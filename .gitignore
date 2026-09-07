@@ -1,0 +1,19 @@
+node_modules/
+.next/
+.next-dev/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# local reference clones (public repos, re-cloneable)
+/pi/
+/dsh/
+/docs/
+
+# local dev & plans
+.zcode/
+.env
+.env*.local
+*.log
+.DS_Store
+Thumbs.db
