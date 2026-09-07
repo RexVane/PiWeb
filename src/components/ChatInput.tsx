@@ -84,6 +84,7 @@ export function ChatInput({
 	const fileRef = useRef<HTMLInputElement>(null);
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
+	const isBlocked = !model?.id;
 
 	useEffect(() => {
 		if (!draft) return;
@@ -258,9 +259,9 @@ export function ChatInput({
 					<textarea
 						ref={taRef}
 						value={text}
-						disabled={disabled}
+						disabled={disabled || isBlocked}
 						rows={1}
-						placeholder={t.inputPlaceholder}
+						placeholder={!disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						className="block w-full resize-none"
 						style={{ fontSize: "var(--dsh-content-font-size)", lineHeight: 1.55 }}
 						onChange={(e) => {
@@ -406,7 +407,7 @@ export function ChatInput({
 							<IconStopFill16 size={16} />
 						</button>
 					) : (
-						<button className="btn-primary-circle" title={isStreaming ? t.queueNote : t.send} disabled={!hasDraft || disabled} onClick={doSend}>
+						<button className="btn-primary-circle" title={isStreaming ? t.queueNote : t.send} disabled={!hasDraft || disabled || isBlocked} onClick={doSend}>
 							<IconSendArrowUp14 size={16} />
 						</button>
 					)}

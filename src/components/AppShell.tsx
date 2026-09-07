@@ -159,7 +159,7 @@ export function AppShell() {
 		thinkingLevels: m.thinkingLevels,
 		contextWindow: m.contextWindow,
 	}));
-	const defaultModel = modelChoices.find((m) => authByProvider[m.provider]) ?? modelChoices[0];
+	const defaultModel = modelChoices.find((m) => authByProvider[m.provider]);
 	const heroModelLevels = (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 	// ---------- 拖拽 ----------

@@ -91,19 +91,30 @@ export function ModelSelector({
 		});
 	}, [open, pane]);
 
-	const label = model ? model.name || model.id : t.model;
+	const hasModel = Boolean(model?.id);
+	const modelName = hasModel ? (model?.name || model?.id || "") : "";
+	const effortLabel = hasModel && thinkingLevel && thinkingLevel !== "off" ? thinkingLevel : undefined;
+	const triggerTitle = hasModel
+		? (effortLabel ? `${modelName} · ${effortLabel}` : modelName)
+		: t.selectModel;
 
 	return (
 		<div ref={ref} className="relative">
 			<button
 				className="chip"
 				data-open={open}
+				title={triggerTitle}
 				onClick={() => {
 					setOpen(!open);
 					setPane("root");
 				}}
 			>
-				<span className="max-w-[220px] truncate">{label}</span>
+				<span className="max-w-[220px] truncate">{hasModel ? modelName : t.selectModel}</span>
+				{effortLabel && (
+					<span style={{ color: "var(--dsw-label-caption)", flex: "none", fontSize: 13 }}>
+						{effortLabel}
+					</span>
+				)}
 				<span className="chevron">
 					<IconChevronDown14 size={14} />
 				</span>
@@ -122,7 +133,7 @@ export function ModelSelector({
 								<span style={{ fontSize: 14, color: "var(--dsw-label-primary)", flex: "none" }}>{t.model}</span>
 								<span className="flex min-w-0 items-center gap-1">
 									<span className="min-w-0 truncate" style={{ fontSize: 13.5, color: "var(--dsw-label-secondary)" }}>
-										{label}
+										{hasModel ? modelName : t.selectModel}
 									</span>
 									<IconChevronRight14 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
 								</span>
@@ -155,6 +166,11 @@ export function ModelSelector({
 							>
 								<IconChevronLeft14 size={14} /> {t.thinking}
 							</button>
+							{thinkingLevels.length === 0 && (
+								<div className="px-4 py-3" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
+									{t.emptyEfforts}
+								</div>
+							)}
 							{thinkingLevels.map((lv) => {
 								const selected = thinkingLevel === lv;
 								return (
@@ -196,7 +212,7 @@ export function ModelSelector({
 							</button>
 							{groups.length === 0 && (
 								<div className="px-4 py-3" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
-									—
+									{t.emptyModels}
 								</div>
 							)}
 							{groups.map((g) => (
