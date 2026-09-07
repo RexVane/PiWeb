@@ -109,7 +109,7 @@ export function ModelSelector({
 					setPane("root");
 				}}
 			>
-				<span className="max-w-[220px] truncate">{hasModel ? modelName : t.selectModel}</span>
+				<span className="max-w-[220px] truncate" suppressHydrationWarning>{hasModel ? modelName : t.selectModel}</span>
 				{effortLabel && (
 					<span style={{ color: "var(--dsw-label-caption)", flex: "none", fontSize: 13 }}>
 						{effortLabel}

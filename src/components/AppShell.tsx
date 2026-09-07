@@ -746,7 +746,7 @@ function Hero({
 					<div className="relative">
 						<button className="hero-chip" data-open={wsMenu} onClick={() => setWsMenu((v) => !v)}>
 							<IconFolderClose16 className="hero-chip-icon" size={16} />
-							<span className="max-w-[220px] truncate">{currentLabel}</span>
+							<span className="max-w-[220px] truncate" suppressHydrationWarning>{currentLabel}</span>
 							<span className="chevron">
 								<IconChevronDown14 size={14} />
 							</span>

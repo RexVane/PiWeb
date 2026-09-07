@@ -262,6 +262,7 @@ export function ChatInput({
 						disabled={disabled || isBlocked}
 						rows={1}
 						placeholder={!disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
+						suppressHydrationWarning
 						className="block w-full resize-none"
 						style={{ fontSize: "var(--dsh-content-font-size)", lineHeight: 1.55 }}
 						onChange={(e) => {
