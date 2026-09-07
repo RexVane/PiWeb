@@ -8,7 +8,6 @@ next-env.d.ts
 # local reference clones (public repos, re-cloneable)
 /pi/
 /dsh/
-/docs/
 
 # local dev & plans
 .zcode/

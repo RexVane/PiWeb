@@ -1,4 +1,4 @@
-﻿# PiWeb
+# PiWeb
 
 <p align="center">
   <strong>为 Pi 编程智能体打造的现代 Web 界面 —— 对齐 DeepSeek Harness (dsh) 交互体验。</strong>
@@ -6,6 +6,10 @@
 
 <p align="center">
   <a href="README.md">English</a> | <strong>简体中文</strong>
+</p>
+
+<p align="center">
+  <img src="assets/showcase.png" alt="PiWeb 界面展示" width="840" />
 </p>
 
 ---
@@ -32,14 +36,24 @@
 
 **环境要求**：Node.js ≥ 22。
 
+### 通过 `pi web` 一键启动（推荐）
+
+对齐 `dsh web` 启动方式，支持在任何终端中输入 `pi web`（支持任意大小写：`pi web`、`PI WEB`、`Pi Web`）启动 Web 界面：
+
 ```bash
-# 安装依赖
-npm install
+# 全局注册 pi 与 piweb 命令（首次一次性执行）
+npm link
 
-# 构建前端
-npm run build
+# 任意终端直接启动（不区分大小写）
+pi web
+```
 
+也可以直接通过 npm 启动：
+
+```bash
 # 启动服务（默认 http://127.0.0.1:30141，端口占用自动 +1，自动打开浏览器）
+npm run web
+# 或
 npm start
 ```
 

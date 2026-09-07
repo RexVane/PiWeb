@@ -4,10 +4,15 @@
 	"private": true,
 	"type": "module",
 	"description": "Web UI for the pi coding agent — dsh-look shell driven by the official pi SDK without modifying pi",
+	"bin": {
+		"pi": "bin/pi.js",
+		"piweb": "bin/piweb.js"
+	},
 	"scripts": {
 		"dev": "next dev -H 127.0.0.1 -p 30141",
 		"build": "next build --webpack",
 		"start": "node bin/piweb.js",
+		"web": "node bin/pi.js web",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"check": "npm run typecheck && npm run test && npm run build",

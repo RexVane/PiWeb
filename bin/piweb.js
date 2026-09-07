@@ -2,6 +2,7 @@
 /**
  * Pi Web 启动器：解析参数 → 端口被占自动 +1 → 起 Next.js → 探活后自动打开浏览器。
  */
+import fs from "node:fs";
 import net from "node:net";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -14,16 +15,19 @@ const args = process.argv.slice(2);
 let port = Number(process.env.PORT || 30141);
 let hostname = process.env.PI_WEB_HOSTNAME || "127.0.0.1";
 let noOpen = process.env.PI_WEB_NO_OPEN === "1";
+let isDev = process.env.PI_WEB_DEV === "1";
 
 for (let i = 0; i < args.length; i++) {
 	const a = args[i];
 	if (a === "-p" || a === "--port") port = Number(args[++i]);
 	else if (a === "-H" || a === "--hostname") hostname = args[++i];
 	else if (a === "--no-open") noOpen = true;
+	else if (a === "--dev") isDev = true;
 	else if (a === "-h" || a === "--help") {
-		console.log(`Usage: piweb [-p, --port <port>] [-H, --hostname <host>] [--no-open]`);
+		console.log(`Usage: pi web [-p, --port <port>] [-H, --hostname <host>] [--dev] [--no-open]`);
 		console.log(`  -p, --port <port>      监听端口（默认 30141，env PORT；被占用自动 +1）`);
 		console.log(`  -H, --hostname <host>  绑定地址（默认 127.0.0.1，env PI_WEB_HOSTNAME）`);
+		console.log(`  --dev                  以开发模式启动（next dev）`);
 		console.log(`  --no-open              不自动打开浏览器（env PI_WEB_NO_OPEN=1）`);
 		console.log(`  -h, --help             帮助`);
 		console.log(`环境变量 PI_WEB_PASSWORD 启用 Basic Auth（用户名 pi）`);
@@ -51,6 +55,14 @@ if (!isLoopback(hostname) && !pw) {
 	process.exit(1);
 }
 
+async function openBrowser(targetUrl) {
+	const { default: open } = await import("open").catch(() => ({ default: null }));
+	if (open) await open(targetUrl).catch(() => {});
+	else if (process.platform === "win32") spawn("cmd", ["/c", "start", "", targetUrl], { detached: true });
+	else if (process.platform === "darwin") spawn("open", [targetUrl], { detached: true });
+	else spawn("xdg-open", [targetUrl], { detached: true });
+}
+
 function isPortFree(p, host) {
 	return new Promise((resolve) => {
 		const srv = net.createServer();
@@ -58,6 +70,22 @@ function isPortFree(p, host) {
 		srv.once("listening", () => srv.close(() => resolve(true)));
 		srv.listen(p, host === "0.0.0.0" || host === "::" ? undefined : host);
 	});
+}
+
+// 检查指定端口上是否已有服务在运行
+const initialUrl = `http://${hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname}:${port}`;
+try {
+	const res = await fetch(initialUrl, { signal: AbortSignal.timeout(1500) });
+	if (res.status >= 200 && res.status < 500) {
+		console.log(`[piweb] PiWeb 已在 ${initialUrl} 运行`);
+		if (!noOpen) {
+			console.log(`[piweb] 正在打开浏览器：${initialUrl}`);
+			await openBrowser(initialUrl);
+		}
+		process.exit(0);
+	}
+} catch {
+	/* not running */
 }
 
 for (;;) {
@@ -69,8 +97,11 @@ for (;;) {
 if (pw) console.log(`[piweb] 已启用 Basic Auth（用户名 pi）`);
 
 const next = path.join(root, "node_modules", "next", "dist", "bin", "next");
-console.log(`[piweb] 启动 http://${hostname}:${port}`);
-const child = spawn(process.execPath, [next, "start", "-p", String(port), "-H", hostname], {
+const hasBuild = fs.existsSync(path.join(root, ".next", "BUILD_ID"));
+const subCmd = isDev || !hasBuild ? "dev" : "start";
+
+console.log(`[piweb] 启动 http://${hostname}:${port} (${subCmd} 模式)`);
+const child = spawn(process.execPath, [next, subCmd, "-p", String(port), "-H", hostname], {
 	cwd: root,
 	stdio: "inherit",
 	env: process.env,
@@ -83,13 +114,7 @@ async function probe(attempt = 0) {
 		const res = await fetch(url, { signal: AbortSignal.timeout(1200) });
 		if (res.ok || res.status === 401 || res.status === 307 || res.status === 308) {
 			console.log(`[piweb] 就绪：${url}`);
-			if (!noOpen) {
-				const { default: open } = await import("open").catch(() => ({ default: null }));
-				if (open) await open(url).catch(() => {});
-				else if (process.platform === "win32") spawn("cmd", ["/c", "start", "", url], { detached: true });
-				else if (process.platform === "darwin") spawn("open", [url], { detached: true });
-				else spawn("xdg-open", [url], { detached: true });
-			}
+			if (!noOpen) await openBrowser(url);
 			return;
 		}
 	} catch {

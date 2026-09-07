@@ -1,4 +1,4 @@
-﻿# PiWeb
+# PiWeb
 
 <p align="center">
   <strong>A modern web UI for the Pi Coding Agent — inspired by DeepSeek Harness (dsh).</strong>
@@ -6,6 +6,10 @@
 
 <p align="center">
   <strong>English</strong> | <a href="README_zh.md">简体中文</a>
+</p>
+
+<p align="center">
+  <img src="assets/showcase.png" alt="PiWeb UI Showcase" width="840" />
 </p>
 
 ---
@@ -28,14 +32,24 @@
 
 **Prerequisites**: Node.js ≥ 22.
 
+### Launch via `pi web` (Recommended)
+
+Just like `dsh web`, you can launch PiWeb directly from your terminal using `pi web` (case-insensitive: `pi web`, `PI WEB`, `Pi Web`):
+
 ```bash
-# Install dependencies
-npm install
+# Link commands globally (one-time setup)
+npm link
 
-# Build frontend
-npm run build
+# Launch anywhere in your terminal (case-insensitive)
+pi web
+```
 
+You can also run directly with npm:
+
+```bash
 # Start PiWeb (defaults to http://127.0.0.1:30141 and auto-opens browser)
+npm run web
+# or
 npm start
 ```
 
