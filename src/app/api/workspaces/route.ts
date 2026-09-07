@@ -2,28 +2,21 @@ import { NextResponse } from "next/server";
 import {
 	addWorkspace,
 	archiveSession,
-	getAliases,
-	getArchivedSessions,
 	getRemovedWorkspaces,
-	listAdded,
+	getWorkspaceRegistry,
 	pickFolderNative,
 	registerCwds,
 	removeWorkspace,
 	setAlias,
 } from "@/lib/workspace-store";
-import { resolveWorkspacePath } from "@/lib/path-security";
+import { encodeSessionId } from "@/lib/pi";
+import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
 	try {
-		const [workspaces, aliases, archivedSessions, removedWorkspaces] = await Promise.all([
-			listAdded(),
-			getAliases(),
-			getArchivedSessions(),
-			getRemovedWorkspaces(),
-		]);
-		return NextResponse.json({ success: true, data: { workspaces, aliases, archivedSessions, removedWorkspaces } });
+		return NextResponse.json({ success: true, data: await getWorkspaceRegistry() });
 	} catch (err: any) {
 		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
 	}
@@ -39,13 +32,12 @@ export async function POST(req: Request) {
 		};
 		if (body.action === "pick") {
 			const r = await pickFolderNative();
-			// 选完即加入列表
-			if (r.path) await addWorkspace(r.path);
-			return NextResponse.json({ success: true, data: r });
+			const registry = r.path ? await addWorkspace(await resolveWorkspacePath(r.path)) : null;
+			return NextResponse.json({ success: true, data: { ...r, ...(registry ?? {}) } });
 		}
 		if (body.action === "add") {
 			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
-			return NextResponse.json({ success: true, data: { workspaces: await addWorkspace(await resolveWorkspacePath(body.path)) } });
+			return NextResponse.json({ success: true, data: await addWorkspace(await resolveWorkspacePath(body.path)) });
 		}
 		if (body.action === "remove") {
 			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
@@ -59,7 +51,8 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "archiveSession") {
 			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
-			const archivedSessions = await archiveSession(body.path);
+			const sessionPath = await resolveSessionPath(encodeSessionId(body.path));
+			const archivedSessions = await archiveSession(sessionPath);
 			return NextResponse.json({ success: true, data: { archivedSessions } });
 		}
 		if (body.action === "registerCwds") {
@@ -70,6 +63,9 @@ export async function POST(req: Request) {
 		}
 		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		return NextResponse.json(
+			{ success: false, error: String(err?.message ?? err) },
+			{ status: err instanceof BoundaryError ? 400 : 500 },
+		);
 	}
 }

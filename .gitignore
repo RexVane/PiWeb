@@ -1,6 +1,8 @@
 node_modules/
 .next/
 .next-dev/
+.next-dev-clean/
+.next-dev-webpack/
 out/
 *.tsbuildinfo
 next-env.d.ts

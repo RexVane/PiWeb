@@ -79,7 +79,6 @@ export function SessionSidebar({
 	onNew,
 	onNewInWorkspace,
 	onRename,
-	onDelete,
 	onFork,
 	onArchive,
 	getWorkspaceName,
@@ -87,7 +86,6 @@ export function SessionSidebar({
 	onDeleteWorkspace,
 	onOpenSettings,
 	onAddWorkspace,
-	onRemoveWorkspace,
 }: {
 	sessions: SessionListItem[];
 	addedWorkspaces: string[];
@@ -102,16 +100,14 @@ export function SessionSidebar({
 	onOpen: (path: string) => void;
 	onNew: () => void;
 	onNewInWorkspace: (cwd: string) => void;
-	onRename: (path: string, newName: string) => void;
-	onDelete: (path: string) => void;
+	onRename: (path: string, newName: string) => Promise<void>;
 	onFork?: (path: string, cwd: string) => void;
 	onArchive?: (path: string) => void;
 	getWorkspaceName?: (cwd: string) => string;
-	onRenameWorkspace?: (cwd: string, newName: string) => void;
-	onDeleteWorkspace?: (cwd: string) => void;
+	onRenameWorkspace?: (cwd: string, newName: string) => Promise<void>;
+	onDeleteWorkspace?: (cwd: string) => Promise<void>;
 	onOpenSettings: () => void;
 	onAddWorkspace: () => void;
-	onRemoveWorkspace: (cwd: string) => void;
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
@@ -129,7 +125,11 @@ export function SessionSidebar({
 		{ type: "session"; path: string; name: string } | { type: "workspace"; cwd: string; name: string } | null
 	>(null);
 	const [renameValue, setRenameValue] = useState("");
+	const [renamePending, setRenamePending] = useState(false);
+	const [renameError, setRenameError] = useState<string | null>(null);
 	const [deleteWorkspaceTarget, setDeleteWorkspaceTarget] = useState<{ cwd: string; name: string } | null>(null);
+	const [deleteWorkspacePending, setDeleteWorkspacePending] = useState(false);
+	const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
 	const [mounted, setMounted] = useState(false);
 
 	useEffect(() => {
@@ -139,6 +139,8 @@ export function SessionSidebar({
 	useEffect(() => {
 		if (renameTarget) {
 			setRenameValue(renameTarget.name);
+			setRenamePending(false);
+			setRenameError(null);
 			setTimeout(() => {
 				renameInputRef.current?.focus();
 				renameInputRef.current?.select();
@@ -146,24 +148,45 @@ export function SessionSidebar({
 		}
 	}, [renameTarget]);
 
-	const handleConfirmRename = () => {
-		if (!renameTarget) return;
+	const handleConfirmRename = async () => {
+		if (!renameTarget || renamePending) return;
 		const val = renameValue.trim();
-		if (val) {
+		if (!val || (renameTarget.type === "workspace" && val === renameTarget.name)) return;
+		setRenamePending(true);
+		setRenameError(null);
+		try {
 			if (renameTarget.type === "session") {
-				onRename(renameTarget.path, val);
+				await onRename(renameTarget.path, val);
 			} else {
-				onRenameWorkspace?.(renameTarget.cwd, val);
+				await onRenameWorkspace?.(renameTarget.cwd, val);
 			}
+			setRenameTarget(null);
+		} catch (error) {
+			setRenameError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setRenamePending(false);
 		}
-		setRenameTarget(null);
 	};
 
-	const handleConfirmDeleteWorkspace = () => {
-		if (!deleteWorkspaceTarget) return;
+	const closeRename = () => {
+		if (renamePending) return;
+		setRenameTarget(null);
+		setRenameError(null);
+	};
+
+	const handleConfirmDeleteWorkspace = async () => {
+		if (!deleteWorkspaceTarget || deleteWorkspacePending) return;
 		const targetCwd = deleteWorkspaceTarget.cwd;
-		setDeleteWorkspaceTarget(null);
-		onDeleteWorkspace?.(targetCwd);
+		setDeleteWorkspacePending(true);
+		setDeleteWorkspaceError(null);
+		try {
+			await onDeleteWorkspace?.(targetCwd);
+			setDeleteWorkspaceTarget(null);
+		} catch (error) {
+			setDeleteWorkspaceError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setDeleteWorkspacePending(false);
+		}
 	};
 
 	const currentCwd = sessions.find((s) => s.path === currentPath)?.cwd;
@@ -493,6 +516,7 @@ export function SessionSidebar({
 										cwd: g.cwd,
 										name: displayName,
 									});
+									setDeleteWorkspaceError(null);
 								}}
 							/>
 						</div>
@@ -681,7 +705,7 @@ export function SessionSidebar({
 			{mounted && renameTarget && createPortal(
 				<div
 					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
-					onClick={() => setRenameTarget(null)}
+					onClick={closeRename}
 				>
 					<div
 						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
@@ -692,7 +716,8 @@ export function SessionSidebar({
 						{/* 关闭按钮 */}
 						<button
 							type="button"
-							onClick={() => setRenameTarget(null)}
+							onClick={closeRename}
+							disabled={renamePending}
 							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
 							aria-label={t.close}
 						>
@@ -712,27 +737,36 @@ export function SessionSidebar({
 								ref={renameInputRef}
 								type="text"
 								value={renameValue}
-								onChange={(e) => setRenameValue(e.target.value)}
+								disabled={renamePending}
+								onChange={(e) => {
+									setRenameValue(e.target.value);
+									setRenameError(null);
+								}}
 								onKeyDown={(e) => {
-									if (e.key === "Enter") handleConfirmRename();
-									if (e.key === "Escape") setRenameTarget(null);
+									if (e.key === "Enter") void handleConfirmRename();
+									if (e.key === "Escape") closeRename();
 								}}
 								className="w-full rounded-full bg-white/[0.05] border border-white/15 px-4 py-2.5 text-[14.5px] text-white outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30 transition"
 							/>
 						</div>
+						{renameError && (
+							<p className="-mt-3 mb-5 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{renameError}</p>
+						)}
 
 						{/* 按钮区 */}
 						<div className="flex items-center justify-end gap-3">
 							<button
 								type="button"
-								onClick={() => setRenameTarget(null)}
+								onClick={closeRename}
+								disabled={renamePending}
 								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 hover:bg-[#383838] transition"
 							>
 								{t.cancel}
 							</button>
 							<button
 								type="button"
-								onClick={handleConfirmRename}
+								onClick={() => void handleConfirmRename()}
+								disabled={renamePending || !renameValue.trim() || (renameTarget.type === "workspace" && renameValue.trim() === renameTarget.name)}
 								className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black hover:bg-zinc-200 transition"
 							>
 								{t.rename}
@@ -747,7 +781,7 @@ export function SessionSidebar({
 			{mounted && deleteWorkspaceTarget && createPortal(
 				<div
 					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
-					onClick={() => setDeleteWorkspaceTarget(null)}
+					onClick={() => !deleteWorkspacePending && setDeleteWorkspaceTarget(null)}
 				>
 					<div
 						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
@@ -759,6 +793,7 @@ export function SessionSidebar({
 						<button
 							type="button"
 							onClick={() => setDeleteWorkspaceTarget(null)}
+							disabled={deleteWorkspacePending}
 							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
 							aria-label={t.close}
 						>
@@ -777,19 +812,27 @@ export function SessionSidebar({
 								deleteWorkspaceTarget.name,
 							)}
 						</p>
+						{deleteWorkspacePending && (
+							<p className="mt-4 text-sm text-zinc-400" role="status">{t.deleteWorkspacePending}</p>
+						)}
+						{deleteWorkspaceError && (
+							<p className="mt-4 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{deleteWorkspaceError}</p>
+						)}
 
 						{/* 按钮区 */}
 						<div className="mt-6 flex items-center justify-end gap-3">
 							<button
 								type="button"
 								onClick={() => setDeleteWorkspaceTarget(null)}
+								disabled={deleteWorkspacePending}
 								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 hover:bg-[#383838] transition"
 							>
 								{t.cancel}
 							</button>
 							<button
 								type="button"
-								onClick={handleConfirmDeleteWorkspace}
+								onClick={() => void handleConfirmDeleteWorkspace()}
+								disabled={deleteWorkspacePending}
 								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] hover:bg-[#383838] hover:text-[#ef4444] transition"
 							>
 								{t.deleteWorkspace}

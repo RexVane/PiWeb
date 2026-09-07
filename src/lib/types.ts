@@ -115,14 +115,25 @@ export interface WebStats {
 	cost: number;
 }
 
+export interface ContextResource {
+	/** Human-readable producer path reported by Pi's resource loader. */
+	path: string;
+	/** Exact text appended to the model context. */
+	content: string;
+	/** Whether Pi discovered the file directly or an extension appended it. */
+	source: "project" | "extension";
+}
+
 /** SSE 连接建立时先发的完整快照 */
 export interface WebSnapshot {
 	seq: number;
 	sessionPath: string;
 	cwd: string;
 	name: string;
-	/** 注入的上下文文件（AGENTS.md 等，来自 pi 资源加载器） */
+	/** 兼容旧版 Web 客户端的上下文路径列表。 */
 	contextFiles: string[];
+	/** 注入的上下文资源（AGENTS.md 与扩展附加 prompt，来自 Pi 资源加载器）。 */
+	contextResources: ContextResource[];
 	/** 斜杠命令数据源：prompt 模板与技能 */
 	promptTemplates: { name: string; description: string }[];
 	skills: { name: string; description: string }[];

@@ -280,11 +280,12 @@ export function usePiWeb() {
 				body: JSON.stringify({ action: "rename", path: dir, name }),
 			});
 			const j = await r.json();
-			if (j.success && j.data?.aliases) {
-				setWorkspaceAliases(j.data.aliases);
-			}
-		} catch {
-			/* ignore */
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (j.data?.aliases) setWorkspaceAliases(j.data.aliases);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to rename workspace";
+			setState((current) => ({ ...current, error: message }));
+			throw error;
 		}
 	}, []);
 
@@ -296,11 +297,12 @@ export function usePiWeb() {
 				body: JSON.stringify({ action: "archiveSession", path: sessionPath }),
 			});
 			const j = await r.json();
-			if (j.success && Array.isArray(j.data?.archivedSessions)) {
-				setArchivedSessions(j.data.archivedSessions);
-			}
-		} catch {
-			/* ignore */
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessions(j.data.archivedSessions);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to archive session";
+			setState((current) => ({ ...current, error: message }));
+			throw error;
 		}
 	}, []);
 
@@ -342,66 +344,72 @@ export function usePiWeb() {
 
 	const removeWorkspace = useCallback(
 		async (dir: string) => {
-			try {
-				const r = await fetch("/api/workspaces", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ action: "remove", path: dir }),
-				});
-				const j = await r.json();
-				if (j.success && j.data) {
-					if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
-					if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
-				}
-			} catch {
-				/* ignore */
+			const r = await fetch("/api/workspaces", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "remove", path: dir }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (j.data) {
+				if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
+				if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
+				if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
 			}
 			await refreshWorkspaces();
 		},
 		[refreshWorkspaces],
 	);
 
-	// 会话 cwd 自动注册为独立工作区（解耦：删除会话不影响工作区存在）
-	useEffect(() => {
-		if (!sessions.length) return;
-		const uniqueCwds = Array.from(new Set(sessions.map((s) => s.cwd).filter(Boolean)));
-		if (!uniqueCwds.length) return;
-		fetch("/api/workspaces", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "registerCwds", cwds: uniqueCwds }),
-		})
-			.then((r) => r.json())
-			.then((j) => {
-				if (j.success && j.data) {
-					if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
-					if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
-				}
-			})
-			.catch(() => {});
-	}, [sessions]);
-
-	// 会话列表轮询（3 秒，多标签同步）
+	// 会话列表轮询（3 秒，多标签同步）；隐藏标签页暂停，单个标签内不会重叠请求。
 	useEffect(() => {
 		let alive = true;
-		const load = async () => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let controller: AbortController | undefined;
+		const schedule = () => {
+			if (!alive || document.visibilityState !== "visible") return;
+			timer = setTimeout(() => void load(false), 3000);
+		};
+		const load = async (force: boolean) => {
+			if (!alive || (!force && document.visibilityState !== "visible")) return;
+			controller = new AbortController();
 			try {
-				const r = await fetch("/api/sessions");
+				const r = await fetch("/api/sessions", { signal: controller.signal });
 				const j = await r.json();
 				if (!alive || !j.success) return;
 				const running: Record<string, { streaming: boolean }> = j.data.running ?? {};
+				const registry = j.data.workspaceRegistry;
+				if (registry) {
+					if (Array.isArray(registry.workspaces)) setAddedWorkspaces(registry.workspaces);
+					if (Array.isArray(registry.removedWorkspaces)) setRemovedWorkspaces(registry.removedWorkspaces);
+					if (registry.aliases && typeof registry.aliases === "object") setWorkspaceAliases(registry.aliases);
+					if (Array.isArray(registry.archivedSessions)) setArchivedSessions(registry.archivedSessions);
+				}
 				setSessions(
 					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true })),
 				);
-			} catch {
-				/* ignore */
+			} catch (error) {
+				if (!(error instanceof DOMException && error.name === "AbortError")) {
+					/* A later poll retries transient list failures. */
+				}
+			} finally {
+				controller = undefined;
+				schedule();
 			}
 		};
-		load();
-		const t = setInterval(load, 3000);
+		const onVisibilityChange = () => {
+			if (timer) clearTimeout(timer);
+			timer = undefined;
+			controller?.abort();
+			if (document.visibilityState === "visible") void load(false);
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		void load(true);
 		return () => {
 			alive = false;
-			clearInterval(t);
+			if (timer) clearTimeout(timer);
+			controller?.abort();
+			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
 	}, []);
 

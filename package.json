@@ -9,7 +9,7 @@
 		"piweb": "bin/piweb.js"
 	},
 	"scripts": {
-		"dev": "next dev -H 127.0.0.1 -p 30141",
+		"dev": "node scripts/dev.mjs",
 		"build": "next build --webpack",
 		"start": "node bin/piweb.js",
 		"web": "node bin/pi.js web",

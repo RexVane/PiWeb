@@ -24,7 +24,7 @@ import {
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
-import type { WebMessage, WebStats } from "@/lib/types";
+import type { ContextResource, WebMessage, WebStats } from "@/lib/types";
 
 function copyText(text: string) {
 	void navigator.clipboard?.writeText(text);
@@ -215,6 +215,51 @@ function ThinkRow({ text }: { text: string }) {
 	);
 }
 
+function ContextRow({ resource }: { resource: ContextResource | string }) {
+	const [open, setOpen] = useState(false);
+	const { t } = useI18n();
+	const normalized = typeof resource === "string"
+		? { path: resource, content: "", source: "project" as const }
+		: resource;
+	return (
+		<div className="my-1 min-w-0">
+			<button
+				type="button"
+				className="flex w-full min-w-0 items-center gap-2 py-0.5 text-left"
+				aria-expanded={open}
+				onClick={() => setOpen((value) => !value)}
+			>
+				<IconContextRow />
+				<span style={{ flex: "none", fontSize: 13.5, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
+					{t.contextInject}
+				</span>
+				<span aria-hidden style={{ flex: "none", color: "var(--dsw-label-caption)", fontSize: 13 }}>·</span>
+				<span
+					className="min-w-0 flex-1 truncate"
+					style={{ color: "var(--dsw-label-tertiary)", fontFamily: "var(--font-mono)", fontSize: 12.5 }}
+					title={normalized.path}
+				>
+					{normalized.path}
+				</span>
+			</button>
+			{open && normalized.content && (
+				<pre
+					className="ml-6 mt-1 max-h-[141px] overflow-auto whitespace-pre-wrap rounded-lg px-3 py-2.5"
+					style={{
+						background: "var(--dsw-markdown-code-block, var(--dsw-hover))",
+						color: "var(--dsw-label-tertiary)",
+						fontFamily: "var(--font-mono)",
+						fontSize: 11,
+						lineHeight: "16px",
+					}}
+				>
+					{normalized.content}
+				</pre>
+			)}
+		</div>
+	);
+}
+
 function AssistantMessage({ message, tools }: { message: WebMessage; tools: Record<string, ToolCardState> }) {
 	const textAll = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -304,21 +349,32 @@ export function ChatWindow({
 	tools: Record<string, ToolCardState>;
 	stats: WebStats | null;
 	queue: { steering: string[]; followUp: string[] };
-	contextFiles?: string[];
+	contextFiles?: Array<ContextResource | string>;
 }) {
 	const { t } = useI18n();
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const stickToBottom = useRef(true);
 
-	const rendered = useMemo(
-		() =>
-			messages.map((m, i) => {
-				if (m.role === "user") return <UserMessage key={i} message={m} />;
-				if (m.role === "assistant") return <AssistantMessage key={i} message={m} tools={tools} />;
-				return null;
-			}),
-		[messages, tools],
-	);
+	const rendered = useMemo(() => {
+		const firstUser = messages.findIndex((message) => message.role === "user");
+		return messages.flatMap((message, index) => {
+			const row = message.role === "user"
+				? <UserMessage key={`message-${index}`} message={message} />
+				: message.role === "assistant"
+					? <AssistantMessage key={`message-${index}`} message={message} tools={tools} />
+					: null;
+			if (index !== firstUser || !contextFiles?.length) return row ? [row] : [];
+			return [
+				...(row ? [row] : []),
+				...contextFiles.map((resource, resourceIndex) => (
+					<ContextRow
+						key={`context-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${resourceIndex}`}
+						resource={resource}
+					/>
+				)),
+			];
+		});
+	}, [contextFiles, messages, tools]);
 
 	const turns = stats?.userMessages ?? 0;
 	const calls = stats?.toolCalls ?? 0;
@@ -347,16 +403,6 @@ export function ChatWindow({
 				}}
 			>
 				<div className="mx-auto flex w-full flex-col gap-4 px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
-					{(contextFiles ?? []).map((f) => (
-						<div key={f} className="flex items-center gap-2" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
-							<IconContextRow />
-							<span style={{ flex: "none" }}>{t.contextInject}</span>
-							<span style={{ opacity: 0.6 }}>·</span>
-							<span className="truncate" style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }} title={f}>
-								{f}
-							</span>
-						</div>
-					))}
 					{rendered}
 					{queue.steering.length + queue.followUp.length > 0 && (
 						<div className="flex justify-end">

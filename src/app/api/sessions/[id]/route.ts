@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { deleteSession, readSession } from "@/lib/session-reader";
 import { disposeSessionPath } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
+import { forgetSession } from "@/lib/workspace-store";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 		const sessionPath = await resolveSessionPath(id);
 		await disposeSessionPath(sessionPath);
 		await deleteSession(sessionPath);
+		await forgetSession(sessionPath);
 		return NextResponse.json({ success: true });
 	} catch (error) {
 		return NextResponse.json(

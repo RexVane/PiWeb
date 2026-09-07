@@ -17,6 +17,7 @@ import {
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import type {
 	AgentCommand,
+	ContextResource,
 	TrajEntry,
 	ToolPreset,
 	WebEvent,
@@ -299,6 +300,25 @@ export function getManaged(sessionPath: string): Managed {
 	return m;
 }
 
+function loadContextResources(cwd: string): ContextResource[] {
+	const files = loadProjectContextFiles({ cwd, agentDir: getAgentDir() }).map((file) => ({
+		path: file.path,
+		content: file.content,
+		source: "project" as const,
+	}));
+	const loader = getResourceLoader(cwd);
+	const append = loader.getAppendSystemPrompt();
+	const sources = loader.getAppendSystemPromptSources();
+	return [
+		...files,
+		...append.map((content, index) => ({
+			path: sources[index]?.path ?? `Appended system prompt ${index + 1}`,
+			content,
+			source: "extension" as const,
+		})),
+	];
+}
+
 function environmentTrajectory(m: Managed, session: AgentSession | null): TrajEntry[] {
 	const ts = m.ledger.entries[0]?.ts ?? Date.now();
 	const entries: TrajEntry[] = [];
@@ -313,23 +333,13 @@ function environmentTrajectory(m: Managed, session: AgentSession | null): TrajEn
 	}
 
 	try {
-		const loader = getResourceLoader(m.cwd);
-		const files = loadProjectContextFiles({ cwd: m.cwd, agentDir: getAgentDir() });
-		files.forEach((file, index) => entries.push({
+		const resources = loadContextResources(m.cwd);
+		resources.forEach((resource, index) => entries.push({
 			seq: -2 - index,
 			kind: "context",
 			ts,
-			title: file.path,
-			detail: file.content,
-		}));
-		const append = loader.getAppendSystemPrompt();
-		const sources = loader.getAppendSystemPromptSources();
-		append.forEach((detail, index) => entries.push({
-			seq: -2 - files.length - index,
-			kind: "context",
-			ts,
-			title: sources[index]?.path ?? `Appended system prompt ${index + 1}`,
-			detail,
+			title: resource.path,
+			detail: resource.content,
 		}));
 	} catch {
 		/* Resource discovery diagnostics are already surfaced by Pi. */
@@ -504,13 +514,12 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		name = "";
 	}
 
-	// 上下文注入文件（AGENTS.md 等）
-	let contextFiles: string[] = [];
+	// 上下文注入资源（AGENTS.md 与扩展附加 prompt）
+	let contextResources: ContextResource[] = [];
 	try {
-		const agentsFiles = loadProjectContextFiles({ cwd: m.cwd, agentDir: getAgentDir() });
-		contextFiles = agentsFiles.map((f: { path: string }) => f.path);
+		contextResources = loadContextResources(m.cwd);
 	} catch {
-		contextFiles = [];
+		contextResources = [];
 	}
 
 	// 斜杠命令数据源：prompt 模板 + 技能
@@ -539,7 +548,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		sessionPath: m.sessionPath,
 		cwd: m.cwd,
 		name,
-		contextFiles,
+		contextFiles: contextResources.map((resource) => resource.path),
+		contextResources,
 		promptTemplates,
 		skills,
 		messages,

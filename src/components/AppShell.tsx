@@ -210,21 +210,18 @@ export function AppShell() {
 		return () => clearTimeout(timer);
 	}, [state.error, clearError]);
 
-	const doRename = (path: string, newName: string) => {
+	const doRename = async (path: string, newName: string) => {
 		if (!newName.trim()) return;
-		if (path === currentPath) void sendCommand({ cmd: "rename", text: newName.trim() });
-		else {
-			// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
-			void sendCommand({ cmd: "rename", text: newName.trim() }, encodeURIComponent(b64url(path)));
+		const result = path === currentPath
+			? await sendCommand({ cmd: "rename", text: newName.trim() })
+			: await sendCommand({ cmd: "rename", text: newName.trim() }, encodeURIComponent(b64url(path)));
+		if (!result?.success) {
+			throw new Error(result?.error || "failed to rename session");
 		}
-	};
-
-	const doDelete = (path: string) => {
-		if (!window.confirm(t.delete)) return;
-		void fetch(`/api/sessions/${encodeURIComponent(b64url(path))}`, { method: "DELETE" }).then(() => {
-			if (path === currentPath) closeSession();
+		if (path !== currentPath) {
+			// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
 			resync();
-		});
+		}
 	};
 
 	const doForkSession = useCallback(
@@ -241,17 +238,19 @@ export function AppShell() {
 
 	const doArchiveSession = useCallback(
 		async (path: string) => {
-			await archiveSession(path);
-			if (path === currentPath) {
-				closeSession();
+			try {
+				await archiveSession(path);
+				if (path === currentPath) closeSession();
+			} catch {
+				// usePiWeb exposes the request failure in the shared error banner.
 			}
 		},
 		[archiveSession, currentPath, closeSession],
 	);
 
 	const doRenameWorkspace = useCallback(
-		(cwd: string, newName: string) => {
-			void renameWorkspace(cwd, newName);
+		async (cwd: string, newName: string) => {
+			await renameWorkspace(cwd, newName);
 		},
 		[renameWorkspace],
 	);
@@ -418,7 +417,6 @@ export function AppShell() {
 						void newSession(cwd);
 					}}
 					onRename={doRename}
-					onDelete={doDelete}
 					onFork={doForkSession}
 					onArchive={doArchiveSession}
 					getWorkspaceName={getWorkspaceName}
@@ -429,7 +427,6 @@ export function AppShell() {
 						setMobileSidebarOpen(false);
 					}}
 					onAddWorkspace={() => void addWorkspaceByPicker()}
-					onRemoveWorkspace={(cwd) => void removeWorkspace(cwd)}
 				/>
 			</div>
 
@@ -531,7 +528,7 @@ export function AppShell() {
 									tools={state.tools}
 									stats={snapshot?.stats ?? null}
 									queue={snapshot?.queue ?? { steering: [], followUp: [] }}
-									contextFiles={snapshot?.contextFiles ?? []}
+									contextFiles={snapshot?.contextResources ?? snapshot?.contextFiles ?? []}
 								/>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
