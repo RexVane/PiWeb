@@ -38,7 +38,7 @@
 
 ### 通过 `pi web` 一键启动（推荐）
 
-对齐 `dsh web` 启动方式，支持在任何终端中输入 `pi web`（支持任意大小写：`pi web`、`PI WEB`、`Pi Web`）启动 Web 界面：
+支持在任何终端中输入 `pi web`（不区分大小写：`pi web`、`PI WEB`、`Pi Web`）直接启动 Web 界面：
 
 ```bash
 # 全局注册 pi 与 piweb 命令（首次一次性执行）

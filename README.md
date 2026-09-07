@@ -34,7 +34,7 @@
 
 ### Launch via `pi web` (Recommended)
 
-Just like `dsh web`, you can launch PiWeb directly from your terminal using `pi web` (case-insensitive: `pi web`, `PI WEB`, `Pi Web`):
+You can launch PiWeb directly from your terminal using `pi web` (case-insensitive: `pi web`, `PI WEB`, `Pi Web`):
 
 ```bash
 # Link commands globally (one-time setup)
