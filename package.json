@@ -10,17 +10,18 @@
 	},
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
-		"build": "next build --webpack",
+		"build": "node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack",
 		"start": "node bin/piweb.js",
 		"web": "node bin/pi.js web",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"check": "npm run typecheck && npm run test && npm run build",
 		"sync:provider-icons": "node scripts/sync-provider-icons.mjs",
-		"update:pi": "npm install --save-exact @earendil-works/pi-coding-agent@latest && npm run sync:provider-icons && npm run check"
+		"update:pi": "npm install --save-exact @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest && npm run sync:provider-icons && npm run check"
 	},
 	"dependencies": {
 		"@automann/maple-mono-cn": "^7.9.2",
+		"@earendil-works/pi-ai": "0.85.1",
 		"@earendil-works/pi-coding-agent": "0.85.1",
 		"@lobehub/icons-static-svg": "^1.95.0",
 		"highlight.js": "^11.11.1",

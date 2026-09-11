@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
-import { supportedThinkingLevels } from "./thinking-levels";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 
 export interface ModelView {
 	provider: string;
@@ -123,7 +123,7 @@ export async function listModels(): Promise<{
 				api: String(mm.api ?? ""),
 				baseUrl: typeof mm.baseUrl === "string" ? mm.baseUrl : undefined,
 				reasoning: mm.reasoning === true,
-			thinkingLevels: supportedThinkingLevels(mm),
+				thinkingLevels: getSupportedThinkingLevels(mm),
 				contextWindow: Number(mm.contextWindow ?? 0),
 				input: Array.isArray(mm.input) ? mm.input.map(String) : ["text"],
 				cost: mm.cost ? { input: mm.cost.input, output: mm.cost.output } : null,

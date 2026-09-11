@@ -17,7 +17,7 @@ import {
 } from "./pi";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import { sanitizeToolOutput } from "./text-sanitize";
-import { clampThinkingLevel, supportedThinkingLevels } from "./thinking-levels";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
 	ContextResource,
@@ -178,7 +178,7 @@ function publishModelState(m: Managed, session: AgentSession): void {
 /** 切模型后恢复用户显式选过的级别（按新模型钳制） */
 function reapplyDesiredLevel(m: Managed, session: AgentSession): void {
 	if (!m.desiredThinkingLevel) return;
-	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel);
+	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel as any);
 	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never);
 }
 
@@ -642,8 +642,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 				const rt = await getModelRuntime();
 				const mm = rt.getModel(ctx.model.provider, ctx.model.modelId);
 				if (mm) {
-					thinkingLevels = supportedThinkingLevels(mm as any);
-					if (thinkingLevel) thinkingLevel = clampThinkingLevel(mm as any, thinkingLevel);
+					thinkingLevels = getSupportedThinkingLevels(mm as any);
+					if (thinkingLevel) thinkingLevel = clampThinkingLevel(mm as any, thinkingLevel as any);
 				}
 			}
 		} catch {
@@ -842,7 +842,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const session = await ensureSession(m);
 				const requested = String(cmd.level ?? "medium");
 				// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
-				const effective = clampThinkingLevel(session.model as any, requested);
+				const effective = clampThinkingLevel(session.model as any, requested as any);
 				m.desiredThinkingLevel = requested;
 				session.setThinkingLevel(effective as never);
 				publishModelState(m, session);
