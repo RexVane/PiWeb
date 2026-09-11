@@ -8,13 +8,18 @@ import {
 	getSettingsManager,
 	getAgentDir,
 	loadProjectContextFiles,
+	peekResourceLoader,
+	refreshResourceLoaderIfStale,
+	resolveProjectTrust,
 	resourceLoaderReady,
+	withResourceLock,
 	TOOL_PRESETS,
 	SessionManager,
 	createAgentSession,
 	getModelRuntime,
 	openSessionManager,
 } from "./pi";
+import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -47,6 +52,10 @@ interface Managed {
 	toolPreset: ToolPreset;
 	/** 用户在本会话里最后一次显式选择的思考级别；切模型后按新模型就近钳制重新应用，不让选择被 SDK 带丢 */
 	desiredThinkingLevel?: string;
+	/** 正在流式生成、尚未进入 session.messages 的助手消息（SDK 的共享 partial 对象）；中途订阅的快照要带上它 */
+	inflight: unknown | null;
+	/** 扩展界面请求桥（select/confirm/input/notify → 浏览器） */
+	ui: ExtensionUiBridge | null;
 }
 
 const globalForAgentManager = globalThis as typeof globalThis & {
@@ -284,6 +293,12 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 		case "message_start": {
 			const raw = (evt as any).message;
 			const msg = toWebMessage(raw, entryIdForMessage(m.sm, raw));
+			if (msg.role === "assistant") {
+				m.inflight = raw;
+				// SDK 的 partial 是被就地追加的共享对象，发到这里时首个增量往往已经写进去了；
+				// 正文一律由后续 delta 事件补齐，这里清空文本，否则浏览器会把首段拼两遍（"TheThe user…"）
+				msg.content = msg.content.map((c) => (c.type === "text" ? { ...c, text: "" } : c.type === "thinking" ? { ...c, thinking: "" } : c));
+			}
 			if (msg.role === "user" || msg.role === "assistant") {
 				publish(m, { type: "message", message: msg, phase: "start", ts: now });
 			}
@@ -291,6 +306,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 		}
 		case "message_update": {
 			const e: any = (evt as any).assistantMessageEvent;
+			if ((evt as any).message) m.inflight = (evt as any).message;
 			if (!e) break;
 			if (e.type === "text_delta" && typeof e.delta === "string") {
 				publish(m, { type: "delta", kind: "text", contentIndex: e.contentIndex, delta: e.delta, ts: now });
@@ -301,10 +317,12 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 		}
 		case "message_end": {
 			const raw = (evt as any).message;
+			m.inflight = null;
 			// Pi persists message_end after notifying listeners; wait one microtask so
 			// the browser receives the durable entry ID used by branch creation.
 			queueMicrotask(() => {
 				const msg = toWebMessage(raw, entryIdForMessage(m.sm, raw));
+				if (msg.role === "assistant") msg.endedAt = now;
 				publish(m, { type: "message", message: msg, phase: "end", ts: now });
 				publishUsage(m);
 			});
@@ -428,6 +446,8 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		subscribers: new Set(),
 		buffer: [],
 		seq: 0,
+		inflight: null,
+		ui: null,
 		ledger: new TrajLedger(initialTrajectory),
 		lastActive: Date.now(),
 		toolPreset: "standard",
@@ -514,6 +534,22 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			}
 			session.subscribe((evt) => translate(m, evt));
 			m.session = session;
+			// 绑定扩展：不绑定的话 SDK 不会向扩展发 session_start，扩展的 select/confirm/notify 全是 no-op，
+			// 扩展注册的斜杠命令也无从执行。语义对齐 pi 的 RPC 模式。
+			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => m.subscribers.size > 0 });
+			m.ui = ui;
+			try {
+				await session.bindExtensions({
+					mode: "rpc",
+					uiContext: ui.uiContext as never,
+					onError: (error: { extensionPath: string; event: string; error: string }) => {
+						publish(m, { type: "error", message: `扩展 ${error.extensionPath.split(/[\\/]/).pop()} 在 ${error.event} 出错：${error.error}`, ts: Date.now() });
+					},
+					abortHandler: () => void session.abort().catch(() => undefined),
+				});
+			} catch (err) {
+				publish(m, { type: "error", message: `扩展初始化失败：${String((err as Error)?.message ?? err)}`, ts: Date.now() });
+			}
 			publishEnvironmentTrajectory(m, session);
 			publish(m, {
 				type: "tools",
@@ -521,6 +557,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				all: listAllToolNames(session),
 				ts: Date.now(),
 			});
+			publishResources(m);
 			publishUsage(m);
 			return session;
 		})().catch((err) => {
@@ -544,6 +581,8 @@ function listActiveTools(session: AgentSession): string[] {
 }
 
 export function disposeSession(m: Managed): void {
+	m.ui?.dispose();
+	m.ui = null;
 	try {
 		m.session?.dispose();
 	} catch {
@@ -598,14 +637,107 @@ export function reap(): void {
 
 setInterval(reap, 60_000).unref?.();
 
+// ---------- 资源清单（技能 / 提示模板 / 扩展命令 / 信任 / 诊断） ----------
+
+type ResourceBundle = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensionCommands" | "projectTrust" | "resourceDiagnostics">;
+
+function collectResources(m: Managed): ResourceBundle {
+	const loader = peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
+	const diagnostics: WebSnapshot["resourceDiagnostics"] = [];
+	let skills: WebSnapshot["skills"] = [];
+	try {
+		const r = loader.getSkills();
+		skills = r.skills.map((sk) => ({ name: String(sk.name ?? ""), description: String(sk.description ?? "") }));
+		for (const d of r.diagnostics ?? []) diagnostics.push({ kind: "skill", path: d.path, message: d.message });
+	} catch {
+		skills = [];
+	}
+	let promptTemplates: WebSnapshot["promptTemplates"] = [];
+	try {
+		const r = loader.getPrompts();
+		promptTemplates = r.prompts.map((p) => ({ name: String(p.name ?? ""), description: String(p.description ?? ""), argumentHint: p.argumentHint }));
+		for (const d of r.diagnostics ?? []) diagnostics.push({ kind: "prompt", path: d.path, message: d.message });
+	} catch {
+		promptTemplates = [];
+	}
+	try {
+		for (const e of loader.getExtensions().errors ?? []) diagnostics.push({ kind: "extension", path: e.path, message: e.error });
+	} catch {
+		/* ignore */
+	}
+	let extensionCommands: WebSnapshot["extensionCommands"] = [];
+	if (m.session) {
+		try {
+			const runner = (m.session as unknown as { extensionRunner?: { getRegisteredCommands(): Array<{ invocationName: string; description?: string; sourceInfo?: { path?: string } }>; getCommandDiagnostics(): Array<{ path?: string; message: string }> } }).extensionRunner;
+			if (runner) {
+				extensionCommands = runner.getRegisteredCommands().map((c) => ({
+					name: c.invocationName,
+					description: String(c.description ?? ""),
+					source: String(c.sourceInfo?.path ?? "").split(/[\\/]/).pop() ?? "",
+				}));
+				for (const d of runner.getCommandDiagnostics() ?? []) diagnostics.push({ kind: "command", path: d.path, message: d.message });
+			}
+		} catch {
+			extensionCommands = [];
+		}
+	}
+	return { skills, promptTemplates, extensionCommands, projectTrust: resolveProjectTrust(m.cwd), resourceDiagnostics: diagnostics };
+}
+
+export function publishResources(m: Managed): void {
+	publish(m, { type: "resources", ...collectResources(m), ts: Date.now() });
+}
+
+/**
+ * 资源变更后（安装插件 / 新建模板 / 切换信任）：让持有该 cwd 的活跃会话重建扩展运行时
+ * （SDK 的 session.reload() = pi 的 /reload），再广播新清单。正在流式的会话跳过，等它空闲。
+ */
+export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
+	const key = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
+	let n = 0;
+	for (const m of sessions.values()) {
+		if (cwd && key(m.cwd) !== key(cwd)) continue;
+		if (!m.session) {
+			// 冷会话没有扩展运行时可重建，但页面可能开着：把新清单（模板 / 技能 / 信任）推过去
+			if (m.subscribers.size > 0) publishResources(m);
+			continue;
+		}
+		if (m.session.isStreaming) {
+			publish(m, { type: "error", message: "资源已更新，将在本轮结束后生效", ts: Date.now() });
+			continue;
+		}
+		try {
+			const session = m.session;
+			await withResourceLock(() => session.reload());
+			n += 1;
+			publish(m, { type: "tools", active: listActiveTools(m.session), all: listAllToolNames(m.session), ts: Date.now() });
+			publishEnvironmentTrajectory(m, m.session);
+		} catch (err) {
+			publish(m, { type: "error", message: `重载扩展失败：${String((err as Error)?.message ?? err)}`, ts: Date.now() });
+		}
+		publishResources(m);
+	}
+	return n;
+}
+
 // ---------- 快照 ----------
 
 export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	touch(m);
-	// 冷路径的 prompt/技能/上下文资源都来自加载器，先等发现完成
+	// 冷路径的 prompt/技能/上下文资源都来自加载器，先等发现完成；
+	// 用户刚在 prompts/skills/extensions 目录新建了文件的话顺手重载一次（只 stat 几个目录）
 	await resourceLoaderReady(m.cwd);
+	try {
+		if (await refreshResourceLoaderIfStale(m.cwd)) {
+			const session = m.session;
+			if (session && !session.isStreaming) await withResourceLock(() => session.reload());
+		}
+	} catch {
+		/* 重载失败不影响快照 */
+	}
 	const session = m.session;
 	let messages: WebMessage[] = [];
+	let snapSeq: number | undefined;
 	let model: WebSnapshot["model"];
 	let thinkingLevel: string | undefined;
 	let isStreaming = false;
@@ -613,6 +745,13 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 
 	if (session) {
 		messages = session.messages.map((message) => toWebMessage(message, entryIdForMessage(m.sm, message)));
+		// 正在生成的助手消息还没进 session.messages：中途打开页面的人要能看到已生成的部分，
+		// 之后的 delta 从 snapSeq 起回放，正好接上（消息投影和 seq 必须在同一同步段里取）
+		if (session.isStreaming && m.inflight) {
+			const partial = toWebMessage(m.inflight);
+			if (partial.role === "assistant") messages.push(partial);
+		}
+		snapSeq = m.seq;
 		const modelObj: any = session.model;
 		if (modelObj) model = { provider: String(modelObj.provider ?? ""), id: String(modelObj.id ?? ""), name: String(modelObj.name ?? modelObj.id ?? "") };
 		thinkingLevel = String(session.thinkingLevel ?? "");
@@ -664,7 +803,18 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			const modelMeta = (rt.getModels(model.provider) as any[]).find((x) => String(x.id) === model.id);
 			const window = Number(modelMeta?.contextWindow ?? 0);
 			let lastTurnTokens = 0;
-			for (let i = messages.length - 1; i >= 0; i--) {
+			// 与 SDK getContextUsage 同一条规则：最近一次压缩之后还没有新的助手回复时，上下文大小未知（不能拿压缩前的用量充数）
+			const entries = m.sm.getEntries() as Array<{ type?: string; message?: { role?: string; stopReason?: string } }>;
+			let compactedSinceLastAssistant = false;
+			for (let i = entries.length - 1; i >= 0; i--) {
+				const e = entries[i];
+				if (e.type === "compaction" || e.type === "branch_summary") {
+					compactedSinceLastAssistant = true;
+					break;
+				}
+				if (e.type === "message" && e.message?.role === "assistant" && e.message.stopReason !== "error" && e.message.stopReason !== "aborted") break;
+			}
+			for (let i = messages.length - 1; i >= 0 && !compactedSinceLastAssistant; i--) {
 				const msg = messages[i];
 				if (msg.role === "assistant" && msg.usage) {
 					lastTurnTokens =
@@ -677,6 +827,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			}
 			if (window > 0 && lastTurnTokens > 0) {
 				contextUsage = { tokens: lastTurnTokens, contextWindow: window, percent: (lastTurnTokens / window) * 100 };
+			} else if (window > 0) {
+				contextUsage = { tokens: null, contextWindow: window, percent: null };
 			}
 		} catch {
 			/* 模型目录不可用则维持 null（UI 显示 0%） */
@@ -705,36 +857,20 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		contextResources = [];
 	}
 
-	// 斜杠命令数据源：prompt 模板 + 技能
-	let promptTemplates: { name: string; description: string }[] = [];
-	let skills: { name: string; description: string }[] = [];
-	try {
-		const pts: any[] = session
-			? ((session as unknown as { promptTemplates: any[] }).promptTemplates ?? [])
-			: getResourceLoader(m.cwd).getPrompts().prompts;
-		promptTemplates = pts.map((p: any) => ({ name: String(p.name ?? ""), description: String(p.description ?? "") }));
-	} catch {
-		promptTemplates = [];
-	}
-	try {
-		const { skills: sk } = getResourceLoader(m.cwd).getSkills();
-		skills = sk.map((s: any) => ({ name: String(s.name ?? ""), description: String(s.description ?? "") }));
-	} catch {
-		skills = [];
-	}
+	// 斜杠命令数据源：技能 / 提示模板 / 扩展命令，加上项目信任与资源诊断
+	const resources = collectResources(m);
 
 	const baseTrajectory = m.ledger.entries.length ? m.ledger.entries : coldTrajectory(m);
 	const trajectory = [...environmentTrajectory(m, session), ...baseTrajectory];
 
 	return {
-		seq: m.seq,
+		seq: snapSeq ?? m.seq,
 		sessionPath: m.sessionPath,
 		cwd: m.cwd,
 		name,
 		contextFiles: contextResources.map((resource) => resource.path),
 		contextResources,
-		promptTemplates,
-		skills,
+		...resources,
 		messages,
 		model,
 		thinkingLevel,
@@ -852,21 +988,33 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const preset = cmd.preset as ToolPreset;
 				if (!Object.hasOwn(TOOL_PRESETS, preset)) return { ok: false, error: "invalid tool preset" };
 				m.toolPreset = preset;
-				if (m.session) {
-					const session = m.session;
-					const allow = TOOL_PRESETS[preset];
-					if (allow && allow.length) {
-						const all = listAllToolNames(session);
-						const active = all.filter((n) => allow.includes(n));
-						(session as unknown as { setActiveToolsByName: (n: string[]) => void }).setActiveToolsByName(active);
-					} else {
-						const all = listAllToolNames(session);
+				// 与 setModel/setThinkingLevel 一致地 ensureSession：冷会话打开即启动 agent，
+				// 快照里的工具列表（工具启用情况节）才有真实数据；空闲 10 分钟由 reap 回收。
+				const session = await ensureSession(m);
+				const allow = TOOL_PRESETS[preset];
+				if (allow && allow.length) {
+					const all = listAllToolNames(session);
+					const active = all.filter((n) => allow.includes(n));
+					(session as unknown as { setActiveToolsByName: (n: string[]) => void }).setActiveToolsByName(active);
+				} else {
+					const all = listAllToolNames(session);
 					(session as unknown as { setActiveToolsByName: (n: string[]) => void }).setActiveToolsByName(all);
-					}
-					publishEnvironmentTrajectory(m, session);
-					publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), ts: Date.now() });
 				}
+				publishEnvironmentTrajectory(m, session);
+				publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), ts: Date.now() });
 				return { ok: true };
+			}
+			case "setActiveTools": {
+				const session = await ensureSession(m);
+				const wanted = Array.isArray(cmd.names) ? cmd.names.map(String) : [];
+				// 与可用集求交集：未知工具名静默丢弃，不放大权限
+				const all = listAllToolNames(session);
+				const next = wanted.filter((n) => all.includes(n));
+				if (next.length === 0) return { ok: false, error: "cannot disable all tools" };
+				(session as unknown as { setActiveToolsByName: (n: string[]) => void }).setActiveToolsByName(next);
+				publishEnvironmentTrajectory(m, session);
+				publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), ts: Date.now() });
+				return { ok: true, data: { active: listActiveTools(session) } };
 			}
 			case "cycleModel": {
 				const session = await ensureSession(m);
@@ -890,6 +1038,19 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				if (m.session) m.session.setSessionName(name);
 				else (m.sm as unknown as { appendSessionInfo: (n: string) => string }).appendSessionInfo(name);
 				publish(m, { type: "name", name, ts: Date.now() });
+				return { ok: true };
+			}
+			case "extensionUiResponse": {
+				const ok = m.ui?.respond(String(cmd.requestId), { value: cmd.value, confirmed: cmd.confirmed, cancelled: cmd.cancelled }) ?? false;
+				return ok ? { ok: true } : { ok: false, error: "no pending extension request" };
+			}
+			case "reload": {
+				const session = await ensureSession(m);
+				if (session.isStreaming) return { ok: false, error: "session is busy" };
+				await withResourceLock(() => session.reload());
+				publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), ts: Date.now() });
+				publishEnvironmentTrajectory(m, session);
+				publishResources(m);
 				return { ok: true };
 			}
 			case "fork": {

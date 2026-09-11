@@ -8,15 +8,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
-import { FilesPanel } from "@/components/FilesPanel";
-import { GitPanel } from "@/components/GitPanel";
+import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
+import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
-import { SettingsPanel } from "@/components/SettingsPanel";
-import { TrajInspector, TrajectoryView } from "@/components/TrajectoryView";
+
+// 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件/Git 只在打开时才用）
+const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
+const TrajectoryView = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajectoryView), { ssr: false });
+const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
+const FilesPanel = dynamic(() => import("@/components/FilesPanel").then((m) => m.FilesPanel), { ssr: false });
+const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
-	IconDataOutline16,
 	IconFolderClose16,
 	IconFolderOpenOutline16,
 	IconGitOutline16,
@@ -77,6 +81,8 @@ export function AppShell() {
 		setToolPreset,
 		clearError,
 		setError,
+		answerExtensionDialog,
+		dismissExtensionNotice,
 	} = usePiWeb();
 
 	const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
@@ -343,23 +349,25 @@ export function AppShell() {
 		[sendCommand, openSession, resync],
 	);
 
-	// 斜杠命令（Web 内置 + pi 模板 + 技能），照 dsh 命令面板
+	// 斜杠命令：Web 内置 + pi 的技能 / 提示模板 / 扩展命令（后三类原样交给 SDK 展开或执行）
 	const slashCommands = useMemo(() => {
-		const list: { name: string; desc: string; kind: "builtin" | "template" | "skill" }[] = [
+		const list: { name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }[] = [
 			{ name: "compact", desc: t.cmdCompact, kind: "builtin" },
 			{ name: "export", desc: t.cmdExport, kind: "builtin" },
 			{ name: "model", desc: t.cmdModel, kind: "builtin" },
 			{ name: "new", desc: t.cmdNew, kind: "builtin" },
 			{ name: "fork", desc: t.cmdFork, kind: "builtin" },
-			...(snapshot?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const })),
+			{ name: "reload", desc: t.cmdReload, kind: "builtin" },
+			...(snapshot?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const, argumentHint: p.argumentHint })),
+			...(snapshot?.extensionCommands ?? []).map((c) => ({ name: c.name, desc: c.description || c.source, kind: "extension" as const })),
 			...(snapshot?.skills ?? []).map((s) => ({ name: `skill:${s.name}`, desc: s.description, kind: "skill" as const })),
 		];
 		return list.sort((a, b) => a.name.localeCompare(b.name));
 	}, [snapshot, t]);
 
 	const runSlashCommand = useCallback(
-		(name: string) => {
-			if (name === "compact") void sendCommand({ cmd: "compact" });
+		(name: string, args: string) => {
+			if (name === "compact") void sendCommand({ cmd: "compact", instructions: args || undefined });
 			else if (name === "export" && currentId) window.open(`/api/sessions/${currentId}/export?format=jsonl`, "_blank");
 			else if (name === "new") {
 				setTab("chat");
@@ -368,9 +376,26 @@ export function AppShell() {
 				void sendCommand({ cmd: "fork" }).then((r) => {
 					if (r.success && r.data?.sessionPath) openSession(r.data.sessionPath);
 				});
+			} else if (name === "reload") void sendCommand({ cmd: "reload" });
+			else setError(t.cmdUnknown.replace("{name}", name));
+		},
+		[sendCommand, currentId, closeSession, openSession, setError, t],
+	);
+
+	const projectTrust = snapshot?.projectTrust;
+	const setProjectTrust = useCallback(
+		async (decision: boolean | null) => {
+			const cwd = snapshot?.cwd;
+			if (!cwd) return;
+			try {
+				const r = await fetch("/api/security", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectTrust: { cwd, decision } }) });
+				const j = await r.json();
+				if (!j.success) throw new Error(j.error || "failed");
+			} catch (e) {
+				setError(e instanceof Error ? e.message : "failed");
 			}
 		},
-		[sendCommand, currentId, closeSession, openSession],
+		[snapshot?.cwd, setError],
 	);
 
 	// 当前会话名 / 工作区标题
@@ -575,18 +600,7 @@ export function AppShell() {
 									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
 										{title}
 									</span>
-									{/* 右侧详情栏（轨迹 / 文件 / Git 三页签）开关 */}
-									<button
-										type="button"
-										className="icon-btn"
-										style={{ width: 30, height: 30, background: detailsOpen ? "var(--dsw-active)" : undefined }}
-										title={t.detailsPanel}
-										aria-label={t.detailsPanel}
-										aria-pressed={detailsOpen}
-										onClick={() => setDetailsOpen((open) => !open)}
-									>
-										<IconDataOutline16 size={15} />
-									</button>
+									{/* 右侧详情栏（文件 / Git 页签）开关；轨迹页签由对话内工具行点击唤起 */}
 									<button
 										type="button"
 										className="icon-btn"
@@ -608,6 +622,16 @@ export function AppShell() {
 										<IconGitOutline16 size={15} />
 									</button>
 								</div>
+							{projectTrust?.required && !projectTrust.trusted && (
+								<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }} role="status">
+									<span style={{ color: "var(--dsw-warn)", fontWeight: 600 }}>⚠</span>
+									<span className="min-w-0 flex-1">{projectTrust.source === "default-never" || projectTrust.source === "remembered" ? t.projectTrustBannerNever : t.projectTrustBanner}</span>
+									<button className="btn-primary-white" style={{ height: 26, padding: "0 10px", fontSize: 12 }} onClick={() => void setProjectTrust(true)}>{t.projectTrustAllow}</button>
+									{projectTrust.source === "undecided" && (
+										<button className="btn-outline" style={{ height: 26, padding: "0 10px", fontSize: 12 }} onClick={() => void setProjectTrust(false)}>{t.projectTrustDeny}</button>
+									)}
+								</div>
+							)}
 							<div className="mt-1.5 flex items-center gap-5">
 								<button className="tab-underline" data-active={tab === "chat"} onClick={() => setTab("chat")}>
 									{t.tabChat}
@@ -658,10 +682,10 @@ export function AppShell() {
 									connected={state.connected}
 									onClearError={clearError}
 									retryNotice={state.retryNotice}
+									workingMessage={state.workingMessage}
 									stats={snapshot?.stats ?? null}
 									trajectory={snapshot?.trajectory ?? []}
-									onRetry={(text) => sendPrompt(text, [])}
-									onAbort={() => void sendCommand({ cmd: "abort" })}
+									cwd={panelCwd}
 									onOpenTrajectory={(toolCallId) => {
 										const entry = (snapshot?.trajectory ?? []).find((e) => e.toolCallId === toolCallId);
 										if (entry) {
@@ -706,6 +730,11 @@ export function AppShell() {
 											onClearQueue={() => void sendCommand({ cmd: "clearQueue" })}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
+										{Object.keys(state.extensionStatuses).length > 0 && (
+											<div className="mx-auto mt-0.5 flex w-full flex-wrap justify-center gap-x-3 px-4" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }} title={t.extensionStatus}>
+												{Object.entries(state.extensionStatuses).map(([k, v]) => <span key={k}>{v}</span>)}
+											</div>
+										)}
 									</div>
 								</div>
 							</div>
@@ -804,6 +833,8 @@ export function AppShell() {
 				/>
 			)}
 
+			<ExtensionDialogHost dialog={state.extensionDialogs[0] ?? null} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice} />
 			<SettingsPanel
 				open={settingsOpen}
 				onClose={() => {
@@ -815,6 +846,10 @@ export function AppShell() {
 				cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
 				toolPreset={state.toolPreset}
 				onToolPresetChange={setToolPreset}
+				tools={snapshot?.tools ?? null}
+				onSetTools={(names) => {
+					void sendCommand({ cmd: "setActiveTools", names });
+				}}
 			/>
 			{isNarrow && (
 				<button

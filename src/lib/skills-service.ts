@@ -5,7 +5,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { getAgentDir, getResourceLoader, invalidateResourceLoaders, resourceLoaderReady } from "./pi";
+import { getAgentDir, getResourceLoader, reloadAllLoaders, resourceLoaderReady } from "./pi";
+import { reloadSessionsForCwd } from "./agent-manager";
 import { resolveDiscoveredPath } from "./path-security";
 
 export interface SkillView {
@@ -82,7 +83,10 @@ export async function setSkillDisabled(filePath: string, disabled: boolean, cwd?
 	const next = toggleFrontmatterKey(content, "disable-model-invocation", disabled);
 	if (next === content) return { changed: false };
 	await fs.writeFile(authorized, next, "utf8");
-	invalidateResourceLoaders();
+	// 就地重载加载器并让活跃会话重建系统提示（技能列表在系统提示里）；全局技能影响所有目录
+	await reloadAllLoaders();
+	const scope = classifyScope(authorized, cwd);
+	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
 	return { changed: true };
 }
 

@@ -33,6 +33,8 @@ export class TrajLedger {
 	entries: TrajEntry[];
 	private nextSeq: number;
 	private streamingStart: { seq: number; t0: number; firstToken?: number } | null = null;
+	/** turn_start 的时刻：请求发出前，LLM 时长与首 token 的真正起点 */
+	private turnStartedAt: number | null = null;
 	private toolIndex = new Map<string, number>(); // toolCallId -> entries 下标
 	private toolStart = new Map<string, number>();
 	private pendingToolArgs = new Map<string, unknown>();
@@ -64,13 +66,19 @@ export class TrajLedger {
 	/** 事件到达时间（服务端计时基准） */
 	onEvent(evt: AgentSessionEvent, now = Date.now()): void {
 		switch (evt.type) {
+			case "turn_start":
+				this.turnStartedAt = now;
+				break;
 			case "message_start": {
 				const m: any = evt.message;
 				if (m?.role === "user") {
 					this.push({ kind: "user", ts: m.timestamp ?? now, detail: textOf(m.content) });
 				} else if (m?.role === "assistant") {
-					this.streamingStart = { seq: this.nextSeq, t0: now };
-					this.push({ kind: "message", ts: now, title: "assistant" });
+					// 供应商已经返回响应头才会有这条事件；起点用 turn_start（没有就退回现在）
+					const t0 = this.turnStartedAt ?? now;
+					this.turnStartedAt = null;
+					this.streamingStart = { seq: this.nextSeq, t0 };
+					this.push({ kind: "message", ts: t0, title: "assistant" });
 				} else if (m?.role === "toolResult") {
 					const idx = m.toolCallId ? this.toolIndex.get(m.toolCallId) : undefined;
 					if (idx !== undefined) {

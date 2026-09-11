@@ -6,7 +6,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getAgentDir } from "./pi";
+import { getAgentDir, getSettingsManager, reloadAllLoaders, reloadSettingsManagers, syncProjectTrust } from "./pi";
+import { reloadSessionsForCwd } from "./agent-manager";
 
 export type ProjectTrust = "ask" | "always" | "never";
 
@@ -22,13 +23,11 @@ export async function getSecurity(): Promise<{ defaultProjectTrust: ProjectTrust
 }
 
 export async function setProjectTrust(value: ProjectTrust): Promise<void> {
-	const file = path.join(getAgentDir(), "settings.json");
-	let parsed: Record<string, unknown> = {};
-	try {
-		parsed = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>;
-	} catch {
-		parsed = {};
-	}
-	parsed.defaultProjectTrust = value;
-	await fs.writeFile(file, JSON.stringify(parsed, null, "\t"), "utf8");
+	// 走 SDK 的 SettingsManager（带写锁、只落修改过的字段），不再整文件覆盖
+	getSettingsManager(process.cwd()).setDefaultProjectTrust(value);
+	// 默认值变了：每个已打开目录的信任结论可能跟着变，就地同步后重载加载器与活跃会话
+	await reloadSettingsManagers();
+	syncProjectTrust();
+	await reloadAllLoaders();
+	await reloadSessionsForCwd();
 }

@@ -69,6 +69,14 @@
 	--dsh-content-font-size: 14px;
 	--dsh-content-font-delta: 0px;
 	--dsh-content-font-size-secondary: 13px;
+	/* 对话字号（设置里独立调节；theme.ts 启动时按 localStorage 覆盖） */
+	--piweb-chat-font-size: var(--dsh-content-font-size);
+	/* 对话过程行分级字号：跟随对话字号缩放（基准 14px 时 ≈ 13.5 / 13 / 12.5 / 12 / 11.5） */
+	--piweb-chat-font-l: calc(var(--piweb-chat-font-size) * 0.96);
+	--piweb-chat-font-m: calc(var(--piweb-chat-font-size) * 0.93);
+	--piweb-chat-font-s: calc(var(--piweb-chat-font-size) * 0.89);
+	--piweb-chat-font-t: calc(var(--piweb-chat-font-size) * 0.86);
+	--piweb-chat-font-xs: calc(var(--piweb-chat-font-size) * 0.82);
 	--font-ui: "Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC",
 		"Microsoft YaHei", monospace;
 	--font-mono: "Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -586,10 +594,12 @@ textarea::placeholder {
 	background: var(--dsw-glass-modal);
 }
 
-/* markdown 内容 */
+/* markdown 内容（字号独立可调：对话字体设置驱动，缺省跟界面字体） */
 .md {
 	min-width: 0;
 	overflow-wrap: break-word;
+	font-size: var(--piweb-chat-font-size);
+	line-height: 1.65;
 }
 .md > *:first-child {
 	margin-top: 0;
@@ -739,6 +749,8 @@ body[data-ds-dark-theme] .hljs-built_in {
 	padding: 10px 16px;
 	display: inline-block;
 	max-width: 85%;
+	font-size: var(--piweb-chat-font-size);
+	line-height: 1.65;
 }
 
 /* 消息操作图标行：常显低透明度，悬停变亮（dsh 同款） */
@@ -763,6 +775,367 @@ body[data-ds-dark-theme] .hljs-built_in {
 }
 .msg-clock-start {
 	padding-right: 12px;
+}
+
+/* ============================================================
+   对话过程时间线（思考 / 叙述 / 工具 / 结果 / 错误）
+   一条竖向轨道贯穿整轮过程，每一行在轨道上有一个节点；最终回答在轨道外。
+   ============================================================ */
+:root {
+	--pw-kind-cmd: rgb(124, 92, 226);
+	--pw-kind-cmd-soft: rgba(124, 92, 226, 0.14);
+	--pw-kind-read: rgb(52, 120, 226);
+	--pw-kind-read-soft: rgba(52, 120, 226, 0.14);
+	--pw-kind-search: rgb(14, 150, 140);
+	--pw-kind-search-soft: rgba(14, 150, 140, 0.14);
+	--pw-kind-write: rgb(214, 118, 8);
+	--pw-kind-write-soft: rgba(214, 118, 8, 0.15);
+	--pw-kind-other: rgb(120, 126, 136);
+	--pw-kind-other-soft: rgba(120, 126, 136, 0.14);
+	--pw-rail: var(--dsw-border-l3);
+	--pw-danger-soft: rgba(236, 19, 19, 0.12);
+}
+html[data-ds-dark-theme],
+body[data-ds-dark-theme] {
+	--pw-kind-cmd: rgb(170, 146, 255);
+	--pw-kind-cmd-soft: rgba(170, 146, 255, 0.18);
+	--pw-kind-read: rgb(110, 168, 255);
+	--pw-kind-read-soft: rgba(110, 168, 255, 0.18);
+	--pw-kind-search: rgb(64, 200, 188);
+	--pw-kind-search-soft: rgba(64, 200, 188, 0.18);
+	--pw-kind-write: rgb(245, 178, 60);
+	--pw-kind-write-soft: rgba(245, 178, 60, 0.18);
+	--pw-kind-other: rgb(150, 156, 166);
+	--pw-kind-other-soft: rgba(150, 156, 166, 0.18);
+	--pw-danger-soft: rgba(242, 90, 90, 0.16);
+}
+
+/* 轨道容器：左侧 26px 留给节点列 */
+.proc-turn {
+	position: relative;
+	padding-left: 26px;
+}
+/* 竖线由每一行自己画：从本行节点中心向下接到下一行节点中心；末行不画，线正好停在最后一个节点上 */
+.proc-row::before {
+	content: "";
+	position: absolute;
+	left: -18.5px;
+	top: 14px;
+	bottom: -14px;
+	width: 1px;
+	background: var(--pw-rail);
+}
+.proc-row:last-child::before {
+	display: none;
+}
+/* 下一行是叙述行（带 6px 上边距）时多伸 6px；叙述接叙述没有边距 */
+.proc-row:has(+ .proc-narr)::before {
+	bottom: -20px;
+}
+.proc-narr:has(+ .proc-narr)::before {
+	bottom: -14px;
+}
+
+/* 行：首行 22px 行高，节点垂直居中于首行 */
+.proc-row {
+	position: relative;
+	padding: 3px 0;
+	line-height: 1.6;
+	animation: proc-in 180ms var(--ds-ease-in-out, ease-out) both;
+}
+@keyframes proc-in {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* 节点：绝对定位到轨道上，用页面底色垫底遮住竖线 */
+.proc-dot {
+	position: absolute;
+	left: -22px;
+	top: 10px;
+	width: 8px;
+	height: 8px;
+	border-radius: 999px;
+	background: var(--dsw-label-caption);
+	box-shadow: 0 0 0 2px var(--dsw-bg-base);
+}
+.proc-dot[data-kind="cmd"] { background: var(--pw-kind-cmd); }
+.proc-dot[data-kind="read"] { background: var(--pw-kind-read); }
+.proc-dot[data-kind="search"] { background: var(--pw-kind-search); }
+.proc-dot[data-kind="write"] { background: var(--pw-kind-write); }
+.proc-dot[data-kind="other"] { background: var(--pw-kind-other); }
+.proc-dot[data-state="running"] {
+	animation: dot-breathe 1s ease-in-out infinite;
+	box-shadow: 0 0 0 2px var(--dsw-bg-base), 0 0 0 5px var(--pw-ring, var(--dsw-accent-soft));
+}
+.proc-dot[data-kind="cmd"][data-state="running"] { --pw-ring: var(--pw-kind-cmd-soft); }
+.proc-dot[data-kind="read"][data-state="running"] { --pw-ring: var(--pw-kind-read-soft); }
+.proc-dot[data-kind="search"][data-state="running"] { --pw-ring: var(--pw-kind-search-soft); }
+.proc-dot[data-kind="write"][data-state="running"] { --pw-ring: var(--pw-kind-write-soft); }
+.proc-dot[data-kind="other"][data-state="running"] { --pw-ring: var(--pw-kind-other-soft); }
+.proc-dot[data-state="failed"] {
+	background: var(--dsw-danger);
+	box-shadow: 0 0 0 2px var(--dsw-bg-base), 0 0 0 5px var(--pw-danger-soft);
+}
+/* 叙述节点：稍大、主标签色 */
+.proc-dot.narr {
+	width: 9px;
+	height: 9px;
+	left: -22.5px;
+	top: 9.5px;
+	background: var(--dsw-label-secondary);
+}
+/* 思考节点：空心 */
+.proc-dot.think {
+	width: 7px;
+	height: 7px;
+	left: -21.5px;
+	top: 10.5px;
+	background: var(--dsw-bg-base);
+	border: 1.5px solid var(--dsw-label-caption);
+}
+.proc-dot.think[data-state="running"] {
+	border-color: var(--dsw-accent);
+	animation: dot-breathe 1s ease-in-out infinite;
+	box-shadow: 0 0 0 2px var(--dsw-bg-base), 0 0 0 5px var(--dsw-accent-soft);
+}
+/* 工作中节点：强调色 */
+.proc-dot.work {
+	background: var(--dsw-accent);
+	animation: dot-breathe 1s ease-in-out infinite;
+	box-shadow: 0 0 0 2px var(--dsw-bg-base), 0 0 0 5px var(--dsw-accent-soft);
+}
+/* 错误节点：✕ */
+.proc-dot.error {
+	width: 12px;
+	height: 12px;
+	left: -24px;
+	top: 8px;
+	background: var(--dsw-bg-base);
+	color: var(--dsw-danger);
+	font-size: 11px;
+	line-height: 12px;
+	text-align: center;
+	font-weight: 700;
+	box-shadow: 0 0 0 2px var(--dsw-bg-base);
+}
+/* 中止节点：灰色方点 */
+.proc-dot.abort {
+	border-radius: 2px;
+	background: var(--dsw-label-caption);
+}
+
+/* 工具名：等宽、按种类着色 */
+.proc-tool-name {
+	font-family: var(--font-mono);
+	font-size: var(--piweb-chat-font-s);
+	font-weight: 650;
+	letter-spacing: 0.01em;
+	flex: none;
+	color: var(--pw-kind-other);
+}
+.proc-tool-name[data-kind="cmd"] { color: var(--pw-kind-cmd); }
+.proc-tool-name[data-kind="read"] { color: var(--pw-kind-read); }
+.proc-tool-name[data-kind="search"] { color: var(--pw-kind-search); }
+.proc-tool-name[data-kind="write"] { color: var(--pw-kind-write); }
+.proc-tool-name[data-failed="true"] { color: var(--dsw-danger); }
+
+/* 结果预览：⎿ 后跟若干行等宽文本 */
+.proc-result {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding-left: 2px;
+	font-family: var(--font-mono);
+	font-size: var(--piweb-chat-font-t);
+	line-height: 1.5;
+	color: var(--dsw-label-tertiary);
+}
+.proc-result .rail {
+	flex: none;
+	width: 14px;
+	text-align: center;
+	color: var(--dsw-label-caption);
+	user-select: none;
+}
+.proc-result .lines {
+	min-width: 0;
+	flex: 1;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+.proc-result .lines > div {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: pre;
+}
+.proc-result .more {
+	color: var(--dsw-label-caption);
+	cursor: pointer;
+}
+.proc-result .more:hover {
+	color: var(--dsw-label-secondary);
+	text-decoration: underline;
+}
+.proc-result[data-failed="true"] {
+	color: var(--dsw-danger);
+}
+.proc-result[data-failed="true"] .rail {
+	color: var(--dsw-danger);
+}
+.proc-result[data-failed="true"] .head {
+	color: var(--dsw-danger);
+}
+
+/* 展开的完整输出 */
+.proc-output {
+	margin: 4px 0 4px 24px;
+	max-height: 360px;
+	overflow: auto;
+	border-radius: 10px;
+	padding: 8px 12px;
+	background: var(--dsw-markdown-code-block, var(--dsw-hover));
+	font-family: var(--font-mono);
+	font-size: var(--piweb-chat-font-t);
+	line-height: 1.55;
+	color: var(--dsw-label-secondary);
+}
+.proc-output .cmdline {
+	color: var(--dsw-label-tertiary);
+	margin-bottom: 6px;
+	padding-bottom: 6px;
+	border-bottom: 0.5px solid var(--dsw-border-l2);
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+.proc-output .cmdline::before {
+	content: "$ ";
+	color: var(--dsw-label-caption);
+}
+
+/* 思考行文本 */
+.proc-think-text {
+	font-size: var(--piweb-chat-font-s);
+	font-style: italic;
+	color: var(--dsw-label-caption);
+}
+.proc-think-live {
+	margin-top: 2px;
+	font-size: var(--piweb-chat-font-m);
+	font-style: italic;
+	color: var(--dsw-label-tertiary);
+	opacity: 0.85;
+	word-break: break-word;
+}
+
+/* 行尾元信息（时长、行数、模型名） */
+.proc-meta {
+	flex: none;
+	font-size: var(--piweb-chat-font-t);
+	color: var(--dsw-label-caption);
+	white-space: nowrap;
+}
+
+/* 输出面板里的「还有 N 行 / 收起」 */
+.proc-more {
+	display: block;
+	margin-top: 4px;
+	font-family: var(--font-mono);
+	font-size: var(--piweb-chat-font-t);
+	color: var(--dsw-label-caption);
+	cursor: pointer;
+}
+.proc-more:hover {
+	color: var(--dsw-label-secondary);
+	text-decoration: underline;
+}
+
+/* 叙述行：模型在工具之间的话，是这一阶段的标题；用上边距拉开阶段（边距不影响节点定位） */
+.proc-narr {
+	margin-top: 6px;
+}
+.proc-turn > .proc-narr:first-child {
+	margin-top: 0;
+}
+.proc-narr-body {
+	font-size: var(--piweb-chat-font-l);
+	line-height: 1.6;
+	color: var(--dsw-label-secondary);
+}
+.proc-narr-body[data-error="true"] {
+	color: var(--dsw-danger);
+}
+.proc-narr-body .md p {
+	margin: 0;
+}
+.proc-narr-body .md p + p {
+	margin-top: 0.4em;
+}
+.proc-narr-body .md pre {
+	margin: 0.4em 0;
+}
+/* 相邻两个叙述行是同一段话：不拉开 */
+.proc-narr + .proc-narr {
+	margin-top: 0;
+}
+/* 工具行紧跟叙述行：稍微贴近它的标题（负边距，节点位置不变） */
+.proc-narr + .proc-row:not(.proc-narr) {
+	margin-top: -2px;
+}
+
+/* 自动重试节点：琥珀 */
+.proc-dot.retry {
+	background: var(--dsw-warn);
+	animation: dot-breathe 1s ease-in-out infinite;
+}
+/* 上下文注入节点：小灰点 */
+.proc-dot.ctx {
+	width: 6px;
+	height: 6px;
+	left: -21px;
+	top: 11px;
+	background: var(--dsw-border-l4);
+}
+/* 结果预览的首行（行数 / 退出码 / diff 统计） */
+.proc-result .head {
+	color: var(--dsw-label-tertiary);
+}
+.proc-result .head + div {
+	margin-top: 1px;
+}
+
+/* 已完成回合的折叠摘要行 */
+.proc-fold {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 4px 0;
+	text-align: left;
+	font-size: 13px;
+	line-height: 22px;
+	color: var(--dsw-label-tertiary);
+}
+.proc-fold .chev {
+	display: inline-flex;
+	width: 14px;
+	justify-content: center;
+	color: var(--dsw-label-caption);
+	transition: transform 120ms var(--ds-ease-in-out, ease);
+}
+.proc-fold[aria-expanded="true"] .chev {
+	transform: rotate(90deg);
+}
+.proc-fold .files {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	color: var(--dsw-label-secondary);
 }
 
 /* ============================================================

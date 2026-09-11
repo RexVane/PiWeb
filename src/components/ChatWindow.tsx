@@ -1,39 +1,53 @@
 "use client";
 
 /**
- * 对话视图 —— 照 dsh 会话流：思考链（◎ Think · 单行预览，点击展开）与
- * 工具调用（工具图标 + 名称 · 参数摘要，点击展开输出）内联交错；
- * 助手正文 markdown 渲染与消息操作行。
+ * 对话视图 —— 过程时间线。
+ * 每个回合 = 用户消息 → 过程轨道（一条竖线串起思考 / 叙述 / 工具 / 结果 / 错误）→ 最终回答（轨道外）。
+ * 工具行按种类着色（命令 / 读取 / 搜索 / 写入），结果预览按种类挑最有用的几行；
+ * 已完成且步骤多的回合折叠成一行摘要（列出改了哪些文件）。
  */
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import {
 	IconBranchOutline16,
-	IconBrowseOutline14,
 	IconCheckOutline14,
 	IconClockOutline16,
 	IconCopyOutline16,
 	IconDataOutline16,
-	IconEditOutline16,
 	IconFileOutline16,
-	IconSearchOutline16,
-	IconTerminalOutline14,
-	IconThinkOutline14,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
 import { OutlineRail } from "@/components/OutlineRail";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
-import type { ContextResource, TrajEntry, TrajTokens, WebMessage, WebStats } from "@/lib/types";
+import type { ContextResource, TrajEntry, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
+import {
+	basename,
+	classifyModelError,
+	cleanCommand,
+	firstSentence,
+	langOfPath,
+	previewSide,
+	relativizeInText,
+	relativizePath,
+	splitLines,
+	toolKind,
+	trimNoiseTail,
+	type ModelErrorKind,
+	type ToolKind,
+} from "@/lib/process-format";
+
+type Dict = Record<string, string>;
+type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
 
 function copyText(text: string) {
 	void navigator.clipboard?.writeText(text);
 }
 
 /** dsh message-chrome formatRunDuration：整秒，分钟档秒数补零 */
-function formatRunDuration(ms: number, t: Record<string, string>): string {
+function formatRunDuration(ms: number, t: Dict): string {
 	const total = Math.max(0, Math.floor(ms / 1000));
 	const minutes = Math.floor(total / 60);
 	const seconds = total % 60;
@@ -43,7 +57,7 @@ function formatRunDuration(ms: number, t: Record<string, string>): string {
 }
 
 /** dsh message-chrome formatMessageClock 的月日精度版：恒显示 M月d日，跨年补年 */
-function formatMessageClock(time: number, t: Record<string, string>): string {
+function formatMessageClock(time: number, t: Dict): string {
 	const d = new Date(time);
 	const n = new Date();
 	const clock = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -76,7 +90,7 @@ function StreamingText({ text }: { text: string }) {
 }
 
 /** dsh TurnTimePanel 的简化版：耗时胶囊常驻，点击弹层看本回合 token 用量 */
-function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: TrajTokens & { cost?: { total?: number } }; t: Record<string, string> }) {
+function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: TrajTokens & { cost?: { total?: number } }; t: Dict }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -94,7 +108,7 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 			<button
 				type="button"
 				className="flex items-center gap-1 rounded-full px-2"
-				style={{ height: 22, fontSize: 11.5, color: "var(--dsw-label-caption)" }}
+				style={{ height: 22, fontSize: "var(--piweb-chat-font-xs)", color: "var(--dsw-label-caption)" }}
 				title={t.turnUsageTitle}
 				aria-haspopup="dialog"
 				aria-expanded={open}
@@ -105,7 +119,7 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 			</button>
 			{open && (
 				<div className="popover absolute left-0 top-full z-50 mt-1.5 w-44 p-3" role="dialog" aria-label={t.turnUsageTitle}>
-					<div className="flex flex-col gap-1" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
+					<div className="flex flex-col gap-1" style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-secondary)" }}>
 						<div className="flex items-center justify-between gap-2">
 							<span style={{ color: "var(--dsw-label-caption)" }}>{t.duration}</span>
 							<span>{formatRunDuration(durationMs, t)}</span>
@@ -207,42 +221,14 @@ function MessageActions({
 	);
 }
 
-// ---------- 工具行（dsh 紧凑内联样式） ----------
+// ---------- 过程轨道：基础行与节点 ----------
 
-function toolSummary(name: string, args: unknown): string {
-	const a = (args ?? {}) as Record<string, unknown>;
-	const str = (v: unknown) => (typeof v === "string" ? v : undefined);
-	switch (name.toLowerCase()) {
-		case "glob":
-			return str(a.pattern) ?? "";
-		case "grep":
-			return [str(a.pattern), str(a.path)].filter(Boolean).join(" · ");
-		case "find":
-			return str(a.pattern) ?? str(a.path) ?? "";
-		case "read":
-		case "write":
-		case "edit":
-			return str(a.path) ?? str(a.file_path) ?? "";
-		case "bash":
-		case "powershell":
-		case "pwsh":
-			return (str(a.command) ?? "").split("\n")[0].slice(0, 120);
-		default: {
-			const first = Object.values(a).find((v) => typeof v === "string") as string | undefined;
-			return (first ?? "").slice(0, 120);
-		}
-	}
-}
-
-function ToolIcon({ name }: { name: string }) {
-	const n = name.toLowerCase();
-	const props = { size: 14, style: { flex: "none" as const, color: "var(--dsw-label-tertiary)" } };
-	if (n === "bash" || n === "powershell" || n === "pwsh") return <IconTerminalOutline14 {...props} />;
-	if (n === "read") return <IconBrowseOutline14 {...props} />;
-	if (n === "glob" || n === "grep" || n === "find" || n === "ls") return <IconSearchOutline16 {...props} />;
-	if (n === "edit" || n === "write") return <IconEditOutline16 {...props} />;
-	return <IconDataOutline16 {...props} />;
-}
+const MONO = "var(--font-mono)";
+const RAIL = "⎿";
+/** ⎿ 预览最多几行 */
+const PREVIEW_LINES = 3;
+/** diff 默认露出多少行 */
+const DIFF_PREVIEW = 40;
 
 /** 每秒刷新一次的已用时长（仅在 active 时计时） */
 function useElapsed(startedAt: number | undefined, active: boolean): number {
@@ -261,100 +247,186 @@ function fmtSeconds(ms: number): string {
 	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-const RAIL = "⎿";
-const MONO = "var(--font-mono)";
+type DotState = "running" | "failed" | "done";
+type DotVariant = "narr" | "think" | "work" | "error" | "abort" | "retry" | "ctx";
 
-/**
- * 结果摘要：照 Claude Code 终端的 ⎿ 行——用行数/匹配数/退出码/最后一行输出概括结果，
- * 而不是把命令再截断显示一遍。
- */
-function toolGist(name: string, state: ToolCardState, t: Record<string, string>, diff: DiffLine[] | null): { text: string; lines: string[]; exitCode?: number } {
-	const raw = (state.result ?? state.partialResult ?? "").replace(/\r/g, "");
-	const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-	const n = name.toLowerCase();
-	const exitMatch = raw.match(/Command exited with code (\d+)/);
-	const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
-	const body = lines.filter((l) => !/^Command exited with code \d+/.test(l));
-	const count = (k: string, v: number) => t[k].replace("{n}", String(v));
-	if (n === "edit" || n === "write") {
-		if (diff) {
-			const add = diff.filter((l) => l.kind === "add").length;
-			const del = diff.filter((l) => l.kind === "del").length;
-			return { text: t.diffSummary.replace("{add}", String(add)).replace("{del}", String(del)), lines: body, exitCode };
-		}
-		return { text: body[0] ?? t.toolWritten, lines: body, exitCode };
-	}
-	if (n === "grep" || n === "find" || n === "glob" || n === "ls") {
-		return { text: body.length ? `${count("toolMatches", body.length)} · ${body[0]}` : t.toolNoOutput, lines: body, exitCode };
-	}
-	if (n === "read") {
-		return { text: body.length ? count("toolLines", body.length) : t.toolNoOutput, lines: body, exitCode };
-	}
-	const parts: string[] = [];
-	if (exitCode !== undefined && exitCode !== 0) parts.push(t.toolExit.replace("{code}", String(exitCode)));
-	if (body.length) parts.push(count("toolLines", body.length), body[body.length - 1]);
-	return { text: parts.length ? parts.join(" · ") : t.toolNoOutput, lines: body, exitCode };
+/** 轨道上的节点：工具行按种类着色，运行中呼吸，失败变红；其它行各有形状 */
+function Dot({ kind, state, variant }: { kind?: ToolKind; state?: DotState; variant?: DotVariant }) {
+	return (
+		<span aria-hidden className={variant ? `proc-dot ${variant}` : "proc-dot"} data-kind={kind} data-state={state}>
+			{variant === "error" ? "✕" : null}
+		</span>
+	);
 }
 
-function ToolRow({ name, state, onInspect, onOpenFile }: { name: string; state?: ToolCardState; onInspect?: () => void; onOpenFile?: (path: string) => void }) {
+function ProcRow({ dot, className, style, children }: { dot: ReactNode; className?: string; style?: CSSProperties; children: ReactNode }) {
+	return (
+		<div className={className ? `proc-row ${className}` : "proc-row"} style={style}>
+			{dot}
+			{children}
+		</div>
+	);
+}
+
+// ---------- 工具行 ----------
+
+const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+
+/** 工具参数摘要：命令去掉 cd 工作区前缀、路径相对于工作区 */
+function toolSummary(name: string, args: unknown, cwd?: string): { text: string; scriptLines: number } {
+	const a = (args ?? {}) as Record<string, unknown>;
+	const n = name.toLowerCase();
+	const kind = toolKind(name);
+	const rel = (v: unknown) => {
+		const s = str(v);
+		return s ? relativizePath(s, cwd) : "";
+	};
+	if (kind === "cmd") {
+		const c = cleanCommand(str(a.command) ?? str(a.cmd) ?? str(a.script) ?? "", cwd);
+		return { text: c.text, scriptLines: c.lines };
+	}
+	if (n === "grep" || n === "glob" || n === "find") return { text: [str(a.pattern), rel(a.path)].filter(Boolean).join("  "), scriptLines: 0 };
+	if (kind === "read" || kind === "write" || n === "ls") return { text: rel(a.path ?? a.file_path), scriptLines: 0 };
+	const first = Object.values(a).find((v) => typeof v === "string") as string | undefined;
+	return { text: (first ?? "").replace(/\s+/g, " ").slice(0, 160), scriptLines: 0 };
+}
+
+type Preview = { head?: string; lines: string[]; hidden: number; side?: "head" | "tail" };
+
+/** ⎿ 结果预览：按工具种类挑最有用的几行（查看类命令看开头、构建测试类看结尾，搜索看开头，读取只给行数，写入给 diff 统计） */
+function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, diff: DiffLine[] | null, cwd?: string): Preview {
+	const running = state.state === "running";
+	const raw = (state.result ?? state.partialResult ?? "").replace(/\r/g, "");
+	const exitMatch = raw.match(/Command exited with code (\d+)/);
+	const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
+	const body = splitLines(raw).filter((l) => !/^Command exited with code \d+/.test(l));
+	const count = (k: string, v: number) => t[k].replace("{n}", String(v));
+	// 输出里的工作区绝对路径也改成相对路径
+	const rel = (lines: string[]) => (cwd ? lines.map((l) => relativizeInText(l, cwd)) : lines);
+	// 结尾只剩括号 / 符号的行（"}"、");"）看了等于没看，取尾巴前先剥掉
+	const tailBody = trimNoiseTail(body);
+	const tail = (n: number): Preview => ({ lines: rel(tailBody.slice(-n)), hidden: Math.max(0, body.length - Math.min(n, tailBody.length)), side: "tail" });
+	const head = (n: number): Preview => ({ lines: rel(body.slice(0, n)), hidden: Math.max(0, body.length - n), side: "head" });
+	const none: Preview = { lines: [], hidden: 0 };
+	const a = state.args as Record<string, unknown> | undefined;
+	const command = kind === "cmd" ? (str(a?.command) ?? str(a?.cmd) ?? str(a?.script) ?? "") : "";
+	// 看开头还是结尾按去掉 cd 前缀后的真正命令判断
+	const byCmd = (n: number) => (previewSide(cleanCommand(command, cwd).text) === "head" ? head(n) : tail(n));
+	if (running) {
+		// 命令运行中：实时贴输出尾巴（像终端）；其它工具运行中不占位
+		return kind === "cmd" && body.length ? tail(PREVIEW_LINES) : none;
+	}
+	if (state.isError) {
+		const h = exitCode !== undefined && exitCode !== 0 ? `${t.toolFailed} · ${t.toolExit.replace("{code}", String(exitCode))}` : t.toolFailed;
+		// 命令的错误通常在末尾，其它工具在开头
+		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
+	}
+	switch (kind) {
+		case "write": {
+			if (diff && diff.length) {
+				const add = diff.filter((l) => l.kind === "add").length;
+				const del = diff.filter((l) => l.kind === "del").length;
+				return { head: t.diffSummary.replace("{add}", String(add)).replace("{del}", String(del)), lines: [], hidden: 0 };
+			}
+			return { head: body[0] ?? t.toolWritten, lines: [], hidden: 0 };
+		}
+		case "read": {
+			const a = state.args as { path?: unknown; file_path?: unknown } | undefined;
+			const lang = langOfPath(str(a?.path ?? a?.file_path) ?? "");
+			return { head: body.length ? `${count("toolLines", body.length)}${lang ? ` · ${lang}` : ""}` : t.toolNoOutput, lines: [], hidden: 0 };
+		}
+		case "search":
+			return body.length ? { head: count("toolMatches", body.length), ...head(PREVIEW_LINES) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
+		case "cmd": {
+			const h = exitCode !== undefined && exitCode !== 0 ? t.toolExit.replace("{code}", String(exitCode)) : undefined;
+			if (!body.length) return { head: h ?? t.toolNoOutput, lines: [], hidden: 0 };
+			return { head: h, ...byCmd(PREVIEW_LINES) };
+		}
+		default:
+			return body.length ? head(2) : { head: t.toolNoOutput, lines: [], hidden: 0 };
+	}
+}
+
+function ToolRow({ name, state, cwd, onInspect, onOpenFile }: { name: string; state?: ToolCardState; cwd?: string; onInspect?: () => void; onOpenFile?: (path: string) => void }) {
 	const [open, setOpen] = useState(false);
 	const { t } = useI18n();
+	const tt = t as unknown as Dict;
+	const kind = toolKind(name);
 	const running = state?.state === "running";
 	const elapsed = useElapsed(state?.startedAt, Boolean(running));
 	const output = state?.result ?? state?.partialResult ?? "";
-	const n = name.toLowerCase();
 	const diff = useMemo(() => {
-		if (n !== "edit" && n !== "write") return null;
-		return parseUnifiedDiff(state?.patch || output);
-	}, [n, output, state?.patch]);
+		if (kind !== "write") return null;
+		const parsed = parseUnifiedDiff(state?.patch || output);
+		if (parsed) return parsed;
+		// pi 的 write 工具不带 patch：整份内容都是新增，直接按绿色新增行展示
+		if (name.toLowerCase() === "write" && state?.state === "done" && !state.isError) {
+			const content = str((state.args as { content?: unknown } | undefined)?.content);
+			if (content) return content.replace(/\r/g, "").replace(/\n$/, "").split("\n").map((text, i): DiffLine => ({ kind: "add", new: i + 1, text }));
+		}
+		return null;
+	}, [kind, name, output, state?.args, state?.isError, state?.patch, state?.state]);
 	if (!state) {
 		return (
-			<div className="flex items-center gap-2 py-1" style={{ fontSize: 13.5, lineHeight: "20px" }}>
-				<ToolIcon name={name} />
-				<span style={{ color: "var(--dsw-label-tertiary)", fontWeight: 500 }}>{name}</span>
-			</div>
+			<ProcRow dot={<Dot kind={kind} state="running" />}>
+				<div className="flex items-center gap-2" style={{ fontSize: "var(--piweb-chat-font-l)" }}>
+					<span className="proc-tool-name" data-kind={kind}>{name}</span>
+				</div>
+			</ProcRow>
 		);
 	}
-	const summary = toolSummary(name, state.args);
+	const failed = Boolean(state.isError) && !running;
+	const summary = toolSummary(name, state.args, cwd);
 	// 悬停显示完整参数（不只是截断的第一行）
-	let argsTitle = summary;
+	let argsTitle = summary.text;
 	try {
 		argsTitle = JSON.stringify(state.args, null, 2).slice(0, 2000);
 	} catch {
 		/* keep summary */
 	}
-	const failed = Boolean(state.isError) && !running;
 	// read/edit/write：悬停给「在编辑器中打开」
 	const argPath = (() => {
-		if (!["read", "edit", "write"].includes(n)) return "";
+		if (kind !== "read" && kind !== "write") return "";
 		const a = state.args as { path?: unknown; file_path?: unknown } | undefined;
-		const p = a?.path ?? a?.file_path;
-		return typeof p === "string" ? p : "";
+		return str(a?.path ?? a?.file_path) ?? "";
 	})();
-	const gist = toolGist(name, state, t as unknown as Record<string, string>, diff);
-	const hasDetails = Boolean(output || state.encodingLoss);
-	// 失败时直接露出前几行，不需要点开才知道错在哪
-	const errorLines = failed ? gist.lines.slice(0, 4) : [];
+	const fullCommand = kind === "cmd"
+		? (() => {
+				const a = state.args as Record<string, unknown> | undefined;
+				return str(a?.command) ?? str(a?.cmd) ?? str(a?.script) ?? "";
+			})()
+		: "";
+	const preview = toolPreview(kind, state, tt, diff, cwd);
+	const hasDiff = Boolean(diff && diff.length) && !failed;
+	const hasOutput = Boolean(output || state.encodingLoss);
+	// 有 diff 的写入：展开由 diff 自己的「还有 N 行」承担，不再另开输出面板
+	const canExpand = hasOutput && !hasDiff;
 	const duration = state.startedAt && state.endedAt ? state.endedAt - state.startedAt : 0;
-	const railColor = failed ? "var(--dsw-danger)" : "var(--dsw-label-caption)";
-	// diff 默认展开：改了什么是最想一眼看到的（像 Claude Code 的 Update 卡）
-	const showDiff = diff && !failed && (open || diff.length <= 40);
+	const dotState: DotState = running ? "running" : failed ? "failed" : "done";
+	const showPreview = Boolean(preview.head) || preview.lines.length > 0;
+	const diffLines = hasDiff && diff ? (open ? diff : diff.slice(0, DIFF_PREVIEW)) : null;
+	const diffHidden = diff && diffLines && !open ? diff.length - diffLines.length : 0;
+	const toggle = () => setOpen((o) => !o);
+	const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+		if (e.key === "Enter" || e.key === " ") {
+			e.preventDefault();
+			toggle();
+		}
+	};
 	return (
-		<div className="group/tool py-1" style={{ lineHeight: "20px" }}>
-			<div className="flex items-center gap-2" style={{ fontSize: 13.5 }}>
-				{running ? (
-					<span className="piweb-spin" style={{ display: "inline-flex", flex: "none" }}><ToolIcon name={name} /></span>
-				) : (
-					<ToolIcon name={name} />
-				)}
-				<span style={{ fontWeight: 600, color: failed ? "var(--dsw-danger)" : "var(--dsw-label-primary)", flex: "none" }}>{name}</span>
-				{summary && (
-					<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: MONO, color: "var(--dsw-label-secondary)" }} title={argsTitle}>
-						{summary}
+		<ProcRow dot={<Dot kind={kind} state={dotState} />} className="group/tool">
+			<div className="flex items-center gap-2" style={{ fontSize: "var(--piweb-chat-font-l)" }}>
+				<span className="proc-tool-name" data-kind={kind} data-failed={failed || undefined}>{name}</span>
+				{summary.text ? (
+					<span className="min-w-0 flex-1 truncate" style={{ fontSize: "var(--piweb-chat-font-s)", fontFamily: MONO, color: "var(--dsw-label-secondary)" }} title={argsTitle}>
+						{summary.text}
 					</span>
+				) : (
+					<span className="flex-1" />
 				)}
-				{running && <span style={{ fontSize: 12, color: "var(--dsw-label-caption)", flex: "none" }}>{fmtSeconds(elapsed)}</span>}
-				{!running && duration >= 1500 && <span style={{ fontSize: 12, color: "var(--dsw-label-caption)", flex: "none" }}>{fmtSeconds(duration)}</span>}
+				{summary.scriptLines > 1 && <span className="proc-meta">{t.commandLines.replace("{n}", String(summary.scriptLines))}</span>}
+				{running && <span className="proc-meta">{fmtSeconds(elapsed)}</span>}
+				{!running && duration >= 1000 && <span className="proc-meta">{fmtSeconds(duration)}</span>}
 				{onOpenFile && argPath && (
 					<button
 						type="button"
@@ -386,262 +458,356 @@ function ToolRow({ name, state, onInspect, onOpenFile }: { name: string; state?:
 					</button>
 				)}
 			</div>
-			{(hasDetails || running || failed) && (
-				<button
-					type="button"
-					className="flex w-full items-start gap-2 text-left"
-					style={{ paddingLeft: 3, cursor: hasDetails ? "pointer" : "default" }}
-					onClick={() => hasDetails && setOpen((o) => !o)}
-					title={hasDetails ? (open ? t.collapseOutput : t.expandOutput) : undefined}
-				>
-					<span aria-hidden style={{ flex: "none", width: 14, textAlign: "center", color: railColor, fontFamily: MONO, fontSize: 12.5 }}>{RAIL}</span>
-					{failed && errorLines.length ? (
-						<span className="min-w-0 flex-1" style={{ fontSize: 12.5, fontFamily: MONO, color: "var(--dsw-danger)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-							{gist.exitCode !== undefined && gist.exitCode !== 0 ? `${t.toolExit.replace("{code}", String(gist.exitCode))}\n` : ""}
-							{errorLines.join("\n")}
-							{gist.lines.length > errorLines.length ? "\n…" : ""}
-						</span>
-					) : (
-						<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: MONO, color: failed ? "var(--dsw-danger)" : "var(--dsw-label-tertiary)" }}>
-							{failed ? `${t.toolFailed} · ${gist.text}` : gist.text}
-						</span>
-					)}
-				</button>
-			)}
-			{showDiff && diff && (
-				<div className="mb-1 ml-6 mt-1 max-h-96 overflow-auto rounded-xl px-2 py-1.5" style={{ background: "var(--dsw-hover)" }}>
-					{summary && (
-						<div className="mb-1 truncate" style={{ fontFamily: MONO, fontSize: 11.5, color: "var(--dsw-label-caption)", borderBottom: "0.5px solid var(--dsw-border-l2)", paddingBottom: 4 }}>
-							{summary}
-						</div>
-					)}
-					<DiffView lines={open ? diff : diff.slice(0, 40)} />
-				</div>
-			)}
-			{open && hasDetails && !showDiff && (
+			{showPreview && (
 				<div
-					className="mb-1 ml-6 mt-1 max-h-80 overflow-auto rounded-xl px-3 py-2"
-					style={{ background: "var(--dsw-hover)", fontFamily: MONO, fontSize: 12, lineHeight: 1.55, color: failed ? "var(--dsw-danger)" : "var(--dsw-label-secondary)" }}
+					className="proc-result"
+					data-failed={failed || undefined}
+					role={canExpand ? "button" : undefined}
+					tabIndex={canExpand ? 0 : undefined}
+					onClick={canExpand ? toggle : undefined}
+					onKeyDown={canExpand ? onKey : undefined}
+					title={canExpand ? (open ? t.collapseOutput : t.expandOutput) : undefined}
+					style={canExpand ? { cursor: "pointer" } : undefined}
 				>
-					{state.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warning, #d5a13b)" }}>{t.encodingLossWarning}</p>}
-					{output && <pre className="whitespace-pre-wrap font-inherit">{output}</pre>}
+					<span className="rail">{RAIL}</span>
+					<span className="lines">
+						{preview.head && <div className="head">{preview.head}</div>}
+						{/* 尾巴预览：被省略的行在上面，「还有 N 行」也放上面 */}
+						{!open && preview.side === "tail" && preview.hidden > 0 && <div className="more">… {t.moreLines.replace("{n}", String(preview.hidden))}</div>}
+						{!open && preview.lines.map((l, i) => <div key={i}>{l}</div>)}
+						{!open && preview.side !== "tail" && preview.hidden > 0 && <div className="more">… {t.moreLines.replace("{n}", String(preview.hidden))}</div>}
+						{open && canExpand && <div className="more">{t.collapseOutput}</div>}
+					</span>
 				</div>
 			)}
-		</div>
+			{diffLines && diffLines.length > 0 && (
+				<div className="proc-output" style={{ padding: "6px 8px" }}>
+					<DiffView lines={diffLines} />
+					{diffHidden > 0 && (
+						<button type="button" className="proc-more" onClick={() => setOpen(true)}>
+							… {t.moreLines.replace("{n}", String(diffHidden))}
+						</button>
+					)}
+					{open && diff && diff.length > DIFF_PREVIEW && (
+						<button type="button" className="proc-more" onClick={() => setOpen(false)}>
+							{t.collapseOutput}
+						</button>
+					)}
+				</div>
+			)}
+			{open && canExpand && (
+				<div className="proc-output">
+					{fullCommand && <div className="cmdline">{fullCommand}</div>}
+					{state.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn)" }}>{t.encodingLossWarning}</p>}
+					{output && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{output}</pre>}
+				</div>
+			)}
+		</ProcRow>
 	);
 }
 
-// ---------- 思考行：进行中显示流动的斜体正文，完成后收成一行暗色斜体（比工具行低一级） ----------
+// ---------- 思考行：进行中显示流动的斜体尾巴，完成后收成首句 ----------
 
 function ThinkRow({ text, live, startedAt }: { text: string; live?: boolean; startedAt?: number }) {
 	const [open, setOpen] = useState(false);
-	const { lang, t } = useI18n();
+	const { t } = useI18n();
 	const elapsed = useElapsed(startedAt, Boolean(live));
-	const oneLine = text.replace(/\s+/g, " ").trim();
 	if (live) {
-		const tail = oneLine.length > 240 ? `…${oneLine.slice(-240)}` : oneLine;
+		const one = text.replace(/\s+/g, " ").trim();
+		const tail = one.length > 240 ? `…${one.slice(-240)}` : one;
 		return (
-			<div className="py-1" style={{ lineHeight: "20px" }}>
-				<div className="flex items-center gap-2" style={{ fontSize: 13 }}>
-					<span className="state-dot running" style={{ width: 6, height: 6 }} />
-					<span style={{ color: "var(--dsw-label-tertiary)", fontStyle: "italic" }}>{t.thinkingLive}</span>
-					{startedAt && elapsed >= 3000 ? <span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{fmtSeconds(elapsed)}</span> : null}
+			<ProcRow dot={<Dot variant="think" state="running" />}>
+				<div className="flex items-center gap-2" style={{ fontSize: "var(--piweb-chat-font-m)" }}>
+					<span style={{ color: "var(--dsw-label-tertiary)", fontStyle: "italic" }}>{t.thinkingLive}…</span>
+					{startedAt && elapsed >= 3000 ? <span className="proc-meta">{fmtSeconds(elapsed)}</span> : null}
 				</div>
-				{tail && (
-					<div className="ml-4" style={{ fontSize: 13, fontStyle: "italic", color: "var(--dsw-label-tertiary)", opacity: 0.85, wordBreak: "break-word" }}>
-						{tail}
-					</div>
-				)}
-			</div>
+				{tail && <div className="proc-think-live">{tail}</div>}
+			</ProcRow>
 		);
 	}
+	const gist = firstSentence(text);
 	return (
-		<div>
-			<button className="flex w-full items-baseline gap-2 py-1 text-left" style={{ lineHeight: "20px" }} onClick={() => setOpen((o) => !o)}>
-				<IconThinkOutline14 size={13} style={{ flex: "none", color: "var(--dsw-label-caption)", alignSelf: "center" }} />
-				<span style={{ fontSize: 13, color: "var(--dsw-label-tertiary)", fontStyle: "italic", flex: "none" }}>
-					{lang === "zh" ? "思考" : "Think"}
-				</span>
-				{!open && (
-					<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, fontStyle: "italic", color: "var(--dsw-label-caption)" }}>
-						{oneLine}
-					</span>
-				)}
+		<ProcRow dot={<Dot variant="think" />}>
+			<button type="button" className="flex w-full min-w-0 items-baseline gap-2 text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+				<span className="proc-think-text" style={{ flex: "none", color: "var(--dsw-label-tertiary)" }}>{t.thinkLabel}</span>
+				{!open && <span className="proc-think-text min-w-0 flex-1 truncate">{gist}</span>}
 			</button>
 			{open && (
-				<pre
-					className="mb-1 ml-6 mt-1 whitespace-pre-wrap rounded-xl px-3 py-2"
-					style={{ background: "var(--dsw-hover)", fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-tertiary)", fontFamily: "inherit" }}
-				>
+				<pre className="proc-output" style={{ fontFamily: "inherit", fontSize: 12.5, fontStyle: "italic", whiteSpace: "pre-wrap", color: "var(--dsw-label-tertiary)" }}>
 					{text}
 				</pre>
 			)}
-		</div>
+		</ProcRow>
 	);
 }
 
-/** 模型返回错误：不能只把正文染红（正文可能为空），要有一条明确的错误行，并给一键重试 */
-function ModelErrorRow({ message, onRetry }: { message: string; onRetry?: () => void }) {
+// ---------- 叙述行：模型在工具之间说的话，是这一阶段的标题 ----------
+
+function NarrationRow({ text, live, error }: { text: string; live?: boolean; error?: boolean }) {
+	return (
+		<ProcRow dot={<Dot variant="narr" />} className="proc-narr">
+			<div className="proc-narr-body" data-error={error || undefined}>
+				{live ? <StreamingText text={text} /> : <Markdown text={text} />}
+			</div>
+		</ProcRow>
+	);
+}
+
+// ---------- 模型错误行：归类成人话 + 原文 + 连续次数（要继续就直接再发一条消息，不设按钮） ----------
+
+const ERROR_HINT_KEY: Record<ModelErrorKind, string> = {
+	rateLimit: "modelErrorRateLimit",
+	billing: "modelErrorBilling",
+	auth: "modelErrorAuth",
+	notFound: "modelErrorNotFound",
+	context: "modelErrorContext",
+	timeout: "modelErrorTimeout",
+	server: "modelErrorServer",
+	network: "modelErrorNetwork",
+};
+
+function ErrorRow({ message, count, model }: { message: string; count: number; model?: string }) {
+	const { t } = useI18n();
+	const tt = t as unknown as Dict;
+	const kind = classifyModelError(message);
+	const hint = kind ? tt[ERROR_HINT_KEY[kind]] : "";
+	return (
+		<ProcRow dot={<Dot variant="error" />}>
+			<div className="flex items-center gap-2" style={{ fontSize: "var(--piweb-chat-font-m)" }}>
+				<span style={{ flex: "none", fontWeight: 600, color: "var(--dsw-danger)" }}>{t.modelError}</span>
+				<span className="flex-1" />
+				{count > 1 && <span className="proc-meta" style={{ color: "var(--dsw-danger)" }}>{t.modelErrorTimes.replace("{n}", String(count))}</span>}
+				{model && <span className="proc-meta">{model}</span>}
+			</div>
+			{/* 第一行是人话解释（认得出错误类型时），原始报错放下面一行变淡 */}
+			<div className="proc-result" data-failed="true">
+				<span className="rail">{RAIL}</span>
+				<span className="lines">
+					{hint && <div className="head" style={{ whiteSpace: "pre-wrap" }}>{hint}</div>}
+					<div style={{ whiteSpace: "pre-wrap", color: hint ? "var(--dsw-label-caption)" : undefined }}>{message}</div>
+				</span>
+			</div>
+		</ProcRow>
+	);
+}
+
+function AbortRow() {
 	const { t } = useI18n();
 	return (
-		<div className="flex items-start gap-2 py-1" style={{ lineHeight: "20px", fontSize: 13 }}>
-			<span aria-hidden style={{ flex: "none", color: "var(--dsw-danger)", fontWeight: 600 }}>✕</span>
-			<span style={{ flex: "none", color: "var(--dsw-danger)", fontWeight: 600 }}>{t.modelError}</span>
-			<span className="min-w-0 flex-1" style={{ color: "var(--dsw-danger)", fontFamily: MONO, fontSize: 12.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-				{message}
-			</span>
-			{onRetry && (
-				<button type="button" className="btn-outline" style={{ height: 24, padding: "0 10px", fontSize: 12, flex: "none" }} onClick={onRetry}>
-					{t.retry}
-				</button>
-			)}
-		</div>
+		<ProcRow dot={<Dot variant="abort" />}>
+			<div style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>{t.turnAborted}</div>
+		</ProcRow>
 	);
 }
 
-/** 流末尾的工作指示：✻ 轮换动词 (已用时长 · ↓ 输出 token)；有工具在跑时改为「正在运行 xxx」 */
-function WorkingIndicator({ startedAt, runningTool, outputTokens }: { startedAt: number; runningTool?: string; outputTokens?: number }) {
+/** 轨道末尾的工作指示：轮换动词 (已用时长 · ↓ 输出 token)；有工具在跑时改为「正在运行 xxx」 */
+function WorkingRow({ startedAt, runningTool, outputTokens, workingMessage }: { startedAt: number; runningTool?: string; outputTokens?: number; workingMessage?: string | null }) {
 	const { t } = useI18n();
 	const elapsed = useElapsed(startedAt, true);
 	const verbs = t.workingVerbs.split("|");
 	const verb = verbs[Math.floor(elapsed / 3000) % verbs.length];
-	const label = runningTool ? t.runningTool.replace("{name}", runningTool) : `${verb}…`;
+	// 扩展可以用 setWorkingMessage 覆盖这行文案（pi 终端同款能力）
+	const label = workingMessage || (runningTool ? t.runningTool.replace("{name}", runningTool) : `${verb}…`);
 	const meta = [fmtSeconds(elapsed), outputTokens ? `↓ ${fmtTok(outputTokens)} tokens` : ""].filter(Boolean).join(" · ");
 	return (
-		<div className="mt-2 flex items-center gap-2" style={{ fontSize: 13, lineHeight: "20px" }}>
-			<span className="state-dot running" style={{ width: 7, height: 7, background: "var(--dsw-accent)" }} />
-			<span style={{ color: "var(--dsw-accent)" }}>{label}</span>
-			<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>({meta})</span>
-		</div>
+		<ProcRow dot={<Dot variant="work" />}>
+			<div className="flex items-center gap-2" style={{ fontSize: "var(--piweb-chat-font-m)" }}>
+				<span style={{ color: "var(--dsw-accent)" }}>{label}</span>
+				<span className="proc-meta">({meta})</span>
+			</div>
+		</ProcRow>
 	);
 }
 
-function ContextRow({ resource }: { resource: ContextResource | string }) {
+// ---------- 自动重试行（pi 自己在重试；点击展开详情，停止用输入框的停止键） ----------
+
+function RetryRow({ text }: { text: string }) {
+	const [open, setOpen] = useState(false);
+	const oneLine = text.replace(/\s+/g, " ").trim();
+	const [label, ...rest] = oneLine.split("：");
+	return (
+		<ProcRow dot={<Dot variant="retry" />}>
+			<button type="button" className="flex w-full min-w-0 items-center gap-2 text-left" style={{ fontSize: "var(--piweb-chat-font-m)" }} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+				<span style={{ fontWeight: 500, color: "var(--dsw-warn)", flex: "none" }}>{label}</span>
+				{!open && rest.length > 0 && (
+					<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-tertiary)" }}>{rest.join("：")}</span>
+				)}
+			</button>
+			{open && (
+				<pre className="proc-output" style={{ fontFamily: "inherit", fontSize: 12.5, whiteSpace: "pre-wrap", color: "var(--dsw-label-tertiary)" }}>
+					{text}
+				</pre>
+			)}
+		</ProcRow>
+	);
+}
+
+// ---------- 上下文注入行（AGENTS.md 等） ----------
+
+function ContextRow({ resource, cwd }: { resource: ContextResource | string; cwd?: string }) {
 	const [open, setOpen] = useState(false);
 	const { t } = useI18n();
-	const normalized = typeof resource === "string"
-		? { path: resource, content: "", source: "project" as const }
-		: resource;
+	const normalized = typeof resource === "string" ? { path: resource, content: "", source: "project" as const } : resource;
 	return (
-		<div className="min-w-0">
+		<ProcRow dot={<Dot variant="ctx" />}>
 			<button
 				type="button"
-				className="flex w-full min-w-0 items-center gap-2 py-1 text-left"
-				style={{ lineHeight: "20px" }}
+				className="flex w-full min-w-0 items-center gap-2 text-left"
+				style={{ fontSize: "var(--piweb-chat-font-m)" }}
 				aria-expanded={open}
 				onClick={() => setOpen((value) => !value)}
 			>
-				<IconContextRow />
-				<span style={{ flex: "none", fontSize: 13.5, fontWeight: 500, color: "var(--dsw-label-tertiary)" }}>
-					{t.contextInject}
-				</span>
-				<span aria-hidden style={{ flex: "none", color: "var(--dsw-label-caption)", fontSize: 13 }}>·</span>
-				<span
-					className="min-w-0 flex-1 truncate"
-					style={{ color: "var(--dsw-label-tertiary)", fontFamily: "var(--font-mono)", fontSize: 12.5 }}
-					title={normalized.path}
-				>
-					{normalized.path}
+				<span style={{ flex: "none", color: "var(--dsw-label-tertiary)" }}>{t.contextInject}</span>
+				<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-caption)", fontFamily: MONO, fontSize: "var(--piweb-chat-font-t)" }} title={normalized.path}>
+					{relativizePath(normalized.path, cwd)}
 				</span>
 			</button>
 			{open && normalized.content && (
-				<pre
-					className="mb-1 ml-6 mt-1 max-h-[141px] overflow-auto whitespace-pre-wrap rounded-lg px-3 py-2.5"
-					style={{
-						background: "var(--dsw-markdown-code-block, var(--dsw-hover))",
-						color: "var(--dsw-label-tertiary)",
-						fontFamily: "var(--font-mono)",
-						fontSize: 11,
-						lineHeight: "16px",
-					}}
-				>
+				<pre className="proc-output" style={{ maxHeight: 141, fontSize: "var(--piweb-chat-font-xs)", lineHeight: 1.45, whiteSpace: "pre-wrap", color: "var(--dsw-label-tertiary)" }}>
 					{normalized.content}
 				</pre>
 			)}
-		</div>
+		</ProcRow>
 	);
 }
 
-/** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const AssistantMessage = memo(function AssistantMessage({
+// ---------- 已完成回合的折叠摘要：一行说清做了什么，点开看全部 ----------
+
+function FoldRow({ calls, tools, open, onToggle }: { calls: ToolCallContent[]; tools: Record<string, ToolCardState>; open: boolean; onToggle: () => void }) {
+	const { t } = useI18n();
+	const edited: string[] = [];
+	let reads = 0;
+	let cmds = 0;
+	let searches = 0;
+	let failed = 0;
+	let start = Infinity;
+	let end = 0;
+	for (const c of calls) {
+		const kind = toolKind(c.name);
+		const s = tools[c.id];
+		if (kind === "write") {
+			const a = c.arguments as { path?: unknown; file_path?: unknown } | undefined;
+			const p = str(a?.path ?? a?.file_path);
+			if (p) {
+				const b = basename(p);
+				if (!edited.includes(b)) edited.push(b);
+			}
+		} else if (kind === "read") reads += 1;
+		else if (kind === "cmd") cmds += 1;
+		else if (kind === "search") searches += 1;
+		if (s?.isError) failed += 1;
+		if (s?.startedAt) start = Math.min(start, s.startedAt);
+		if (s?.endedAt) end = Math.max(end, s.endedAt);
+	}
+	const parts: Array<{ text: string; mono?: boolean }> = [{ text: t.batchDone.replace("{n}", String(calls.length)) }];
+	if (edited.length) {
+		const names = edited.slice(0, 3).join(", ") + (edited.length > 3 ? ` +${edited.length - 3}` : "");
+		parts.push({ text: t.stepsSummaryEdited.replace("{files}", names), mono: true });
+	}
+	if (reads) parts.push({ text: t.stepsSummaryReads.replace("{n}", String(reads)) });
+	if (searches) parts.push({ text: t.stepsSummarySearches.replace("{n}", String(searches)) });
+	if (cmds) parts.push({ text: t.stepsSummaryCmds.replace("{n}", String(cmds)) });
+	if (failed) parts.push({ text: t.stepsSummaryFailed.replace("{n}", String(failed)) });
+	const duration = Number.isFinite(start) && end > start ? end - start : 0;
+	if (duration >= 1500) parts.push({ text: fmtSeconds(duration) });
+	return (
+		<ProcRow dot={<Dot />}>
+			<button type="button" className="proc-fold" aria-expanded={open} onClick={onToggle}>
+				<span className="chev" aria-hidden>▸</span>
+				<span className="min-w-0 flex-1 truncate">
+					{parts.map((p, i) => (
+						<span key={i} className={p.mono ? "files" : undefined}>
+							{i > 0 ? " · " : ""}
+							{p.text}
+						</span>
+					))}
+				</span>
+				<span className="proc-meta">{open ? t.hideSteps : t.showSteps}</span>
+			</button>
+		</ProcRow>
+	);
+}
+
+// ---------- 一条助手消息在轨道上的行（思考 / 叙述 / 工具 / 错误 / 中止） ----------
+
+const ProcessMessage = memo(function ProcessMessage({
 	message,
 	tools,
-	onFork,
-	showActions = true,
-	compact = false,
+	cwd,
 	live = false,
-	onRetry,
+	omitText = false,
+	errorCount,
 	onInspectTool,
 	onOpenFile,
-	turnStartMs,
 }: {
 	message: WebMessage;
 	tools: Record<string, ToolCardState>;
-	onFork?: (entryId: string) => void;
-	/** 流式输出中隐藏操作行：完整回答后才允许复制/分支 */
-	showActions?: boolean;
-	/** 同一回合内的后续步骤（上一条也是助手消息，或紧随上下文注入行）：用步骤间距而非回合间距 */
-	compact?: boolean;
-	/** 这条正在流式生成：思考块以活的斜体正文显示，最后一段正文逐字显示带光标 */
+	cwd?: string;
+	/** 正在流式生成：最后一个思考块显示为进行中，最后一段正文逐字显示带光标 */
 	live?: boolean;
-	/** 模型出错时重发上一条用户消息 */
-	onRetry?: () => void;
-	/** 点工具行右侧图标，在轨迹页打开对应记录 */
+	/** 这条是回合的最终回答：正文在轨道外单独渲染，这里只出思考 */
+	omitText?: boolean;
+	/** 模型错误行：0 = 不渲染（已并入前一条同错误行），≥ 1 = 渲染并标连续次数 */
+	errorCount?: number;
 	onInspectTool?: (toolCallId: string) => void;
-	/** read/edit/write 工具行：在本机编辑器打开该文件 */
 	onOpenFile?: (path: string) => void;
-	/** 本回合首条用户消息的时间戳：与最终回答时间戳一起算回合耗时（dsh runMs） */
+}) {
+	const lastIndex = message.content.length - 1;
+	const isError = message.stopReason === "error";
+	const rows: ReactNode[] = [];
+	message.content.forEach((c, i) => {
+		if (c.type === "thinking" && c.thinking.trim()) {
+			rows.push(<ThinkRow key={`t${i}`} text={c.thinking} live={live && i === lastIndex} startedAt={message.timestamp} />);
+		} else if (c.type === "toolCall") {
+			rows.push(
+				<ToolRow key={`${c.id}-${i}`} name={c.name} state={tools[c.id]} cwd={cwd} onInspect={onInspectTool ? () => onInspectTool(c.id) : undefined} onOpenFile={onOpenFile} />,
+			);
+		} else if (c.type === "text" && !omitText && c.text.trim()) {
+			rows.push(<NarrationRow key={`n${i}`} text={c.text} live={live && i === lastIndex} error={isError} />);
+		} else if (c.type === "image" && !omitText) {
+			rows.push(
+				<ProcRow key={`i${i}`} dot={<Dot variant="narr" />}>
+					<img src={`data:${c.mimeType};base64,${c.data}`} alt="" className="my-1 max-h-96 max-w-full rounded-2xl object-contain" />
+				</ProcRow>,
+			);
+		}
+	});
+	if (isError && (errorCount ?? 1) > 0) {
+		rows.push(<ErrorRow key="err" message={message.errorMessage || message.stopReason || "error"} count={errorCount ?? 1} model={message.model} />);
+	}
+	if (message.stopReason === "aborted") rows.push(<AbortRow key="abort" />);
+	return <>{rows}</>;
+});
+
+// ---------- 最终回答：轨道外、完整 Markdown、带操作行 ----------
+
+const FinalAnswer = memo(function FinalAnswer({
+	message,
+	onFork,
+	showActions,
+	turnStartMs,
+}: {
+	message: WebMessage;
+	onFork?: (entryId: string) => void;
+	showActions: boolean;
 	turnStartMs?: number;
 }) {
 	const textAll = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("");
-	const isError = message.stopReason === "error";
-	// 只有回合的最终回答才显示复制/分支：带工具调用的中间步骤（stopReason=toolUse，
-	// 模型常附带仅含换行的空 text 块）和流式未完成（pending）的消息都不算最终回答。
-	const hasToolCall = message.content.some((c) => c.type === "toolCall");
-	const isFinalAnswer = Boolean(textAll.trim())
-		&& !hasToolCall
-		&& message.stopReason !== "toolUse"
-		&& message.stopReason !== "pending";
-	// 正在流式且思考块是最后一个内容块时，它才是"进行中"的思考
-	const lastIndex = message.content.length - 1;
-	// 一条消息里并发多个工具调用时，先给一行汇总（像 Claude Code 的 "Running N steps…"），再列每个步骤
-	const toolCalls = message.content.filter((c): c is { type: "toolCall"; id: string; name: string; arguments: unknown } => c.type === "toolCall");
-	const batchRunning = toolCalls.some((c) => tools[c.id]?.state === "running" || !tools[c.id]);
-	const { t } = useI18n();
-
 	return (
-		<div className={`group w-full first:mt-0 ${compact ? "" : "mt-3"}`} data-role="assistant">
-			{toolCalls.length >= 2 && (
-				<div className="flex items-center gap-2 py-1" style={{ fontSize: 13, lineHeight: "20px", color: "var(--dsw-label-tertiary)" }}>
-					{batchRunning ? <span className="state-dot running" style={{ width: 6, height: 6 }} /> : <span aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: "var(--dsw-label-caption)", flex: "none" }} />}
-					<span>{(batchRunning ? t.batchRunning : t.batchDone).replace("{n}", String(toolCalls.length))}</span>
-				</div>
-			)}
+		<div className="group w-full" style={{ marginTop: 14 }} data-role="assistant">
 			{message.content.map((c, i) => {
-				if (c.type === "thinking" && c.thinking.trim())
-					return <ThinkRow key={i} text={c.thinking} live={live && i === lastIndex} startedAt={message.timestamp} />;
-				if (c.type === "toolCall") return <div key={`${c.id}-${i}`} className={toolCalls.length >= 2 ? "ml-4" : undefined}><ToolRow name={c.name} state={tools[c.id]} onInspect={onInspectTool ? () => onInspectTool(c.id) : undefined} onOpenFile={onOpenFile} /></div>;
-				if (c.type === "image")
-					return <img key={i} src={`data:${c.mimeType};base64,${c.data}`} alt="" className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
-				if (c.type === "text" && c.text.trim())
-					return (
-						<div key={i} className="py-1" style={isError ? { color: "var(--dsw-danger)" } : undefined}>
-							{live && i === lastIndex ? <StreamingText text={c.text} /> : <Markdown text={c.text} />}
-						</div>
-					);
+				if (c.type === "text" && c.text.trim()) return <Markdown key={i} text={c.text} />;
+				if (c.type === "image") return <img key={i} src={`data:${c.mimeType};base64,${c.data}`} alt="" className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
 				return null;
 			})}
-			{isError && (message.errorMessage || !textAll.trim()) && (
-				<ModelErrorRow message={message.errorMessage || (message.stopReason ?? "error")} onRetry={onRetry} />
-			)}
-			{isFinalAnswer && showActions && (
+			{showActions && (
 				<MessageActions
 					text={textAll.trim()}
 					onFork={message.id && onFork ? () => onFork(message.id!) : undefined}
-					durationMs={message.timestamp != null && turnStartMs != null ? Math.max(0, message.timestamp - turnStartMs) : undefined}
+					durationMs={(message.endedAt ?? message.timestamp) != null && turnStartMs != null ? Math.max(0, (message.endedAt ?? message.timestamp)! - turnStartMs) : undefined}
 					usage={message.usage}
 					time={message.timestamp}
 				/>
@@ -650,12 +816,8 @@ const AssistantMessage = memo(function AssistantMessage({
 	);
 });
 
-const UserMessage = memo(function UserMessage({
-	message,
-}: {
-	message: WebMessage;
-}) {
-	const { t } = useI18n();
+/** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
+const UserMessage = memo(function UserMessage({ message }: { message: WebMessage }) {
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
@@ -680,16 +842,149 @@ const UserMessage = memo(function UserMessage({
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
 			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
 			{/* 用户消息只有复制操作，不提供分支；时钟在图标左侧（dsh clock=start） */}
-			{text && (
-				<MessageActions
-					text={text}
-					clockStart={message.timestamp !== undefined}
-					time={message.timestamp}
-				/>
-			)}
+			{text && <MessageActions text={text} clockStart={message.timestamp !== undefined} time={message.timestamp} />}
 		</div>
 	);
 });
+
+// ---------- 回合：用户消息 → 轨道 → 最终回答 ----------
+
+type Turn = { key: string; userIndex: number; assistantIndexes: number[] };
+
+function buildTurns(messages: WebMessage[]): Turn[] {
+	const out: Turn[] = [];
+	let cur: Turn | null = null;
+	messages.forEach((m, i) => {
+		if (m.role === "user") {
+			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [] };
+			out.push(cur);
+		} else if (m.role === "assistant") {
+			if (!cur) {
+				cur = { key: `a${i}`, userIndex: -1, assistantIndexes: [] };
+				out.push(cur);
+			}
+			cur.assistantIndexes.push(i);
+		}
+	});
+	return out;
+}
+
+/** 回合的最终回答：有正文、没有工具调用、且不是中途状态（toolUse / pending / error / aborted） */
+function isFinalAnswer(m: WebMessage): boolean {
+	const hasText = m.content.some((c) => c.type === "text" && c.text.trim());
+	const hasTool = m.content.some((c) => c.type === "toolCall");
+	const sr = m.stopReason ?? "stop";
+	return hasText && !hasTool && sr !== "toolUse" && sr !== "pending" && sr !== "error" && sr !== "aborted";
+}
+
+const isToolCall = (c: WebContent): c is ToolCallContent => c.type === "toolCall";
+
+function TurnBlock({
+	turn,
+	messages,
+	tools,
+	cwd,
+	isStreaming,
+	isLast,
+	lastAssistantIndex,
+	contextFiles,
+	retryNotice,
+	streamStartedAt,
+	runningTool,
+	outputTokens,
+	workingMessage,
+	onFork,
+	onInspectTool,
+	onOpenFile,
+}: {
+	turn: Turn;
+	messages: WebMessage[];
+	tools: Record<string, ToolCardState>;
+	cwd?: string;
+	isStreaming: boolean;
+	isLast: boolean;
+	lastAssistantIndex: number;
+	contextFiles?: Array<ContextResource | string>;
+	retryNotice?: string | null;
+	streamStartedAt: number | null;
+	runningTool?: string;
+	outputTokens?: number;
+	workingMessage?: string | null;
+	onFork?: (entryId: string) => void;
+	onInspectTool?: (toolCallId: string) => void;
+	onOpenFile?: (path: string) => void;
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
+	const assistants = turn.assistantIndexes;
+	const lastIdx = assistants[assistants.length - 1];
+	const turnLive = isStreaming && isLast;
+	// 正在流式的那条永远先在轨道里，回合结束后才作为最终回答“走出”轨道
+	const finalIdx = lastIdx !== undefined && isFinalAnswer(messages[lastIdx]) && !(isStreaming && lastIdx === lastAssistantIndex) ? lastIdx : -1;
+
+	// 连续相同的模型错误（内容为空的错误消息）合并成一行，标连续次数
+	const errorCounts = new Map<number, number>();
+	{
+		let runStart = -1;
+		let runMsg = "";
+		for (const k of assistants) {
+			const m = messages[k];
+			const bare = m.stopReason === "error" && !m.content.some((c) => (c.type === "text" && c.text.trim()) || c.type === "toolCall");
+			if (bare && runStart >= 0 && (m.errorMessage ?? "") === runMsg) {
+				errorCounts.set(k, 0);
+				errorCounts.set(runStart, (errorCounts.get(runStart) ?? 1) + 1);
+				continue;
+			}
+			if (bare) {
+				runStart = k;
+				runMsg = m.errorMessage ?? "";
+				errorCounts.set(k, 1);
+				continue;
+			}
+			runStart = -1;
+		}
+	}
+
+	const calls = assistants.flatMap((k) => messages[k].content.filter(isToolCall));
+	// 出错或中止的回合不折叠：用户需要直接看到出错前后的完整过程
+	const turnFailed = assistants.some((k) => messages[k].stopReason === "error" || messages[k].stopReason === "aborted")
+		|| calls.some((c) => tools[c.id]?.isError);
+	const foldable = !turnLive && !turnFailed && calls.length >= 4;
+	// 轨道上要渲染的消息：最终回答只在有思考块时进轨道（只出思考）
+	const processIdx = assistants.filter((k) => k !== finalIdx || messages[k].content.some((c) => c.type === "thinking" && c.thinking.trim()));
+	const showRail = processIdx.length > 0 || Boolean(contextFiles?.length) || turnLive || (isLast && Boolean(retryNotice));
+
+	return (
+		<>
+			{user && <UserMessage message={user} />}
+			{showRail && (
+				<div className="proc-turn">
+					{contextFiles?.map((resource, i) => (
+						<ContextRow key={`ctx-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${i}`} resource={resource} cwd={cwd} />
+					))}
+					{foldable && <FoldRow calls={calls} tools={tools} open={expanded} onToggle={() => setExpanded((o) => !o)} />}
+					{(!foldable || expanded)
+						&& processIdx.map((k) => (
+							<ProcessMessage
+								key={`m-${k}`}
+								message={messages[k]}
+								tools={tools}
+								cwd={cwd}
+								live={isStreaming && k === lastAssistantIndex}
+								omitText={k === finalIdx}
+								errorCount={errorCounts.get(k)}
+								onInspectTool={onInspectTool}
+								onOpenFile={onOpenFile}
+							/>
+						))}
+					{isLast && retryNotice && <RetryRow text={retryNotice} />}
+					{turnLive && streamStartedAt && <WorkingRow startedAt={streamStartedAt} runningTool={runningTool} outputTokens={outputTokens} workingMessage={workingMessage} />}
+				</div>
+			)}
+			{finalIdx >= 0 && <FinalAnswer message={messages[finalIdx]} onFork={onFork} showActions={!isStreaming} turnStartMs={user?.timestamp} />}
+		</>
+	);
+}
 
 function fmtTok(n: number): string {
 	const scaled = (value: number) => value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
@@ -757,16 +1052,15 @@ export function ChatWindow({
 	tools,
 	queue,
 	contextFiles,
+	cwd,
 	onFork,
 	isStreaming = false,
 	error,
 	connected = true,
 	onClearError,
 	retryNotice,
+	workingMessage,
 	stats,
-	trajectory,
-	onRetry,
-	onAbort,
 	onOpenTrajectory,
 	onOpenFile,
 }: {
@@ -774,22 +1068,22 @@ export function ChatWindow({
 	tools: Record<string, ToolCardState>;
 	queue: { steering: string[]; followUp: string[] };
 	contextFiles?: Array<ContextResource | string>;
+	/** 工作区路径：工具行里的命令去掉 cd 前缀、文件路径显示为相对路径 */
+	cwd?: string;
 	onFork?: (entryId: string) => void;
 	isStreaming?: boolean;
 	/** 行内错误提示（显示在消息流末尾，替代右下角弹窗） */
 	error?: string | null;
 	connected?: boolean;
 	onClearError?: () => void;
-	/** 自动重试通知（消息流内折叠行，点击展开详情） */
+	/** 自动重试通知（轨道内一行，点击展开详情） */
 	retryNotice?: string | null;
+	/** 扩展覆盖的工作中文案（setWorkingMessage） */
+	workingMessage?: string | null;
 	/** 会话统计：工作指示里显示本轮输出 token */
 	stats?: WebStats | null;
 	/** 轨迹条目：用于把工具行链接到轨迹 inspector */
 	trajectory?: TrajEntry[];
-	/** 模型出错后重发文本 */
-	onRetry?: (text: string) => void;
-	/** 停止（用于“停止重试”） */
-	onAbort?: () => void;
 	onOpenTrajectory?: (toolCallId: string) => void;
 	/** 在本机编辑器打开工具行涉及的文件 */
 	onOpenFile?: (path: string) => void;
@@ -800,121 +1094,22 @@ export function ChatWindow({
 	// 脱离底部后累计的新内容条数（回到底部按钮上的角标）
 	const [unseen, setUnseen] = useState(0);
 	const prevLenRef = useRef(messages.length);
-	// 本轮开始时间：工作指示的计时基准（切到流式时记一次）
+	// 本轮开始时间：工作指示的计时基准。以本轮用户消息的时间戳为准（中途打开页面也能显示真实已用时长），没有就取现在
+	const lastUserTs = useMemo(() => {
+		for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === "user") return messages[i].timestamp;
+		return undefined;
+	}, [messages]);
 	const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
 	useEffect(() => {
-		setStreamStartedAt(isStreaming ? Date.now() : null);
-	}, [isStreaming]);
+		setStreamStartedAt((prev) => (isStreaming ? prev ?? (lastUserTs && Date.now() - lastUserTs < 6 * 3600_000 ? lastUserTs : Date.now()) : null));
+	}, [isStreaming, lastUserTs]);
 	const runningTool = useMemo(() => Object.values(tools).find((tool) => tool.state === "running")?.name, [tools]);
 	const lastAssistantIndex = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === "assistant") return i;
 		return -1;
 	}, [messages]);
-
-	const rendered = useMemo(() => {
-		const firstUser = messages.findIndex((message) => message.role === "user");
-		const hasContextGroup = firstUser >= 0 && Boolean(contextFiles?.length);
-		// 每条助手消息对应的“上一条用户消息文本”（重试用）
-		const lastUserTextBefore = (index: number): string => {
-			for (let j = index - 1; j >= 0; j -= 1) {
-				const m = messages[j];
-				if (m.role === "user") return m.content.filter((c): c is { type: "text"; text: string } => c.type === "text").map((c) => c.text).join("\n");
-			}
-			return "";
-		};
-		// 回合墙钟起点：本回合首条用户消息的时间戳（dsh turn.start 的对应物）。
-		// 缺 timestamp（老会话冷读）时返回 undefined，操作行只显示时钟不显示耗时。
-		const turnStartBefore = (index: number): number | undefined => {
-			for (let j = index - 1; j >= 0; j -= 1) {
-				if (messages[j].role === "user") return typeof messages[j].timestamp === "number" ? messages[j].timestamp : undefined;
-			}
-			return undefined;
-		};
-		const renderAssistant = (message: WebMessage, index: number, compact: boolean) => (
-			<AssistantMessage
-				key={`message-${index}`}
-				message={message}
-				tools={tools}
-				onFork={onFork}
-				compact={compact}
-				live={isStreaming && index === lastAssistantIndex}
-				// 整个回合（含工具执行、分段输出）结束前不显示复制/分支
-				showActions={!isStreaming}
-				onRetry={onRetry && message.stopReason === "error" ? () => onRetry(lastUserTextBefore(index)) : undefined}
-				onInspectTool={onOpenTrajectory}
-				onOpenFile={onOpenFile}
-				turnStartMs={turnStartBefore(index)}
-			/>
-		);
-		// 回合折叠：一轮已结束、中间步骤消息 ≥ 2 且工具调用 ≥ 4 时，把中间步骤收成一行摘要（最终回答保持展开）
-		const stepIndexes = new Set<number>();
-		const groups: Array<{ start: number; end: number }> = [];
-		{
-			let i = 0;
-			while (i < messages.length) {
-				if (messages[i].role !== "assistant") { i += 1; continue; }
-				let j = i;
-				while (j < messages.length && messages[j].role !== "user") j += 1;
-				const assistants: number[] = [];
-				for (let k = i; k < j; k += 1) if (messages[k].role === "assistant") assistants.push(k);
-				const turnLive = isStreaming && assistants.includes(lastAssistantIndex);
-				const last = assistants[assistants.length - 1];
-				const lastIsAnswer = last !== undefined && !messages[last].content.some((c) => c.type === "toolCall");
-				const steps = lastIsAnswer ? assistants.slice(0, -1) : assistants;
-				const toolCount = steps.reduce((n, k) => n + messages[k].content.filter((c) => c.type === "toolCall").length, 0);
-				// 出错的回合不折叠：模型报错或任一工具失败时，用户需要直接看到出错前后的完整过程
-				const turnFailed = assistants.some((k) => messages[k].stopReason === "error")
-					|| assistants.some((k) => messages[k].content.some((c) => c.type === "toolCall" && tools[c.id]?.isError));
-				if (!turnLive && !turnFailed && steps.length >= 2 && toolCount >= 4) {
-					groups.push({ start: steps[0], end: steps[steps.length - 1] });
-					for (const k of steps) stepIndexes.add(k);
-				}
-				i = j;
-			}
-		}
-		// 垂直节奏：回合之间 16px（mt-3 加行内 4px 内边距），同一回合内的步骤行之间 8px（上下各 4px 内边距）。
-		return messages.flatMap((message, index) => {
-			let prevIndex = -1;
-			for (let j = index - 1; j >= 0; j -= 1) {
-				if (messages[j].role === "user" || messages[j].role === "assistant") {
-					prevIndex = j;
-					break;
-				}
-			}
-			// 上一条可见消息也是助手（工具调用后的续写），或紧随首条用户消息下的上下文注入行：同属一个回合
-			const compact = prevIndex >= 0 && (messages[prevIndex].role === "assistant" || (hasContextGroup && prevIndex === firstUser));
-			const group = groups.find((g) => g.start === index);
-			let row: React.ReactNode = null;
-			if (group) {
-				const stepMessages: number[] = [];
-				for (let k = group.start; k <= group.end; k += 1) if (stepIndexes.has(k)) stepMessages.push(k);
-				row = (
-					<StepsGroup key={`steps-${index}`} messages={stepMessages.map((k) => messages[k])} tools={tools} compact={compact}>
-						{stepMessages.map((k, n) => renderAssistant(messages[k], k, n > 0 || compact))}
-					</StepsGroup>
-				);
-			} else if (stepIndexes.has(index)) {
-				row = null;
-			} else if (message.role === "user") {
-				row = <UserMessage key={`message-${index}`} message={message} />;
-			} else if (message.role === "assistant") {
-				row = renderAssistant(message, index, compact);
-			}
-			if (index !== firstUser || !contextFiles?.length) return row ? [row] : [];
-			// 多条上下文注入行收进同一容器，与下方助手消息的思考/工具行共用步骤间距（视觉上同属一组）
-			return [
-				...(row ? [row] : []),
-				<div key="context-group" className="mt-3 flex flex-col">
-					{contextFiles.map((resource, resourceIndex) => (
-						<ContextRow
-							key={`context-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${resourceIndex}`}
-							resource={resource}
-						/>
-					))}
-				</div>,
-			];
-		});
-	}, [contextFiles, isStreaming, lastAssistantIndex, messages, onFork, onOpenFile, onOpenTrajectory, onRetry, tools]);
+	const turns = useMemo(() => buildTurns(messages), [messages]);
+	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
 
 	useEffect(() => {
 		const grew = messages.length > prevLenRef.current;
@@ -950,26 +1145,49 @@ export function ChatWindow({
 				}}
 			>
 				<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
-					{rendered}
-					{isStreaming && streamStartedAt && <WorkingIndicator startedAt={streamStartedAt} runningTool={runningTool} outputTokens={stats?.tokens.output} />}
+					{turns.map((turn, ti) => (
+						<TurnBlock
+							key={turn.key}
+							turn={turn}
+							messages={messages}
+							tools={tools}
+							cwd={cwd}
+							isStreaming={isStreaming}
+							isLast={ti === turns.length - 1}
+							lastAssistantIndex={lastAssistantIndex}
+							contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
+							retryNotice={retryNotice}
+							streamStartedAt={streamStartedAt}
+							runningTool={runningTool}
+							outputTokens={stats?.tokens.output}
+							workingMessage={workingMessage}
+							onFork={onFork}
+							onInspectTool={onOpenTrajectory}
+							onOpenFile={onOpenFile}
+						/>
+					))}
+					{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
+					{isStreaming && streamStartedAt && turns.length === 0 && (
+						<div className="proc-turn">
+							<WorkingRow startedAt={streamStartedAt} runningTool={runningTool} outputTokens={stats?.tokens.output} workingMessage={workingMessage} />
+						</div>
+					)}
 					{queue.steering.length + queue.followUp.length > 0 && (
 						<div className="mt-3 flex justify-end">
 							<div
 								className="rounded-full px-3 py-1"
-								style={{ fontSize: 12, color: "var(--dsw-label-caption)", border: "0.5px dashed var(--dsw-border-l3)" }}
+								style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-caption)", border: "0.5px dashed var(--dsw-border-l3)" }}
 							>
 								+{queue.steering.length + queue.followUp.length} queued
 							</div>
 						</div>
 					)}
-					{/* 自动重试通知：消息流内折叠行，点击展开错误详情；可一键停止 */}
-					{retryNotice && <RetryRow text={retryNotice} onStop={onAbort} />}
 					{/* 重连提示：跟随消息流显示在最后一条输出下面 */}
 					{!connected && (
 						<div className="mt-3 flex justify-center">
 							<div
 								className="rounded-full px-3 py-1"
-								style={{ fontSize: 12, color: "var(--dsw-label-caption)", border: "0.5px dashed var(--dsw-border-l3)" }}
+								style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-caption)", border: "0.5px dashed var(--dsw-border-l3)" }}
 							>
 								{t.reconnecting}
 							</div>
@@ -978,7 +1196,7 @@ export function ChatWindow({
 					{error && (
 						<button
 							className="mt-3 rounded-xl px-3 py-2 text-left"
-							style={{ fontSize: 12.5, background: "var(--dsw-danger)", color: "white" }}
+							style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-danger)", color: "white" }}
 							onClick={onClearError}
 							role="alert"
 						>
@@ -1007,107 +1225,5 @@ export function ChatWindow({
 				</button>
 			)}
 		</div>
-	);
-}
-
-// ---------- 已完成回合的中间步骤折叠：一行摘要，点开看全部 ----------
-
-function StepsGroup({ messages, tools, compact, children }: { messages: WebMessage[]; tools: Record<string, ToolCardState>; compact: boolean; children: React.ReactNode }) {
-	const [open, setOpen] = useState(false);
-	const { t } = useI18n();
-	const calls = messages.flatMap((m) => m.content.filter((c): c is { type: "toolCall"; id: string; name: string; arguments: unknown } => c.type === "toolCall"));
-	const isFile = (n: string) => ["read", "edit", "write"].includes(n.toLowerCase());
-	const isCmd = (n: string) => ["bash", "powershell", "pwsh"].includes(n.toLowerCase());
-	const files = calls.filter((c) => isFile(c.name)).length;
-	const cmds = calls.filter((c) => isCmd(c.name)).length;
-	const failed = calls.some((c) => tools[c.id]?.isError);
-	let start = Infinity;
-	let end = 0;
-	for (const c of calls) {
-		const s = tools[c.id];
-		if (s?.startedAt) start = Math.min(start, s.startedAt);
-		if (s?.endedAt) end = Math.max(end, s.endedAt);
-	}
-	const duration = Number.isFinite(start) && end > start ? end - start : 0;
-	const summary = t.turnSummary.replace("{steps}", String(calls.length)).replace("{files}", String(files)).replace("{cmds}", String(cmds));
-	return (
-		<div className={`w-full first:mt-0 ${compact ? "" : "mt-3"}`}>
-			<button
-				type="button"
-				className="flex w-full items-center gap-2 py-1 text-left"
-				style={{ lineHeight: "20px", fontSize: 13, color: "var(--dsw-label-tertiary)" }}
-				onClick={() => setOpen((o) => !o)}
-				aria-expanded={open}
-			>
-				<span aria-hidden style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : "none", transition: "transform 120ms var(--ds-ease-in-out)", width: 14, justifyContent: "center", color: failed ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }}>▸</span>
-				<span className="min-w-0 flex-1 truncate">
-					{summary}
-					{duration >= 1500 ? ` · ${fmtSeconds(duration)}` : ""}
-					{failed ? ` · ${t.toolFailed}` : ""}
-				</span>
-				<span style={{ fontSize: 12, color: "var(--dsw-label-caption)", flex: "none" }}>{open ? t.hideSteps : t.showSteps}</span>
-			</button>
-			{open && <div className="ml-1 border-l pl-3" style={{ borderColor: "var(--dsw-border-l2)" }}>{children}</div>}
-		</div>
-	);
-}
-
-// ---------- 自动重试行（对齐思考行的点击展开交互） ----------
-
-function RetryRow({ text, onStop }: { text: string; onStop?: () => void }) {
-	const [open, setOpen] = useState(false);
-	const { t } = useI18n();
-	const oneLine = text.replace(/\s+/g, " ").trim();
-	return (
-		<div>
-			<div className="flex w-full items-center gap-2 py-1" style={{ lineHeight: "20px" }}>
-				<button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setOpen((o) => !o)}>
-					<span
-						className="state-dot"
-						style={{ width: 6, height: 6, flex: "none", background: "var(--dsw-warn)" }}
-						aria-hidden
-					/>
-					<span style={{ fontSize: 13, fontWeight: 500, color: "var(--dsw-warn)", flex: "none" }}>
-						{oneLine.split("：")[0]}
-					</span>
-					<span style={{ fontSize: 13, color: "var(--dsw-label-caption)", flex: "none" }}>·</span>
-					{!open && (
-						<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
-							{oneLine.split("：").slice(1).join("：") || oneLine}
-						</span>
-					)}
-				</button>
-				{onStop && (
-					<button type="button" className="btn-outline" style={{ height: 24, padding: "0 10px", fontSize: 12, flex: "none" }} onClick={onStop}>
-						{t.stopRetry}
-					</button>
-				)}
-			</div>
-			{open && (
-				<pre
-					className="mb-1 ml-6 mt-1 whitespace-pre-wrap rounded-xl px-3 py-2"
-					style={{ background: "var(--dsw-hover)", fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-tertiary)", fontFamily: "inherit" }}
-				>
-					{text}
-				</pre>
-			)}
-		</div>
-	);
-}
-
-function IconContextRow() {
-	return (
-		<svg width={13} height={13} viewBox="0 0 16 16" fill="none" style={{ flex: "none" }}>
-			<path
-				d="M11.9512 1.13281C12.401 1.20666 12.8093 1.34164 13.1738 1.60645C13.4282 1.79137 13.6521 2.01609 13.8369 2.27051C14.1574 2.71187 14.2892 3.21614 14.3506 3.78223C14.4105 4.33532 14.4102 5.02658 14.4102 5.87305V10.0273C14.4102 10.8738 14.4105 11.5651 14.3506 12.1182C14.2892 12.6843 14.1574 13.1885 13.8369 13.6299C13.652 13.8843 13.4282 14.109 13.1738 14.2939C12.7324 14.6146 12.2273 14.7462 11.6611 14.8076C11.1081 14.8675 10.4166 14.8672 9.57031 14.8672H6.43164C5.58533 14.8672 4.89387 14.8675 4.34082 14.8076C3.77474 14.7463 3.27046 14.6144 2.8291 14.2939C2.57453 14.109 2.35003 13.8844 2.16504 13.6299C1.84444 13.1885 1.71272 12.6844 1.65137 12.1182C1.59147 11.5651 1.5918 10.8738 1.5918 10.0273V5.87305C1.5918 5.02655 1.59146 4.33533 1.65137 3.78223C1.71272 3.21606 1.84443 2.71191 2.16504 2.27051C2.35003 2.01596 2.57453 1.79141 2.8291 1.60645C3.19332 1.34202 3.60062 1.20669 4.0498 1.13281V2.56445C3.87191 2.61154 3.74906 2.66836 3.65137 2.73926C3.51583 2.83777 3.3964 2.95726 3.29785 3.09277C3.1794 3.25581 3.09143 3.4856 3.04297 3.93262C2.9931 4.39287 2.99219 4.99529 2.99219 5.87305V10.0273C2.99219 10.905 2.99312 11.5075 3.04297 11.9678C3.09142 12.4147 3.17943 12.6446 3.29785 12.8076C3.3964 12.9431 3.51583 13.0626 3.65137 13.1611C3.81441 13.2795 4.04437 13.3676 4.49121 13.416C4.95142 13.4658 5.55411 13.4668 6.43164 13.4668H9.57031C10.4479 13.4668 11.0505 13.4659 11.5107 13.416C11.9576 13.3675 12.1876 13.2796 12.3506 13.1611C12.4861 13.0626 12.6056 12.9431 12.7041 12.8076C12.8224 12.6446 12.9106 12.4146 12.959 11.9678C13.0088 11.5075 13.0098 10.905 13.0098 10.0273V5.87305C13.0098 4.99532 13.0088 4.39286 12.959 3.93262C12.9105 3.48579 12.8225 3.2558 12.7041 3.09277C12.6056 2.95727 12.4861 2.83778 12.3506 2.73926C12.2527 2.66816 12.1296 2.61064 11.9512 2.56348V1.13281Z"
-				fill="currentColor"
-			/>
-			<path d="M9.32227 11.4141H4.95508V10.2148H9.32227V11.4141Z" fill="currentColor" />
-			<path d="M11.0439 8.90039H4.95508V7.70117H11.0439V8.90039Z" fill="currentColor" />
-			<path
-				d="M8.59961 3.75781L9.70996 2.64746L10.5586 3.49609L8.49512 5.55957C8.22173 5.83266 7.77816 5.83285 7.50488 5.55957L5.44141 3.49512L6.28906 2.64746L7.40039 3.75781V1.09668H8.59961V3.75781Z"
-				fill="currentColor"
-			/>
-		</svg>
 	);
 }

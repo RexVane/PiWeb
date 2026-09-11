@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { NextResponse } from "next/server";
 import {
 	answerLogin,
@@ -14,12 +15,34 @@ import {
 
 export const dynamic = "force-dynamic";
 
+/** 1300+ 个模型的目录有 240KB～420KB；Next 的压缩层实测没有压这条响应，这里自己 gzip（浏览器透明解压） */
+function jsonMaybeGzip(req: Request, payload: unknown): Response {
+	const body = JSON.stringify(payload);
+	const accept = req.headers.get("accept-encoding") ?? "";
+	if (!/\bgzip\b/.test(accept) || body.length < 2048) {
+		return new Response(body, { headers: { "Content-Type": "application/json; charset=utf-8" } });
+	}
+	const gz = gzipSync(Buffer.from(body, "utf8"));
+	return new Response(new Uint8Array(gz), {
+		headers: { "Content-Type": "application/json; charset=utf-8", "Content-Encoding": "gzip", Vary: "Accept-Encoding", "Cache-Control": "no-store" },
+	});
+}
+
 export async function GET(req: Request) {
-	const custom = new URL(req.url).searchParams.get("custom") === "1";
+	const params = new URL(req.url).searchParams;
+	const custom = params.get("custom") === "1";
+	const full = custom || params.get("full") === "1";
 	try {
 		const data = await listModels();
 		const customProviders = custom ? await readCustomProviders() : null;
-		return NextResponse.json({ success: true, data: { ...data, customProviders } });
+		// 页面挂载只需要选模型用的字段（1300+ 个模型带 api/baseUrl/cost/input 有 400KB）；设置页用 custom=1 拿完整版
+		const models = full
+			? data.models
+			: data.models.map((m) => ({ provider: m.provider, id: m.id, name: m.name, reasoning: m.reasoning, thinkingLevels: m.thinkingLevels, contextWindow: m.contextWindow }));
+		const providers = full
+			? data.providers
+			: data.providers.map((p) => ({ id: p.id, name: p.name, authReady: p.authReady, builtIn: p.builtIn, modelCount: p.modelCount }));
+		return jsonMaybeGzip(req, { success: true, data: { providers, models, customProviders } });
 	} catch (err: any) {
 		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
 	}

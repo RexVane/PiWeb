@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
+import { getAgentDir } from "./pi";
 
 export interface FileEntry {
 	name: string;
@@ -114,7 +115,52 @@ export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Pr
 		binary: false,
 		truncated,
 		content: buffer.subarray(0, MAX_READ_BYTES).toString("utf8"),
-	};
+	}
+}
+
+// ---------- 拖拽上传（dsh attachment-local 语义：原样字节保存，模型经路径引用） ----------
+
+/** 单文件上传上限：50 MB（压缩包/日志等走这条链路；图片走既有 image 附件） */
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/** 文件名净化：剥目录成分与控制字符，限长；空名给占位 */
+function sanitizeUploadName(name: string): string {
+	const base = name.replace(/[\\/\u0000-\u001f\u007f]/g, "_").trim();
+	const trimmed = base.slice(0, 120);
+	return trimmed || "upload.bin";
+}
+
+/**
+ * 保存拖入的普通文件（非图片）：原样字节落盘到 ~/.pi/agent/web-uploads/，
+ * 返回绝对路径供消息引用（agent 用 read/bash 等工具访问）。
+ */
+export async function saveUpload(name: unknown, dataBase64: unknown): Promise<{ path: string; name: string; size: number }> {
+	if (typeof name !== "string" || typeof dataBase64 !== "string" || !dataBase64) throw new BoundaryError("missing upload payload");
+	const buffer = Buffer.from(dataBase64, "base64");
+	if (buffer.length === 0) throw new BoundaryError("empty upload");
+	if (buffer.length > MAX_UPLOAD_BYTES) throw new BoundaryError("file too large (max 100 MB)");
+
+	const safeName = sanitizeUploadName(name);
+	const dir = path.join(getAgentDir(), "web-uploads");
+	await fs.mkdir(dir, { recursive: true });
+	// 防碰撞：时间戳前缀 + 同名自增
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	let target = path.join(dir, `${stamp}_${safeName}`);
+	for (let i = 1; ; i += 1) {
+		try {
+			const handle = await fs.open(target, "wx");
+			await handle.writeFile(buffer);
+			await handle.close();
+			break;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+				target = path.join(dir, `${stamp}_${i}_${safeName}`);
+				continue;
+			}
+			throw error;
+		}
+	}
+	return { path: target, name: safeName, size: buffer.length };
 }
 
 /**

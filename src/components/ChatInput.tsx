@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
+	IconFileOutline16,
 	IconSendArrowUp14,
 	IconStopFill16,
 } from "@/components/icons";
@@ -18,7 +19,10 @@ import type { ImageAttachment } from "@/lib/types";
 export interface SlashCommand {
 	name: string;
 	desc: string;
-	kind: "builtin" | "template" | "skill";
+	/** builtin = Web 自己处理；skill / template / extension = 原样发给 pi，由 SDK 展开或执行 */
+	kind: "builtin" | "skill" | "template" | "extension";
+	/** 提示模板的参数提示（frontmatter argument-hint） */
+	argumentHint?: string;
 }
 
 export function ChatInput({
@@ -65,7 +69,7 @@ export function ChatInput({
 	authByProvider: Record<string, boolean>;
 	queue: { steering: string[]; followUp: string[] };
 	commands?: SlashCommand[];
-	onCommand?: (name: string) => void;
+	onCommand?: (name: string, args: string) => void;
 	onSend: (text: string, images: ImageAttachment[]) => void;
 	onSteer: (text: string, images: ImageAttachment[]) => void;
 	onFollowUp?: (text: string, images: ImageAttachment[]) => void;
@@ -82,6 +86,12 @@ export function ChatInput({
 	const imagesRef = useRef<ImageAttachment[]>([]);
 	const pendingReads = useRef<Promise<void>[]>([]);
 	const [attachmentError, setAttachmentError] = useState("");
+	/** 拖入的普通文件（非图片）：上传到 ~/.pi/agent/web-uploads，发送时以路径引用（dsh 附件语义） */
+	const [uploads, setUploads] = useState<Array<{ name: string; path: string; size: number }>>([]);
+	const uploadsRef = useRef<Array<{ name: string; path: string; size: number }>>([]);
+	const [uploadBusy, setUploadBusy] = useState(false);
+	const [dragActive, setDragActive] = useState(false);
+	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
 	const [cmdDismissed, setCmdDismissed] = useState(false);
@@ -136,9 +146,15 @@ export function ChatInput({
 			return;
 		}
 		if (entry.kind === "builtin") {
-			onCommand?.(entry.name);
+			onCommand?.(entry.name, args);
+		} else if (entry.kind === "template" && entry.argumentHint && !args) {
+			// 模板要参数：把 /name 留在输入框里等用户补参数，而不是直接发空参数
+			setText(`/${entry.name} `);
+			setCmdDismissed(true);
+			requestAnimationFrame(() => taRef.current?.focus());
+			return;
 		} else {
-			// prompt 模板 / 技能：交给 pi 展开执行
+			// 技能 / 模板 / 扩展命令：交给 pi 展开执行（SDK 的 prompt() 会识别 /skill:x、/template、扩展命令）
 			onSend(`/${entry.name}${args ? ` ${args}` : ""}`, []);
 		}
 		setText("");
@@ -164,39 +180,54 @@ export function ChatInput({
 				pendingReads.current = [];
 			}
 			const attachments = imagesRef.current;
-			if (!trimmed && attachments.length === 0) return;
+			const files = uploadsRef.current;
+			if (!trimmed && attachments.length === 0 && files.length === 0) return;
+			// 直接敲 "/compact 只留结论" 这类 Web 内置命令：走命令处理，不能当普通文本发给模型
+			if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0) {
+				const [head, ...rest] = trimmed.slice(1).split(/\s+/);
+				const builtin = (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
+				if (builtin) {
+					onCommand?.(builtin.name, rest.join(" "));
+					setText("");
+					setCmdDismissed(false);
+					requestAnimationFrame(autoSize);
+					return;
+				}
+			}
+			// 普通文件以路径行附在消息尾部，模型经 read/bash 等工具访问（dsh FileAttachmentRef 语义）
+			const compose = (base: string) =>
+				files.length ? `${base}${base ? "\n\n" : ""}${files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n")}` : base;
 			if (isStreaming) {
 				// Enter 键行为（设置）：排队发送 = followUp；插话 = steer
 				const behavior = localStorage.getItem("piweb.enterBehavior") ?? "queue";
-				if (behavior === "steer") onSteer(trimmed, attachments);
-				else if (onFollowUp) onFollowUp(trimmed, attachments);
-				else onSteer(trimmed, attachments);
-			} else onSend(trimmed, attachments);
+				if (behavior === "steer") onSteer(compose(trimmed), attachments);
+				else if (onFollowUp) onFollowUp(compose(trimmed), attachments);
+				else onSteer(compose(trimmed), attachments);
+			} else onSend(compose(trimmed), attachments);
 			setText("");
 			imagesRef.current = [];
 			setImages([]);
+			uploadsRef.current = [];
+			setUploads([]);
 			requestAnimationFrame(autoSize);
 		})();
 	};
 
-	const pickFiles = (files: FileList | null) => {
+	const pickFiles = (files: FileList | File[] | null) => {
 		if (!files) return;
 		for (const f of Array.from(files)) {
-			if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type)) {
-				setAttachmentError(t.imageTypeUnsupported);
-				continue;
-			}
-			if (f.size > 10 * 1024 * 1024) {
-				setAttachmentError(t.imageTooLarge);
-				continue;
-			}
-			const read = new Promise<void>((resolve) => {
-				const reader = new FileReader();
-				reader.onload = () => {
+			if (["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type)) {
+				if (f.size > 20 * 1024 * 1024) {
+					setAttachmentError(t.imageTooLarge);
+					continue;
+				}
+				const read = new Promise<void>((resolve) => {
+					const reader = new FileReader();
+					reader.onload = () => {
 					const dataUrl = String(reader.result);
 					const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
 					const next = imagesRef.current;
-					if (next.length >= 8) setAttachmentError(t.imageCountLimit);
+					if (next.length >= 20) setAttachmentError(t.imageCountLimit);
 					else {
 						imagesRef.current = [...next, { type: "image", data: base64, mimeType: f.type }];
 						setImages(imagesRef.current);
@@ -207,10 +238,91 @@ export function ChatInput({
 				reader.readAsDataURL(f);
 			});
 			pendingReads.current.push(read);
+			} else {
+				// 非图片文件：上传到本机 uploads 目录，发送时以路径引用
+				void uploadFile(f);
+			}
 		}
 	};
 
-	const hasDraft = text.trim().length > 0 || images.length > 0;
+	const uploadFile = async (f: File) => {
+		if (f.size > 100 * 1024 * 1024) {
+			setAttachmentError(t.uploadTooLarge);
+			return;
+		}
+		if (uploadsRef.current.length >= 16) {
+			setAttachmentError(t.uploadCountLimit);
+			return;
+		}
+		setUploadBusy(true);
+		setAttachmentError("");
+		try {
+			const dataUrl = await new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve(String(reader.result));
+				reader.onerror = () => reject(reader.error);
+				reader.readAsDataURL(f);
+			});
+			const r = await fetch("/api/files", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "upload", name: f.name, data: dataUrl.slice(dataUrl.indexOf(",") + 1) }),
+			});
+			const j = await r.json();
+			if (!j.success) throw new Error(j.error || "upload failed");
+			uploadsRef.current = [...uploadsRef.current, { name: j.data.name, path: j.data.path, size: j.data.size }];
+			setUploads(uploadsRef.current);
+		} catch (e) {
+			setAttachmentError(`${t.uploadFailed}：${e instanceof Error ? e.message : String(e)}`);
+		} finally {
+			setUploadBusy(false);
+		}
+	};
+
+	// 全窗口拖放（照 dsh ComposerAttachments）：拖文件悬停时整窗高亮，任意位置松开即接收
+	useEffect(() => {
+		const withFiles = (e: DragEvent) => e.dataTransfer !== null && e.dataTransfer.types.includes("Files");
+		const reset = () => {
+			dragDepth.current = 0;
+			setDragActive(false);
+		};
+		const onDragEnter = (e: DragEvent) => {
+			if (!withFiles(e)) return;
+			e.preventDefault();
+			dragDepth.current += 1;
+			setDragActive(true);
+		};
+		const onDragOver = (e: DragEvent) => {
+			if (!withFiles(e)) return;
+			e.preventDefault();
+		};
+		const onDragLeave = (e: DragEvent) => {
+			if (!withFiles(e)) return;
+			dragDepth.current = Math.max(0, dragDepth.current - 1);
+			if (dragDepth.current === 0) setDragActive(false);
+		};
+		const onDrop = (e: DragEvent) => {
+			if (e.dataTransfer === null) return;
+			e.preventDefault();
+			reset();
+			pickFiles(e.dataTransfer.files);
+		};
+		document.addEventListener("dragenter", onDragEnter);
+		document.addEventListener("dragover", onDragOver);
+		document.addEventListener("dragleave", onDragLeave);
+		document.addEventListener("drop", onDrop);
+		window.addEventListener("dragend", reset);
+		return () => {
+			document.removeEventListener("dragenter", onDragEnter);
+			document.removeEventListener("dragover", onDragOver);
+			document.removeEventListener("dragleave", onDragLeave);
+			document.removeEventListener("drop", onDrop);
+			window.removeEventListener("dragend", reset);
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0;
 
 	return (
 		<div ref={wrapRef} className="relative w-full">
@@ -238,8 +350,11 @@ export function ChatInput({
 							<span style={{ fontSize: 14, fontWeight: 500, color: "var(--dsw-label-primary)", flex: "none" }}>{c.name}</span>
 							{c.kind !== "builtin" && (
 								<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)", background: "var(--dsw-selector)", flex: "none" }}>
-									{c.kind === "template" ? t.promptType : t.skillType}
+									{c.kind === "skill" ? t.skillType : c.kind === "template" ? t.promptType : t.extensionCmdType}
 								</span>
+							)}
+							{c.argumentHint && (
+								<span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", flex: "none" }}>{c.argumentHint}</span>
 							)}
 							<span className="truncate" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
 								{c.desc}
@@ -249,7 +364,7 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨 */}
+			{/* 附件轨：图片 */}
 			{images.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-2 px-1">
 					{images.map((img, i) => (
@@ -272,7 +387,36 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 卡片（玻璃态） */}
+			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
+			{uploads.length > 0 && (
+				<div className="mb-2 flex flex-wrap gap-2 px-1">
+					{uploads.map((f, i) => (
+						<div
+							key={f.path}
+							className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
+							style={{ border: "0.5px solid var(--dsw-border-l2)", background: "var(--dsw-hover)" }}
+							title={f.path}
+						>
+							<IconFileOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+							<span className="max-w-[180px] truncate" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>{f.name}</span>
+							<span style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtUploadSize(f.size)}</span>
+							<button
+								className="flex h-5 w-5 items-center justify-center rounded-full text-[10px]"
+								style={{ color: "var(--dsw-label-caption)" }}
+								onClick={() => {
+									uploadsRef.current = uploadsRef.current.filter((_, j) => j !== i);
+									setUploads(uploadsRef.current);
+								}}
+								aria-label="remove"
+							>
+								✕
+							</button>
+						</div>
+					))}
+				</div>
+			)}
+
+			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
 			<div
 				className="relative w-full"
 				style={{
@@ -282,14 +426,7 @@ export function ChatInput({
 					border: "0.5px solid var(--dsw-border-l1)",
 				}}
 			>
-				<div
-					className="px-4 pt-3"
-					onDragOver={(e) => e.preventDefault()}
-					onDrop={(e) => {
-						e.preventDefault();
-						pickFiles(e.dataTransfer.files);
-					}}
-				>
+				<div className="px-4 pt-3">
 					<textarea
 						ref={taRef}
 						value={text}
@@ -298,7 +435,7 @@ export function ChatInput({
 						placeholder={!disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						suppressHydrationWarning
 						className="block w-full resize-none"
-						style={{ fontSize: "var(--dsh-content-font-size)", lineHeight: 1.55 }}
+						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
 							onChange={(e) => {
 							setText(e.target.value);
 									setCmdDismissed(false);
@@ -408,6 +545,41 @@ export function ChatInput({
 					)}
 				</div>
 			</div>
+
+			{/* 全窗口拖放遮罩（dsh：拖文件悬停时高亮，松开即添加） */}
+			{dragActive && (
+				<div
+					className="pointer-events-none fixed inset-0 z-[95] flex items-center justify-center"
+					style={{ background: "color-mix(in srgb, var(--dsw-bg-base) 65%, transparent)" }}
+				>
+					<div
+						className="flex flex-col items-center gap-3 rounded-3xl px-12 py-10"
+						style={{
+							border: "2px dashed var(--dsw-accent)",
+							background: "var(--dsw-glass-popover)",
+							boxShadow: "var(--dsw-elevation-prominent)",
+						}}
+					>
+						<IconFileOutline16 size={32} style={{ color: "var(--dsw-accent)" }} />
+						<div style={{ fontSize: 15, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
+							{uploadBusy ? t.uploading : t.dropToAttach}
+						</div>
+						<div style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.dropToAttachHint}</div>
+						<div
+							className="rounded-full px-3 py-1"
+							style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)", lineHeight: "18px" }}
+						>
+							{t.dropLimits}
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
+}
+
+function fmtUploadSize(bytes: number): string {
+	if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+	if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
+	return `${bytes}B`;
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { BoundaryError } from "@/lib/path-security";
-import { listWorkspaceDir, openInEditor, readWorkspaceFile } from "@/lib/files-service";
+import { listWorkspaceDir, openInEditor, readWorkspaceFile, saveUpload } from "@/lib/files-service";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +20,15 @@ export async function GET(req: Request) {
 	}
 }
 
-/** POST { action: "open", cwd, path, line? }：在本机编辑器打开文件 */
+/** POST { action: "open", cwd, path, line? }：编辑器打开；{ action: "upload", name, data }：拖拽上传普通文件 */
 export async function POST(req: Request) {
 	try {
-		const body = (await req.json()) as { action?: string; cwd?: unknown; path?: unknown; line?: unknown };
+		const body = (await req.json()) as { action?: string; cwd?: unknown; path?: unknown; line?: unknown; name?: unknown; data?: unknown };
 		if (body.action === "open") {
 			return NextResponse.json({ success: true, data: await openInEditor(body.cwd, body.path, body.line) });
+		}
+		if (body.action === "upload") {
+			return NextResponse.json({ success: true, data: await saveUpload(body.name, body.data) });
 		}
 		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 	} catch (err: any) {

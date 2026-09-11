@@ -38,6 +38,8 @@ export function parseUnifiedDiff(text: string): DiffLine[] | null {
 			continue;
 		}
 		if (!inHunk) continue;
+		// 合法的 hunk 行都带前缀（+ / - / 空格 / 反斜杠）；空串只会是 patch 末尾换行切出来的幽灵行
+		if (raw === "") continue;
 		if (raw.startsWith("+")) out.push({ kind: "add", new: n++, text: raw.slice(1) });
 		else if (raw.startsWith("-")) out.push({ kind: "del", old: o++, text: raw.slice(1) });
 		else if (raw.startsWith("\\")) continue;
@@ -75,11 +77,13 @@ export function DiffView({ lines }: { lines: DiffLine[] }) {
 				}
 				const num = l.kind === "hunk" ? "" : String(l.kind === "del" ? l.old : l.new).padStart(width);
 				const color = l.kind === "add" ? "var(--dsw-success)" : l.kind === "del" ? "var(--dsw-danger)" : "var(--dsw-label-tertiary)";
-				const bg = l.kind === "add" ? "rgba(34,197,94,.10)" : l.kind === "del" ? "rgba(236,19,19,.10)" : "transparent";
+				// 新增绿、删除红：底色 + 左侧 2px 色条，扫一眼就分得出加了什么减了什么
+				const bg = l.kind === "add" ? "rgba(34,197,94,.14)" : l.kind === "del" ? "rgba(236,19,19,.12)" : "transparent";
+				const bar = l.kind === "add" ? "inset 2px 0 0 var(--dsw-success)" : l.kind === "del" ? "inset 2px 0 0 var(--dsw-danger)" : undefined;
 				const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ";
 				return (
-					<div key={i} style={{ background: bg, color: l.kind === "ctx" ? "var(--dsw-label-secondary)" : color, padding: "0 8px", margin: "0 -8px" }}>
-						<span style={{ color: "var(--dsw-label-caption)", userSelect: "none" }}>{num} {sign} </span>
+					<div key={i} style={{ background: bg, boxShadow: bar, color: l.kind === "ctx" ? "var(--dsw-label-secondary)" : color, padding: "0 8px", margin: "0 -8px" }}>
+						<span style={{ color: l.kind === "ctx" ? "var(--dsw-label-caption)" : color, opacity: l.kind === "ctx" ? 1 : 0.8, userSelect: "none" }}>{num} {sign} </span>
 						{l.text}
 					</div>
 				);

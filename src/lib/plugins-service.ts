@@ -3,7 +3,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getAgentDir, getPackageManager, getResourceLoader, invalidateResourceLoaders, reloadAllLoaders, resourceLoaderReady } from "./pi";
+import { getAgentDir, getPackageManager, getResourceLoader, getSettingsManager, reloadAllLoaders, resourceLoaderReady } from "./pi";
+import { reloadSessionsForCwd } from "./agent-manager";
 
 export interface PackageView {
 	source: string;
@@ -17,6 +18,31 @@ export interface ExtensionView {
 	name: string;
 	path: string;
 	disabled: boolean;
+	/** 加载失败的原因（语法错误、依赖缺失等），来自 pi 资源加载器 */
+	error?: string;
+}
+
+/**
+ * pi 的启用/停用语义（core/package-manager.js isEnabledByOverrides）：
+ * settings.extensions 里 `-<path>` 强制排除、`+<path>` 强制包含，路径相对于该 settings 所在的基目录。
+ * 之前 PiWeb 写的 disabledExtensions 键 pi 根本不读，开关是假的。
+ */
+function extensionPattern(extPath: string, baseDir: string): string {
+	const rel = path.relative(baseDir, extPath).replace(/\\/g, "/");
+	return rel && !rel.startsWith("..") ? rel : extPath.replace(/\\/g, "/");
+}
+
+function isForceExcluded(extPath: string, patterns: string[], baseDir: string): boolean {
+	const rel = path.relative(baseDir, extPath).replace(/\\/g, "/");
+	const abs = extPath.replace(/\\/g, "/");
+	const norm = (p: string) => (p.startsWith("./") ? p.slice(2) : p).replace(/\\/g, "/");
+	return patterns.some((p) => p.startsWith("-") && [rel, abs].includes(norm(p.slice(1))));
+}
+
+/** 全部变更后的统一收尾：加载器就地重载 + 活跃会话 session.reload() + 广播新清单；全局变更影响所有目录 */
+async function applyResourceChange(cwd: string, scope: "user" | "project"): Promise<void> {
+	await reloadAllLoaders();
+	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
 }
 
 async function readSettingsFile(filePath: string): Promise<Record<string, unknown>> {
@@ -65,8 +91,9 @@ export async function listPackages(cwd: string): Promise<PackageView[]> {
 	const globalSettings = await readSettingsFile(path.join(getAgentDir(), "settings.json"));
 	const projectSettings = await readSettingsFile(path.join(cwd, ".pi", "settings.json"));
 
-	const userDisabled = Array.isArray(globalSettings.disabledPackages) ? (globalSettings.disabledPackages as string[]) : [];
-	const projectDisabled = Array.isArray(projectSettings.disabledPackages) ? (projectSettings.disabledPackages as string[]) : [];
+	const sourceOf = (p: unknown): string => (typeof p === "string" ? p : String((p as { source?: string } | null)?.source ?? ""));
+	const userDisabled = (Array.isArray(globalSettings.disabledPackages) ? globalSettings.disabledPackages : []).map(sourceOf).filter(Boolean);
+	const projectDisabled = (Array.isArray(projectSettings.disabledPackages) ? projectSettings.disabledPackages : []).map(sourceOf).filter(Boolean);
 
 	const out: PackageView[] = [];
 	const seen = new Set<string>();
@@ -107,36 +134,39 @@ export async function listLoadedExtensions(cwd: string): Promise<ExtensionView[]
 	const loader = getResourceLoader(cwd);
 	const result = loader.getExtensions() as unknown as {
 		extensions?: Array<{ path?: string; name?: string }>;
+		errors?: Array<{ path: string; error: string }>;
 	};
-
-	const globalSettings = await readSettingsFile(path.join(getAgentDir(), "settings.json"));
-	const projectSettings = await readSettingsFile(path.join(cwd, ".pi", "settings.json"));
-
-	const disabledExts = new Set<string>([
-		...(Array.isArray(globalSettings.disabledExtensions) ? (globalSettings.disabledExtensions as string[]) : []),
-		...(Array.isArray(projectSettings.disabledExtensions) ? (projectSettings.disabledExtensions as string[]) : []),
-	]);
+	const sm = getSettingsManager(cwd);
+	const globalPatterns = sm.getGlobalSettings().extensions ?? [];
+	const projectPatterns = sm.getProjectSettings().extensions ?? [];
+	const agentDir = getAgentDir();
+	const projectBase = path.join(cwd, ".pi");
 
 	const out: ExtensionView[] = [];
 	const seenPaths = new Set<string>();
-
 	for (const e of result?.extensions ?? []) {
 		const p = String(e.path ?? "");
 		if (!p) continue;
 		const name = String(e.name ?? path.basename(p).replace(/\.(ts|js)$/, ""));
-		const isDisabled = disabledExts.has(p) || disabledExts.has(name);
 		seenPaths.add(p);
-		out.push({ name, path: p, disabled: isDisabled });
+		out.push({ name, path: p, disabled: false });
 	}
-
-	for (const p of disabledExts) {
-		if (!seenPaths.has(p)) {
-			seenPaths.add(p);
-			const name = path.basename(p).replace(/\.(ts|js)$/, "");
-			out.push({ name, path: p, disabled: true });
-		}
+	for (const err of result?.errors ?? []) {
+		if (seenPaths.has(err.path)) continue;
+		seenPaths.add(err.path);
+		out.push({ name: path.basename(err.path).replace(/\.(ts|js)$/, ""), path: err.path, disabled: false, error: err.error });
 	}
-
+	// 被 `-path` 排除的扩展不会出现在 loader 结果里：从两份 settings 的模式里补出来，让用户能重新启用
+	const excluded: Array<{ pattern: string; base: string }> = [
+		...globalPatterns.filter((p) => p.startsWith("-")).map((p) => ({ pattern: p.slice(1), base: agentDir })),
+		...projectPatterns.filter((p) => p.startsWith("-")).map((p) => ({ pattern: p.slice(1), base: projectBase })),
+	];
+	for (const { pattern, base } of excluded) {
+		const abs = path.isAbsolute(pattern) ? pattern : path.resolve(base, pattern);
+		if (seenPaths.has(abs)) continue;
+		seenPaths.add(abs);
+		out.push({ name: path.basename(abs).replace(/\.(ts|js)$/, ""), path: abs, disabled: true });
+	}
 	return out;
 }
 
@@ -148,38 +178,22 @@ export async function togglePackage(
 ): Promise<void> {
 	const settingsPath = scope === "project" ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	const settings = await readSettingsFile(settingsPath);
-
-	const packages: any[] = Array.isArray(settings.packages) ? settings.packages : [];
-	const disabledPackages: string[] = Array.isArray(settings.disabledPackages) ? (settings.disabledPackages as string[]) : [];
+	const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
+	const packages: unknown[] = Array.isArray(settings.packages) ? settings.packages : [];
+	// 停用的包原样存到 disabledPackages（PiWeb 私有键，pi 不读；保留对象形式的过滤配置，启用时原样放回）
+	const disabledPackages: unknown[] = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
 
 	if (disable) {
-		// 从 packages 移至 disabledPackages
-		const filteredPackages = packages.filter((p) => {
-			const s = typeof p === "string" ? p : p?.source;
-			return s !== source;
-		});
-		if (!disabledPackages.includes(source)) {
-			disabledPackages.push(source);
-		}
-		settings.packages = filteredPackages;
-		settings.disabledPackages = disabledPackages;
+		const moved = packages.filter((p) => sourceOf(p) === source);
+		settings.packages = packages.filter((p) => sourceOf(p) !== source);
+		settings.disabledPackages = [...disabledPackages.filter((p) => sourceOf(p) !== source), ...(moved.length ? moved : [source])];
 	} else {
-		// 从 disabledPackages 移回 packages
-		const filteredDisabled = disabledPackages.filter((s) => s !== source);
-		const existsInPackages = packages.some((p) => {
-			const s = typeof p === "string" ? p : p?.source;
-			return s === source;
-		});
-		if (!existsInPackages) {
-			packages.push(source);
-		}
-		settings.packages = packages;
-		settings.disabledPackages = filteredDisabled;
+		const restored = disabledPackages.filter((p) => sourceOf(p) === source);
+		settings.disabledPackages = disabledPackages.filter((p) => sourceOf(p) !== source);
+		settings.packages = packages.some((p) => sourceOf(p) === source) ? packages : [...packages, ...(restored.length ? restored : [source])];
 	}
-
 	await writeSettingsFile(settingsPath, settings);
-	invalidateResourceLoaders();
-	await reloadAllLoaders();
+	await applyResourceChange(cwd, scope);
 }
 
 export async function toggleExtension(
@@ -187,70 +201,53 @@ export async function toggleExtension(
 	disable: boolean,
 	cwd: string
 ): Promise<void> {
-	const norm = extPath.replace(/\\/g, "/");
-	const isProject = norm.includes(cwd.replace(/\\/g, "/"));
-	const settingsPath = isProject ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	const settings = await readSettingsFile(settingsPath);
-
-	const disabledExtensions: string[] = Array.isArray(settings.disabledExtensions)
-		? (settings.disabledExtensions as string[])
-		: [];
-
-	if (disable) {
-		if (!disabledExtensions.includes(extPath)) {
-			disabledExtensions.push(extPath);
-		}
-	} else {
-		const idx = disabledExtensions.indexOf(extPath);
-		if (idx !== -1) disabledExtensions.splice(idx, 1);
+	const norm = extPath.replace(/\\/g, "/").toLowerCase();
+	const isProject = norm.startsWith(`${path.resolve(cwd).replace(/\\/g, "/").toLowerCase()}/`);
+	const baseDir = isProject ? path.join(cwd, ".pi") : getAgentDir();
+	const sm = getSettingsManager(cwd);
+	const current = (isProject ? sm.getProjectSettings().extensions : sm.getGlobalSettings().extensions) ?? [];
+	const pattern = extensionPattern(extPath, baseDir);
+	const withoutOurs = current.filter((p) => !(p.startsWith("-") && [pattern, extPath.replace(/\\/g, "/")].includes((p.slice(1).startsWith("./") ? p.slice(3) : p.slice(1)).replace(/\\/g, "/"))));
+	const next = disable ? [...withoutOurs, `-${pattern}`] : withoutOurs;
+	if (!disable && isForceExcluded(extPath, next, baseDir)) {
+		// 还有别的形式的排除模式（例如绝对路径），保留 pi 语义：再加一个 +path 强制包含也压不过 -path，直接删掉匹配项
+		for (let i = next.length - 1; i >= 0; i -= 1) if (isForceExcluded(extPath, [next[i]], baseDir)) next.splice(i, 1);
 	}
-
-	settings.disabledExtensions = disabledExtensions;
-	await writeSettingsFile(settingsPath, settings);
-	invalidateResourceLoaders();
-	await reloadAllLoaders();
+	if (isProject) sm.setProjectExtensionPaths(next);
+	else sm.setExtensionPaths(next);
+	await applyResourceChange(cwd, isProject ? "project" : "user");
 }
 
 export async function installPackage(source: string, local: boolean, cwd: string): Promise<void> {
 	const pm = getPackageManager(cwd);
 	await pm.installAndPersist(source, { local });
-	invalidateResourceLoaders();
-	await reloadAllLoaders();
+	await applyResourceChange(cwd, local ? "project" : "user");
 }
 
 export async function removePackage(source: string, local: boolean, cwd: string): Promise<boolean> {
 	const pm = getPackageManager(cwd);
 	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	const settings = await readSettingsFile(settingsPath);
-	if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.includes(source)) {
-		settings.disabledPackages = (settings.disabledPackages as string[]).filter((s) => s !== source);
+	const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
+	if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some((p) => sourceOf(p) === source)) {
+		settings.disabledPackages = settings.disabledPackages.filter((p) => sourceOf(p) !== source);
 		await writeSettingsFile(settingsPath, settings);
 	}
-
-	let removed = false;
-	try {
-		removed = await pm.removeAndPersist(source, { local });
-	} catch {
-		try {
-			await pm.remove(source, { local });
-			removed = true;
-		} catch {
-			/* ignore */
-		}
-	}
-	invalidateResourceLoaders();
-	await reloadAllLoaders();
+	// 卸载失败必须让界面知道（之前这里把异常吞掉还返回成功）
+	const removed = await pm.removeAndPersist(source, { local });
+	await applyResourceChange(cwd, local ? "project" : "user");
 	return removed;
 }
 
 export async function updatePackages(source: string | undefined, cwd: string): Promise<void> {
 	const pm = getPackageManager(cwd);
 	await pm.update(source);
-	invalidateResourceLoaders();
-	await reloadAllLoaders();
+	await applyResourceChange(cwd, "user");
 }
 
-/** 热重载全部扩展（pi /reload 等价物） */
-export async function reloadExtensions(): Promise<number> {
-	return reloadAllLoaders();
+/** 热重载全部扩展（pi /reload 等价物）：加载器 + 所有活跃会话 */
+export async function reloadExtensions(cwd?: string): Promise<{ loaders: number; sessions: number }> {
+	const loaders = (await reloadAllLoaders()).length;
+	const sessions = await reloadSessionsForCwd(cwd);
+	return { loaders, sessions };
 }

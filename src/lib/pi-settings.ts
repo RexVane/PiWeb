@@ -4,7 +4,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getAgentDir } from "./pi";
+import { getAgentDir, reloadSettingsManagers } from "./pi";
 
 export interface CompactionSettings {
 	enabled: boolean;
@@ -62,4 +62,6 @@ export async function patchPiSettings(patch: { compaction?: Partial<CompactionSe
 	if (patch.compaction) raw.compaction = { ...cur.compaction, ...patch.compaction };
 	if (patch.retry) raw.retry = { ...cur.retry, ...patch.retry };
 	await fs.writeFile(file, JSON.stringify(raw, null, "\t"), "utf8");
+	// 正在运行的会话每次压缩/重试都从 SettingsManager 读：让它们重新读盘，改动立即生效
+	await reloadSettingsManagers();
 }

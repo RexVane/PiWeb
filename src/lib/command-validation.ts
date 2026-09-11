@@ -10,19 +10,22 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"setModel",
 	"setThinkingLevel",
 	"setToolPreset",
+	"setActiveTools",
 	"rename",
 	"fork",
 	"cycleModel",
 	"navigate",
 	"clearQueue",
+	"extensionUiResponse",
+	"reload",
 ]);
 const TOOL_PRESETS = new Set<ToolPreset>(["readonly", "standard", "full"]);
 const STREAMING_BEHAVIORS = new Set(["steer", "followUp"]);
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_TEXT = 1_000_000;
-const MAX_IMAGES = 8;
-const MAX_IMAGE_BASE64 = 14_000_000;
-const MAX_IMAGES_BASE64 = 42_000_000;
+const MAX_IMAGES = 20;
+const MAX_IMAGE_BASE64 = 28_000_000; // dsh: 单图 20MB
+const MAX_IMAGES_BASE64 = 268_000_000; // dsh: 单条消息图片总量 200MB
 
 export type CommandParseResult = { ok: true; command: AgentCommand } | { ok: false; error: string };
 
@@ -82,10 +85,29 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 			if (raw.direction !== "forward" && raw.direction !== "backward") throw new Error("invalid cycle direction");
 			command.direction = raw.direction;
 		}
+		if (raw.names !== undefined) {
+			// setActiveTools 的目标工具名列表：数量与长度上限防滥用（未知名字由 agent-manager 求交集丢弃）
+			if (!Array.isArray(raw.names) || raw.names.length === 0 || raw.names.length > 64 || raw.names.some((n) => typeof n !== "string" || !n || n.length > 100)) {
+				throw new Error("names must be a non-empty array of tool names");
+			}
+			command.names = raw.names as string[];
+		}
 
+		if (raw.requestId !== undefined) command.requestId = optionalText(raw.requestId, "requestId");
+		if (raw.value !== undefined) command.value = optionalText(raw.value, "value");
+		if (raw.confirmed !== undefined) {
+			if (typeof raw.confirmed !== "boolean") throw new Error("confirmed must be a boolean");
+			command.confirmed = raw.confirmed;
+		}
+		if (raw.cancelled !== undefined) {
+			if (typeof raw.cancelled !== "boolean") throw new Error("cancelled must be a boolean");
+			command.cancelled = raw.cancelled;
+		}
+		if (command.cmd === "extensionUiResponse" && !command.requestId) throw new Error("requestId is required");
 		if (command.cmd === "setModel" && (!command.provider || !command.modelId)) throw new Error("provider and modelId are required");
 		if (command.cmd === "setThinkingLevel" && !command.level) throw new Error("level is required");
 		if (command.cmd === "setToolPreset" && !command.preset) throw new Error("preset is required");
+		if (command.cmd === "setActiveTools" && !command.names) throw new Error("names are required");
 		if (command.cmd === "navigate" && !command.entryId) throw new Error("entryId is required");
 		return { ok: true, command };
 	} catch (error) {

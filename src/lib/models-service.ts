@@ -45,6 +45,14 @@ export interface DiscoveredModel {
 
 let builtInProviderIdsPromise: Promise<Set<string>> | null = null;
 
+/** 目录短缓存：页面挂载与设置关闭都会拉一次；认证探测（每个供应商一次网络往返）不必秒级重复 */
+let listCache: { at: number; value: Promise<{ providers: ProviderView[]; models: ModelView[] }> } | null = null;
+const LIST_TTL_MS = 5_000;
+
+export function invalidateModelList(): void {
+	listCache = null;
+}
+
 /** Read the unmodified SDK catalog through its public modelsPath:null option. */
 function getBuiltInProviderIds(): Promise<Set<string>> {
 	if (!builtInProviderIdsPromise) {
@@ -63,37 +71,58 @@ function envKeyOf(providerId: string): string | null {
 	return null;
 }
 
-export async function listModels(): Promise<{
+export function listModels(): Promise<{
+	providers: ProviderView[];
+	models: ModelView[];
+}> {
+	if (listCache && Date.now() - listCache.at < LIST_TTL_MS) return listCache.value;
+	const value = listModelsUncached().catch((error) => {
+		listCache = null;
+		throw error;
+	});
+	listCache = { at: Date.now(), value };
+	return value;
+}
+
+async function listModelsUncached(): Promise<{
 	providers: ProviderView[];
 	models: ModelView[];
 }> {
 	const rt = await getModelRuntime();
 	const builtInProviderIds = await getBuiltInProviderIds();
-	const providers = rt.getProviders();
+	const providers = rt.getProviders() as any[];
 	const out: ProviderView[] = [];
 	const models: ModelView[] = [];
-	for (const p of providers as any[]) {
-		const pid = String(p.id ?? p.name ?? "");
-		if (!pid) continue;
-		let auth: any = null;
-		try {
-			auth = rt.getProviderAuthStatus(pid);
-		} catch {
-			auth = null;
-		}
-		const authFastPath = rt.hasConfiguredAuth(pid);
-		let authReady = false;
-		let resolvedAuthSource: string | undefined;
-		let authError: string | undefined;
-		if (auth?.configured === true || authFastPath) {
+	// 认证探测逐个 await 时，N 个已配置供应商就是 N 次串行网络往返；并发做，单个超时不拖累整体
+	const checks = await Promise.all(
+		providers.map(async (p) => {
+			const pid = String(p.id ?? p.name ?? "");
+			if (!pid) return null;
+			let auth: any = null;
 			try {
-				const checked = await rt.checkAuth(pid, { signal: AbortSignal.timeout(5000) });
-				authReady = checked !== undefined;
-				resolvedAuthSource = checked?.source;
-			} catch (error) {
-				authError = error instanceof Error ? error.message : String(error);
+				auth = rt.getProviderAuthStatus(pid);
+			} catch {
+				auth = null;
 			}
-		}
+			const authFastPath = rt.hasConfiguredAuth(pid);
+			let authReady = false;
+			let resolvedAuthSource: string | undefined;
+			let authError: string | undefined;
+			if (auth?.configured === true || authFastPath) {
+				try {
+					const checked = await rt.checkAuth(pid, { signal: AbortSignal.timeout(5000) });
+					authReady = checked !== undefined;
+					resolvedAuthSource = checked?.source;
+				} catch (error) {
+					authError = error instanceof Error ? error.message : String(error);
+				}
+			}
+			return { pid, p, auth, authFastPath, authReady, resolvedAuthSource, authError };
+		}),
+	);
+	for (const c of checks) {
+		if (!c) continue;
+		const { pid, p, auth, authFastPath, authReady, resolvedAuthSource, authError } = c;
 		const list = rt.getModels(pid) as any[];
 		const authTypes: Array<"api_key" | "oauth"> = [];
 		if (p.auth?.apiKey) authTypes.push("api_key");
@@ -171,6 +200,7 @@ export async function setApiKey(providerId: string, apiKey: string): Promise<voi
 		pl.done = true;
 		pl.prompt = null;
 		pl.finishedAt = Date.now();
+		invalidateModelList();
 	} catch (error) {
 		pl.done = true;
 		pl.error = String((error as any)?.message ?? error);
@@ -183,6 +213,7 @@ export async function setApiKey(providerId: string, apiKey: string): Promise<voi
 export async function removeApiKey(providerId: string): Promise<void> {
 	const rt = await getModelRuntime();
 	await rt.logout(providerId);
+	invalidateModelList();
 }
 
 /** 已存密钥回退：编辑表单的 key 框为空（「留空保持不变」）时，从这里取。 */
@@ -324,6 +355,7 @@ export async function startLogin(providerId: string): Promise<void> {
 			pl.done = true;
 			pl.prompt = null;
 			pl.finishedAt = Date.now();
+			invalidateModelList();
 		})
 		.catch((err: any) => {
 			pl.done = true;
@@ -488,4 +520,5 @@ export async function writeCustomProviders(content: string): Promise<void> {
 	}
 	await fs.writeFile(modelsJsonPath(), JSON.stringify(parsed, null, 2), "utf8");
 	resetModelRuntime();
+	invalidateModelList();
 }

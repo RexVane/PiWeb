@@ -28,6 +28,18 @@ export interface ToolCardState {
 	endedAt?: number;
 }
 
+/** 扩展发来的、需要浏览器应答的对话框（对应 pi RPC 的 extension_ui_request） */
+export interface ExtensionDialog {
+	id: string;
+	method: "select" | "confirm" | "input";
+	title: string;
+	message?: string;
+	options?: string[];
+	placeholder?: string;
+	timeout?: number;
+	ts: number;
+}
+
 export interface PiWebState {
 	snapshot: WebSnapshot | null;
 	messages: WebMessage[];
@@ -37,6 +49,14 @@ export interface PiWebState {
 	error: string | null;
 	/** 自动重试通知（随消息流显示的折叠行，流结束清除） */
 	retryNotice: string | null;
+	/** 扩展对话框队列（按到达顺序，一次显示一个） */
+	extensionDialogs: ExtensionDialog[];
+	/** 扩展通知（notify），显示几秒后消失 */
+	extensionNotices: { id: string; message: string; type: "info" | "warning" | "error"; ts: number }[];
+	/** 扩展设的页脚状态文本（setStatus） */
+	extensionStatuses: Record<string, string>;
+	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
+	workingMessage: string | null;
 }
 
 export interface SessionListItem extends SessionSummary {
@@ -49,27 +69,30 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 	const s = { ...state };
 	switch (evt.type) {
 		case "delta": {
-			// 增量追加到最后一条 assistant 消息的 content[contentIndex]
+			// 增量追加到正在生成的那条 assistant（stopReason=pending）；错过了 start（中途订阅）就先补一条占位
 			const msgs = [...s.messages];
-			for (let i = msgs.length - 1; i >= 0; i--) {
-				if (msgs[i].role === "assistant") {
-					const m = { ...msgs[i] };
-					const content = [...m.content];
-					while (content.length <= evt.contentIndex) content.push({ type: "text", text: "" });
-					const c: any = { ...content[evt.contentIndex] };
-					if (evt.kind === "text" && c.type !== "text") {
-						content[evt.contentIndex] = { type: "text", text: evt.delta };
-					} else if (evt.kind === "thinking") {
-						if (c.type !== "thinking") content[evt.contentIndex] = { type: "thinking", thinking: evt.delta };
-						else c.thinking = (c.thinking ?? "") + evt.delta, content[evt.contentIndex] = c;
-					} else if (c.type === "text") {
-						c.text = (c.text ?? "") + evt.delta;
-						content[evt.contentIndex] = c;
-					}
-					m.content = content;
-					msgs[i] = m;
-					break;
+			let i = msgs.length - 1;
+			while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
+			if (i < 0 || msgs[i].role !== "assistant" || (msgs[i].stopReason ?? "pending") !== "pending") {
+				msgs.push({ role: "assistant", content: [], stopReason: "pending", timestamp: evt.ts });
+				i = msgs.length - 1;
+			}
+			{
+				const m = { ...msgs[i] };
+				const content = [...m.content];
+				while (content.length <= evt.contentIndex) content.push({ type: "text", text: "" });
+				const c: any = { ...content[evt.contentIndex] };
+				if (evt.kind === "text" && c.type !== "text") {
+					content[evt.contentIndex] = { type: "text", text: evt.delta };
+				} else if (evt.kind === "thinking") {
+					if (c.type !== "thinking") content[evt.contentIndex] = { type: "thinking", thinking: evt.delta };
+					else c.thinking = (c.thinking ?? "") + evt.delta, content[evt.contentIndex] = c;
+				} else if (c.type === "text") {
+					c.text = (c.text ?? "") + evt.delta;
+					content[evt.contentIndex] = c;
 				}
+				m.content = content;
+				msgs[i] = m;
 			}
 			s.messages = msgs;
 			return s;
@@ -90,11 +113,17 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 					const isResend = last?.role === "user" && !!evt.message.id && last.id === evt.message.id;
 					if (!isResend) msgs.push(evt.message);
 				}
-			} else if (evt.message.role === "user" || evt.message.role === "assistant") {
-				// end：替换最后一条同角色消息（权威版本）
-				const role = evt.message.role;
+			} else if (evt.message.role === "assistant") {
+				// end：用权威版本替换正在生成的那条（pending 占位）；找不到（中途订阅错过了 start）就追加，
+				// 绝不能回头覆盖上一轮已完成的助手消息
+				let i = msgs.length - 1;
+				while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
+				if (i >= 0 && msgs[i].role === "assistant" && (msgs[i].stopReason ?? "pending") === "pending") msgs[i] = evt.message;
+				else msgs.push(evt.message);
+			} else if (evt.message.role === "user") {
+				// end：替换最后一条用户消息（权威版本，带落盘的 entry id）
 				for (let i = msgs.length - 1; i >= 0; i--) {
-					if (msgs[i].role === role) {
+					if (msgs[i].role === "user") {
 						msgs[i] = evt.message;
 						break;
 					}
@@ -124,10 +153,6 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			s.tools = tools;
 			return s;
 		}
-		case "status":
-			if (s.snapshot) s.snapshot = { ...s.snapshot, isStreaming: evt.isStreaming };
-			if (!evt.isStreaming) s.retryNotice = null;
-			return s;
 		case "queue":
 			if (s.snapshot)
 				s.snapshot = { ...s.snapshot, queue: { steering: evt.steering, followUp: evt.followUp } };
@@ -164,6 +189,43 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 		case "tools":
 			if (s.snapshot) s.snapshot = { ...s.snapshot, tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) } };
 			return s;
+		case "resources":
+			if (s.snapshot) {
+				s.snapshot = {
+					...s.snapshot,
+					skills: evt.skills,
+					promptTemplates: evt.promptTemplates,
+					extensionCommands: evt.extensionCommands,
+					projectTrust: evt.projectTrust,
+					resourceDiagnostics: evt.resourceDiagnostics,
+				};
+			}
+			return s;
+		case "extension_ui": {
+			if (evt.method === "select" || evt.method === "confirm" || evt.method === "input") {
+				s.extensionDialogs = [
+					...s.extensionDialogs,
+					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, placeholder: evt.placeholder, timeout: evt.timeout, ts: evt.ts },
+				];
+			} else if (evt.method === "notify") {
+				s.extensionNotices = [...s.extensionNotices.slice(-4), { id: evt.id, message: evt.message ?? "", type: evt.notifyType ?? "info", ts: evt.ts }];
+			} else if (evt.method === "setStatus" && evt.statusKey) {
+				const next = { ...s.extensionStatuses };
+				if (evt.statusText === undefined || evt.statusText === "") delete next[evt.statusKey];
+				else next[evt.statusKey] = evt.statusText;
+				s.extensionStatuses = next;
+			} else if (evt.method === "setWorkingMessage") {
+				s.workingMessage = evt.message ?? null;
+			}
+			return s;
+		}
+		case "status":
+			if (s.snapshot) s.snapshot = { ...s.snapshot, isStreaming: evt.isStreaming };
+			if (!evt.isStreaming) {
+				s.retryNotice = null;
+				s.workingMessage = null;
+			}
+			return s;
 		case "error":
 			// 自动重试属流程内通知：随消息流显示、流结束清除，不走 6 秒错误条
 			if (/^自动重试/.test(evt.message)) s.retryNotice = evt.message;
@@ -180,13 +242,15 @@ function savedToolPreset(): ToolPreset {
 	return saved === "readonly" || saved === "full" ? saved : "standard";
 }
 
-function toolsFromMessages(messages: WebMessage[]): Record<string, ToolCardState> {
+function toolsFromMessages(messages: WebMessage[], streaming = false): Record<string, ToolCardState> {
 	const tools: Record<string, ToolCardState> = {};
+	const resolved = new Set<string>();
 	for (const message of messages) {
 		for (const content of message.content) {
 			if (content.type === "toolCall") {
 				tools[content.id] = { name: content.name, args: content.arguments, state: "done" };
 			} else if (content.type === "toolResult" && content.toolCallId && tools[content.toolCallId]) {
+				resolved.add(content.toolCallId);
 				tools[content.toolCallId] = {
 					...tools[content.toolCallId],
 					result: content.text,
@@ -195,6 +259,12 @@ function toolsFromMessages(messages: WebMessage[]): Record<string, ToolCardState
 					patch: content.patch,
 				};
 			}
+		}
+	}
+	// 正在流式时还没有结果的调用就是正在执行（中途打开页面拿到的快照），别显示成"已完成 · 无输出"
+	if (streaming) {
+		for (const [id, tool] of Object.entries(tools)) {
+			if (!resolved.has(id)) tools[id] = { ...tool, state: "running", startedAt: Date.now() };
 		}
 	}
 	return tools;
@@ -208,38 +278,17 @@ const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
 	connected: false,
 	error: null,
 	retryNotice: null,
+	extensionDialogs: [],
+	extensionNotices: [],
+	extensionStatuses: {},
+	workingMessage: null,
 });
-
-export interface SessionPreset {
-	name: string;
-	tool: ToolPreset;
-	provider?: string;
-	modelId?: string;
-	thinking?: string;
-}
-
-const BUILTIN_PRESETS: SessionPreset[] = [
-	{ name: "standard", tool: "standard" },
-	{ name: "readonly", tool: "readonly" },
-	{ name: "full", tool: "full" },
-];
 
 function pathKey(value: string): string {
 	const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
 	return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
 		? normalized.toLowerCase()
 		: normalized;
-}
-
-function loadPresets(): { all: SessionPreset[]; custom: SessionPreset[]; active: string } {
-	let custom: SessionPreset[] = [];
-	try {
-		const raw = JSON.parse(localStorage.getItem("piweb.presets") ?? "[]");
-		if (Array.isArray(raw)) custom = raw.filter((p) => p && typeof p.name === "string");
-	} catch {
-		/* ignore */
-	}
-	return { all: [...BUILTIN_PRESETS, ...custom], custom, active: localStorage.getItem("piweb.activePreset") ?? "standard" };
 }
 
 export function usePiWeb() {
@@ -252,15 +301,9 @@ export function usePiWeb() {
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
-	const [presets, setPresetsState] = useState<{ all: SessionPreset[]; custom: SessionPreset[]; active: string }>({
-		all: BUILTIN_PRESETS,
-		custom: [],
-		active: "standard",
-	});
 	const [resyncNonce, setResyncNonce] = useState(0);
 	const esRef = useRef<EventSource | null>(null);
 	const subscribedSessionRef = useRef<string | null>(null);
-	const activePresetRef = useRef<string>("standard");
 
 	const idOf = useCallback((path: string) => {
 		const bytes = new TextEncoder().encode(path);
@@ -530,15 +573,20 @@ export function usePiWeb() {
 				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
 					const snap = parsed.snapshot as WebSnapshot;
-					setState({
+					setState((prev) => ({
 						snapshot: snap,
 						messages: snap.messages,
-						tools: toolsFromMessages(snap.messages),
+						tools: toolsFromMessages(snap.messages, snap.isStreaming),
 						toolPreset: savedToolPreset(),
 						connected: true,
 						error: null,
 						retryNotice: null,
-					});
+						// 重连拿新快照时不丢还没应答的扩展对话框（服务端仍在等）
+						extensionDialogs: prev.extensionDialogs,
+						extensionNotices: prev.extensionNotices,
+						extensionStatuses: {},
+						workingMessage: null,
+					}));
 				} else {
 					setState((s) => fold(s, parsed as WebEvent));
 				}
@@ -589,32 +637,28 @@ export function usePiWeb() {
 			if (j.success) {
 				const p = j.data.sessionPath as string;
 				const id = idOf(p);
-				const { all, active } = loadPresets();
-				const preset = all.find((item) => item.name === active) ?? BUILTIN_PRESETS[0];
-				const setup: Record<string, unknown>[] = [{ cmd: "setToolPreset", preset: preset.tool }];
-				const provider = overrides.provider ?? preset.provider;
-				const modelId = overrides.modelId ?? preset.modelId;
-				const thinking = overrides.thinking ?? preset.thinking;
-				if (provider && modelId) setup.push({ cmd: "setModel", provider, modelId });
-				if (thinking) setup.push({ cmd: "setThinkingLevel", level: thinking });
+				// 工具预设取通用设置的持久化选择；模型/思考级别由 Hero 页显式下发
+				const setup: Record<string, unknown>[] = [{ cmd: "setToolPreset", preset: savedToolPreset() }];
+				if (overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId });
+				if (overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
 				for (const command of setup) {
 					const configured = await sendCommand(command, id);
 					if (!configured.success) {
-						// 预设的思考级别与模型不兼容（如非推理模型只支持 off）时降级跳过，
+						// 思考级别与模型不兼容（如非推理模型只支持 off）时降级跳过，
 						// 不能因此删掉整个会话让用户毫无提示。
 						if (command.cmd === "setThinkingLevel") continue;
 						await fetch(`/api/sessions/${id}`, { method: "DELETE" }).catch(() => undefined);
 						return null;
 					}
 				}
-			setCurrentPath(p);
-			setCurrentId(id);
-			try {
-				localStorage.setItem("piweb.currentSession", p);
-			} catch {
-				/* ignore */
-			}
-			return p;
+				setCurrentPath(p);
+				setCurrentId(id);
+				try {
+					localStorage.setItem("piweb.currentSession", p);
+				} catch {
+					/* ignore */
+				}
+				return p;
 			}
 			setState((s) => ({ ...s, error: j.error || "failed to create session" }));
 			return null;
@@ -676,70 +720,19 @@ export function usePiWeb() {
 		[currentId, sendCommand],
 	);
 
-	// ---------- 会话预设 ----------
-	const refreshPresets = useCallback(() => setPresetsState(loadPresets()), []);
-	const setActivePreset = useCallback(
-		(name: string) => {
-			activePresetRef.current = name;
-			localStorage.setItem("piweb.activePreset", name);
-			refreshPresets();
-			const { all } = loadPresets();
-			const p = all.find((x) => x.name === name);
-			if (!p) return;
-			localStorage.setItem("piweb.toolPreset", p.tool);
-			if (currentId) {
-				void (async () => {
-					await sendCommand({ cmd: "setToolPreset", preset: p.tool });
-					if (p.provider && p.modelId) await sendCommand({ cmd: "setModel", provider: p.provider, modelId: p.modelId });
-					if (p.thinking) await sendCommand({ cmd: "setThinkingLevel", level: p.thinking });
-				})();
-			}
-			refreshModels();
-		},
-		[currentId, sendCommand, refreshPresets, refreshModels],
-	);
-	useEffect(() => {
-		refreshPresets();
-		// 初始化基准：当前激活预设名（挂载时不向会话重放，见下方 toolPreset effect 注释）
-		activePresetRef.current = loadPresets().active;
-		const changed = () => {
-			const next = loadPresets();
-			setPresetsState(next);
-			// 仅当激活预设切换时才重放到当前会话；编辑无关预设不能
-			// 覆盖用户在会话内手动切换的模型/思考级别。
-			if (next.active !== activePresetRef.current) setActivePreset(next.active);
-		};
-		window.addEventListener("piweb.presetsChanged", changed);
-		return () => window.removeEventListener("piweb.presetsChanged", changed);
-	}, [refreshPresets, setActivePreset]);
-
-	const saveCustomPresets = useCallback((custom: SessionPreset[]) => {
-		localStorage.setItem("piweb.presets", JSON.stringify(custom));
-	}, []);
-
-	const addPreset = useCallback(
-		(p: SessionPreset) => {
-			const { custom } = loadPresets();
-			const next = [...custom.filter((x) => x.name !== p.name), p];
-			saveCustomPresets(next);
-			refreshPresets();
-			setActivePreset(p.name);
-		},
-		[saveCustomPresets, refreshPresets, setActivePreset],
-	);
-
-	const removePreset = useCallback(
-		(name: string) => {
-			const { custom, active } = loadPresets();
-			saveCustomPresets(custom.filter((x) => x.name !== name));
-			refreshPresets();
-			if (active === name) setActivePreset("standard");
-		},
-		[saveCustomPresets, refreshPresets, setActivePreset],
-	);
+	// ---------- 会话预设已移除：工具档位见通用设置/工具启用情况，模型与思考级别由 Hero 页显式下发 ----------
 
 	/** 强制重连 SSE 拿新快照（navigate 等场景） */
 	const resync = useCallback(() => setResyncNonce((n) => n + 1), []);
+	/** 应答扩展对话框（select/confirm/input）；cancelled=true 表示用户关掉了 */
+	const answerExtensionDialog = useCallback(
+		async (id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => {
+			setState((s) => ({ ...s, extensionDialogs: s.extensionDialogs.filter((d) => d.id !== id) }));
+			await sendCommand({ cmd: "extensionUiResponse", requestId: id, ...response });
+		},
+		[sendCommand],
+	);
+	const dismissExtensionNotice = useCallback((id: string) => setState((s) => ({ ...s, extensionNotices: s.extensionNotices.filter((n) => n.id !== id) })), []);
 	const clearError = useCallback(() => setState((s) => ({ ...s, error: null })), []);
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
 	const setError = useCallback((message: string) => setState((s) => ({ ...s, error: message })), []);
@@ -778,10 +771,6 @@ export function usePiWeb() {
 		renameWorkspace,
 		archiveSession,
 		unarchiveSession,
-		presets,
-		setActivePreset,
-		addPreset,
-		removePreset,
 		resync,
 		groupBy,
 		orderBy,
@@ -797,5 +786,7 @@ export function usePiWeb() {
 		setToolPreset,
 		clearError,
 		setError,
+		answerExtensionDialog,
+		dismissExtensionNotice,
 	};
 }

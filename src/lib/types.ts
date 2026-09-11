@@ -57,6 +57,8 @@ export interface WebMessage {
 	role: "user" | "assistant" | "toolResult" | "custom" | "other";
 	content: WebContent[];
 	timestamp?: number;
+	/** assistant：生成结束的时刻（热会话由 message_end 打点；冷会话没有，回落到 timestamp） */
+	endedAt?: number;
 	stopReason?: string;
 	errorMessage?: string;
 	/** assistant：模型/用量/思考级别等元信息 */
@@ -111,6 +113,31 @@ export type WebEvent =
 	| { type: "traj"; entry: TrajEntry; ts: number }
 	| { type: "name"; name: string; ts: number }
 	| { type: "tools"; active: string[]; all: string[]; ts: number }
+	| {
+			/** 资源（扩展/技能/模板/命令）重载后的新清单；前端据此刷新 / 菜单与设置面板 */
+			type: "resources";
+			skills: WebSnapshot["skills"];
+			promptTemplates: WebSnapshot["promptTemplates"];
+			extensionCommands: WebSnapshot["extensionCommands"];
+			projectTrust: WebSnapshot["projectTrust"];
+			resourceDiagnostics: WebSnapshot["resourceDiagnostics"];
+			ts: number;
+	  }
+	| {
+			/** 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input 需要浏览器应答 */
+			type: "extension_ui";
+			id: string;
+			method: "select" | "confirm" | "input" | "notify" | "setStatus" | "setWorkingMessage";
+			title?: string;
+			message?: string;
+			options?: string[];
+			placeholder?: string;
+			notifyType?: "info" | "warning" | "error";
+			statusKey?: string;
+			statusText?: string;
+			timeout?: number;
+			ts: number;
+	  }
 	| { type: "error"; message: string; ts: number };
 
 export interface WebStats {
@@ -147,9 +174,16 @@ export interface WebSnapshot {
 	contextFiles: string[];
 	/** 注入的上下文资源（AGENTS.md 与扩展附加 prompt，来自 Pi 资源加载器）。 */
 	contextResources: ContextResource[];
-	/** 斜杠命令数据源：prompt 模板与技能 */
-	promptTemplates: { name: string; description: string }[];
+	/** 斜杠命令数据源：技能 */
 	skills: { name: string; description: string }[];
+	/** 斜杠命令数据源：提示模板（~/.pi/agent/prompts、<cwd>/.pi/prompts 里的 .md） */
+	promptTemplates: { name: string; description: string; argumentHint?: string }[];
+	/** 斜杠命令数据源：扩展注册的命令（只有热会话才有） */
+	extensionCommands: { name: string; description: string; source: string }[];
+	/** 项目信任：目录含 .pi/extensions 等需要信任的资源时，pi 只在受信任时才加载它们 */
+	projectTrust: { required: boolean; trusted: boolean; source: string };
+	/** 资源诊断：扩展加载失败、技能/模板解析警告（来自 pi 资源加载器） */
+	resourceDiagnostics: { kind: "extension" | "skill" | "prompt" | "command"; path?: string; message: string }[];
 	messages: WebMessage[];
 	model?: { provider: string; id: string; name: string };
 	thinkingLevel?: string;
@@ -187,7 +221,10 @@ export interface AgentCommand {
 		| "fork"
 		| "cycleModel"
 		| "navigate"
-		| "clearQueue";
+		| "clearQueue"
+		| "setActiveTools"
+		| "extensionUiResponse"
+		| "reload";
 	text?: string;
 	images?: ImageAttachment[];
 	instructions?: string;
@@ -198,4 +235,11 @@ export interface AgentCommand {
 	entryId?: string;
 	behavior?: "steer" | "followUp";
 	direction?: "forward" | "backward";
+	/** setActiveTools：目标激活的工具名列表（与可用集求交集） */
+	names?: string[];
+	/** extensionUiResponse：对应 extension_ui 事件的 id 与应答 */
+	requestId?: string;
+	value?: string;
+	confirmed?: boolean;
+	cancelled?: boolean;
 }

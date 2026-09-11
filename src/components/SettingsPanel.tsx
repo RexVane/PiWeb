@@ -11,7 +11,6 @@ import {
 	IconCheckOutline14,
 	IconCloseOutline14,
 	IconCopyOutline16,
-	IconDataOutline16,
 	IconDownloadOutline16,
 	IconModelOutline16,
 	IconPluginOutline16,
@@ -38,7 +37,7 @@ import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, typ
 import type { ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
 
-type Section = "general" | "models" | "presets" | "skills" | "prompts" | "plugins";
+type Section = "general" | "models" | "tools" | "skills" | "plugins";
 
 export function SettingsPanel({
 	open,
@@ -46,12 +45,18 @@ export function SettingsPanel({
 	cwd,
 	toolPreset,
 	onToolPresetChange,
+	tools,
+	onSetTools,
 }: {
 	open: boolean;
 	onClose: () => void;
 	cwd: string;
 	toolPreset: ToolPreset;
 	onToolPresetChange: (preset: ToolPreset) => void;
+	/** 当前会话的工具状态（快照数据；无会话时为 null） */
+	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
+	/** 逐个启停当前会话的工具（写回 setActiveTools） */
+	onSetTools?: (names: string[]) => void;
 }) {
 	const { t, lang, setLang } = useI18n();
 	const [section, setSection] = useState<Section>("general");
@@ -70,8 +75,7 @@ export function SettingsPanel({
 	const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
 		{ id: "general", label: t.setGeneral, icon: <IconSettingsOutline16 size={15} /> },
 		{ id: "models", label: t.setModels, icon: <IconModelOutline16 size={15} /> },
-		{ id: "presets", label: t.presetSection, icon: <IconAgentPresetOutline16 size={15} /> },
-		{ id: "prompts", label: t.promptSection, icon: <IconDataOutline16 size={15} /> },
+		{ id: "tools", label: t.toolsSection, icon: <IconAgentPresetOutline16 size={15} /> },
 		{ id: "plugins", label: t.setPlugins, icon: <IconPluginOutline16 size={15} /> },
 		{ id: "skills", label: t.setSkills, icon: <IconSkillOutline16 size={15} /> },
 	];
@@ -135,11 +139,10 @@ export function SettingsPanel({
 						</button>
 					</div>
 					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-						{section === "general" && <GeneralSection lang={lang} setLang={setLang} toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} />}
+						{section === "general" && <GeneralSection lang={lang} setLang={setLang} />}
 						{section === "models" && <ModelsSection />}
 						{section === "skills" && <SkillsSection cwd={cwd} />}
-						{section === "presets" && <PresetsSection />}
-						{section === "prompts" && <PromptsSection cwd={cwd} />}
+						{section === "tools" && <ToolsSection toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} />}
 						{section === "plugins" && <PluginsSection cwd={cwd} />}
 					</div>
 				</div>
@@ -153,19 +156,15 @@ export function SettingsPanel({
 function GeneralSection({
 	lang,
 	setLang,
-	toolPreset,
-	onToolPresetChange,
 }: {
 	lang: "zh" | "en";
 	setLang: (l: "zh" | "en") => void;
-	toolPreset: ToolPreset;
-	onToolPresetChange: (preset: ToolPreset) => void;
 }) {
 	const { t } = useI18n();
 	const [theme, setTheme] = useState<PebrelTheme>("dsh");
 	const [themeMode, setThemeMode] = useState<ThemeMode>("system");
 	const [fontSize, setFontSize] = useState(14);
-	const [preset, setPreset] = useState<ToolPreset>(toolPreset);
+	const [chatFontSize, setChatFontSize] = useState(14);
 	const [enterBehavior, setEnterBehavior] = useState<"queue" | "steer">("queue");
 	const [trust, setTrust] = useState<"ask" | "always" | "never">("ask");
 	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
@@ -175,8 +174,8 @@ function GeneralSection({
 		setThemeMode(loadThemeMode());
 		const fs = parseInt(localStorage.getItem("piweb.fontSize") ?? "14", 10);
 		if (!Number.isNaN(fs)) setFontSize(fs);
-		const tp = localStorage.getItem("piweb.toolPreset") as ToolPreset | null;
-		if (tp) setPreset(tp);
+		const chatFs = parseInt(localStorage.getItem("piweb.chatFontSize") ?? "14", 10);
+		if (!Number.isNaN(chatFs)) setChatFontSize(chatFs);
 		const eb = localStorage.getItem("piweb.enterBehavior");
 		if (eb === "steer" || eb === "queue") setEnterBehavior(eb);
 		void (async () => {
@@ -188,7 +187,6 @@ function GeneralSection({
 			if (j2.success) setPiSettings(j2.data);
 		})();
 	}, []);
-	useEffect(() => setPreset(toolPreset), [toolPreset]);
 
 	const pickTheme = (p: PebrelTheme) => {
 		setTheme(p);
@@ -201,17 +199,21 @@ function GeneralSection({
 		applyPebrelTheme(theme, m);
 	};
 
+	/** 界面字号：body/导航/标签等（与 theme.ts applyFontSize 同一套变量，改完即生效并持久化） */
 	const pickFont = (n: number) => {
-		const v = Math.max(12, Math.min(17, n));
+		const v = Math.max(12, Math.min(18, n));
 		setFontSize(v);
 		localStorage.setItem("piweb.fontSize", String(v));
-		document.body.style.setProperty("--dsh-content-font-size", `${v}px`);
-		document.body.style.setProperty("--dsh-content-font-delta", `${v - 14}px`);
+		document.documentElement.style.setProperty("--dsh-content-font-size", `${v}px`);
+		document.documentElement.style.setProperty("--dsh-content-font-delta", `${v - 14}px`);
 	};
 
-	const pickPreset = (p: ToolPreset) => {
-		setPreset(p);
-		onToolPresetChange(p);
+	/** 对话字号：消息正文/用户气泡/输入框 */
+	const pickChatFont = (n: number) => {
+		const v = Math.max(12, Math.min(20, n));
+		setChatFontSize(v);
+		localStorage.setItem("piweb.chatFontSize", String(v));
+		document.documentElement.style.setProperty("--piweb-chat-font-size", `${v}px`);
 	};
 
 	const pickEnter = (v: "queue" | "steer") => {
@@ -318,6 +320,12 @@ function GeneralSection({
 					))}
 				</div>
 			</RowColumn>
+			<Row title={t.fontUiSize} desc={t.fontUiSizeDesc}>
+				<FontSizeStepper value={fontSize} onChange={pickFont} max={18} />
+			</Row>
+			<Row title={t.fontChatSize} desc={t.fontChatSizeDesc}>
+				<FontSizeStepper value={chatFontSize} onChange={pickChatFont} max={20} />
+			</Row>
 			<Row title={t.enterBehavior} desc={t.enterBehaviorDesc}>
 				<SelectOption
 				value={enterBehavior}
@@ -327,17 +335,6 @@ function GeneralSection({
 				]}
 				onChange={(v) => pickEnter(v as "queue" | "steer")}
 			/>
-			</Row>
-			<Row title={t.securityToolPreset} desc={t.securityToolPresetDesc}>
-				<SelectOption
-					value={preset}
-					options={[
-						{ value: "readonly", label: t.toolReadonly },
-						{ value: "standard", label: t.toolStandard },
-						{ value: "full", label: t.toolFull },
-					]}
-					onChange={(value) => pickPreset(value as ToolPreset)}
-				/>
 			</Row>
 			<Row title={t.autoCompact} desc={t.autoCompactDesc}>
 				<div className="flex items-center gap-2">
@@ -476,6 +473,39 @@ function RowColumn({ title, desc, children }: { title: string; desc?: string; ch
 				)}
 			</div>
 			{children}
+		</div>
+	);
+}
+
+/** 字号步进器：− 值 ＋（越界禁用；点中间数值回到 14 默认） */
+function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v: number) => void; max: number }) {
+	return (
+		<div className="flex items-center gap-2">
+			<button
+				className="icon-btn"
+				style={{ width: 26, height: 26, border: "0.5px solid var(--dsw-border-l3)", borderRadius: 8 }}
+				disabled={value <= 12}
+				onClick={() => onChange(value - 1)}
+				aria-label="decrease font size"
+			>
+				−
+			</button>
+			<button
+				style={{ minWidth: 48, textAlign: "center", fontSize: 13, color: value === 14 ? "var(--dsw-label-tertiary)" : "var(--dsw-label-primary)" }}
+				title="reset"
+				onClick={() => onChange(14)}
+			>
+				{value} px
+			</button>
+			<button
+				className="icon-btn"
+				style={{ width: 26, height: 26, border: "0.5px solid var(--dsw-border-l3)", borderRadius: 8 }}
+				disabled={value >= max}
+				onClick={() => onChange(value + 1)}
+				aria-label="increase font size"
+			>
+				＋
+			</button>
 		</div>
 	);
 }
@@ -1082,325 +1112,106 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 	);
 }
 
-// ---------- 会话预设（A） ----------
+// ---------- 工具启用情况 ----------
 
-interface SessionPreset {
-	name: string;
-	tool: ToolPreset;
-	provider?: string;
-	modelId?: string;
-	thinking?: string;
-}
+/** 内置工具的一句话说明（未知/扩展工具只显示原名） */
+const TOOL_DESCRIPTIONS: Record<string, { zh: string; en: string }> = {
+	read: { zh: "读取文件", en: "Read files" },
+	bash: { zh: "执行 Shell 命令", en: "Run shell commands" },
+	powershell: { zh: "执行 PowerShell", en: "Run PowerShell" },
+	edit: { zh: "编辑文件", en: "Edit files" },
+	write: { zh: "写入文件", en: "Write files" },
+	grep: { zh: "搜索文件内容", en: "Search file contents" },
+	find: { zh: "按名称查找文件", en: "Find files by name" },
+	ls: { zh: "列出目录内容", en: "List directories" },
+};
 
-const BUILTIN_PRESETS: SessionPreset[] = [
-	{ name: "standard", tool: "standard" },
-	{ name: "readonly", tool: "readonly" },
-	{ name: "full", tool: "full" },
-];
+function ToolsSection({
+	toolPreset,
+	onToolPresetChange,
+	tools,
+	onSetTools,
+}: {
+	toolPreset: ToolPreset;
+	onToolPresetChange: (preset: ToolPreset) => void;
+	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
+	onSetTools?: (names: string[]) => void;
+}) {
+	const { t, lang } = useI18n();
+	const active = new Set(tools?.active ?? []);
+	const all = tools?.all ?? [];
 
-function presetTitle(name: string): string {
-	return name === "standard" ? "标准模式" : name === "readonly" ? "只读模式" : name === "full" ? "全部工具" : name;
-}
-
-function readPresets(): { all: SessionPreset[]; custom: SessionPreset[]; active: string } {
-	let custom: SessionPreset[] = [];
-	try {
-		const raw = JSON.parse(localStorage.getItem("piweb.presets") ?? "[]");
-		if (Array.isArray(raw)) custom = raw.filter((p) => p && typeof p.name === "string");
-	} catch {
-		/* ignore */
-	}
-	return { all: [...BUILTIN_PRESETS, ...custom], custom, active: localStorage.getItem("piweb.activePreset") ?? "standard" };
-}
-
-function PresetsSection() {
-	const { t } = useI18n();
-	const [models, setModels] = useState<any[]>([]);
-	const [presets, setPresets] = useState<{ all: SessionPreset[]; custom: SessionPreset[]; active: string }>(() => readPresets());
-	const [creating, setCreating] = useState(false);
-	const [pName, setPName] = useState("");
-	const [pTool, setPTool] = useState<ToolPreset>("standard");
-	const [pProvider, setPProvider] = useState("");
-	const [pModelId, setPModelId] = useState("");
-	const [pThinking, setPThinking] = useState("");
-
-	const loadModels = useCallback(async () => {
-		const r = await fetch("/api/models");
-		const j = await r.json();
-		if (j.success) {
-			setModels(j.data.models);
-		}
-	}, []);
-
-	useEffect(() => {
-		void loadModels();
-	}, [loadModels]);
-
-	const save = (custom: SessionPreset[], active?: string) => {
-		localStorage.setItem("piweb.presets", JSON.stringify(custom));
-		if (active) localStorage.setItem("piweb.activePreset", active);
-		setPresets(readPresets());
-		window.dispatchEvent(new Event("piweb.presetsChanged"));
+	const toggle = (name: string) => {
+		if (!onSetTools) return;
+		const next = active.has(name) ? [...active].filter((n) => n !== name) : [...active, name];
+		onSetTools(next);
 	};
 
-	const activate = (name: string) => save(presets.custom, name);
-
-	const presetDesc = (p: SessionPreset): string => {
-		const toolLabel = p.tool === "readonly" ? t.toolReadonly : p.tool === "standard" ? t.toolStandard : t.toolFull;
-		const parts = [toolLabel];
-		if (p.provider && p.modelId) parts.push(`${p.provider}/${p.modelId}`);
-		if (p.thinking) parts.push(p.thinking);
-		return parts.join(" · ");
+	const describe = (name: string) => {
+		const d = TOOL_DESCRIPTIONS[name];
+		return d ? (lang === "zh" ? d.zh : d.en) : "";
 	};
-
-	const providerOptions = [...new Set(models.map((m: any) => m.provider))];
-	const modelOptions = models.filter((m: any) => !pProvider || m.provider === pProvider);
 
 	return (
 		<div className="flex flex-col gap-5">
-			<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.presetSectionDesc}</div>
-			<div className="flex flex-col gap-3">
-				<div style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.presetBuiltin}</div>
-				<div className="flex flex-wrap gap-3">
-					{presets.all.map((p) => {
-						const isCustom = presets.custom.some((x) => x.name === p.name);
-						const active = presets.active === p.name;
+			<div>
+				<div style={{ fontSize: 14, fontWeight: 400 }}>{t.toolsSection}</div>
+				<div className="mt-0.5" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
+					{t.toolsSectionDesc}
+				</div>
+			</div>
+
+			<Row title={t.securityToolPreset} desc={t.securityToolPresetDesc}>
+				<SelectOption
+					value={toolPreset}
+					options={[
+						{ value: "readonly", label: t.toolReadonly },
+						{ value: "standard", label: t.toolStandard },
+						{ value: "full", label: t.toolFull },
+					]}
+					onChange={(value) => onToolPresetChange(value as ToolPreset)}
+				/>
+			</Row>
+
+			{all.length === 0 ? (
+				<div className="rounded-2xl p-4" style={{ border: "0.5px dashed var(--dsw-border-l3)", fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
+					{t.toolsNoSession}
+				</div>
+			) : (
+				<div className="flex flex-col gap-2.5">
+					<div className="flex items-center gap-2" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+						<span style={{ fontWeight: 600 }}>{t.toolsCurrentSession}</span>
+						<span>{t.toolsActiveCount.replace("{n}", String(active.size)).replace("{total}", String(all.length))}</span>
+					</div>
+					{all.map((tool) => {
+						const on = active.has(tool.name);
+						const desc = tool.description || describe(tool.name);
 						return (
-							<div
-								key={p.name}
-								className="flex cursor-pointer flex-col rounded-2xl transition-colors"
-								style={{
-									width: 240,
-									border: `0.5px solid ${active ? "var(--dsw-border-strong)" : "var(--dsw-border-l2)"}`,
-									background: active ? "var(--dsw-module-platform)" : "transparent",
-								}}
-								onClick={() => activate(p.name)}
-							>
-								<div className="flex items-center gap-2 px-4 pt-3.5">
-									<span style={{ fontSize: 14, fontWeight: 600 }}>{presetTitle(p.name)}</span>
-									{!isCustom && (
-										<span
-											className="rounded-md px-1.5 py-0.5"
-											style={{ fontSize: 10, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
-										>
-											{t.presetBuiltin}
-										</span>
-									)}
-									{active && (
-										<span
-											className="rounded-full px-2 py-0.5"
-											style={{ fontSize: 10, background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
-										>
-											{t.presetInUse}
-										</span>
+							<div key={tool.name} className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+								<div className="min-w-0 flex-1">
+									<div style={{ fontSize: 13.5, fontWeight: 500, fontFamily: "var(--font-mono)" }}>{tool.name}</div>
+									{desc && (
+										<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+											{desc}
+										</div>
 									)}
 								</div>
-								<div className="flex-1 px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
-									{presetDesc(p)}
-								</div>
-								<div className="flex items-center justify-end gap-1 px-3 pb-2.5">
-									{isCustom && (
-										<button
-											className="icon-btn"
-											style={{ width: 24, height: 24 }}
-											title={t.delete}
-											onClick={(ev) => {
-												ev.stopPropagation();
-												save(presets.custom.filter((x) => x.name !== p.name));
-											}}
-										>
-											<IconTrashOutline16 size={13} />
-										</button>
-									)}
-									<button
-										className="icon-btn"
-										style={{ width: 24, height: 24 }}
-										title={t.copy}
-										onClick={(ev) => {
-											ev.stopPropagation();
-											setPName(p.name + "-copy");
-											setPTool(p.tool);
-											setPProvider(p.provider ?? "");
-											setPModelId(p.modelId ?? "");
-											setPThinking(p.thinking ?? "");
-											setCreating(true);
-										}}
-									>
-										<IconCopyOutline16 size={13} />
-									</button>
-								</div>
-							</div>
+								<button
+									className="relative h-5 w-9 flex-none rounded-full transition-colors"
+									style={{ background: on ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }}
+									role="switch"
+									aria-checked={on}
+									aria-label={tool.name}
+									disabled={!onSetTools || (on && active.size <= 1)}
+									onClick={() => toggle(tool.name)}
+								>
+									<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: on ? 18 : 2 }} />
+								</button>
+						</div>
 						);
 					})}
 				</div>
-			</div>
-
-			{creating && (
-				<div className="rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-					<div className="flex flex-col gap-3">
-						<Field label={t.presetName}>
-							<input value={pName} onChange={(e) => setPName(e.target.value)} className={fieldCls} placeholder="my-preset" />
-						</Field>
-						<Field label={t.presetTool}>
-							<select value={pTool} onChange={(e) => setPTool(e.target.value as ToolPreset)} className={fieldCls}>
-								<option value="readonly">{t.toolReadonly}</option>
-								<option value="standard">{t.toolStandard}</option>
-								<option value="full">{t.toolFull}</option>
-							</select>
-						</Field>
-						<Field label={t.presetModel}>
-							<select value={pProvider} onChange={(e) => { setPProvider(e.target.value); setPModelId(""); }} className={fieldCls}>
-								<option value="">—</option>
-								{providerOptions.map((pid) => (
-									<option key={pid} value={pid}>{pid}</option>
-								))}
-							</select>
-						</Field>
-						{pProvider && (
-							<Field label={t.model}>
-								<select value={pModelId} onChange={(e) => setPModelId(e.target.value)} className={fieldCls}>
-									<option value="">—</option>
-									{modelOptions.filter((m: any) => m.provider === pProvider).map((m: any) => (
-										<option key={m.id} value={m.id}>{m.name}</option>
-									))}
-								</select>
-							</Field>
-						)}
-						<Field label={t.presetThinking}>
-							<select value={pThinking} onChange={(e) => setPThinking(e.target.value)} className={fieldCls}>
-								<option value="">—</option>
-								{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((lv) => (
-									<option key={lv} value={lv}>{lv}</option>
-								))}
-							</select>
-						</Field>
-						<div className="flex justify-end gap-2">
-							<button className="btn-outline" style={{ height: 32 }} onClick={() => setCreating(false)}>{t.cancel}</button>
-							<button
-								className="btn-primary-white"
-								disabled={!pName.trim()}
-								style={{ opacity: pName.trim() ? 1 : 0.5 }}
-								onClick={() => {
-									const custom = readPresets().custom;
-									const next = [...custom.filter((x) => x.name !== pName.trim()), {
-										name: pName.trim(),
-										tool: pTool,
-										...(pProvider && pModelId ? { provider: pProvider, modelId: pModelId } : {}),
-										...(pThinking ? { thinking: pThinking } : {}),
-									}];
-									save(next, pName.trim());
-									setCreating(false);
-									setPName("");
-								}}
-							>
-								{t.save}
-							</button>
-						</div>
-					</div>
-				</div>
 			)}
-
-			<button
-				className="flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3.5 transition-colors"
-				style={{ border: "0.5px solid var(--dsw-border-l3)", fontSize: 14 }}
-				onClick={() => setCreating(true)}
-			>
-				<IconPlusOutline16 size={15} />
-				{t.createPreset}
-			</button>
-		</div>
-	);
-}
-
-// ---------- Prompt 模板（C） ----------
-
-function PromptsSection({ cwd }: { cwd: string }) {
-	const { t } = useI18n();
-	const [prompts, setPrompts] = useState<any[]>([]);
-	const [expanded, setExpanded] = useState<string | null>(null);
-	const [content, setContent] = useState("");
-
-	const load = useCallback(async () => {
-		const r = await fetch(`/api/prompts${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
-		const j = await r.json();
-		if (j.success) setPrompts(j.data.prompts);
-	}, [cwd]);
-
-	useEffect(() => {
-		void load();
-	}, [load]);
-
-	const view = async (p: any) => {
-		if (expanded === p.filePath) {
-			setExpanded(null);
-			return;
-		}
-		const r = await fetch("/api/prompts", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ filePath: p.filePath, cwd }),
-		});
-		const j = await r.json();
-		if (j.success) {
-			setContent(j.data.content);
-			setExpanded(p.filePath);
-		}
-	};
-
-	const scopeLabel = (s: string) => (s === "global" ? t.scopeGlobal : s === "project" ? t.scopeProject : t.scopePackage);
-
-	return (
-		<div className="flex flex-col gap-5">
-			<div className="rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l2)", background: "var(--dsw-hover)" }}>
-				<div style={{ fontSize: 13.5, fontWeight: 560 }}>{t.promptWhatTitle}</div>
-				<div className="mt-1" style={{ fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>{t.promptWhatDesc}</div>
-				<div className="mt-3 flex flex-col gap-1" style={{ fontSize: 12 }}>
-					<div><code style={{ color: "var(--dsw-accent)" }}>/review</code><span className="ml-2" style={{ color: "var(--dsw-label-caption)" }}>{t.promptExample}</span></div>
-					<div style={{ color: "var(--dsw-label-caption)" }}>{t.promptGlobalPath}</div>
-					<div style={{ color: "var(--dsw-label-caption)" }}>{t.promptProjectPath}</div>
-				</div>
-			</div>
-			<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.promptSectionDesc}</div>
-			{prompts.length === 0 && (
-				<div className="rounded-2xl p-4" style={{ border: "0.5px dashed var(--dsw-border-l3)", fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-caption)" }}>
-					{t.promptEmpty}
-				</div>
-			)}
-			<div className="flex flex-col gap-2">
-				{prompts.map((p) => (
-					<div key={p.filePath} className="rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-						<div className="flex items-center gap-2">
-							<span style={{ fontSize: 13.5, fontWeight: 500 }}>/​{p.name}</span>
-							{p.argumentHint && (
-								<span style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{p.argumentHint}</span>
-							)}
-							<span
-								className="rounded-md px-1.5 py-0.5"
-								style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
-							>
-								{scopeLabel(p.scope)}
-							</span>
-							<div className="flex-1" />
-							<button className="icon-btn" title={t.promptView} aria-label={t.promptView} style={{ width: 24, height: 24 }} onClick={() => view(p)}>
-								<IconDataOutline16 size={13} />
-							</button>
-						</div>
-						{p.description && (
-							<div className="mt-0.5 truncate" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }} title={p.description}>
-								{p.description}
-							</div>
-						)}
-						{expanded === p.filePath && (
-							<pre
-								className="mt-3 max-h-64 overflow-auto rounded-xl p-3"
-								style={{ background: "var(--dsw-hover)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55 }}
-							>
-								{content}
-							</pre>
-						)}
-					</div>
-				))}
-			</div>
 		</div>
 	);
 }
@@ -1690,14 +1501,49 @@ function PluginsSection({ cwd }: { cwd: string }) {
 
 			{tab === "config" && (
 				<div className="flex flex-col gap-2.5">
+					{/* 安装入口：pi 包管理器支持 npm:包名 / git 地址 / 本地路径；安装后自动重载加载器与活跃会话 */}
+					<div className="flex flex-col gap-2 rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+						<div style={{ fontSize: 13.5, fontWeight: 500 }}>{t.addPackage}</div>
+						<div className="flex flex-wrap items-center gap-2">
+							<input
+								value={source}
+								onChange={(e) => setSource(e.target.value)}
+								placeholder={t.addPackagePlaceholder}
+								className="min-w-0 flex-1 rounded-xl px-3 py-2"
+								style={{ fontSize: 13, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)", fontFamily: "var(--font-mono)" }}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && source.trim() && !busy) void act("install", { source: source.trim(), local }, undefined, t.installing, t.installSuccess).then(() => setSource(""));
+								}}
+							/>
+							<label className="flex items-center gap-1.5" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
+								<input type="checkbox" checked={local} onChange={(e) => setLocal(e.target.checked)} disabled={!cwd} />
+								{t.installLocal}
+							</label>
+							<button
+								className="btn-primary-white"
+								style={{ height: 32, padding: "0 14px" }}
+								disabled={!source.trim() || busy}
+								onClick={() => void act("install", { source: source.trim(), local }, undefined, t.installing, t.installSuccess).then(() => setSource(""))}
+							>
+								{t.install}
+							</button>
+						</div>
+					</div>
 					<div className="flex justify-end">
 						<button
 							className="btn-outline"
 							style={{ height: 30, fontSize: 12.5 }}
+							disabled={busy}
 							onClick={async () => {
-								const r = await fetch("/api/plugins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reload" }) });
-								const j = await r.json();
-								notify(j.success, j.error);
+								setBusy(true);
+								try {
+									const r = await fetch("/api/plugins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reload", cwd }) });
+									const j = await r.json();
+									notify(j.success, j.success ? t.reloadedSessions.replace("{loaders}", String(j.data?.loaders ?? 0)).replace("{sessions}", String(j.data?.sessions ?? 0)) : j.error);
+									if (j.success) await load();
+								} finally {
+									setBusy(false);
+								}
 							}}
 						>
 							<IconRefreshOutline14 size={13} /> {t.reloadExtensions}
@@ -1714,9 +1560,17 @@ function PluginsSection({ cwd }: { cwd: string }) {
 							<div key={key} className="rounded-2xl" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
 								<button className="flex w-full items-center gap-3 px-4 py-3.5 text-left" onClick={() => toggle(key)}>
 									<div className="min-w-0 flex-1">
-										<div style={{ fontSize: 14, fontWeight: 500 }}>{e.name}</div>
-										<div className="truncate" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }} title={e.path}>
-											{e.path}
+										<div className="flex items-center gap-2" style={{ fontSize: 14, fontWeight: 500 }}>
+											<span>{e.name}</span>
+											{e.error && (
+												<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-danger)", background: "var(--pw-danger-soft, rgba(236,19,19,.12))" }}>{t.extensionLoadError}</span>
+											)}
+											{e.disabled && !e.error && (
+												<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-label-tertiary)", background: "var(--dsw-selector)" }}>{t.disabled}</span>
+											)}
+										</div>
+										<div className="truncate" style={{ fontSize: 12, color: e.error ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }} title={e.error ?? e.path}>
+											{e.error ?? e.path}
 										</div>
 									</div>
 									<span

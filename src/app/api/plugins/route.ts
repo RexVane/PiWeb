@@ -40,8 +40,8 @@ export async function POST(req: Request) {
 			return NextResponse.json({ success: false, error: "package source is too long" }, { status: 400 });
 		}
 		if (body.action === "reload") {
-			const reloaded = await reloadExtensions();
-			return NextResponse.json({ success: true, data: { reloaded } });
+			const reloaded = await reloadExtensions(cwd);
+			return NextResponse.json({ success: true, data: reloaded });
 		}
 		if (body.action === "toggle") {
 			if (body.kind === "package" && body.source) {
@@ -62,6 +62,7 @@ export async function POST(req: Request) {
 		if (body.action === "remove") {
 			if (!body.source) return NextResponse.json({ success: false, error: "missing source" }, { status: 400 });
 			const removed = await removePackage(body.source, body.local === true, cwd);
+			if (!removed) return NextResponse.json({ success: false, error: `package not found: ${body.source}` }, { status: 404 });
 			return NextResponse.json({ success: true, data: { removed } });
 		}
 		if (body.action === "update") {

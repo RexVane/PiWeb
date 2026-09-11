@@ -92,11 +92,18 @@ function applyLightDark(mode: ThemeMode): void {
 
 function applyFontSize(): void {
 	try {
+		// 界面字号：驱动 body/导航/标签等（--dsh-content-font-size + delta）
 		const fs = localStorage.getItem('piweb.fontSize');
 		if (fs) {
-			const n = Math.max(12, Math.min(17, parseInt(fs, 10) || 14));
+			const n = Math.max(12, Math.min(18, parseInt(fs, 10) || 14));
 			document.documentElement.style.setProperty('--dsh-content-font-size', `${n}px`);
 			document.documentElement.style.setProperty('--dsh-content-font-delta', `${n - 14}px`);
+		}
+		// 对话字号：只作用于消息正文/用户气泡/输入框（.md 等），缺省回落界面字号
+		const chatFs = localStorage.getItem('piweb.chatFontSize');
+		if (chatFs) {
+			const n = Math.max(12, Math.min(20, parseInt(chatFs, 10) || 14));
+			document.documentElement.style.setProperty('--piweb-chat-font-size', `${n}px`);
 		}
 	} catch {
 		/* ignore */

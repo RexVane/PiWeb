@@ -23,6 +23,19 @@ describe("trajectory timing", () => {
 		expect(ledger.entries[0]?.timing).toEqual({ ttftMs: 35, decodeMs: 85, durationMs: 120 });
 	});
 
+	it("measures LLM duration and TTFT from turn_start, not from the provider's first byte", () => {
+		const ledger = new TrajLedger();
+		ledger.onEvent({ type: "turn_start" } as any, 1_000);
+		// 供应商 800ms 后才返回响应头（SDK 此时才发 message_start）
+		ledger.onEvent({ type: "message_start", message: { role: "assistant" } } as any, 1_800);
+		ledger.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "ok" } } as any, 1_850);
+		ledger.onEvent(
+			{ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "ok" }], usage: {} } } as any,
+			2_000,
+		);
+		expect(ledger.entries[0]?.timing).toEqual({ ttftMs: 850, decodeMs: 150, durationMs: 1_000 });
+	});
+
 	it("records tool execution duration without inventing cold-session timing", () => {
 		const ledger = new TrajLedger();
 		ledger.onEvent({ type: "tool_execution_start", toolCallId: "call-1", toolName: "read", args: { path: "a.ts" } } as any, 2_000);
