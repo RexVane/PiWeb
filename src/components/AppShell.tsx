@@ -16,6 +16,7 @@ import { TrajInspector, TrajectoryView } from "@/components/TrajectoryView";
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
+	IconDataOutline16,
 	IconFolderClose16,
 	IconFolderOpenOutline16,
 	IconGitOutline16,
@@ -34,7 +35,7 @@ const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 280;
 const SIDEBAR_COLLAPSED = 56;
 const DETAILS_MIN = 300;
-const DETAILS_MAX = 520;
+const DETAILS_MAX = 760;
 const DETAILS_DEFAULT = 360;
 function persist(key: string, value: number) {
 	localStorage.setItem(key, String(value));
@@ -82,8 +83,10 @@ export function AppShell() {
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [detailsWidth, setDetailsWidth] = useState(DETAILS_DEFAULT);
 	const [detailsOpen, setDetailsOpen] = useState(false);
-	/** 详情栏内容来源：files / git 面板；轨迹 inspector 由 selected 驱动 */
-	const [detailsTab, setDetailsTab] = useState<"files" | "git" | null>(null);
+	/** 详情栏页签：轨迹 inspector / 文件 / Git（三者共用右侧一栏） */
+	const [detailsTab, setDetailsTab] = useState<"traj" | "files" | "git">("traj");
+	/** 注入输入框的文本（文件引用、让 pi 提交） */
+	const [composerInsert, setComposerInsert] = useState<{ key: number; text: string } | null>(null);
 	const [dragging, setDragging] = useState<"sidebar" | "details" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [tab, setTab] = useState<"chat" | "traj">("chat");
@@ -127,15 +130,17 @@ export function AppShell() {
 		};
 	}, []);
 
-	// 轨迹页选中后展开 details 栏
+	// 轨迹页选中后展开 details 栏并切到轨迹页签
 	useEffect(() => {
-		if (selected) setDetailsOpen(true);
+		if (selected) {
+			setDetailsTab("traj");
+			setDetailsOpen(true);
+		}
 	}, [selected]);
 
 	useEffect(() => {
 		setSelected(null);
 		setDetailsOpen(false);
-		setDetailsTab(null);
 	}, [currentPath]);
 
 	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
@@ -386,6 +391,64 @@ export function AppShell() {
 	// 详情栏文件/Git 面板的工作区：当前会话的工作区优先，快照未到时回落到会话列表里的 cwd
 	const panelCwd = snapshot?.cwd || currentSession?.cwd || heroCwd || knownCwds[0] || "";
 
+	// 文件 / Git 面板自动刷新：pi 每完成一个会改动文件的工具，或一轮结束时，静默重拉
+	const mutatingDone = useMemo(
+		() => Object.values(state.tools).filter((tool) => tool.state === "done" && ["edit", "write", "bash", "powershell", "pwsh"].includes(tool.name.toLowerCase())).length,
+		[state.tools],
+	);
+	const [panelRefreshKey, setPanelRefreshKey] = useState(0);
+	const prevMutatingRef = useRef(mutatingDone);
+	const prevStreamingRef = useRef(isStreaming);
+	useEffect(() => {
+		if (prevMutatingRef.current !== mutatingDone) {
+			prevMutatingRef.current = mutatingDone;
+			setPanelRefreshKey((k) => k + 1);
+		}
+	}, [mutatingDone]);
+	useEffect(() => {
+		if (prevStreamingRef.current && !isStreaming) setPanelRefreshKey((k) => k + 1);
+		prevStreamingRef.current = isStreaming;
+	}, [isStreaming]);
+
+	// 本会话被 pi 改过的文件（相对工作区，"/" 分隔），文件面板用来打标记
+	const changedPaths = useMemo(() => {
+		const out = new Set<string>();
+		const root = panelCwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+		for (const tool of Object.values(state.tools)) {
+			if (tool.state !== "done" || !["edit", "write"].includes(tool.name.toLowerCase())) continue;
+			const a = tool.args as { path?: unknown; file_path?: unknown } | undefined;
+			const raw = a?.path ?? a?.file_path;
+			if (typeof raw !== "string" || !raw) continue;
+			let rel = raw.replace(/\\/g, "/");
+			if (root && rel.toLowerCase().startsWith(`${root}/`)) rel = rel.slice(root.length + 1);
+			if (/^[A-Za-z]:\//.test(rel) || rel.startsWith("/")) continue;
+			out.add(rel.replace(/^\.\//, ""));
+		}
+		return out;
+	}, [state.tools, panelCwd]);
+
+	const insertIntoComposer = useCallback((text: string) => setComposerInsert({ key: Date.now(), text }), []);
+	const openInEditor = useCallback(
+		async (filePath: string) => {
+			try {
+				const r = await fetch("/api/files", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ action: "open", cwd: panelCwd, path: filePath }),
+				});
+				const j = await r.json();
+				if (!j.success) throw new Error(j.error || "failed to open file");
+			} catch (e) {
+				setError(e instanceof Error ? e.message : "failed to open file");
+			}
+		},
+		[panelCwd, setError],
+	);
+	const openDetails = useCallback((tabName: "traj" | "files" | "git") => {
+		setDetailsTab(tabName);
+		setDetailsOpen(true);
+	}, []);
+
 	useEffect(() => {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
 	}, [currentId, title]);
@@ -512,44 +575,35 @@ export function AppShell() {
 									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
 										{title}
 									</span>
-									{/* 文件 / Git 面板入口（照 Pebrel「终端旁的文件与 Git」） */}
+									{/* 右侧详情栏（轨迹 / 文件 / Git 三页签）开关 */}
 									<button
 										type="button"
 										className="icon-btn"
-										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "files" && !selected ? "var(--dsw-active)" : undefined }}
+										style={{ width: 30, height: 30, background: detailsOpen ? "var(--dsw-active)" : undefined }}
+										title={t.detailsPanel}
+										aria-label={t.detailsPanel}
+										aria-pressed={detailsOpen}
+										onClick={() => setDetailsOpen((open) => !open)}
+									>
+										<IconDataOutline16 size={15} />
+									</button>
+									<button
+										type="button"
+										className="icon-btn"
+										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "files" ? "var(--dsw-active)" : undefined }}
 										title={t.filesPanel}
 										aria-label={t.filesPanel}
-										aria-pressed={detailsOpen && detailsTab === "files" && !selected}
-										onClick={() => {
-											if (selected) {
-												setSelected(null);
-												setDetailsTab("files");
-												return;
-											}
-											const next = !(detailsOpen && detailsTab === "files");
-											setDetailsTab(next ? "files" : null);
-											setDetailsOpen(next);
-										}}
+										onClick={() => (detailsOpen && detailsTab === "files" ? setDetailsOpen(false) : openDetails("files"))}
 									>
 										<IconFolderOpenOutline16 size={15} />
 									</button>
 									<button
 										type="button"
 										className="icon-btn"
-										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "git" && !selected ? "var(--dsw-active)" : undefined }}
+										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "git" ? "var(--dsw-active)" : undefined }}
 										title={t.gitPanel}
 										aria-label={t.gitPanel}
-										aria-pressed={detailsOpen && detailsTab === "git" && !selected}
-										onClick={() => {
-											if (selected) {
-												setSelected(null);
-												setDetailsTab("git");
-												return;
-											}
-											const next = !(detailsOpen && detailsTab === "git");
-											setDetailsTab(next ? "git" : null);
-											setDetailsOpen(next);
-										}}
+										onClick={() => (detailsOpen && detailsTab === "git" ? setDetailsOpen(false) : openDetails("git"))}
 									>
 										<IconGitOutline16 size={15} />
 									</button>
@@ -612,15 +666,17 @@ export function AppShell() {
 										const entry = (snapshot?.trajectory ?? []).find((e) => e.toolCallId === toolCallId);
 										if (entry) {
 											setSelected(entry);
-											setDetailsOpen(true);
+											openDetails("traj");
 										}
 									}}
+									onOpenFile={openInEditor}
 									onFork={handleFork}
 								/>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ChatInput
+											insert={composerInsert}
 											isStreaming={isStreaming}
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
@@ -667,32 +723,68 @@ export function AppShell() {
 				)}
 			</div>
 
-			{/* details 栏 */}
+			{/* details 栏：轨迹 / 文件 / Git 三页签共用 */}
 			{detailsOpen && (
 				<div
-					className="min-h-0 overflow-hidden"
+					className="flex min-h-0 flex-col overflow-hidden"
 					style={isNarrow ? {
 						position: "fixed",
 						inset: "0 0 0 auto",
-						width: "min(92vw, 520px)",
+						width: "min(92vw, 640px)",
 						zIndex: 90,
 						background: "var(--dsw-sidebar-fill)",
 						boxShadow: "var(--dsw-elevation-prominent)",
 					} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
 				>
-					{selected ? (
-						<TrajInspector
-							entry={selected}
-							onClose={() => {
-								setSelected(null);
-								setDetailsOpen(false);
-							}}
-						/>
-					) : detailsTab === "files" ? (
-						<FilesPanel cwd={panelCwd} onClose={() => { setDetailsTab(null); setDetailsOpen(false); }} />
-					) : detailsTab === "git" ? (
-						<GitPanel cwd={panelCwd} onClose={() => { setDetailsTab(null); setDetailsOpen(false); }} />
-					) : null}
+					<div className="hairline-b flex items-center gap-4 px-4 pt-2.5" style={{ flex: "none" }}>
+						{([
+							{ id: "traj" as const, label: t.detailsTabTraj },
+							{ id: "files" as const, label: t.filesPanel },
+							{ id: "git" as const, label: t.gitPanel },
+						]).map((tabItem) => (
+							<button
+								key={tabItem.id}
+								className="tab-underline"
+								data-active={detailsTab === tabItem.id}
+								style={{ fontSize: 13 }}
+								onClick={() => setDetailsTab(tabItem.id)}
+							>
+								{tabItem.label}
+							</button>
+						))}
+					</div>
+					<div className="min-h-0 flex-1">
+						{detailsTab === "traj" ? (
+							selected ? (
+								<TrajInspector
+									entry={selected}
+									onClose={() => {
+										setSelected(null);
+										setDetailsOpen(false);
+									}}
+								/>
+							) : (
+								<div className="p-4" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", lineHeight: 1.6 }}>{t.detailsTrajHint}</div>
+							)
+						) : detailsTab === "files" ? (
+							<FilesPanel
+								cwd={panelCwd}
+								refreshKey={panelRefreshKey}
+								changedPaths={changedPaths}
+								onReference={insertIntoComposer}
+								onOpenFile={openInEditor}
+								onClose={() => setDetailsOpen(false)}
+							/>
+						) : (
+							<GitPanel
+								cwd={panelCwd}
+								refreshKey={panelRefreshKey}
+								onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
+								onOpenFile={openInEditor}
+								onClose={() => setDetailsOpen(false)}
+							/>
+						)}
+					</div>
 				</div>
 			)}
 
