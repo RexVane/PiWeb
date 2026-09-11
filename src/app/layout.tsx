@@ -1,4 +1,7 @@
 import type { Metadata, Viewport } from "next";
+// Maple Mono CN（含中文字形，unicode-range 分片按需加载）—— pebrel 同款字体
+import "@automann/maple-mono-cn/regular.css";
+import "@automann/maple-mono-cn/medium.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,8 +13,8 @@ export const viewport: Viewport = {
 	width: "device-width",
 	initialScale: 1,
 	themeColor: [
-		{ media: "(prefers-color-scheme: light)", color: "#ffffff" },
-		{ media: "(prefers-color-scheme: dark)", color: "#151517" },
+		{ media: "(prefers-color-scheme: light)", color: "#fcfbf9" },
+		{ media: "(prefers-color-scheme: dark)", color: "#2e3440" },
 	],
 };
 

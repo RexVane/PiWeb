@@ -19,7 +19,7 @@ export function isPathInside(root: string, candidate: string): boolean {
 	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-export async function resolveSessionPath(id: string): Promise<string> {
+export async function resolveSessionPath(id: string, options?: { allowPending?: boolean }): Promise<string> {
 	if (!isSessionId(id)) throw new BoundaryError("invalid session id");
 	const decoded = decodeSessionId(id);
 	if (!path.isAbsolute(decoded) || path.extname(decoded).toLowerCase() !== ".jsonl") {
@@ -27,13 +27,18 @@ export async function resolveSessionPath(id: string): Promise<string> {
 	}
 
 	const sessionsRoot = path.join(getAgentDir(), "sessions");
-	const [realRoot, realFile] = await Promise.all([
-		fs.realpath(sessionsRoot).catch(() => path.resolve(sessionsRoot)),
-		fs.realpath(decoded).catch(() => {
-			throw new BoundaryError("session not found");
-		}),
-	]);
-	if (!isPathInside(realRoot, realFile)) throw new BoundaryError("session path is outside the Pi session store");
+	const realRoot = await fs.realpath(sessionsRoot).catch(() => path.resolve(sessionsRoot));
+	if (!isPathInside(realRoot, path.resolve(decoded))) throw new BoundaryError("session path is outside the Pi session store");
+
+	// A freshly created session may not be materialized on disk yet
+	// (SessionManager is lazy); allow pending sessions through so setup
+	// commands can apply first. The real file is materialized by ensureSession.
+
+	if (options?.allowPending) return decoded;
+
+	const realFile = await fs.realpath(decoded).catch(() => {
+		throw new BoundaryError("session not found");
+	});
 	const stat = await fs.stat(realFile);
 	if (!stat.isFile()) throw new BoundaryError("session is not a file");
 	return realFile;
@@ -66,6 +71,7 @@ export async function resolveDiscoveredPath(requested: string, allowed: string[]
 		if (!candidate) continue;
 		const realCandidate = await fs.realpath(candidate).catch(() => null);
 		if (realCandidate && samePath(realRequested, realCandidate)) return realRequested;
+
 	}
 	throw new BoundaryError("resource is not part of the discovered Pi configuration");
 }

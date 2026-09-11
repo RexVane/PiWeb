@@ -99,12 +99,17 @@ if (pw) console.log(`[piweb] 已启用 Basic Auth（用户名 pi）`);
 const next = path.join(root, "node_modules", "next", "dist", "bin", "next");
 const hasBuild = fs.existsSync(path.join(root, ".next", "BUILD_ID"));
 const subCmd = isDev || !hasBuild ? "dev" : "start";
+const utf8Env = {
+	...process.env,
+	PYTHONUTF8: process.env.PYTHONUTF8 ?? "1",
+	PYTHONIOENCODING: process.env.PYTHONIOENCODING ?? "utf-8",
+};
 
 console.log(`[piweb] 启动 http://${hostname}:${port} (${subCmd} 模式)`);
 const child = spawn(process.execPath, [next, subCmd, "-p", String(port), "-H", hostname], {
 	cwd: root,
 	stdio: "inherit",
-	env: process.env,
+	env: utf8Env,
 });
 
 const url = `http://${hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname}:${port}`;

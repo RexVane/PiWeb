@@ -8,7 +8,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const { id } = await params;
 	let sessionPath: string;
 	try {
-		sessionPath = await resolveSessionPath(id);
+		// allowPending：Hero 发首条消息时订阅先于 JSONL 落盘；此时拒绝会让
+		// EventSource 收到 400 并永久放弃重连，实时视图永远拿不到快照。
+		sessionPath = await resolveSessionPath(id, { allowPending: true });
 	} catch (error) {
 		return new Response(error instanceof BoundaryError ? error.message : "invalid session", { status: 400 });
 	}

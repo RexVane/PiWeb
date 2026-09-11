@@ -10,6 +10,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+const utf8Env = {
+	...process.env,
+	PYTHONUTF8: process.env.PYTHONUTF8 ?? "1",
+	PYTHONIOENCODING: process.env.PYTHONIOENCODING ?? "utf-8",
+};
 
 const rawArgs = process.argv.slice(2);
 const firstArg = rawArgs[0]?.trim().toLowerCase();
@@ -21,7 +26,7 @@ if (firstArg === "web") {
 	const child = spawn(process.execPath, [script, ...subArgs], {
 		cwd: root,
 		stdio: "inherit",
-		env: process.env,
+		env: utf8Env,
 	});
 	child.on("exit", (code) => process.exit(code ?? 0));
 } else {
@@ -39,7 +44,7 @@ if (firstArg === "web") {
 	const child = spawn(process.execPath, [piAgentCli, ...rawArgs], {
 		cwd: process.cwd(),
 		stdio: "inherit",
-		env: process.env,
+		env: utf8Env,
 	});
 	child.on("exit", (code) => process.exit(code ?? 0));
 }

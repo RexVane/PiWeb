@@ -40,6 +40,8 @@ export interface TrajEntry {
 	thinking?: string;
 	tokens?: TrajTokens;
 	isError?: boolean;
+	/** Historical shell output contained irreversible Unicode replacement characters. */
+	encodingLoss?: boolean;
 	toolName?: string;
 	toolCallId?: string;
 	timing?: { ttftMs?: number; decodeMs?: number; durationMs?: number };
@@ -69,7 +71,7 @@ export type WebContent =
 	| { type: "image"; data: string; mimeType: string }
 	| { type: "thinking"; thinking: string }
 	| { type: "toolCall"; id: string; name: string; arguments: unknown }
-	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string };
+	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string };
 
 export type WebEvent =
 	| { type: "delta"; kind: "text" | "thinking"; contentIndex: number; delta: string; ts: number }
@@ -83,6 +85,9 @@ export type WebEvent =
 			partialResult?: string;
 			result?: string;
 			isError?: boolean;
+			encodingLoss?: boolean;
+			/** edit/write 工具附带的 unified patch（pi 的 details.patch），前端渲染红绿 diff */
+			patch?: string;
 			ts: number;
 	  }
 	| { type: "status"; isStreaming: boolean; state: string; ts: number }
@@ -92,6 +97,8 @@ export type WebEvent =
 			provider?: string;
 			model?: string;
 			thinkingLevel?: string;
+			/** 当前模型支持的档位；切模型后随之更新，否则前端菜单停留在旧模型的档位 */
+			thinkingLevels?: string[];
 			ts: number;
 	  }
 	| {
@@ -113,6 +120,12 @@ export interface WebStats {
 	totalMessages: number;
 	tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
 	cost: number;
+	llmMs: number;
+	toolMs: number;
+	ttftMs: number;
+	ttftSteps: number;
+	decodeMs: number;
+	decodeTokens: number;
 }
 
 export interface ContextResource {

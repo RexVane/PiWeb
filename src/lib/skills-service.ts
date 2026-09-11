@@ -5,7 +5,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { getAgentDir, getResourceLoader, invalidateResourceLoaders } from "./pi";
+import { getAgentDir, getResourceLoader, invalidateResourceLoaders, resourceLoaderReady } from "./pi";
 import { resolveDiscoveredPath } from "./path-security";
 
 export interface SkillView {
@@ -33,6 +33,7 @@ export async function listSkills(cwd?: string): Promise<SkillView[]> {
 	const out: SkillView[] = [];
 	const targets: string[] = cwd ? [path.resolve(cwd)] : [process.cwd()];
 	for (const dir of targets) {
+		await resourceLoaderReady(dir);
 		const loader = getResourceLoader(dir);
 		const { skills } = loader.getSkills();
 		for (const s of skills) {

@@ -20,6 +20,12 @@ export interface ToolCardState {
 	partialResult?: string;
 	result?: string;
 	isError?: boolean;
+	encodingLoss?: boolean;
+	/** edit/write 的 unified patch，用于渲染红绿 diff */
+	patch?: string;
+	/** 服务端事件时间戳：运行中显示已用时长，完成后显示耗时 */
+	startedAt?: number;
+	endedAt?: number;
 }
 
 export interface PiWebState {
@@ -29,10 +35,14 @@ export interface PiWebState {
 	toolPreset: ToolPreset;
 	connected: boolean;
 	error: string | null;
+	/** 自动重试通知（随消息流显示的折叠行，流结束清除） */
+	retryNotice: string | null;
 }
 
 export interface SessionListItem extends SessionSummary {
 	streaming: boolean;
+	/** 正在运行的会话最后一个工具步骤（侧栏副标题） */
+	lastStep?: string;
 }
 
 const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
@@ -74,19 +84,24 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 						msgs[msgs.length - 1] = evt.message;
 					} else msgs.push(evt.message);
 				} else if (evt.message.role === "user") {
+					// 只有同一消息重发（id 相同）才去重；相邻两条 user 消息必须都保留，
+					// 否则第二条的 end 会覆盖第一条（如快照末尾已是 user 再发新消息）。
 					const last = msgs[msgs.length - 1];
-					if (last?.role !== "user") msgs.push(evt.message);
+					const isResend = last?.role === "user" && !!evt.message.id && last.id === evt.message.id;
+					if (!isResend) msgs.push(evt.message);
 				}
-			} else {
+			} else if (evt.message.role === "user" || evt.message.role === "assistant") {
 				// end：替换最后一条同角色消息（权威版本）
 				const role = evt.message.role;
 				for (let i = msgs.length - 1; i >= 0; i--) {
 					if (msgs[i].role === role) {
-						if (role === "toolResult") break;
 						msgs[i] = evt.message;
 						break;
 					}
 				}
+			} else if (evt.message.role !== "toolResult") {
+				// custom/other：start 阶段没有占位，end 只能追加，不能回溯覆盖历史消息
+				msgs.push(evt.message);
 			}
 			s.messages = msgs;
 			return s;
@@ -101,12 +116,17 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 				partialResult: evt.partialResult ?? (evt.state === "done" ? undefined : prev?.partialResult),
 				result: evt.result ?? prev?.result,
 				isError: evt.isError ?? prev?.isError,
+				encodingLoss: evt.encodingLoss ?? prev?.encodingLoss,
+				patch: evt.patch ?? prev?.patch,
+				startedAt: prev?.startedAt ?? evt.ts,
+				endedAt: evt.state === "done" ? evt.ts : prev?.endedAt,
 			};
 			s.tools = tools;
 			return s;
 		}
 		case "status":
 			if (s.snapshot) s.snapshot = { ...s.snapshot, isStreaming: evt.isStreaming };
+			if (!evt.isStreaming) s.retryNotice = null;
 			return s;
 		case "queue":
 			if (s.snapshot)
@@ -118,6 +138,7 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 				if (evt.model) snap.model = { ...(snap.model ?? { provider: "", id: "", name: "" }), id: evt.model, name: evt.model };
 				if (evt.provider && snap.model) snap.model = { ...snap.model, provider: evt.provider };
 				if (evt.thinkingLevel) snap.thinkingLevel = evt.thinkingLevel;
+				if (evt.thinkingLevels) snap.thinkingLevels = evt.thinkingLevels;
 				s.snapshot = snap;
 			}
 			return s;
@@ -144,7 +165,9 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			if (s.snapshot) s.snapshot = { ...s.snapshot, tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) } };
 			return s;
 		case "error":
-			s.error = evt.message;
+			// 自动重试属流程内通知：随消息流显示、流结束清除，不走 6 秒错误条
+			if (/^自动重试/.test(evt.message)) s.retryNotice = evt.message;
+			else s.error = evt.message;
 			return s;
 		default:
 			return s;
@@ -168,6 +191,8 @@ function toolsFromMessages(messages: WebMessage[]): Record<string, ToolCardState
 					...tools[content.toolCallId],
 					result: content.text,
 					isError: content.isError,
+					encodingLoss: content.encodingLoss,
+					patch: content.patch,
 				};
 			}
 		}
@@ -182,6 +207,7 @@ const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
 	toolPreset,
 	connected: false,
 	error: null,
+	retryNotice: null,
 });
 
 export interface SessionPreset {
@@ -197,6 +223,13 @@ const BUILTIN_PRESETS: SessionPreset[] = [
 	{ name: "readonly", tool: "readonly" },
 	{ name: "full", tool: "full" },
 ];
+
+function pathKey(value: string): string {
+	const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+	return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
+		? normalized.toLowerCase()
+		: normalized;
+}
 
 function loadPresets(): { all: SessionPreset[]; custom: SessionPreset[]; active: string } {
 	let custom: SessionPreset[] = [];
@@ -226,6 +259,8 @@ export function usePiWeb() {
 	});
 	const [resyncNonce, setResyncNonce] = useState(0);
 	const esRef = useRef<EventSource | null>(null);
+	const subscribedSessionRef = useRef<string | null>(null);
+	const activePresetRef = useRef<string>("standard");
 
 	const idOf = useCallback((path: string) => {
 		const bytes = new TextEncoder().encode(path);
@@ -251,21 +286,23 @@ export function usePiWeb() {
 	}, []);
 
 	const [workspaceAliases, setWorkspaceAliases] = useState<Record<string, string>>({});
-	const [archivedSessions, setArchivedSessions] = useState<string[]>([]);
+	const [archivedSessionPaths, setArchivedSessionPaths] = useState<string[]>([]);
 
 	// 手动添加的工作区与别名、归档
 	const refreshWorkspaces = useCallback(async () => {
 		try {
 			const r = await fetch("/api/workspaces");
 			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (j.success) {
 				if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
 				if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
 				if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
-				if (Array.isArray(j.data.archivedSessions)) setArchivedSessions(j.data.archivedSessions);
+				if (Array.isArray(j.data.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
 			}
-		} catch {
-			/* ignore */
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to load workspaces";
+			setState((current) => ({ ...current, error: message }));
 		}
 	}, []);
 	useEffect(() => {
@@ -298,9 +335,26 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
-			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessions(j.data.archivedSessions);
+			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to archive session";
+			setState((current) => ({ ...current, error: message }));
+			throw error;
+		}
+	}, []);
+
+	const unarchiveSession = useCallback(async (sessionPath: string) => {
+		try {
+			const r = await fetch("/api/workspaces", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "forgetSession", path: sessionPath }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to unarchive session";
 			setState((current) => ({ ...current, error: message }));
 			throw error;
 		}
@@ -309,9 +363,9 @@ export function usePiWeb() {
 	const getWorkspaceName = useCallback(
 		(dir: string): string => {
 			if (!dir) return "";
-			const norm = dir.replace(/\\/g, "/").toLowerCase();
+			const norm = pathKey(dir);
 			for (const [k, v] of Object.entries(workspaceAliases)) {
-				if (k.replace(/\\/g, "/").toLowerCase() === norm && v.trim()) {
+				if (pathKey(k) === norm && v.trim()) {
 					return v;
 				}
 			}
@@ -331,32 +385,41 @@ export function usePiWeb() {
 				body: JSON.stringify({ action: "pick" }),
 			});
 			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (j.success && j.data?.path) {
 				setAddedWorkspaces(j.data.workspaces ?? []);
 				await refreshWorkspaces();
 				return j.data.path as string;
 			}
 			return null;
-		} catch {
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to add workspace";
+			setState((current) => ({ ...current, error: message }));
 			return null;
 		}
 	}, [refreshWorkspaces]);
 
 	const removeWorkspace = useCallback(
 		async (dir: string) => {
-			const r = await fetch("/api/workspaces", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action: "remove", path: dir }),
-			});
-			const j = await r.json();
-			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
-			if (j.data) {
-				if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
-				if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
-				if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
+			try {
+				const r = await fetch("/api/workspaces", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ action: "remove", path: dir }),
+				});
+				const j = await r.json();
+				if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+				if (j.data) {
+					if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
+					if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
+					if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
+				}
+				await refreshWorkspaces();
+			} catch (error) {
+				const message = error instanceof Error ? error.message : "failed to remove workspace";
+				setState((current) => ({ ...current, error: message }));
+				throw error;
 			}
-			await refreshWorkspaces();
 		},
 		[refreshWorkspaces],
 	);
@@ -377,16 +440,16 @@ export function usePiWeb() {
 				const r = await fetch("/api/sessions", { signal: controller.signal });
 				const j = await r.json();
 				if (!alive || !j.success) return;
-				const running: Record<string, { streaming: boolean }> = j.data.running ?? {};
+				const running: Record<string, { streaming: boolean; lastStep?: string }> = j.data.running ?? {};
 				const registry = j.data.workspaceRegistry;
 				if (registry) {
 					if (Array.isArray(registry.workspaces)) setAddedWorkspaces(registry.workspaces);
 					if (Array.isArray(registry.removedWorkspaces)) setRemovedWorkspaces(registry.removedWorkspaces);
 					if (registry.aliases && typeof registry.aliases === "object") setWorkspaceAliases(registry.aliases);
-					if (Array.isArray(registry.archivedSessions)) setArchivedSessions(registry.archivedSessions);
+					if (Array.isArray(registry.archivedSessions)) setArchivedSessionPaths(registry.archivedSessions);
 				}
 				setSessions(
-					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true })),
+					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
 				);
 			} catch (error) {
 				if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -432,32 +495,60 @@ export function usePiWeb() {
 		esRef.current?.close();
 		esRef.current = null;
 		if (!currentId) {
+			subscribedSessionRef.current = null;
 			setState(emptyState(savedToolPreset()));
 			return;
 		}
-		setState({ ...emptyState(savedToolPreset()), connected: false });
-		const es = new EventSource(`/api/agent/${currentId}/events`);
-		esRef.current = es;
-		es.onopen = () => setState((s) => ({ ...s, connected: true }));
-		es.onerror = () => setState((s) => ({ ...s, connected: false }));
-		es.onmessage = (e) => {
-			const parsed = JSON.parse(e.data) as any;
-			if (parsed.type === "snapshot" && parsed.snapshot) {
-				const snap = parsed.snapshot as WebSnapshot;
-				setState({
-					snapshot: snap,
-					messages: snap.messages,
-					tools: toolsFromMessages(snap.messages),
-					toolPreset: savedToolPreset(),
-					connected: true,
-					error: null,
-				});
-			} else {
-				setState((s) => fold(s, parsed as WebEvent));
-			}
+		const reconnectingCurrentSession = subscribedSessionRef.current === currentId;
+		subscribedSessionRef.current = currentId;
+		setState((current) => reconnectingCurrentSession
+			? { ...current, connected: false }
+			: { ...emptyState(savedToolPreset()), connected: false });
+		const connect = () => {
+			const es = new EventSource(`/api/agent/${currentId}/events`);
+			esRef.current = es;
+			es.onopen = () => setState((s) => ({ ...s, connected: true }));
+			es.onerror = () => {
+				setState((s) => ({ ...s, connected: false }));
+				// 浏览器对非 200 响应会永久放弃 EventSource 自动重连
+				// （网络断连才会重试），这里手动兜底：关掉后延迟重建，
+				// 重建时会拿到全新快照，不依赖 Last-Event-ID 回放。
+				if (esRef.current !== es) return;
+				es.close();
+				esRef.current = null;
+				retryTimer = setTimeout(() => {
+					if (esRef.current === null) connect();
+				}, 2000);
+			};
+			es.onmessage = (e) => {
+				let parsed: any;
+				try {
+					parsed = JSON.parse(e.data);
+				} catch {
+					// 单帧损坏（代理截断等）只丢弃该帧，不能让 EventSource 回调抛异常
+					return;
+				}
+				if (parsed.type === "snapshot" && parsed.snapshot) {
+					const snap = parsed.snapshot as WebSnapshot;
+					setState({
+						snapshot: snap,
+						messages: snap.messages,
+						tools: toolsFromMessages(snap.messages),
+						toolPreset: savedToolPreset(),
+						connected: true,
+						error: null,
+						retryNotice: null,
+					});
+				} else {
+					setState((s) => fold(s, parsed as WebEvent));
+				}
+			};
 		};
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
+		connect();
 		return () => {
-			es.close();
+			if (retryTimer) clearTimeout(retryTimer);
+			esRef.current?.close();
 			esRef.current = null;
 		};
 	}, [currentId, resyncNonce]);
@@ -509,13 +600,21 @@ export function usePiWeb() {
 				for (const command of setup) {
 					const configured = await sendCommand(command, id);
 					if (!configured.success) {
+						// 预设的思考级别与模型不兼容（如非推理模型只支持 off）时降级跳过，
+						// 不能因此删掉整个会话让用户毫无提示。
+						if (command.cmd === "setThinkingLevel") continue;
 						await fetch(`/api/sessions/${id}`, { method: "DELETE" }).catch(() => undefined);
 						return null;
 					}
 				}
-				setCurrentPath(p);
-				setCurrentId(id);
-				return p;
+			setCurrentPath(p);
+			setCurrentId(id);
+			try {
+				localStorage.setItem("piweb.currentSession", p);
+			} catch {
+				/* ignore */
+			}
+			return p;
 			}
 			setState((s) => ({ ...s, error: j.error || "failed to create session" }));
 			return null;
@@ -529,6 +628,12 @@ export function usePiWeb() {
 		(path: string) => {
 			setCurrentPath(path);
 			setCurrentId(idOf(path));
+			// 持久化当前会话：刷新页面时恢复到这里，而不是回到新会话草稿
+			try {
+				localStorage.setItem("piweb.currentSession", path);
+			} catch {
+				/* ignore */
+			}
 		},
 		[idOf],
 	);
@@ -536,7 +641,31 @@ export function usePiWeb() {
 	const closeSession = useCallback(() => {
 		setCurrentId(null);
 		setCurrentPath(null);
+		try {
+			localStorage.removeItem("piweb.currentSession");
+		} catch {
+			/* ignore */
+		}
 	}, []);
+
+	// 刷新恢复：会话列表首次加载后，若刷新前有打开的会话且仍存在，则重新打开
+	const restoredRef = useRef(false);
+	useEffect(() => {
+		if (restoredRef.current || !sessions.length) return;
+		restoredRef.current = true;
+		try {
+			const saved = localStorage.getItem("piweb.currentSession");
+			if (saved) {
+				if (sessions.some((s) => s.path === saved)) {
+					// 标记本次 currentPath 来自刷新恢复：侧栏据此跳过"自动展开其工作区"
+					sessionStorage.setItem("piweb.sessionRestored", "1");
+					openSession(saved);
+				} else localStorage.removeItem("piweb.currentSession");
+			}
+		} catch {
+			/* ignore */
+		}
+	}, [sessions, openSession]);
 
 	const setToolPreset = useCallback(
 		(preset: ToolPreset) => {
@@ -551,6 +680,7 @@ export function usePiWeb() {
 	const refreshPresets = useCallback(() => setPresetsState(loadPresets()), []);
 	const setActivePreset = useCallback(
 		(name: string) => {
+			activePresetRef.current = name;
 			localStorage.setItem("piweb.activePreset", name);
 			refreshPresets();
 			const { all } = loadPresets();
@@ -570,10 +700,14 @@ export function usePiWeb() {
 	);
 	useEffect(() => {
 		refreshPresets();
+		// 初始化基准：当前激活预设名（挂载时不向会话重放，见下方 toolPreset effect 注释）
+		activePresetRef.current = loadPresets().active;
 		const changed = () => {
 			const next = loadPresets();
 			setPresetsState(next);
-			setActivePreset(next.active);
+			// 仅当激活预设切换时才重放到当前会话；编辑无关预设不能
+			// 覆盖用户在会话内手动切换的模型/思考级别。
+			if (next.active !== activePresetRef.current) setActivePreset(next.active);
 		};
 		window.addEventListener("piweb.presetsChanged", changed);
 		return () => window.removeEventListener("piweb.presetsChanged", changed);
@@ -607,19 +741,32 @@ export function usePiWeb() {
 	/** 强制重连 SSE 拿新快照（navigate 等场景） */
 	const resync = useCallback(() => setResyncNonce((n) => n + 1), []);
 	const clearError = useCallback(() => setState((s) => ({ ...s, error: null })), []);
+	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
+	const setError = useCallback((message: string) => setState((s) => ({ ...s, error: message })), []);
 
 	// 工具权限是 PiWeb 的会话护栏，不写入 Pi JSONL；恢复会话时只重放此项，不覆盖模型与思考级别。
 	useEffect(() => {
 		if (currentId) void sendCommand({ cmd: "setToolPreset", preset: savedToolPreset() });
 	}, [currentId, sendCommand]);
 
+	// dsh sessionVisible 合同：当前会话豁免归档过滤——归档当前会话不关闭、
+	// 主列表保持可见可聊，已归档区也不显示它（取消归档前菜单按真实归档态切换）。
 	const visibleSessions = useMemo(() => {
-		const set = new Set(archivedSessions.map((p) => p.replace(/\\/g, "/").toLowerCase()));
-		return sessions.filter((s) => !set.has(s.path.replace(/\\/g, "/").toLowerCase()));
-	}, [sessions, archivedSessions]);
+		const set = new Set(archivedSessionPaths.map(pathKey));
+		const currentKey = currentPath ? pathKey(currentPath) : null;
+		return sessions.filter((s) => !set.has(pathKey(s.path)) || (currentKey != null && pathKey(s.path) === currentKey));
+	}, [sessions, archivedSessionPaths, currentPath]);
+	const archivedSessions = useMemo(() => {
+		const set = new Set(archivedSessionPaths.map(pathKey));
+		const currentKey = currentPath ? pathKey(currentPath) : null;
+		return sessions.filter((s) => set.has(pathKey(s.path)) && !(currentKey != null && pathKey(s.path) === currentKey));
+	}, [sessions, archivedSessionPaths, currentPath]);
 
 	return {
 		sessions: visibleSessions,
+		archivedSessions,
+		/** 原始归档路径列表（含被豁免的当前会话，供菜单显示真实归档态） */
+		archivedSessionPaths,
 		currentId,
 		currentPath,
 		state,
@@ -630,6 +777,7 @@ export function usePiWeb() {
 		getWorkspaceName,
 		renameWorkspace,
 		archiveSession,
+		unarchiveSession,
 		presets,
 		setActivePreset,
 		addPreset,
@@ -648,5 +796,6 @@ export function usePiWeb() {
 		closeSession,
 		setToolPreset,
 		clearError,
+		setError,
 	};
 }

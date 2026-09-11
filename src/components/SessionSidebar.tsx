@@ -15,6 +15,7 @@ import {
 	IconArchiveOutline20,
 	IconBranchOutline16,
 	IconCheckOutline14,
+	IconDownloadOutline16,
 	IconEditOutline16,
 	IconEllipsisOutline16,
 	IconFolderClose16,
@@ -52,7 +53,10 @@ function basename(p: string): string {
 
 function normPath(p: string): string {
 	if (!p) return "";
-	return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+	const normalized = p.replace(/\\/g, "/").replace(/\/+$/, "");
+	return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
+		? normalized.toLowerCase()
+		: normalized;
 }
 
 type GroupBy = "workspace" | "flat";
@@ -66,6 +70,8 @@ interface WorkspaceGroup {
 
 export function SessionSidebar({
 	sessions,
+	archivedSessions = [],
+	archivedPaths = [],
 	addedWorkspaces,
 	removedWorkspaces = [],
 	currentPath,
@@ -81,13 +87,19 @@ export function SessionSidebar({
 	onRename,
 	onFork,
 	onArchive,
+	onUnarchive,
+	onExport,
 	getWorkspaceName,
 	onRenameWorkspace,
 	onDeleteWorkspace,
 	onOpenSettings,
 	onAddWorkspace,
+	draftCwd,
 }: {
 	sessions: SessionListItem[];
+	archivedSessions?: SessionListItem[];
+	/** 原始归档路径（含被豁免的当前会话：dsh 合同下主列表可见但菜单显示取消归档） */
+	archivedPaths?: string[];
 	addedWorkspaces: string[];
 	removedWorkspaces?: string[];
 	currentPath: string | null;
@@ -103,19 +115,24 @@ export function SessionSidebar({
 	onRename: (path: string, newName: string) => Promise<void>;
 	onFork?: (path: string, cwd: string) => void;
 	onArchive?: (path: string) => void;
+	onUnarchive?: (path: string) => void;
+	/** 下载会话日志（JSONL 导出，经 AppShell 统一编码会话 id） */
+	onExport?: (path: string) => void;
 	getWorkspaceName?: (cwd: string) => string;
 	onRenameWorkspace?: (cwd: string, newName: string) => Promise<void>;
 	onDeleteWorkspace?: (cwd: string) => Promise<void>;
 	onOpenSettings: () => void;
 	onAddWorkspace: () => void;
+	/** 新会话草稿所在的工作区：条目显示在该分组内，发送第一条消息才真正创建 */
+	draftCwd?: string | null;
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
 	const [searchOpen, setSearchOpen] = useState(false);
-	const [openSet, setOpenSet] = useState<Set<string>>(new Set());
 	const [viewMenu, setViewMenu] = useState(false);
 	const [rowMenu, setRowMenu] = useState<string | null>(null); // 展开工作区行菜单的 cwd
 	const [sessionMenu, setSessionMenu] = useState<string | null>(null); // 展开会话行菜单的 session path
+	const [archiveOpen, setArchiveOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const sessionMenuRef = useRef<HTMLDivElement>(null);
 	const renameInputRef = useRef<HTMLInputElement>(null);
@@ -131,6 +148,12 @@ export function SessionSidebar({
 	const [deleteWorkspacePending, setDeleteWorkspacePending] = useState(false);
 	const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
 	const [mounted, setMounted] = useState(false);
+	const renameWorkspaceConflict = renameTarget?.type === "workspace"
+		&& renameValue.trim().length > 0
+		&& addedWorkspaces.some((cwd) => (
+			normPath(cwd) !== normPath(renameTarget.cwd)
+			&& (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) === renameValue.trim()
+		));
 
 	useEffect(() => {
 		setMounted(true);
@@ -151,7 +174,12 @@ export function SessionSidebar({
 	const handleConfirmRename = async () => {
 		if (!renameTarget || renamePending) return;
 		const val = renameValue.trim();
-		if (!val || (renameTarget.type === "workspace" && val === renameTarget.name)) return;
+		if (!val || (renameTarget.type === "workspace" && (val === renameTarget.name || renameWorkspaceConflict))) {
+			if (renameWorkspaceConflict) {
+				setRenameError(t.workspaceNameConflict.replace("{name}", val));
+			}
+			return;
+		}
 		setRenamePending(true);
 		setRenameError(null);
 		try {
@@ -257,20 +285,45 @@ export function SessionSidebar({
 		return { workspaceGroups: groups, ungroupedGroup: ungrouped };
 	}, [sessions, addedWorkspaces, removedWorkspaces, orderBy]);
 
-	// 默认展开所有活跃工作区和未分组
-	const initializedRef = useRef(false);
-	useEffect(() => {
-		if (!initializedRef.current && (workspaceGroups.length > 0 || ungroupedGroup)) {
-			initializedRef.current = true;
-			setOpenSet(new Set([...workspaceGroups.map((g) => g.cwd), "__ungrouped__"]));
+	// 工作区展开状态持久化：刷新后保持收起/展开，不被自动展开逻辑覆盖
+	const [openSet, setOpenSet] = useState<Set<string>>(() => {
+		try {
+			const saved = JSON.parse(localStorage.getItem("piweb.openWorkspaces") ?? "[]");
+			if (Array.isArray(saved)) return new Set(saved.filter((x) => typeof x === "string"));
+		} catch {
+			/* ignore */
 		}
-	}, [workspaceGroups, ungroupedGroup]);
-
-	// 确保当前选中的会话所在工作区是展开的
+		return new Set();
+	});
 	useEffect(() => {
-		if (!currentPath) return;
+		try {
+			localStorage.setItem("piweb.openWorkspaces", JSON.stringify([...openSet]));
+		} catch {
+			/* ignore */
+		}
+	}, [openSet]);
+
+	// 仅在用户主动切换会话时展开其所在工作区一次；刷新恢复（sessionRestored 标记）
+	// 与后续列表轮询/手动收起都不再自动撑开
+	const lastExpandedFor = useRef<string | null>(null);
+	useEffect(() => {
+		if (!currentPath) {
+			lastExpandedFor.current = null;
+			return;
+		}
+		if (lastExpandedFor.current === currentPath) return;
+		try {
+			if (sessionStorage.getItem("piweb.sessionRestored")) {
+				sessionStorage.removeItem("piweb.sessionRestored");
+				lastExpandedFor.current = currentPath;
+				return;
+			}
+		} catch {
+			/* ignore */
+		}
 		const s = sessions.find((item) => item.path === currentPath);
-		if (!s) return;
+		if (!s) return; // 会话列表尚未加载，等轮询后重试
+		lastExpandedFor.current = currentPath;
 		const matchedGroup = workspaceGroups.find((g) => normPath(g.cwd) === normPath(s.cwd));
 		if (matchedGroup) {
 			setOpenSet((prev) => (prev.has(matchedGroup.cwd) ? prev : new Set([...prev, matchedGroup.cwd])));
@@ -278,6 +331,19 @@ export function SessionSidebar({
 			setOpenSet((prev) => (prev.has("__ungrouped__") ? prev : new Set([...prev, "__ungrouped__"])));
 		}
 	}, [currentPath, sessions, workspaceGroups, ungroupedGroup]);
+
+	// 进入草稿态时展开其所属分组一次（对齐 dsh 新建 blank 会话即定位到该工作区）
+	const lastDraftCwd = useRef<string | null>(null);
+	useEffect(() => {
+		if (!draftCwd) {
+			lastDraftCwd.current = null;
+			return;
+		}
+		if (lastDraftCwd.current === draftCwd) return;
+		lastDraftCwd.current = draftCwd;
+		const groupKey = workspaceGroups.find((g) => normPath(g.cwd) === normPath(draftCwd))?.cwd ?? "__ungrouped__";
+		setOpenSet((prev) => (prev.has(groupKey) ? prev : new Set([...prev, groupKey])));
+	}, [draftCwd, workspaceGroups]);
 
 	const flatSessions = useMemo(() => {
 		const list = [...sessions];
@@ -329,8 +395,10 @@ export function SessionSidebar({
 		);
 	}
 
-	const sessionRow = (s: SessionListItem, indented: boolean) => {
+	const sessionRow = (s: SessionListItem, indented: boolean, archived = false) => {
 		const selected = s.path === currentPath;
+		// dsh 合同：被归档的当前会话仍显示在主列表，菜单按真实归档态切换
+		const reallyArchived = archived || archivedPaths.some((p) => normPath(p) === normPath(s.path));
 		return (
 			<div
 				key={s.path}
@@ -341,6 +409,9 @@ export function SessionSidebar({
 					paddingRight: 8,
 					paddingTop: 6,
 					paddingBottom: 6,
+					// 选中/悬停框之间留缝，不互相粘连
+					marginTop: 2,
+					marginBottom: 2,
 				}}
 				onMouseEnter={(e) => {
 					if (!selected) e.currentTarget.style.background = "var(--dsw-hover)";
@@ -350,21 +421,26 @@ export function SessionSidebar({
 				}}
 			>
 				{s.streaming && <span className="state-dot running" style={{ position: "absolute", left: indented ? 26 : 6, width: 6, height: 6 }} />}
-				<button className="flex min-w-0 flex-1 items-center text-left" onClick={() => onOpen(s.path)}>
+				<button className="flex min-w-0 flex-1 flex-col items-start text-left" onClick={() => onOpen(s.path)}>
 					<span
-						className="truncate"
+						className="w-full truncate"
 						style={{ fontSize: 13, color: selected ? "var(--dsw-accent)" : "var(--dsw-label-primary)" }}
 					>
 						{s.name || s.firstMessage || "(untitled)"}
 					</span>
+					{s.streaming && s.lastStep && (
+						<span className="w-full truncate" style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", lineHeight: "16px" }} title={s.lastStep}>
+							{s.lastStep}
+						</span>
+					)}
 				</button>
 				<span
-					className={`flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden"}`}
+					className={`flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
 					style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}
 				>
 					{relTime(s.modified, lang)}
 				</span>
-				<span className={`flex-none items-center pl-1 ${sessionMenu === s.path ? "flex" : "hidden group-hover:flex"}`}>
+				<span className={`flex-none items-center pl-1 ${sessionMenu === s.path ? "flex" : "hidden group-hover:flex group-focus-within:flex"}`}>
 					<button
 						className="icon-btn"
 						style={{ width: 22, height: 22 }}
@@ -395,6 +471,15 @@ export function SessionSidebar({
 							}}
 						/>
 						<MenuItem
+							icon={<IconDownloadOutline16 size={14} />}
+							label={t.cmdExport}
+							onClick={(e) => {
+								e.stopPropagation();
+								setSessionMenu(null);
+								onExport?.(s.path);
+							}}
+						/>
+						<MenuItem
 							icon={<IconBranchOutline16 size={14} />}
 							label={t.forkSession}
 							onClick={(e) => {
@@ -405,11 +490,12 @@ export function SessionSidebar({
 						/>
 						<MenuItem
 							icon={<IconArchiveOutline20 size={14} />}
-							label={t.archiveSession}
+							label={reallyArchived ? t.unarchiveSession : t.archiveSession}
 							onClick={(e) => {
 								e.stopPropagation();
 								setSessionMenu(null);
-								onArchive?.(s.path);
+								if (reallyArchived) onUnarchive?.(s.path);
+								else onArchive?.(s.path);
 							}}
 						/>
 					</div>
@@ -422,6 +508,12 @@ export function SessionSidebar({
 		const isUngrouped = g.cwd === "__ungrouped__";
 		const open = openSet.has(g.cwd);
 		const isCurrent = !isUngrouped && g.cwd === currentCwd;
+		// 草稿新会话属于哪个分组：路径匹配的工作区，否则归未分组
+		const draftInThisGroup = draftCwd
+			? (isUngrouped
+				? !workspaceGroups.some((wg) => normPath(wg.cwd) === normPath(draftCwd))
+				: normPath(g.cwd) === normPath(draftCwd))
+			: false;
 		const displayName = isUngrouped
 			? (t.ungrouped || "未分组")
 			: (getWorkspaceName ? getWorkspaceName(g.cwd) : basename(g.cwd));
@@ -436,6 +528,9 @@ export function SessionSidebar({
 						paddingRight: 6,
 						paddingTop: 7,
 						paddingBottom: 7,
+						// 悬停/展开框之间留缝，不互相粘连（与会话行一致）
+						marginTop: 2,
+						marginBottom: 2,
 					}}
 					onMouseEnter={(e) => {
 						if (!(open || isCurrent)) e.currentTarget.style.background = "var(--dsw-hover)";
@@ -466,7 +561,7 @@ export function SessionSidebar({
 							{displayName}
 						</span>
 					</button>
-					<span className="hidden flex-none items-center gap-0.5 pl-1 group-hover:flex" style={{ color: "var(--dsw-label-tertiary)" }}>
+					<span className="hidden flex-none items-center gap-0.5 pl-1 group-hover:flex group-focus-within:flex" style={{ color: "var(--dsw-label-tertiary)" }}>
 						{!isUngrouped && (
 							<button
 								className="icon-btn"
@@ -522,7 +617,31 @@ export function SessionSidebar({
 						</div>
 					)}
 				</div>
-				{open && g.sessions.map((s) => sessionRow(s, true))}
+				{open && (
+					<>
+						{/* dsh 草稿新会话：显示在所属工作区分组内，发送第一条消息才真正创建，切走即消失 */}
+						{draftInThisGroup && (
+							<div
+								className="flex items-center rounded-xl"
+								style={{
+									background: "var(--dsw-active)",
+									paddingLeft: 38,
+									paddingRight: 8,
+									paddingTop: 6,
+									paddingBottom: 6,
+									marginTop: 2,
+									marginBottom: 2,
+								}}
+							>
+								<IconNewChatOutline16 size={14} style={{ color: "var(--dsw-accent)", flex: "none", marginRight: 8 }} />
+								<span className="truncate" style={{ fontSize: 13, color: "var(--dsw-accent)" }}>
+									{t.newChat}
+								</span>
+							</div>
+						)}
+						{g.sessions.map((s) => sessionRow(s, true))}
+					</>
+				)}
 			</div>
 		);
 	};
@@ -668,9 +787,29 @@ export function SessionSidebar({
 							{ungroupedGroup && workspaceRow(ungroupedGroup)}
 						</>
 					)
-				) : (
-					// 单列表
-					(flatSessions.length === 0
+					) : (
+						// 单列表
+						<>
+							{draftCwd && (
+								<div
+									className="flex items-center rounded-xl"
+									style={{
+										background: "var(--dsw-active)",
+										paddingLeft: 10,
+										paddingRight: 8,
+										paddingTop: 6,
+										paddingBottom: 6,
+										marginTop: 2,
+										marginBottom: 2,
+									}}
+								>
+									<IconNewChatOutline16 size={14} style={{ color: "var(--dsw-accent)", flex: "none", marginRight: 8 }} />
+									<span className="truncate" style={{ fontSize: 13, color: "var(--dsw-accent)" }}>
+										{t.newChat}
+									</span>
+								</div>
+							)}
+							{(flatSessions.length === 0
 						? [...workspaceGroups, ...(ungroupedGroup ? [ungroupedGroup] : [])].map((g) => (
 								<div key={g.cwd} className="flex items-center gap-2.5 rounded-xl px-2.5 py-2" title={g.cwd}>
 									<span style={{ color: "var(--dsw-label-tertiary)", display: "inline-flex" }}>
@@ -683,7 +822,35 @@ export function SessionSidebar({
 									</span>
 								</div>
 						  ))
-						: flatSessions.map((s) => sessionRow(s, false)))
+						: flatSessions.map((s) => sessionRow(s, false)))}
+							</>
+					)}
+				{!searchOpen && archivedSessions.length > 0 && (
+					<div className="mt-2 border-t pt-2" style={{ borderColor: "var(--dsw-border-l2)" }}>
+						<button
+							type="button"
+							className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors"
+							aria-expanded={archiveOpen}
+							onClick={() => setArchiveOpen((open) => !open)}
+							onMouseEnter={(event) => (event.currentTarget.style.background = "var(--dsw-hover)")}
+							onMouseLeave={(event) => (event.currentTarget.style.background = "transparent")}
+						>
+							<span
+								style={{
+									display: "inline-flex",
+									transform: archiveOpen ? "rotate(90deg)" : "none",
+									transition: "transform 120ms var(--ds-ease-in-out)",
+									color: "var(--dsw-label-tertiary)",
+								}}
+							>
+								<IconTriangleRightFill14 size={11} />
+							</span>
+							<IconArchiveOutline20 size={15} style={{ color: "var(--dsw-label-tertiary)" }} />
+							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13 }}>{t.archivedSessions}</span>
+							<span style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{archivedSessions.length}</span>
+						</button>
+						{archiveOpen && archivedSessions.map((session) => sessionRow(session, true, true))}
+					</div>
 				)}
 			</div>
 
@@ -712,6 +879,7 @@ export function SessionSidebar({
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
+						aria-labelledby="rename-dialog-title"
 					>
 						{/* 关闭按钮 */}
 						<button
@@ -725,7 +893,7 @@ export function SessionSidebar({
 						</button>
 
 						{/* 标题 */}
-						<h3 className="text-lg font-medium text-white pr-8">
+						<h3 id="rename-dialog-title" className="text-lg font-medium text-white pr-8">
 							{renameTarget.type === "session"
 								? (t.renameSession || "重命名会话")
 								: (t.renameWorkspace || "重命名工作区")}
@@ -766,7 +934,7 @@ export function SessionSidebar({
 							<button
 								type="button"
 								onClick={() => void handleConfirmRename()}
-								disabled={renamePending || !renameValue.trim() || (renameTarget.type === "workspace" && renameValue.trim() === renameTarget.name)}
+								disabled={renamePending || !renameValue.trim() || (renameTarget.type === "workspace" && (renameValue.trim() === renameTarget.name || renameWorkspaceConflict))}
 								className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black hover:bg-zinc-200 transition"
 							>
 								{t.rename}
@@ -788,6 +956,7 @@ export function SessionSidebar({
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
+						aria-labelledby="delete-workspace-dialog-title"
 					>
 						{/* 关闭按钮 */}
 						<button
@@ -801,7 +970,7 @@ export function SessionSidebar({
 						</button>
 
 						{/* 标题 */}
-						<h3 className="text-lg font-medium text-white pr-8">
+						<h3 id="delete-workspace-dialog-title" className="text-lg font-medium text-white pr-8">
 							{t.deleteWorkspace}
 						</h3>
 
@@ -825,7 +994,7 @@ export function SessionSidebar({
 								type="button"
 								onClick={() => setDeleteWorkspaceTarget(null)}
 								disabled={deleteWorkspacePending}
-								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 hover:bg-[#383838] transition"
+								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 transition hover:border-white/25 hover:bg-[#383838]"
 							>
 								{t.cancel}
 							</button>
@@ -833,7 +1002,7 @@ export function SessionSidebar({
 								type="button"
 								onClick={() => void handleConfirmDeleteWorkspace()}
 								disabled={deleteWorkspacePending}
-								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] hover:bg-[#383838] hover:text-[#ef4444] transition"
+								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] transition hover:border-[#f87171]/40 hover:bg-[#383838] hover:text-[#ef4444]"
 							>
 								{t.deleteWorkspace}
 							</button>
@@ -859,7 +1028,7 @@ function MenuItem({
 }) {
 	return (
 		<button
-			className="flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors"
+			className="mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
 			style={{ fontSize: 13, color: danger ? "var(--dsw-danger)" : "var(--dsw-label-primary)" }}
 			onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
 			onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
@@ -874,7 +1043,7 @@ function MenuItem({
 function MenuCheck({ label, checked, onClick }: { label: string; checked: boolean; onClick: () => void }) {
 	return (
 		<button
-			className="flex w-full items-center justify-between pl-6 pr-4 py-2 text-left transition-colors"
+			className="mx-1 flex w-[calc(100%-8px)] items-center justify-between rounded-lg pl-5 pr-3 py-2 text-left transition-colors"
 			style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}
 			onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
 			onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}

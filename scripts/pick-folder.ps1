@@ -1,7 +1,18 @@
 # Pop the Windows modern folder picker (IFileOpenDialog, Explorer style, centered).
 # Usage: powershell -NoProfile -STA -ExecutionPolicy Bypass -File pick-folder.ps1 [title]
 # Output: the selected path on one line; empty when canceled.
+#
+# Encoding contract: this file must stay pure ASCII. Windows PowerShell 5.1 reads
+# BOM-less .ps1 files with the active ANSI code page (GBK on zh-CN), so any literal
+# CJK character here would reach the dialog mojibake'd. Non-ASCII UI strings are
+# embedded as C# \uXXXX escapes instead.
 param([string]$Title = 'Select workspace folder')
+
+# PowerShell 5.1 otherwise emits text using the active Windows code page.
+try {
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+} catch {}
 
 $src = @'
 using System;
@@ -18,7 +29,7 @@ public class PiFolderPicker {
     [PreserveSig] int SetFileTypeIndex(uint iFileType);
     [PreserveSig] int GetFileTypeIndex(out uint piFileType);
     [PreserveSig] int Advise(IntPtr pfde, out uint pdwCookie);
-    [PreserveSig] int Unadvise(uint dwCookie);
+    [PreserveSig] int Unadvise(uint pdwCookie);
     [PreserveSig] int SetOptions(uint fos);
     [PreserveSig] int GetOptions(out uint pfos);
     [PreserveSig] int SetDefaultFolder(IShellItem psi);
@@ -52,15 +63,34 @@ public class PiFolderPicker {
   private const uint FOS_FORCEFILESYSTEM = 0x40;
   private const uint SIGDN_FILESYSPATH = 0x80058000;
 
+  // Ok-button label ("select this folder", zh) as escapes: keep this .ps1 ASCII.
+  private const string OkLabel = "\u9009\u62E9\u6B64\u6587\u4EF6\u5939";
+
   [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
+
+  // A non-DPI-aware host process gets the dialog bitmap-stretched on scaled
+  // displays (blurry). Per-Monitor V2 (-4) keeps it crisp; fall back to the
+  // legacy declaration on pre-1703 Windows. Best effort: both may no-op when
+  // awareness is already set by a manifest.
+  private static void EnableDpiAwareness() {
+    try {
+      if (!SetProcessDpiAwarenessContext(new IntPtr(-4))) SetProcessDPIAware();
+    } catch {
+      try { SetProcessDPIAware(); } catch {}
+    }
+  }
 
   public static string Pick(string title) {
     try {
+      EnableDpiAwareness();
       var dlg = (IFileDialog)(new FileOpenDialogRCW());
       uint options;
       dlg.GetOptions(out options);
       dlg.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
       if (!string.IsNullOrEmpty(title)) dlg.SetTitle(title);
+      dlg.SetOkButtonLabel(OkLabel);
       int hr = dlg.Show(GetForegroundWindow());
       if (hr != 0) return "";
       IShellItem item;

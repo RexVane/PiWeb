@@ -2,7 +2,7 @@
  * prompts-service：pi Prompt 模板发现与查看（~/.pi/agent/prompts、.pi/prompts、pi 包）。
  */
 import fs from "node:fs/promises";
-import { getResourceLoader } from "./pi";
+import { getResourceLoader, resourceLoaderReady } from "./pi";
 import { resolveDiscoveredPath } from "./path-security";
 
 export interface PromptView {
@@ -24,6 +24,7 @@ function classifyScope(filePath: string, cwd: string): PromptView["scope"] {
 }
 
 export async function listPrompts(cwd: string): Promise<PromptView[]> {
+	await resourceLoaderReady(cwd);
 	const loader = getResourceLoader(cwd);
 	const { prompts } = loader.getPrompts();
 	return prompts.map((p: any) => ({

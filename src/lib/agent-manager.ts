@@ -8,6 +8,7 @@ import {
 	getSettingsManager,
 	getAgentDir,
 	loadProjectContextFiles,
+	resourceLoaderReady,
 	TOOL_PRESETS,
 	SessionManager,
 	createAgentSession,
@@ -15,6 +16,8 @@ import {
 	openSessionManager,
 } from "./pi";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
+import { sanitizeToolOutput } from "./text-sanitize";
+import { clampThinkingLevel, supportedThinkingLevels } from "./thinking-levels";
 import type {
 	AgentCommand,
 	ContextResource,
@@ -42,6 +45,8 @@ interface Managed {
 	ledger: TrajLedger;
 	lastActive: number;
 	toolPreset: ToolPreset;
+	/** 用户在本会话里最后一次显式选择的思考级别；切模型后按新模型就近钳制重新应用，不让选择被 SDK 带丢 */
+	desiredThinkingLevel?: string;
 }
 
 const globalForAgentManager = globalThis as typeof globalThis & {
@@ -62,10 +67,11 @@ function textOf(content: any): string {
 	return "";
 }
 
-export function toWebMessage(m: any): WebMessage {
+export function toWebMessage(m: any, entryId?: string): WebMessage {
 	if (!m || typeof m !== "object") return { role: "other", content: [] };
 	const out: WebMessage = { role: "other", content: [] };
-	if (typeof m.id === "string") out.id = m.id;
+	if (entryId) out.id = entryId;
+	else if (typeof m.id === "string") out.id = m.id;
 	if (typeof m.timestamp === "number") out.timestamp = m.timestamp;
 	const items: WebMessage["content"] = [];
 	const content = Array.isArray(m.content) ? m.content : typeof m.content === "string" ? [{ type: "text", text: m.content }] : [];
@@ -91,9 +97,36 @@ export function toWebMessage(m: any): WebMessage {
 		out.provider = typeof m.provider === "string" ? m.provider : undefined;
 	} else if (m.role === "toolResult") {
 		out.role = "toolResult";
-		out.content = [{ type: "toolResult", toolCallId: m.toolCallId, text: textOf(m.content), isError: m.isError === true }];
+		const result = sanitizeToolOutput(textOf(m.content));
+		out.content = [{
+			type: "toolResult",
+			toolCallId: m.toolCallId,
+			text: result.text,
+			isError: m.isError === true,
+			encodingLoss: result.encodingLoss || undefined,
+			patch: patchOf(m.details),
+		}];
 	}
 	return out;
+}
+
+function entryIdForMessage(sm: SessionManager, message: any): string | undefined {
+	const entries = sm.getEntries() as any[];
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry?.type !== "message" || !entry.message) continue;
+		if (entry.message === message) return typeof entry.id === "string" ? entry.id : undefined;
+		if (entry.message.role === message?.role && entry.message.timestamp === message?.timestamp) {
+			return typeof entry.id === "string" ? entry.id : undefined;
+		}
+	}
+	return undefined;
+}
+
+/** edit/write 工具在 details.patch 里带 unified patch；限长避免撑爆 SSE 帧 */
+function patchOf(details: unknown): string | undefined {
+	const patch = (details as { patch?: unknown } | undefined)?.patch;
+	return typeof patch === "string" && patch.trim() ? patch.slice(0, 60_000) : undefined;
 }
 
 function coercePartial(p: unknown): string | undefined {
@@ -129,28 +162,112 @@ function publish(m: Managed, evt: WebEvent): void {
 	}
 }
 
+/** 模型/档位变化统一广播：同时带上新模型支持的档位，前端菜单据此刷新 */
+function publishModelState(m: Managed, session: AgentSession): void {
+	const model: any = session.model;
+	publish(m, {
+		type: "model",
+		provider: model ? String(model.provider ?? "") : undefined,
+		model: model ? String(model.id ?? "") : undefined,
+		thinkingLevel: String(session.thinkingLevel ?? ""),
+		thinkingLevels: session.getAvailableThinkingLevels() as unknown as string[],
+		ts: Date.now(),
+	});
+}
+
+/** 切模型后恢复用户显式选过的级别（按新模型钳制） */
+function reapplyDesiredLevel(m: Managed, session: AgentSession): void {
+	if (!m.desiredThinkingLevel) return;
+	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel);
+	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never);
+}
+
 function publishTraj(m: Managed): void {
 	for (const entry of m.ledger.drainDirty()) {
 		publish(m, { type: "traj", entry, ts: Date.now() });
 	}
 }
 
-function publishUsage(m: Managed): void {
-	if (!m.session) return;
-	let stats: WebStats | null = null;
+function timingStats(m: Managed): Pick<WebStats, "llmMs" | "toolMs" | "ttftMs" | "ttftSteps" | "decodeMs" | "decodeTokens"> {
+	let llmMs = 0;
+	let toolMs = 0;
+	let ttftMs = 0;
+	let ttftSteps = 0;
+	let decodeMs = 0;
+	let decodeTokens = 0;
+	for (const entry of m.ledger.entries) {
+		if (entry.kind === "tool") {
+			toolMs += Math.max(0, entry.timing?.durationMs ?? 0);
+			continue;
+		}
+		if (entry.kind !== "message") continue;
+		llmMs += Math.max(0, entry.timing?.durationMs ?? 0);
+		if (entry.timing?.ttftMs !== undefined) {
+			ttftMs += Math.max(0, entry.timing.ttftMs);
+			ttftSteps += 1;
+		}
+		if (entry.timing?.decodeMs !== undefined && entry.tokens?.output !== undefined) {
+			decodeMs += Math.max(0, entry.timing.decodeMs);
+			decodeTokens += Math.max(0, entry.tokens.output);
+		}
+	}
+	return { llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens };
+}
+
+function sessionStats(m: Managed): WebStats | null {
+	if (!m.session) return null;
 	try {
-		const s = m.session.getSessionStats();
-		stats = {
-			userMessages: s.userMessages,
-			assistantMessages: s.assistantMessages,
-			toolCalls: s.toolCalls,
-			totalMessages: s.totalMessages,
-			tokens: s.tokens,
-			cost: s.cost,
+		const stats = m.session.getSessionStats();
+		return {
+			userMessages: stats.userMessages,
+			assistantMessages: stats.assistantMessages,
+			toolCalls: stats.toolCalls,
+			totalMessages: stats.totalMessages,
+			tokens: stats.tokens,
+			cost: stats.cost,
+			...timingStats(m),
 		};
 	} catch {
-		stats = null;
+		return null;
 	}
+}
+
+function coldSessionStats(m: Managed): WebStats {
+	let userMessages = 0;
+	let assistantMessages = 0;
+	let toolCalls = 0;
+	let totalMessages = 0;
+	const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+	let cost = 0;
+	const addUsage = (usage: any) => {
+		if (!usage || typeof usage !== "object") return;
+		tokens.input += Number(usage.input ?? 0);
+		tokens.output += Number(usage.output ?? 0);
+		tokens.cacheRead += Number(usage.cacheRead ?? 0);
+		tokens.cacheWrite += Number(usage.cacheWrite ?? 0);
+		cost += Number(usage.cost?.total ?? 0);
+	};
+	for (const entry of m.sm.getEntries() as any[]) {
+		if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) addUsage(entry.usage);
+		if (entry.type !== "message" || !entry.message) continue;
+		totalMessages += 1;
+		const message = entry.message;
+		if (message.role === "user") userMessages += 1;
+		else if (message.role === "assistant") {
+			assistantMessages += 1;
+			toolCalls += Array.isArray(message.content)
+				? message.content.filter((content: any) => content?.type === "toolCall").length
+				: 0;
+			addUsage(message.usage);
+		} else if (message.role === "toolResult") addUsage(message.usage);
+	}
+	tokens.total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+	return { userMessages, assistantMessages, toolCalls, totalMessages, tokens, cost, ...timingStats(m) };
+}
+
+function publishUsage(m: Managed): void {
+	if (!m.session) return;
+	const stats = sessionStats(m);
 	const usage = m.session.getContextUsage() ?? null;
 	publish(m, {
 		type: "usage",
@@ -165,7 +282,8 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 	const now = Date.now();
 	switch (evt.type) {
 		case "message_start": {
-			const msg = toWebMessage((evt as any).message);
+			const raw = (evt as any).message;
+			const msg = toWebMessage(raw, entryIdForMessage(m.sm, raw));
 			if (msg.role === "user" || msg.role === "assistant") {
 				publish(m, { type: "message", message: msg, phase: "start", ts: now });
 			}
@@ -182,9 +300,14 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		}
 		case "message_end": {
-			const msg = toWebMessage((evt as any).message);
-			publish(m, { type: "message", message: msg, phase: "end", ts: now });
-			publishUsage(m);
+			const raw = (evt as any).message;
+			// Pi persists message_end after notifying listeners; wait one microtask so
+			// the browser receives the durable entry ID used by branch creation.
+			queueMicrotask(() => {
+				const msg = toWebMessage(raw, entryIdForMessage(m.sm, raw));
+				publish(m, { type: "message", message: msg, phase: "end", ts: now });
+				publishUsage(m);
+			});
 			break;
 		}
 		case "tool_execution_start":
@@ -197,30 +320,37 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				ts: now,
 			});
 			break;
-		case "tool_execution_update":
+		case "tool_execution_update": {
+			const partial = sanitizeToolOutput(coercePartial((evt as any).partialResult) ?? "");
 			publish(m, {
 				type: "tool",
 				id: evt.toolCallId,
 				name: evt.toolName,
 				args: (evt as any).args,
 				state: "running",
-				partialResult: coercePartial((evt as any).partialResult),
+				partialResult: partial.text || undefined,
+				encodingLoss: partial.encodingLoss || undefined,
 				ts: now,
 			});
 			break;
-		case "tool_execution_end":
+		}
+		case "tool_execution_end": {
+			const result = sanitizeToolOutput(coercePartial((evt as any).result) ?? "");
 			publish(m, {
 				type: "tool",
 				id: evt.toolCallId,
 				name: evt.toolName,
 				args: (evt as any).args,
 				state: "done",
-				result: coercePartial((evt as any).result),
+				result: result.text || undefined,
 				isError: evt.isError,
+				encodingLoss: result.encodingLoss || undefined,
+				patch: patchOf((evt as any).result?.details),
 				ts: now,
 			});
 			publishUsage(m);
 			break;
+		}
 		case "agent_start":
 			publish(m, { type: "status", isStreaming: true, state: "running", ts: now });
 			break;
@@ -254,7 +384,8 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			publish(m, { type: "name", name: (evt as any).name ?? "", ts: now });
 			break;
 		case "thinking_level_changed":
-			publish(m, { type: "model", thinkingLevel: (evt as any).level, ts: now });
+			if (m.session) publishModelState(m, m.session);
+			else publish(m, { type: "model", thinkingLevel: (evt as any).level, ts: now });
 			break;
 		case "auto_retry_start":
 			publish(m, { type: "error", message: `自动重试 ${(evt as any).attempt}/${(evt as any).maxAttempts}：${(evt as any).errorMessage ?? ""}`, ts: now });
@@ -275,28 +406,33 @@ export function getManaged(sessionPath: string): Managed {
 	let m = sessions.get(sessionPath);
 	if (!m) {
 		const sm = openSessionManager(sessionPath);
-		let initialTrajectory: TrajEntry[] = [];
-		try {
-			initialTrajectory = buildTrajectoryFromEntries(sm.getEntries() as unknown as any[]);
-		} catch {
-			/* A damaged history can still be opened; live events start a fresh ledger. */
-		}
-		m = {
-			sessionPath,
-			cwd: sm.getCwd() || process.cwd(),
-			sm,
-			session: null,
-			creating: null,
-			subscribers: new Set(),
-			buffer: [],
-			seq: 0,
-			ledger: new TrajLedger(initialTrajectory),
-			lastActive: Date.now(),
-			toolPreset: "standard",
-		};
-		sessions.set(sessionPath, m);
+		m = registerManaged(sessionPath, sm.getCwd() || process.cwd(), sm);
 	}
 	touch(m);
+	return m;
+}
+
+function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): Managed {
+	let initialTrajectory: TrajEntry[] = [];
+	try {
+		initialTrajectory = buildTrajectoryFromEntries(sm.getEntries() as unknown as any[]);
+	} catch {
+		/* A damaged history can still be opened; live events start a fresh ledger. */
+	}
+	const m: Managed = {
+		sessionPath,
+		cwd,
+		sm,
+		session: null,
+		creating: null,
+		subscribers: new Set(),
+		buffer: [],
+		seq: 0,
+		ledger: new TrajLedger(initialTrajectory),
+		lastActive: Date.now(),
+		toolPreset: "standard",
+	};
+	sessions.set(sessionPath, m);
 	return m;
 }
 
@@ -357,15 +493,25 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 	if (m.session) return m.session;
 	if (!m.creating) {
 		m.creating = (async () => {
-			const preset = TOOL_PRESETS[m.toolPreset];
+			// 资源加载器必须先完成发现（AGENTS.md/技能/模板），SDK 不会替调用方加载
+			await resourceLoaderReady(m.cwd);
 			const { session } = await createAgentSession({
 				cwd: m.cwd,
 				sessionManager: m.sm,
 				modelRuntime: await getModelRuntime(),
 				resourceLoader: getResourceLoader(m.cwd),
 				settingsManager: getSettingsManager(m.cwd),
-				...(preset && preset.length ? { tools: [...preset] } : {}),
 			});
+			// 工具注册表保持全集，预设只在激活层面收敛；
+			// 在 create 时传白名单会把 grep/find/ls 等永久锁在注册表外，
+			// 之后无论怎么切预设都拿不回来。
+			const allow = TOOL_PRESETS[m.toolPreset];
+			if (allow && allow.length) {
+				const all = listAllToolNames(session);
+				(session as unknown as { setActiveToolsByName: (names: string[]) => void }).setActiveToolsByName(
+					all.filter((name) => allow.includes(name)),
+				);
+			}
 			session.subscribe((evt) => translate(m, evt));
 			m.session = session;
 			publishEnvironmentTrajectory(m, session);
@@ -392,8 +538,9 @@ function listAllToolNames(session: AgentSession): string[] {
 }
 
 function listActiveTools(session: AgentSession): string[] {
-	const active = (session as unknown as { getActiveTools?: () => Array<{ name: string }> }).getActiveTools?.();
-	return active ? active.map((t) => t.name) : [];
+	// SDK 的真名是 getActiveToolNames（getActiveTools 不存在）
+	const active = (session as unknown as { getActiveToolNames?: () => string[] }).getActiveToolNames?.();
+	return active ?? [];
 }
 
 export function disposeSession(m: Managed): void {
@@ -401,6 +548,19 @@ export function disposeSession(m: Managed): void {
 		m.session?.dispose();
 	} catch {
 		/* ignore */
+	}
+	// 正在创建中的会话：创建完成后立即销毁，否则它会挂在已被移出池的
+	// Managed 上，订阅与句柄永久泄漏（同一 JSONL 还会出现双活跃会话）。
+	if (m.creating) {
+		void m.creating
+			.then((session) => {
+				try {
+					session?.dispose();
+				} catch {
+					/* ignore */
+				}
+			})
+			.catch(() => undefined);
 	}
 	for (const send of m.subscribers) {
 		try {
@@ -442,6 +602,8 @@ setInterval(reap, 60_000).unref?.();
 
 export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	touch(m);
+	// 冷路径的 prompt/技能/上下文资源都来自加载器，先等发现完成
+	await resourceLoaderReady(m.cwd);
 	const session = m.session;
 	let messages: WebMessage[] = [];
 	let model: WebSnapshot["model"];
@@ -450,7 +612,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	let thinkingLevels: string[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 	if (session) {
-		messages = session.messages.map(toWebMessage);
+		messages = session.messages.map((message) => toWebMessage(message, entryIdForMessage(m.sm, message)));
 		const modelObj: any = session.model;
 		if (modelObj) model = { provider: String(modelObj.provider ?? ""), id: String(modelObj.id ?? ""), name: String(modelObj.name ?? modelObj.id ?? "") };
 		thinkingLevel = String(session.thinkingLevel ?? "");
@@ -466,7 +628,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			const entries = m.sm.buildContextEntries();
 			messages = entries
 				.filter((e: any) => e.type === "message" && e.message)
-				.map((e: any) => toWebMessage(e.message));
+				.map((e: any) => toWebMessage(e.message, e.id));
 		} catch {
 			messages = [];
 		}
@@ -475,29 +637,50 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			const ctx = anySm.buildSessionContext?.();
 			if (ctx?.model) model = { provider: ctx.model.provider, id: ctx.model.modelId, name: ctx.model.modelId };
 			thinkingLevel = ctx?.thinkingLevel;
+			// 冷会话也按真实模型给档位，而不是固定七档
+			if (ctx?.model) {
+				const rt = await getModelRuntime();
+				const mm = rt.getModel(ctx.model.provider, ctx.model.modelId);
+				if (mm) {
+					thinkingLevels = supportedThinkingLevels(mm as any);
+					if (thinkingLevel) thinkingLevel = clampThinkingLevel(mm as any, thinkingLevel);
+				}
+			}
 		} catch {
 			/* ignore */
 		}
 	}
 
-	let stats: WebStats | null = null;
+	const stats: WebStats | null = session ? sessionStats(m) : coldSessionStats(m);
 	let contextUsage: WebSnapshot["contextUsage"] = null;
 	if (session) {
-		try {
-			const s = session.getSessionStats();
-			stats = {
-				userMessages: s.userMessages,
-				assistantMessages: s.assistantMessages,
-				toolCalls: s.toolCalls,
-				totalMessages: s.totalMessages,
-				tokens: s.tokens,
-				cost: s.cost,
-			};
-		} catch {
-			stats = null;
-		}
 		const usage = session.getContextUsage() ?? null;
 		contextUsage = usage ? { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent } : null;
+	} else if (model) {
+		// 冷会话没有 SDK 实例：用最后一轮 assistant 用量（input+cache+output ≈ 该轮后的
+		// 上下文规模）除以模型窗口估算，避免上下文计量永远显示 0% / —
+		try {
+			const rt = await getModelRuntime();
+			const modelMeta = (rt.getModels(model.provider) as any[]).find((x) => String(x.id) === model.id);
+			const window = Number(modelMeta?.contextWindow ?? 0);
+			let lastTurnTokens = 0;
+			for (let i = messages.length - 1; i >= 0; i--) {
+				const msg = messages[i];
+				if (msg.role === "assistant" && msg.usage) {
+					lastTurnTokens =
+						Number(msg.usage.input ?? 0) +
+						Number(msg.usage.cacheRead ?? 0) +
+						Number(msg.usage.cacheWrite ?? 0) +
+						Number(msg.usage.output ?? 0);
+					break;
+				}
+			}
+			if (window > 0 && lastTurnTokens > 0) {
+				contextUsage = { tokens: lastTurnTokens, contextWindow: window, percent: (lastTurnTokens / window) * 100 };
+			}
+		} catch {
+			/* 模型目录不可用则维持 null（UI 显示 0%） */
+		}
 	}
 
 	const tools = session
@@ -651,23 +834,19 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const model = rt.getModels(cmd.provider).find((x) => x.id === cmd.modelId) as any;
 				if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
 				await session.setModel(model, { persist: false });
-				publish(m, {
-					type: "model",
-					provider: String(model.provider),
-					model: String(model.id),
-					thinkingLevel: String(session.thinkingLevel ?? ""),
-					ts: Date.now(),
-				});
-				return { ok: true };
+				reapplyDesiredLevel(m, session);
+				publishModelState(m, session);
+				return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: session.getAvailableThinkingLevels() } };
 			}
 			case "setThinkingLevel": {
 				const session = await ensureSession(m);
-				if (!session.getAvailableThinkingLevels().includes(cmd.level as never)) {
-					return { ok: false, error: `unsupported thinking level ${cmd.level}` };
-				}
-				session.setThinkingLevel((cmd.level ?? "medium") as never);
-				publish(m, { type: "model", thinkingLevel: cmd.level, ts: Date.now() });
-				return { ok: true };
+				const requested = String(cmd.level ?? "medium");
+				// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
+				const effective = clampThinkingLevel(session.model as any, requested);
+				m.desiredThinkingLevel = requested;
+				session.setThinkingLevel(effective as never);
+				publishModelState(m, session);
+				return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
 			}
 			case "setToolPreset": {
 				const preset = cmd.preset as ToolPreset;
@@ -693,14 +872,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const session = await ensureSession(m);
 				const r = await session.cycleModel(cmd.direction ?? "forward");
 				if (r?.model) {
-					publish(m, {
-						type: "model",
-						provider: String((r.model as any).provider ?? ""),
-						model: String((r.model as any).id ?? ""),
-						thinkingLevel: String(r.thinkingLevel ?? session.thinkingLevel ?? ""),
-						ts: Date.now(),
-					});
-					return { ok: true, data: { model: String((r.model as any).id ?? "") } };
+					reapplyDesiredLevel(m, session);
+					publishModelState(m, session);
+					return { ok: true, data: { model: String((r.model as any).id ?? ""), thinkingLevel: session.thinkingLevel } };
 				}
 				return { ok: false, error: "no scoped models to cycle" };
 			}
@@ -719,9 +893,11 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				return { ok: true };
 			}
 			case "fork": {
-				const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-				const forked = SessionManager.forkFrom(m.sessionPath, m.cwd);
-				const newPath = forked.getSessionFile() ?? "";
+				const forked = cmd.entryId
+					? SessionManager.open(m.sessionPath).createBranchedSession(cmd.entryId)
+					: SessionManager.forkFrom(m.sessionPath, m.cwd).getSessionFile();
+				const newPath = forked ?? "";
+				if (!newPath) return { ok: false, error: "failed to create forked session" };
 				return { ok: true, data: { sessionPath: newPath } };
 			}
 			default:
@@ -737,15 +913,27 @@ export async function createNewSession(cwd: string): Promise<{ sessionPath: stri
 	const sm = SessionManager.create(cwd);
 	const p = sm.getSessionFile() ?? "";
 	if (!p) throw new Error("failed to create session file");
-	getManaged(p); // 预注册
+	// 必须直接注册 create 得到的实例：JSONL 落盘前 SessionManager.open(p) 找不到
+	// 文件会走新建分支，cwd 回退 process.cwd()，把会话偷换到服务器进程目录。
+	registerManaged(p, cwd, sm);
 	return { sessionPath: p };
 }
 
 /** 活跃会话状态（给侧栏状态点用） */
-export function activeStatus(): Record<string, { streaming: boolean }> {
-	const out: Record<string, { streaming: boolean }> = {};
+export function activeStatus(): Record<string, { streaming: boolean; lastStep?: string }> {
+	const out: Record<string, { streaming: boolean; lastStep?: string }> = {};
 	for (const [p, m] of sessions) {
-		if (m.session) out[p] = { streaming: m.session.isStreaming };
+		if (!m.session) continue;
+		// 侧栏显示“最后一步”：正在跑的会话让用户一眼知道它在干什么
+		let lastStep: string | undefined;
+		for (let i = m.ledger.entries.length - 1; i >= 0; i -= 1) {
+			const e = m.ledger.entries[i];
+			if (e.kind === "tool") {
+				lastStep = [e.toolName, (e.preview ?? e.title ?? "").split("\n")[0].slice(0, 80)].filter(Boolean).join(" · ");
+				break;
+			}
+		}
+		out[p] = { streaming: m.session.isStreaming, lastStep };
 	}
 	return out;
 }
@@ -761,6 +949,10 @@ export async function exportSession(
 		return { filename: base, content: await readFile(m.sessionPath, "utf8"), contentType: "application/jsonl" };
 	}
 	const session = await ensureSession(m);
-	const content = await session.exportToHtml();
+	// exportToHtml 返回的是写入磁盘的路径，不是内容；读回后删掉临时副本
+	const outPath = await session.exportToHtml();
+	const { readFile, rm } = await import("node:fs/promises");
+	const content = await readFile(outPath, "utf8");
+	await rm(outPath, { force: true }).catch(() => undefined);
 	return { filename: base.replace(/\.jsonl$/, ".html"), content, contentType: "text/html" };
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
 	answerLogin,
 	cancelLogin,
+	discoverModels,
 	listModels,
 	loginState,
 	readCustomProviders,
@@ -31,12 +32,15 @@ export async function POST(req: Request) {
 				| "setKey"
 				| "removeKey"
 				| "saveCustomProviders"
+				| "discoverModels"
 				| "loginStart"
 				| "loginState"
 				| "loginAnswer"
 				| "loginCancel";
 			providerId?: string;
 			apiKey?: string;
+			baseUrl?: string;
+			api?: string;
 			content?: string;
 			text?: string;
 		};
@@ -53,7 +57,12 @@ export async function POST(req: Request) {
 		if (body.action === "saveCustomProviders") {
 			if (typeof body.content !== "string") return NextResponse.json({ success: false, error: "missing content" }, { status: 400 });
 			await writeCustomProviders(body.content);
-			return NextResponse.json({ success: true });
+			return NextResponse.json({ success: true, data: { requiresSessionReopen: true } });
+		}
+		if (body.action === "discoverModels") {
+			if (!body.baseUrl) return NextResponse.json({ success: false, error: "missing baseUrl" }, { status: 400 });
+			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId });
+			return NextResponse.json({ success: true, data: { models } });
 		}
 		if (body.action === "loginStart") {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });

@@ -43,9 +43,27 @@ describe("PiWeb workspace registry", () => {
 			archiveSession(archived),
 		]);
 
+		const aliasKey = (dir: string) => (process.platform === "win32" ? path.resolve(dir).toLowerCase() : path.resolve(dir));
+
 		expect(await listAdded()).toEqual([path.resolve(first), path.resolve(second)]);
-		expect(await getAliases()).toEqual({ [path.resolve(first)]: "First workspace" });
+		expect(await getAliases()).toEqual({ [aliasKey(first)]: "First workspace" });
 		expect(await getArchivedSessions()).toEqual([path.resolve(archived)]);
+	});
+
+	it("normalizes alias keys case-insensitively on Windows", async () => {
+		const workspace = path.join(tempDir, "CaseDir");
+		await addWorkspace(workspace);
+		await setAlias(workspace, "Original");
+
+		// 同一目录的另一种大小写应更新同一个别名，而不是产生第二个键
+		await setAlias(path.join(tempDir, "casedir"), "Renamed");
+		const aliases = await getAliases();
+		expect(Object.keys(aliases)).toHaveLength(1);
+		expect(Object.values(aliases)).toEqual(["Renamed"]);
+
+		// 大小写不同的路径也能清除别名
+		await setAlias(path.join(tempDir, "CASEDIR"), "");
+		expect(await getAliases()).toEqual({});
 	});
 
 	it("removes only the workspace registration and keeps its sessions archived", async () => {
@@ -73,5 +91,13 @@ describe("PiWeb workspace registry", () => {
 		await archiveSession(archived);
 		expect(await forgetSession(archived)).toEqual([]);
 		expect(await getArchivedSessions()).toEqual([]);
+	});
+
+	it("does not overwrite a malformed workspace registry", async () => {
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		await fs.writeFile(registryPath, "{malformed", "utf8");
+
+		await expect(listAdded()).rejects.toThrow();
+		expect(await fs.readFile(registryPath, "utf8")).toBe("{malformed");
 	});
 });

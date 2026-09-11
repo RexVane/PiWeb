@@ -3,7 +3,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getAgentDir, getPackageManager, getResourceLoader, invalidateResourceLoaders, reloadAllLoaders } from "./pi";
+import { getAgentDir, getPackageManager, getResourceLoader, invalidateResourceLoaders, reloadAllLoaders, resourceLoaderReady } from "./pi";
 
 export interface PackageView {
 	source: string;
@@ -103,6 +103,7 @@ export async function listPackages(cwd: string): Promise<PackageView[]> {
 }
 
 export async function listLoadedExtensions(cwd: string): Promise<ExtensionView[]> {
+	await resourceLoaderReady(cwd);
 	const loader = getResourceLoader(cwd);
 	const result = loader.getExtensions() as unknown as {
 		extensions?: Array<{ path?: string; name?: string }>;

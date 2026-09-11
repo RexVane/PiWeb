@@ -26,9 +26,17 @@ function toSummary(info: {
 	};
 }
 
+/** 列表短缓存：多标签每 3 秒各轮询一次会全盘扫描 JSONL，1.2 秒 TTL 吸收并发请求 */
+let listCache: { at: number; list: SessionSummary[] } | null = null;
+
 export async function listSessions(query?: string): Promise<SessionSummary[]> {
-	const all = await SessionManager.listAll();
-	let list = all.map(toSummary);
+	let list: SessionSummary[];
+	if (listCache && Date.now() - listCache.at < 1200) {
+		list = listCache.list;
+	} else {
+		list = (await SessionManager.listAll()).map(toSummary);
+		listCache = { at: Date.now(), list };
+	}
 	if (query?.trim()) {
 		const q = query.trim().toLowerCase();
 		list = list.filter(
@@ -43,7 +51,12 @@ export async function listSessions(query?: string): Promise<SessionSummary[]> {
 }
 
 export async function deleteSession(sessionPath: string): Promise<void> {
-	await fs.unlink(sessionPath);
+	try {
+		await fs.unlink(sessionPath);
+	} catch (error) {
+		// 未落盘的惰性会话（还没发过消息）本来就没有文件，删除视为成功
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
 }
 
 /** 冷读取：还原上下文消息 + 会话名（不启动 agent） */
@@ -58,7 +71,7 @@ export async function readSession(sessionPath: string): Promise<{
 		const entries = sm.buildContextEntries();
 		messages = entries
 			.filter((e: any) => e.type === "message" && e.message)
-			.map((e: any) => toWebMessage(e.message));
+			.map((e: any) => toWebMessage(e.message, e.id));
 	} catch {
 		messages = [];
 	}

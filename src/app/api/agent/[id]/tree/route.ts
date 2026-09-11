@@ -16,7 +16,7 @@ function messageText(content: unknown): string {
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
 	try {
-		const m = getManaged(await resolveSessionPath(id));
+		const m = getManaged(await resolveSessionPath(id, { allowPending: true }));
 		const activeBranch = m.sm.getBranch() as unknown as any[];
 		const activeUserId = [...activeBranch]
 			.reverse()

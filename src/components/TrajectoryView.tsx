@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { IconClockOutline16, IconCloseOutline14, IconSearchOutline16 } from "@/components/icons";
+import { IconCloseOutline14, IconSearchOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { TrajEntry, TrajTokens } from "@/lib/types";
 import styles from "./TrajectoryAnalyzer.module.css";
@@ -11,15 +11,8 @@ type DetailTab = "summary" | "preview" | "raw" | "source";
 
 interface DisplayRow {
 	entry: TrajEntry;
-	groupKey: string;
 	index: number;
 	lane: Lane;
-	turn?: number;
-}
-
-interface DisplayGroup {
-	key: string;
-	rows: DisplayRow[];
 	turn?: number;
 }
 
@@ -78,23 +71,9 @@ function deriveRows(entries: TrajEntry[]): DisplayRow[] {
 	return entries.map((entry, index) => {
 		if (entry.kind === "user") turn += 1;
 		const currentTurn = turn > 0 ? turn : undefined;
-		const groupKey = entry.kind === "system" || entry.kind === "context" ? "system" : currentTurn ? `turn:${currentTurn}` : "session";
 		const lane: Lane = entry.kind === "tool" ? 2 : entry.kind === "message" ? 1 : 0;
-		return { entry, groupKey, index, lane, ...(currentTurn ? { turn: currentTurn } : {}) };
+		return { entry, index, lane, ...(currentTurn ? { turn: currentTurn } : {}) };
 	});
-}
-
-function deriveGroups(rows: DisplayRow[]): DisplayGroup[] {
-	const groups = new Map<string, DisplayGroup>();
-	for (const row of rows) {
-		let group = groups.get(row.groupKey);
-		if (!group) {
-			group = { key: row.groupKey, rows: [], ...(row.turn ? { turn: row.turn } : {}) };
-			groups.set(row.groupKey, group);
-		}
-		group.rows.push(row);
-	}
-	return [...groups.values()];
 }
 
 function matchesQuery(row: DisplayRow, query: string): boolean {
@@ -108,11 +87,14 @@ function matchesQuery(row: DisplayRow, query: string): boolean {
 }
 
 function FoldIcon({ expanded }: { expanded: boolean }) {
+	return <span className={styles.foldIcon} aria-hidden>{expanded ? "⊟" : "⊞"}</span>;
+}
+
+function DurationIcon() {
 	return (
-		<svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-			<rect x="1.5" y="1.5" width="9" height="9" rx="1.5" stroke="currentColor" />
-			<path d="M3.5 6h5" stroke="currentColor" strokeLinecap="round" />
-			{!expanded && <path d="M6 3.5v5" stroke="currentColor" strokeLinecap="round" />}
+		<svg className={styles.durationIcon} viewBox="0 0 16 16" fill="none" aria-hidden>
+			<circle cx="8" cy="8" r="5.25" />
+			<path d="M8 4.75V8l2.25 1.5" />
 		</svg>
 	);
 }
@@ -183,43 +165,35 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 	const { t } = useI18n();
 	const [actualDuration, setActualDuration] = useState(true);
 	const [callsCollapsed, setCallsCollapsed] = useState(false);
-	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+	const [turnsCollapsed, setTurnsCollapsed] = useState(false);
 	const [query, setQuery] = useState("");
 	const rows = useMemo(() => deriveRows(entries), [entries]);
-	const groups = useMemo(() => deriveGroups(rows), [rows]);
 	const normalizedQuery = query.trim().toLocaleLowerCase();
 	const matchedSeqs = useMemo(
 		() => normalizedQuery ? new Set(rows.filter((row) => matchesQuery(row, normalizedQuery)).map((row) => row.entry.seq)) : null,
 		[normalizedQuery, rows],
 	);
-	const collapsibleKeys = groups.filter((group) => group.key !== "system").map((group) => group.key);
-	const allTurnsCollapsed = collapsibleKeys.length > 0 && collapsibleKeys.every((key) => collapsedGroups.has(key));
-	const visibleCount = groups.reduce(
-		(total, group) => total + group.rows.filter((row) => (!callsCollapsed || row.entry.kind !== "tool") && matchesQuery(row, normalizedQuery)).length,
-		0,
+	const visibleRows = useMemo(
+		() => rows.filter((row) => {
+			if (callsCollapsed && row.entry.kind === "tool") return false;
+			if (turnsCollapsed && !["system", "context", "user", "compacted"].includes(row.entry.kind)) return false;
+			return matchesQuery(row, normalizedQuery);
+		}).reverse(),
+		[callsCollapsed, normalizedQuery, rows, turnsCollapsed],
 	);
-
-	const toggleGroup = (key: string) => {
-		setCollapsedGroups((current) => {
-			const next = new Set(current);
-			if (next.has(key)) next.delete(key);
-			else next.add(key);
-			return next;
-		});
-	};
 
 	return (
 		<div className={styles.root}>
 			<div className={styles.toolbar} role="toolbar" aria-label={t.tabTrajectory}>
 				<div className={styles.toolbarActions}>
 					<button type="button" className={styles.toolbarButton} aria-pressed={actualDuration} onClick={() => setActualDuration((value) => !value)}>
-						<IconClockOutline16 size={13} />{t.duration}
+						<DurationIcon />Duration
 					</button>
-					<button type="button" className={styles.toolbarButton} aria-pressed={allTurnsCollapsed} onClick={() => setCollapsedGroups(allTurnsCollapsed ? new Set() : new Set(collapsibleKeys))}>
-						<FoldIcon expanded={!allTurnsCollapsed} />{t.turns}
+					<button type="button" className={styles.toolbarButton} aria-pressed={turnsCollapsed} onClick={() => setTurnsCollapsed((value) => !value)}>
+						<FoldIcon expanded={!turnsCollapsed} />Turns
 					</button>
 					<button type="button" className={styles.toolbarButton} aria-pressed={callsCollapsed} onClick={() => setCallsCollapsed((value) => !value)}>
-						<FoldIcon expanded={!callsCollapsed} />{t.toolCalls}
+						<FoldIcon expanded={!callsCollapsed} />Calls
 					</button>
 				</div>
 				<label className={styles.searchBox}>
@@ -231,21 +205,8 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 			<TrajectoryTimeline rows={rows} actualDuration={actualDuration} matchedSeqs={matchedSeqs} selected={selected} onSelect={onSelect} />
 
 			<div className={styles.ledger}>
-				{!entries.length ? <div className={styles.empty}>{t.trajEmpty}</div> : visibleCount === 0 ? <div className={styles.empty}>{t.trajNoMatch}</div> : groups.map((group) => {
-					const visibleRows = group.rows.filter((row) => (!callsCollapsed || row.entry.kind !== "tool") && matchesQuery(row, normalizedQuery));
-					if (!visibleRows.length) return null;
-					const isEnvironment = group.key === "system";
-					const collapsed = !isEnvironment && collapsedGroups.has(group.key);
-					const groupTitle = group.key === "system" ? t.trajSystem : group.turn ? `${t.trajTurn} ${group.turn}` : t.trajSession;
-					return (
-						<section className={styles.group} key={group.key} data-environment={isEnvironment || undefined}>
-							{!isEnvironment && <button type="button" className={styles.groupHeader} onClick={() => toggleGroup(group.key)} aria-expanded={!collapsed}>
-								<span className={styles.groupTitle}><FoldIcon expanded={!collapsed} />{groupTitle}</span>
-								<span className={styles.columnHeaders} aria-hidden>
-									<span>{t.trajInput}</span><span>{t.trajOutput}</span><span>{t.trajThink}</span><span>{t.trajTime}</span>
-								</span>
-							</button>}
-							{!collapsed && <div className={styles.groupBody}>{visibleRows.map((row) => {
+				{!entries.length ? <div className={styles.empty}>{t.trajEmpty}</div> : visibleRows.length === 0 ? <div className={styles.empty}>{t.trajNoMatch}</div> : (
+					<div className={styles.groupBody}>{visibleRows.map((row) => {
 								const entry = row.entry;
 								const tokens: TrajTokens = entry.tokens ?? {};
 								return (
@@ -254,10 +215,10 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 										key={`${entry.seq}:${row.index}`}
 										className={styles.row}
 										data-kind={entry.kind}
+										data-environment={entry.kind === "system" || entry.kind === "context" || undefined}
 										data-selected={selected?.seq === entry.seq || undefined}
 										onClick={() => onSelect({ ...entry, ...(row.turn ? { turn: row.turn } : {}) })}
 									>
-										<span className={styles.rowIndex}>{row.index + 1}</span>
 										<span className={styles.kindTag}>{entry.kind === "tool" && entry.toolName ? entry.toolName : KIND_NAME[entry.kind]}</span>
 										<span className={styles.rowText} title={previewOf(entry)}>{previewOf(entry) || KIND_NAME[entry.kind]}</span>
 										<span className={styles.metric}>{fmtTok(tokens.input)}</span>
@@ -266,10 +227,8 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 										<span className={styles.metric}>{fmtDur(durationOf(entry))}</span>
 									</button>
 								);
-							})}</div>}
-						</section>
-					);
-				})}
+							})}</div>
+				)}
 			</div>
 		</div>
 	);
@@ -299,6 +258,7 @@ export function TrajInspector({ entry, onClose }: { entry: TrajEntry; onClose: (
 				{tabs.map((item) => <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)}>{item.label}</button>)}
 			</div>
 			<div className={styles.inspectorBody}>
+				{entry.encodingLoss && <p role="status" style={{ margin: "0 0 14px", color: "var(--dsw-warning, #d5a13b)", fontSize: 13, lineHeight: 1.55 }}>{t.encodingLossWarning}</p>}
 				{tab === "summary" && <>
 					<dl className={styles.summaryList}>
 						<div><dt>{t.trajSource}</dt><dd>{sourceOf(entry)}</dd></div>

@@ -7,22 +7,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput } from "@/components/ChatInput";
-import { ChatWindow } from "@/components/ChatWindow";
+import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
+import { FilesPanel } from "@/components/FilesPanel";
+import { GitPanel } from "@/components/GitPanel";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { TrajInspector, TrajectoryView } from "@/components/TrajectoryView";
 import {
-	IconBranchOutline16,
 	IconCheckOutline14,
 	IconChevronDown14,
-	IconDownloadOutline16,
 	IconFolderClose16,
+	IconFolderOpenOutline16,
+	IconGitOutline16,
 	IconPanelLeftOutline16,
 	IconProjectAddOutline16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
-import { applyTheme, type ThemePref } from "@/lib/theme";
+import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
@@ -46,6 +48,8 @@ export function AppShell() {
 	const { t } = useI18n();
 	const {
 		sessions,
+		archivedSessions,
+		archivedSessionPaths,
 		currentId,
 		currentPath,
 		state,
@@ -56,6 +60,7 @@ export function AppShell() {
 		getWorkspaceName,
 		renameWorkspace,
 		archiveSession,
+		unarchiveSession,
 		resync,
 		groupBy,
 		orderBy,
@@ -70,12 +75,15 @@ export function AppShell() {
 		closeSession,
 		setToolPreset,
 		clearError,
+		setError,
 	} = usePiWeb();
 
 	const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [detailsWidth, setDetailsWidth] = useState(DETAILS_DEFAULT);
 	const [detailsOpen, setDetailsOpen] = useState(false);
+	/** 详情栏内容来源：files / git 面板；轨迹 inspector 由 selected 驱动 */
+	const [detailsTab, setDetailsTab] = useState<"files" | "git" | null>(null);
 	const [dragging, setDragging] = useState<"sidebar" | "details" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [tab, setTab] = useState<"chat" | "traj">("chat");
@@ -83,24 +91,8 @@ export function AppShell() {
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
-	const [branchOpen, setBranchOpen] = useState(false);
-	const [branchItems, setBranchItems] = useState<{ entryId: string; ts: number; text: string; depth: number; label?: string }[]>([]);
-	const [branchLeafId, setBranchLeafId] = useState("");
-	const [branchLoading, setBranchLoading] = useState(false);
-	const [branchError, setBranchError] = useState("");
-	const [restoredDraft, setRestoredDraft] = useState<{ key: number; text: string } | null>(null);
 	const [isNarrow, setIsNarrow] = useState(false);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-	const branchRef = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		if (!branchOpen) return;
-		const h = (e: MouseEvent) => {
-			if (!branchRef.current?.contains(e.target as Node)) setBranchOpen(false);
-		};
-		document.addEventListener("mousedown", h);
-		return () => document.removeEventListener("mousedown", h);
-	}, [branchOpen]);
 	useEffect(() => {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
 		setDetailsWidth(restore("piweb.detailsW", DETAILS_DEFAULT));
@@ -118,17 +110,15 @@ export function AppShell() {
 		return () => query.removeEventListener("change", sync);
 	}, []);
 
-	// 全局外观主题初始化与系统偏好动态监听（对齐 dsh theme-presenter）
+	// 全局 Pebrel 主题初始化与系统亮暗/跨标签动态监听
 	useEffect(() => {
-		const sync = () => {
-			const pref = (localStorage.getItem("piweb.theme") as ThemePref) || "system";
-			applyTheme(pref);
-		};
+		const sync = () => syncPebrelTheme();
 		sync();
 		const mq = window.matchMedia("(prefers-color-scheme: dark)");
 		mq.addEventListener("change", sync);
 		const onStorage = (e: StorageEvent) => {
-			if (e.key === "piweb.theme") sync();
+			// 配色或亮暗任一变化都重放（跨标签同步）
+			if (e.key === "piweb.pebrelTheme" || e.key === "piweb.theme") sync();
 		};
 		window.addEventListener("storage", onStorage);
 		return () => {
@@ -142,25 +132,48 @@ export function AppShell() {
 		if (selected) setDetailsOpen(true);
 	}, [selected]);
 
-	// 已知工作区列表（给 Hero 建议）
-	const knownCwds = Array.from(new Set([...addedWorkspaces, ...sessions.map((s) => s.cwd)])).filter(Boolean);
+	useEffect(() => {
+		setSelected(null);
+		setDetailsOpen(false);
+		setDetailsTab(null);
+	}, [currentPath]);
 
-	const authByProvider: Record<string, boolean> = {};
-	const providerNames: Record<string, string> = {};
-	for (const p of models?.providers ?? []) {
-		authByProvider[p.id] = p.authConfigured === true;
-		providerNames[p.id] = p.name;
-	}
-	const modelChoices: ModelChoice[] = (models?.models ?? []).map((m: any) => ({
-		provider: m.provider,
-		id: m.id,
-		name: m.name,
-		reasoning: m.reasoning,
-		thinkingLevels: m.thinkingLevels,
-		contextWindow: m.contextWindow,
-	}));
-	const defaultModel = modelChoices.find((m) => authByProvider[m.provider]);
-	const heroModelLevels = (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
+	// 未选择时输入框仍可用，发送会提示先选择工作区
+	const knownCwds = useMemo(
+		() => Array.from(new Set([...addedWorkspaces, ...sessions.map((s) => s.cwd)])).filter(Boolean),
+		[addedWorkspaces, sessions],
+	);
+
+	// 模型目录派生值：数百个模型对象的映射只在目录变化时重算，
+	// 不能跟着每次 token 增量 / 3 秒轮询重跑（usePiWeb 的 setState 都会触发本组件渲染）
+	const { authByProvider, providerNames } = useMemo(() => {
+		const auth: Record<string, boolean> = {};
+		const names: Record<string, string> = {};
+		for (const p of models?.providers ?? []) {
+			auth[p.id] = p.authReady === true;
+			names[p.id] = p.name;
+		}
+		return { authByProvider: auth, providerNames: names };
+	}, [models]);
+	const modelChoices: ModelChoice[] = useMemo(
+		() =>
+			(models?.models ?? []).map((m: any) => ({
+				provider: m.provider,
+				id: m.id,
+				name: m.name,
+				reasoning: m.reasoning,
+				thinkingLevels: m.thinkingLevels,
+				contextWindow: m.contextWindow,
+			})),
+		[models],
+	);
+	const defaultModel = useMemo(() => modelChoices.find((m) => authByProvider[m.provider]), [modelChoices, authByProvider]);
+	const heroModelLevels = useMemo(
+		() => (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+		[heroModel, modelChoices, defaultModel],
+	);
+
 
 	// ---------- 拖拽 ----------
 	const onDrag = useCallback(
@@ -182,9 +195,12 @@ export function AppShell() {
 				setDragging(null);
 				window.removeEventListener("pointermove", move);
 				window.removeEventListener("pointerup", up);
+				window.removeEventListener("pointercancel", up);
 			};
 			window.addEventListener("pointermove", move);
 			window.addEventListener("pointerup", up);
+			// 触摸/笔输入被系统手势打断时只触发 pointercancel，不处理会永久泄漏监听器
+			window.addEventListener("pointercancel", up);
 		},
 		[sidebarWidth, detailsWidth],
 	);
@@ -202,6 +218,13 @@ export function AppShell() {
 
 	// ---------- 会话操作 ----------
 	const snapshot = state.snapshot;
+
+	// 上下文分段的数据源：系统提示词按注入资源字符数（很便宜）；
+	// 消息字符统计交给 ContextMeter 弹窗打开时再算，避免每次 token 增量全量扫描
+	const contextSystemChars = useMemo(
+		() => (snapshot?.contextResources ?? []).reduce((sum, r) => sum + (r.content?.length ?? 0), 0),
+		[snapshot?.contextResources],
+	);
 	const isStreaming = snapshot?.isStreaming ?? false;
 
 	useEffect(() => {
@@ -239,13 +262,25 @@ export function AppShell() {
 	const doArchiveSession = useCallback(
 		async (path: string) => {
 			try {
+				// dsh 合同：归档不关会话——当前会话被归档后保持打开且在主列表可见
+				// （usePiWeb 的可见性规则对 currentPath 豁免），继续可聊。
 				await archiveSession(path);
-				if (path === currentPath) closeSession();
 			} catch {
 				// usePiWeb exposes the request failure in the shared error banner.
 			}
 		},
-		[archiveSession, currentPath, closeSession],
+		[archiveSession],
+	);
+	const doUnarchiveSession = useCallback(
+		async (path: string) => {
+			try {
+				await unarchiveSession(path);
+				resync();
+			} catch {
+				// usePiWeb exposes the request failure in the shared error banner.
+			}
+		},
+		[unarchiveSession, resync],
 	);
 
 	const doRenameWorkspace = useCallback(
@@ -266,46 +301,20 @@ export function AppShell() {
 		[removeWorkspace, heroCwd, resync],
 	);
 
-	const openBranches = useCallback(async () => {
-		if (branchOpen) {
-			setBranchOpen(false);
-			return;
-		}
-		if (!currentId) return;
-		setBranchOpen(true);
-		setBranchLoading(true);
-		setBranchError("");
-		try {
-			const response = await fetch(`/api/agent/${currentId}/tree`);
-			const result = await response.json();
-			if (!response.ok || !result.success) throw new Error(result.error || "failed to load branches");
-			setBranchItems(result.data.userMessages ?? []);
-			setBranchLeafId(result.data.activeUserId ?? "");
-		} catch (error) {
-			setBranchError(error instanceof Error ? error.message : "failed to load branches");
-		} finally {
-			setBranchLoading(false);
-		}
-	}, [branchOpen, currentId]);
-
-	const navigateBranch = useCallback(async (entryId: string) => {
-		const result = await sendCommand({ cmd: "navigate", entryId });
-		if (result.success) {
-			if (typeof result.data?.editorText === "string") {
-				setRestoredDraft({ key: Date.now(), text: result.data.editorText });
-			}
-			setBranchOpen(false);
-			resync();
-		}
-	}, [sendCommand, resync]);
-
 	// Hero 发送：先完整应用新会话预设，再发第一条消息。
 	const heroSend = async (text: string, images: ImageAttachment[]) => {
-		const cwd = heroCwd.trim() || knownCwds[0] || "";
-		if (!cwd) return;
+		// 启动不预选工作区：未选择就发送时明确提示，而不是静默落到第一个工作区
+		const cwd = heroCwd.trim();
+		if (!cwd) {
+			setError(t.pickWorkspaceFirst);
+			return;
+		}
+		// 用户没手动选过模型时也要把界面显示的默认模型显式下发，
+		// 否则后端不 setModel、SDK 自选的默认与界面显示不一致。
+		const effective = heroModel ?? (defaultModel ? { provider: defaultModel.provider, id: defaultModel.id } : null);
 		const p = await newSession(cwd, {
-			provider: heroModel?.provider,
-			modelId: heroModel?.id,
+			provider: effective?.provider,
+			modelId: effective?.id,
 			thinking: heroThinking || undefined,
 		});
 		if (!p) return;
@@ -315,6 +324,19 @@ export function AppShell() {
 	const sendPrompt = (text: string, images: ImageAttachment[]) => {
 		void sendCommand({ cmd: "prompt", text, images });
 	};
+
+	// 稳定引用：ChatWindow 行级 memo 依赖它，内联箭头函数会让 memo 全部失效
+	const handleFork = useCallback(
+		(entryId: string) =>
+			sendCommand({ cmd: "fork", entryId }).then((result) => {
+				if (result.success && result.data?.sessionPath) {
+					openSession(result.data.sessionPath);
+					resync();
+				}
+				return result;
+			}),
+		[sendCommand, openSession, resync],
+	);
 
 	// 斜杠命令（Web 内置 + pi 模板 + 技能），照 dsh 命令面板
 	const slashCommands = useMemo(() => {
@@ -361,6 +383,9 @@ export function AppShell() {
 		currentPath?.split(/[\\/]/).pop() ||
 		"pi";
 
+	// 详情栏文件/Git 面板的工作区：当前会话的工作区优先，快照未到时回落到会话列表里的 cwd
+	const panelCwd = snapshot?.cwd || currentSession?.cwd || heroCwd || knownCwds[0] || "";
+
 	useEffect(() => {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
 	}, [currentId, title]);
@@ -395,6 +420,8 @@ export function AppShell() {
 			>
 				<SessionSidebar
 					sessions={sessions}
+					archivedSessions={archivedSessions}
+					archivedPaths={archivedSessionPaths}
 					addedWorkspaces={addedWorkspaces}
 					removedWorkspaces={removedWorkspaces}
 					currentPath={currentPath}
@@ -409,16 +436,23 @@ export function AppShell() {
 						setMobileSidebarOpen(false);
 					}}
 					onNew={() => {
+						// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
 						setTab("chat");
+						const cur = sessions.find((s) => s.path === currentPath)?.cwd;
+						setHeroCwd(cur || heroCwd || knownCwds[0] || "");
 						closeSession();
 					}}
 					onNewInWorkspace={(cwd) => {
+						// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
 						setTab("chat");
-						void newSession(cwd);
+						setHeroCwd(cwd);
+						closeSession();
 					}}
 					onRename={doRename}
 					onFork={doForkSession}
 					onArchive={doArchiveSession}
+					onUnarchive={doUnarchiveSession}
+					onExport={(path) => window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank")}
 					getWorkspaceName={getWorkspaceName}
 					onRenameWorkspace={doRenameWorkspace}
 					onDeleteWorkspace={doDeleteWorkspace}
@@ -427,80 +461,99 @@ export function AppShell() {
 						setMobileSidebarOpen(false);
 					}}
 					onAddWorkspace={() => void addWorkspaceByPicker()}
+					draftCwd={!currentId ? heroCwd || null : null}
 				/>
 			</div>
 
 			{/* 会话区 */}
 			<div className="pi-main flex min-h-0 min-w-0 flex-col">
 				{!currentId ? (
-					<Hero
-						cwd={heroCwd}
-						setCwd={setHeroCwd}
-						knownCwds={knownCwds}
-						getWorkspaceName={getWorkspaceName}
-						onSend={heroSend}
-						models={modelChoices}
-						providerNames={providerNames}
-						authByProvider={authByProvider}
-						addWorkspaceByPicker={addWorkspaceByPicker}
-						heroModel={heroModel}
-						onSelectHeroModel={(provider, id) => {
-							setHeroModel({ provider, id });
-							const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
-							if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
-						}}
-						defaultModel={defaultModel}
-						heroModelLevels={heroModelLevels}
-						heroThinking={heroThinking}
-						onSelectHeroThinking={setHeroThinking}
-					/>
-				) : (
-					<>
-						{/* 头部：标题行 + 页签行（dsh 两行式） */}
-						<div className="hairline-b px-5 pb-0 pt-3">
-							<div className="flex items-center gap-3">
-								<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
-									{title}
-								</span>
-								<div ref={branchRef} className="relative">
-									<button className="btn-outline" style={{ height: 30, fontSize: 12.5 }} onClick={() => void openBranches()}>
-										<IconBranchOutline16 size={13} />
-										{t.branches}
-										<IconChevronDown14 size={12} />
-									</button>
-									{branchOpen && (
-										<div className="popover absolute right-0 top-9 z-50 max-h-80 w-80 overflow-y-auto py-1.5">
-											{branchLoading && <div className="px-4 py-3" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>...</div>}
-											{branchError && <div className="px-4 py-3" role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{branchError}</div>}
-											{!branchLoading && !branchError && branchItems.length === 0 && (
-												<div className="px-4 py-3" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.noBranches}</div>
-											)}
-											{branchItems.map((item, index) => (
-												<button
-													key={item.entryId}
-													className="flex w-full items-start gap-3 px-4 py-2.5 text-left"
-													style={{ background: item.entryId === branchLeafId ? "var(--dsw-accent-soft)" : "transparent" }}
-													disabled={item.entryId === branchLeafId || isStreaming}
-													onClick={() => void navigateBranch(item.entryId)}
-												>
-													<span style={{ fontSize: 11, color: "var(--dsw-label-caption)", flex: "none", marginLeft: Math.min(item.depth, 8) * 10 }}>{index + 1}</span>
-													<span className="line-clamp-2 min-w-0 flex-1" style={{ fontSize: 12.5 }}>{item.label ? `${item.label}: ` : ""}{item.text || "..."}</span>
-													{item.entryId === branchLeafId && <IconCheckOutline14 size={13} style={{ flex: "none", color: "var(--dsw-accent)" }} />}
-												</button>
-											))}
-										</div>
-									)}
-								</div>
+					<div className="flex min-h-0 flex-1 flex-col">
+						<Hero
+							cwd={heroCwd}
+							setCwd={setHeroCwd}
+							knownCwds={knownCwds}
+							getWorkspaceName={getWorkspaceName}
+							onSend={heroSend}
+							models={modelChoices}
+							providerNames={providerNames}
+							authByProvider={authByProvider}
+							addWorkspaceByPicker={addWorkspaceByPicker}
+							heroModel={heroModel}
+							onSelectHeroModel={(provider, id) => {
+								setHeroModel({ provider, id });
+								const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
+								if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
+							}}
+							defaultModel={defaultModel}
+							heroModelLevels={heroModelLevels}
+							heroThinking={heroThinking}
+							onSelectHeroThinking={setHeroThinking}
+						/>
+						{/* 草稿阶段的错误行内显示（不再弹右下角） */}
+						{state.error && (
+							<div className="px-4 pb-3">
 								<button
-									className="btn-outline"
-									style={{ height: 30, fontSize: 12.5 }}
-									onClick={() => currentId && window.open(`/api/sessions/${currentId}/export?format=jsonl`, "_blank")}
-									title={t.exportJsonl}
+									className="mx-auto block w-full max-w-md rounded-xl px-3 py-2 text-left"
+									style={{ fontSize: 12.5, background: "var(--dsw-danger)", color: "white" }}
+									onClick={clearError}
+									role="alert"
 								>
-									<IconDownloadOutline16 size={13} />
-									{t.sessionLog}
+									{state.error}
 								</button>
 							</div>
+						)}
+					</div>
+				) : (
+					<>
+							{/* 头部：标题行 + 页签行（dsh 两行式） */}
+							<div className="hairline-b px-5 pb-0 pt-3">
+								<div className="flex items-center gap-3">
+									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
+										{title}
+									</span>
+									{/* 文件 / Git 面板入口（照 Pebrel「终端旁的文件与 Git」） */}
+									<button
+										type="button"
+										className="icon-btn"
+										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "files" && !selected ? "var(--dsw-active)" : undefined }}
+										title={t.filesPanel}
+										aria-label={t.filesPanel}
+										aria-pressed={detailsOpen && detailsTab === "files" && !selected}
+										onClick={() => {
+											if (selected) {
+												setSelected(null);
+												setDetailsTab("files");
+												return;
+											}
+											const next = !(detailsOpen && detailsTab === "files");
+											setDetailsTab(next ? "files" : null);
+											setDetailsOpen(next);
+										}}
+									>
+										<IconFolderOpenOutline16 size={15} />
+									</button>
+									<button
+										type="button"
+										className="icon-btn"
+										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "git" && !selected ? "var(--dsw-active)" : undefined }}
+										title={t.gitPanel}
+										aria-label={t.gitPanel}
+										aria-pressed={detailsOpen && detailsTab === "git" && !selected}
+										onClick={() => {
+											if (selected) {
+												setSelected(null);
+												setDetailsTab("git");
+												return;
+											}
+											const next = !(detailsOpen && detailsTab === "git");
+											setDetailsTab(next ? "git" : null);
+											setDetailsOpen(next);
+										}}
+									>
+										<IconGitOutline16 size={15} />
+									</button>
+								</div>
 							<div className="mt-1.5 flex items-center gap-5">
 								<button className="tab-underline" data-active={tab === "chat"} onClick={() => setTab("chat")}>
 									{t.tabChat}
@@ -522,20 +575,58 @@ export function AppShell() {
 
 						{/* 内容 */}
 						{tab === "chat" ? (
+							!snapshot ? (
+								// 切换会话时快照未到：居中加载指示，避免空白/占位符闪现
+								<div className="flex min-h-0 flex-1 items-center justify-center">
+									<span
+										className="piweb-spin"
+										style={{
+											width: 18,
+											height: 18,
+											borderRadius: "50%",
+											border: "2px solid var(--dsw-border-l3)",
+											borderTopColor: "var(--dsw-accent)",
+											display: "inline-block",
+										}}
+										aria-label="loading"
+									/>
+								</div>
+							) : (
 							<div className="flex min-h-0 flex-1 flex-col justify-end">
 								<ChatWindow
+									key={currentId ?? "none"}
 									messages={state.messages}
 									tools={state.tools}
-									stats={snapshot?.stats ?? null}
 									queue={snapshot?.queue ?? { steering: [], followUp: [] }}
 									contextFiles={snapshot?.contextResources ?? snapshot?.contextFiles ?? []}
+									isStreaming={isStreaming}
+									error={state.error}
+									connected={state.connected}
+									onClearError={clearError}
+									retryNotice={state.retryNotice}
+									stats={snapshot?.stats ?? null}
+									trajectory={snapshot?.trajectory ?? []}
+									onRetry={(text) => sendPrompt(text, [])}
+									onAbort={() => void sendCommand({ cmd: "abort" })}
+									onOpenTrajectory={(toolCallId) => {
+										const entry = (snapshot?.trajectory ?? []).find((e) => e.toolCallId === toolCallId);
+										if (entry) {
+											setSelected(entry);
+											setDetailsOpen(true);
+										}
+									}}
+									onFork={handleFork}
 								/>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
+										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ChatInput
 											isStreaming={isStreaming}
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
+											contextWindow={snapshot?.contextUsage?.contextWindow ?? null}
+											contextSource={{ systemChars: contextSystemChars, messages: state.messages }}
+											contextVisible={(snapshot?.messages?.length ?? 0) > 0}
 											model={snapshot?.model}
 											thinkingLevel={snapshot?.thinkingLevel}
 											thinkingLevels={snapshot?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
@@ -549,16 +640,20 @@ export function AppShell() {
 											onSteer={(text, images) => void sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
 											onFollowUp={(text, images) => void sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
 											onAbort={() => void sendCommand({ cmd: "abort" })}
-											onCompact={() => void sendCommand({ cmd: "compact" })}
 											onSelectModel={(provider, id) => void sendCommand({ cmd: "setModel", provider, modelId: id })}
-											onSelectLevel={(level) => void sendCommand({ cmd: "setThinkingLevel", level })}
-											onCycleModel={(direction) => void sendCommand({ cmd: "cycleModel", direction })}
+											onSelectLevel={(level) =>
+												void sendCommand({ cmd: "setThinkingLevel", level }).then((r) => {
+													// 后端按 pi 规则就近钳制；被调整时明确告知，不再“选了没反应”
+													if (r?.success && r.data?.clamped) setError(t.thinkingClamped.replace("{requested}", level).replace("{level}", String(r.data.thinkingLevel)));
+												})
+											}
 											onClearQueue={() => void sendCommand({ cmd: "clearQueue" })}
-											draft={restoredDraft}
 										/>
+										<SessionStatsBar stats={snapshot?.stats ?? null} />
 									</div>
 								</div>
 							</div>
+							)
 						) : (
 							<div className="min-h-0 flex-1">
 								<TrajectoryView
@@ -593,15 +688,11 @@ export function AppShell() {
 								setDetailsOpen(false);
 							}}
 						/>
-					) : (
-						<SessionInfoPane
-							name={snapshot?.name ?? ""}
-							cwd={snapshot?.cwd ?? ""}
-							model={snapshot?.model ? `${snapshot.model.provider}/${snapshot.model.id}` : "—"}
-							stats={snapshot?.stats ?? null}
-							onClose={() => setDetailsOpen(false)}
-						/>
-					)}
+					) : detailsTab === "files" ? (
+						<FilesPanel cwd={panelCwd} onClose={() => { setDetailsTab(null); setDetailsOpen(false); }} />
+					) : detailsTab === "git" ? (
+						<GitPanel cwd={panelCwd} onClose={() => { setDetailsTab(null); setDetailsOpen(false); }} />
+					) : null}
 				</div>
 			)}
 
@@ -623,7 +714,12 @@ export function AppShell() {
 
 			<SettingsPanel
 				open={settingsOpen}
-				onClose={() => setSettingsOpen(false)}
+				onClose={() => {
+					setSettingsOpen(false);
+					// 模型配置可能在设置里被改动（API key / OAuth / 自定义 provider）：
+					// 关闭时刷新全局模型目录，否则输入卡/新会话页的模型菜单停留在旧目录。
+					void refreshModels();
+				}}
 				cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
 				toolPreset={state.toolPreset}
 				onToolPresetChange={setToolPreset}
@@ -645,16 +741,6 @@ export function AppShell() {
 					onClick={() => setMobileSidebarOpen(false)}
 					aria-label={t.close}
 				/>
-			)}
-			{state.error && (
-				<button
-					className="fixed bottom-5 right-5 z-[140] max-w-md rounded-2xl px-4 py-3 text-left"
-					style={{ background: "var(--dsw-danger)", color: "white", boxShadow: "var(--dsw-elevation-prominent)", fontSize: 13 }}
-					onClick={clearError}
-					role="alert"
-				>
-					{state.error}
-				</button>
 			)}
 		</div>
 	);
@@ -796,10 +882,11 @@ function Hero({
 
 				{/* 输入卡 */}
 				<ChatInput
-					disabled={!cwd.trim()}
 					isStreaming={false}
 					contextPercent={null}
 					contextTokens={null}
+					contextWindow={null}
+					contextVisible={false}
 					model={heroModel ? models.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) ?? { provider: heroModel.provider, id: heroModel.id, name: heroModel.id, reasoning: false, contextWindow: 0 } : defaultModel}
 					thinkingLevel={heroThinking || undefined}
 					thinkingLevels={heroModelLevels}
@@ -810,54 +897,9 @@ function Hero({
 					onSend={onSend}
 					onSteer={() => {}}
 					onAbort={() => {}}
-					onCompact={() => {}}
 					onSelectModel={onSelectHeroModel}
 					onSelectLevel={onSelectHeroThinking}
 				/>
-			</div>
-		</div>
-	);
-}
-
-function SessionInfoPane({
-	name,
-	cwd,
-	model,
-	stats,
-	onClose,
-}: {
-	name: string;
-	cwd: string;
-	model: string;
-	stats: { userMessages: number; toolCalls: number; tokens: { input: number; output: number; cacheRead: number }; cost: number } | null;
-	onClose: () => void;
-}) {
-	const { t } = useI18n();
-	return (
-		<div className="flex h-full flex-col p-4">
-			<div className="mb-3 flex items-center justify-between">
-				<span style={{ fontSize: 13, fontWeight: 600 }}>{name || t.sessionLog}</span>
-				<button className="icon-btn" onClick={onClose} style={{ width: 22, height: 22 }}>
-					<IconChevronDown14 size={13} />
-				</button>
-			</div>
-			<div className="flex flex-col gap-2" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
-				<div>
-					<span style={{ color: "var(--dsw-label-caption)" }}>{t.workspaces}: </span>
-					<span className="break-all">{cwd ? basename(cwd) : "—"}</span>
-				</div>
-				<div>
-					<span style={{ color: "var(--dsw-label-caption)" }}>model: </span>
-					{model}
-				</div>
-				{stats && (
-					<div>
-						<span style={{ color: "var(--dsw-label-caption)" }}>
-							{t.turns}:{" "}
-						</span>
-						{stats.userMessages} · {t.toolCalls} {stats.toolCalls} · ${stats.cost.toFixed(4)}
-					</div>
-				)}
 			</div>
 		</div>
 	);

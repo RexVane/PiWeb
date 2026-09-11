@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
 	addWorkspace,
 	archiveSession,
+	forgetSession,
 	getRemovedWorkspaces,
 	getWorkspaceRegistry,
 	pickFolderNative,
@@ -25,7 +26,7 @@ export async function GET() {
 export async function POST(req: Request) {
 	try {
 		const body = (await req.json()) as {
-			action: "add" | "remove" | "pick" | "rename" | "archiveSession" | "registerCwds";
+			action: "add" | "remove" | "pick" | "rename" | "archiveSession" | "forgetSession" | "registerCwds";
 			path?: string;
 			name?: string;
 			cwds?: string[];
@@ -51,8 +52,14 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "archiveSession") {
 			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
-			const sessionPath = await resolveSessionPath(encodeSessionId(body.path));
+			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const archivedSessions = await archiveSession(sessionPath);
+			return NextResponse.json({ success: true, data: { archivedSessions } });
+		}
+		if (body.action === "forgetSession") {
+			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
+			const archivedSessions = await forgetSession(sessionPath);
 			return NextResponse.json({ success: true, data: { archivedSessions } });
 		}
 		if (body.action === "registerCwds") {

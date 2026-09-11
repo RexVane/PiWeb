@@ -3,7 +3,7 @@
 	"version": "0.3.0",
 	"private": true,
 	"type": "module",
-	"description": "Web UI for the pi coding agent — dsh-look shell driven by the official pi SDK without modifying pi",
+	"description": "Web UI for the pi coding agent - dsh-look shell driven by the official pi SDK without modifying pi",
 	"bin": {
 		"pi": "bin/pi.js",
 		"piweb": "bin/piweb.js"
@@ -16,10 +16,13 @@
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"check": "npm run typecheck && npm run test && npm run build",
-		"update:pi": "npm install --save-exact @earendil-works/pi-coding-agent@latest && npm run check"
+		"sync:provider-icons": "node scripts/sync-provider-icons.mjs",
+		"update:pi": "npm install --save-exact @earendil-works/pi-coding-agent@latest && npm run sync:provider-icons && npm run check"
 	},
 	"dependencies": {
+		"@automann/maple-mono-cn": "^7.9.2",
 		"@earendil-works/pi-coding-agent": "0.85.1",
+		"@lobehub/icons-static-svg": "^1.95.0",
 		"highlight.js": "^11.11.1",
 		"next": "16.3.4",
 		"react": "^19.2.4",

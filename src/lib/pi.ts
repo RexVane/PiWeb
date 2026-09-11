@@ -18,6 +18,10 @@ import {
 
 export { createAgentSession, getAgentDir, loadProjectContextFiles, SessionManager };
 
+// Child tools inherit these defaults; Node itself already decodes source and JSON as UTF-8.
+process.env.PYTHONUTF8 ??= "1";
+process.env.PYTHONIOENCODING ??= "utf-8";
+
 let modelRuntimePromise: Promise<PiModelRuntime> | null = null;
 
 export function getModelRuntime(): Promise<PiModelRuntime> {
@@ -39,29 +43,57 @@ const settingsCache = new Map<string, SettingsManager>();
 
 /** 每个 cwd 一个 SettingsManager（project 级发现依赖 cwd；global 级共享 agentDir） */
 export function getSettingsManager(cwd: string): SettingsManager {
-	const key = path.resolve(cwd).toLowerCase();
+	const resolved = path.resolve(cwd);
+	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
 	let sm = settingsCache.get(key);
 	if (!sm) {
-		sm = SettingsManagerClass.create(cwd, getAgentDir());
+		sm = SettingsManagerClass.create(resolved, getAgentDir());
 		settingsCache.set(key, sm);
 	}
 	return sm;
 }
 
-const loaderCache = new Map<string, DefaultResourceLoader>();
-
-/** 每个 cwd 一个资源加载器（技能/扩展/prompt/主题发现），agent 会话与技能面板共用 */
-export function getResourceLoader(cwd: string): DefaultResourceLoader {
-	const key = path.resolve(cwd).toLowerCase();
-	let loader = loaderCache.get(key);
-	if (!loader) {
-		loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir() });
-		loaderCache.set(key, loader);
-	}
-	return loader;
+interface LoaderEntry {
+	loader: DefaultResourceLoader;
+	ready: Promise<void>;
 }
 
-/** 插件/技能变更后清空全部缓存加载器（下次访问重建） */
+const loaderCache = new Map<string, LoaderEntry>();
+
+function loaderKey(cwd: string): string {
+	const resolved = path.resolve(cwd);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * 每个 cwd 一个资源加载器（技能/扩展/prompt/主题发现），agent 会话与技能面板共用。
+ * SDK 不会替调用方加载：新建后必须触发一次 reload()（含首次加载），
+ * 否则系统提示不含 AGENTS.md、技能/模板列表恒为空。
+ */
+export function getResourceLoader(cwd: string): DefaultResourceLoader {
+	const key = loaderKey(cwd);
+	let entry = loaderCache.get(key);
+	if (!entry) {
+		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir() });
+		entry = {
+			loader,
+			ready: loader.reload().then(
+				() => undefined,
+				() => undefined,
+			),
+		};
+		loaderCache.set(key, entry);
+	}
+	return entry.loader;
+}
+
+/** 等待某 cwd 的加载器完成发现；消费 loader 前必须 await（ensureSession / 快照 / 技能面板等）。 */
+export async function resourceLoaderReady(cwd: string): Promise<void> {
+	getResourceLoader(cwd);
+	await loaderCache.get(loaderKey(cwd))!.ready;
+}
+
+/** 插件/技能变更后清空全部缓存加载器（下次访问重建并重新加载） */
 export function invalidateResourceLoaders(): void {
 	loaderCache.clear();
 	invalidateSettingsManagers();
@@ -80,18 +112,21 @@ export function invalidateSettingsManagers(): void {
 	packageManagerCache.clear();
 }
 
-/** 热重载全部已缓存加载器（对应 pi 的 /reload） */
+/** 热重载全部已缓存加载器（对应 pi 的 /reload）；就地刷新，不清缓存 */
 export async function reloadAllLoaders(): Promise<number> {
 	let n = 0;
-	for (const loader of loaderCache.values()) {
+	for (const entry of loaderCache.values()) {
 		try {
-			await loader.reload();
+			await entry.loader.reload();
+			entry.ready = Promise.resolve();
 			n += 1;
 		} catch {
 			/* 单个失败不影响其他 */
 		}
 	}
-	invalidateResourceLoaders();
+	// 插件安装/卸载会改 settings.json 与包缓存，需要失效；但加载器本体已 reload，
+	// 不能再 invalidateResourceLoaders()（会把刚刷新的实例清掉换成冷实例）。
+	invalidateSettingsManagers();
 	return n;
 }
 

@@ -23,7 +23,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
 	try {
-		const sessionPath = await resolveSessionPath(id);
+		const sessionPath = await resolveSessionPath(id, { allowPending: true });
 		await disposeSessionPath(sessionPath);
 		await deleteSession(sessionPath);
 		await forgetSession(sessionPath);

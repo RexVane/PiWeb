@@ -5,6 +5,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { getAgentDir } from "./pi";
 
 interface WorkspaceFile {
@@ -81,13 +82,17 @@ export async function getAliases(): Promise<Record<string, string>> {
 }
 
 export async function setAlias(dir: string, name: string): Promise<Record<string, string>> {
-	const norm = path.resolve(dir);
+	const key = pathKey(path.resolve(dir));
 	return mutate(async (data) => {
 		if (!data.aliases) data.aliases = {};
+		// 键统一走 pathKey（win32 小写），并清掉历史遗留的大小写变体，避免别名时有时无
+		for (const existing of Object.keys(data.aliases)) {
+			if (existing !== key && pathKey(existing) === key) delete data.aliases[existing];
+		}
 		if (name.trim()) {
-			data.aliases[norm] = name.trim();
+			data.aliases[key] = name.trim();
 		} else {
-			delete data.aliases[norm];
+			delete data.aliases[key];
 		}
 		await write(data);
 		return data.aliases;
@@ -207,27 +212,37 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 			const child = spawn(
 				"powershell.exe",
 				["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", script, "选择工作区文件夹"],
-				{ stdio: ["ignore", "pipe", "pipe"] },
+				// windowsHide：不再先闪出一个黑色 PowerShell 控制台窗口，只出现资源管理器风格的选择对话框
+				{ stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
 			);
+			const decoder = new StringDecoder("utf8");
 			let buf = "";
-			child.stdout.on("data", (d) => (buf += d.toString()));
+			let decoderEnded = false;
+			child.stdout.on("data", (data: Buffer) => {
+				buf += decoder.write(data);
+			});
 			let settled = false;
-			const finish = (value: string) => {
+			let timeout: ReturnType<typeof setTimeout>;
+			const finish = () => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeout);
-				resolve(value);
+				if (!decoderEnded) {
+					decoderEnded = true;
+					buf += decoder.end();
+				}
+				resolve(buf.trim());
 			};
-			child.on("error", () => finish(""));
-			child.on("close", () => finish(buf.trim()));
+			child.on("error", finish);
+			child.on("close", finish);
 			// 5 分钟超时保护
-			const timeout = setTimeout(() => {
+			timeout = setTimeout(() => {
 				try {
 					child.kill();
 				} catch {
 					/* ignore */
 				}
-				finish(buf.trim());
+				finish();
 			}, 5 * 60 * 1000);
 		});
 		return out ? { path: out, canceled: false } : { path: null, canceled: true };

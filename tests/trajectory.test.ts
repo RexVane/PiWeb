@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TrajLedger } from "../src/lib/trajectory";
+import { TrajLedger, buildTrajectoryFromEntries } from "../src/lib/trajectory";
 
 describe("trajectory timing", () => {
 	it("continues sequence numbers after restored history", () => {
@@ -34,5 +34,34 @@ describe("trajectory timing", () => {
 			toolCallId: "call-1",
 			timing: { durationMs: 275 },
 		});
+	});
+
+	it("flags irreversibly damaged historical output without rendering replacement characters", () => {
+		const entries = buildTrajectoryFromEntries([
+			{
+				type: "message",
+				message: {
+					role: "assistant",
+					timestamp: 1_000,
+					content: [{ type: "toolCall", id: "call-1", name: "powershell", arguments: { command: "Get-ChildItem" } }],
+				},
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolCallId: "call-1",
+					isError: true,
+					timestamp: 1_050,
+					content: [{ type: "text", text: "��� damaged line\r\nFullyQualifiedErrorId: Example\r\nCommand exited with code 1" }],
+				},
+			},
+		]);
+
+		const tool = entries.find((entry) => entry.kind === "tool");
+		expect(tool).toMatchObject({ encodingLoss: true, isError: true });
+		expect(tool?.detail).toContain("FullyQualifiedErrorId: Example");
+		expect(tool?.detail).toContain("Command exited with code 1");
+		expect(tool?.detail).not.toContain("�");
 	});
 });

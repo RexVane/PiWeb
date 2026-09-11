@@ -5,6 +5,7 @@
  */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { TrajEntry, TrajTokens } from "./types";
+import { sanitizeToolOutput } from "./text-sanitize";
 
 export function toTrajTokens(u: any): TrajTokens | undefined {
 	if (!u || typeof u !== "object") return undefined;
@@ -74,7 +75,9 @@ export class TrajLedger {
 					const idx = m.toolCallId ? this.toolIndex.get(m.toolCallId) : undefined;
 					if (idx !== undefined) {
 						const e = this.entries[idx];
-						e.detail = textOf(m.content) || e.detail;
+						const result = sanitizeToolOutput(textOf(m.content));
+						e.detail = result.text || e.detail;
+						e.encodingLoss = result.encodingLoss || e.encodingLoss;
 						e.isError = m.isError === true;
 						e.tokens = toTrajTokens(m.usage) ?? e.tokens;
 						this.touch(e);
@@ -167,8 +170,9 @@ export class TrajLedger {
 				const idx = this.toolIndex.get(evt.toolCallId);
 				if (idx !== undefined) {
 					const e = this.entries[idx];
-					const text = textOf(evt.partialResult);
-					if (text) e.preview = text.slice(-2000);
+					const result = sanitizeToolOutput(textOf(evt.partialResult));
+					if (result.text) e.preview = result.text.slice(-2000);
+					e.encodingLoss = result.encodingLoss || e.encodingLoss;
 					this.touch(e);
 				}
 				break;
@@ -177,7 +181,9 @@ export class TrajLedger {
 				const idx = this.toolIndex.get(evt.toolCallId);
 				if (idx !== undefined) {
 					const e = this.entries[idx];
-					e.detail = [e.detail, textOf(evt.result)].filter(Boolean).join("\n\n---\n\n");
+					const result = sanitizeToolOutput(textOf(evt.result));
+					e.detail = [e.detail, result.text].filter(Boolean).join("\n\n---\n\n");
+					e.encodingLoss = result.encodingLoss || e.encodingLoss;
 					e.isError = evt.isError === true;
 					const startedAt = this.toolStart.get(evt.toolCallId);
 					if (startedAt !== undefined) e.timing = { ...(e.timing ?? {}), durationMs: now - startedAt };
@@ -250,7 +256,9 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 					(e) => e.kind === "tool" && (m.toolCallId ? e.toolCallId === m.toolCallId : e.toolName === m.toolName),
 				);
 				if (target) {
-					target.detail = [target.detail, textOf(m.content)].filter(Boolean).join("\n\n---\n\n");
+					const result = sanitizeToolOutput(textOf(m.content));
+					target.detail = [target.detail, result.text].filter(Boolean).join("\n\n---\n\n");
+					target.encodingLoss = result.encodingLoss || target.encodingLoss;
 					target.isError = m.isError === true || undefined;
 					target.tokens = toTrajTokens(m.usage) ?? target.tokens;
 				}
