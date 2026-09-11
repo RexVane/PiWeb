@@ -1,13 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { IconCloseOutline14, IconSearchOutline16 } from "@/components/icons";
+import { IconSearchOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { TrajEntry, TrajTokens } from "@/lib/types";
 import styles from "./TrajectoryAnalyzer.module.css";
 
 type Lane = 0 | 1 | 2;
-type DetailTab = "summary" | "preview" | "raw" | "source";
 
 interface DisplayRow {
 	entry: TrajEntry;
@@ -53,17 +52,6 @@ function fmtDur(ms?: number): string {
 function previewOf(entry: TrajEntry): string {
 	const value = entry.preview || entry.detail || entry.thinking || entry.title || KIND_NAME[entry.kind];
 	return value.replace(/\s+/g, " ").trim();
-}
-
-function sourceOf(entry: TrajEntry): string {
-	switch (entry.kind) {
-		case "system": return "Pi SDK · AgentSession.systemPrompt";
-		case "context": return `Pi ResourceLoader · ${entry.title || "context"}`;
-		case "user": return "Pi SessionManager · user message";
-		case "message": return "Pi AgentSession · model response";
-		case "tool": return `Pi AgentSession · tool execution${entry.toolName ? ` · ${entry.toolName}` : ""}`;
-		case "compacted": return "Pi SessionManager · compaction";
-	}
 }
 
 function deriveRows(entries: TrajEntry[]): DisplayRow[] {
@@ -232,54 +220,4 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 			</div>
 		</div>
 	);
-}
-
-export function TrajInspector({ entry, onClose }: { entry: TrajEntry; onClose: () => void }) {
-	const { t } = useI18n();
-	const [tab, setTab] = useState<DetailTab>("summary");
-	const kind = entry.toolName || KIND_NAME[entry.kind];
-	const position = entry.kind === "system" ? t.trajSystem : entry.turn ? `${t.trajTurn} ${entry.turn}` : t.trajSession;
-	const preview = entry.detail || entry.preview || entry.thinking || "";
-	const tabs: Array<{ id: DetailTab; label: string }> = [
-		{ id: "summary", label: t.trajSummary },
-		{ id: "preview", label: t.trajPreview },
-		{ id: "raw", label: t.trajRaw },
-		{ id: "source", label: t.trajSource },
-	];
-
-	return (
-		<div className={styles.inspector}>
-			<div className={styles.inspectorHeader}>
-				<span className={styles.inspectorTag} data-kind={entry.kind}>{kind}</span>
-				<span className={styles.inspectorTitle}>{position} · {entry.kind === "message" ? t.trajModel : kind}</span>
-				<button type="button" className={styles.closeButton} onClick={onClose} aria-label={t.close}><IconCloseOutline14 size={15} /></button>
-			</div>
-			<div className={styles.inspectorTabs} role="tablist">
-				{tabs.map((item) => <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)}>{item.label}</button>)}
-			</div>
-			<div className={styles.inspectorBody}>
-				{entry.encodingLoss && <p role="status" style={{ margin: "0 0 14px", color: "var(--dsw-warning, #d5a13b)", fontSize: 13, lineHeight: 1.55 }}>{t.encodingLossWarning}</p>}
-				{tab === "summary" && <>
-					<dl className={styles.summaryList}>
-						<div><dt>{t.trajSource}</dt><dd>{sourceOf(entry)}</dd></div>
-						<div><dt>{t.trajStatus}</dt><dd data-error={entry.isError || undefined}>{entry.isError ? t.trajFailed : t.trajCompleted}</dd></div>
-						<div><dt>{t.duration}</dt><dd>{fmtDur(durationOf(entry))}</dd></div>
-						<div><dt>{t.trajStarted}</dt><dd>{fmtTime(entry.ts)}</dd></div>
-						{entry.tokens && <div><dt>{t.trajTokens}</dt><dd>↑ {fmtTok(entry.tokens.input)} · ↓ {fmtTok(entry.tokens.output)} · cache {fmtTok(entry.tokens.cacheRead)}</dd></div>}
-						{entry.toolCallId && <div><dt>Call ID</dt><dd className={styles.monoValue}>{entry.toolCallId}</dd></div>}
-						{entry.timing?.ttftMs != null && <div><dt>{t.ttft}</dt><dd>{fmtDur(entry.timing.ttftMs)}</dd></div>}
-						{entry.timing?.decodeMs != null && <div><dt>{t.decode}</dt><dd>{fmtDur(entry.timing.decodeMs)}</dd></div>}
-					</dl>
-					{preview && <InspectorPayload title={t.trajPreview} value={preview} />}
-				</>}
-				{tab === "preview" && <InspectorPayload title={entry.thinking ? t.trajThink : t.trajPreview} value={[entry.thinking, entry.detail || entry.preview].filter(Boolean).join("\n\n")} empty={t.trajNoContent} />}
-				{tab === "raw" && <InspectorPayload title="JSON" value={JSON.stringify(entry, null, 2)} mono />}
-				{tab === "source" && <InspectorPayload title={t.trajSource} value={`${sourceOf(entry)}\n\nseq: ${entry.seq}\ntimestamp: ${new Date(entry.ts).toISOString()}`} mono />}
-			</div>
-		</div>
-	);
-}
-
-function InspectorPayload({ title, value, empty, mono = false }: { title: string; value: string; empty?: string; mono?: boolean }) {
-	return <section className={styles.payloadSection}><h3>{title}</h3><pre data-mono={mono || undefined}>{value || empty || "—"}</pre></section>;
 }

@@ -1207,22 +1207,33 @@ export function ChatWindow({
 			</div>
 			{/* 右侧大纲导航：从助手回答的标题和用户消息生成，随滚动高亮，悬停展开 */}
 			<OutlineRail scrollRef={scrollRef} revision={`${messages.length}:${isStreaming ? 1 : 0}`} />
-			{/* 脱离底部时的“回到底部”浮钮，带新内容角标 */}
+			{/* 脱离底部时的“回到底部”浮钮：与输入框卡片同轴，挂在右上角顶部，图标带新内容角标 */}
 			{(unseen > 0 || !stickToBottom.current) && (
-				<button
-					type="button"
-					className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full px-3 py-1.5"
-					style={{ fontSize: 12, background: "var(--dsw-glass-popover)", border: "0.5px solid var(--dsw-border-l2)", boxShadow: "var(--dsw-elevation-soft)", color: "var(--dsw-label-secondary)" }}
-					onClick={scrollToBottom}
-					title={t.backToBottom}
+				<div
+					className="pointer-events-none absolute inset-x-0 bottom-2 mx-auto flex w-full justify-end"
+					style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}
 				>
-					{/* 圆圈内向下箭头 */}
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden style={{ flex: "none" }}>
-						<circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.3" />
-						<path d="M8 5v6M5.5 8.5L8 11l2.5-2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-					</svg>
-					{unseen > 0 ? t.newContent.replace("{n}", String(unseen)) : t.backToBottom}
-				</button>
+					<button
+						type="button"
+						className="pointer-events-auto relative flex h-8 w-8 items-center justify-center rounded-full"
+						style={{ background: "var(--dsw-glass-popover)", border: "0.5px solid var(--dsw-border-l2)", boxShadow: "var(--dsw-elevation-soft)", color: "var(--dsw-label-secondary)" }}
+						onClick={scrollToBottom}
+						title={t.backToBottom}
+					>
+						{/* 向下箭头 */}
+						<svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+							<path d="M8 3.5v9M4.5 9L8 12.5 11.5 9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+						</svg>
+						{unseen > 0 && (
+							<span
+								className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1"
+								style={{ fontSize: 10, fontWeight: 600, background: "var(--dsw-accent)", color: "#fff" }}
+							>
+								{unseen > 99 ? "99+" : unseen}
+							</span>
+						)}
+					</button>
+				</div>
 			)}
 		</div>
 	);

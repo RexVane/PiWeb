@@ -15,7 +15,6 @@ import { SessionSidebar } from "@/components/SessionSidebar";
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件/Git 只在打开时才用）
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
 const TrajectoryView = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajectoryView), { ssr: false });
-const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
 const FilesPanel = dynamic(() => import("@/components/FilesPanel").then((m) => m.FilesPanel), { ssr: false });
 const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
 import {
@@ -89,8 +88,8 @@ export function AppShell() {
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [detailsWidth, setDetailsWidth] = useState(DETAILS_DEFAULT);
 	const [detailsOpen, setDetailsOpen] = useState(false);
-	/** 详情栏页签：轨迹 inspector / 文件 / Git（三者共用右侧一栏） */
-	const [detailsTab, setDetailsTab] = useState<"traj" | "files" | "git">("traj");
+	/** 详情栏页签：文件 / Git（共用右侧一栏） */
+	const [detailsTab, setDetailsTab] = useState<"files" | "git">("files");
 	/** 注入输入框的文本（文件引用、让 pi 提交） */
 	const [composerInsert, setComposerInsert] = useState<{ key: number; text: string } | null>(null);
 	const [dragging, setDragging] = useState<"sidebar" | "details" | null>(null);
@@ -136,14 +135,7 @@ export function AppShell() {
 		};
 	}, []);
 
-	// 轨迹页选中后展开 details 栏并切到轨迹页签
-	useEffect(() => {
-		if (selected) {
-			setDetailsTab("traj");
-			setDetailsOpen(true);
-		}
-	}, [selected]);
-
+	// 切换会话时清掉轨迹页的选中态并收起详情栏
 	useEffect(() => {
 		setSelected(null);
 		setDetailsOpen(false);
@@ -469,7 +461,7 @@ export function AppShell() {
 		},
 		[panelCwd, setError],
 	);
-	const openDetails = useCallback((tabName: "traj" | "files" | "git") => {
+	const openDetails = useCallback((tabName: "files" | "git") => {
 		setDetailsTab(tabName);
 		setDetailsOpen(true);
 	}, []);
@@ -690,7 +682,7 @@ export function AppShell() {
 										const entry = (snapshot?.trajectory ?? []).find((e) => e.toolCallId === toolCallId);
 										if (entry) {
 											setSelected(entry);
-											openDetails("traj");
+											setTab("traj");
 										}
 									}}
 									onOpenFile={openInEditor}
@@ -752,7 +744,7 @@ export function AppShell() {
 				)}
 			</div>
 
-			{/* details 栏：轨迹 / 文件 / Git 三页签共用 */}
+			{/* details 栏：文件 / Git 两页签共用 */}
 			{detailsOpen && (
 				<div
 					className="flex min-h-0 flex-col overflow-hidden"
@@ -767,7 +759,6 @@ export function AppShell() {
 				>
 					<div className="hairline-b flex items-center gap-4 px-4 pt-2.5" style={{ flex: "none" }}>
 						{([
-							{ id: "traj" as const, label: t.detailsTabTraj },
 							{ id: "files" as const, label: t.filesPanel },
 							{ id: "git" as const, label: t.gitPanel },
 						]).map((tabItem) => (
@@ -783,19 +774,7 @@ export function AppShell() {
 						))}
 					</div>
 					<div className="min-h-0 flex-1">
-						{detailsTab === "traj" ? (
-							selected ? (
-								<TrajInspector
-									entry={selected}
-									onClose={() => {
-										setSelected(null);
-										setDetailsOpen(false);
-									}}
-								/>
-							) : (
-								<div className="p-4" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", lineHeight: 1.6 }}>{t.detailsTrajHint}</div>
-							)
-						) : detailsTab === "files" ? (
+						{detailsTab === "files" ? (
 							<FilesPanel
 								cwd={panelCwd}
 								refreshKey={panelRefreshKey}
