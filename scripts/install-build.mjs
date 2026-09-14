@@ -101,11 +101,13 @@ function stagingParent(root) {
 	return outside ?? os.tmpdir();
 }
 
-/** Rebuild a path from already-split segments, keeping a Windows drive prefix. */
+/**
+ * Rebuild a path from already-split segments. Only a Windows drive segment is a
+ * prefix; on POSIX the first segment is a real directory and must survive.
+ */
 function pathFromSegments(segments) {
-	const [first, ...rest] = segments;
-	const base = /^[A-Za-z]:$/.test(first) ? `${first}${path.sep}` : path.sep;
-	return rest.length ? path.join(base, ...rest) : base;
+	if (/^[A-Za-z]:$/.test(segments[0])) return path.join(`${segments[0]}${path.sep}`, ...segments.slice(1));
+	return path.join(path.sep, ...segments);
 }
 
 function isWritableDirectory(candidate) {
