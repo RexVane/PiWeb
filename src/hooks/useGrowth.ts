@@ -265,19 +265,33 @@ export function useGrowth({
 		try {
 			const params = new URLSearchParams({ cwd });
 			if (sessionPath) params.set("session", sessionPath);
-			const [growthResult, diskResult] = await Promise.allSettled([
-				sessionPath ? getJson<{ available: boolean; steps: GrowthStep[] }>(`/api/growth?${params}`, controller.signal) : Promise.resolve({ available: true, steps: [] }),
-				listDiskEntries(cwd, "", controller.signal),
-			]);
+			// 两个请求解耦：磁盘目录先到先画，growth 慢（git 探测超时等）不拖住目录树
+			const growthRequest = sessionPath
+				? getJson<{ available: boolean; steps: GrowthStep[] }>(`/api/growth?${params}`, controller.signal).then(
+					(value) => ({ status: "fulfilled" as const, value }),
+					(reason: unknown) => ({ status: "rejected" as const, reason }),
+				)
+				: Promise.resolve({ status: "fulfilled" as const, value: { available: true, steps: [] } });
+			const diskRequest = listDiskEntries(cwd, "", controller.signal).then(
+				(value) => ({ status: "fulfilled" as const, value }),
+				(reason: unknown) => ({ status: "rejected" as const, reason }),
+			);
+			void diskRequest.then((diskResult) => {
+				if (!isCurrent(controller)) return;
+				if (diskResult.status === "fulfilled") {
+					updateLazy(controller, (previous) => new Map(previous).set("", diskNodes("", diskResult.value)));
+				}
+			});
+			const growthResult = await growthRequest;
 			if (!isCurrent(controller)) return;
 			if (growthResult.status === "fulfilled") {
 				setFetched({ key, steps: growthResult.value.steps ?? [], available: growthResult.value.available !== false, error: null });
 			} else {
 				setFetched({ key, steps: [], available: true, error: growthResult.reason instanceof Error ? growthResult.reason.message : "failed to load" });
 			}
-			if (diskResult.status === "fulfilled") {
-				updateLazy(controller, (previous) => new Map(previous).set("", diskNodes("", diskResult.value)));
-			} else if (growthResult.status === "fulfilled") {
+			const diskResult = await diskRequest;
+			if (!isCurrent(controller)) return;
+			if (diskResult.status === "rejected" && growthResult.status === "fulfilled") {
 				setFetched((previous) => ({ ...previous, error: diskResult.reason instanceof Error ? diskResult.reason.message : "failed to list workspace" }));
 			}
 		} finally {

@@ -161,6 +161,12 @@ export function ProjectPanel({
 					<IconCloseOutline14 size={13} />
 				</button>
 			</div>
+			{/* 生长快照不可用（找不到 git 等）：明确提示 + 已退化为当前目录结构 */}
+			{cwd && hasSession && !growth.available && !growth.loading && (
+				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-warn)", background: "var(--dsw-hover)" }} role="status">
+					{t.growthUnavailableFallback}
+				</div>
+			)}
 			{gitError && (
 				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-danger)" }} title={gitError} role="alert" data-testid="growth-git-error">
 					{t.gitStatusUnknown}

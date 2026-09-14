@@ -1143,7 +1143,14 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if (m.disposed) throw new Error("session is disposed");
 					// 只有用户显式选择 steer/followUp 才排队；旧的普通提交不能悄悄成为 steering。
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
-					if (!session.isStreaming) await growthOf(m).prepare();
+					if (!session.isStreaming) {
+						// 基线快照不能无限阻塞首条 prompt（git 不可用时每次探测至多 30s 超时）：
+						// 5s 内没完成就放行 prompt，快照后台补拍（工具结束后照常记步，外部修改兜底）。
+						await Promise.race([
+							growthOf(m).prepare().catch(() => undefined),
+							new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+						]);
+					}
 					if (m.disposed) throw new Error("session is disposed");
 					return await new Promise<CommandResult>((resolve) => {
 						let accepted = false;

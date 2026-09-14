@@ -62,6 +62,10 @@ interface WorkspaceState {
 interface Registry {
 	workspaces: Map<string, Promise<WorkspaceState>>;
 	gitOk?: Promise<boolean>;
+	/** git 不可用的上次确认时间（否定结果短缓存，避免重复探测超时） */
+	gitFailedAt?: number;
+	/** 解析后的 git 可执行文件（macOS GUI PATH 兜底） */
+	gitBin?: string;
 }
 const globalForGrowth = globalThis as typeof globalThis & { __piWebGrowth?: Registry };
 const registry: Registry = (globalForGrowth.__piWebGrowth ??= { workspaces: new Map() });
@@ -106,62 +110,102 @@ interface RunResult {
 
 type Env = Record<string, string | undefined>;
 
-function runGit(args: string[], opts: { cwd?: string; input?: Buffer | string; maxBuffer?: number; env?: Env } = {}): Promise<RunResult> {
-	const maxBuffer = opts.maxBuffer ?? 64 * 1024 * 1024;
-	return new Promise((resolve, reject) => {
-		const child = spawn("git", args, {
-			cwd: opts.cwd,
-			env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...opts.env },
-			windowsHide: true,
-			stdio: ["pipe", "pipe", "pipe"],
+/**
+ * 解析 git 可执行文件：macOS GUI/launchd 启动的进程 PATH 常不含 Homebrew，
+ * spawn("git") 会 ENOENT → 生长快照整体误判不可用。PATH 找不到时退回常见安装位置。
+ * 只在非 Windows 生效；结果缓存到 registry（成功后不再变）。
+ */
+async function resolveGitBin(): Promise<string> {
+	if (registry.gitBin) return registry.gitBin;
+	let bin = "git";
+	if (process.platform !== "win32") {
+		const candidates = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git", "/usr/local/git/bin/git"];
+		const inPath = await new Promise<boolean>((resolve) => {
+			const child = spawn("git", ["--version"], { stdio: "ignore" });
+			child.on("error", () => resolve(false));
+			child.on("close", (code) => resolve(code === 0));
 		});
-		const out: Buffer[] = [];
-		const err: Buffer[] = [];
-		let size = 0;
-		let settled = false;
-		const timer = setTimeout(() => fail(new GrowthError("git timed out", "failed")), 30_000);
-		const fail = (error: Error) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			child.kill();
-			reject(error);
-		};
-		child.stdout.on("data", (chunk: Buffer) => {
-			size += chunk.length;
-			if (size > maxBuffer) {
-				child.kill();
-				fail(new GrowthError("git output exceeded the buffer limit", "too-large"));
-				return;
+		if (!inPath) {
+			for (const candidate of candidates) {
+				const ok = await new Promise<boolean>((resolve) => {
+					const child = spawn(candidate, ["--version"], { stdio: "ignore" });
+					child.on("error", () => resolve(false));
+					child.on("close", (code) => resolve(code === 0));
+				});
+				if (ok) {
+					bin = candidate;
+					break;
+				}
 			}
-			out.push(chunk);
-		});
-		child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
-		child.on("error", (error: NodeJS.ErrnoException) => {
-			if (error.code === "ENOENT" && opts.cwd && !existsSync(opts.cwd)) fail(new GrowthError("workspace directory not found", "failed"));
-			else fail(error.code === "ENOENT" ? new GrowthError("git is not installed", "unavailable") : error);
-		});
-		child.on("close", (code) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8"), code: code ?? -1 });
-		});
-		if (opts.input !== undefined) child.stdin.end(opts.input);
-		else child.stdin.end();
-	});
+		}
+	}
+	registry.gitBin = bin;
+	return bin;
 }
 
+function runGit(args: string[], opts: { cwd?: string; input?: Buffer | string; maxBuffer?: number; env?: Env } = {}): Promise<RunResult> {
+	const maxBuffer = opts.maxBuffer ?? 64 * 1024 * 1024;
+	return resolveGitBin().then(
+		(gitBin) =>
+			new Promise<RunResult>((resolve, reject) => {
+				const child = spawn(gitBin, args, {
+					cwd: opts.cwd,
+					env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...opts.env },
+					windowsHide: true,
+					stdio: ["pipe", "pipe", "pipe"],
+				});
+				const out: Buffer[] = [];
+				const err: Buffer[] = [];
+				let size = 0;
+				let settled = false;
+				const timer = setTimeout(() => fail(new GrowthError("git timed out", "failed")), 30_000);
+				const fail = (error: Error) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					child.kill();
+					reject(error);
+				};
+				child.stdout.on("data", (chunk: Buffer) => {
+					size += chunk.length;
+					if (size > maxBuffer) {
+						child.kill();
+						fail(new GrowthError("git output exceeded the buffer limit", "too-large"));
+						return;
+					}
+					out.push(chunk);
+				});
+				child.stderr.on("data", (chunk: Buffer) => err.push(chunk));
+				child.on("error", (error: NodeJS.ErrnoException) => {
+					if (error.code === "ENOENT" && opts.cwd && !existsSync(opts.cwd)) fail(new GrowthError("workspace directory not found", "failed"));
+					else fail(error.code === "ENOENT" ? new GrowthError("git is not installed", "unavailable") : error);
+				});
+				child.on("close", (code) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8"), code: code ?? -1 });
+				});
+				if (opts.input !== undefined) child.stdin.end(opts.input);
+				else child.stdin.end();
+			}),
+	);
+}
+
+/** git 不可用时短时间缓存否定结果：避免每个会话重复 30s 超时把 UI 拖死 */
+const GIT_FAIL_RETRY_MS = 60_000;
+
 async function gitOk(): Promise<boolean> {
-	registry.gitOk ??= runGit(["--version"]).then((r) => {
-		const ok = r.code === 0;
-		if (!ok) registry.gitOk = undefined;
-		return ok;
-	}, () => {
+	if (registry.gitOk) return registry.gitOk;
+	if (registry.gitFailedAt && Date.now() - registry.gitFailedAt < GIT_FAIL_RETRY_MS) return false;
+	const check = runGit(["--version"]).then((r) => r.code === 0, () => false);
+	registry.gitOk = check;
+	void check.then((ok) => {
 		registry.gitOk = undefined;
-		return false;
+		if (ok) registry.gitFailedAt = undefined;
+		else registry.gitFailedAt = Date.now();
 	});
-	return registry.gitOk;
+	return check;
 }
 
 /** 影子仓库命令：固定 git-dir / work-tree，关掉换行转换与路径转义，输出按字节原样 */
