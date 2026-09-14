@@ -9,6 +9,7 @@
  * Repository checkouts always have dev dependencies and keep `npm run dev`.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
@@ -65,13 +66,62 @@ export function resolveNextBin(root) {
  * neither compiled nor mapped through the `@/*` path alias. Build in a staging
  * directory outside `node_modules` (same drive, so the dependency links resolve)
  * and copy the finished output back into the package.
+ *
+ * The staging directory must NOT sit inside any `node_modules`: for a global
+ * install like ~/.local/lib/node_modules/@rexvane/piweb, the grandparent IS
+ * node_modules, and Next would exclude the staged sources exactly the same way.
+ * Walk up until we are outside every node_modules segment; give up and use the
+ * system temp dir (cross-device copy is still correct, just slower).
  */
+function stagingParent(root) {
+	// Split on BOTH separators: a win32 Node can see POSIX paths (and vice versa)
+	// when the package is installed through a compatibility layer or the test
+	// suite simulates foreign layouts.
+	const segments = path.dirname(root).split(/[\\/]/).filter(Boolean);
+	// Drop trailing path components while the path still contains a node_modules segment.
+	while (segments.length > 1 && segments.includes("node_modules")) {
+		segments.pop();
+	}
+	const candidate = segments.length ? path.resolve(`/${segments.join(path.sep)}`) : path.sep;
+	try {
+		fs.mkdirSync(candidate, { recursive: true });
+		fs.accessSync(candidate, fs.constants.W_OK);
+		return candidate;
+	} catch {
+		return os.tmpdir();
+	}
+}
+
+/** Staging directory must live outside EVERY node_modules on the way up (Next excludes those paths). */
+export function assertStagingOutsideNodeModules(root) {
+	const parent = stagingParent(root);
+	if (parent.split(/[\\/]/).includes("node_modules")) {
+		throw new Error(`staging parent is inside node_modules: ${parent}`);
+	}
+	return parent;
+}
+
+function tryLinkDependencies(root, staging) {
+	try {
+		fs.symlinkSync(path.join(root, "node_modules"), path.join(staging, "node_modules"), "junction");
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function buildInStaging(root, nextBin, env, log, warn) {
-	const parent = path.dirname(path.dirname(root));
 	let staging;
 	try {
-		staging = fs.mkdtempSync(path.join(parent, ".piweb-build-"));
+		staging = fs.mkdtempSync(path.join(stagingParent(root), ".piweb-build-"));
 	} catch {
+		staging = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-build-"));
+	}
+	// junction 不能跨卷：staging 与包不同盘时链接会失败，退回系统临时目录再试一次
+	if (!tryLinkDependencies(root, staging) && path.parse(staging).root !== path.parse(os.tmpdir()).root) {
+		try {
+			fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+		} catch { /* proceed to the tmpdir attempt */ }
 		staging = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-build-"));
 	}
 	try {
@@ -83,10 +133,8 @@ function buildInStaging(root, nextBin, env, log, warn) {
 			const from = path.join(root, file);
 			if (fs.existsSync(from)) fs.copyFileSync(from, path.join(staging, file));
 		}
-		try {
-			fs.symlinkSync(path.join(root, "node_modules"), path.join(staging, "node_modules"), "junction");
-		} catch (error) {
-			warn(`[piweb] Could not link dependencies into the staging build: ${error.message}`);
+		if (!tryLinkDependencies(root, staging)) {
+			warn("[piweb] Could not link dependencies into the staging build (junction unavailable).");
 			return false;
 		}
 		log(`[piweb] Building in ${staging} ...`);
