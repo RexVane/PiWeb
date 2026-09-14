@@ -1,20 +1,19 @@
 name: publish
 
-# Publishes to npm when a release version arrives:
-#   - a `v*` tag is pushed (npm version patch && git push --follow-tags), or
-#   - `main` receives a package.json change (for example a merged version bump).
-# Publishing an already-published version is skipped, so the two triggers can
-# coexist. Requires the repository secret NPM_TOKEN (npm Automation token).
+# Every push to main becomes a release:
+#   1. bump the patch version (the repository's package.json is the version source of truth)
+#   2. run the prepublishOnly gate (typecheck + tests + build) and publish to npm
+#   3. push the version commit and a v* tag back to main
+# Publishing only happens after the gate passes, and an already-published version
+# is bumped past, so a re-run or a concurrent push never fails on E403.
+#
+# Requires the repository secret NPM_TOKEN (npm Automation token). The bot commit
+# it pushes back does not re-trigger this workflow (GITHUB_TOKEN pushes do not
+# start new runs), and the actor guard covers manual re-runs on that commit.
 on:
   push:
-    tags: ["v*"]
     branches: [main]
-    paths: ["package.json"]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Existing tag or commit to publish (e.g. v0.3.1)"
-        required: true
 
 concurrency:
   group: publish
@@ -24,14 +23,13 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: github.actor != 'github-actions[bot]'
     permissions:
-      contents: read
-      # Required for npm provenance attestation (--provenance).
-      id-token: write
+      contents: write # push the version bump commit and the tag
+      id-token: write # npm provenance attestation
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -40,40 +38,41 @@ jobs:
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
-      - name: Check the tag and the package version agree
+      - run: npm ci
+
+      - name: Bump the patch version past anything already published
+        id: version
         run: |
           set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          tag="$(git describe --exact-match --tags HEAD 2>/dev/null || true)"
-          echo "package version: $version"
-          echo "tag: ${tag:-none}"
-          if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then
-            echo "::error::tag $tag does not match package.json version $version"
-            exit 1
-          fi
-
-      - name: Skip when this version is already on npm
-        id: gate
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          if npm view "piweb@$version" version >/dev/null 2>&1; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "piweb@$version is already published; nothing to do."
-          else
-            echo "already=false" >> "$GITHUB_OUTPUT"
-            echo "publishing piweb@$version"
-          fi
-
-      - if: steps.gate.outputs.already == 'false'
-        run: npm ci
+          for _ in $(seq 1 50); do
+            npm version patch --no-git-tag-version >/dev/null
+            version="$(node -p "require('./package.json').version")"
+            if ! npm view "piweb@$version" version >/dev/null 2>&1; then break; fi
+            echo "piweb@$version is already published; bumping again"
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "releasing piweb@$version"
 
       # `npm publish` runs the `prepublishOnly` gate (typecheck + tests + build)
       # before uploading, so a broken build never reaches the registry.
-      - if: steps.gate.outputs.already == 'false'
+      - name: Publish
         run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
           PI_OFFLINE: "1"
           NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Push the version commit and tag
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v${{ steps.version.outputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main || {
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
+          }
+          git push origin "v${{ steps.version.outputs.version }}"
