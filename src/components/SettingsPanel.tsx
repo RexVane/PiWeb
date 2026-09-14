@@ -5,6 +5,7 @@
  * 五节：General / Models / 安全 / 技能 / 插件。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/enter-behavior";
 import {
 	IconAgentPresetOutline16,
@@ -605,11 +606,16 @@ function SelectOption({
 	disabled?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
-	const ref = useRef<HTMLDivElement>(null);
+	const [rect, setRect] = useState<{ left: number; top: number; bottom: number } | null>(null);
+	const anchorRef = useRef<HTMLButtonElement>(null);
+	const popRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!open) return;
+		// 弹层挂在 body（fixed 定位）：设置对话框 overflow-hidden 会裁掉 absolute 弹层
+		const anchor = anchorRef.current?.getBoundingClientRect();
+		if (anchor) setRect({ left: anchor.left, top: anchor.bottom + 6, bottom: anchor.top - 6 });
 		const h = (e: MouseEvent) => {
-			if (!ref.current?.contains(e.target as Node)) setOpen(false);
+			if (!anchorRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
 		};
 		document.addEventListener("mousedown", h);
 		return () => document.removeEventListener("mousedown", h);
@@ -619,19 +625,19 @@ function SelectOption({
 	}, [disabled]);
 	const current = options.find((o) => o.value === value);
 	return (
-		<div ref={ref} className="relative">
-			<button className="select-chip" data-open={open} disabled={disabled} onClick={() => setOpen((o) => !o)}>
+		<div className="relative">
+			<button ref={anchorRef} className="select-chip" data-open={open} disabled={disabled} onClick={() => setOpen((o) => !o)}>
 				{current?.label ?? value}
 				<span className="chevron">
 					<IconChevronDown14 size={14} />
 				</span>
 			</button>
-			{open && !disabled && (
+			{open && !disabled && rect && createPortal(
 				<div
-					// left-0：根容器在表单里占满整行宽，right-0 会把弹层甩到行右缘（远离 chip）；
-					// chip 恒在容器左缘，左对齐两种用法（Row 的 flex-none / Field 的整行）都正确
-					className="popover absolute left-0 top-10 z-50 p-1.5 shadow-xl"
-					style={{ minWidth: width ?? 140, width: "max-content", maxHeight: 280, overflowY: "auto" }}
+					ref={popRef}
+					className="popover fixed z-[130] p-1.5 shadow-xl"
+					// 下方空间不足时向上翻转；左右都对齐 chip 左缘
+					style={{ left: rect.left, top: Math.min(rect.top, window.innerHeight - 40), minWidth: width ?? 140, width: "max-content", maxHeight: 280, overflowY: "auto" }}
 				>
 					{options.map((o) => {
 						const selected = o.value === value;
@@ -664,7 +670,8 @@ function SelectOption({
 							</button>
 						);
 					})}
-				</div>
+				</div>,
+				document.body,
 			)}
 		</div>
 	);
