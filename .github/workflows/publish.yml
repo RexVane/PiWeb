@@ -1,18 +1,19 @@
 name: publish
 
-# Every push to main becomes a release:
+# Releases are manual: push to main does NOT publish. Merge your batch of fixes,
+# then trigger this workflow (Actions → publish → Run workflow, or `gh workflow run
+# publish --ref main`) when the batch is ready to ship.
+#
 #   1. bump the patch version (the repository's package.json is the version source of truth)
 #   2. run the prepublishOnly gate (typecheck + tests + build) and publish to npm
 #   3. push the version commit and a v* tag back to main
 # Publishing only happens after the gate passes, and an already-published version
-# is bumped past, so a re-run or a concurrent push never fails on E403.
+# is bumped past, so a re-run never fails on E403.
 #
 # Requires the repository secret NPM_TOKEN (npm Automation token). The bot commit
-# it pushes back does not re-trigger this workflow (GITHUB_TOKEN pushes do not
-# start new runs), and the actor guard covers manual re-runs on that commit.
+# it pushes back does not re-trigger this workflow, and the actor guard covers
+# manual re-runs on that commit.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
