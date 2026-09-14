@@ -66,9 +66,10 @@ npm install -g @rexvane/piweb@latest
 ```
 
 npm replaces the installed version in place, so there is nothing to uninstall first. This is
-the same command the in-app "Check for updates" button runs, and pinning `@latest` avoids
-reinstalling an older build that the local cache still holds. Restart `piweb` afterwards to
-serve the new version.
+the same command the in-app "Check for updates" button runs. `latest` is npm's default tag,
+so `npm install -g @rexvane/piweb` behaves identically; if your registry is a mirror that
+syncs with a delay, add `--registry=https://registry.npmjs.org` to get a release the moment
+it is published. Restart `piweb` afterwards to serve the new version.
 
 Or install a specific version: `npm install -g @rexvane/piweb@0.3.4`.
 
