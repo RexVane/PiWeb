@@ -1,6 +1,6 @@
 # Releasing
 
-Maintainer notes. Users only need `npm install -g piweb`.
+Maintainer notes. Users only need `npm install -g @rexvane/piweb`.
 
 Every push to `main` is a release, handled by `.github/workflows/publish.yml`:
 

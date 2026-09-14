@@ -1,13 +1,25 @@
 {
-	"name": "piweb",
+	"name": "@rexvane/piweb",
 	"version": "0.3.0",
 	"license": "MIT",
 	"type": "module",
 	"description": "Web UI for the pi coding agent - dsh-look shell driven by the official pi SDK without modifying pi",
-	"repository": { "type": "git", "url": "git+https://github.com/RexVane/PiWeb.git" },
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/RexVane/PiWeb.git"
+	},
 	"homepage": "https://github.com/RexVane/PiWeb#readme",
-	"bugs": { "url": "https://github.com/RexVane/PiWeb/issues" },
-	"keywords": ["pi", "coding-agent", "agent", "web-ui", "nextjs", "cli"],
+	"bugs": {
+		"url": "https://github.com/RexVane/PiWeb/issues"
+	},
+	"keywords": [
+		"pi",
+		"coding-agent",
+		"agent",
+		"web-ui",
+		"nextjs",
+		"cli"
+	],
 	"bin": {
 		"pi": "bin/pi.js",
 		"piweb": "bin/piweb.js"
@@ -69,5 +81,8 @@
 	},
 	"engines": {
 		"node": ">=22.19.0"
+	},
+	"publishConfig": {
+		"access": "public"
 	}
 }

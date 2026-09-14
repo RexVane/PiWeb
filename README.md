@@ -35,11 +35,11 @@
 ### Install from npm (recommended)
 
 ```bash
-npm install -g piweb
+npm install -g @rexvane/piweb
 piweb
 ```
 
-A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g piweb`. The package registers both `pi` and `piweb` (`pi web` starts the UI, any other argument is forwarded to the official pi CLI); if the official `pi` package is also installed globally, the two compete for the same `pi` command and the most recent install wins.
+A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g @rexvane/piweb`. The package registers both `pi` and `piweb` (`pi web` starts the UI, any other argument is forwarded to the official pi CLI); if the official `pi` package is also installed globally, the two compete for the same `pi` command and the most recent install wins.
 
 ### Inside this repository
 

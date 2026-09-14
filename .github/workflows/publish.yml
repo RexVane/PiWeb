@@ -47,11 +47,11 @@ jobs:
           for _ in $(seq 1 50); do
             npm version patch --no-git-tag-version >/dev/null
             version="$(node -p "require('./package.json').version")"
-            if ! npm view "piweb@$version" version >/dev/null 2>&1; then break; fi
-            echo "piweb@$version is already published; bumping again"
+            if ! npm view "@rexvane/piweb@$version" version >/dev/null 2>&1; then break; fi
+            echo "@rexvane/piweb@$version is already published; bumping again"
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "releasing piweb@$version"
+          echo "releasing @rexvane/piweb@$version"
 
       # `npm publish` runs the `prepublishOnly` gate (typecheck + tests + build)
       # before uploading, so a broken build never reaches the registry.
