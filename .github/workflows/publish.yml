@@ -63,10 +63,15 @@ jobs:
         run: |
           set -euo pipefail
           node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack
-          rm -rf .next/cache
+          rm -rf .next/cache .next/diagnostics .next/trace .next/trace-build
           rm -rf .next-releases
           test -f .next/BUILD_ID
           du -sh .next
+
+      # 打包前用真实 tarball 校验 .next 完整（files 是白名单，漏一个 Next 清单
+      # 就会发出「装得上、起不来」的包），避免再出现 required-server-files.json 缺失。
+      - name: Verify the packed artifact runs
+        run: npm run verify:package
 
       - name: Publish
         run: npm publish --provenance --access public

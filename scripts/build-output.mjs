@@ -67,12 +67,30 @@ function readLocalFile(root, relative, maxBytes = 1024 * 1024) {
 	return fs.readFileSync(file, "utf8");
 }
 
+/**
+ * A truncated .next (package built without the runtime manifests, or an interrupted
+ * build) leaves BUILD_ID behind, so the raw ENOENT names a file the user cannot act on.
+ */
+export function incompleteBuildMessage(buildDir, missing = "required-server-files.json") {
+	return `incomplete production build in ${buildDir}: ${missing} is missing. `
+		+ "Reinstall with `npm install -g @rexvane/piweb@latest`, or rebuild this installation with `npm rebuild -g piweb`.";
+}
+
+function readRequiredServerFiles(root, buildDir) {
+	try {
+		return readLocalFile(root, `${buildDir}/required-server-files.json`);
+	} catch (error) {
+		if (error.code === "ENOENT") throw new Error(incompleteBuildMessage(buildDir));
+		throw error;
+	}
+}
+
 /** Verify a finished Next production build, not just a leftover BUILD_ID. */
 export function readProductionBuild(root, value) {
 	const buildDir = resolveBuildOutput(root, value);
 	const buildId = readLocalFile(root, `${buildDir}/BUILD_ID`, 1024).trim();
 	if (!buildId || /\s/.test(buildId)) throw new Error(`invalid BUILD_ID in ${buildDir}`);
-	const required = JSON.parse(readLocalFile(root, `${buildDir}/required-server-files.json`));
+	const required = JSON.parse(readRequiredServerFiles(root, buildDir));
 	if (required?.version !== 1 || required.config?.distDir?.replaceAll("\\", "/") !== buildDir) {
 		throw new Error(`build output does not match ${buildDir}`);
 	}

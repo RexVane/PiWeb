@@ -13,12 +13,22 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { readProductionBuild } from "./build-output.mjs";
 
+/**
+ * A leftover BUILD_ID is not a usable build: a package that shipped .next without
+ * its runtime manifests starts and then dies on a missing manifest. Only a build
+ * that passes the same validation the launcher applies counts as prepared, so a
+ * truncated install falls through to the one-time build instead of crashing.
+ */
 export function hasProductionBuild(root) {
-	return (
-		fs.existsSync(path.join(root, ".next", "BUILD_ID")) ||
-		fs.existsSync(path.join(root, ".next-releases", "active.json"))
-	);
+	if (fs.existsSync(path.join(root, ".next-releases", "active.json"))) return true;
+	try {
+		readProductionBuild(root, ".next");
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -70,8 +80,8 @@ export function resolveNextBin(root) {
  * The staging directory must NOT sit inside any `node_modules`: for a global
  * install like ~/.local/lib/node_modules/@rexvane/piweb, the grandparent IS
  * node_modules, and Next would exclude the staged sources exactly the same way.
- * Walk up until we are outside every node_modules segment; give up and use the
- * system temp dir (cross-device copy is still correct, just slower).
+ * It must also stay on the package's own volume: a node_modules link that crosses
+ * volumes makes webpack resolve dependencies as "./D:/..." and the build fails.
  */
 function stagingParent(root) {
 	// Split on BOTH separators: a win32 Node can see POSIX paths (and vice versa)
@@ -82,13 +92,32 @@ function stagingParent(root) {
 	while (segments.length > 1 && segments.includes("node_modules")) {
 		segments.pop();
 	}
-	const candidate = segments.length ? path.resolve(`/${segments.join(path.sep)}`) : path.sep;
+	// Same-volume candidates first; only a broken layout falls back to the temp dir.
+	const outside = segments.length ? pathFromSegments(segments) : undefined;
+	const candidates = [outside, outside && path.parse(outside).root, os.tmpdir()];
+	for (const candidate of candidates) {
+		if (candidate && isWritableDirectory(candidate)) return candidate;
+	}
+	return outside ?? os.tmpdir();
+}
+
+/** Rebuild a path from already-split segments, keeping a Windows drive prefix. */
+function pathFromSegments(segments) {
+	const [first, ...rest] = segments;
+	const base = /^[A-Za-z]:$/.test(first) ? `${first}${path.sep}` : path.sep;
+	return rest.length ? path.join(base, ...rest) : base;
+}
+
+function isWritableDirectory(candidate) {
+	// Never create anything here: the popped prefix of an installed package always
+	// exists, and a simulated/foreign layout must not litter the filesystem. The
+	// caller falls back to the temp dir when mkdtemp cannot use this parent.
 	try {
-		fs.mkdirSync(candidate, { recursive: true });
+		if (!fs.statSync(candidate).isDirectory()) return false;
 		fs.accessSync(candidate, fs.constants.W_OK);
-		return candidate;
+		return true;
 	} catch {
-		return os.tmpdir();
+		return false;
 	}
 }
 

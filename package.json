@@ -32,12 +32,7 @@
 		"next.config.ts",
 		"tsconfig.json",
 		"postcss.config.mjs",
-		".next/BUILD_ID",
-		".next/package.json",
-		".next/app",
-		".next/server",
-		".next/static",
-		".next/types"
+		".next"
 	],
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
@@ -48,6 +43,7 @@
 		"start": "node bin/piweb.js",
 		"web": "node bin/pi.js web",
 		"typecheck": "tsc --noEmit",
+		"verify:package": "node scripts/verify-package.mjs",
 		"test": "vitest run",
 		"check": "npm run typecheck && npm run test && npm run build",
 		"sync:provider-icons": "node scripts/sync-provider-icons.mjs",
