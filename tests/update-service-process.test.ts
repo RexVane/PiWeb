@@ -34,6 +34,10 @@ describe("update command runner without real subprocesses", () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-launcher-open-"));
 		try {
 			await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "pi-web" }));
+			// Mark it as a development checkout so the launcher does not try to prepare an
+			// install-time production build (that path needs real dependencies).
+			await fs.mkdir(path.join(root, "node_modules", "vitest"), { recursive: true });
+			await fs.writeFile(path.join(root, "node_modules", "vitest", "package.json"), "{}");
 			const child = Object.assign(fakeChild(), { unref: vi.fn() });
 			mocks.spawn.mockReturnValue(child);
 			const { runLauncher } = await import("../scripts/launcher.mjs");

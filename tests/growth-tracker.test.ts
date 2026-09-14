@@ -19,10 +19,14 @@ describe("growth-tracker", () => {
 		expect(isMutatingTool("read")).toBe(false);
 		expect(isMutatingTool("Bash")).toBe(true);
 		expect(isMutatingTool("my_extension_tool")).toBe(true);
-		expect(labelForTool("D:/p", "bash", { command: "  mkdir -p src \n echo hi" })).toBe("bash · mkdir -p src");
-		expect(labelForTool("D:/p", "write", { path: "D:\\p\\src\\a.ts" })).toBe("write · src/a.ts");
-		expect(labelForTool("D:/p", "edit", { path: "../x.ts" })).toBe("edit · ../x.ts");
-		expect(labelForTool("D:/p", "bash", { command: "x".repeat(80) })).toHaveLength("bash · ".length + 60);
+		// The label strips the workspace prefix; use paths of the host platform so the
+		// expectation does not depend on Windows-specific path handling.
+		const workspace = process.platform === "win32" ? "D:/p" : "/p";
+		const written = process.platform === "win32" ? "D:\\p\\src\\a.ts" : "/p/src/a.ts";
+		expect(labelForTool(workspace, "bash", { command: "  mkdir -p src \n echo hi" })).toBe("bash · mkdir -p src");
+		expect(labelForTool(workspace, "write", { path: written })).toBe("write · src/a.ts");
+		expect(labelForTool(workspace, "edit", { path: "../x.ts" })).toBe("edit · ../x.ts");
+		expect(labelForTool(workspace, "bash", { command: "x".repeat(80) })).toHaveLength("bash · ".length + 60);
 	});
 
 	describe("with real git", () => {

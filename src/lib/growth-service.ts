@@ -9,7 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
@@ -75,7 +75,15 @@ function comparablePath(p: string): string {
 
 /** 工作区目录名：路径 slug + 8 位哈希（Windows 大小写不敏感） */
 export function workspaceKey(cwd: string): string {
-	const cmp = comparablePath(cwd);
+	// Canonicalize first: Windows may report an 8.3 short path (RUNNER~1) in one call and
+	// the long path in another, and two spellings must not split one workspace's ledger.
+	let resolved = path.resolve(cwd);
+	try {
+		resolved = realpathSync.native(resolved);
+	} catch {
+		/* the directory may not exist yet; the resolved path is stable enough */
+	}
+	const cmp = comparablePath(resolved);
 	const slug = cmp.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").slice(-48).toLowerCase();
 	return `${slug || "root"}-${createHash("sha1").update(cmp).digest("hex").slice(0, 8)}`;
 }

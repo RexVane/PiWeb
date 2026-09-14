@@ -9,6 +9,7 @@ import { installPiUpdate, PI_PACKAGE, prepareRelease } from "../../scripts/relea
 import { assertInstallation } from "../../scripts/build-output.mjs";
 import { runCommand } from "../../scripts/process-runner.mjs";
 import { isNewer } from "./semver";
+import { samePath } from "./path-security";
 import { getRuntimeVersions } from "./version";
 import { APP_ROOT } from "./app-root";
 
@@ -93,7 +94,9 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 					if (target === "piweb") {
 						const command = (args: string[]) => run("git", args, { cwd: installation, env: commandEnv, timeoutMs: 15_000 });
 						const top = (await command(["rev-parse", "--show-toplevel"])).trim();
-						if (await fs.realpath(top) !== installation) throw new Error("refusing to update: PiWeb is not the Git installation root");
+						// Git may report a differently cased or 8.3-shortened path; compare canonically.
+						const realTop = await fs.realpath(top).catch(() => path.resolve(top));
+						if (!samePath(realTop, installation)) throw new Error("refusing to update: PiWeb is not the Git installation root");
 						if ((await command(["status", "--porcelain", "--untracked-files=no"])).trim()) {
 							throw new Error("PiWeb has local tracked changes; preserve them before updating (no files were reset)");
 						}
