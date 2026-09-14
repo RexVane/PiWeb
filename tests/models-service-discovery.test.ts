@@ -118,6 +118,15 @@ describe("provider model discovery", () => {
 		await expect(discoverModels({ baseUrl: "http://127.0.0.1:11434/v1" })).rejects.toThrow("私有网络");
 		await expect(discoverModels({ baseUrl: "http://localhost:11434/v1" })).rejects.toThrow("私有网络");
 	});
+
+	it("allows loopback discovery with the explicit allowPrivate flag (local gateways)", async () => {
+		// 本地网关场景：显式勾选放行，不需要环境变量
+		await withCatalogServer((_request, response) => {
+			response.end(JSON.stringify({ data: [{ id: "llama-local" }] }));
+		}, async (baseUrl) => {
+			await expect(discoverModels({ baseUrl, allowPrivate: true })).resolves.toEqual([{ id: "llama-local" }]);
+		});
+	});
 });
 
 describe("custom provider credential boundaries", () => {

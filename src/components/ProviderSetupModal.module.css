@@ -271,6 +271,24 @@
 	opacity: 0.48;
 }
 
+.discoverControls {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 12px;
+}
+
+.allowPrivate {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11.5px;
+	color: var(--dsw-label-caption);
+	cursor: pointer;
+	user-select: none;
+	white-space: nowrap;
+}
+
 .modelEmpty {
 	margin-top: 13px;
 	padding: 17px;

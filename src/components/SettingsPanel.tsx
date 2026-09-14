@@ -1219,12 +1219,12 @@ function ModelsSection() {
 												models={cModels}
 												setModels={setCModels}
 												updateModel={(index, patch) => setCModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
-												discover={async () => {
+												discover={async (allowPrivate) => {
 													const response = await fetch("/api/models", {
 														method: "POST",
 														headers: { "Content-Type": "application/json" },
 														// providerId：key 留空（保持不变）时后端回退到已存密钥
-														body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: cBaseUrl.trim(), api: cApi, apiKey: cKey.trim() }),
+														body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: cBaseUrl.trim(), api: cApi, apiKey: cKey.trim(), allowPrivate }),
 													});
 													const result = await response.json();
 													if (!result.success) throw new Error(result.error || t.toastError);
@@ -1275,12 +1275,12 @@ function ModelsSection() {
 															setModels={setBModels}
 															updateModel={(index, patch) => setBModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
 															inheritedCount={p.modelCount}
-															discover={async () => {
+															discover={async (allowPrivate) => {
 																const response = await fetch("/api/models", {
 																	method: "POST",
 																	headers: { "Content-Type": "application/json" },
 																	// providerId：key 留空（保持不变）时后端回退到已存密钥
-																	body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: (bBaseUrl.trim() || p.baseUrl || ""), api: p.apis[0], apiKey: keyDraft.trim() }),
+																	body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: (bBaseUrl.trim() || p.baseUrl || ""), api: p.apis[0], apiKey: keyDraft.trim(), allowPrivate }),
 																});
 																const result = await response.json();
 																if (!result.success) throw new Error(result.error || t.toastError);

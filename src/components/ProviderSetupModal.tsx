@@ -145,13 +145,13 @@ export function ProviderSetupModal({
 	};
 
 	/** 供 ModelCatalog 的候选对话框调用：用表单当前值（含未保存的 key）探测远端目录 */
-	const discoverAvailableModels = async (): Promise<ModelDraft[]> => {
+	const discoverAvailableModels = async (allowPrivate: boolean): Promise<ModelDraft[]> => {
 		if (!baseUrl.trim()) throw new Error(t.apiAddress);
 		const response = await fetch("/api/models", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			// builtin 模式带 providerId：表单 key 为空时后端回退到已存密钥 / OAuth 令牌
-			body: JSON.stringify({ action: "discoverModels", baseUrl: baseUrl.trim(), api: mode === "builtin" ? selected?.apis[0] : api, apiKey: apiKey.trim(), providerId: mode === "builtin" ? selected?.id : undefined }),
+			body: JSON.stringify({ action: "discoverModels", baseUrl: baseUrl.trim(), api: mode === "builtin" ? selected?.apis[0] : api, apiKey: apiKey.trim(), providerId: mode === "builtin" ? selected?.id : undefined, allowPrivate }),
 		});
 		const result = await response.json();
 		if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
@@ -332,14 +332,16 @@ export function ModelCatalog({
 	setModels: React.Dispatch<React.SetStateAction<ModelDraft[]>>;
 	updateModel: (index: number, patch: Partial<ModelDraft>) => void;
 	inheritedCount?: number;
-	/** 用表单当前值探测远端目录；抛错时错误显示在目录内 */
-	discover?: () => Promise<ModelDraft[]>;
+	/** 用表单当前值探测远端目录（allowPrivate：用户勾选了允许访问本机/私网地址）；抛错时错误显示在目录内 */
+	discover?: (allowPrivate: boolean) => Promise<ModelDraft[]>;
 	discoverDisabled?: boolean;
 }) {
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
 	const [discovering, setDiscovering] = useState(false);
 	const [discoverError, setDiscoverError] = useState("");
+	// 本地网关（Ollama 等）在私网/回环地址上，探测需要用户显式授权
+	const [allowPrivate, setAllowPrivate] = useState(false);
 	// 候选对话框：null = 关闭
 	const [candidates, setCandidates] = useState<ModelDraft[] | null>(null);
 	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -384,7 +386,7 @@ export function ModelCatalog({
 		setDiscovering(true);
 		setDiscoverError("");
 		try {
-			const found = await discover();
+			const found = await discover(allowPrivate);
 			if (!found.length) {
 				setDiscoverError(t.discoverEmpty);
 				return;
@@ -441,9 +443,19 @@ export function ModelCatalog({
 					</div>
 				</div>
 				{discover ? (
-					<button className={styles.discoverButton} disabled={discoverDisabled || discovering} onClick={() => void startDiscover()}>
-						{discovering ? t.discoveringModels : t.discoverModels}
-					</button>
+					<div className={styles.discoverControls}>
+						<label className={styles.allowPrivate} title={t.allowPrivateHint}>
+							<input
+								type="checkbox"
+								checked={allowPrivate}
+								onChange={(event) => setAllowPrivate(event.target.checked)}
+							/>
+							{t.allowPrivateDiscovery}
+						</label>
+						<button className={styles.discoverButton} disabled={discoverDisabled || discovering} onClick={() => void startDiscover()}>
+							{discovering ? t.discoveringModels : t.discoverModels}
+						</button>
+					</div>
 				) : null}
 			</div>
 			{discoverError ? <div className={styles.catalogError}>{discoverError}</div> : null}

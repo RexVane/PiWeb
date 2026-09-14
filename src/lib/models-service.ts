@@ -11,6 +11,7 @@ import { BlockList, isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
+import { reloadSessionsForCwd } from "./agent-manager";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -287,22 +288,23 @@ export function isPublicModelDiscoveryAddress(address: string): boolean {
 	return false;
 }
 
-async function requestModelCatalog(endpoint: URL, headers: Record<string, string>, signal: AbortSignal): Promise<Response> {
-	const allowPrivate = process.env.PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY === "1";
+async function requestModelCatalog(endpoint: URL, headers: Record<string, string>, signal: AbortSignal, allowPrivate = false): Promise<Response> {
+	// 显式勾选（本次允许访问本机/私网）或全局环境变量，二选一放行
+	const allowed = allowPrivate || process.env.PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY === "1";
 	const literalFamily = isIP(endpoint.hostname.replace(/^\[|\]$/g, ""));
-	if (!allowPrivate && literalFamily && !isPublicModelDiscoveryAddress(endpoint.hostname.replace(/^\[|\]$/g, ""))) {
-		throw new Error("模型目录地址指向本机或私有网络；如需访问本地网关，请设置 PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1");
+	if (!allowed && literalFamily && !isPublicModelDiscoveryAddress(endpoint.hostname.replace(/^\[|\]$/g, ""))) {
+		throw new Error("模型目录地址指向本机或私有网络；勾选「允许访问本机/私有网络地址」后重试，或设置 PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1");
 	}
 	return new Promise<Response>((resolve, reject) => {
 		const request = (endpoint.protocol === "https:" ? httpsRequest : httpRequest)(endpoint, {
 			headers,
 			signal,
 			agent: false,
-			lookup: allowPrivate ? undefined : (hostname, options, callback) => {
+			lookup: allowed ? undefined : (hostname, options, callback) => {
 				void dns.lookup(hostname, { all: true }).then((addresses) => {
 					const publicAddress = addresses.find(({ address }) => isPublicModelDiscoveryAddress(address));
 					if (!publicAddress) {
-						callback(new Error("模型目录地址指向本机或私有网络；如需访问本地网关，请设置 PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1"), "", 0);
+						callback(new Error("模型目录地址指向本机或私有网络；勾选「允许访问本机/私有网络地址」后重试，或设置 PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1"), "", 0);
 						return;
 					}
 					if (options.all) callback(null, [publicAddress]);
@@ -367,7 +369,7 @@ async function readModelCatalog(response: Response): Promise<unknown> {
 }
 
 /** Fetch a provider's conventional /models catalog without persisting credentials. */
-export async function discoverModels(input: { baseUrl: string; api?: string; apiKey?: string; providerId?: string }): Promise<DiscoveredModel[]> {
+export async function discoverModels(input: { baseUrl: string; api?: string; apiKey?: string; providerId?: string; allowPrivate?: boolean }): Promise<DiscoveredModel[]> {
 	const rawBaseUrl = input.baseUrl.trim();
 	if (!rawBaseUrl) throw new Error("缺少 API 地址");
 	const base = new URL(rawBaseUrl);
@@ -407,7 +409,7 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15000);
 		try {
-			const response = await requestModelCatalog(endpoint, headers, controller.signal);
+			const response = await requestModelCatalog(endpoint, headers, controller.signal, input.allowPrivate === true);
 			if (response.status === 401) {
 				throw new Error(apiKey ? "模型目录请求失败（HTTP 401）：密钥或令牌无效" : "模型目录请求失败（HTTP 401）：请先填写 API 密钥");
 			}
@@ -777,12 +779,21 @@ function mergeCustomProviderApiKeys(parsed: CustomProvidersFile, previous: Custo
 		// 字段缺失（包括 JSON.stringify 省略的 undefined）保留旧密钥；只有显式 null 删除。
 		if (provider.apiKey === null) {
 			delete provider.apiKey;
-			continue;
+		} else if (provider.apiKey === undefined) {
+			const previousProvider = previous.providers[id];
+			if (previousProvider && Object.prototype.hasOwnProperty.call(previousProvider, "apiKey")) {
+				provider.apiKey = previousProvider.apiKey;
+			}
 		}
-		const previousProvider = previous.providers[id];
-		if (!Object.prototype.hasOwnProperty.call(provider, "apiKey") && previousProvider
-			&& Object.prototype.hasOwnProperty.call(previousProvider, "apiKey")) {
-			provider.apiKey = previousProvider.apiKey;
+	}
+}
+
+/** 本地/回环地址的无鉴权网关（Ollama 等）：SDK 设计上必须给 apiKey 才算「已配置」；占位值 "unused" 是官方认可模式 */
+function applyLocalPlaceholderKeys(parsed: CustomProvidersFile): void {
+	for (const provider of Object.values(parsed.providers)) {
+		if (provider.apiKey === undefined && typeof provider.baseUrl === "string"
+			&& /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(provider.baseUrl.trim())) {
+			provider.apiKey = "unused";
 		}
 	}
 }
@@ -859,6 +870,8 @@ export async function writeCustomProviders(content: string, revision?: string): 
 				await validateStagedCustomProviders(temporary);
 			}
 			mergeCustomProviderApiKeys(parsed, old);
+			// 本地网关无 key 也得给占位值，否则 SDK 判定「未配置」→ 发消息报 No API key
+			applyLocalPlaceholderKeys(parsed);
 			validateTokenLimits(parsed);
 			await fs.writeFile(temporary, JSON.stringify(parsed, null, 2), {
 				encoding: "utf8", flag: previous.content === undefined ? "wx" : "w", mode: 0o600,
@@ -873,4 +886,7 @@ export async function writeCustomProviders(content: string, revision?: string): 
 	}));
 	resetModelRuntime();
 	invalidateModelList();
+	// 已打开的会话持有保存前的旧 runtime：不清掉的话，在里面选新 provider 的模型
+	// 会报 "No API key for X"（新 runtime 有配置，旧 runtime 查不到）。让活跃会话就地重建。
+	await reloadSessionsForCwd();
 }

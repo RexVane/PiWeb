@@ -72,6 +72,7 @@ export async function POST(req: Request) {
 			revision?: string;
 			text?: string;
 			force?: boolean;
+			allowPrivate?: boolean;
 		};
 		if (body.action === "setKey") {
 			if (!body.providerId || !body.apiKey) return NextResponse.json({ success: false, error: "missing fields" }, { status: 400 });
@@ -93,7 +94,7 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "discoverModels") {
 			if (!body.baseUrl) return NextResponse.json({ success: false, error: "missing baseUrl" }, { status: 400 });
-			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId });
+			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId, allowPrivate: body.allowPrivate === true });
 			return NextResponse.json({ success: true, data: { models } });
 		}
 		if (body.action === "providerUsage") {
