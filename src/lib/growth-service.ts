@@ -490,6 +490,11 @@ export interface SnapshotMeta {
 	toolName?: string;
 	/** tree 没变也记一步（会话基线用） */
 	force?: boolean;
+	/**
+	 * 步的归属时刻（默认落账时刻）。轮次内的工具/turn 快照传轮次开始时间：
+	 * 基线竞速放行后快照可能晚落账，按落账时间切轮次窗口会把改动算给下一轮。
+	 */
+	ts?: number;
 }
 
 /**
@@ -524,7 +529,7 @@ export async function snapshot(cwdValue: string, meta: SnapshotMeta): Promise<Gr
 
 		const step: GrowthStep = {
 			seq: (ws.steps[ws.steps.length - 1]?.seq ?? 0) + 1,
-			ts: Date.now(),
+			ts: meta.ts ?? Date.now(),
 			session: meta.session,
 			kind: meta.kind,
 			label: meta.label.slice(0, 200),

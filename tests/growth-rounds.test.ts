@@ -67,4 +67,16 @@ describe("buildGrowthRounds", () => {
 		expect(rounds.map((round) => round.recorded)).toEqual([false, true]);
 		expect(rounds[1]).toMatchObject({ fromTree: "a", toTree: "b" });
 	});
+
+	it("attributes slow-snapshot steps to the turn that produced them (turn timestamps)", () => {
+		// 基线竞速放行后，快照可能晚落账；步的 ts 记轮次开始时刻（tracker 的 turnTs），
+		// 不按落账时刻切窗。工具步的 parent 即基线树，fromTree 由 parent 链得出。
+		const rounds = buildGrowthRounds([
+			{ ...step(1, "baseline", "empty", "a"), initial: true, ts: 5 }, // 慢基线：第 5 秒才落账
+			{ ...step(2, "tool", "a", "b"), ts: 1.4 },                       // 但归属第 1 轮
+			{ ...step(3, "turn", "b", "b"), ts: 1.6 },
+		], [1, 2]);
+		expect(rounds[0].recorded).toBe(true);
+		expect(rounds[0]).toMatchObject({ fromTree: "a", toTree: "b" });
+	});
 });

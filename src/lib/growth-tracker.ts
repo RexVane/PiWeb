@@ -27,6 +27,8 @@ interface QueuedMeta {
 	label: string;
 	toolCallId?: string;
 	toolName?: string;
+	/** 归属时刻：轮次内的步传轮次开始时间，避免慢快照落账晚被切进下一轮窗口 */
+	ts?: number;
 }
 
 export interface GrowthTracker {
@@ -88,6 +90,8 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 	let errorActive = false;
 	let lastErrorMessage: string | null = null;
 	let chain: Promise<void> = Promise.resolve();
+	/** 当前轮次的开始时刻：本轮所有步的归属 ts（慢快照不再把改动算给下一轮） */
+	let turnTs: number | undefined;
 
 	// 快照失败不打扰用户（项目栏退化成普通文件树 + 查看器）：只在服务端日志记一次，没 git / 项目过大就停用本会话的跟踪
 	const reportError = (error: unknown) => {
@@ -157,7 +161,7 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 		if (baselinePending) return baselinePending;
 		baselinePending = enqueue(async () => {
 			if (disabled || disposed) return;
-			if (!(await hasSessionSteps(cwd, sessionPath))) await doRecord({ kind: "baseline", label: "" }, true);
+			if (!(await hasSessionSteps(cwd, sessionPath))) await doRecord({ kind: "baseline", label: "", ts: turnTs }, true);
 			baselineChecked = true;
 		});
 		void baselinePending.finally(() => { baselinePending = null; });
@@ -171,7 +175,18 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 		const tools = metas.filter((x) => x.kind === "tool");
 		const head = tools[0] ?? metas[0];
 		const extra = tools.length > 1 ? ` +${tools.length - 1}` : "";
-		void record({ kind: head.kind, label: `${head.label}${extra}`, toolCallId: head.toolCallId, toolName: head.toolName });
+		// 归属时刻优先用队里最新的（同轮多个工具取最后一个工具结束时也在轮内）；
+		// 没有就退回当前轮开始时刻，再退回落账时刻。
+		const ts = metas.reduce<number | undefined>((acc, m) => m.ts ?? acc, undefined) ?? turnTs;
+		// 首轮工具快照前确保基线已在链上排队：基线落账晚于首轮工具时，
+		// buildGrowthRounds 按时间戳切窗会把首轮误判成「快照启用前，未记录」。
+		const recordAfterBaseline = baselineChecked
+			? Promise.resolve()
+			: ensureBaseline().catch(() => undefined);
+		void recordAfterBaseline.then(() => {
+			if (disposed || disabled) return;
+			record({ kind: head.kind, label: `${head.label}${extra}`, toolCallId: head.toolCallId, toolName: head.toolName, ts });
+		});
 	};
 
 	const schedule = (meta: QueuedMeta) => {
@@ -180,7 +195,8 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 			clearTimeout(externalTimer);
 			externalTimer = undefined;
 		}
-		queue.push(meta);
+		// 轮内工具步继承轮次开始时刻（外部修改步不标 ts，按实际发生时间归属）
+		queue.push(meta.kind === "tool" && turnTs !== undefined ? { ...meta, ts: meta.ts ?? turnTs } : meta);
 		if (flushTimer) clearTimeout(flushTimer);
 		flushTimer = setTimeout(flush, SNAPSHOT_DEBOUNCE_MS);
 	};
@@ -246,6 +262,9 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 		version: GROWTH_TRACKER_VERSION,
 		getError: () => lastErrorMessage,
 		async prepare() {
+			// prepare 在首条 prompt 前同步执行：此刻就是轮次开始时刻，基线带上
+			// （晚落账时轮次窗口仍能对上；基线本身不进轮，但 fromTree 归属要用）
+			turnTs = Date.now();
 			startWatcher();
 			await ensureBaseline();
 		},
@@ -253,6 +272,8 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 			if (disposed || disabled) return;
 			switch (evt.type) {
 				case "agent_start":
+					// 轮次开始时刻：本轮所有步的归属 ts（用户消息时间戳与之对齐，切窗才准）
+					turnTs = (evt as { ts?: number }).ts ?? Date.now();
 					startWatcher();
 					void ensureBaseline();
 					break;
@@ -281,7 +302,9 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 					if (flushTimer) clearTimeout(flushTimer);
 					flush();
 					// 无文件变更的回合也持久化终点，轮数才能与真实用户轮次一致。
-					if (!evt.willRetry) void enqueue(() => doRecord({ kind: "turn", label: "" }, true));
+					// turn 步同样按轮次开始时刻归属，防晚落账切错窗口。
+					if (!evt.willRetry) void enqueue(() => doRecord({ kind: "turn", label: "", ts: turnTs }, true));
+					turnTs = undefined;
 					break;
 				default:
 					break;

@@ -5,9 +5,11 @@ name: publish
 # publish --ref main`) when the batch is ready to ship.
 #
 #   1. bump the patch version (the repository's package.json is the version source of truth)
-#   2. run the prepublishOnly gate (typecheck + tests + build) and publish to npm
-#   3. push the version commit and a v* tag back to main
-#   4. create a GitHub Release for the tag (notes = commit history since the previous tag)
+#   2. prebuild the production bundle (.next, cache excluded) into the package —
+#      users install a ready-to-run artifact with zero compilation on their machine
+#   3. run the prepublishOnly gate (typecheck + tests) and publish to npm
+#   4. push the version commit and a v* tag back to main
+#   5. create a GitHub Release for the tag (notes = commit history since the previous tag)
 # Publishing only happens after the gate passes, and an already-published version
 # is bumped past, so a re-run never fails on E403.
 #
@@ -55,14 +57,23 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "releasing @rexvane/piweb@$version"
 
-      # `npm publish` runs the `prepublishOnly` gate (typecheck + tests + build)
-      # before uploading, so a broken build never reaches the registry.
+      # 预构建：发布物自带 .next 产物（排除 cache），用户安装后零编译直接运行——
+      # 安装时构建在 macOS 上踩了一串坑（staging 目录/junction/执行位），成品发布根除。
+      - name: Prebuild the production bundle
+        run: |
+          set -euo pipefail
+          node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack
+          rm -rf .next/cache
+          rm -rf .next-releases
+          test -f .next/BUILD_ID
+          du -sh .next
+
       - name: Publish
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PIWEB_SKIP_INSTALL_BUILD: "1"
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
-          PI_OFFLINE: "1"
           NEXT_TELEMETRY_DISABLED: "1"
 
       - name: Push the version commit and tag

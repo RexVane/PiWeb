@@ -247,10 +247,23 @@ function runDialog(argv: string[], opts: { timeoutMs?: number; windowsHide?: boo
 	});
 }
 
-/** osascript 的 POSIX path 输出带前后引号（可能含转义），剥成普通路径 */
-function unquoteApplePath(out: string): string {
-	const m = out.match(/^alias "?(.*?)"?$/s) ?? out.match(/^(\/.*)$/s);
-	return (m ? m[1] : out).trim();
+/**
+ * osascript 输出转 POSIX 路径。
+ * `POSIX path of ...` 输出 `/Users/...`（带引号，内部转义）；裸 `choose folder` 输出
+ * HFS 冒号格式 `alias Macintosh HD:Users:...`——后端按 POSIX 解析会 workspace not found。
+ */
+function applePathToPosix(out: string): string {
+	let s = out.trim();
+	// 去掉 alias 前缀与包裹引号
+	s = s.replace(/^alias\s+/i, "").replace(/^"(.*)"$/s, "$1");
+	// 已经是 POSIX 路径
+	if (s.startsWith("/")) return s.replace(/\\(.)/g, "$1");
+	// HFS 冒号格式：Macintosh HD:Users:kaijimima:proj: → /Users/kaijimima/proj
+	if (/^[A-Za-z][A-Za-z0-9 ]*:(.+)$/.test(s)) {
+		const rest = s.slice(s.indexOf(":") + 1);
+		return `/${rest.split(":").filter(Boolean).join("/")}`;
+	}
+	return s;
 }
 
 /**
@@ -273,8 +286,9 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 			return out ? { path: out, canceled: false } : { path: null, canceled: true };
 		}
 		if (process.platform === "darwin") {
-			const out = await runDialog(["osascript", "-e", 'choose folder with prompt "选择工作区文件夹"']);
-			const p = unquoteApplePath(out);
+			// 直接要 POSIX path 输出；老 osascript / 异常路径由 applePathToPosix 兜底转换
+			const out = await runDialog(["osascript", "-e", 'POSIX path of (choose folder with prompt "选择工作区文件夹")']);
+			const p = applePathToPosix(out);
 			return p ? { path: p, canceled: false } : { path: null, canceled: true };
 		}
 		// Linux /其他：zenity → kdialog
