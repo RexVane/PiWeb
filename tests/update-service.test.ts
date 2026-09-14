@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lib/version", () => ({ getRuntimeVersions: async () => ({ piWeb: "1.0.0", piEngine: "1.0.0" }) }));
 
-import { createUpdateService } from "../src/lib/update-service";
+import { createUpdateService, canSelfUpdateNpmInstall } from "../src/lib/update-service";
 import { installPiUpdate, prepareRelease } from "../scripts/release.mjs";
 import { selectProductionBuild } from "../scripts/build-output.mjs";
 
@@ -221,7 +221,93 @@ describe("update service transactions", () => {
 			if (args[0] === "show") return JSON.stringify({ name: "pi-web", version: "1.2.0" });
 			return "";
 		});
-		expect(await createUpdateService({ root, run }).checkForUpdate("piweb")).toEqual({ current: "1.0.0", latest: "1.2.0", behind: 2, canUpdate: true });
+		expect(await createUpdateService({ root, run }).checkForUpdate("piweb")).toEqual({ current: "1.0.0", latest: "1.2.0", behind: 2, canUpdate: true, selfUpdate: true });
 		expect(run.mock.calls.some(([, args]) => args[0] === "tag")).toBe(false);
+	});
+});
+
+/**
+ * 用户装的是 npm 成品包（<prefix>/node_modules/@rexvane/piweb），那里没有 Git 仓库，
+ * 更新只能走 npm；以前这条路会直接抛 "fatal: not a git repository"。
+ */
+describe("npm-installed PiWeb updates from the registry", () => {
+	/** 复刻 npm 全局安装的目录布局。 */
+	async function npmInstallation(version = "1.0.0") {
+		const prefix = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-npm-")));
+		roots.push(prefix);
+		const root = path.join(prefix, "node_modules", "@rexvane", "piweb");
+		await fs.mkdir(root, { recursive: true });
+		await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "@rexvane/piweb", version }));
+		await build(root, ".next", "installed-build");
+		return root;
+	}
+
+	const versions = async () => ({ piWeb: "1.0.0", piEngine: "1.0.0" });
+
+	it("compares the registry version instead of touching Git", async () => {
+		const root = await npmInstallation();
+		const run = vi.fn(async (command: string, args: string[]) => {
+			expect(command).toBe("npm");
+			return args[0] === "view" ? "2.0.0\n" : "";
+		});
+		const check = await createUpdateService({ root, run, versions }).checkForUpdate("piweb");
+		expect(check).toMatchObject({ current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: canSelfUpdateNpmInstall() });
+		// 不能原地替换的平台上，界面改显示这条命令
+		expect(check.command).toBe(canSelfUpdateNpmInstall() ? undefined : "npm install -g @rexvane/piweb@latest");
+		expect(run.mock.calls.map(([, args]) => args.join(" "))).toEqual(["view @rexvane/piweb version"]);
+	});
+
+	it("shows the install command instead of a button on Windows", async () => {
+		// Windows 下运行中的 piweb 锁着自己的安装目录，npm rename 会 EBUSY（已实测）；
+		// 所以这里必须给出命令，而不是一个注定失败的按钮。
+		const root = await npmInstallation();
+		const run = vi.fn(async (_command: string, args: string[]) => args[0] === "view" ? "2.0.0\n" : "");
+		const check = await createUpdateService({ root, run, versions, platform: "win32" }).checkForUpdate("piweb");
+		expect(check).toMatchObject({ canUpdate: true, selfUpdate: false, command: "npm install -g @rexvane/piweb@latest" });
+
+		const service = createUpdateService({ root, run, versions, platform: "win32" });
+		await expect(service.runUpdate("piweb", { assertIdle: async () => {} })).rejects.toThrow(/npm install -g @rexvane\/piweb@latest/);
+		expect(run.mock.calls.some(([, args]) => args[0] === "install")).toBe(false);
+	});
+
+	it("installs the published package itself where the platform allows it", async () => {
+		const root = await npmInstallation();
+		const calls: string[][] = [];
+		const run = vi.fn(async (command: string, args: string[]) => {
+			expect(command).toBe("npm");
+			calls.push(args);
+			if (args[0] === "install") {
+				// npm 用新版本的成品包替换目录内容（含 .next），服务进程仍跑旧代码直到重启
+				await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "@rexvane/piweb", version: "2.0.0" }));
+				await build(root, ".next", "new-installed-build");
+			}
+			return "";
+		});
+		const result = await createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("piweb", { assertIdle: async () => {} });
+		expect(calls).toEqual([["install", "-g", "@rexvane/piweb@latest", "--no-audit", "--no-fund"]]);
+		expect(result).toEqual({ buildDir: ".next", buildId: "new-installed-build", version: "2.0.0", needsRestart: true });
+		// 不走 git、也不产生 release 清单：成品包自带构建
+		await expect(fs.access(path.join(root, ".next-releases", "active.json"))).rejects.toThrow();
+	});
+
+	it("refuses to report success when npm updated a different copy", async () => {
+		const root = await npmInstallation();
+		const run = vi.fn(async (_command: string, args: string[]) => args[0] === "view" ? "2.0.0\n" : "");
+		await expect(createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("piweb", { assertIdle: async () => {} }))
+			.rejects.toThrow(/not the global package/);
+	});
+
+	it("fails on a truncated installed build instead of after a restart", async () => {
+		const root = await npmInstallation();
+		const run = vi.fn(async (_command: string, args: string[]) => {
+			if (args[0] === "install") {
+				await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "@rexvane/piweb", version: "2.0.0" }));
+				// 0.3.7 就是这样发的：BUILD_ID 在，运行时清单不在
+				await fs.rm(path.join(root, ".next", "required-server-files.json"));
+			}
+			return "";
+		});
+		await expect(createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("piweb", { assertIdle: async () => {} }))
+			.rejects.toThrow(/incomplete production build/);
 	});
 });

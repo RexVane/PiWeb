@@ -509,11 +509,13 @@ function VersionLink({ href, value }: { href: string; value?: string }) {
 
 type UpdatePhase = "idle" | "checking" | "available" | "updating" | "latest" | "updated" | "error";
 
-/** 检查更新 / 更新控件：piweb 走 git pull + npm install，pi 走 npm install @latest（服务端固定参数） */
+/** 检查更新 / 更新控件：npm 安装的 piweb 走 npm install -g @rexvane/piweb@latest（服务端固定参数），
+ *  Git 检出仍走 git pull + 本地构建；pi 走 npm install @latest。 */
 function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 	const { t } = useI18n();
 	const [phase, setPhase] = useState<UpdatePhase>("idle");
 	const [latest, setLatest] = useState("");
+	const [command, setCommand] = useState("");
 	const [error, setError] = useState("");
 	const busy = phase === "checking" || phase === "updating";
 
@@ -534,6 +536,7 @@ function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 			if (!j.success) throw new Error(j.error);
 			if (j.data.canUpdate) {
 				setLatest(j.data.latest);
+				setCommand(j.data.command ?? "");
 				setPhase("available");
 			} else {
 				setPhase("latest");
@@ -574,6 +577,15 @@ function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 		);
 	}
 	if (phase === "available") {
+		// Windows 无法替换运行中的安装目录（npm 会 EBUSY），此时给命令而不是按钮。
+		if (command) {
+			return (
+				<span className="flex flex-col items-end gap-0.5" style={{ maxWidth: 300 }}>
+					<code style={{ fontSize: 11, color: "var(--dsw-label-primary)", whiteSpace: "nowrap", overflowX: "auto", maxWidth: "100%" }}>{command}</code>
+					<span style={{ fontSize: 11, color: "var(--dsw-label-tertiary)", textAlign: "right" }}>{t.updateManualHint}</span>
+				</span>
+			);
+		}
 		return (
 			<button type="button" className="btn-primary-white" style={{ height: 26, padding: "0 12px", fontSize: 12 }} onClick={() => void run()}>
 				{t.updateTo.replace("{v}", latest)}

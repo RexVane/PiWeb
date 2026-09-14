@@ -62,8 +62,11 @@ piweb
 ### 更新
 
 ```bash
-npm update -g @rexvane/piweb
+npm install -g @rexvane/piweb@latest
 ```
+
+npm 会原地替换已安装的版本，不用先卸载。界面里的「检查更新」按钮执行的就是这条命令，
+指定 `@latest` 也避免本地缓存把你装回旧版本。装完重启 `piweb` 即可用上新版本。
 
 也可以装指定版本：`npm install -g @rexvane/piweb@0.3.4`。
 

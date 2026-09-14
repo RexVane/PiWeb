@@ -62,8 +62,13 @@ The package registers only the `piweb` command, so it never conflicts with the o
 ### Update
 
 ```bash
-npm update -g @rexvane/piweb
+npm install -g @rexvane/piweb@latest
 ```
+
+npm replaces the installed version in place, so there is nothing to uninstall first. This is
+the same command the in-app "Check for updates" button runs, and pinning `@latest` avoids
+reinstalling an older build that the local cache still holds. Restart `piweb` afterwards to
+serve the new version.
 
 Or install a specific version: `npm install -g @rexvane/piweb@0.3.4`.
 

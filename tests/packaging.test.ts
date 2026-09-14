@@ -141,10 +141,19 @@ describe("bundled scripts must not depend on the build machine's paths", () => {
 
 	it("resolves the installation root without the module URL when it is foreign", async () => {
 		const cwd = await tempDir("piweb-root-");
-		const opts = { cwd, moduleUrl: "file:///home/runner/work/PiWeb/PiWeb/scripts/release.mjs" };
-		// Windows: fileURLToPath 直接抛 ERR_INVALID_FILE_URL_PATH；POSIX: 路径不存在。
-		expect(resolveReleaseRoot({ env: {}, ...opts })).toBe(path.resolve(cwd));
-		expect(resolveReleaseRoot({ env: { PI_WEB_ROOT: cwd }, ...opts })).toBe(path.resolve(cwd));
+		// 这个路径在任何机器上都不存在：CI 上 /home/runner/work/... 是真实检出，不能拿来当外来路径。
+		const moduleUrl = "file:///piweb-does-not-exist-2f4c/scripts/release.mjs";
+		expect(resolveReleaseRoot({ env: {}, cwd, moduleUrl })).toBe(path.resolve(cwd));
+		expect(resolveReleaseRoot({ env: { PI_WEB_ROOT: cwd }, cwd: os.tmpdir(), moduleUrl })).toBe(path.resolve(cwd));
+	});
+
+	it("never throws on a drive-less POSIX file URL (the 0.3.8 Windows crash)", async () => {
+		// Windows 的 fileURLToPath 拒绝没有盘符的 POSIX 路径，正是用户看到的
+		// ERR_INVALID_FILE_URL_PATH；这里必须回退，不能抛。
+		const cwd = await tempDir("piweb-root-");
+		const root = resolveReleaseRoot({ env: {}, cwd, moduleUrl: "file:///home/runner/work/PiWeb/PiWeb/scripts/release.mjs" });
+		if (process.platform === "win32") expect(root).toBe(path.resolve(cwd));
+		else expect(typeof root).toBe("string");
 	});
 
 	it("still resolves a real checkout from the module URL", async () => {
