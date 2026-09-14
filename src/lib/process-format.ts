@@ -194,11 +194,14 @@ export function firstSentence(text: string, max = 140): string {
 	return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 }
 
-export type ModelErrorKind = "rateLimit" | "billing" | "auth" | "notFound" | "context" | "timeout" | "server" | "network";
+export type ModelErrorKind = "rateLimit" | "billing" | "auth" | "notFound" | "context" | "timeout" | "server" | "network" | "moderation";
 
 /** 把供应商原始报错归到少数几类，界面给一句人话；认不出返回 null（只显示原文） */
 export function classifyModelError(message: string): ModelErrorKind | null {
 	const m = message.toLowerCase();
+	// Content moderation (gateway-side sensitive-word filters) must be checked before
+	// the generic 5xx rule: such gateways often answer with a misleading 500.
+	if (/sensitive[ _-]?words?|content (moderation|filter)|moderation|content_policy|content policy|input blocked/.test(m)) return "moderation";
 	if (/\b429\b|rate.?limit|too many requests|requests per (minute|second)/.test(m)) return "rateLimit";
 	if (/\b402\b|insufficient (balance|credits|quota|funds)|billing|quota exceeded|余额/.test(m)) return "billing";
 	if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid.*(api.?key|token)|authentication|permission denied/.test(m)) return "auth";

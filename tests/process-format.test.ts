@@ -161,6 +161,12 @@ describe("classifyModelError", () => {
 		expect(classifyModelError("500 Internal Server Error")).toBe("server");
 		expect(classifyModelError("fetch failed: ECONNRESET")).toBe("network");
 	});
+	it("classifies gateway content moderation ahead of the generic 5xx rule", () => {
+		// new-api style gateways reject with a misleading 500 plus this payload.
+		expect(classifyModelError('500: {"message":"sensitive words detected","code":"sensitive_words_detected"}')).toBe("moderation");
+		expect(classifyModelError("Your input was flagged by the content filter")).toBe("moderation");
+		expect(classifyModelError("Request blocked by content moderation policy")).toBe("moderation");
+	});
 	it("returns null for unknown messages", () => {
 		expect(classifyModelError("something odd happened")).toBeNull();
 	});

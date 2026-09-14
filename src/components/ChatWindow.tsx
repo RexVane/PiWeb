@@ -638,6 +638,7 @@ const ERROR_HINT_KEY: Record<ModelErrorKind, string> = {
 	timeout: "modelErrorTimeout",
 	server: "modelErrorServer",
 	network: "modelErrorNetwork",
+	moderation: "modelErrorModeration",
 };
 
 function ErrorStep({ message, count, model }: { message: string; count: number; model?: string }) {
