@@ -1,7 +1,7 @@
 # PiWeb
 
 <p align="center">
-  <strong>A modern web UI for the Pi Coding Agent — inspired by DeepSeek Harness (dsh).</strong>
+  <strong>A modern web UI for the Pi Coding Agent.</strong>
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 
 ---
 
-**PiWeb** brings a sleek, feature-rich browser interface to the [pi coding agent](https://github.com/earendil-works/pi) with zero modifications to the core Pi engine. Built with Next.js and Tailwind CSS, it aligns visually and interactively with DeepSeek Harness (dsh).
+**PiWeb** brings a sleek, feature-rich browser interface to the [pi coding agent](https://github.com/earendil-works/pi) with zero modifications to the core Pi engine. Built with Next.js and Tailwind CSS.
 
 ## Key Features
 

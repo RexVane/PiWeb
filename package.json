@@ -3,7 +3,7 @@
 	"version": "0.3.1",
 	"license": "MIT",
 	"type": "module",
-	"description": "Web UI for the pi coding agent - dsh-look shell driven by the official pi SDK without modifying pi",
+	"description": "Modern web UI for the pi coding agent, driven by the official pi SDK without modifying pi",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/RexVane/PiWeb.git"

@@ -1,6 +1,5 @@
 /**
- * 图标集 —— SVG path 逐字取自 dsh (deepseek-harness) ui-primitives 的 ic_ds_* 图标集（MIT）。
- * 全部 fill="currentColor"，{size, className} 与 dsh 相同的props约定。
+ * 图标集 —— 全部 fill="currentColor"，{size, className} props 约定。
  */
 import type { SVGProps } from "react";
 

@@ -41,11 +41,11 @@ describe("agent command validation", () => {
 		expect(parseAgentCommand({ cmd: "navigate" }).ok).toBe(false);
 	});
 
-	// ---------- 附件限额（对齐 dsh attachment-local DEFAULT_*） ----------
+	// ---------- 附件限额 ----------
 
 	const image = (data: string) => ({ type: "image", mimeType: "image/png", data });
 
-	it("accepts exactly 20 images per message (dsh maxImagesPerMessage)", () => {
+	it("accepts exactly 20 images per message (maxImagesPerMessage)", () => {
 		const result = parseAgentCommand({ cmd: "prompt", text: "x", images: Array.from({ length: 20 }, () => image("aGVsbG8=")) });
 		expect(result.ok).toBe(true);
 	});
@@ -56,14 +56,14 @@ describe("agent command validation", () => {
 		if (!result.ok) expect(result.error).toContain("at most 20");
 	});
 
-	it("rejects a single image over 20MB (28MB base64, dsh maxImageBytes)", () => {
+	it("rejects a single image over 20MB (28MB base64, maxImageBytes)", () => {
 		const over = parseAgentCommand({ cmd: "prompt", images: [image("A".repeat(28_000_001))] });
 		expect(over.ok).toBe(false);
 		const edge = parseAgentCommand({ cmd: "prompt", images: [image("A".repeat(28_000_000))] });
 		expect(edge.ok).toBe(true);
 	});
 
-	it("rejects images totaling over 200MB (268MB base64, dsh maxMessageImageBytes)", () => {
+	it("rejects images totaling over 200MB (268MB base64, maxMessageImageBytes)", () => {
 		// 20 张 × 13.4MB base64 = 268,000,000 恰好在界内（> 才拒绝）
 		const atCap = parseAgentCommand({ cmd: "prompt", images: Array.from({ length: 20 }, () => image("A".repeat(13_400_000))) });
 		expect(atCap.ok).toBe(true);

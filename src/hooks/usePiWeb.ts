@@ -846,7 +846,7 @@ export function usePiWeb() {
 		presetRestorePromiseRef.current = restore;
 	}, [currentId, snapshotEpoch, state.connected, state.snapshot, sendCommand]);
 
-	// dsh sessionVisible 合同：当前会话豁免归档过滤——归档当前会话不关闭、
+	// 会话可见性规则：当前会话豁免归档过滤——归档当前会话不关闭、
 	// 主列表保持可见可聊，已归档区也不显示它（取消归档前菜单按真实归档态切换）。
 	const visibleSessions = useMemo(() => {
 		const set = new Set(archivedSessionPaths.map(pathKey));

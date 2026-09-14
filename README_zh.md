@@ -1,7 +1,7 @@
 # PiWeb
 
 <p align="center">
-  <strong>为 Pi 编程智能体打造的现代 Web 界面 —— 对齐 DeepSeek Harness (dsh) 交互体验。</strong>
+  <strong>为 Pi 编程智能体打造的现代 Web 界面。</strong>
 </p>
 
 <p align="center">
@@ -14,10 +14,10 @@
 
 ---
 
-**PiWeb** 是为 [pi 编程智能体](https://github.com/earendil-works/pi) 打造的 **dsh 式** 现代 Web 界面：`npm start` 一键启动，提供实时流式对话、工作区会话管理、会话树分支跳转、技能/插件/模型管理，**pi 本身零改动**。
+**PiWeb** 是为 [pi 编程智能体](https://github.com/earendil-works/pi) 打造的现代 Web 界面：`npm start` 一键启动，提供实时流式对话、工作区会话管理、会话树分支跳转、技能/插件/模型管理，**pi 本身零改动**。
 
 - **引擎**：官方 npm 包 `@earendil-works/pi-coding-agent`（进程内 SDK），使用精确版本锁；`npm run update:pi` 独立升级和验证上游引擎。
-- **界面**：视觉与交互对齐 [deepseek-harness (dsh)](https://github.com/deepseek-ai/deepseek-harness) Web 端 —— `--dsw-*` 实色面板、三栏框架（侧栏可收起为 56px 导轨 + 拖拽调宽）、22px 输入卡、ic_ds 图标与 π 官方图标。
+- **界面**：`--dsw-*` 实色面板、三栏框架（侧栏可收起为 56px 导轨 + 拖拽调宽）、22px 输入卡与 π 官方图标。
 - **原则**：工具、模型、技能和插件机制完全使用 Pi 官方原生方案；会话与工作区结构保持兼容。
 
 ## 功能亮点
