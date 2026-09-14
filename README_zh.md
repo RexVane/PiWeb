@@ -110,14 +110,24 @@ CI 在 Linux、Windows 与 Node.js 22.19.0、24 上执行完整检查。普通 `
 
 ## 发布到 npm
 
-发布由 `.github/workflows/publish.yml` 完成：推送 `v*` tag、或 `main` 上的 `package.json` 版本变化都会触发；npm 上已存在的版本会自动跳过。上传前会执行 `prepublishOnly` 门槛（`npm run check`），类型检查、测试或构建任一失败都不会发布。
+**每次推送到 `main` 都会自动发一个版本**，由 `.github/workflows/publish.yml` 完成：
+
+1. 升一个 patch 版本号（`package.json` 始终是版本的唯一来源）；
+2. 执行 `prepublishOnly` 门槛（`npm run check`：类型检查 + 测试 + 构建）并发布到 npm；
+3. 把版本提交和 `v*` tag 推回 `main`。
+
+npm 上已存在的版本会自动跳过（不会因重复版本号失败），工作流自己产生的发布提交不会再次触发。门槛任一环节失败都不会发布。
 
 ```bash
-npm version patch        # 0.3.0 → 0.3.1：改版本号、提交、打 tag
-git push --follow-tags   # 推送提交（与 tag）→ 工作流自动发布
+# 日常开发：推送即发布
+git push origin main
+# 之后拉取工作流提交的版本号变更
+git pull --rebase origin main
 ```
 
-一次性准备：在 npmjs.com 生成 **Automation Token**，存为仓库 secret `NPM_TOKEN`；没有它发布步骤会以鉴权错误失败。用户想升级时自行执行：
+一次性准备：在 npmjs.com 生成 **Automation Token**，存为仓库 secret `NPM_TOKEN`；没有它发布步骤会以鉴权错误失败。某次推送不想发版（例如只改文档），在提交信息里加 `[skip ci]` 即可。
+
+用户想升级时自行执行：
 
 ```bash
 npm install -g piweb@latest
