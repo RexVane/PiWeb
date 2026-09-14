@@ -14,109 +14,84 @@
 
 ---
 
-**PiWeb** brings a sleek, feature-rich browser interface to the [pi coding agent](https://github.com/earendil-works/pi) with zero modifications to the core Pi engine. Built with Next.js and Tailwind CSS.
+**PiWeb** brings a sleek, feature-rich browser interface to the [pi coding agent](https://github.com/earendil-works/pi) with zero modifications to the core Pi engine. Install with one command, and all your existing pi configuration, sessions, models, skills, and plugins work out of the box.
 
-## Key Features
+## Features
 
-- **Real-Time Streaming**: Full SSE snapshots with ordered deltas, automatic replay via `Last-Event-ID`, real-time thinking process and inline tool execution cards.
-- **Composer & Input**: Image attachments (paste, pick, drag-and-drop), 2-level model selector, model cycling forward/backward, queue management (steering / follow-up), and `/` slash commands.
-- **Decoupled Workspaces & Sessions**: Group sessions by workspace folders, native system folder picker on Windows, rename/delete workspaces with centered confirmation modals, preserve sessions under "Ungrouped", and maintain empty workspaces independently.
-- **Session Exploration**: Session tree branch visualization & navigation, user message draft recovery, export session logs to JSONL / HTML, and trajectory views.
-- **Comprehensive Settings**:
-  - **General**: Tool presets (Read Only / Workspace Write / Full Access), language (zh/en), appearance, enter key behaviors, and auto-compact.
-  - **Models**: Manage 30+ built-in providers, custom providers in `models.json`, and OAuth logins (Claude, Codex, Copilot, etc.).
-  - **Plugins & Skills**: View and manage extensions and skills directly via Pi's built-in package manager.
-- **Security & Sandboxing**: Optional HTTP Basic Auth via `PI_WEB_PASSWORD`, origin validation on write actions, and strict path boundary checks.
+### Real-Time Streaming Chat
 
-## Quick Start
+Full SSE snapshots with ordered deltas and automatic replay via `Last-Event-ID`. The thinking process and inline tool execution cards stream live.
 
-**Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features.
+<p align="center"><img src="assets/showcase.png" alt="Streaming chat with tool cards" width="840" /></p>
 
-### Install from npm (recommended)
+### Workspaces & Sessions
+
+Sessions grouped by project folder, with a native folder picker (Windows / macOS / Linux), rename and archive. Session tree branches, draft recovery, and JSONL / HTML export.
+
+### Project Growth Tree
+
+Every step the agent takes on your codebase is snapshotted: navigate the timeline round by round, see added/modified/deleted files, and open line-level diffs for any file at any step — even if the workspace has no git history of its own.
+
+### Context Meter
+
+Click the ring next to the composer to see the context window broken down into 13 segments — System Prompt, System/Custom Tools, Memory (AGENTS.md), Skills, messages by type, Compacted Data, Auto-Compact Buffer, and Free Space.
+
+### Model & Provider Management
+
+30+ built-in providers, OAuth logins (Claude, Codex, Copilot, etc.), custom providers written to `models.json`, one-click model discovery, and a placeholder key auto-filled for local gateways like Ollama.
+
+### Plugins & Skills
+
+Install, update, and uninstall pi packages directly from the UI. Enable/disable or delete skills; every change applies to running sessions immediately.
+
+### Security
+
+Optional login via `PI_WEB_PASSWORD` (required for non-loopback binds), origin validation on write actions, strict path boundary checks, and tool presets (Read Only / Workspace Write / Full Access).
+
+## Usage
+
+### Install
 
 ```bash
 npm install -g @rexvane/piweb
 piweb
 ```
 
-A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g @rexvane/piweb`. The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI (`npm i -g @earendil-works/pi-coding-agent`) if you have both.
+The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI. Requires Node.js ≥ 22.19.0 (24 recommended); Git is needed for growth-history features.
 
-### Inside this repository
-
-```bash
-npm install
-npm run dev        # development server with hot reload
-```
-
-Or run a production build locally:
+### Update
 
 ```bash
-npm install
-npm run build      # or: npm run build:release (staged, does not touch a running build)
-npm start          # serves on http://127.0.0.1:30141 (auto-increments if busy)
+npm update -g @rexvane/piweb
 ```
 
-### CLI Options (`bin/piweb.js`)
+Or install a specific version: `npm install -g @rexvane/piweb@0.3.4`.
 
-```
--p, --port <port>      Listen port (default 30141, env PORT; auto-increments if in use)
--H, --hostname <host>  Bind address (default 127.0.0.1, env PI_WEB_HOSTNAME)
---dev                  Start in development mode (`next dev`; env PI_WEB_DEV=1; also used when no production build exists)
---no-open              Do not automatically open browser (env PI_WEB_NO_OPEN=1)
--h, --help             Show help
-```
-
-Environment variables: `PI_WEB_PASSWORD` enables a browser login session and HTTP Basic Auth for API clients (user `pi`). It is **required** for any non-loopback production bind address. Development mode is loopback-only, even with a password; if no production build exists, an external bind fails rather than falling back to an exposed development server. Use HTTPS or a trusted VPN for remote access. `PI_WEB_EDITOR` overrides the editor used by "open in editor" (default `code`). Without a password, PiWeb only accepts requests whose `Host` is loopback.
-
-`GET /api/health` exposes only a fixed service identifier for credential-free startup probes. Runtime versions are available from the authenticated `/api/version` endpoint. Tool presets limit the tools offered to the agent; they are not an operating-system sandbox, and installed extensions run with the server process's permissions.
-
-Model catalog discovery blocks loopback, private, and reserved network addresses by default. If you intentionally use a local model gateway, set `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1` before starting PiWeb. This relaxes the discovery endpoint only; use it only on a trusted PiWeb instance.
-
-### Development
+### Uninstall
 
 ```bash
-npm run dev        # Run Next.js in development mode
-npm run typecheck  # TypeScript check
-npm test           # Service, protocol and component regressions
-npm run check      # Full check (types + tests + build)
-npm run build:release # Validate and stage a production build without replacing the running build
+npm uninstall -g @rexvane/piweb
 ```
 
-## Status and known limitations (2026-09-14)
+This removes PiWeb only — your pi data lives in `~/.pi/agent/` and is left untouched.
 
-The audit follow-up is merged into this branch and has been through an isolated release plus a local production deployment. It covers the production login build, upload integrity through the Next.js proxy, per-session extension isolation and tool-policy reloads, lossless model/settings writes, composer and pending-extension-UI lifecycle, Git/Growth/diff correctness, and isolated release preparation.
+### Run
 
-The latest local validation passed TypeScript checking, **355 tests across 52 files** (one additional test skipped), `npm run build`, and `git diff --check`. The skipped test requires Windows symlink privileges or Developer Mode.
-
-Known limitations: saving the model configuration normalizes it to plain JSON (comments are not preserved, data is); updates replace dependencies in place during a maintenance window rather than being zero-downtime; a custom tool allowlist lives only for the session lifetime; third-party extension module globals are not isolated.
-
-## Production builds and updates
-
-Use `npm run build:release` when preparing a build while PiWeb is running. It validates types and tests, builds into a fresh `.next-releases/<id>` directory, and only then publishes the build selection for the next start. It does not restart the server or replace the output used by an existing process. `npm start` uses the last successfully prepared release; after a failed or interrupted release attempt it reports the problem instead of silently serving a stale build. Correct the error and run `npm run build:release` again to recover.
-
-The in-app updater uses the same validation path. Source files and npm dependencies are still updated in the installation directory, so perform updates during a maintenance window with no running agent turns. This is not a fully isolated zero-downtime deployment system. Restart PiWeb manually after a successful update; running processes do not automatically switch to the new build.
-
-CI runs the full checks on Linux and Windows with Node.js 22.19.0 and 24. Ordinary `npm run build` still uses `.next`, so do not run it against an installation whose active production process is using that directory.
-
-## Architecture
-
+```bash
+piweb                    # http://127.0.0.1:30141 (auto-increments if busy)
+piweb -p 30143 --no-open # custom port, don't open the browser
+piweb -H 0.0.0.0         # LAN access (requires PI_WEB_PASSWORD)
 ```
-Browser (React 19 + Tailwind, src/components)
-   │  REST commands (POST /api/agent/[id]) + SSE streams (GET /api/agent/[id]/events)
-   ▼
-Next.js Server (src/app/api, src/lib)
-   ├─ agent-manager    AgentSession pool: lazy startup, event translation, idle eviction
-   ├─ session-reader   Direct read ~/.pi/agent/sessions/**.jsonl (cold render without running agent)
-   ├─ trajectory       Trajectory ledger + server-side timing (TTFT / decode)
-   ├─ skills/prompts   Skills & Prompt template discovery + frontmatter toggles
-   ├─ models-service   Model catalogue, auth, OAuth bridge & models.json
-   ├─ security-service Tool presets & project trust
-   ├─ plugins-service  Pi package management (DefaultPackageManager) & extension registry
-   ├─ workspace-store  Persistent workspaces registry & native folder picker
-   ▼
-@earendil-works/pi-coding-agent  (Official Pi SDK, zero engine modifications)
-```
+
+| Option | Description |
+| --- | --- |
+| `-p, --port <port>` | Listen port (default 30141, env `PORT`) |
+| `-H, --hostname <host>` | Bind address (default 127.0.0.1, env `PI_WEB_HOSTNAME`) |
+| `--dev` | Development mode |
+| `--no-open` | Do not auto-open the browser |
+
+Set `PI_WEB_PASSWORD` to enable the login page and HTTP Basic Auth (user `pi`). Remote access over plain HTTP is not recommended; use HTTPS or a trusted VPN.
 
 ## License
 
-[MIT License](LICENSE)
+[MIT](LICENSE)

@@ -14,113 +14,84 @@
 
 ---
 
-**PiWeb** 是为 [pi 编程智能体](https://github.com/earendil-works/pi) 打造的现代 Web 界面：`npm start` 一键启动，提供实时流式对话、工作区会话管理、会话树分支跳转、技能/插件/模型管理，**pi 本身零改动**。
+**PiWeb** 是为 [pi 编程智能体](https://github.com/earendil-works/pi) 打造的现代 Web 界面，**pi 引擎零改动**。一条命令安装，pi 已有的配置、会话、模型、技能和插件开箱即用。
 
-- **引擎**：官方 npm 包 `@earendil-works/pi-coding-agent`（进程内 SDK），使用精确版本锁；`npm run update:pi` 独立升级和验证上游引擎。
-- **界面**：`--dsw-*` 实色面板、三栏框架（侧栏可收起为 56px 导轨 + 拖拽调宽）、22px 输入卡与 π 官方图标。
-- **原则**：工具、模型、技能和插件机制完全使用 Pi 官方原生方案；会话与工作区结构保持兼容。
+## 特色功能
 
-## 功能亮点
+### 实时流式对话
 
-- **实时流式交互**：SSE 完整快照 + 有序增量同步，支持 `Last-Event-ID` 断线补发，逐字平滑渲染；思考链（Thinking）与工具调用内联展示；多标签页 3 秒自动同步。
-- **输入卡与控制**：支持图片附件（选择 / 粘贴 / 拖放）、两级模型选择与快速循环切换、上下文压缩、停止生成、清空队列及 `/` 斜杠命令面板（内置命令 + Pi 模板 + 技能）。
-- **解耦的工作区与会话**：按项目文件夹分组展示，支持 Windows 原生文件夹选择器；支持空工作区独立留存；删除工作区弹出全局居中确认弹窗，文件夹与会话文件均安全保留并自动归集到“未分组”下。
-- **会话管理**：支持导出会话日志为 JSONL / HTML、会话树分支可视化跳转与草稿恢复、AGENTS.md 上下文注入展示，以及轨迹性能视图（TTFT / 解码耗时）。
-- **多功能设置**：
-  - **通用**：工具权限预设（只读 / 工作区写入 / 完全访问）、中英双语切换、外观偏好、Enter 键行为、自动重试及自动压缩。
-  - **模型**：支持 30+ 官方内置 Provider、添加自定义提供方（写入 `models.json`）及 OAuth 登录（Claude / Codex / Copilot 等）。
-  - **插件与技能**：通过 Pi 原生包管理器安装、卸载、更新扩展，并支持即时开关 Skill。
-- **安全防护**：可通过 `PI_WEB_PASSWORD` 开启 HTTP Basic Auth；写接口严格执行同源与路径边界校验。
+SSE 完整快照 + 有序增量同步，支持 `Last-Event-ID` 断线补发；思考链（Thinking）与工具调用卡片内联实时展示。
 
-## 快速开始
+<p align="center"><img src="assets/showcase.png" alt="流式对话与工具卡片" width="840" /></p>
 
-**环境要求**：Node.js ≥ 22.19.0（推荐 Node.js 24）；Git 与成长树功能还需要安装 Git。
+### 工作区与会话
 
-### 通过 npm 全局安装（推荐）
+会话按项目文件夹分组，原生文件夹选择器（Windows / macOS / Linux），支持重命名与归档；会话树分支跳转、草稿恢复、JSONL / HTML 导出。
+
+### 项目生长树
+
+智能体对代码库的每一步操作都会拍快照：按轮次导航时间轴，查看新增/修改/删除的文件，任意一步、任意文件的行级 diff 都能打开——即使项目本身没有 git 历史也能用。
+
+### 上下文计量
+
+点击输入框旁的圆环，上下文窗口拆成 13 段展示——System Prompt、System/Custom Tools、Memory（AGENTS.md）、Skills、各类消息、Compacted Data、Auto-Compact Buffer 与 Free Space。
+
+### 模型与供应商管理
+
+30+ 官方内置供应商，OAuth 登录（Claude / Codex / Copilot 等），自定义提供方写入 `models.json`，一键获取模型目录，本地网关（Ollama 等）自动填占位 Key。
+
+### 插件与技能
+
+在界面里直接安装、更新、卸载 pi 包；技能可启用/禁用/删除，改动即时作用于运行中的会话。
+
+### 安全防护
+
+可选 `PI_WEB_PASSWORD` 登录（对外监听必须设置）、写接口同源校验、严格路径边界检查、工具权限预设（只读 / 工作区写入 / 完全访问）。
+
+## 使用
+
+### 安装
 
 ```bash
 npm install -g @rexvane/piweb
 piweb
 ```
 
-全局安装会在安装时（或首次运行时）准备一次生产产物，随后以生产模式启动；失败时会明确报错而不是回退到缺少开发依赖的开发模式，可用 `npm rebuild -g @rexvane/piweb` 重试。包只注册 `piweb` 一个命令，与官方 `pi` CLI（`npm i -g @earendil-works/pi-coding-agent`）互不冲突，可以同时安装。
+包只注册 `piweb` 一个命令，与官方 `pi` CLI 互不冲突。需要 Node.js ≥ 22.19.0（推荐 24）；生长树功能需要安装 Git。
 
-### 在本仓库中开发
-
-```bash
-npm install
-npm run dev        # 热重载开发服务器
-```
-
-或在本地跑生产构建：
+### 更新
 
 ```bash
-npm install
-npm run build      # 或：npm run build:release（独立目录，不影响正在运行的构建）
-npm start          # 默认 http://127.0.0.1:30141（端口占用自动 +1）
+npm update -g @rexvane/piweb
 ```
 
-### 命令行参数（bin/piweb.js）
+也可以装指定版本：`npm install -g @rexvane/piweb@0.3.4`。
 
-```
--p, --port <port>      监听端口（默认 30141，env PORT；被占用自动 +1）
--H, --hostname <host>  绑定地址（默认 127.0.0.1，env PI_WEB_HOSTNAME）
---dev                  以开发模式启动（`next dev`；env PI_WEB_DEV=1；没有生产构建时也会自动走此模式）
---no-open              不自动打开浏览器（env PI_WEB_NO_OPEN=1）
--h, --help             帮助信息
-```
-
-环境变量：`PI_WEB_PASSWORD` 开启浏览器登录会话，并为 API 客户端保留 HTTP Basic Auth（用户名 `pi`）；生产模式绑定非本机地址时**必须**设置。开发模式仅允许本机回环地址，即使设置密码也不能对外监听；没有生产构建时，对外启动会明确失败，不会自动暴露开发服务器。远程访问请使用 HTTPS 或可信 VPN。`PI_WEB_EDITOR` 指定「用编辑器打开」使用的编辑器（默认 `code`）。未设密码时只接受 `Host` 为本机回环地址的请求。
-
-`GET /api/health` 仅公开固定服务标识，让启动器无需向未知端口发送凭据。版本信息改由需要认证的 `/api/version` 返回。工具预设限制的是智能体可用工具，不是操作系统沙箱；已安装扩展使用服务进程本身的权限运行。
-
-模型目录探测默认拒绝回环、私网及保留网段地址。如果确实使用本地模型网关，可在启动 PiWeb 前设置 `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1`。此开关只放宽模型目录探测，请仅在可信的 PiWeb 实例上使用。
-
-### 开发与测试
+### 删除
 
 ```bash
-npm run dev        # 启动热重载开发服务器
-npm run typecheck  # TypeScript 类型检查
-npm test           # 服务、协议和组件回归测试
-npm run check      # 完整流水线校验（类型 + 测试 + 生产构建）
-npm run build:release # 校验并准备独立生产构建，不覆盖运行中的构建
+npm uninstall -g @rexvane/piweb
 ```
 
-## 状态与已知限制（2026-09-14）
+只删除 PiWeb 本身——pi 的数据在 `~/.pi/agent/`，不会被动到。
 
-审查后的修复已合入本分支并完成一次隔离发布与本地生产部署：登录页生产构建、经过 Next.js 代理的上传完整性、扩展运行时按会话隔离与重载后的工具权限、模型及设置的无损写入、输入草稿与扩展待答界面的生命周期、Git/Growth/diff 正确性，以及隔离发布构建。
+### 启动
 
-最近一次本地验证通过 TypeScript 检查、**52 个测试文件中 355 项通过、1 项跳过**、`npm run build` 与 `git diff --check`。跳过项需要 Windows 符号链接权限或开发者模式。
-
-已知限制：模型配置保存会规范化为标准 JSON（注释格式不保留，数据保留）；更新在维护窗口内原地更新依赖，不是零停机；自定义工具白名单只存在于会话生命周期内；不隔离第三方扩展模块的全局变量。
-
-## 生产构建与更新
-
-PiWeb 正在运行时，请使用 `npm run build:release` 准备新构建。它先校验类型与测试，再将产物写入全新的 `.next-releases/<id>`，全部成功后才发布供下次启动使用的构建记录。它不会重启服务或覆盖现有进程使用的产物。`npm start` 选择最后成功准备的发布构建；发布失败或中断后会明确报错，而不是悄悄回退旧构建。排除错误后重新运行 `npm run build:release` 即可恢复。
-
-界面中的更新使用同一校验流程。源码和 npm 依赖仍在安装目录中更新，因此应在没有智能体运行轮次的维护窗口执行。这不是依赖完全隔离的零停机发布系统。成功更新后由用户手动重启 PiWeb；运行中的进程不会自动切换构建。
-
-CI 在 Linux、Windows 与 Node.js 22.19.0、24 上执行完整检查。普通 `npm run build` 仍使用 `.next`；若生产进程正在使用该目录，不要直接覆盖构建。
-
-## 架构
-
+```bash
+piweb                    # http://127.0.0.1:30141（端口占用自动 +1）
+piweb -p 30143 --no-open # 自定义端口，不自动打开浏览器
+piweb -H 0.0.0.0         # 局域网访问（必须设置 PI_WEB_PASSWORD）
 ```
-浏览器 (React 19 + Tailwind, src/components)
-   │  REST 命令 (POST /api/agent/[id]) + SSE 事件流 (GET /api/agent/[id]/events)
-   ▼
-Next.js 服务端 (src/app/api, src/lib)
-   ├─ agent-manager    AgentSession 池：惰性冷启动、事件翻译、空闲回收（10min/最多 6）
-   ├─ session-reader   直读 ~/.pi/agent/sessions/**.jsonl（冷渲染不开 agent）
-   ├─ trajectory       轨迹账本 + 服务端计时（TTFT/decode）
-   ├─ skills/prompts   技能与 Prompt 模板发现 + SKILL.md frontmatter 开关
-   ├─ models-service   模型目录/认证/OAuth 桥/models.json
-   ├─ security-service 工具预设 + 项目信任
-   ├─ plugins-service  pi 包安装/卸载/更新（DefaultPackageManager）+ 扩展清单
-   ├─ workspace-store  手动添加的工作区（web-workspaces.json）+ 原生选文件夹
-   ▼
-@earendil-works/pi-coding-agent  (官方 SDK，pi 未修改)
-```
+
+| 参数 | 说明 |
+| --- | --- |
+| `-p, --port <port>` | 监听端口（默认 30141，env `PORT`） |
+| `-H, --hostname <host>` | 绑定地址（默认 127.0.0.1，env `PI_WEB_HOSTNAME`） |
+| `--dev` | 开发模式 |
+| `--no-open` | 不自动打开浏览器 |
+
+设置 `PI_WEB_PASSWORD` 开启登录页与 HTTP Basic Auth（用户名 `pi`）。远程访问不建议裸 HTTP，请使用 HTTPS 或可信 VPN。
 
 ## 开源协议
 
-[MIT License](LICENSE)
+[MIT](LICENSE)
