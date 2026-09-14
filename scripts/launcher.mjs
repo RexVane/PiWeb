@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { assertInstallation, selectProductionBuild } from "./build-output.mjs";
+import { ensureInstallBuild, isProductionOnlyInstall } from "./install-build.mjs";
 export { isMainModule } from "./entrypoint.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -173,6 +174,14 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		return 0;
 	}
 	// Validate before probing/reusing: an existing server must not hide an unsafe request.
+	// Production-only installs (`npm i -g piweb`) have no dev dependencies, so the
+	// development fallback is unusable there: prepare the one-time build first.
+	if (!options.isDev) {
+		const prepared = ensureInstallBuild(root, { log, warn: dependencies.warn ?? console.warn });
+		if (prepared === "failed" && isProductionOnlyInstall(root)) {
+			throw new Error("无法准备生产构建，且该安装没有开发依赖。请用 `npm rebuild -g piweb` 重试，或改用仓库中的 npm run dev。");
+		}
+	}
 	const plan = createLaunchPlan(root, options, env);
 	const checkPort = dependencies.probePort ?? probePort;
 	const checkHealth = dependencies.isPiWebRunning ?? isPiWebRunning;

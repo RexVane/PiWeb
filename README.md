@@ -32,7 +32,16 @@
 
 **Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features.
 
-### Launch via `pi web` (Recommended)
+### Install from npm (recommended)
+
+```bash
+npm install -g piweb
+piweb
+```
+
+A global install prepares the production bundle once (on install or on first run). If that build fails, `piweb` reports it instead of falling back to a development server; retry with `npm rebuild -g piweb`. **Known issue:** the one-time build inside a globally installed package is not verified yet — for now prefer the repository workflow below. The package registers both `pi` and `piweb` (`pi web` starts the UI, any other argument is forwarded to the official pi CLI); if the official `pi` package is also installed globally, the two compete for the same `pi` command and the most recent install wins.
+
+### Inside this repository
 
 You can launch PiWeb directly from your terminal using `pi web` (case-insensitive: `pi web`, `PI WEB`, `Pi Web`):
 
@@ -79,13 +88,13 @@ npm run check      # Full check (types + tests + build)
 npm run build:release # Validate and stage a production build without replacing the running build
 ```
 
-## Remediation status (2026-09-14)
+## Status and known limitations (2026-09-14)
 
-The audit follow-up is implemented in the current **uncommitted** worktree. It covers the production login build, upload integrity through the Next.js proxy, per-session extension isolation and tool-policy reloads, lossless model/settings writes, composer and pending-extension-UI lifecycle, Git/Growth/diff correctness, and isolated release preparation. An isolated production integration run passed the 11 MiB upload, extension isolation, readonly reload, pending UI reconnect, and prompt acceptance/follow-up checks.
+The audit follow-up is merged into this branch and has been through an isolated release plus a local production deployment. It covers the production login build, upload integrity through the Next.js proxy, per-session extension isolation and tool-policy reloads, lossless model/settings writes, composer and pending-extension-UI lifecycle, Git/Growth/diff correctness, and isolated release preparation.
 
-The latest local validation passed TypeScript checking, **355 tests across 52 files** (one additional test skipped), `npm run build`, and `git diff --check`. The skipped test requires Windows symlink privileges or Developer Mode. The build still emits a non-fatal webpack dynamic-dependency warning from `scripts/release.mjs`.
+The latest local validation passed TypeScript checking, **355 tests across 52 files** (one additional test skipped), `npm run build`, and `git diff --check`. The skipped test requires Windows symlink privileges or Developer Mode.
 
-This is not a live-deployment sign-off: real OAuth, an actual external update/install, and restarting the existing PiWeb service were not performed. The isolated release check passed, but the running service will continue using its current build until restarted during a maintenance window.
+Known limitations: saving the model configuration normalizes it to plain JSON (comments are not preserved, data is); updates replace dependencies in place during a maintenance window rather than being zero-downtime; a custom tool allowlist lives only for the session lifetime; third-party extension module globals are not isolated.
 
 ## Production builds and updates
 

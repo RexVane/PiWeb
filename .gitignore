@@ -21,3 +21,4 @@ probe_*.py
 *.log
 .DS_Store
 Thumbs.db
+PiWeb_Audit_*.md

@@ -15,6 +15,10 @@ async function installation() {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-launcher-"));
 	cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
 	await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "pi-web", version: "1.0.0" }));
+	// Mark it as a development checkout (test dev dependencies present) so the
+	// launcher does not try to prepare an install-time production build.
+	await fs.mkdir(path.join(root, "node_modules", "vitest"), { recursive: true });
+	await fs.writeFile(path.join(root, "node_modules", "vitest", "package.json"), "{}");
 	return root;
 }
 

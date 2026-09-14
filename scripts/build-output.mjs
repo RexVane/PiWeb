@@ -54,7 +54,8 @@ export function assertInstallation(root) {
 	const realRoot = fs.realpathSync(root);
 	const manifestPath = assertLocalPath(realRoot, "package.json");
 	const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-	if (manifest?.name !== "pi-web") throw new Error(`refusing to update outside the PiWeb installation: ${realRoot}`);
+	// Accept the historical name so installations made before the npm rename keep working.
+	if (manifest?.name !== "piweb" && manifest?.name !== "pi-web") throw new Error(`refusing to update outside the PiWeb installation: ${realRoot}`);
 	return realRoot;
 }
 
