@@ -39,27 +39,21 @@ npm install -g @rexvane/piweb
 piweb
 ```
 
-A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g @rexvane/piweb`. The package registers both `pi` and `piweb` (`pi web` starts the UI, any other argument is forwarded to the official pi CLI); if the official `pi` package is also installed globally, the two compete for the same `pi` command and the most recent install wins.
+A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g @rexvane/piweb`. The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI (`npm i -g @earendil-works/pi-coding-agent`) if you have both.
 
 ### Inside this repository
 
-You can launch PiWeb directly from your terminal using `pi web` (case-insensitive: `pi web`, `PI WEB`, `Pi Web`):
-
 ```bash
-# Link commands globally (one-time setup)
-npm link
-
-# Launch anywhere in your terminal (case-insensitive)
-pi web
+npm install
+npm run dev        # development server with hot reload
 ```
 
-You can also run directly with npm:
+Or run a production build locally:
 
 ```bash
-# Start PiWeb (defaults to http://127.0.0.1:30141 and auto-opens browser)
-npm run web
-# or
-npm start
+npm install
+npm run build      # or: npm run build:release (staged, does not touch a running build)
+npm start          # serves on http://127.0.0.1:30141 (auto-increments if busy)
 ```
 
 ### CLI Options (`bin/piweb.js`)

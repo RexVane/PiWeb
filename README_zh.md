@@ -43,27 +43,21 @@ npm install -g @rexvane/piweb
 piweb
 ```
 
-全局安装会在安装时（或首次运行时）准备一次生产产物，随后以生产模式启动；失败时会明确报错而不是回退到缺少开发依赖的开发模式，可用 `npm rebuild -g @rexvane/piweb` 重试。安装同时注册 `pi` 与 `piweb` 两个命令（`pi web` 启动界面，其它参数转发给官方 pi CLI）；如果同时全局安装了官方 `pi` 包，两者会争用同一个 `pi` 命令，最后安装的生效。
+全局安装会在安装时（或首次运行时）准备一次生产产物，随后以生产模式启动；失败时会明确报错而不是回退到缺少开发依赖的开发模式，可用 `npm rebuild -g @rexvane/piweb` 重试。包只注册 `piweb` 一个命令，与官方 `pi` CLI（`npm i -g @earendil-works/pi-coding-agent`）互不冲突，可以同时安装。
 
-### 在本仓库中使用 `pi web`
-
-支持在任何终端中输入 `pi web`（不区分大小写：`pi web`、`PI WEB`、`Pi Web`）直接启动 Web 界面：
+### 在本仓库中开发
 
 ```bash
-# 全局注册 pi 与 piweb 命令（首次一次性执行）
-npm link
-
-# 任意终端直接启动（不区分大小写）
-pi web
+npm install
+npm run dev        # 热重载开发服务器
 ```
 
-也可以直接通过 npm 启动：
+或在本地跑生产构建：
 
 ```bash
-# 启动服务（默认 http://127.0.0.1:30141，端口占用自动 +1，自动打开浏览器）
-npm run web
-# 或
-npm start
+npm install
+npm run build      # 或：npm run build:release（独立目录，不影响正在运行的构建）
+npm start          # 默认 http://127.0.0.1:30141（端口占用自动 +1）
 ```
 
 ### 命令行参数（bin/piweb.js）

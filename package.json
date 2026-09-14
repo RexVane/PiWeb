@@ -21,7 +21,6 @@
 		"cli"
 	],
 	"bin": {
-		"pi": "bin/pi.js",
 		"piweb": "bin/piweb.js"
 	},
 	"files": [
