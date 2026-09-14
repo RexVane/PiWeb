@@ -8,6 +8,7 @@
  * 快照失败不影响 pi，只向浏览器报一次错；项目过大 / 没有 git 时本会话停用。
  */
 import fs from "node:fs";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { GrowthError, hasSessionSteps, isExcludedRelPath, snapshot } from "./growth-service";
@@ -217,7 +218,15 @@ export function createGrowthTracker(opts: { cwd: string; sessionPath: string; pu
 	const startWatcher = () => {
 		if (watcher || watcherFailed || disabled) return;
 		try {
-			watcher = fs.watch(cwd, { recursive: true, persistent: false }, onFsChange);
+			// Watch the canonical path: on Windows an 8.3 short name (RUNNER~1) can make
+			// libuv's directory watcher compare mismatched spellings and crash the process.
+			let watchRoot = cwd;
+			try {
+				watchRoot = realpathSync.native(cwd);
+			} catch {
+				/* keep the given path when it cannot be resolved */
+			}
+			watcher = fs.watch(watchRoot, { recursive: true, persistent: false }, onFsChange);
 			watcher.on("error", () => {
 				watcherFailed = true;
 				try {

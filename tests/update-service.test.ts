@@ -14,7 +14,11 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 
 async function installation() {
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-update-"));
+	// The launcher and the update service canonicalize the installation directory
+	// (Windows can hand out 8.3 short paths such as RUNNER~1), so the fixture is
+	// canonical too and \`options.cwd\` comparisons stay exact on every runner.
+	const created = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-update-"));
+	const root = await fs.realpath(created);
 	roots.push(root);
 	await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "pi-web", version: "1.0.0" }));
 	await fs.writeFile(path.join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true }, exclude: [".next-releases"] }));
