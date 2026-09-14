@@ -4,9 +4,12 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { APP_ROOT } from "./app-root";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { getAgentDir } from "./pi";
+import { randomUUID } from "node:crypto";
+import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 
 interface WorkspaceFile {
 	workspaces: string[];
@@ -22,15 +25,14 @@ export interface WorkspaceRegistrySnapshot {
 	removedWorkspaces: string[];
 }
 
-let mutationTail: Promise<void> = Promise.resolve();
-
-async function file(): Promise<string> {
+function file(): string {
 	return path.join(getAgentDir(), "web-workspaces.json");
 }
 
-async function readFile(): Promise<WorkspaceFile> {
+async function readFile(target = file()): Promise<WorkspaceFile> {
 	try {
-		const parsed = JSON.parse(await fs.readFile(await file(), "utf8")) as WorkspaceFile;
+		const parsed = JSON.parse(await fs.readFile(target, "utf8")) as WorkspaceFile;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid workspace registry");
 		const aliases = Object.fromEntries(
 			Object.entries(typeof parsed.aliases === "object" && parsed.aliases !== null ? parsed.aliases : {})
 				.filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -52,21 +54,25 @@ function pathKey(value: string): string {
 	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-async function write(data: WorkspaceFile): Promise<void> {
-	const target = await file();
+async function write(data: WorkspaceFile, target: string): Promise<void> {
 	await fs.mkdir(path.dirname(target), { recursive: true });
-	await fs.writeFile(target, JSON.stringify(data, null, 2), "utf8");
+	const temporary = `${target}.${randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(temporary, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+		await fs.rename(temporary, target);
+	} finally {
+		await fs.unlink(temporary).catch(() => undefined);
+	}
 }
 
 async function read(): Promise<WorkspaceFile> {
-	await mutationTail;
-	return readFile();
+	const target = file();
+	return withSettingsWriteLock(target, () => readFile(target));
 }
 
-async function mutate<T>(change: (data: WorkspaceFile) => Promise<T> | T): Promise<T> {
-	const operation = mutationTail.then(async () => change(await readFile()));
-	mutationTail = operation.then(() => undefined, () => undefined);
-	return operation;
+async function mutate<T>(change: (data: WorkspaceFile, target: string) => Promise<T> | T): Promise<T> {
+	const target = file();
+	return withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => change(await readFile(target), target)));
 }
 
 export async function listAdded(): Promise<string[]> {
@@ -83,7 +89,7 @@ export async function getAliases(): Promise<Record<string, string>> {
 
 export async function setAlias(dir: string, name: string): Promise<Record<string, string>> {
 	const key = pathKey(path.resolve(dir));
-	return mutate(async (data) => {
+	return mutate(async (data, target) => {
 		if (!data.aliases) data.aliases = {};
 		// 键统一走 pathKey（win32 小写），并清掉历史遗留的大小写变体，避免别名时有时无
 		for (const existing of Object.keys(data.aliases)) {
@@ -94,7 +100,7 @@ export async function setAlias(dir: string, name: string): Promise<Record<string
 		} else {
 			delete data.aliases[key];
 		}
-		await write(data);
+		await write(data, target);
 		return data.aliases;
 	});
 }
@@ -116,11 +122,11 @@ export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot>
 export async function archiveSession(sessionPath: string): Promise<string[]> {
 	const norm = path.resolve(sessionPath);
 	const key = pathKey(norm);
-	return mutate(async (data) => {
+	return mutate(async (data, target) => {
 		if (!data.archivedSessions) data.archivedSessions = [];
 		if (!data.archivedSessions.some((p) => pathKey(p) === key)) {
 			data.archivedSessions.push(norm);
-			await write(data);
+			await write(data, target);
 		}
 		return data.archivedSessions;
 	});
@@ -129,12 +135,12 @@ export async function archiveSession(sessionPath: string): Promise<string[]> {
 export async function forgetSession(sessionPath: string): Promise<string[]> {
 	const norm = path.resolve(sessionPath);
 	const key = pathKey(norm);
-	return mutate(async (data) => {
+	return mutate(async (data, target) => {
 		const previous = data.archivedSessions ?? [];
 		const next = previous.filter((p) => pathKey(p) !== key);
 		if (next.length !== previous.length) {
 			data.archivedSessions = next;
-			await write(data);
+			await write(data, target);
 		}
 		return next;
 	});
@@ -143,7 +149,7 @@ export async function forgetSession(sessionPath: string): Promise<string[]> {
 export async function addWorkspace(dir: string): Promise<{ workspaces: string[]; removedWorkspaces: string[] }> {
 	const norm = path.resolve(dir);
 	const key = pathKey(norm);
-	return mutate(async (data) => {
+	return mutate(async (data, target) => {
 		let changed = false;
 		if (!data.workspaces.some((w) => pathKey(w) === key)) {
 			data.workspaces.push(norm);
@@ -154,13 +160,13 @@ export async function addWorkspace(dir: string): Promise<{ workspaces: string[];
 			changed ||= next.length !== data.removedWorkspaces.length;
 			data.removedWorkspaces = next;
 		}
-		if (changed) await write(data);
+		if (changed) await write(data, target);
 		return { workspaces: data.workspaces, removedWorkspaces: data.removedWorkspaces ?? [] };
 	});
 }
 
 export async function registerCwds(cwds: string[]): Promise<string[]> {
-	return mutate(async (data) => {
+	return mutate(async (data, target) => {
 		let changed = false;
 		const removedKeys = new Set((data.removedWorkspaces ?? []).map(pathKey));
 		const existingKeys = new Set(data.workspaces.map(pathKey));
@@ -175,7 +181,7 @@ export async function registerCwds(cwds: string[]): Promise<string[]> {
 				changed = true;
 			}
 		}
-		if (changed) await write(data);
+		if (changed) await write(data, target);
 		return data.workspaces;
 	});
 }
@@ -183,7 +189,7 @@ export async function registerCwds(cwds: string[]): Promise<string[]> {
 export async function removeWorkspace(dir: string): Promise<{ workspaces: string[]; removedWorkspaces: string[]; aliases: Record<string, string> }> {
 	const norm = path.resolve(dir);
 	const key = pathKey(norm);
-	return mutate(async (data) => {
+	return mutate(async (data, target) => {
 		data.workspaces = data.workspaces.filter((w) => pathKey(w) !== key);
 		if (!data.removedWorkspaces) data.removedWorkspaces = [];
 		if (!data.removedWorkspaces.some((w) => pathKey(w) === key)) {
@@ -194,7 +200,7 @@ export async function removeWorkspace(dir: string): Promise<{ workspaces: string
 				if (pathKey(k) === key) delete data.aliases[k];
 			}
 		}
-		await write(data);
+		await write(data, target);
 		return { workspaces: data.workspaces, removedWorkspaces: data.removedWorkspaces, aliases: data.aliases ?? {} };
 	});
 }
@@ -203,12 +209,12 @@ let picking = false;
 
 /** 弹出系统原生文件夹选择对话框（Windows 现代资源管理器风格，屏幕居中） */
 export async function pickFolderNative(): Promise<{ path: string | null; canceled: boolean }> {
-	if (process.platform !== "win32") return { path: null, canceled: true };
+	if (process.platform !== "win32") throw new Error("native folder picker is currently available only on Windows");
 	if (picking) return { path: null, canceled: true };
 	picking = true;
 	try {
-		const script = path.join(process.cwd(), "scripts", "pick-folder.ps1");
-		const out = await new Promise<string>((resolve) => {
+		const script = path.join(APP_ROOT, "scripts", "pick-folder.ps1");
+		const out = await new Promise<string>((resolve, reject) => {
 			const child = spawn(
 				"powershell.exe",
 				["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", script, "选择工作区文件夹"],
@@ -217,13 +223,15 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 			);
 			const decoder = new StringDecoder("utf8");
 			let buf = "";
+			let stderr = "";
 			let decoderEnded = false;
 			child.stdout.on("data", (data: Buffer) => {
 				buf += decoder.write(data);
 			});
+			child.stderr.on("data", (data: Buffer) => { stderr = (stderr + data.toString("utf8")).slice(-1000); });
 			let settled = false;
 			let timeout: ReturnType<typeof setTimeout>;
-			const finish = () => {
+			const finish = (error?: Error) => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timeout);
@@ -231,10 +239,11 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 					decoderEnded = true;
 					buf += decoder.end();
 				}
-				resolve(buf.trim());
+				if (error) reject(error);
+				else resolve(buf.trim());
 			};
-			child.on("error", finish);
-			child.on("close", finish);
+			child.on("error", (error) => finish(error));
+			child.on("close", (code) => finish(code === 0 ? undefined : new Error(stderr || `folder picker exited with code ${code}`)));
 			// 5 分钟超时保护
 			timeout = setTimeout(() => {
 				try {
@@ -242,7 +251,7 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 				} catch {
 					/* ignore */
 				}
-				finish();
+				finish(new Error("folder picker timed out"));
 			}, 5 * 60 * 1000);
 		});
 		return out ? { path: out, canceled: false } : { path: null, canceled: true };

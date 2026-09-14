@@ -205,9 +205,10 @@ export function ModelSelector({
 								)}
 								{groups.map((g) => (
 									<section key={g.provider} role="group" aria-label={g.label}>
+										{/* 提供商名不吸顶：吸顶会在滚动时钉住并被下一组顶出成半截文字（"卡住"观感） */}
 										<div
-											className="sticky top-0 z-[1] px-3 pb-1 pt-2"
-											style={{ fontSize: 12, fontWeight: 500, color: "var(--dsw-label-caption)", background: "var(--dsw-glass-popover)" }}
+											className="px-3 pb-1 pt-2"
+											style={{ fontSize: 12, fontWeight: 500, color: "var(--dsw-label-caption)" }}
 										>
 											{g.label}
 										</div>
@@ -247,7 +248,9 @@ export function ModelSelector({
 									</section>
 								))}
 							</div>
-							{thinkingLevels.length > 1 && (
+							{/* 思考档位入口：模型只有一档（非推理模型 / models.json 没写 reasoning: true）时也显示，
+							    但置灰并说明是模型不支持，而不是让入口凭空消失 */}
+							{hasModel && (thinkingLevels.length > 1 ? (
 								<button
 									type="button"
 									className="mt-1 flex w-full items-center justify-between gap-3 border-t px-3 pb-1 pt-2 text-left transition-colors"
@@ -264,7 +267,16 @@ export function ModelSelector({
 										<IconChevronRight14 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
 									</span>
 								</button>
-							)}
+							) : (
+								<div
+									className="mt-1 flex w-full items-center justify-between gap-3 border-t px-3 pb-1 pt-2"
+									style={{ borderColor: "var(--dsw-border-l1)", opacity: 0.6 }}
+									title={t.thinkingUnsupportedHint}
+								>
+									<span style={{ fontSize: 13.5, color: "var(--dsw-label-secondary)" }}>{t.thinking}</span>
+									<span className="truncate" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.thinkingUnsupported}</span>
+								</div>
+							))}
 						</div>
 					)}
 				</div>

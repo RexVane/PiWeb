@@ -30,9 +30,18 @@
 
 ## Quick Start
 
-**Prerequisites**: Node.js ≥ 22.
+**Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features.
 
-### Launch via `pi web` (Recommended)
+### Install from npm (recommended)
+
+```bash
+npm install -g piweb
+piweb
+```
+
+A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g piweb`. The package registers both `pi` and `piweb` (`pi web` starts the UI, any other argument is forwarded to the official pi CLI); if the official `pi` package is also installed globally, the two compete for the same `pi` command and the most recent install wins.
+
+### Inside this repository
 
 You can launch PiWeb directly from your terminal using `pi web` (case-insensitive: `pi web`, `PI WEB`, `Pi Web`):
 
@@ -58,17 +67,56 @@ npm start
 ```
 -p, --port <port>      Listen port (default 30141, env PORT; auto-increments if in use)
 -H, --hostname <host>  Bind address (default 127.0.0.1, env PI_WEB_HOSTNAME)
+--dev                  Start in development mode (`next dev`; env PI_WEB_DEV=1; also used when no production build exists)
 --no-open              Do not automatically open browser (env PI_WEB_NO_OPEN=1)
 -h, --help             Show help
 ```
+
+Environment variables: `PI_WEB_PASSWORD` enables a browser login session and HTTP Basic Auth for API clients (user `pi`). It is **required** for any non-loopback production bind address. Development mode is loopback-only, even with a password; if no production build exists, an external bind fails rather than falling back to an exposed development server. Use HTTPS or a trusted VPN for remote access. `PI_WEB_EDITOR` overrides the editor used by "open in editor" (default `code`). Without a password, PiWeb only accepts requests whose `Host` is loopback.
+
+`GET /api/health` exposes only a fixed service identifier for credential-free startup probes. Runtime versions are available from the authenticated `/api/version` endpoint. Tool presets limit the tools offered to the agent; they are not an operating-system sandbox, and installed extensions run with the server process's permissions.
+
+Model catalog discovery blocks loopback, private, and reserved network addresses by default. If you intentionally use a local model gateway, set `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1` before starting PiWeb. This relaxes the discovery endpoint only; use it only on a trusted PiWeb instance.
 
 ### Development
 
 ```bash
 npm run dev        # Run Next.js in development mode
 npm run typecheck  # TypeScript check
-npm test           # Vitest security & protocol tests
+npm test           # Service, protocol and component regressions
 npm run check      # Full check (types + tests + build)
+npm run build:release # Validate and stage a production build without replacing the running build
+```
+
+## Status and known limitations (2026-09-14)
+
+The audit follow-up is merged into this branch and has been through an isolated release plus a local production deployment. It covers the production login build, upload integrity through the Next.js proxy, per-session extension isolation and tool-policy reloads, lossless model/settings writes, composer and pending-extension-UI lifecycle, Git/Growth/diff correctness, and isolated release preparation.
+
+The latest local validation passed TypeScript checking, **355 tests across 52 files** (one additional test skipped), `npm run build`, and `git diff --check`. The skipped test requires Windows symlink privileges or Developer Mode.
+
+Known limitations: saving the model configuration normalizes it to plain JSON (comments are not preserved, data is); updates replace dependencies in place during a maintenance window rather than being zero-downtime; a custom tool allowlist lives only for the session lifetime; third-party extension module globals are not isolated.
+
+## Production builds and updates
+
+Use `npm run build:release` when preparing a build while PiWeb is running. It validates types and tests, builds into a fresh `.next-releases/<id>` directory, and only then publishes the build selection for the next start. It does not restart the server or replace the output used by an existing process. `npm start` uses the last successfully prepared release; after a failed or interrupted release attempt it reports the problem instead of silently serving a stale build. Correct the error and run `npm run build:release` again to recover.
+
+The in-app updater uses the same validation path. Source files and npm dependencies are still updated in the installation directory, so perform updates during a maintenance window with no running agent turns. This is not a fully isolated zero-downtime deployment system. Restart PiWeb manually after a successful update; running processes do not automatically switch to the new build.
+
+CI runs the full checks on Linux and Windows with Node.js 22.19.0 and 24. Ordinary `npm run build` still uses `.next`, so do not run it against an installation whose active production process is using that directory.
+
+## Publishing to npm
+
+Releases are published by `.github/workflows/publish.yml`. It triggers when a `v*` tag is pushed, or when `main` receives a `package.json` version change, and it skips versions that already exist on npm. The `prepublishOnly` gate (`npm run check`) runs before the upload, so a failing type check, test, or build never reaches the registry.
+
+```bash
+npm version patch        # 0.3.0 -> 0.3.1: bumps package.json, commits, tags
+git push --follow-tags   # push the commit (and the tag) -> the workflow publishes
+```
+
+One-time setup: create an npm **Automation token** (npmjs.com → Access Tokens) and store it as the repository secret `NPM_TOKEN`; without it the publish step fails with an authentication error. Users update whenever they choose:
+
+```bash
+npm install -g piweb@latest
 ```
 
 ## Architecture

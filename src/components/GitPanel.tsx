@@ -5,8 +5,9 @@
  * 点文件看差异（暂存 / 工作区 / 未跟踪整文件），点提交看该次提交的内容。
  * 只读——提交、推送走对话让 pi 做（「让 pi 提交」会把请求填进输入框）。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DiffView, diffStats, parseUnifiedDiff } from "@/components/DiffView";
+import { languageForPath } from "@/lib/highlight";
 import { IconChevronLeft14, IconCloseOutline14, IconFileOutline16, IconGitOutline16, IconRefreshOutline14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 
@@ -35,6 +36,7 @@ interface GitInfo {
 	detached: boolean;
 	files: GitFileEntry[];
 	commits: GitCommit[];
+	statusError?: string;
 }
 
 interface DiffResult {
@@ -74,24 +76,32 @@ export function GitPanel({
 	const { t } = useI18n();
 	const [info, setInfo] = useState<GitInfo | null>(null);
 	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState("");
+	const [statusError, setStatusError] = useState("");
+	const [diffError, setDiffError] = useState("");
 	const [view, setView] = useState<View | null>(null);
 	const [diff, setDiff] = useState<DiffResult | null>(null);
 	const [diffLoading, setDiffLoading] = useState(false);
+	const statusRequest = useRef<{ version: number; controller?: AbortController }>({ version: 0 });
+	const diffRequest = useRef<{ version: number; controller?: AbortController }>({ version: 0 });
 
 	const load = useCallback(async () => {
+		statusRequest.current.controller?.abort();
+		const controller = new AbortController();
+		const version = ++statusRequest.current.version;
+		statusRequest.current.controller = controller;
+		const isCurrent = () => !controller.signal.aborted && statusRequest.current.version === version;
 		if (!cwd) return;
 		setLoading(true);
-		setError("");
+		setStatusError("");
 		try {
-			const r = await fetch(`/api/git?cwd=${encodeURIComponent(cwd)}`);
+			const r = await fetch(`/api/git?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal });
 			const j = await r.json();
-			if (!j.success) throw new Error(j.error || "failed to load git status");
-			setInfo(j.data as GitInfo);
+			if (!r.ok || !j.success) throw new Error(j.error || "failed to load git status");
+			if (isCurrent()) setInfo(j.data as GitInfo);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "failed to load git status");
+			if (isCurrent()) setStatusError(e instanceof Error ? e.message : "failed to load git status");
 		} finally {
-			setLoading(false);
+			if (isCurrent()) setLoading(false);
 		}
 	}, [cwd]);
 
@@ -99,39 +109,60 @@ export function GitPanel({
 		setInfo(null);
 		setView(null);
 		setDiff(null);
-		void load();
-	}, [load]);
+		setDiffError("");
+		setStatusError("");
+		setLoading(false);
+		return () => {
+			statusRequest.current.controller?.abort();
+			statusRequest.current.version += 1;
+			diffRequest.current.controller?.abort();
+			diffRequest.current.version += 1;
+		};
+	}, [cwd]);
+	useEffect(() => { void load(); }, [load, refreshKey]);
 
-	// 外部刷新：列表静默重拉；正在看的差异也重拉
+	const loadDiff = useCallback(async (target: View) => {
+		diffRequest.current.controller?.abort();
+		const controller = new AbortController();
+		const version = ++diffRequest.current.version;
+		diffRequest.current.controller = controller;
+		const isCurrent = () => !controller.signal.aborted && diffRequest.current.version === version;
+		setDiffLoading(true);
+		setDiff(null);
+		setDiffError("");
+		try {
+			const url = target.kind === "file"
+				? `/api/git?cwd=${encodeURIComponent(cwd)}&diff=${encodeURIComponent(target.path)}&mode=${target.mode}`
+				: `/api/git?cwd=${encodeURIComponent(cwd)}&show=${encodeURIComponent(target.hash)}`;
+			const r = await fetch(url, { signal: controller.signal });
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || "failed to load diff");
+			if (isCurrent()) setDiff(j.data as DiffResult);
+		} catch (e) {
+			if (isCurrent()) setDiffError(e instanceof Error ? e.message : "failed to load diff");
+		} finally {
+			if (isCurrent()) setDiffLoading(false);
+		}
+	}, [cwd]);
+
 	useEffect(() => {
-		if (refreshKey > 0) void load();
-	}, [refreshKey, load]);
-
-	const loadDiff = useCallback(
-		async (target: View) => {
-			setDiffLoading(true);
-			setDiff(null);
-			setError("");
-			try {
-				const url = target.kind === "file"
-					? `/api/git?cwd=${encodeURIComponent(cwd)}&diff=${encodeURIComponent(target.path)}&mode=${target.mode}`
-					: `/api/git?cwd=${encodeURIComponent(cwd)}&show=${encodeURIComponent(target.hash)}`;
-				const r = await fetch(url);
-				const j = await r.json();
-				if (!j.success) throw new Error(j.error || "failed to load diff");
-				setDiff(j.data as DiffResult);
-			} catch (e) {
-				setError(e instanceof Error ? e.message : "failed to load diff");
-			} finally {
-				setDiffLoading(false);
-			}
-		},
-		[cwd],
-	);
-
-	useEffect(() => {
+		setDiff(null);
+		setDiffError("");
+		setDiffLoading(false);
 		if (view) void loadDiff(view);
+		return () => {
+			diffRequest.current.controller?.abort();
+			diffRequest.current.version += 1;
+		};
 	}, [view, loadDiff, refreshKey]);
+	const changeView = (next: View | null) => {
+		diffRequest.current.controller?.abort();
+		diffRequest.current.version += 1;
+		setDiff(null);
+		setDiffError("");
+		setView(next);
+	};
+	const error = view ? diffError : statusError || info?.statusError || "";
 
 	const parsed = useMemo(() => (diff?.patch ? parseUnifiedDiff(diff.patch) : null), [diff]);
 	const stats = parsed ? diffStats(parsed) : null;
@@ -141,7 +172,7 @@ export function GitPanel({
 	const unstaged = info?.files.filter((f) => f.kind !== "conflict" && f.kind !== "untracked" && f.workStatus !== " ") ?? [];
 	const untracked = info?.files.filter((f) => f.kind === "untracked") ?? [];
 
-	const openFile = (f: GitFileEntry, mode: "staged" | "worktree" | "untracked", label: string) => setView({ kind: "file", path: f.path, mode, label });
+	const openFile = (f: GitFileEntry, mode: "staged" | "worktree" | "untracked", label: string) => changeView({ kind: "file", path: f.path, mode, label });
 
 	const headerTitle = view
 		? view.kind === "file"
@@ -153,7 +184,7 @@ export function GitPanel({
 		<div className="flex h-full min-h-0 flex-col p-4">
 			<div className="mb-3 flex items-center gap-2">
 				{view ? (
-					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.gitBack} onClick={() => { setView(null); setDiff(null); }}>
+					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.gitBack} onClick={() => changeView(null)}>
 						<IconChevronLeft14 size={13} />
 					</button>
 				) : (
@@ -177,6 +208,7 @@ export function GitPanel({
 
 			{error && (
 				<div className="mb-2 rounded-xl px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-danger)", color: "white" }} role="alert">
+					{!view && <div>{t.gitStatusUnknown}</div>}
 					{error}
 				</div>
 			)}
@@ -199,7 +231,7 @@ export function GitPanel({
 						{diff && !diff.binary && !parsed && <div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "4px 2px" }}>{t.gitDiffEmpty}</div>}
 						{parsed && (
 							<div className="overflow-x-auto rounded-xl px-2 py-1.5" style={{ background: "var(--dsw-hover)" }}>
-								<DiffView lines={parsed} />
+								<DiffView lines={parsed} language={view?.kind === "file" ? languageForPath(view.path) : undefined} />
 							</div>
 						)}
 					</div>
@@ -232,7 +264,7 @@ export function GitPanel({
 						</div>
 
 						{/* 让 pi 提交 */}
-						{info.files.length > 0 && onAskCommit && (
+						{!error && info.files.length > 0 && onAskCommit && (
 							<button
 								type="button"
 								className="btn-outline self-start"
@@ -245,7 +277,7 @@ export function GitPanel({
 						)}
 
 						{/* 变更文件 */}
-						{info.files.length === 0 ? (
+						{error ? null : info.files.length === 0 ? (
 							<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.gitNoChanges}</div>
 						) : (
 							[
@@ -303,7 +335,7 @@ export function GitPanel({
 											className="flex w-full flex-col items-stretch rounded-lg px-2 py-1 text-left transition-colors"
 											onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
 											onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-											onClick={() => setView({ kind: "commit", hash: c.hash })}
+											onClick={() => changeView({ kind: "commit", hash: c.hash })}
 										>
 											<span className="flex items-baseline gap-2">
 												<span className="flex-none" style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--dsw-accent)" }}>{c.hash}</span>

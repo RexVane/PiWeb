@@ -3,8 +3,10 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { getAgentDir, getPackageManager, getResourceLoader, getSettingsManager, reloadAllLoaders, resourceLoaderReady } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
+import { flushSettingsOrThrow, withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 
 export interface PackageView {
 	source: string;
@@ -47,15 +49,51 @@ async function applyResourceChange(cwd: string, scope: "user" | "project"): Prom
 
 async function readSettingsFile(filePath: string): Promise<Record<string, unknown>> {
 	try {
-		return JSON.parse(await fs.readFile(filePath, "utf8")) as Record<string, unknown>;
+		return await readSettingsFileStrict(filePath);
 	} catch {
 		return {};
 	}
 }
 
+async function readSettingsFileStrict(filePath: string): Promise<Record<string, unknown>> {
+	let text: string;
+	try {
+		text = await fs.readFile(filePath, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+		throw error;
+	}
+	const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${filePath} must contain a JSON object`);
+	return parsed as Record<string, unknown>;
+}
+
+async function prepareSettingsWrite(cwd: string, file: string): Promise<ReturnType<typeof getSettingsManager>> {
+	await readSettingsFileStrict(file);
+	const manager = getSettingsManager(cwd);
+	await flushSettingsOrThrow(manager);
+	// Another cwd's manager may have changed the same global array since our last read.
+	await manager.reload();
+	await flushSettingsOrThrow(manager);
+	return manager;
+}
+
+async function verifySettingsField(file: string, field: "extensions" | "packages", expected: unknown): Promise<void> {
+	const persisted = await readSettingsFileStrict(file);
+	if (JSON.stringify(persisted[field] ?? []) !== JSON.stringify(expected ?? [])) {
+		throw new Error(`Pi settings ${field} was not persisted`);
+	}
+}
+
 async function writeSettingsFile(filePath: string, data: Record<string, unknown>): Promise<void> {
 	await fs.mkdir(path.dirname(filePath), { recursive: true });
-	await fs.writeFile(filePath, JSON.stringify(data, null, "\t"), "utf8");
+	const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(temporary, JSON.stringify(data, null, "\t"), "utf8");
+		await fs.rename(temporary, filePath);
+	} finally {
+		await fs.rm(temporary, { force: true }).catch(() => undefined);
+	}
 }
 
 async function countResources(installedPath: string): Promise<PackageView["resources"]> {
@@ -177,22 +215,23 @@ export async function togglePackage(
 	cwd: string
 ): Promise<void> {
 	const settingsPath = scope === "project" ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	const settings = await readSettingsFile(settingsPath);
-	const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
-	const packages: unknown[] = Array.isArray(settings.packages) ? settings.packages : [];
-	// 停用的包原样存到 disabledPackages（PiWeb 私有键，pi 不读；保留对象形式的过滤配置，启用时原样放回）
-	const disabledPackages: unknown[] = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
-
-	if (disable) {
-		const moved = packages.filter((p) => sourceOf(p) === source);
-		settings.packages = packages.filter((p) => sourceOf(p) !== source);
-		settings.disabledPackages = [...disabledPackages.filter((p) => sourceOf(p) !== source), ...(moved.length ? moved : [source])];
-	} else {
-		const restored = disabledPackages.filter((p) => sourceOf(p) === source);
-		settings.disabledPackages = disabledPackages.filter((p) => sourceOf(p) !== source);
-		settings.packages = packages.some((p) => sourceOf(p) === source) ? packages : [...packages, ...(restored.length ? restored : [source])];
-	}
-	await writeSettingsFile(settingsPath, settings);
+	await withSettingsWriteLock(settingsPath, () => withExternalSettingsLock(settingsPath, async () => {
+		const settings = await readSettingsFileStrict(settingsPath);
+		const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
+		const packages: unknown[] = Array.isArray(settings.packages) ? settings.packages : [];
+		// 停用的包原样存到 disabledPackages（PiWeb 私有键，pi 不读）
+		const disabledPackages: unknown[] = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
+		if (disable) {
+			const moved = packages.filter((p) => sourceOf(p) === source);
+			settings.packages = packages.filter((p) => sourceOf(p) !== source);
+			settings.disabledPackages = [...disabledPackages.filter((p) => sourceOf(p) !== source), ...(moved.length ? moved : [source])];
+		} else {
+			const restored = disabledPackages.filter((p) => sourceOf(p) === source);
+			settings.disabledPackages = disabledPackages.filter((p) => sourceOf(p) !== source);
+			settings.packages = packages.some((p) => sourceOf(p) === source) ? packages : [...packages, ...(restored.length ? restored : [source])];
+		}
+		await writeSettingsFile(settingsPath, settings);
+	}));
 	await applyResourceChange(cwd, scope);
 }
 
@@ -204,44 +243,64 @@ export async function toggleExtension(
 	const norm = extPath.replace(/\\/g, "/").toLowerCase();
 	const isProject = norm.startsWith(`${path.resolve(cwd).replace(/\\/g, "/").toLowerCase()}/`);
 	const baseDir = isProject ? path.join(cwd, ".pi") : getAgentDir();
-	const sm = getSettingsManager(cwd);
-	const current = (isProject ? sm.getProjectSettings().extensions : sm.getGlobalSettings().extensions) ?? [];
-	const pattern = extensionPattern(extPath, baseDir);
-	const withoutOurs = current.filter((p) => !(p.startsWith("-") && [pattern, extPath.replace(/\\/g, "/")].includes((p.slice(1).startsWith("./") ? p.slice(3) : p.slice(1)).replace(/\\/g, "/"))));
-	const next = disable ? [...withoutOurs, `-${pattern}`] : withoutOurs;
-	if (!disable && isForceExcluded(extPath, next, baseDir)) {
-		// 还有别的形式的排除模式（例如绝对路径），保留 pi 语义：再加一个 +path 强制包含也压不过 -path，直接删掉匹配项
-		for (let i = next.length - 1; i >= 0; i -= 1) if (isForceExcluded(extPath, [next[i]], baseDir)) next.splice(i, 1);
-	}
-	if (isProject) sm.setProjectExtensionPaths(next);
-	else sm.setExtensionPaths(next);
+	const settingsPath = isProject ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
+	await withSettingsWriteLock(settingsPath, async () => {
+		const sm = await prepareSettingsWrite(cwd, settingsPath);
+		const current = (isProject ? sm.getProjectSettings().extensions : sm.getGlobalSettings().extensions) ?? [];
+		const pattern = extensionPattern(extPath, baseDir);
+		const withoutOurs = current.filter((p) => !(p.startsWith("-") && [pattern, extPath.replace(/\\/g, "/")].includes((p.slice(1).startsWith("./") ? p.slice(3) : p.slice(1)).replace(/\\/g, "/"))));
+		const next = disable ? [...withoutOurs, `-${pattern}`] : withoutOurs;
+		if (!disable && isForceExcluded(extPath, next, baseDir)) {
+			for (let i = next.length - 1; i >= 0; i -= 1) if (isForceExcluded(extPath, [next[i]], baseDir)) next.splice(i, 1);
+		}
+		if (isProject) sm.setProjectExtensionPaths(next);
+		else sm.setExtensionPaths(next);
+		await flushSettingsOrThrow(sm);
+		await verifySettingsField(settingsPath, "extensions", next);
+	});
 	await applyResourceChange(cwd, isProject ? "project" : "user");
 }
 
 export async function installPackage(source: string, local: boolean, cwd: string): Promise<void> {
 	const pm = getPackageManager(cwd);
-	await pm.installAndPersist(source, { local });
+	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
+	await withSettingsWriteLock(settingsPath, async () => {
+		const sm = await prepareSettingsWrite(cwd, settingsPath);
+		await pm.installAndPersist(source, { local });
+		await flushSettingsOrThrow(sm);
+		await verifySettingsField(settingsPath, "packages", (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages);
+	});
 	await applyResourceChange(cwd, local ? "project" : "user");
 }
 
 export async function removePackage(source: string, local: boolean, cwd: string): Promise<boolean> {
 	const pm = getPackageManager(cwd);
 	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	const settings = await readSettingsFile(settingsPath);
-	const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
-	if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some((p) => sourceOf(p) === source)) {
-		settings.disabledPackages = settings.disabledPackages.filter((p) => sourceOf(p) !== source);
-		await writeSettingsFile(settingsPath, settings);
-	}
-	// 卸载失败必须让界面知道（之前这里把异常吞掉还返回成功）
-	const removed = await pm.removeAndPersist(source, { local });
+	const removed = await withSettingsWriteLock(settingsPath, async () => {
+		const sm = await prepareSettingsWrite(cwd, settingsPath);
+		// SDK failures must surface before touching the disabled-package bookkeeping.
+		const removedActive = await pm.removeAndPersist(source, { local });
+		await flushSettingsOrThrow(sm);
+		await verifySettingsField(settingsPath, "packages", (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages);
+		const removedDisabled = await withExternalSettingsLock(settingsPath, async () => {
+			const settings = await readSettingsFileStrict(settingsPath);
+			const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
+			if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some((p) => sourceOf(p) === source)) {
+				settings.disabledPackages = settings.disabledPackages.filter((p) => sourceOf(p) !== source);
+				await writeSettingsFile(settingsPath, settings);
+				return true;
+			}
+			return false;
+		});
+		return removedActive || removedDisabled;
+	});
 	await applyResourceChange(cwd, local ? "project" : "user");
 	return removed;
 }
 
 export async function updatePackages(source: string | undefined, cwd: string): Promise<void> {
 	const pm = getPackageManager(cwd);
-	await pm.update(source);
+	await withSettingsWriteLock(path.join(getAgentDir(), "settings.json"), () => pm.update(source));
 	await applyResourceChange(cwd, "user");
 }
 

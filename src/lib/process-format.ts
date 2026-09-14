@@ -66,8 +66,100 @@ export function cleanCommand(command: string, cwd?: string): { text: string; lin
 		}
 	}
 	let text = first.replace(/\s+/g, " ").trim();
+	text = dropEchoSeparators(text);
 	if (cwd) text = relativizeInText(text, cwd);
 	return { text, lines: lines.length };
+}
+
+/** 按顶层的 ; && || 切分（引号内不切） */
+function splitTopLevel(cmd: string): string[] {
+	const parts: string[] = [];
+	let cur = "";
+	let quote: string | null = null;
+	for (let i = 0; i < cmd.length; i += 1) {
+		const ch = cmd[i];
+		if (quote) {
+			cur += ch;
+			if (ch === quote && cmd[i - 1] !== "\\") quote = null;
+			continue;
+		}
+		if (ch === '"' || ch === "'") {
+			quote = ch;
+			cur += ch;
+			continue;
+		}
+		if (ch === ";") {
+			parts.push(cur);
+			cur = "";
+			continue;
+		}
+		if ((ch === "&" && cmd[i + 1] === "&") || (ch === "|" && cmd[i + 1] === "|")) {
+			parts.push(cur);
+			cur = "";
+			i += 1;
+			continue;
+		}
+		cur += ch;
+	}
+	parts.push(cur);
+	return parts;
+}
+
+/**
+ * 去掉只起分隔/标题作用的 echo 段（echo "═══ rag ═══"; echo ---; echo ""），只留真正的命令。
+ * 带变量的 echo（echo "EXIT=$?"）是结果输出，保留。全是分隔段就原样返回。
+ */
+export function dropEchoSeparators(cmd: string): string {
+	const parts = splitTopLevel(cmd).map((p) => p.trim());
+	if (parts.length < 2) return cmd;
+	const isSeparator = (p: string): boolean => {
+		const m = p.match(/^echo(?:\s+-[ne]+)?\s*(?:"([^"]*)"|'([^']*)'|(\S*))?$/);
+		if (!m) return false;
+		const payload = m[1] ?? m[2] ?? m[3] ?? "";
+		if (payload.includes("$")) return false;
+		if (/^[\s\-=─═—#*~_.>]*$/.test(payload)) return true;
+		return /[─═=\-#*~]{3,}/.test(payload);
+	};
+	const kept = parts.filter((p) => p && !isSeparator(p));
+	if (!kept.length || kept.length === parts.filter(Boolean).length) return cmd;
+	return kept.join("; ");
+}
+
+const TOOL_DISPLAY: Record<string, string> = {
+	bash: "Bash",
+	powershell: "PowerShell",
+	pwsh: "PowerShell",
+	shell: "Shell",
+	read: "Read",
+	edit: "Edit",
+	multiedit: "MultiEdit",
+	multi_edit: "MultiEdit",
+	write: "Write",
+	grep: "Grep",
+	glob: "Glob",
+	find: "Find",
+	ls: "List",
+	search: "Search",
+};
+
+/** 工具名的展示写法（Claude Code 式的 Bash / Read / Edit…），未知工具首字母大写 */
+export function displayToolName(name: string): string {
+	const n = name.toLowerCase();
+	return TOOL_DISPLAY[n] ?? (name.charAt(0).toUpperCase() + name.slice(1));
+}
+
+const LIST_VERBS = new Set(["ls", "dir", "tree", "find", "fd"]);
+
+/** 命令的动词（去掉环境变量前缀与路径） */
+export function commandVerb(command: string): string {
+	const first = command.replace(/\r/g, "").split("\n").find((l) => l.trim().length > 0) ?? "";
+	const tokens = first.trim().replace(/^(?:\w+=\S*\s+)+/, "").split(/\s+/);
+	return basename(tokens[0] ?? "").replace(/\.exe$/i, "").toLowerCase();
+}
+
+/** 列目录类命令（Codex 的「Listed」） */
+export function isListCommand(command: string): boolean {
+	return LIST_VERBS.has(commandVerb(command));
 }
 
 function escapeRe(s: string): string {

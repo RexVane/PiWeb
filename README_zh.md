@@ -34,9 +34,18 @@
 
 ## 快速开始
 
-**环境要求**：Node.js ≥ 22。
+**环境要求**：Node.js ≥ 22.19.0（推荐 Node.js 24）；Git 与成长树功能还需要安装 Git。
 
-### 通过 `pi web` 一键启动（推荐）
+### 通过 npm 全局安装（推荐）
+
+```bash
+npm install -g piweb
+piweb
+```
+
+全局安装会在安装时（或首次运行时）准备一次生产产物，随后以生产模式启动；失败时会明确报错而不是回退到缺少开发依赖的开发模式，可用 `npm rebuild -g piweb` 重试。安装同时注册 `pi` 与 `piweb` 两个命令（`pi web` 启动界面，其它参数转发给官方 pi CLI）；如果同时全局安装了官方 `pi` 包，两者会争用同一个 `pi` 命令，最后安装的生效。
+
+### 在本仓库中使用 `pi web`
 
 支持在任何终端中输入 `pi web`（不区分大小写：`pi web`、`PI WEB`、`Pi Web`）直接启动 Web 界面：
 
@@ -62,17 +71,56 @@ npm start
 ```
 -p, --port <port>      监听端口（默认 30141，env PORT；被占用自动 +1）
 -H, --hostname <host>  绑定地址（默认 127.0.0.1，env PI_WEB_HOSTNAME）
+--dev                  以开发模式启动（`next dev`；env PI_WEB_DEV=1；没有生产构建时也会自动走此模式）
 --no-open              不自动打开浏览器（env PI_WEB_NO_OPEN=1）
 -h, --help             帮助信息
 ```
+
+环境变量：`PI_WEB_PASSWORD` 开启浏览器登录会话，并为 API 客户端保留 HTTP Basic Auth（用户名 `pi`）；生产模式绑定非本机地址时**必须**设置。开发模式仅允许本机回环地址，即使设置密码也不能对外监听；没有生产构建时，对外启动会明确失败，不会自动暴露开发服务器。远程访问请使用 HTTPS 或可信 VPN。`PI_WEB_EDITOR` 指定「用编辑器打开」使用的编辑器（默认 `code`）。未设密码时只接受 `Host` 为本机回环地址的请求。
+
+`GET /api/health` 仅公开固定服务标识，让启动器无需向未知端口发送凭据。版本信息改由需要认证的 `/api/version` 返回。工具预设限制的是智能体可用工具，不是操作系统沙箱；已安装扩展使用服务进程本身的权限运行。
+
+模型目录探测默认拒绝回环、私网及保留网段地址。如果确实使用本地模型网关，可在启动 PiWeb 前设置 `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1`。此开关只放宽模型目录探测，请仅在可信的 PiWeb 实例上使用。
 
 ### 开发与测试
 
 ```bash
 npm run dev        # 启动热重载开发服务器
 npm run typecheck  # TypeScript 类型检查
-npm test           # Vitest 安全边界与协议测试
+npm test           # 服务、协议和组件回归测试
 npm run check      # 完整流水线校验（类型 + 测试 + 生产构建）
+npm run build:release # 校验并准备独立生产构建，不覆盖运行中的构建
+```
+
+## 状态与已知限制（2026-09-14）
+
+审查后的修复已合入本分支并完成一次隔离发布与本地生产部署：登录页生产构建、经过 Next.js 代理的上传完整性、扩展运行时按会话隔离与重载后的工具权限、模型及设置的无损写入、输入草稿与扩展待答界面的生命周期、Git/Growth/diff 正确性，以及隔离发布构建。
+
+最近一次本地验证通过 TypeScript 检查、**52 个测试文件中 355 项通过、1 项跳过**、`npm run build` 与 `git diff --check`。跳过项需要 Windows 符号链接权限或开发者模式。
+
+已知限制：模型配置保存会规范化为标准 JSON（注释格式不保留，数据保留）；更新在维护窗口内原地更新依赖，不是零停机；自定义工具白名单只存在于会话生命周期内；不隔离第三方扩展模块的全局变量。
+
+## 生产构建与更新
+
+PiWeb 正在运行时，请使用 `npm run build:release` 准备新构建。它先校验类型与测试，再将产物写入全新的 `.next-releases/<id>`，全部成功后才发布供下次启动使用的构建记录。它不会重启服务或覆盖现有进程使用的产物。`npm start` 选择最后成功准备的发布构建；发布失败或中断后会明确报错，而不是悄悄回退旧构建。排除错误后重新运行 `npm run build:release` 即可恢复。
+
+界面中的更新使用同一校验流程。源码和 npm 依赖仍在安装目录中更新，因此应在没有智能体运行轮次的维护窗口执行。这不是依赖完全隔离的零停机发布系统。成功更新后由用户手动重启 PiWeb；运行中的进程不会自动切换构建。
+
+CI 在 Linux、Windows 与 Node.js 22.19.0、24 上执行完整检查。普通 `npm run build` 仍使用 `.next`；若生产进程正在使用该目录，不要直接覆盖构建。
+
+## 发布到 npm
+
+发布由 `.github/workflows/publish.yml` 完成：推送 `v*` tag、或 `main` 上的 `package.json` 版本变化都会触发；npm 上已存在的版本会自动跳过。上传前会执行 `prepublishOnly` 门槛（`npm run check`），类型检查、测试或构建任一失败都不会发布。
+
+```bash
+npm version patch        # 0.3.0 → 0.3.1：改版本号、提交、打 tag
+git push --follow-tags   # 推送提交（与 tag）→ 工作流自动发布
+```
+
+一次性准备：在 npmjs.com 生成 **Automation Token**，存为仓库 secret `NPM_TOKEN`；没有它发布步骤会以鉴权错误失败。用户想升级时自行执行：
+
+```bash
+npm install -g piweb@latest
 ```
 
 ## 架构

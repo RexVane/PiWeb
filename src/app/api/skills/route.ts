@@ -11,7 +11,7 @@ export async function GET(req: Request) {
 		const skills = await listSkills(cwd);
 		return NextResponse.json({ success: true, data: { skills } });
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: err instanceof BoundaryError ? 400 : 500 });
 	}
 }
 

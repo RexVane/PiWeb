@@ -34,11 +34,35 @@ export async function resolveSessionPath(id: string, options?: { allowPending?: 
 	// (SessionManager is lazy); allow pending sessions through so setup
 	// commands can apply first. The real file is materialized by ensureSession.
 
-	if (options?.allowPending) return decoded;
+	if (options?.allowPending) {
+		const existing = await fs.realpath(decoded).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return null;
+			throw error;
+		});
+		if (!existing) {
+			let parent = path.dirname(decoded);
+			while (isPathInside(sessionsRoot, parent)) {
+				const realParent = await fs.realpath(parent).catch((error: NodeJS.ErrnoException) => {
+					if (error.code === "ENOENT") return null;
+					throw error;
+				});
+				if (realParent) {
+					if (!isPathInside(realRoot, realParent)) throw new BoundaryError("session path escapes the Pi session store");
+					return decoded;
+				}
+				if (samePath(parent, sessionsRoot)) break;
+				parent = path.dirname(parent);
+			}
+			throw new BoundaryError("session store not found");
+		}
+		if (!isPathInside(realRoot, existing)) throw new BoundaryError("session path escapes the Pi session store");
+		return decoded;
+	}
 
 	const realFile = await fs.realpath(decoded).catch(() => {
 		throw new BoundaryError("session not found");
 	});
+	if (!isPathInside(realRoot, realFile)) throw new BoundaryError("session path escapes the Pi session store");
 	const stat = await fs.stat(realFile);
 	if (!stat.isFile()) throw new BoundaryError("session is not a file");
 	return realFile;

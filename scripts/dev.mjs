@@ -1,27 +1,18 @@
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { isMainModule, runLauncher } from "./launcher.mjs";
 
-const nextCli = fileURLToPath(new URL("../node_modules/next/dist/bin/next", import.meta.url));
-const assetId = `${Date.now().toString(36)}-${process.pid.toString(36)}`;
-const utf8Env = {
-	...process.env,
-	PIWEB_DEV_ASSET_ID: assetId,
-	PYTHONUTF8: process.env.PYTHONUTF8 ?? "1",
-	PYTHONIOENCODING: process.env.PYTHONIOENCODING ?? "utf-8",
-};
-const child = spawn(
-	process.execPath,
-	[nextCli, "dev", "--webpack", "-H", "127.0.0.1", "-p", "30141"],
-	{
-		stdio: "inherit",
-		env: utf8Env,
-	},
-);
+/**
+ * npm run dev forwards only known launcher options; no raw Next flags can override the host.
+ * @param {import('./launcher.mjs').LauncherOptions} [options]
+ */
+export function runDev({ args = process.argv.slice(2), ...options } = {}) {
+	return runLauncher({ ...options, args: ["--dev", "--no-open", ...args] });
+}
 
-child.once("error", (error) => {
-	console.error(error);
-	process.exitCode = 1;
-});
-child.once("exit", (code) => {
-	process.exitCode = code ?? 1;
-});
+if (isMainModule(import.meta.url)) {
+	try {
+		process.exitCode = await runDev();
+	} catch (error) {
+		console.error(`[piweb] ${error instanceof Error ? error.message : error}`);
+		process.exitCode = 1;
+	}
+}

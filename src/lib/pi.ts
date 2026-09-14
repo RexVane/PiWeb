@@ -133,8 +133,9 @@ export function getSettingsManager(cwd: string): SettingsManager {
 interface LoaderEntry {
 	loader: DefaultResourceLoader;
 	ready: Promise<void>;
-	/** 上一次 reload 完成的时间；prompts/skills 目录有新文件时按需再 reload */
-	loadedAt: number;
+	/** 发现缓存的版本；每个热会话分别追踪自己已应用的版本。 */
+	version: number;
+	fingerprint: string;
 }
 
 const loaderCache = new Map<string, LoaderEntry>();
@@ -155,31 +156,59 @@ function loaderKey(cwd: string): string {
 	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
+/** 每个热会话必须拥有自己的扩展 runtime；这里只创建，不加入发现缓存。 */
+export async function createSessionResourceLoader(cwd: string): Promise<DefaultResourceLoader> {
+	const settingsManager = getSettingsManager(cwd);
+	settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
+	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager });
+	const reload = loader.reload.bind(loader);
+	loader.reload = async (options) => {
+		settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
+		await reload(options);
+	};
+	try {
+		await withResourceLock(() => loader.reload());
+		return loader;
+	} catch (error) {
+		loader.getExtensions().runtime.invalidate();
+		throw error;
+	}
+}
+
 /**
- * 每个 cwd 一个资源加载器（技能/扩展/prompt/主题发现），agent 会话与技能面板共用。
- * SDK 不会替调用方加载：新建后必须触发一次 reload()（含首次加载），
- * 否则系统提示不含 AGENTS.md、技能/模板列表恒为空。
- * 加载器与 SettingsManager 共享同一实例，项目信任状态才一致（SDK 默认 projectTrusted=true，
- * 不传的话未受信任项目的 .pi/extensions 也会被直接 import 执行）。
+ * 每 cwd 的只读发现缓存（技能/扩展/prompt 面板），绝不能传给 AgentSession。
+ * SDK 缓存的是扩展工厂，DefaultResourceLoader 的 runtime 却会被 bindCore 就地绑定到会话。
  */
 export function getResourceLoader(cwd: string): DefaultResourceLoader {
 	const key = loaderKey(cwd);
 	let entry = loaderCache.get(key);
 	if (!entry) {
 		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd) });
-		const created: LoaderEntry = { loader, ready: Promise.resolve(), loadedAt: 0 };
-		created.ready = withResourceLock(() => loader.reload()).then(
-			() => {
-				created.loadedAt = Date.now();
-			},
-			() => {
-				created.loadedAt = Date.now();
-			},
-		);
-		entry = created;
+		entry = { loader, ready: Promise.resolve(), version: 0, fingerprint: "" };
 		loaderCache.set(key, entry);
+		queueLoaderReload(cwd, entry);
 	}
 	return entry.loader;
+}
+
+function queueLoaderReload(cwd: string, entry: LoaderEntry): Promise<void> {
+	const run = withResourceLock(async () => {
+		getSettingsManager(cwd).setProjectTrusted(resolveProjectTrust(cwd).trusted);
+		// 发现缓存从未被会话绑定；替换前释放它自己的 event-bus 订阅。
+		entry.loader.getExtensions().runtime.invalidate();
+		const fingerprint = resourceFingerprint(cwd);
+		await entry.loader.reload();
+		entry.fingerprint = fingerprint;
+		entry.version += 1;
+	});
+	entry.ready = run;
+	// getResourceLoader 是同步兼容接口；错误仍由 ready 的 await 方接收。
+	void run.catch(() => undefined);
+	return run;
+}
+
+export function resourceLoaderVersion(cwd: string): number {
+	return loaderCache.get(loaderKey(cwd))?.version ?? 0;
 }
 
 /** 等待某 cwd 的加载器完成发现；消费 loader 前必须 await（ensureSession / 快照 / 技能面板等）。 */
@@ -202,40 +231,40 @@ function watchedResourceDirs(cwd: string): string[] {
 	];
 }
 
-function newestMtime(dirs: string[]): number {
-	let newest = 0;
-	const visit = (dir: string, depth: number) => {
-		let entries: fs.Dirent[];
+function resourceFingerprint(cwd: string): string {
+	const records: string[] = [String(resolveProjectTrust(cwd).trusted)];
+	const visit = (file: string, depth: number) => {
 		try {
-			newest = Math.max(newest, fs.statSync(dir).mtimeMs);
-			entries = fs.readdirSync(dir, { withFileTypes: true });
-		} catch {
-			return;
-		}
-		for (const entry of entries) {
-			const full = path.join(dir, entry.name);
-			try {
-				newest = Math.max(newest, fs.statSync(full).mtimeMs);
-			} catch {
-				continue;
+			const stat = fs.statSync(file);
+			records.push(`${file}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`);
+			if (stat.isDirectory() && depth < 2) {
+				for (const entry of fs.readdirSync(file, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+					if (entry.name !== "node_modules") visit(path.join(file, entry.name), depth + 1);
+				}
 			}
-			// skills/<name>/SKILL.md 与 extensions/<name>/index.ts 只需再下一层
-			if (entry.isDirectory() && depth < 1 && entry.name !== "node_modules") visit(full, depth + 1);
+		} catch {
+			records.push(`${file}:missing`);
 		}
 	};
-	for (const dir of dirs) visit(dir, 0);
-	return newest;
+	for (const dir of watchedResourceDirs(cwd)) visit(dir, 0);
+	for (const file of [path.join(getAgentDir(), "settings.json"), path.join(cwd, ".pi", "settings.json")]) visit(file, 2);
+	return records.join("\n");
 }
 
 /**
  * 资源目录里有比上次加载更新的文件（用户刚新建了 prompt / 技能 / 扩展）就重载一次。
  * 只 stat 几个目录，不递归项目；返回是否真的重载了。
  */
+export function resourceLoaderIsStale(cwd: string): boolean {
+	const entry = loaderCache.get(loaderKey(cwd));
+	return !entry || resourceFingerprint(cwd) !== entry.fingerprint;
+}
+
 export async function refreshResourceLoaderIfStale(cwd: string): Promise<boolean> {
 	await resourceLoaderReady(cwd);
 	const entry = loaderCache.get(loaderKey(cwd));
 	if (!entry) return false;
-	if (newestMtime(watchedResourceDirs(cwd)) <= entry.loadedAt) return false;
+	if (resourceFingerprint(cwd) === entry.fingerprint) return false;
 	await reloadLoader(cwd);
 	return true;
 }
@@ -245,30 +274,14 @@ export function peekResourceLoader(cwd: string): DefaultResourceLoader | undefin
 	return loaderCache.get(loaderKey(cwd))?.loader;
 }
 
-/** 重载某个 cwd 的加载器（就地，不换实例，正在运行的 AgentSession 持有的就是它） */
+/** 仅重载某 cwd 的发现缓存；热会话由 reloadSessionsForCwd 分别更新，不能共享 runtime。 */
 export async function reloadLoader(cwd: string): Promise<void> {
 	const entry = loaderCache.get(loaderKey(cwd));
 	if (!entry) {
-		getResourceLoader(cwd);
 		await resourceLoaderReady(cwd);
 		return;
 	}
-	const run = withResourceLock(() => entry.loader.reload()).then(
-		() => {
-			entry.loadedAt = Date.now();
-		},
-		() => {
-			entry.loadedAt = Date.now();
-		},
-	);
-	entry.ready = run;
-	await run;
-}
-
-/** 插件/技能变更后清空全部缓存加载器（下次访问重建并重新加载） */
-export function invalidateResourceLoaders(): void {
-	loaderCache.clear();
-	invalidateSettingsManagers();
+	await queueLoaderReload(cwd, entry);
 }
 
 /** 让所有已缓存的 SettingsManager 就地重新读盘（活跃会话持有的就是这些实例） */
@@ -282,16 +295,9 @@ export async function reloadSettingsManagers(): Promise<void> {
 	}
 }
 
-/** 清空 SettingsManager 与 PackageManager 缓存，强制重新读取 settings.json */
+/** 保留活跃加载器持有的 SettingsManager，重新读盘而不是留下脱离缓存的实例。 */
 export function invalidateSettingsManagers(): void {
-	for (const sm of settingsCache.values()) {
-		try {
-			sm.reload();
-		} catch {
-			/* ignore */
-		}
-	}
-	settingsCache.clear();
+	for (const sm of settingsCache.values()) void sm.reload().catch(() => undefined);
 	packageManagerCache.clear();
 }
 
@@ -309,13 +315,7 @@ export async function reloadAllLoaders(): Promise<string[]> {
 	const reloaded: string[] = [];
 	for (const [key, entry] of loaderCache) {
 		try {
-			const run = withResourceLock(() => entry.loader.reload());
-			entry.ready = run.then(
-				() => undefined,
-				() => undefined,
-			);
-			await run;
-			entry.loadedAt = Date.now();
+			await queueLoaderReload(key, entry);
 			reloaded.push(key);
 		} catch {
 			/* 单个失败不影响其他 */
@@ -362,6 +362,6 @@ export function openSessionManager(sessionPath: string): SessionManager {
 /** 工具预设 → pi 工具白名单 */
 export const TOOL_PRESETS: Record<"readonly" | "standard" | "full", string[]> = {
 	readonly: ["read", "grep", "find", "ls"],
-	standard: ["read", "bash", "edit", "write"],
+	standard: ["read", "grep", "find", "ls", "bash", "edit", "write"],
 	full: [], // 空 = 不限制（全部可用工具）
 };

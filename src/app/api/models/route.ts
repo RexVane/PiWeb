@@ -3,9 +3,12 @@ import { NextResponse } from "next/server";
 import {
 	answerLogin,
 	cancelLogin,
+	CustomProvidersConflictError,
+	CustomProvidersValidationError,
 	discoverModels,
 	listModels,
 	loginState,
+	providerUsage,
 	readCustomProviders,
 	removeApiKey,
 	setApiKey,
@@ -33,8 +36,8 @@ export async function GET(req: Request) {
 	const custom = params.get("custom") === "1";
 	const full = custom || params.get("full") === "1";
 	try {
-		const data = await listModels();
 		const customProviders = custom ? await readCustomProviders() : null;
+		const data = await listModels();
 		// 页面挂载只需要选模型用的字段（1300+ 个模型带 api/baseUrl/cost/input 有 400KB）；设置页用 custom=1 拿完整版
 		const models = full
 			? data.models
@@ -56,6 +59,7 @@ export async function POST(req: Request) {
 				| "removeKey"
 				| "saveCustomProviders"
 				| "discoverModels"
+				| "providerUsage"
 				| "loginStart"
 				| "loginState"
 				| "loginAnswer"
@@ -65,7 +69,9 @@ export async function POST(req: Request) {
 			baseUrl?: string;
 			api?: string;
 			content?: string;
+			revision?: string;
 			text?: string;
+			force?: boolean;
 		};
 		if (body.action === "setKey") {
 			if (!body.providerId || !body.apiKey) return NextResponse.json({ success: false, error: "missing fields" }, { status: 400 });
@@ -79,13 +85,21 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "saveCustomProviders") {
 			if (typeof body.content !== "string") return NextResponse.json({ success: false, error: "missing content" }, { status: 400 });
-			await writeCustomProviders(body.content);
+			if (body.revision !== undefined && (typeof body.revision !== "string" || !/^(?:missing|[a-f0-9]{64})$/.test(body.revision))) {
+				return NextResponse.json({ success: false, error: "invalid revision" }, { status: 400 });
+			}
+			await writeCustomProviders(body.content, body.revision);
 			return NextResponse.json({ success: true, data: { requiresSessionReopen: true } });
 		}
 		if (body.action === "discoverModels") {
 			if (!body.baseUrl) return NextResponse.json({ success: false, error: "missing baseUrl" }, { status: 400 });
 			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId });
 			return NextResponse.json({ success: true, data: { models } });
+		}
+		if (body.action === "providerUsage") {
+			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });
+			const usage = await providerUsage(body.providerId, body.force === true);
+			return NextResponse.json({ success: true, data: { usage } });
 		}
 		if (body.action === "loginStart") {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });
@@ -108,6 +122,8 @@ export async function POST(req: Request) {
 		}
 		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		const status = err instanceof CustomProvidersConflictError ? 409
+			: err instanceof CustomProvidersValidationError || err instanceof SyntaxError ? 400 : 500;
+		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status });
 	}
 }

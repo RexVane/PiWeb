@@ -109,8 +109,12 @@ function TrajectoryTimeline({ rows, actualDuration, matchedSeqs, selected, onSel
 	const { t } = useI18n();
 	const spans = useMemo(() => {
 		if (!rows.length) return [];
-		const startTs = Math.min(...rows.map((row) => row.entry.ts));
-		const endTs = Math.max(...rows.map((row) => row.entry.ts + (durationOf(row.entry) ?? 0)));
+		let startTs = Infinity;
+		let endTs = -Infinity;
+		for (const row of rows) {
+			startTs = Math.min(startTs, row.entry.ts);
+			endTs = Math.max(endTs, row.entry.ts + (durationOf(row.entry) ?? 0));
+		}
 		const domain = Math.max(endTs - startTs, 1);
 		return rows.map((row, index) => {
 			if (!actualDuration || endTs === startTs) {

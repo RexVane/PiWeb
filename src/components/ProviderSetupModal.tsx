@@ -12,43 +12,11 @@ import {
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
+import { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
 import styles from "./ProviderSetupModal.module.css";
 
-/** 行式模型草稿：容量留空 = 用 pi 默认（contextWindow 128K / maxTokens 16K） */
-export interface ModelDraft {
-	id: string;
-	name: string;
-	contextWindow?: number;
-	maxTokens?: number;
-}
-
-/** 容量的 K/M 人类写法（dsh 同款：K=1000）；不可解析返回 undefined */
-export function parseCapacity(text: string): number | undefined {
-	const value = text.trim().toLowerCase();
-	if (!value) return undefined;
-	const match = /^(\d+(?:\.\d+)?)\s*([km]?)$/.exec(value);
-	if (!match) return NaN;
-	const scaled = Number(match[1]) * (match[2] === "k" ? 1000 : match[2] === "m" ? 1000_000 : 1);
-	return Number.isFinite(scaled) && scaled > 0 ? Math.round(scaled) : NaN;
-}
-
-export function formatCapacity(value: number | undefined): string {
-	if (value === undefined || !Number.isFinite(value) || value <= 0) return "";
-	if (value >= 1000_000 && value % 1000_000 === 0) return `${value / 1000_000}M`;
-	if (value >= 1000 && value % 1000 === 0) return `${value / 1000}K`;
-	return String(value);
-}
-
-/** 逐行校验：返回第一个坏行的下标与原因（dsh「第 N 行」定位） */
-export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" } | undefined {
-	for (let index = 0; index < models.length; index += 1) {
-		const model = models[index];
-		if (!model.id.trim()) return { index, reason: "id" };
-		if (Number.isNaN(model.contextWindow) || Number.isNaN(model.maxTokens)) return { index, reason: "capacity" };
-	}
-	return undefined;
-}
+export { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 
 export interface BuiltinProviderSetup {
 	providerId: string;
@@ -70,6 +38,7 @@ export function ProviderSetupModal({
 	onClose,
 	onSaveBuiltin,
 	onSaveCustom,
+	onOAuthLogin,
 }: {
 	mode: "builtin" | "custom";
 	providers: ProviderView[];
@@ -77,11 +46,14 @@ export function ProviderSetupModal({
 	onClose: () => void;
 	onSaveBuiltin: (value: BuiltinProviderSetup) => Promise<SubmitResult>;
 	onSaveCustom: (value: CustomProviderSetup) => Promise<SubmitResult>;
+	/** 内置提供商支持 OAuth 时的订阅登录路径；未传则不显示认证方式选择 */
+	onOAuthLogin?: (providerId: string) => Promise<SubmitResult>;
 }) {
 	const { t } = useI18n();
 	const [selectedId, setSelectedId] = useState(providers[0]?.id ?? "");
 	const [pickerOpen, setPickerOpen] = useState(false);
 	const [search, setSearch] = useState("");
+	const [authMethod, setAuthMethod] = useState<"api_key" | "oauth">("api_key");
 	const [apiKey, setApiKey] = useState("");
 	const [advanced, setAdvanced] = useState(false);
 	const [baseUrl, setBaseUrl] = useState("");
@@ -124,33 +96,32 @@ export function ProviderSetupModal({
 		setModels((current) => current.map((model, modelIndex) => (modelIndex === index ? { ...model, ...patch } : model)));
 	};
 
-	const validModels = models
-		.map((model) => ({
-			id: model.id.trim(),
-			name: model.name.trim(),
-			...(Number.isFinite(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
-			...(Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
-		}))
-		.filter((model) => model.id);
+	const invalidModels = validateModelDrafts(models);
 	const normalizedId = providerId.trim();
 	const customIdValid = CUSTOM_PROVIDER_ID_PATTERN.test(normalizedId);
-	const customCanSave = customIdValid && !existingIds.includes(normalizedId) && Boolean(baseUrl.trim()) && validModels.length > 0;
-	const builtinCanSave = Boolean(selected);
+	const customCanSave = customIdValid && !existingIds.includes(normalizedId) && Boolean(baseUrl.trim()) && models.length > 0 && !invalidModels;
+	const builtinCanSave = Boolean(selected) && (authMethod === "oauth" || !invalidModels);
+	const savingRef = useRef(false);
 
 	const submit = async () => {
-		if (saving) return;
+		if (savingRef.current || (mode === "builtin" ? !builtinCanSave : !customCanSave)) return;
+		savingRef.current = true;
 		setSaving(true);
 		setError("");
 		try {
 			let result: SubmitResult;
 			if (mode === "builtin" && selected) {
-				const config: Record<string, unknown> = {};
-				if (baseUrl.trim()) config.baseUrl = baseUrl.trim();
-				if (validModels.length) {
-					config.api = selected.apis[0] ?? "openai-completions";
-					config.models = validModels.map(serializeModelDraft);
+				if (authMethod === "oauth" && onOAuthLogin) {
+					result = await onOAuthLogin(selected.id);
+				} else {
+					const config: Record<string, unknown> = {};
+					if (baseUrl.trim()) config.baseUrl = baseUrl.trim();
+					if (models.length) {
+						config.api = selected.apis[0] ?? "openai-completions";
+						config.models = models.map(serializeModelDraft);
+					}
+					result = await onSaveBuiltin({ providerId: selected.id, apiKey: apiKey.trim(), config });
 				}
-				result = await onSaveBuiltin({ providerId: selected.id, apiKey: apiKey.trim(), config });
 			} else {
 				result = await onSaveCustom({
 					providerId: normalizedId,
@@ -159,7 +130,7 @@ export function ProviderSetupModal({
 						baseUrl: baseUrl.trim(),
 						api,
 						...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-						models: validModels.map(serializeModelDraft),
+						models: models.map(serializeModelDraft),
 					},
 				});
 			}
@@ -168,6 +139,7 @@ export function ProviderSetupModal({
 		} catch (reason) {
 			setError(reason instanceof Error ? reason.message : t.toastError);
 		} finally {
+			savingRef.current = false;
 			setSaving(false);
 		}
 	};
@@ -178,10 +150,11 @@ export function ProviderSetupModal({
 		const response = await fetch("/api/models", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "discoverModels", baseUrl: baseUrl.trim(), api, apiKey: apiKey.trim() }),
+			// builtin 模式带 providerId：表单 key 为空时后端回退到已存密钥 / OAuth 令牌
+			body: JSON.stringify({ action: "discoverModels", baseUrl: baseUrl.trim(), api: mode === "builtin" ? selected?.apis[0] : api, apiKey: apiKey.trim(), providerId: mode === "builtin" ? selected?.id : undefined }),
 		});
 		const result = await response.json();
-		if (!result.success) throw new Error(result.error || t.toastError);
+		if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
 		return (result.data.models ?? []).map((model: { id: string; name?: string }) => ({ id: model.id, name: model.name ?? "" }));
 	};
 
@@ -231,6 +204,9 @@ export function ProviderSetupModal({
 														data-selected={provider.id === selectedId}
 														onClick={() => {
 															setSelectedId(provider.id);
+															setAuthMethod("api_key");
+															setApiKey("");
+															setApi(provider.apis[0] ?? "openai-completions");
 															setBaseUrl("");
 															setModels([]);
 															setPickerOpen(false);
@@ -251,10 +227,22 @@ export function ProviderSetupModal({
 								</div>
 							</div>
 
-							<div className={styles.field}>
-								<label className={styles.label}>{selected?.apiKeyLabel ?? t.apiKey}</label>
-								<input className={styles.input} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyOptional} />
-							</div>
+							{selected?.authTypes.includes("oauth") && onOAuthLogin ? (
+								<div className={styles.field}>
+									<label className={styles.label}>{t.authMethod}</label>
+									<select className={styles.select} value={authMethod} onChange={(event) => setAuthMethod(event.target.value as "api_key" | "oauth")}>
+										<option value="api_key">{t.authMethodApiKey}</option>
+										<option value="oauth">{t.oauthLogin}</option>
+									</select>
+								</div>
+							) : null}
+
+							{authMethod === "api_key" ? (
+								<div className={styles.field}>
+									<label className={styles.label}>{selected?.apiKeyLabel ?? t.apiKey}</label>
+									<input className={styles.input} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyOptional} />
+								</div>
+							) : null}
 
 							<div className={styles.advanced}>
 								<button className={styles.advancedButton} data-open={advanced} onClick={() => setAdvanced((open) => !open)}>
@@ -325,16 +313,6 @@ export function ProviderSetupModal({
 			</section>
 		</div>
 	);
-}
-
-/** 序列化为 models.json 条目：容量缺省不写入（走 pi 默认） */
-export function serializeModelDraft(model: { id: string; name?: string; contextWindow?: number; maxTokens?: number }): Record<string, unknown> {
-	return {
-		id: model.id,
-		...(model.name ? { name: model.name } : {}),
-		...(Number.isFinite(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
-		...(Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
-	};
 }
 
 /**
