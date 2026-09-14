@@ -3,6 +3,7 @@
  * 会话 cwd + 手动添加的目录共同构成侧栏「工作区」列表；pi 不受影响（独立文件）。
  */
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { APP_ROOT } from "./app-root";
 import { spawn } from "node:child_process";
@@ -207,54 +208,91 @@ export async function removeWorkspace(dir: string): Promise<{ workspaces: string
 
 let picking = false;
 
-/** 弹出系统原生文件夹选择对话框（Windows 现代资源管理器风格，屏幕居中） */
+/** 收集子进程 stdout（utf8）与 stderr 尾部，带超时；退出码非 0 抛错 */
+function runDialog(argv: string[], opts: { timeoutMs?: number; windowsHide?: boolean } = {}): Promise<string> {
+	const { timeoutMs = 5 * 60 * 1000, windowsHide = false } = opts;
+	return new Promise<string>((resolve, reject) => {
+		const child = spawn(argv[0], argv.slice(1), { stdio: ["ignore", "pipe", "pipe"], windowsHide });
+		const decoder = new StringDecoder("utf8");
+		let buf = "";
+		let stderr = "";
+		let decoderEnded = false;
+		child.stdout.on("data", (data: Buffer) => {
+			buf += decoder.write(data);
+		});
+		child.stderr.on("data", (data: Buffer) => { stderr = (stderr + data.toString("utf8")).slice(-1000); });
+		let settled = false;
+		let timeout: ReturnType<typeof setTimeout>;
+		const finish = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+			if (!decoderEnded) {
+				decoderEnded = true;
+				buf += decoder.end();
+			}
+			if (error) reject(error);
+			else resolve(buf.trim());
+		};
+		child.on("error", (error) => finish(error));
+		child.on("close", (code) => finish(code === 0 ? undefined : new Error(stderr || `folder picker exited with code ${code}`)));
+		timeout = setTimeout(() => {
+			try {
+				child.kill();
+			} catch {
+				/* ignore */
+			}
+			finish(new Error("folder picker timed out"));
+		}, timeoutMs);
+	});
+}
+
+/** osascript 的 POSIX path 输出带前后引号（可能含转义），剥成普通路径 */
+function unquoteApplePath(out: string): string {
+	const m = out.match(/^alias "?(.*?)"?$/s) ?? out.match(/^(\/.*)$/s);
+	return (m ? m[1] : out).trim();
+}
+
+/**
+ * 弹出系统原生文件夹选择对话框。
+ * - Windows：PowerShell 脚本（现代资源管理器风格，屏幕居中）
+ * - macOS：osascript choose folder（原生选择框）
+ * - Linux：zenity / kdialog（哪个可用用哪个）
+ * 都不可用时抛错，前端有手动输入路径的兜底入口。
+ */
 export async function pickFolderNative(): Promise<{ path: string | null; canceled: boolean }> {
-	if (process.platform !== "win32") throw new Error("native folder picker is currently available only on Windows");
 	if (picking) return { path: null, canceled: true };
 	picking = true;
 	try {
-		const script = path.join(APP_ROOT, "scripts", "pick-folder.ps1");
-		const out = await new Promise<string>((resolve, reject) => {
-			const child = spawn(
-				"powershell.exe",
-				["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", script, "选择工作区文件夹"],
-				// windowsHide：不再先闪出一个黑色 PowerShell 控制台窗口，只出现资源管理器风格的选择对话框
-				{ stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+		if (process.platform === "win32") {
+			const script = path.join(APP_ROOT, "scripts", "pick-folder.ps1");
+			const out = await runDialog(
+				["powershell.exe", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", script, "选择工作区文件夹"],
+				{ windowsHide: true },
 			);
-			const decoder = new StringDecoder("utf8");
-			let buf = "";
-			let stderr = "";
-			let decoderEnded = false;
-			child.stdout.on("data", (data: Buffer) => {
-				buf += decoder.write(data);
-			});
-			child.stderr.on("data", (data: Buffer) => { stderr = (stderr + data.toString("utf8")).slice(-1000); });
-			let settled = false;
-			let timeout: ReturnType<typeof setTimeout>;
-			const finish = (error?: Error) => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(timeout);
-				if (!decoderEnded) {
-					decoderEnded = true;
-					buf += decoder.end();
-				}
-				if (error) reject(error);
-				else resolve(buf.trim());
-			};
-			child.on("error", (error) => finish(error));
-			child.on("close", (code) => finish(code === 0 ? undefined : new Error(stderr || `folder picker exited with code ${code}`)));
-			// 5 分钟超时保护
-			timeout = setTimeout(() => {
-				try {
-					child.kill();
-				} catch {
-					/* ignore */
-				}
-				finish(new Error("folder picker timed out"));
-			}, 5 * 60 * 1000);
-		});
-		return out ? { path: out, canceled: false } : { path: null, canceled: true };
+			return out ? { path: out, canceled: false } : { path: null, canceled: true };
+		}
+		if (process.platform === "darwin") {
+			const out = await runDialog(["osascript", "-e", 'choose folder with prompt "选择工作区文件夹"']);
+			const p = unquoteApplePath(out);
+			return p ? { path: p, canceled: false } : { path: null, canceled: true };
+		}
+		// Linux /其他：zenity → kdialog
+		for (const argv of [
+			["zenity", "--file-selection", "--directory", "--title=选择工作区文件夹"],
+			["kdialog", "--getexistingdirectory", `${os.homedir()}`, "--title", "选择工作区文件夹"],
+		]) {
+			try {
+				const out = await runDialog(argv);
+				return out ? { path: out, canceled: false } : { path: null, canceled: true };
+			} catch (error) {
+				// 未安装（ENOENT）→ 试下一个；用户取消的 zenity 退出码 1 但 stdout 可能为空
+				if (error instanceof Error && /ENOENT|not found|not recognized/i.test(error.message)) continue;
+				if (/exited with code (1|5)$/.test(error instanceof Error ? error.message : String(error))) return { path: null, canceled: true };
+				throw error;
+			}
+		}
+		throw new Error("no folder picker available: install zenity or kdialog, or type the path manually");
 	} finally {
 		picking = false;
 	}

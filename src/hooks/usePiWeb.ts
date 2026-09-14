@@ -496,6 +496,28 @@ export function usePiWeb() {
 		}
 	}, [refreshWorkspaces]);
 
+	/** 手动输入路径添加工作区（原生选择器不可用 / 无桌面环境时的兜底） */
+	const addWorkspaceByPath = useCallback(async (dir: string): Promise<string | null> => {
+		const trimmed = dir.trim().replace(/^["']|["']$/g, "");
+		if (!trimmed) return null;
+		try {
+			const r = await fetch("/api/workspaces", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "add", path: trimmed }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			setAddedWorkspaces(j.data?.workspaces ?? []);
+			await refreshWorkspaces();
+			return trimmed;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to add workspace";
+			setState((current) => ({ ...current, error: message }));
+			return null;
+		}
+	}, [refreshWorkspaces]);
+
 	const removeWorkspace = useCallback(
 		async (dir: string) => {
 			try {
@@ -884,6 +906,7 @@ export function usePiWeb() {
 		setGroupBy,
 		setOrderBy,
 		addWorkspaceByPicker,
+		addWorkspaceByPath,
 		removeWorkspace,
 		refreshModels,
 		sendCommand,

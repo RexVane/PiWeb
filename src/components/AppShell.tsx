@@ -81,6 +81,7 @@ export function AppShell() {
 		setGroupBy,
 		setOrderBy,
 		addWorkspaceByPicker,
+		addWorkspaceByPath,
 		removeWorkspace,
 		refreshModels,
 		sendCommand,
@@ -701,6 +702,7 @@ export function AppShell() {
 							providerNames={providerNames}
 							authByProvider={authByProvider}
 							addWorkspaceByPicker={addWorkspaceByPicker}
+							addWorkspaceByPath={addWorkspaceByPath}
 							heroModel={heroModel}
 							onSelectHeroModel={(provider, id) => {
 								setHeroModel({ provider, id });
@@ -1019,6 +1021,7 @@ function Hero({
 	providerNames,
 	authByProvider,
 	addWorkspaceByPicker,
+	addWorkspaceByPath,
 	heroModel,
 	onSelectHeroModel,
 	defaultModel,
@@ -1045,6 +1048,7 @@ function Hero({
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
 	addWorkspaceByPicker: () => Promise<string | null>;
+	addWorkspaceByPath: (dir: string) => Promise<string | null>;
 	heroModel: { provider: string; id: string } | null;
 	onSelectHeroModel: (provider: string, id: string) => void;
 	defaultModel?: ModelChoice;
@@ -1054,6 +1058,8 @@ function Hero({
 }) {
 	const { t } = useI18n();
 	const [wsMenu, setWsMenu] = useState(false);
+	const [wsPathDraft, setWsPathDraft] = useState("");
+	const [wsPathError, setWsPathError] = useState<string | null>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
@@ -1072,6 +1078,19 @@ function Hero({
 		if (p) {
 			setCwd(p);
 			setWsMenu(false);
+		}
+	};
+
+	// 手动输入路径添加（原生选择器不可用 / 无桌面环境兜底）
+	const addByPath = async () => {
+		const p = await addWorkspaceByPath(wsPathDraft);
+		if (p) {
+			setWsPathDraft("");
+			setWsPathError(null);
+			setCwd(p);
+			setWsMenu(false);
+		} else {
+			setWsPathError(t.workspacePathInvalid);
 		}
 	};
 
@@ -1136,6 +1155,24 @@ function Hero({
 									<IconProjectAddOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
 									{t.addWorkspace}
 								</button>
+								<div className="flex items-center gap-1.5 px-2 py-1.5" style={{ fontSize: 12.5 }}>
+									<input
+										className="min-w-0 flex-1 rounded-lg px-2 py-1"
+										style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-input-bg, transparent)", color: "inherit" }}
+										placeholder={t.workspacePathPlaceholder}
+										value={wsPathDraft}
+										onChange={(e) => { setWsPathDraft(e.target.value); setWsPathError(null); }}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") { e.preventDefault(); void addByPath(); }
+										}}
+									/>
+									<button type="button" className="pw-chip" style={{ flex: "none" }} disabled={!wsPathDraft.trim()} onClick={() => void addByPath()}>
+										{t.workspacePathAdd}
+									</button>
+								</div>
+								{wsPathError && (
+									<div className="px-3.5 pb-1.5" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{wsPathError}</div>
+								)}
 							</div>
 						)}
 					</div>
