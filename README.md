@@ -104,6 +104,21 @@ The in-app updater uses the same validation path. Source files and npm dependenc
 
 CI runs the full checks on Linux and Windows with Node.js 22.19.0 and 24. Ordinary `npm run build` still uses `.next`, so do not run it against an installation whose active production process is using that directory.
 
+## Publishing to npm
+
+Releases are published by `.github/workflows/publish.yml`. It triggers when a `v*` tag is pushed, or when `main` receives a `package.json` version change, and it skips versions that already exist on npm. The `prepublishOnly` gate (`npm run check`) runs before the upload, so a failing type check, test, or build never reaches the registry.
+
+```bash
+npm version patch        # 0.3.0 -> 0.3.1: bumps package.json, commits, tags
+git push --follow-tags   # push the commit (and the tag) -> the workflow publishes
+```
+
+One-time setup: create an npm **Automation token** (npmjs.com → Access Tokens) and store it as the repository secret `NPM_TOKEN`; without it the publish step fails with an authentication error. Users update whenever they choose:
+
+```bash
+npm install -g piweb@latest
+```
+
 ## Architecture
 
 ```

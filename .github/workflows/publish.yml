@@ -1,0 +1,79 @@
+name: publish
+
+# Publishes to npm when a release version arrives:
+#   - a `v*` tag is pushed (npm version patch && git push --follow-tags), or
+#   - `main` receives a package.json change (for example a merged version bump).
+# Publishing an already-published version is skipped, so the two triggers can
+# coexist. Requires the repository secret NPM_TOKEN (npm Automation token).
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+    paths: ["package.json"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Existing tag or commit to publish (e.g. v0.3.1)"
+        required: true
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Required for npm provenance attestation (--provenance).
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check the tag and the package version agree
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          tag="$(git describe --exact-match --tags HEAD 2>/dev/null || true)"
+          echo "package version: $version"
+          echo "tag: ${tag:-none}"
+          if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then
+            echo "::error::tag $tag does not match package.json version $version"
+            exit 1
+          fi
+
+      - name: Skip when this version is already on npm
+        id: gate
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if npm view "piweb@$version" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "piweb@$version is already published; nothing to do."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "publishing piweb@$version"
+          fi
+
+      - if: steps.gate.outputs.already == 'false'
+        run: npm ci
+
+      # `npm publish` runs the `prepublishOnly` gate (typecheck + tests + build)
+      # before uploading, so a broken build never reaches the registry.
+      - if: steps.gate.outputs.already == 'false'
+        run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"

@@ -108,6 +108,21 @@ PiWeb 正在运行时，请使用 `npm run build:release` 准备新构建。它�
 
 CI 在 Linux、Windows 与 Node.js 22.19.0、24 上执行完整检查。普通 `npm run build` 仍使用 `.next`；若生产进程正在使用该目录，不要直接覆盖构建。
 
+## 发布到 npm
+
+发布由 `.github/workflows/publish.yml` 完成：推送 `v*` tag、或 `main` 上的 `package.json` 版本变化都会触发；npm 上已存在的版本会自动跳过。上传前会执行 `prepublishOnly` 门槛（`npm run check`），类型检查、测试或构建任一失败都不会发布。
+
+```bash
+npm version patch        # 0.3.0 → 0.3.1：改版本号、提交、打 tag
+git push --follow-tags   # 推送提交（与 tag）→ 工作流自动发布
+```
+
+一次性准备：在 npmjs.com 生成 **Automation Token**，存为仓库 secret `NPM_TOKEN`；没有它发布步骤会以鉴权错误失败。用户想升级时自行执行：
+
+```bash
+npm install -g piweb@latest
+```
+
 ## 架构
 
 ```
