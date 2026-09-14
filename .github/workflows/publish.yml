@@ -7,6 +7,7 @@ name: publish
 #   1. bump the patch version (the repository's package.json is the version source of truth)
 #   2. run the prepublishOnly gate (typecheck + tests + build) and publish to npm
 #   3. push the version commit and a v* tag back to main
+#   4. create a GitHub Release for the tag (notes = commit history since the previous tag)
 # Publishing only happens after the gate passes, and an already-published version
 # is bumped past, so a re-run never fails on E403.
 #
@@ -77,3 +78,20 @@ jobs:
             git push origin HEAD:main
           }
           git push origin "v${{ steps.version.outputs.version }}"
+
+      # npm 发布的同时创建 GitHub Release：说明文字 = 上一个版本以来的提交历史（去 merge 提交）
+      - name: Create the GitHub release
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          tag="v$version"
+          prev="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then
+            range="$prev..$tag"
+          else
+            range="$tag"
+          fi
+          notes="$(git log --format='- %s (%h)' --no-merges "$range")"
+          gh release create "$tag" --title "v$version" --notes "$notes" --latest
+        env:
+          GH_TOKEN: ${{ github.token }}

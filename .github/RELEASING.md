@@ -6,7 +6,8 @@ Releases are **manual**: pushing to `main` does not publish. Batch your fixes, m
 
 1. bumps the patch version (`package.json` stays the version source of truth),
 2. runs the `prepublishOnly` gate (`npm run check`: typecheck + tests + build) and publishes to npm,
-3. pushes the version commit and a `v*` tag back to `main`.
+3. pushes the version commit and a `v*` tag back to `main`,
+4. creates a GitHub Release for the tag (notes = commit history since the previous tag).
 
 A version that already exists on npm is bumped past, so re-runs never fail on a duplicate. The workflow ignores its own release commits. Nothing is published when the gate fails.
 
