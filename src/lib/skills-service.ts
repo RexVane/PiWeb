@@ -95,3 +95,26 @@ export async function readSkillFile(filePath: string, cwd?: string): Promise<str
 	const authorized = await resolveDiscoveredPath(filePath, skills.map((skill) => skill.filePath));
 	return fs.readFile(authorized, "utf8");
 }
+
+/** 删除技能（SKILL.md 所在目录）。包技能（node_modules 内）随包安装，删除会被还原 → 拒绝并用禁用管理。 */
+export async function deleteSkill(filePath: string, cwd?: string): Promise<{ removed: string }> {
+	const skills = await listSkills(cwd);
+	const authorized = await resolveDiscoveredPath(filePath, skills.map((skill) => skill.filePath));
+	if (classifyScope(authorized, cwd) === "package") {
+		throw new Error("package-managed skill: disable it instead (it is reinstalled with the package)");
+	}
+	const skillDir = path.dirname(authorized);
+	// 只删技能目录本身，不能误删父目录（全局技能目录 ~/.pi/agent/skills、项目 .agents/skills 等）
+	const agentDir = getAgentDir().replace(/\\/g, "/");
+	const normalizedSkillDir = skillDir.replace(/\\/g, "/");
+	const knownRoots = [`${agentDir}/skills`, `${agentDir}/web-skills`];
+	if (!knownRoots.some((root) => normalizedSkillDir.toLowerCase() === root.toLowerCase())) {
+		// 非已知根：项目内技能目录，至少确认 SKILL.md 直接位于其下且目录名非空
+		if (path.basename(skillDir) === "") throw new Error("refusing to delete workspace root");
+	}
+	await fs.rm(skillDir, { recursive: true, force: true });
+	await reloadAllLoaders();
+	const scope = classifyScope(authorized, cwd);
+	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
+	return { removed: skillDir };
+}

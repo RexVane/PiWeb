@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listSkills, readSkillFile, setSkillDisabled } from "@/lib/skills-service";
+import { deleteSkill, listSkills, readSkillFile, setSkillDisabled } from "@/lib/skills-service";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
 	try {
-		const body = (await req.json()) as { action: "toggle" | "read"; filePath?: string; disabled?: boolean; cwd?: string };
+		const body = (await req.json()) as { action: "toggle" | "read" | "delete"; filePath?: string; disabled?: boolean; cwd?: string };
 		const cwd = await resolveWorkspacePath(body.cwd || process.cwd());
 		if (body.action === "toggle") {
 			if (!body.filePath || typeof body.disabled !== "boolean")
@@ -28,6 +28,11 @@ export async function POST(req: Request) {
 		if (body.action === "read") {
 			if (!body.filePath) return NextResponse.json({ success: false, error: "missing filePath" }, { status: 400 });
 			return NextResponse.json({ success: true, data: { content: await readSkillFile(body.filePath, cwd) } });
+		}
+		if (body.action === "delete") {
+			if (!body.filePath) return NextResponse.json({ success: false, error: "missing filePath" }, { status: 400 });
+			const r = await deleteSkill(body.filePath, cwd);
+			return NextResponse.json({ success: true, data: r });
 		}
 		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 	} catch (error) {

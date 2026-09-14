@@ -1648,11 +1648,30 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 		if (j.success) onOpenFileContent?.(s.filePath, j.data.content);
 	};
 
+	const [deleteError, setDeleteError] = useState<string | null>(null);
+	const remove = async (s: SkillRow) => {
+		if (!window.confirm(t.confirmDeleteSkill.replace("{name}", s.name))) return;
+		setDeleteError(null);
+		const r = await fetch("/api/skills", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action: "delete", filePath: s.filePath, cwd }),
+		});
+		const j = await r.json();
+		if (j.success) void load();
+		else setDeleteError(j.error || t.toastError);
+	};
+
 	const scopeLabel = (s: SkillRow["scope"]) => (s === "global" ? t.scopeGlobal : s === "project" ? t.scopeProject : t.scopePackage);
 
 	return (
 		<div className="flex flex-col gap-4">
 			<div style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.skillsDesc}</div>
+			{deleteError && (
+				<div role="alert" className="rounded-lg px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", color: "var(--dsw-danger)" }}>
+					{deleteError}
+				</div>
+			)}
 			{skills.length === 0 && (
 				<div style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>—</div>
 			)}
@@ -1681,6 +1700,21 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 							>
 								{t.viewSkillFile}
 							</button>
+							{s.scope !== "package" && (
+								<button
+									className="rounded-lg px-2.5 py-1"
+									style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}
+									title={t.deleteSkillHint}
+									onClick={() => void remove(s)}
+								>
+									{t.delete}
+								</button>
+							)}
+							{s.scope === "package" && (
+								<span style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }} title={t.skillDeletePackageHint}>
+									{t.skillDeletePackageHint}
+								</span>
+							)}
 							<button
 								className="relative h-5 w-9 flex-none rounded-full transition-colors"
 								style={{ background: s.disabled ? "var(--dsw-border-l3)" : "var(--dsw-accent)" }}
