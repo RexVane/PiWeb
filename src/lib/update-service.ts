@@ -75,7 +75,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		const behind = Number((await command("git", ["rev-list", "--count", "HEAD..origin/main"], 15_000)).trim());
 		if (!Number.isSafeInteger(behind) || behind < 0) throw new Error("invalid upstream commit count");
 		const remotePkg = JSON.parse(await command("git", ["show", "origin/main:package.json"], 15_000)) as { name?: string; version?: string };
-		if ((remotePkg.name !== "piweb" && remotePkg.name !== "pi-web") || typeof remotePkg.version !== "string" || !remotePkg.version) throw new Error("upstream is not a PiWeb package");
+		if (!["piweb", "pi-web", "@rexvane/piweb"].includes(String(remotePkg.name)) || typeof remotePkg.version !== "string" || !remotePkg.version) throw new Error("upstream is not a PiWeb package");
 		// Do not advertise a tag version that `git pull origin main` will never install.
 		return { current: piWeb, latest: remotePkg.version, behind, canUpdate: isNewer(remotePkg.version, piWeb) || behind > 0 };
 	}
