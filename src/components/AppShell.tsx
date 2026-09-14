@@ -201,11 +201,17 @@ export function AppShell() {
 	}, [currentPath]);
 
 	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
-	// 未选择时输入框仍可用，发送会提示先选择工作区
-	const knownCwds = useMemo(
-		() => Array.from(new Set([...addedWorkspaces, ...sessions.map((s) => s.cwd)])).filter(Boolean),
-		[addedWorkspaces, sessions],
-	);
+	// 未选择时输入框仍可用，发送会提示先选择工作区。
+	// 已删除工作区要过滤（与会话栏分组同口径）：否则它下面残留的会话 cwd
+	// 会把刚删掉的工作区重新喂回顶部下拉。
+	const knownCwds = useMemo(() => {
+		const removed = new Set(removedWorkspaces.map((w) => w.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()));
+		const keep = (cwd: string) => {
+			const norm = cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+			return Boolean(norm) && !removed.has(norm);
+		};
+		return Array.from(new Set([...addedWorkspaces, ...sessions.map((s) => s.cwd)].filter(keep)));
+	}, [addedWorkspaces, sessions, removedWorkspaces]);
 
 	// 模型目录派生值：数百个模型对象的映射只在目录变化时重算，
 	// 不能跟着每次 token 增量 / 3 秒轮询重跑（usePiWeb 的 setState 都会触发本组件渲染）
