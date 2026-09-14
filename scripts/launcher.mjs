@@ -1,4 +1,5 @@
 import net from "node:net";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -179,7 +180,15 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	if (!options.isDev) {
 		const prepared = ensureInstallBuild(root, { log, warn: dependencies.warn ?? console.warn });
 		if (prepared === "failed" && isProductionOnlyInstall(root)) {
-			throw new Error("无法准备生产构建，且该安装没有开发依赖。请用 `npm rebuild -g piweb` 重试，或改用仓库中的 npm run dev。");
+			// 常见根因：包目录属主不是当前用户（sudo 安装残留），构建产物写不进去
+			let owner = "";
+			try {
+				const stat = await fs.stat(root);
+				if (typeof stat.uid === "number" && stat.uid !== process.getuid?.()) {
+					owner = `\n此安装目录属主不是当前用户（uid ${stat.uid}）——之前可能用 sudo 安装过。修复：sudo chown -R $(whoami) "${root}"，然后重试 piweb。`;
+				}
+			} catch { /* diagnostics only */ }
+			throw new Error(`无法准备生产构建，且该安装没有开发依赖。请用 \`npm rebuild -g piweb\` 重试，或改用仓库中的 npm run dev。${owner}`);
 		}
 	}
 	const plan = createLaunchPlan(root, options, env);

@@ -105,14 +105,24 @@ function linkOrCopyDependencies(root, staging, log) {
 	const target = path.join(root, "node_modules");
 	const linkPath = path.join(staging, "node_modules");
 	// Windows: junction 不需要符号链接权限；跨卷时 junction 也会失败（试回退）。
-	// POSIX（macOS/Linux）: 目录符号链接即可，"junction" 类型会被 libuv 拒绝
-	// （0.3.5 的 Mac 现场：symlinkSync(..., 'junction') 抛 EINVAL）。
+	// POSIX（macOS/Linux）: 目录符号链接即可，"junction" 类型会被 libuv 拒绝。
 	const type = process.platform === "win32" ? "junction" : "dir";
 	try {
 		fs.symlinkSync(target, linkPath, type);
 		return;
-	} catch {
-		/* fall through to the copy */
+	} catch (error) {
+		// EEXIST：链接已存在（重入/上次构建残留）。指向正确位置就复用，否则删了重建。
+		if (error.code === "EEXIST") {
+			try {
+				const existing = fs.readlinkSync(linkPath);
+				if (path.resolve(path.dirname(linkPath), existing) === path.resolve(target)) return;
+				fs.rmSync(linkPath, { recursive: true, force: true });
+				fs.symlinkSync(target, linkPath, type);
+				return;
+			} catch {
+				/* fall through to the copy */
+			}
+		}
 	}
 	// 兜底：符号链接不可用（如无权限）时整份复制依赖。慢但保证构建可解析。
 	log("[piweb] Symlink unavailable; copying dependencies into the staging build (slower)...");
