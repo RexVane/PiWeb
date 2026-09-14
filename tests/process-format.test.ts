@@ -4,6 +4,9 @@ import {
 	classifyModelError,
 	cleanCommand,
 	firstSentence,
+	dropEchoSeparators,
+	displayToolName,
+	isListCommand,
 	langOfPath,
 	previewSide,
 	relativizeInText,
@@ -94,6 +97,30 @@ EOF`)).toBe("tail");
 		expect(trimNoiseTail(['"node": ">=22"', "}", "}", "$"])).toEqual(['"node": ">=22"']);
 		expect(trimNoiseTail(["ok", "done"])).toEqual(["ok", "done"]);
 		expect(trimNoiseTail(["}"])).toEqual([]);
+	});
+});
+
+describe("dropEchoSeparators / displayToolName / isListCommand", () => {
+	it("removes heading-style echo segments but keeps real commands and echoed variables", () => {
+		expect(dropEchoSeparators('echo "═══ rag/retrieval ═══"; ls app/rag/retrieval; echo "═══ compose ═══"; ls docker')).toBe("ls app/rag/retrieval; ls docker");
+		expect(dropEchoSeparators('echo "---"; git remote -v && echo ""; head -5 NOTICE')).toBe("git remote -v; head -5 NOTICE");
+		expect(dropEchoSeparators('npx tsc --noEmit; echo "TSC_EXIT=$?"')).toBe('npx tsc --noEmit; echo "TSC_EXIT=$?"');
+		expect(dropEchoSeparators('echo "hello world"')).toBe('echo "hello world"');
+		expect(dropEchoSeparators('echo "═══ only ═══"')).toBe('echo "═══ only ═══"');
+		expect(dropEchoSeparators('grep -n "a; b" file.ts; echo ---')).toBe('grep -n "a; b" file.ts');
+	});
+	it("is applied by cleanCommand", () => {
+		expect(cleanCommand('cd D:/AIApp/PiWeb && echo "=== tsconfig ===" && cat tsconfig.json', "D:/AIApp/PiWeb").text).toBe("cat tsconfig.json");
+	});
+	it("maps pi tool names to display names", () => {
+		expect(displayToolName("bash")).toBe("Bash");
+		expect(displayToolName("ls")).toBe("List");
+		expect(displayToolName("web_fetch")).toBe("Web_fetch");
+	});
+	it("recognises directory listings", () => {
+		expect(isListCommand("ls -la src")).toBe(true);
+		expect(isListCommand("FOO=1 tree -L 2")).toBe(true);
+		expect(isListCommand("cat a.txt")).toBe(false);
 	});
 });
 

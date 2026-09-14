@@ -54,6 +54,8 @@ export interface TrajEntry {
 /** 消息在客户端渲染时的统一形状（pi AgentMessage 的投影） */
 export interface WebMessage {
 	id?: string;
+	/** 热会话流的稳定身份；持久 entry id 尚未生成时也可关联 start/delta/end 与快照。 */
+	streamId?: string;
 	role: "user" | "assistant" | "toolResult" | "custom" | "other";
 	content: WebContent[];
 	timestamp?: number;
@@ -76,7 +78,7 @@ export type WebContent =
 	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string };
 
 export type WebEvent =
-	| { type: "delta"; kind: "text" | "thinking"; contentIndex: number; delta: string; ts: number }
+	| { type: "delta"; kind: "text" | "thinking"; contentIndex: number; delta: string; messageId?: string; ts: number }
 	| { type: "message"; message: WebMessage; phase: "start" | "end"; ts: number }
 	| {
 			type: "tool";
@@ -112,7 +114,7 @@ export type WebEvent =
 	| { type: "compaction"; phase: "start" | "end"; reason?: string; errorMessage?: string; ts: number }
 	| { type: "traj"; entry: TrajEntry; ts: number }
 	| { type: "name"; name: string; ts: number }
-	| { type: "tools"; active: string[]; all: string[]; ts: number }
+	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; ts: number }
 	| {
 			/** 资源（扩展/技能/模板/命令）重载后的新清单；前端据此刷新 / 菜单与设置面板 */
 			type: "resources";
@@ -138,7 +140,13 @@ export type WebEvent =
 			timeout?: number;
 			ts: number;
 	  }
-	| { type: "error"; message: string; ts: number };
+	| { type: "extension_ui_resolved"; id: string; ts: number }
+	| { type: "error"; message: string; ts: number }
+	/** 项目生长：记录了一步（工具结束 / 回合结束 / 外部修改 / 会话基线） */
+	| { type: "growth"; step: GrowthStep; ts: number }
+	/** 项目生长：改盘类工具运行期间目录监听看到的新路径（累计；空数组 = 清空） */
+	| { type: "growth_pending"; paths: string[]; ts: number }
+	| { type: "growth_error"; message: string | null; ts: number };
 
 export interface WebStats {
 	userMessages: number;
@@ -153,6 +161,45 @@ export interface WebStats {
 	ttftSteps: number;
 	decodeMs: number;
 	decodeTokens: number;
+}
+
+// ---------- 项目生长（影子仓库快照） ----------
+
+export type GrowthStepKind = "baseline" | "tool" | "turn" | "external" | "manual";
+
+export interface GrowthChange {
+	status: "A" | "M" | "D" | "R";
+	/** 相对工作区的路径（"/" 分隔） */
+	path: string;
+	/** 重命名前的路径 */
+	from?: string;
+	add?: number;
+	del?: number;
+	binary?: boolean;
+}
+
+export interface GrowthStep {
+	/** 工作区内单调递增 */
+	seq: number;
+	ts: number;
+	/** 触发这一步的会话（JSONL 绝对路径） */
+	session: string;
+	kind: GrowthStepKind;
+	/** 「bash · mkdir -p src」这样的一句标签 */
+	label: string;
+	/** 这一步之后的 tree 哈希 */
+	tree: string;
+	/** 这一步之前的 tree 哈希（工作区首张快照为 empty tree） */
+	parent: string;
+	commit?: string;
+	toolCallId?: string;
+	toolName?: string;
+	/** 相对上一步的变更（超过上限时截断，truncated=true） */
+	changes: GrowthChange[];
+	truncated?: boolean;
+	/** 工作区的第一张快照：全部文件都是新增，账本里不存清单 */
+	initial?: boolean;
+	stats: { added: number; modified: number; deleted: number; renamed: number; add: number; del: number };
 }
 
 export interface ContextResource {
@@ -185,9 +232,17 @@ export interface WebSnapshot {
 	/** 资源诊断：扩展加载失败、技能/模板解析警告（来自 pi 资源加载器） */
 	resourceDiagnostics: { kind: "extension" | "skill" | "prompt" | "command"; path?: string; message: string }[];
 	messages: WebMessage[];
+	/** 全部持久用户消息的轮次（含上下文压缩后不再渲染的消息）。 */
+	userTurns: { id: string; ts: number }[];
+	growthError: string | null;
 	model?: { provider: string; id: string; name: string };
 	thinkingLevel?: string;
 	thinkingLevels: string[];
+	toolPreset: ToolPreset;
+	/** custom 白名单优先于 preset；null 表示使用 preset，省略兼容旧服务端。 */
+	customActiveTools?: string[] | null;
+	/** 当前待应答的扩展请求；快照是权威集合，不重放已答请求。 */
+	extensionUiRequests?: Extract<WebEvent, { type: "extension_ui" }>[];
 	tools: { active: string[]; all: { name: string; description?: string }[] };
 	stats: WebStats | null;
 	contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | null;

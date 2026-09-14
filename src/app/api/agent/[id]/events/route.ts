@@ -29,29 +29,36 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 			const write = (chunk: string) => {
 				if (!closed) controller.enqueue(encoder.encode(chunk));
 			};
-			subscriber = (seq: number, json: string) => write(`id: ${seq}\ndata: ${json}\n\n`);
-			const send = subscriber;
-
-			ping = setInterval(() => write(`: ping\n\n`), 15_000);
-			write(`retry: 2000\n\n`);
-
-			req.signal.addEventListener("abort", () => {
+			const close = () => {
+				if (closed) return;
 				closed = true;
 				if (ping) clearInterval(ping);
-				unsubscribe(m, send);
+				if (subscriber) unsubscribe(m, subscriber);
 				try {
 					controller.close();
 				} catch {
 					/* already closed */
 				}
-			});
+			};
+			subscriber = (seq: number, json: string) => {
+				write(`id: ${seq}\ndata: ${json}\n\n`);
+				if (json.includes('"state":"disposed"')) close();
+			};
+			const send = subscriber;
+
+			ping = setInterval(() => write(`: ping\n\n`), 15_000);
+			write(`retry: 2000\n\n`);
+
+			req.signal.addEventListener("abort", close, { once: true });
 
 			// 自动重连优先从环形缓冲续放；缓冲断档时才回退到完整快照。
 			if (lastEventId !== undefined && subscribe(m, send, lastEventId)) return;
 			const snap = await buildSnapshot(m);
+			if (closed) return;
 			send(snap.seq, JSON.stringify({ type: "snapshot", snapshot: snap, ts: Date.now() }));
 			if (!subscribe(m, send, snap.seq)) {
 				const latest = await buildSnapshot(m);
+				if (closed) return;
 				send(latest.seq, JSON.stringify({ type: "snapshot", snapshot: latest, ts: Date.now() }));
 				subscribe(m, send, latest.seq);
 			}

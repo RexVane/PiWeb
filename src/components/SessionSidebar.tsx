@@ -70,6 +70,8 @@ interface WorkspaceGroup {
 
 export function SessionSidebar({
 	sessions,
+	sessionListError,
+	onRetrySessionList,
 	archivedSessions = [],
 	archivedPaths = [],
 	addedWorkspaces,
@@ -97,6 +99,8 @@ export function SessionSidebar({
 	draftCwd,
 }: {
 	sessions: SessionListItem[];
+	sessionListError?: string | null;
+	onRetrySessionList?: () => void;
 	archivedSessions?: SessionListItem[];
 	/** 原始归档路径（含被豁免的当前会话：dsh 合同下主列表可见但菜单显示取消归档） */
 	archivedPaths?: string[];
@@ -730,6 +734,12 @@ export function SessionSidebar({
 
 			{/* 列表区 */}
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+				{sessionListError && (
+					<div role="alert" className="mb-2 rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-danger)", fontSize: 12 }}>
+						<div>{t.sessionListLoadFailed}: {sessionListError}</div>
+						<button type="button" className="mt-1 underline" onClick={onRetrySessionList}>{t.retry}</button>
+					</div>
+				)}
 				{searchOpen && q.trim() ? (
 					// 搜索结果：会话平铺
 					flatSessions.filter(

@@ -6,28 +6,32 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
-import { ChatInput } from "@/components/ChatInput";
+import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
 
-// 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件/Git 只在打开时才用）
+// 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
 const TrajectoryView = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajectoryView), { ssr: false });
-const FilesPanel = dynamic(() => import("@/components/FilesPanel").then((m) => m.FilesPanel), { ssr: false });
+const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
+const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) => m.ProjectPanel), { ssr: false });
+const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
 	IconFolderClose16,
 	IconFolderOpenOutline16,
-	IconGitOutline16,
 	IconPanelLeftOutline16,
 	IconProjectAddOutline16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
+import { useGrowth } from "@/hooks/useGrowth";
+import { useFileViewer } from "@/hooks/useFileViewer";
+import type { TreeNode } from "@/lib/growth-tree";
 import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
@@ -40,6 +44,9 @@ const SIDEBAR_COLLAPSED = 56;
 const DETAILS_MIN = 300;
 const DETAILS_MAX = 760;
 const DETAILS_DEFAULT = 360;
+const PROJECT_MIN = 280;
+const PROJECT_MAX = 640;
+const PROJECT_DEFAULT = 380;
 function persist(key: string, value: number) {
 	localStorage.setItem(key, String(value));
 }
@@ -52,6 +59,8 @@ export function AppShell() {
 	const { t } = useI18n();
 	const {
 		sessions,
+		sessionListError,
+		retrySessionList,
 		archivedSessions,
 		archivedSessionPaths,
 		currentId,
@@ -63,6 +72,7 @@ export function AppShell() {
 		workspaceAliases,
 		getWorkspaceName,
 		renameWorkspace,
+		patchSessionName,
 		archiveSession,
 		unarchiveSession,
 		resync,
@@ -79,6 +89,7 @@ export function AppShell() {
 		closeSession,
 		setToolPreset,
 		clearError,
+		clearCompaction,
 		setError,
 		answerExtensionDialog,
 		dismissExtensionNotice,
@@ -87,15 +98,43 @@ export function AppShell() {
 	const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	const [detailsWidth, setDetailsWidth] = useState(DETAILS_DEFAULT);
-	const [detailsOpen, setDetailsOpen] = useState(false);
-	/** 详情栏页签：文件 / Git（共用右侧一栏） */
-	const [detailsTab, setDetailsTab] = useState<"files" | "git">("files");
-	/** 注入输入框的文本（文件引用、让 pi 提交） */
-	const [composerInsert, setComposerInsert] = useState<{ key: number; text: string } | null>(null);
-	const [dragging, setDragging] = useState<"sidebar" | "details" | null>(null);
+	/** 项目栏（侧栏与对话之间的第四列：项目生长可视化） */
+	const [projectOpen, setProjectOpen] = useState(false);
+	const [projectWidth, setProjectWidth] = useState(PROJECT_DEFAULT);
+	// Drafts are parent-owned data, never a replayable last insertion/upload event.
+	// A hero draft keeps its identity when newSession switches the rendered composer.
+	const composerDrafts = useRef(new Map<string, ChatDraft>());
+	const sessionDraftKeys = useRef(new Map<string, string>());
+	const draftSequence = useRef(0);
+	const [heroDraftKey, setHeroDraftKey] = useState("__hero__:0");
+	const [draftVersion, setDraftVersion] = useState(0);
+	void draftVersion;
+	const draftKey = currentPath ? sessionDraftKeys.current.get(currentPath) ?? currentPath : heroDraftKey;
+	const [uploadCounts, setUploadCounts] = useState<Record<string, number>>({});
+	const [uploadFailures, setUploadFailures] = useState<Record<string, string>>({});
+	const [pendingSends, setPendingSends] = useState<Record<string, boolean>>({});
+	const updateDraft = useCallback((key: string, update: ChatDraftUpdate) => {
+		const previous = composerDrafts.current.get(key) ?? EMPTY_CHAT_DRAFT;
+		composerDrafts.current.set(key, typeof update === "function" ? update(previous) : update);
+		setDraftVersion((version) => version + 1);
+	}, []);
+	const trackUpload = useCallback((key: string, delta: 1 | -1) => {
+		if (delta === 1) setUploadFailures((current) => ({ ...current, [key]: "" }));
+		setUploadCounts((current) => ({ ...current, [key]: Math.max(0, (current[key] ?? 0) + delta) }));
+	}, []);
+	const failUpload = useCallback((key: string, message: string) => {
+		setUploadFailures((current) => ({ ...current, [key]: message }));
+	}, []);
+	const trackSend = useCallback((key: string, pending: boolean) => {
+		setPendingSends((current) => ({ ...current, [key]: pending }));
+	}, []);
+	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
+	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
+	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [tab, setTab] = useState<"chat" | "traj">("chat");
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
+	const [gitDetailsOpen, setGitDetailsOpen] = useState(false);
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
@@ -104,8 +143,28 @@ export function AppShell() {
 	useEffect(() => {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
 		setDetailsWidth(restore("piweb.detailsW", DETAILS_DEFAULT));
+		setProjectWidth(restore("piweb.projectW", PROJECT_DEFAULT));
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
+		setProjectOpen(localStorage.getItem("piweb.projectOpen") === "1");
 	}, []);
+	const toggleProject = useCallback((next?: boolean) => {
+		setProjectOpen((cur) => {
+			const v = next ?? !cur;
+			localStorage.setItem("piweb.projectOpen", v ? "1" : "0");
+			return v;
+		});
+	}, []);
+	// Ctrl/⌘+Shift+E：切换项目栏（与 VS Code 资源管理器同键）
+	useEffect(() => {
+		const h = (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+				e.preventDefault();
+				toggleProject();
+			}
+		};
+		document.addEventListener("keydown", h);
+		return () => document.removeEventListener("keydown", h);
+	}, [toggleProject]);
 
 	useEffect(() => {
 		const query = window.matchMedia("(max-width: 840px)");
@@ -138,7 +197,7 @@ export function AppShell() {
 	// 切换会话时清掉轨迹页的选中态并收起详情栏
 	useEffect(() => {
 		setSelected(null);
-		setDetailsOpen(false);
+		setGitDetailsOpen(false);
 	}, [currentPath]);
 
 	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
@@ -180,15 +239,18 @@ export function AppShell() {
 
 	// ---------- 拖拽 ----------
 	const onDrag = useCallback(
-		(side: "sidebar" | "details") => (e: React.PointerEvent) => {
+		(side: "sidebar" | "details" | "project") => (e: React.PointerEvent) => {
 			e.preventDefault();
 			setDragging(side);
 			const startX = e.clientX;
-			const startW = side === "sidebar" ? sidebarWidth : detailsWidth;
+			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : detailsWidth;
 			const move = (ev: PointerEvent) => {
 				if (side === "sidebar") {
 					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
 					setSidebarWidth(w);
+				} else if (side === "project") {
+					const w = Math.max(PROJECT_MIN, Math.min(PROJECT_MAX, startW + (ev.clientX - startX)));
+					setProjectWidth(w);
 				} else {
 					const w = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startW - (ev.clientX - startX)));
 					setDetailsWidth(w);
@@ -205,13 +267,14 @@ export function AppShell() {
 			// 触摸/笔输入被系统手势打断时只触发 pointercancel，不处理会永久泄漏监听器
 			window.addEventListener("pointercancel", up);
 		},
-		[sidebarWidth, detailsWidth],
+		[sidebarWidth, detailsWidth, projectWidth],
 	);
 
 	useEffect(() => {
 		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
 		if (dragging === "details") persist("piweb.detailsW", detailsWidth);
-	}, [dragging, sidebarWidth, detailsWidth]);
+		if (dragging === "project") persist("piweb.projectW", projectWidth);
+	}, [dragging, sidebarWidth, detailsWidth, projectWidth]);
 
 	const toggleSidebar = () => {
 		const next = !sidebarCollapsed;
@@ -221,6 +284,16 @@ export function AppShell() {
 
 	// ---------- 会话操作 ----------
 	const snapshot = state.snapshot;
+	const trajectoryRef = useRef(snapshot?.trajectory ?? []);
+	useEffect(() => {
+		trajectoryRef.current = snapshot?.trajectory ?? [];
+	}, [snapshot?.trajectory]);
+	const openToolTrajectory = useCallback((toolCallId: string) => {
+		const entry = trajectoryRef.current.find((item) => item.toolCallId === toolCallId);
+		if (!entry) return;
+		setGitDetailsOpen(false);
+		setSelected(entry);
+	}, []);
 
 	// 上下文分段的数据源：系统提示词按注入资源字符数（很便宜）；
 	// 消息字符统计交给 ContextMeter 弹窗打开时再算，避免每次 token 增量全量扫描
@@ -244,6 +317,7 @@ export function AppShell() {
 		if (!result?.success) {
 			throw new Error(result?.error || "failed to rename session");
 		}
+		patchSessionName(path, newName.trim());
 		if (path !== currentPath) {
 			// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
 			resync();
@@ -310,7 +384,7 @@ export function AppShell() {
 		const cwd = heroCwd.trim();
 		if (!cwd) {
 			setError(t.pickWorkspaceFirst);
-			return;
+			return { success: false };
 		}
 		// 用户没手动选过模型时也要把界面显示的默认模型显式下发，
 		// 否则后端不 setModel、SDK 自选的默认与界面显示不一致。
@@ -320,13 +394,15 @@ export function AppShell() {
 			modelId: effective?.id,
 			thinking: heroThinking || undefined,
 		});
-		if (!p) return;
-		await sendCommand({ cmd: "prompt", text, images }, encodeURIComponent(b64url(p)));
+		if (!p) return { success: false };
+		// Bind before the new-session render. In-flight ChatInput callbacks still own
+		// this same key; a failed acceptance keeps the original text and attachments.
+		sessionDraftKeys.current.set(p, heroDraftKey);
+		setHeroDraftKey(`__hero__:${++draftSequence.current}`);
+		return sendCommand({ cmd: "prompt", text, images }, encodeURIComponent(b64url(p)));
 	};
 
-	const sendPrompt = (text: string, images: ImageAttachment[]) => {
-		void sendCommand({ cmd: "prompt", text, images });
-	};
+	const sendPrompt = (text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images });
 
 	// 稳定引用：ChatWindow 行级 memo 依赖它，内联箭头函数会让 memo 全部失效
 	const handleFork = useCallback(
@@ -405,10 +481,10 @@ export function AppShell() {
 		currentPath?.split(/[\\/]/).pop() ||
 		"pi";
 
-	// 详情栏文件/Git 面板的工作区：当前会话的工作区优先，快照未到时回落到会话列表里的 cwd
+	// 项目栏/文件查看器的工作区：当前会话的工作区优先，快照未到时回落到会话列表里的 cwd
 	const panelCwd = snapshot?.cwd || currentSession?.cwd || heroCwd || knownCwds[0] || "";
 
-	// 文件 / Git 面板自动刷新：pi 每完成一个会改动文件的工具，或一轮结束时，静默重拉
+	// Git 面板自动刷新：pi 每完成一个会改动文件的工具，或一轮结束时，静默重拉
 	const mutatingDone = useMemo(
 		() => Object.values(state.tools).filter((tool) => tool.state === "done" && ["edit", "write", "bash", "powershell", "pwsh"].includes(tool.name.toLowerCase())).length,
 		[state.tools],
@@ -427,24 +503,17 @@ export function AppShell() {
 		prevStreamingRef.current = isStreaming;
 	}, [isStreaming]);
 
-	// 本会话被 pi 改过的文件（相对工作区，"/" 分隔），文件面板用来打标记
-	const changedPaths = useMemo(() => {
-		const out = new Set<string>();
-		const root = panelCwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-		for (const tool of Object.values(state.tools)) {
-			if (tool.state !== "done" || !["edit", "write"].includes(tool.name.toLowerCase())) continue;
-			const a = tool.args as { path?: unknown; file_path?: unknown } | undefined;
-			const raw = a?.path ?? a?.file_path;
-			if (typeof raw !== "string" || !raw) continue;
-			let rel = raw.replace(/\\/g, "/");
-			if (root && rel.toLowerCase().startsWith(`${root}/`)) rel = rel.slice(root.length + 1);
-			if (/^[A-Za-z]:\//.test(rel) || rel.startsWith("/")) continue;
-			out.add(rel.replace(/^\.\//, ""));
-		}
-		return out;
-	}, [state.tools, panelCwd]);
-
-	const insertIntoComposer = useCallback((text: string) => setComposerInsert({ key: Date.now(), text }), []);
+	const insertIntoComposer = useCallback((text: string) => {
+		const textarea = document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea');
+		const cursor = textarea?.selectionStart;
+		updateDraft(draftKey, (previous) => {
+			const position = Math.min(cursor ?? previous.text.length, previous.text.length);
+			const before = previous.text.slice(0, position);
+			const after = previous.text.slice(position);
+			return { ...previous, text: `${before}${before && !/\s$/.test(before) ? " " : ""}${text}${after}` };
+		});
+		requestAnimationFrame(() => textarea?.focus());
+	}, [draftKey, updateDraft]);
 	const openInEditor = useCallback(
 		async (filePath: string) => {
 			try {
@@ -461,19 +530,71 @@ export function AppShell() {
 		},
 		[panelCwd, setError],
 	);
-	const openDetails = useCallback((tabName: "files" | "git") => {
-		setDetailsTab(tabName);
-		setDetailsOpen(true);
-	}, []);
+	// ---------- 项目生长 ----------
+	const viewer = useFileViewer();
+	const resetViewer = viewer.reset;
+	useEffect(() => {
+		resetViewer();
+	}, [panelCwd, resetViewer]);
+	const growthTurnStarts = useMemo(
+		() => {
+			const persisted = state.snapshot?.userTurns ?? [];
+			const ids = new Set(persisted.map((turn) => turn.id));
+			const lastTs = persisted[persisted.length - 1]?.ts ?? -Infinity;
+			const live = state.messages
+				.filter((message) => message.role === "user" && (!message.id || !ids.has(message.id)) && (message.timestamp ?? Date.now()) >= lastTs - 1000)
+				.map((message) => message.timestamp ?? Date.now());
+			return [...persisted.map((turn) => turn.ts), ...live];
+		},
+		[state.snapshot?.userTurns, state.messages],
+	);
+	const growth = useGrowth({
+		cwd: panelCwd,
+		sessionPath: currentPath,
+		liveSteps: state.growth.steps,
+		pending: state.growth.pending,
+		runtimeError: state.growth.error,
+		active: projectOpen || viewer.state.open,
+		connected: state.connected,
+		turnStarts: growthTurnStarts,
+	});
+	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy }), [viewer]);
 
 	useEffect(() => {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
 	}, [currentId, title]);
 
 	// 三栏网格
-	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px minmax(0,1fr) ${
-		detailsOpen ? `${detailsWidth}px` : "0px"
+	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${projectOpen ? `${projectWidth}px` : "0px"} minmax(0,1fr) ${
+		selected || gitDetailsOpen ? `${detailsWidth}px` : "0px"
 	}`;
+	const projectColumn = projectOpen && (
+		<div
+			className="min-h-0 overflow-hidden"
+			style={isNarrow ? {
+				position: "fixed",
+				inset: "0 auto 0 0",
+				width: "min(88vw, 420px)",
+				zIndex: 88,
+				boxShadow: "var(--dsw-elevation-prominent)",
+			} : undefined}
+		>
+			<ProjectPanel
+				growth={growth}
+				workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}
+				cwd={panelCwd}
+				hasSession={Boolean(currentPath)}
+				onOpenFile={openFileNode}
+				onReference={insertIntoComposer}
+				onOpenEditor={openInEditor}
+				gitRefreshKey={panelRefreshKey}
+				onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
+				onOpenGit={() => { setSelected(null); setGitDetailsOpen(true); }}
+				onClose={() => toggleProject(false)}
+				onError={setError}
+			/>
+		</div>
+	);
 
 	return (
 		<div
@@ -500,6 +621,8 @@ export function AppShell() {
 			>
 				<SessionSidebar
 					sessions={sessions}
+					sessionListError={sessionListError}
+					onRetrySessionList={retrySessionList}
 					archivedSessions={archivedSessions}
 					archivedPaths={archivedSessionPaths}
 					addedWorkspaces={addedWorkspaces}
@@ -545,11 +668,24 @@ export function AppShell() {
 				/>
 			</div>
 
+			{/* 四列网格中始终保留项目列，否则关闭项目栏时会话区会落进 0px 列。 */}
+			{!isNarrow && (projectColumn || <div aria-hidden="true" />)}
+
 			{/* 会话区 */}
 			<div className="pi-main flex min-h-0 min-w-0 flex-col">
 				{!currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
 						<Hero
+								draft={composerDrafts.current.get(heroDraftKey) ?? EMPTY_CHAT_DRAFT}
+								onDraftChange={saveHeroDraft}
+								onUploadError={(message) => failUpload(heroDraftKey, message)}
+								onUploadProgress={(delta) => trackUpload(heroDraftKey, delta)}
+								uploadFailure={uploadFailures[heroDraftKey]}
+								pendingUploadCount={uploadCounts[heroDraftKey] ?? 0}
+								pendingSend={pendingSends[heroDraftKey] ?? false}
+								onSendPendingChange={(pending) => trackSend(heroDraftKey, pending)}
+							commands={slashCommands}
+							onCommand={runSlashCommand}
 							cwd={heroCwd}
 							setCwd={setHeroCwd}
 							knownCwds={knownCwds}
@@ -592,26 +728,17 @@ export function AppShell() {
 									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
 										{title}
 									</span>
-									{/* 右侧详情栏（文件 / Git 页签）开关；轨迹页签由对话内工具行点击唤起 */}
+									{/* 项目生长入口；轨迹详情由对话内工具行点击唤起 */}
 									<button
 										type="button"
 										className="icon-btn"
-										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "files" ? "var(--dsw-active)" : undefined }}
-										title={t.filesPanel}
-										aria-label={t.filesPanel}
-										onClick={() => (detailsOpen && detailsTab === "files" ? setDetailsOpen(false) : openDetails("files"))}
+										style={{ width: 30, height: 30, background: projectOpen ? "var(--dsw-active)" : undefined }}
+										title={`${t.projectPanel} (Ctrl/⌘+Shift+E)`}
+										aria-label={t.projectPanel}
+										data-testid="project-toggle"
+										onClick={() => toggleProject()}
 									>
 										<IconFolderOpenOutline16 size={15} />
-									</button>
-									<button
-										type="button"
-										className="icon-btn"
-										style={{ width: 30, height: 30, background: detailsOpen && detailsTab === "git" ? "var(--dsw-active)" : undefined }}
-										title={t.gitPanel}
-										aria-label={t.gitPanel}
-										onClick={() => (detailsOpen && detailsTab === "git" ? setDetailsOpen(false) : openDetails("git"))}
-									>
-										<IconGitOutline16 size={15} />
 									</button>
 								</div>
 							{projectTrust?.required && !projectTrust.trusted && (
@@ -633,9 +760,7 @@ export function AppShell() {
 									data-active={tab === "traj"}
 									onClick={() => {
 										setTab("traj");
-										void sendCommand({ cmd: "prepare" }).then((result) => {
-											if (result.success) resync();
-										});
+										void sendCommand({ cmd: "prepare" });
 									}}
 								>
 									{t.tabTrajectory}
@@ -667,24 +792,19 @@ export function AppShell() {
 									key={currentId ?? "none"}
 									messages={state.messages}
 									tools={state.tools}
-									queue={snapshot?.queue ?? { steering: [], followUp: [] }}
 									contextFiles={snapshot?.contextResources ?? snapshot?.contextFiles ?? []}
 									isStreaming={isStreaming}
 									error={state.error}
 									connected={state.connected}
 									onClearError={clearError}
 									retryNotice={state.retryNotice}
+									compaction={state.compaction}
+									onClearCompaction={clearCompaction}
 									workingMessage={state.workingMessage}
 									stats={snapshot?.stats ?? null}
 									trajectory={snapshot?.trajectory ?? []}
 									cwd={panelCwd}
-									onOpenTrajectory={(toolCallId) => {
-										const entry = (snapshot?.trajectory ?? []).find((e) => e.toolCallId === toolCallId);
-										if (entry) {
-											setSelected(entry);
-											setTab("traj");
-										}
-									}}
+									onOpenTrajectory={openToolTrajectory}
 									onOpenFile={openInEditor}
 									onFork={handleFork}
 								/>
@@ -692,7 +812,15 @@ export function AppShell() {
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ChatInput
-											insert={composerInsert}
+											key={draftKey}
+												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
+												onDraftChange={saveSessionDraft}
+												onUploadError={(message) => failUpload(draftKey, message)}
+												onUploadProgress={(delta) => trackUpload(draftKey, delta)}
+												uploadFailure={uploadFailures[draftKey]}
+												pendingUploadCount={uploadCounts[draftKey] ?? 0}
+												pendingSend={pendingSends[draftKey] ?? false}
+												onSendPendingChange={(pending) => trackSend(draftKey, pending)}
 											isStreaming={isStreaming}
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
@@ -709,9 +837,9 @@ export function AppShell() {
 											commands={slashCommands}
 											onCommand={runSlashCommand}
 											onSend={sendPrompt}
-											onSteer={(text, images) => void sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
-											onFollowUp={(text, images) => void sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
-											onAbort={() => void sendCommand({ cmd: "abort" })}
+											onSteer={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
+											onFollowUp={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
+											onAbort={() => sendCommand({ cmd: "abort" })}
 											onSelectModel={(provider, id) => void sendCommand({ cmd: "setModel", provider, modelId: id })}
 											onSelectLevel={(level) =>
 												void sendCommand({ cmd: "setThinkingLevel", level }).then((r) => {
@@ -719,7 +847,7 @@ export function AppShell() {
 													if (r?.success && r.data?.clamped) setError(t.thinkingClamped.replace("{requested}", level).replace("{level}", String(r.data.thinkingLevel)));
 												})
 											}
-											onClearQueue={() => void sendCommand({ cmd: "clearQueue" })}
+											onClearQueue={() => sendCommand({ cmd: "clearQueue" })}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
 										{Object.keys(state.extensionStatuses).length > 0 && (
@@ -736,7 +864,10 @@ export function AppShell() {
 								<TrajectoryView
 									entries={snapshot?.trajectory ?? []}
 									selected={selected}
-									onSelect={setSelected}
+									onSelect={(entry) => {
+									setSelected(entry);
+									setGitDetailsOpen(false);
+									}}
 								/>
 							</div>
 						)}
@@ -744,8 +875,8 @@ export function AppShell() {
 				)}
 			</div>
 
-			{/* details 栏：文件 / Git 两页签共用 */}
-			{detailsOpen && (
+			{/* 轨迹或 Git 详情栏 */}
+			{(selected || gitDetailsOpen) && (
 				<div
 					className="flex min-h-0 flex-col overflow-hidden"
 					style={isNarrow ? {
@@ -757,40 +888,11 @@ export function AppShell() {
 						boxShadow: "var(--dsw-elevation-prominent)",
 					} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
 				>
-					<div className="hairline-b flex items-center gap-4 px-4 pt-2.5" style={{ flex: "none" }}>
-						{([
-							{ id: "files" as const, label: t.filesPanel },
-							{ id: "git" as const, label: t.gitPanel },
-						]).map((tabItem) => (
-							<button
-								key={tabItem.id}
-								className="tab-underline"
-								data-active={detailsTab === tabItem.id}
-								style={{ fontSize: 13 }}
-								onClick={() => setDetailsTab(tabItem.id)}
-							>
-								{tabItem.label}
-							</button>
-						))}
-					</div>
 					<div className="min-h-0 flex-1">
-						{detailsTab === "files" ? (
-							<FilesPanel
-								cwd={panelCwd}
-								refreshKey={panelRefreshKey}
-								changedPaths={changedPaths}
-								onReference={insertIntoComposer}
-								onOpenFile={openInEditor}
-								onClose={() => setDetailsOpen(false)}
-							/>
+						{selected ? (
+							<TrajInspector entry={selected} onClose={() => setSelected(null)} />
 						) : (
-							<GitPanel
-								cwd={panelCwd}
-								refreshKey={panelRefreshKey}
-								onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
-								onOpenFile={openInEditor}
-								onClose={() => setDetailsOpen(false)}
-							/>
+							<GitPanel cwd={panelCwd} refreshKey={panelRefreshKey} onClose={() => setGitDetailsOpen(false)} onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)} onOpenFile={openInEditor} />
 						)}
 					</div>
 				</div>
@@ -804,11 +906,37 @@ export function AppShell() {
 					onPointerDown={onDrag("sidebar")}
 				/>
 			)}
-			{!isNarrow && detailsOpen && (
+			{!isNarrow && (selected || gitDetailsOpen) && (
 				<div
 					className="fixed top-0 h-full w-2 cursor-col-resize"
 					style={{ left: `calc(100vw - ${detailsWidth}px - 4px)`, zIndex: 40 }}
 					onPointerDown={onDrag("details")}
+				/>
+			)}
+			{!isNarrow && projectOpen && (
+				<div
+					className="fixed top-0 h-full w-2 cursor-col-resize"
+					style={{ left: (sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth) + projectWidth - 4, zIndex: 40 }}
+					onPointerDown={onDrag("project")}
+				/>
+			)}
+			{isNarrow && projectOpen && (
+				<>
+					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleProject(false)} aria-label={t.close} />
+					{projectColumn}
+				</>
+			)}
+			{viewer.state.open && (
+				<FileViewer
+					state={viewer.state}
+					growth={growth}
+					cwd={panelCwd}
+					onClose={viewer.close}
+					onSelectTab={viewer.select}
+					onCloseTab={viewer.closeTab}
+					onOpen={viewer.open}
+					onReference={insertIntoComposer}
+					onOpenEditor={openInEditor}
 				/>
 			)}
 
@@ -822,6 +950,7 @@ export function AppShell() {
 					// 关闭时刷新全局模型目录，否则输入卡/新会话页的模型菜单停留在旧目录。
 					void refreshModels();
 				}}
+				onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
 				cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
 				toolPreset={state.toolPreset}
 				onToolPresetChange={setToolPreset}
@@ -865,6 +994,16 @@ function basename(p: string): string {
 }
 
 function Hero({
+	draft,
+	onDraftChange,
+	onUploadError,
+	onUploadProgress,
+	uploadFailure,
+	pendingUploadCount,
+	pendingSend,
+	onSendPendingChange,
+	commands,
+	onCommand,
 	cwd,
 	setCwd,
 	knownCwds,
@@ -881,11 +1020,21 @@ function Hero({
 	heroThinking,
 	onSelectHeroThinking,
 }: {
+	draft: ChatDraft;
+	onDraftChange: (update: ChatDraftUpdate) => void;
+	onUploadError: (message: string) => void;
+	onUploadProgress: (delta: 1 | -1) => void;
+	uploadFailure?: string;
+	pendingUploadCount: number;
+	pendingSend: boolean;
+	onSendPendingChange: (pending: boolean) => void;
+	commands: Array<{ name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }>;
+	onCommand: (name: string, args: string) => void;
 	cwd: string;
 	setCwd: (v: string) => void;
 	knownCwds: string[];
 	getWorkspaceName?: (cwd: string) => string;
-	onSend: (text: string, images: ImageAttachment[]) => void;
+	onSend: (text: string, images: ImageAttachment[]) => Promise<{ success: boolean }>;
 	models: ModelChoice[];
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
@@ -988,6 +1137,16 @@ function Hero({
 
 				{/* 输入卡 */}
 				<ChatInput
+						draft={draft}
+						onDraftChange={onDraftChange}
+						onUploadError={onUploadError}
+						onUploadProgress={onUploadProgress}
+						uploadFailure={uploadFailure}
+						pendingUploadCount={pendingUploadCount}
+						pendingSend={pendingSend}
+						onSendPendingChange={onSendPendingChange}
+					commands={commands}
+					onCommand={onCommand}
 					isStreaming={false}
 					contextPercent={null}
 					contextTokens={null}
@@ -1001,7 +1160,7 @@ function Hero({
 					authByProvider={authByProvider}
 					queue={{ steering: [], followUp: [] }}
 					onSend={onSend}
-					onSteer={() => {}}
+					onSteer={() => ({ success: false })}
 					onAbort={() => {}}
 					onSelectModel={onSelectHeroModel}
 					onSelectLevel={onSelectHeroThinking}

@@ -41,6 +41,7 @@
   ],
   "exclude": [
     "node_modules",
+    ".next-releases",
     "pi",
     "dsh",
     "bin"

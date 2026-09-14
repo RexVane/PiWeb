@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-releases/
 .next-dev/
 .next-dev-clean/
 .next-dev-webpack/
@@ -13,6 +14,8 @@ next-env.d.ts
 
 # local dev & plans
 .zcode/
+probe_tools.py
+probe_*.py
 .env
 .env*.local
 *.log

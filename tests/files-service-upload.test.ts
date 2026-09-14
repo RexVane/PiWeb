@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { saveUpload } from "../src/lib/files-service";
+import { saveUpload, saveUploadStream } from "../src/lib/files-service";
+import { POST } from "../src/app/api/files/route";
 
 /** 拖拽上传的限额与安全（dsh 语义：原样字节保存 + 路径引用） */
 describe("files-service saveUpload", () => {
@@ -32,6 +33,47 @@ describe("files-service saveUpload", () => {
 		expect(path.dirname(r.path)).toBe(path.join(tempDir, "web-uploads"));
 		const stored = await fs.readFile(r.path);
 		expect([...stored]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+	});
+
+	it("streams an upload without base64 and removes an empty partial file", async () => {
+		const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+		const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } });
+		const saved = await saveUploadStream("stream.zip", stream);
+		expect(saved.size).toBe(bytes.length);
+		expect([...await fs.readFile(saved.path)]).toEqual([...bytes]);
+		const empty = new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } });
+		await expect(saveUploadStream("empty-stream.zip", empty)).rejects.toThrow("empty upload");
+		expect((await fs.readdir(path.join(tempDir, "web-uploads"))).some((name) => name.endsWith("empty-stream.zip"))).toBe(false);
+	});
+
+	it("rejects truncated or surplus streams and removes their partial files", async () => {
+		const stream = () => new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } });
+		await expect(saveUploadStream("short.bin", stream(), 5)).rejects.toThrow("incomplete upload");
+		await expect(saveUploadStream("long.bin", stream(), 3)).rejects.toThrow("declared length");
+		expect(await fs.readdir(path.join(tempDir, "web-uploads"))).toEqual([]);
+	});
+
+	it("validates upload size headers before accepting a request", async () => {
+		for (const headers of [{}, { "x-upload-size": "-1" }, { "x-upload-size": "NaN" }, { "x-upload-size": String(101 * 1024 * 1024) }, { "x-upload-size": "4", "content-length": "5" }] satisfies Record<string, string>[]) {
+			const response = await POST(new Request("http://localhost/api/files?action=upload&name=invalid.bin", { method: "POST", headers: headers as Record<string, string>, body: "test" }));
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ success: false });
+		}
+		expect(await fs.readdir(tempDir)).toEqual([]);
+	});
+
+	it("accepts either an explicit file size or Content-Length and rejects truncated requests", async () => {
+		const variants: Record<string, string>[] = [{ "x-upload-size": "4" }, { "content-length": "4" }];
+		for (const headers of variants) {
+			const response = await POST(new Request("http://localhost/api/files?action=upload&name=complete.bin", { method: "POST", headers: headers as Record<string, string>, body: "test" }));
+			expect(response.status).toBe(200);
+			const result = await response.json();
+			expect(result).toMatchObject({ success: true, data: { size: 4 } });
+			expect(await fs.readFile(result.data.path, "utf8")).toBe("test");
+		}
+		const response = await POST(new Request("http://localhost/api/files?action=upload&name=truncated.bin", { method: "POST", headers: { "x-upload-size": "5" }, body: "test" }));
+		expect(response.status).toBe(400);
+		expect((await fs.readdir(path.join(tempDir, "web-uploads"))).some((name) => name.endsWith("truncated.bin"))).toBe(false);
 	});
 
 	it("sanitizes names: strips path components and control characters", async () => {

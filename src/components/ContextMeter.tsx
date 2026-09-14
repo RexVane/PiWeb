@@ -51,6 +51,7 @@ export function ContextMeter({
 	}, [open, source]);
 
 	const p = percent ?? 0;
+	const usageLabel = percent === null ? t.contextUnknown : `${Math.round(p)}% ${t.contextUsed}`;
 	const r = 5.5;
 	const c = 2 * Math.PI * r;
 	const shown = Math.max(0, Math.min(100, p));
@@ -69,7 +70,7 @@ export function ContextMeter({
 			<button
 				className="icon-btn"
 				style={{ width: 28, height: 28 }}
-				title={`${Math.round(p)}% ${t.contextUsed}`}
+				title={usageLabel}
 				onClick={() => setOpen((o) => !o)}
 			>
 				<svg width="14" height="14" viewBox="0 0 14 14">
@@ -91,10 +92,10 @@ export function ContextMeter({
 					style={{ fontSize: "var(--dsh-content-font-size-secondary)" }}
 				>
 					<div className="font-medium" style={{ color: "var(--dsw-label-primary)" }}>
-						{Math.round(p)}% {t.contextUsed}
+						{usageLabel}
 					</div>
 					<div style={{ color: "var(--dsw-label-tertiary)" }} className="mt-1">
-						~{fmtTok(used)} / {window_ > 0 ? fmtTok(window_) : "—"}
+						{tokens === null ? "—" : `~${fmtTok(used)}`} / {window_ > 0 ? fmtTok(window_) : "—"}
 					</div>
 
 					{/* 分段占用条（mac 磁盘存储条式多色分段） */}

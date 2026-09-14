@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLoopbackHostname, isSafeOrigin, validBasicAuthorization } from "../src/lib/auth";
+import { isLoopbackHostname, isSafeHost, isSafeOrigin, validBasicAuthorization } from "../src/lib/auth";
 
 describe("Basic authentication", () => {
 	it("accepts only the pi user with the configured password", () => {
@@ -31,5 +31,19 @@ describe("origin validation", () => {
 	it("rejects cross-origin browser mutations", () => {
 		const request = new Request("http://localhost:30141/api/test", { headers: { origin: "https://example.com" } });
 		expect(isSafeOrigin(request)).toBe(false);
+	});
+
+	it("does not trust a caller-supplied forwarded host", () => {
+		const request = new Request("http://localhost:30141/api/test", {
+			headers: { host: "localhost:30141", origin: "http://attacker.test:30141", "x-forwarded-host": "attacker.test:30141" },
+		});
+		expect(isSafeOrigin(request)).toBe(false);
+	});
+
+	it("rejects DNS-rebinding hostnames without a password", () => {
+		const rebound = new Request("http://attacker.test:30141/api/test", { headers: { host: "attacker.test:30141" } });
+		expect(isSafeHost(rebound, false)).toBe(false);
+		expect(isSafeHost(rebound, true)).toBe(true);
+		expect(isSafeHost(new Request("http://127.0.0.1:30141/api/test"), false)).toBe(true);
 	});
 });

@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 		const [packages, extensions] = await Promise.all([listPackages(cwd), listLoadedExtensions(cwd)]);
 		return NextResponse.json({ success: true, data: { packages, extensions } });
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: err instanceof BoundaryError ? 400 : 500 });
 	}
 }
 

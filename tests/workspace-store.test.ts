@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import {
 	addWorkspace,
 	archiveSession,
@@ -56,13 +58,14 @@ describe("PiWeb workspace registry", () => {
 		await setAlias(workspace, "Original");
 
 		// 同一目录的另一种大小写应更新同一个别名，而不是产生第二个键
-		await setAlias(path.join(tempDir, "casedir"), "Renamed");
+		const caseOnly = path.join(tempDir, process.platform === "win32" ? "casedir" : "CaseDir");
+		await setAlias(caseOnly, "Renamed");
 		const aliases = await getAliases();
 		expect(Object.keys(aliases)).toHaveLength(1);
 		expect(Object.values(aliases)).toEqual(["Renamed"]);
 
 		// 大小写不同的路径也能清除别名
-		await setAlias(path.join(tempDir, "CASEDIR"), "");
+		await setAlias(path.join(tempDir, process.platform === "win32" ? "CASEDIR" : "CaseDir"), "");
 		expect(await getAliases()).toEqual({});
 	});
 
@@ -93,11 +96,68 @@ describe("PiWeb workspace registry", () => {
 		expect(await getArchivedSessions()).toEqual([]);
 	});
 
+	it("keeps the previous registry intact when atomic replacement fails", async () => {
+		const first = path.join(tempDir, "first");
+		await addWorkspace(first);
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		const original = await fs.readFile(registryPath, "utf8");
+		const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("replacement denied"), { code: "EACCES" }));
+		try {
+			await expect(addWorkspace(path.join(tempDir, "second"))).rejects.toThrow("replacement denied");
+		} finally {
+			rename.mockRestore();
+		}
+		expect(await fs.readFile(registryPath, "utf8")).toBe(original);
+		expect((await fs.readdir(tempDir)).filter((name) => name.endsWith(".tmp") || name.endsWith(".lock"))).toEqual([]);
+	});
+
+	it("reads the latest registry after another process releases its lock", async () => {
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		await fs.writeFile(registryPath, JSON.stringify({ workspaces: [], aliases: {} }));
+		const external = path.join(tempDir, "external");
+		const local = path.join(tempDir, "local");
+		const script = `import fs from "node:fs/promises";
+import { createRequire } from "node:module";
+const require = createRequire(process.cwd() + "/package.json");
+const lockfile = require("proper-lockfile");
+const file = process.argv[1];
+const release = await lockfile.lock(file, { realpath: false });
+process.once("message", async () => {
+  const data = JSON.parse(await fs.readFile(file, "utf8"));
+  data.workspaces.push(process.argv[2]);
+  await fs.writeFile(file, JSON.stringify(data));
+  await release();
+  process.disconnect();
+});
+process.send("locked");`;
+		const child = spawn(process.execPath, ["--input-type=module", "-e", script, registryPath, external], {
+			cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true,
+		});
+		const exited = once(child, "exit");
+		let pending: Promise<unknown> | undefined;
+		try {
+			await once(child, "message");
+			let completed = false;
+			pending = addWorkspace(local).finally(() => { completed = true; });
+			await new Promise((resolve) => setTimeout(resolve, 60));
+			expect(completed).toBe(false);
+			child.send("release");
+			await pending;
+			expect((await exited)[0]).toBe(0);
+			expect(await listAdded()).toEqual([external, local]);
+		} finally {
+			if (child.exitCode === null) child.kill();
+			await exited;
+			await pending?.catch(() => undefined);
+		}
+	}, 15_000);
+
 	it("does not overwrite a malformed workspace registry", async () => {
 		const registryPath = path.join(tempDir, "web-workspaces.json");
 		await fs.writeFile(registryPath, "{malformed", "utf8");
 
 		await expect(listAdded()).rejects.toThrow();
+		await expect(addWorkspace(path.join(tempDir, "new-workspace"))).rejects.toThrow();
 		expect(await fs.readFile(registryPath, "utf8")).toBe("{malformed");
 	});
 });

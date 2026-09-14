@@ -5,6 +5,7 @@
  * 五节：General / Models / 安全 / 技能 / 插件。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/enter-behavior";
 import {
 	IconAgentPresetOutline16,
 	IconChevronDown14,
@@ -26,15 +27,14 @@ import { ProviderBrand } from "@/components/ProviderBrand";
 import {
 	ModelCatalog,
 	ProviderSetupModal,
-	serializeModelDraft,
-	type ModelDraft,
-	validateModelDrafts,
 	type BuiltinProviderSetup,
 	type CustomProviderSetup,
 } from "@/components/ProviderSetupModal";
 import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
-import type { ProviderView } from "@/lib/models-service";
+import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { customApiOptions } from "@/lib/provider-display";
+import type { ProviderUsage, ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
 
 type Section = "general" | "models" | "tools" | "skills" | "plugins";
@@ -47,6 +47,7 @@ export function SettingsPanel({
 	onToolPresetChange,
 	tools,
 	onSetTools,
+	onOpenFileContent,
 }: {
 	open: boolean;
 	onClose: () => void;
@@ -57,6 +58,8 @@ export function SettingsPanel({
 	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
 	/** 逐个启停当前会话的工具（写回 setActiveTools） */
 	onSetTools?: (names: string[]) => void;
+	/** 在大窗口查看器中打开内容已就绪的文件（技能文档等） */
+	onOpenFileContent?: (path: string, content: string) => void;
 }) {
 	const { t, lang, setLang } = useI18n();
 	const [section, setSection] = useState<Section>("general");
@@ -141,7 +144,7 @@ export function SettingsPanel({
 					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
 						{section === "general" && <GeneralSection lang={lang} setLang={setLang} />}
 						{section === "models" && <ModelsSection />}
-						{section === "skills" && <SkillsSection cwd={cwd} />}
+						{section === "skills" && <SkillsSection cwd={cwd} onOpenFileContent={onOpenFileContent} />}
 						{section === "tools" && <ToolsSection toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} />}
 						{section === "plugins" && <PluginsSection cwd={cwd} />}
 					</div>
@@ -165,9 +168,53 @@ function GeneralSection({
 	const [themeMode, setThemeMode] = useState<ThemeMode>("system");
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
-	const [enterBehavior, setEnterBehavior] = useState<"queue" | "steer">("queue");
+	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
 	const [trust, setTrust] = useState<"ask" | "always" | "never">("ask");
+	const [trustLoaded, setTrustLoaded] = useState(false);
 	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
+	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
+	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
+	const [settingsLoading, setSettingsLoading] = useState(true);
+	const [settingsSaving, setSettingsSaving] = useState(false);
+	const [settingsError, setSettingsError] = useState<"load" | "save" | null>(null);
+	const [numberDrafts, setNumberDrafts] = useState({ reserveTokens: "", keepRecentTokens: "", maxRetries: "", baseDelayMs: "" });
+
+	const loadRemoteSettings = async () => {
+		setSettingsLoading(true);
+		setSettingsError(null);
+		setTrustLoaded(false);
+		const request = async (url: string) => {
+			const response = await fetch(url);
+			const json = await response.json();
+			if (!response.ok || !json.success) throw new Error(json.error || `request failed (${response.status})`);
+			return json.data;
+		};
+		const [sec, ps, health, auth] = await Promise.allSettled([
+			request("/api/security"),
+			request("/api/pi-settings"),
+			request("/api/version"),
+			request("/api/web-auth"),
+		]);
+		if (sec.status === "fulfilled") {
+			setTrust(sec.value.defaultProjectTrust);
+			setTrustLoaded(true);
+		}
+		if (ps.status === "fulfilled") {
+			setPiSettings(ps.value);
+			setNumberDrafts({
+				reserveTokens: String(ps.value.compaction.reserveTokens),
+				keepRecentTokens: String(ps.value.compaction.keepRecentTokens),
+				maxRetries: String(ps.value.retry.maxRetries),
+				baseDelayMs: String(ps.value.retry.baseDelayMs),
+			});
+		} else setPiSettings(null);
+		if (health.status === "fulfilled" && health.value?.piWeb) setVersions({ piWeb: health.value.piWeb, piEngine: health.value.piEngine });
+		else setVersions(null);
+		if (auth.status === "fulfilled" && typeof auth.value?.enabled === "boolean") setWebAuth({ enabled: auth.value.enabled, authenticated: auth.value.authenticated === true });
+		else setWebAuth(null);
+		if ([sec, ps, health].some((item) => item.status === "rejected")) setSettingsError("load");
+		setSettingsLoading(false);
+	};
 
 	useEffect(() => {
 		setTheme(loadPebrelTheme());
@@ -176,16 +223,8 @@ function GeneralSection({
 		if (!Number.isNaN(fs)) setFontSize(fs);
 		const chatFs = parseInt(localStorage.getItem("piweb.chatFontSize") ?? "14", 10);
 		if (!Number.isNaN(chatFs)) setChatFontSize(chatFs);
-		const eb = localStorage.getItem("piweb.enterBehavior");
-		if (eb === "steer" || eb === "queue") setEnterBehavior(eb);
-		void (async () => {
-			const r = await fetch("/api/security");
-			const j = await r.json();
-			if (j.success) setTrust(j.data.defaultProjectTrust);
-			const r2 = await fetch("/api/pi-settings");
-			const j2 = await r2.json();
-			if (j2.success) setPiSettings(j2.data);
-		})();
+		setEnterBehavior(getEnterBehavior());
+		void loadRemoteSettings();
 	}, []);
 
 	const pickTheme = (p: PebrelTheme) => {
@@ -216,28 +255,77 @@ function GeneralSection({
 		document.documentElement.style.setProperty("--piweb-chat-font-size", `${v}px`);
 	};
 
-	const pickEnter = (v: "queue" | "steer") => {
+	const pickEnter = (v: EnterBehavior) => {
 		setEnterBehavior(v);
-		localStorage.setItem("piweb.enterBehavior", v);
+		saveEnterBehavior(v);
 	};
 
 	const patchPiSettings = async (patch: Record<string, unknown>) => {
-		const r = await fetch("/api/pi-settings", {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(patch),
-		});
-		const j = await r.json();
-		if (j.success) setPiSettings(j.data);
+		if (!piSettings || settingsSaving) return false;
+		setSettingsSaving(true);
+		setSettingsError(null);
+		try {
+			const r = await fetch("/api/pi-settings", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(patch),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || "save failed");
+			setPiSettings(j.data);
+			return true;
+		} catch {
+			setSettingsError("save");
+			return false;
+		} finally {
+			setSettingsSaving(false);
+		}
 	};
 
+	const commitNumber = async (section: "compaction" | "retry", field: "reserveTokens" | "keepRecentTokens" | "maxRetries" | "baseDelayMs") => {
+		if (!piSettings) return;
+		const raw = numberDrafts[field].trim();
+		const value = Number(raw);
+		if (!raw || !Number.isSafeInteger(value) || value < 0 || value > 1_000_000_000) {
+			setSettingsError("save");
+			return;
+		}
+		if (value === (piSettings[section] as unknown as Record<string, number>)[field]) return;
+		await patchPiSettings({ [section]: { [field]: value } });
+	};
+	const numberInput = (section: "compaction" | "retry", field: "reserveTokens" | "keepRecentTokens" | "maxRetries" | "baseDelayMs", title: string) => (
+		<input
+			type="number"
+			min={0}
+			value={numberDrafts[field]}
+			disabled={!piSettings || settingsLoading || settingsSaving}
+			onChange={(event) => setNumberDrafts((previous) => ({ ...previous, [field]: event.target.value }))}
+			onBlur={() => void commitNumber(section, field)}
+			onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+			className="rounded-lg px-2 py-1"
+			title={title}
+			style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }}
+		/>
+	);
+
 	const pickTrust = async (v: "ask" | "always" | "never") => {
-		setTrust(v);
-		await fetch("/api/security", {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ defaultProjectTrust: v }),
-		});
+		if (!trustLoaded || settingsSaving) return;
+		setSettingsSaving(true);
+		setSettingsError(null);
+		try {
+			const response = await fetch("/api/security", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ defaultProjectTrust: v }),
+			});
+			const result = await response.json();
+			if (!response.ok || !result.success) throw new Error(result.error || "save failed");
+			setTrust(v);
+		} catch {
+			setSettingsError("save");
+		} finally {
+			setSettingsSaving(false);
+		}
 	};
 
 	const themes: { id: PebrelTheme; label: string; light: string; dark: string; accent: string }[] = [
@@ -251,6 +339,12 @@ function GeneralSection({
 
 	return (
 		<div className="flex flex-col gap-6">
+			{(settingsLoading || settingsError) && (
+				<div role={settingsError ? "alert" : "status"} className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: "var(--dsw-hover)", color: settingsError ? "var(--dsw-danger)" : "var(--dsw-label-secondary)" }}>
+					<span className="flex-1">{settingsError === "load" ? t.settingsLoadFailed : settingsError === "save" ? t.settingsSaveFailed : t.settingsLoading}</span>
+					{settingsError === "load" && <button type="button" className="pw-chip" onClick={() => void loadRemoteSettings()}>{t.settingsRetry}</button>}
+				</div>
+			)}
 			<Row title={t.language}>
 				<SelectOption
 				value={lang}
@@ -330,33 +424,34 @@ function GeneralSection({
 				<SelectOption
 				value={enterBehavior}
 				options={[
-					{ value: "queue", label: t.enterQueue },
 					{ value: "steer", label: t.enterSteer },
+					{ value: "queue", label: t.enterQueue },
 				]}
-				onChange={(v) => pickEnter(v as "queue" | "steer")}
+				onChange={(v) => pickEnter(v as EnterBehavior)}
 			/>
 			</Row>
 			<Row title={t.autoCompact} desc={t.autoCompactDesc}>
 				<div className="flex items-center gap-2">
-					<button className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.compaction.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.compaction.enabled ?? true} onClick={() => patchPiSettings({ compaction: { enabled: !(piSettings?.compaction.enabled ?? true) } })}>
+					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.compaction.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.compaction.enabled ?? false} onClick={() => void patchPiSettings({ compaction: { enabled: !piSettings?.compaction.enabled } })}>
 						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.compaction.enabled ? 18 : 2 }} />
 					</button>
-					<input type="number" value={piSettings?.compaction.reserveTokens ?? 16384} onChange={(e) => patchPiSettings({ compaction: { reserveTokens: Number(e.target.value) || 0 } })} className="rounded-lg px-2 py-1" title={t.reserveTokens} style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }} />
-					<input type="number" value={piSettings?.compaction.keepRecentTokens ?? 20000} onChange={(e) => patchPiSettings({ compaction: { keepRecentTokens: Number(e.target.value) || 0 } })} className="rounded-lg px-2 py-1" title={t.keepRecentTokens} style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }} />
+					{numberInput("compaction", "reserveTokens", t.reserveTokens)}
+					{numberInput("compaction", "keepRecentTokens", t.keepRecentTokens)}
 				</div>
 			</Row>
 			<Row title={t.autoRetry} desc={t.autoRetryDesc}>
 				<div className="flex items-center gap-2">
-					<button className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.retry.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.retry.enabled ?? true} onClick={() => patchPiSettings({ retry: { enabled: !(piSettings?.retry.enabled ?? true) } })}>
+					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.retry.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.retry.enabled ?? false} onClick={() => void patchPiSettings({ retry: { enabled: !piSettings?.retry.enabled } })}>
 						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.retry.enabled ? 18 : 2 }} />
 					</button>
-					<input type="number" value={piSettings?.retry.maxRetries ?? 3} onChange={(e) => patchPiSettings({ retry: { maxRetries: Number(e.target.value) || 0 } })} className="rounded-lg px-2 py-1" title={t.maxRetries} style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }} />
-					<input type="number" value={piSettings?.retry.baseDelayMs ?? 2000} onChange={(e) => patchPiSettings({ retry: { baseDelayMs: Number(e.target.value) || 0 } })} className="rounded-lg px-2 py-1" title={t.baseDelayMs} style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }} />
+					{numberInput("retry", "maxRetries", t.maxRetries)}
+					{numberInput("retry", "baseDelayMs", t.baseDelayMs)}
 				</div>
 			</Row>
 			<Row title={t.securityTrust} desc={t.securityTrustDesc}>
 				<SelectOption
 				value={trust}
+				disabled={!trustLoaded || settingsLoading || settingsSaving}
 				options={[
 					{ value: "ask", label: t.trustAsk },
 					{ value: "always", label: t.trustAlways },
@@ -365,7 +460,133 @@ function GeneralSection({
 				onChange={(v) => pickTrust(v as "ask" | "always" | "never")}
 			/>
 			</Row>
+			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
+				<div className="flex items-center gap-2.5">
+					<VersionLink href="https://github.com/RexVane/PiWeb" value={versions?.piWeb} />
+					<UpdateControl target="piweb" />
+				</div>
+			</Row>
+			<Row title={t.versionPi} desc={t.versionPiDesc}>
+				<div className="flex items-center gap-2.5">
+					<VersionLink href="https://github.com/earendil-works/pi" value={versions?.piEngine} />
+					<UpdateControl target="pi" />
+				</div>
+			</Row>
+			{webAuth?.enabled ? (
+				<Row title={t.webAuth} desc={t.webAuthOn}>
+					<button
+						className="btn-outline"
+						style={{ height: 30, padding: "0 14px", fontSize: 12.5 }}
+						onClick={async () => {
+							await fetch("/api/web-auth", { method: "DELETE" }).catch(() => {});
+							window.location.href = "/login";
+						}}
+					>
+						{t.logout}
+					</button>
+				</Row>
+			) : null}
 		</div>
+	);
+}
+
+/** 版本号文本链接：等宽字体，悬停变主题色（新窗口打开对应仓库） */
+function VersionLink({ href, value }: { href: string; value?: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--dsw-label-secondary)", textDecoration: "none" }}
+			onMouseEnter={(e) => (e.currentTarget.style.color = "var(--dsw-accent)")}
+			onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dsw-label-secondary)")}
+		>
+			{value ?? "—"}
+		</a>
+	);
+}
+
+type UpdatePhase = "idle" | "checking" | "available" | "updating" | "latest" | "updated" | "error";
+
+/** 检查更新 / 更新控件：piweb 走 git pull + npm install，pi 走 npm install @latest（服务端固定参数） */
+function UpdateControl({ target }: { target: "piweb" | "pi" }) {
+	const { t } = useI18n();
+	const [phase, setPhase] = useState<UpdatePhase>("idle");
+	const [latest, setLatest] = useState("");
+	const [error, setError] = useState("");
+	const busy = phase === "checking" || phase === "updating";
+
+	const post = async (action: "check" | "update") => {
+		const r = await fetch("/api/update", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ target, action }),
+		});
+		return r.json();
+	};
+
+	const check = async () => {
+		setPhase("checking");
+		setError("");
+		try {
+			const j = await post("check");
+			if (!j.success) throw new Error(j.error);
+			if (j.data.canUpdate) {
+				setLatest(j.data.latest);
+				setPhase("available");
+			} else {
+				setPhase("latest");
+			}
+		} catch (e: any) {
+			setError(String(e?.message ?? e));
+			setPhase("error");
+		}
+	};
+
+	const run = async () => {
+		setPhase("updating");
+		try {
+			const j = await post("update");
+			if (!j.success) throw new Error(j.error);
+			setLatest(j.data.version ?? latest);
+			setPhase("updated");
+		} catch (e: any) {
+			setError(String(e?.message ?? e));
+			setPhase("error");
+		}
+	};
+
+	if (phase === "idle" || phase === "latest" || phase === "error") {
+		const label = phase === "latest" ? t.upToDate : phase === "error" ? t.updateFailed : t.checkUpdate;
+		const color = phase === "latest" ? "var(--dsw-label-tertiary)" : phase === "error" ? "var(--dsw-danger)" : "var(--dsw-label-primary)";
+		return (
+			<button
+				type="button"
+				className="btn-outline"
+				style={{ height: 26, padding: "0 10px", fontSize: 12, color }}
+				title={error || undefined}
+				disabled={busy}
+				onClick={() => void check()}
+			>
+				{label}
+			</button>
+		);
+	}
+	if (phase === "available") {
+		return (
+			<button type="button" className="btn-primary-white" style={{ height: 26, padding: "0 12px", fontSize: 12 }} onClick={() => void run()}>
+				{t.updateTo.replace("{v}", latest)}
+			</button>
+		);
+	}
+	if (phase === "updated") {
+		return <span style={{ fontSize: 12, color: "var(--dsw-success)", maxWidth: 260, textAlign: "right" }}>{t.updatedTo.replace("{v}", latest)}</span>;
+	}
+	return (
+		<span className="flex items-center gap-1.5" style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>
+			<span className="h-3 w-3 flex-none animate-spin rounded-full border-2 border-current border-t-transparent" />
+			{phase === "updating" ? t.updatingNow : t.checkingUpdate}
+		</span>
 	);
 }
 
@@ -375,11 +596,13 @@ function SelectOption({
 	options,
 	onChange,
 	width,
+	disabled,
 }: {
 	value: string;
 	options: { value: string; label: string }[];
 	onChange: (v: string) => void;
 	width?: number;
+	disabled?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -391,16 +614,19 @@ function SelectOption({
 		document.addEventListener("mousedown", h);
 		return () => document.removeEventListener("mousedown", h);
 	}, [open]);
+	useEffect(() => {
+		if (disabled) setOpen(false);
+	}, [disabled]);
 	const current = options.find((o) => o.value === value);
 	return (
 		<div ref={ref} className="relative">
-			<button className="select-chip" data-open={open} onClick={() => setOpen((o) => !o)}>
+			<button className="select-chip" data-open={open} disabled={disabled} onClick={() => setOpen((o) => !o)}>
 				{current?.label ?? value}
 				<span className="chevron">
 					<IconChevronDown14 size={14} />
 				</span>
 			</button>
-			{open && (
+			{open && !disabled && (
 				<div
 					// left-0：根容器在表单里占满整行宽，right-0 会把弹层甩到行右缘（远离 chip）；
 					// chip 恒在容器左缘，左对齐两种用法（Row 的 flex-none / Field 的整行）都正确
@@ -515,7 +741,8 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 function ModelsSection() {
 	const { t } = useI18n();
 	const [providers, setProviders] = useState<ProviderView[]>([]);
-	const [custom, setCustom] = useState<{ providers: Record<string, any> }>({ providers: {} });
+	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
+	const [customRevision, setCustomRevision] = useState<string | null>(null);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
 	const [editing, setEditing] = useState<string | null>(null);
 	const [keyDraft, setKeyDraft] = useState("");
@@ -532,22 +759,75 @@ function ModelsSection() {
 	const [editAdvanced, setEditAdvanced] = useState(false);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
 	const [oauthProvider, setOauthProvider] = useState<string | null>(null);
-	const [oauthPrompt, setOauthPrompt] = useState<{ type: string; message: string; placeholder?: string } | null>(null);
+	const [oauthPrompt, setOauthPrompt] = useState<{ type: string; message: string; placeholder?: string; options?: Array<{ label: string; value: string }> } | null>(null);
 	const [oauthLog, setOauthLog] = useState<string[]>([]);
 	const [oauthInput, setOauthInput] = useState("");
 	const [oauthDone, setOauthDone] = useState<{ ok: boolean; msg: string } | null>(null);
+	const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
+
+	// 设备码/授权链接流程（xAI/Codex/Copilot/Kimi 发 device_code；Anthropic/OpenRouter 发 auth_url）：
+	// SDK 经 notify 发 JSON 事件，解析出授权链接（设备码流程附用户码）
+	const oauthDeviceCode = useMemo(() => {
+		for (let i = oauthLog.length - 1; i >= 0; i--) {
+			const line = oauthLog[i];
+			if (!line.startsWith("{")) continue;
+			try {
+				const parsed = JSON.parse(line) as { type?: string; userCode?: string; verificationUri?: string; url?: string; instructions?: string };
+				if (parsed.type === "device_code" && typeof parsed.verificationUri === "string") {
+					return { userCode: typeof parsed.userCode === "string" ? parsed.userCode : "", verificationUri: parsed.verificationUri, instructions: "" };
+				}
+				if (parsed.type === "auth_url" && typeof parsed.url === "string") {
+					return { userCode: "", verificationUri: parsed.url, instructions: typeof parsed.instructions === "string" ? parsed.instructions : "" };
+				}
+			} catch {
+				/* 非 JSON 的 notify 行忽略 */
+			}
+		}
+		return null;
+	}, [oauthLog]);
+
+	// 拿到设备码后自动打开授权页一次；被弹窗拦截时仍有可见链接可点
+	const openedDeviceUriRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!oauthDeviceCode?.verificationUri || openedDeviceUriRef.current === oauthDeviceCode.verificationUri) return;
+		openedDeviceUriRef.current = oauthDeviceCode.verificationUri;
+		window.open(oauthDeviceCode.verificationUri, "_blank", "noopener");
+	}, [oauthDeviceCode]);
+
+	const copyDeviceCode = () => {
+		if (!oauthDeviceCode?.userCode) return;
+		const text = oauthDeviceCode.userCode;
+		const done = () => {
+			setOauthCodeCopied(true);
+			setTimeout(() => setOauthCodeCopied(false), 2000);
+		};
+		void navigator.clipboard.writeText(text).then(done).catch(() => {
+			const area = document.createElement("textarea");
+			area.value = text;
+			document.body.appendChild(area);
+			area.select();
+			document.execCommand("copy");
+			area.remove();
+			done();
+		});
+	};
 
 	const load = useCallback(async () => {
-		const r = await fetch("/api/models?custom=1");
-		const j = await r.json();
-		if (j.success) {
+		try {
+			const r = await fetch("/api/models?custom=1");
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || "failed to load model configuration");
+			const parsed = JSON.parse(j.data.customProviders?.content ?? "{}");
+			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed.providers !== undefined && (!parsed.providers || typeof parsed.providers !== "object" || Array.isArray(parsed.providers)))) {
+				throw new Error("invalid model configuration");
+			}
 			setProviders(j.data.providers);
 			setSecretProviderIds(new Set(j.data.customProviders?.secretProviderIds ?? []));
-			try {
-				setCustom(JSON.parse(j.data.customProviders?.content ?? "{}"));
-			} catch {
-				setCustom({ providers: {} });
-			}
+			setCustom({ ...parsed, providers: parsed.providers ?? {} });
+			setCustomRevision(typeof j.data.customProviders?.revision === "string" ? j.data.customProviders.revision : null);
+		} catch (error) {
+			setCustomRevision(null);
+			setToast({ ok: false, msg: error instanceof Error ? error.message : "failed to load model configuration" });
 		}
 	}, []);
 
@@ -559,24 +839,51 @@ function ModelsSection() {
 	useEffect(() => {
 		if (!oauthProvider) return;
 		let alive = true;
+		let finished = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		const poll = async () => {
-			const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "loginState", providerId: oauthProvider }) });
-			const j = await r.json();
-			if (!alive || !j.success) return;
-			setOauthPrompt(j.data.prompt);
-			setOauthLog(j.data.notifyLog ?? []);
-			if (j.data.done) {
-				setOauthDone({ ok: !j.data.error, msg: j.data.error ?? (lang_or_default(j)) });
-				if (!j.data.error) void load();
+			try {
+				const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "loginState", providerId: oauthProvider }) });
+				const j = await r.json();
+				if (!alive || !j.success) return;
+				setOauthPrompt(j.data.prompt);
+				setOauthLog(j.data.notifyLog ?? []);
+				if (j.data.done) {
+					finished = true;
+					setOauthDone({ ok: !j.data.error, msg: j.data.error ?? (lang_or_default(j)) });
+					if (!j.data.error) void load();
+				}
+			} catch {
+				// 短暂断线后继续轮询，不能留下未处理的 Promise 拒绝。
+			} finally {
+				if (alive && !finished) timer = setTimeout(poll, 1500);
 			}
 		};
 		void poll();
-		const t2 = setInterval(poll, 1500);
-		return () => { alive = false; clearInterval(t2); };
+		return () => { alive = false; if (timer) clearTimeout(timer); };
 		function lang_or_default(j: any) {
 			return oauthProvider + " ✓";
 		}
 	}, [oauthProvider, load]);
+
+	// xAI 订阅配额（x-ratelimit-* 响应头；后端 5 分钟缓存，force 跳过）
+	const [xaiUsage, setXaiUsage] = useState<ProviderUsage | null>(null);
+	const [usageBusy, setUsageBusy] = useState(false);
+	const [usageError, setUsageError] = useState(false);
+	const fetchUsage = useCallback(async (force: boolean) => {
+		setUsageBusy(true);
+		setUsageError(false);
+		try {
+			const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "providerUsage", providerId: "xai", force }) });
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || "usage probe failed");
+			setXaiUsage(j.data.usage ?? null);
+		} catch {
+			setUsageError(true);
+		} finally {
+			setUsageBusy(false);
+		}
+	}, []);
 
 	const notify = (ok: boolean, msg?: string) => {
 		setToast({ ok, msg: msg ?? (ok ? t.toastSaved : t.toastError) });
@@ -584,29 +891,61 @@ function ModelsSection() {
 	};
 
 	const request = async (body: Record<string, unknown>) => {
-		const r = await fetch("/api/models", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-		});
-		return r.json();
+		try {
+			const r = await fetch("/api/models", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
+			const result = await r.json();
+			return r.ok ? result : { ...result, success: false, error: result.error || `request failed (${r.status})` };
+		} catch (error) {
+			return { success: false, error: error instanceof Error ? error.message : t.toastError };
+		}
 	};
 
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
 		notify(j.success, j.success && j.data?.requiresSessionReopen ? t.modelConfigReopen : j.error);
-		if (j.success) void load();
+		if (j.success) await load();
 		return j;
+	};
+
+	const answerOAuth = async (value: string) => {
+		if (!oauthProvider) return;
+		try {
+			const response = await request({ action: "loginAnswer", providerId: oauthProvider, text: value });
+			if (!response.success || response.data?.delivered !== true) throw new Error(response.error || t.toastError);
+			setOauthInput("");
+		} catch (error) {
+			notify(false, error instanceof Error ? error.message : t.toastError);
+		}
+	};
+
+	const cancelOAuth = async () => {
+		if (!oauthProvider) return;
+		try {
+			const response = await request({ action: "loginCancel", providerId: oauthProvider });
+			if (!response.success) throw new Error(response.error || t.toastError);
+			setOauthProvider(null);
+		} catch (error) {
+			notify(false, error instanceof Error ? error.message : t.toastError);
+		}
 	};
 
 	const customIds = new Set(Object.keys(custom.providers ?? {}));
 	// 显示为卡片的 provider：已配置认证 或 自定义
-	const shown = providers.filter((p) => p.authReady || customIds.has(p.id));
+	const shown = providers.filter((p) => p.authReady || p.authConfigured || p.keyManaged || customIds.has(p.id));
 	// 添加提供方下拉：内置目录里未显示的
 	const addable = providers.filter((p) => p.builtIn && !shown.some((s) => s.id === p.id));
 
 	const saveCustom = async (content: Record<string, any>) => {
-		return call({ action: "saveCustomProviders", content: JSON.stringify({ providers: content }, null, 2) });
+		if (customRevision === null) {
+			const result = { success: false, error: "Reload model configuration before saving." };
+			notify(false, result.error);
+			return result;
+		}
+		return call({ action: "saveCustomProviders", revision: customRevision, content: JSON.stringify({ ...custom, providers: content }, null, 2) });
 	};
 
 	const providerName = (id: string) => providers.find((p) => p.id === id)?.name ?? id;
@@ -627,27 +966,20 @@ function ModelsSection() {
 		setEditBusy(false);
 		setEditAdvanced(false);
 		const override = custom.providers[id];
-		if (customIds.has(id)) {
+		// 与卡片渲染的 isCustom 同口径：内置 provider 即使有 models.json 覆盖层也走内置编辑分支，
+		// 否则 OAuth 后添加的内置提供商会填错状态、编辑时模型列表显示为空
+		const isCustomEntry = customIds.has(id) && !providers.find((p) => p.id === id)?.builtIn;
+		if (isCustomEntry) {
 			setCId(id);
 			setCBaseUrl(override?.baseUrl ?? "");
 			setCApi(override?.api ?? "openai-completions");
 			setCKey("");
 			setCName(typeof override?.name === "string" ? override.name : "");
-			setCModels((override?.models ?? []).map((m: any) => ({
-				id: typeof m === "string" ? m : String(m?.id ?? ""),
-				name: typeof m?.name === "string" ? m.name : "",
-				...(Number.isFinite(m?.contextWindow) ? { contextWindow: m.contextWindow } : {}),
-				...(Number.isFinite(m?.maxTokens) ? { maxTokens: m.maxTokens } : {}),
-			})));
+			setCModels((override?.models ?? []).map(modelDraftFromConfig));
 		} else {
 			// 内置 provider：从 models.json 覆盖层初始化（若有）
 			setBBaseUrl(typeof override?.baseUrl === "string" ? override.baseUrl : "");
-			setBModels((override?.models ?? []).map((m: any) => ({
-				id: typeof m === "string" ? m : String(m?.id ?? ""),
-				name: typeof m?.name === "string" ? m.name : "",
-				...(Number.isFinite(m?.contextWindow) ? { contextWindow: m.contextWindow } : {}),
-				...(Number.isFinite(m?.maxTokens) ? { maxTokens: m.maxTokens } : {}),
-			})));
+			setBModels((override?.models ?? []).map(modelDraftFromConfig));
 		}
 	};
 
@@ -661,21 +993,13 @@ function ModelsSection() {
 			const previousId = editing ?? cId.trim();
 			const previous = next[previousId] ?? {};
 			if (previousId !== cId.trim()) delete next[previousId];
-			const trimmed = cModels
-				.map((model) => ({
-					id: model.id.trim(),
-					name: model.name.trim(),
-					...(Number.isFinite(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
-					...(Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
-				}))
-				.filter((model) => model.id);
-			next[cId.trim()] = {
-				...(cName.trim() || previous.name ? { name: cName.trim() || previous.name } : {}),
-				baseUrl: cBaseUrl.trim(),
+			next[cId.trim()] = serializeProviderDraft(previous, {
+				name: cName,
+				baseUrl: cBaseUrl,
 				api: cApi,
-				...(cKey.trim() ? { apiKey: cKey.trim() } : {}),
-				models: trimmed.map(serializeModelDraft),
-			};
+				apiKey: cKey,
+				models: cModels,
+			});
 			const j = await saveCustom(next);
 			if (j.success) setEditing(null);
 		} finally {
@@ -691,22 +1015,10 @@ function ModelsSection() {
 		setEditBusy(true);
 		try {
 			const next = { ...custom.providers };
-			const config: Record<string, unknown> = {};
-			if (bBaseUrl.trim()) config.baseUrl = bBaseUrl.trim();
-			if (bModels.length) {
-				config.api = provider.apis[0] ?? "openai-completions";
-				config.models = bModels
-					.map((model) => ({
-						id: model.id.trim(),
-						name: model.name.trim(),
-						...(Number.isFinite(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
-						...(Number.isFinite(model.maxTokens) ? { maxTokens: model.maxTokens } : {}),
-					}))
-					.filter((model) => model.id)
-					.map(serializeModelDraft);
-			}
-			if (Object.keys(config).length) next[provider.id] = { ...(next[provider.id] ?? {}), ...config };
-			else delete next[provider.id];
+			next[provider.id] = serializeProviderDraft(next[provider.id] ?? {}, {
+				baseUrl: bBaseUrl,
+				models: bModels,
+			}, provider.apis[0] ?? "openai-completions");
 			const j = await saveCustom(next);
 			if (j.success && keyDraft.trim()) {
 				void call({ action: "setKey", providerId: provider.id, apiKey: keyDraft.trim() });
@@ -720,6 +1032,7 @@ function ModelsSection() {
 	};
 
 	const deleteCustom = async (id: string) => {
+		if (!window.confirm(t.confirmRemoveProvider.replace("{name}", providerName(id)))) return;
 		const next = { ...custom.providers };
 		delete next[id];
 		// 内置 provider（“添加提供方”加入）只写有 models.json 覆盖：删除时
@@ -737,9 +1050,8 @@ function ModelsSection() {
 	};
 
 	const saveBuiltinSetup = async ({ providerId, apiKey, config }: BuiltinProviderSetup) => {
-		const next = { ...custom.providers, [providerId]: config };
-		const result = await request({ action: "saveCustomProviders", content: JSON.stringify({ providers: next }, null, 2) });
-		const requiresSessionReopen = result.success && result.data?.requiresSessionReopen === true;
+		const next = { ...custom.providers, [providerId]: { ...custom.providers[providerId], ...config } };
+		const result = await saveCustom(next);
 		if (result.success && apiKey) {
 			// 多步认证（Vertex/Bedrock/Cloudflare 等）的后续提示经登录弹窗应答；
 			// 不能 await setKey —— 它会挂起到全部提示答完。
@@ -747,17 +1059,23 @@ function ModelsSection() {
 			setOauthDone(null);
 			setOauthProvider(providerId);
 		}
-		notify(result.success, result.success && requiresSessionReopen ? t.modelConfigReopen : result.error);
-		if (result.success) void load();
 		return result;
 	};
 
 	const saveCustomSetup = async ({ providerId, config }: CustomProviderSetup) => {
 		const next = { ...custom.providers, [providerId]: config };
-		const result = await request({ action: "saveCustomProviders", content: JSON.stringify({ providers: next }, null, 2) });
-		notify(result.success, result.success && result.data?.requiresSessionReopen ? t.modelConfigReopen : result.error);
-		if (result.success) void load();
-		return result;
+		return saveCustom(next);
+	};
+
+	/** 添加弹窗里的 OAuth 订阅登录：启动后由下方已有的 OAuth 轮询弹窗接管交互 */
+	const oauthSetupLogin = async (providerId: string) => {
+		const result = await request({ action: "loginStart", providerId });
+		if (result.success) {
+			setOauthDone(null);
+			setOauthProvider(providerId);
+			return { success: true };
+		}
+		return { success: false, error: result.error };
 	};
 
 	return (
@@ -842,6 +1160,17 @@ function ModelsSection() {
 								)}
 							</div>
 
+							{p.id === "xai" && p.authReady && (
+								<div className="mt-1.5 flex items-center gap-2 px-4" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
+									{xaiUsage ? (
+										<span>{t.usageQuotaLabel} · {xaiUsage.model} · {t.usageRequests} {xaiUsage.requestRemaining.toLocaleString()}/{xaiUsage.requestLimit.toLocaleString()} · Tokens {fmtQuotaTokens(xaiUsage.tokenRemaining)}/{fmtQuotaTokens(xaiUsage.tokenLimit)}</span>
+									) : <span>{usageError ? t.usageProbeFailed : t.usageProbeDisclosure}</span>}
+									<button type="button" className="pw-chip" disabled={usageBusy} title={t.usageProbeDisclosure} onClick={() => void fetchUsage(true)}>
+										{usageBusy ? t.usageProbing : xaiUsage ? t.usageRefresh : t.usageProbe}
+									</button>
+								</div>
+							)}
+
 							{editingThis && (
 								<div className="mt-2 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
 									{isCustom ? (
@@ -864,12 +1193,7 @@ function ModelsSection() {
 											<Field label={t.apiType}>
 												<SelectOption
 													value={cApi}
-													options={[
-														{ value: "openai-completions", label: "openai-completions" },
-														{ value: "openai-responses", label: "openai-responses" },
-														{ value: "anthropic-messages", label: "anthropic-messages" },
-														{ value: "google-generative-ai", label: "google-generative-ai" },
-													]}
+													options={customApiOptions([cApi, ...p.apis]).map((api) => ({ value: api, label: api }))}
 													onChange={setCApi}
 												/>
 											</Field>
@@ -954,8 +1278,9 @@ function ModelsSection() {
 													<button
 														style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}
 														disabled={editBusy}
-														onClick={async () => {
-															const j = await call({ action: "removeKey", providerId: p.id });
+													onClick={async () => {
+														if (!window.confirm(t.confirmRemoveKey.replace("{name}", p.name))) return;
+														const j = await call({ action: "removeKey", providerId: p.id });
 															if (j.success) setEditing(null);
 														}}
 													>
@@ -965,7 +1290,7 @@ function ModelsSection() {
 												<button className="btn-outline" style={{ height: 32 }} disabled={editBusy} onClick={() => setEditing(null)}>{t.cancel}</button>
 												<button
 													className="btn-primary-white"
-													disabled={editBusy || !!validateModelDrafts(bModels) || (!keyDraft.trim() && !bBaseUrl.trim() && bModels.length === 0)}
+													disabled={editBusy || customRevision === null || !!validateModelDrafts(bModels)}
 													onClick={() => void saveBuiltinEdit({ id: p.id, apis: p.apis })}
 												>
 													{editBusy ? t.saving : t.save}
@@ -1012,21 +1337,45 @@ function ModelsSection() {
 					onClose={() => setAdding(null)}
 					onSaveBuiltin={saveBuiltinSetup}
 					onSaveCustom={saveCustomSetup}
+					onOAuthLogin={oauthSetupLogin}
 				/>
 			) : null}
 
 	{/* OAuth 登录弹窗 */}
 	{oauthProvider && (
-		<div className="modal-mask fixed inset-0 z-[120] flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) setOauthProvider(null); }}>
+		<div className="modal-mask fixed inset-0 z-[120] flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget) void cancelOAuth(); }}>
 			<div className="glass-modal flex flex-col gap-4 p-6" style={{ width: 460, maxWidth: "92vw", borderRadius: 24, boxShadow: "var(--dsw-elevation-prominent)" }}>
 				<div style={{ fontSize: 15, fontWeight: 600 }}>{t.oauthLogin} · {oauthProvider}</div>
-				{oauthLog.length > 0 && (
+				{oauthDeviceCode && !oauthDone ? (
+					<div className="flex flex-col gap-2">
+						<div style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}>{t.oauthDevicePrompt}</div>
+						{oauthDeviceCode.instructions ? (
+							<div style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>{oauthDeviceCode.instructions}</div>
+						) : null}
+						<div className="flex flex-wrap items-center gap-2">
+							<a
+								href={oauthDeviceCode.verificationUri}
+								target="_blank"
+								rel="noreferrer"
+								className="btn-primary-white"
+								style={{ fontSize: 12.5, textDecoration: "none" }}
+							>
+								{t.oauthOpenAuth}
+							</a>
+							{oauthDeviceCode.userCode ? (
+								<button className="btn-outline" style={{ height: 32 }} onClick={copyDeviceCode}>
+									{oauthCodeCopied ? t.oauthCodeCopied : `${t.oauthDeviceCode}: ${oauthDeviceCode.userCode}`}
+								</button>
+							) : null}
+						</div>
+					</div>
+				) : oauthLog.length > 0 ? (
 					<div className="flex flex-col gap-0.5" style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>
 						{oauthLog.slice(-3).map((l, i) => (
 							<div key={i} className="truncate">{l}</div>
 						))}
 					</div>
-				)}
+				) : null}
 				{oauthDone ? (
 					<div style={{ fontSize: 13, color: oauthDone.ok ? "var(--dsw-success)" : "var(--dsw-danger)" }}>{oauthDone.ok ? oauthProvider + " ✓" : oauthDone.msg}</div>
 				) : oauthPrompt ? (
@@ -1043,45 +1392,56 @@ function ModelsSection() {
 								{oauthPrompt.message.match(/https?:\/\/[^\s)]+/)![0]}
 							</a>
 						)}
-						<input
-							autoFocus
-							type={oauthPrompt.type === "secret" ? "password" : "text"}
-							value={oauthInput}
-							onChange={(e) => setOauthInput(e.target.value)}
-							placeholder={oauthPrompt.placeholder ?? ""}
-							className="w-full rounded-xl px-3 py-2"
-							style={{ fontSize: 13, background: "var(--dsw-hover)" }}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && oauthInput.trim()) {
-									void fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "loginAnswer", providerId: oauthProvider, text: oauthInput.trim() }) });
-									setOauthInput("");
-								}
-							}}
-						/>
+						{oauthPrompt.options?.length ? (
+							// select 型提示：点选项即作答（回传 SDK 的原始 value）
+							<div className="flex flex-col gap-1.5">
+								{oauthPrompt.options.map((opt) => (
+									<button
+										key={opt.value}
+										className="btn-outline"
+										style={{ height: 34, justifyContent: "flex-start", textAlign: "left" }}
+										onClick={() => { void answerOAuth(opt.value); }}
+									>
+										{opt.label}
+									</button>
+								))}
+							</div>
+						) : (
+							<input
+								autoFocus
+								type={oauthPrompt.type === "secret" ? "password" : "text"}
+								value={oauthInput}
+								onChange={(e) => setOauthInput(e.target.value)}
+								placeholder={oauthPrompt.placeholder ?? ""}
+								className="w-full rounded-xl px-3 py-2"
+								style={{ fontSize: 13, background: "var(--dsw-hover)" }}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && !e.nativeEvent.isComposing && oauthInput.trim()) {
+										void answerOAuth(oauthInput.trim());
+									}
+								}}
+							/>
+						)}
 						<div className="flex items-center justify-between gap-2">
 							<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.oauthWait}</span>
 							<div className="flex gap-2">
 								<button
 									className="btn-outline"
 									style={{ height: 32 }}
-									onClick={async () => {
-										await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "loginCancel", providerId: oauthProvider }) });
-										setOauthProvider(null);
-									}}
+									onClick={() => { void cancelOAuth(); }}
 								>
 									{t.oauthCancel}
 								</button>
-								<button
-									className="btn-primary-white"
-									disabled={!oauthInput.trim()}
-									style={{ opacity: oauthInput.trim() ? 1 : 0.5 }}
-									onClick={async () => {
-										await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "loginAnswer", providerId: oauthProvider, text: oauthInput.trim() }) });
-										setOauthInput("");
-									}}
-								>
-									{t.confirm}
-								</button>
+								{!oauthPrompt.options?.length && (
+									<button
+										className="btn-primary-white"
+										disabled={!oauthInput.trim()}
+										style={{ opacity: oauthInput.trim() ? 1 : 0.5 }}
+										onClick={() => { void answerOAuth(oauthInput.trim()); }}
+									>
+										{t.confirm}
+									</button>
+								)}
 							</div>
 						</div>
 					</>
@@ -1100,6 +1460,12 @@ function ModelsSection() {
 		</div>
 	);
 }const fieldCls = "w-full rounded-xl px-3 py-2";
+
+/** 配额展示：token 数转 M（53,000,000 → 53M），小数值原样 */
+function fmtQuotaTokens(value: number): string {
+	if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
+	return value.toLocaleString();
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
@@ -1226,11 +1592,9 @@ interface SkillRow {
 	scope: "global" | "project" | "package";
 }
 
-function SkillsSection({ cwd }: { cwd: string }) {
+function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileContent?: (path: string, content: string) => void }) {
 	const { t } = useI18n();
 	const [skills, setSkills] = useState<SkillRow[]>([]);
-	const [expanded, setExpanded] = useState<string | null>(null);
-	const [fileContent, setFileContent] = useState("");
 
 	const load = useCallback(async () => {
 		const r = await fetch(`/api/skills${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
@@ -1251,21 +1615,15 @@ function SkillsSection({ cwd }: { cwd: string }) {
 		if ((await r.json()).success) void load();
 	};
 
+	// 查看技能文档：弹大窗口查看器（与项目文件查看器同款，Markdown 可切渲染/源码）
 	const view = async (s: SkillRow) => {
-		if (expanded === s.filePath) {
-			setExpanded(null);
-			return;
-		}
 		const r = await fetch("/api/skills", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ action: "read", filePath: s.filePath, cwd }),
 		});
 		const j = await r.json();
-		if (j.success) {
-			setFileContent(j.data.content);
-			setExpanded(s.filePath);
-		}
+		if (j.success) onOpenFileContent?.(s.filePath, j.data.content);
 	};
 
 	const scopeLabel = (s: SkillRow["scope"]) => (s === "global" ? t.scopeGlobal : s === "project" ? t.scopeProject : t.scopePackage);
@@ -1308,22 +1666,14 @@ function SkillsSection({ cwd }: { cwd: string }) {
 								aria-checked={!s.disabled}
 								onClick={() => toggle(s)}
 							>
-								<span
-									className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
-									style={{ left: s.disabled ? 2 : 18 }}
-								/>
-							</button>
-						</div>
-						{expanded === s.filePath && (
-							<pre
-								className="mt-3 max-h-64 overflow-auto rounded-xl p-3"
-								style={{ background: "var(--dsw-hover)", fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55 }}
-							>
-								{fileContent}
-							</pre>
-						)}
+							<span
+								className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
+								style={{ left: s.disabled ? 2 : 18 }}
+							/>
+						</button>
 					</div>
-				))}
+				</div>
+			))}
 			</div>
 		</div>
 	);
@@ -1333,6 +1683,7 @@ function SkillsSection({ cwd }: { cwd: string }) {
 
 function PluginsSection({ cwd }: { cwd: string }) {
 	const { t, lang } = useI18n();
+	const confirmUninstall = (source: string) => window.confirm(t.confirmUninstallPackage.replace("{source}", source));
 	const [tab, setTab] = useState<"config" | "list">("config");
 	const [packages, setPackages] = useState<any[]>([]);
 	const [extensions, setExtensions] = useState<any[]>([]);
@@ -1393,11 +1744,14 @@ function PluginsSection({ cwd }: { cwd: string }) {
 			if (j.success) {
 				notify(true, successMsg ?? (action === "toggle" ? (payload.disabled ? t.disabled : t.enabled) : t.toastSaved));
 				await load();
+				return true;
 			} else {
 				notify(false, j.error ?? t.toastError);
+				return false;
 			}
 		} catch (e: any) {
 			notify(false, e?.message ?? t.toastError);
+			return false;
 		} finally {
 			setBusy(false);
 			setBusyKey(null);
@@ -1512,7 +1866,7 @@ function PluginsSection({ cwd }: { cwd: string }) {
 								className="min-w-0 flex-1 rounded-xl px-3 py-2"
 								style={{ fontSize: 13, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)", fontFamily: "var(--font-mono)" }}
 								onKeyDown={(e) => {
-									if (e.key === "Enter" && source.trim() && !busy) void act("install", { source: source.trim(), local }, undefined, t.installing, t.installSuccess).then(() => setSource(""));
+									if (e.key === "Enter" && source.trim() && !busy) void act("install", { source: source.trim(), local }, undefined, t.installing, t.installSuccess).then((ok) => { if (ok) setSource(""); });
 								}}
 							/>
 							<label className="flex items-center gap-1.5" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
@@ -1523,7 +1877,7 @@ function PluginsSection({ cwd }: { cwd: string }) {
 								className="btn-primary-white"
 								style={{ height: 32, padding: "0 14px" }}
 								disabled={!source.trim() || busy}
-								onClick={() => void act("install", { source: source.trim(), local }, undefined, t.installing, t.installSuccess).then(() => setSource(""))}
+								onClick={() => void act("install", { source: source.trim(), local }, undefined, t.installing, t.installSuccess).then((ok) => { if (ok) setSource(""); })}
 							>
 								{t.install}
 							</button>
@@ -1756,6 +2110,7 @@ function PluginsSection({ cwd }: { cwd: string }) {
 																	disabled={busy}
 																	onClick={() => {
 																		setMenuKey(null);
+																		if (!confirmUninstall(x.p.source)) return;
 																		void act(
 																			"remove",
 																			{ source: x.p.source, local: x.p.scope === "project" },
@@ -1826,15 +2181,16 @@ function PluginsSection({ cwd }: { cwd: string }) {
 																disabled={busy}
 																style={{ fontSize: 12, color: "var(--dsw-danger)" }}
 																className="hover:underline cursor-pointer disabled:opacity-50"
-																onClick={() =>
+																onClick={() => {
+																	if (!confirmUninstall(x.p.source)) return;
 																	void act(
 																		"remove",
 																		{ source: x.p.source, local: x.p.scope === "project" },
 																		x.key,
 																		t.uninstalling,
 																		t.uninstallSuccess
-																	)
-																}
+																	);
+																}}
 															>
 																{t.uninstall}
 															</button>
@@ -1858,4 +2214,3 @@ function PluginsSection({ cwd }: { cwd: string }) {
 	</div>
 	);
 }
-

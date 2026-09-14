@@ -10,8 +10,10 @@ type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
 type UiEvent = Extract<WebEvent, { type: "extension_ui" }>;
 
 interface PendingUi {
+	request: UiEvent;
 	resolve: (response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => void;
 	timer?: ReturnType<typeof setTimeout>;
+	removeAbortListener?: () => void;
 }
 
 export interface ExtensionUiBridge {
@@ -19,6 +21,8 @@ export interface ExtensionUiBridge {
 	uiContext: Record<string, unknown>;
 	/** 浏览器应答 */
 	respond(requestId: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }): boolean;
+	/** 当前仍待应答的请求，不含已答/取消/过期请求。 */
+	getPendingRequests(): UiEvent[];
 	/** 会话销毁：把挂起的对话框全部按取消结束 */
 	dispose(): void;
 	/** 扩展通过 setStatus 设的状态文本（页脚展示） */
@@ -33,6 +37,7 @@ export function createExtensionUiBridge(opts: {
 }): ExtensionUiBridge {
 	const pending = new Map<string, PendingUi>();
 	const statuses = new Map<string, string>();
+	let disposed = false;
 
 	const ask = <T,>(
 		request: Omit<UiEvent, "type" | "id" | "ts">,
@@ -41,7 +46,7 @@ export function createExtensionUiBridge(opts: {
 		parse: (r: { value?: string; confirmed?: boolean; cancelled?: boolean }) => T,
 	): Promise<T> => {
 		// 没有浏览器在看：不能永远挂着扩展，按 pi 的 noOp 语义立即返回默认值
-		if (!opts.hasViewers()) return Promise.resolve(fallback);
+		if (disposed || !opts.hasViewers() || dialogOpts?.signal?.aborted) return Promise.resolve(fallback);
 		const id = randomUUID();
 		return new Promise<T>((resolve) => {
 			const finish = (r: { value?: string; confirmed?: boolean; cancelled?: boolean } | null) => {
@@ -49,14 +54,20 @@ export function createExtensionUiBridge(opts: {
 				if (!entry) return;
 				pending.delete(id);
 				if (entry.timer) clearTimeout(entry.timer);
+				entry.removeAbortListener?.();
+				opts.publish({ type: "extension_ui_resolved", id, ts: Date.now() });
 				resolve(r ? parse(r) : fallback);
 			};
-			const entry: PendingUi = { resolve: (r) => finish(r) };
+			const event: UiEvent = { type: "extension_ui", id, ...request, timeout: dialogOpts?.timeout, ts: Date.now() };
+			const entry: PendingUi = { request: event, resolve: (r) => finish(r) };
 			const timeout = dialogOpts?.timeout ?? DEFAULT_TIMEOUT_MS;
 			entry.timer = setTimeout(() => finish(null), timeout);
-			dialogOpts?.signal?.addEventListener("abort", () => finish(null), { once: true });
+			entry.timer.unref?.();
+			const onAbort = () => finish(null);
+			dialogOpts?.signal?.addEventListener("abort", onAbort, { once: true });
+			entry.removeAbortListener = () => dialogOpts?.signal?.removeEventListener("abort", onAbort);
 			pending.set(id, entry);
-			opts.publish({ type: "extension_ui", id, ...request, timeout: dialogOpts?.timeout, ts: Date.now() });
+			opts.publish(event);
 		});
 	};
 
@@ -105,6 +116,7 @@ export function createExtensionUiBridge(opts: {
 	return {
 		uiContext,
 		statuses,
+		getPendingRequests: () => [...pending.values()].map(({ request }) => ({ ...request, options: request.options ? [...request.options] : undefined })),
 		respond(requestId, response) {
 			const entry = pending.get(requestId);
 			if (!entry) return false;
@@ -112,6 +124,7 @@ export function createExtensionUiBridge(opts: {
 			return true;
 		},
 		dispose() {
+			disposed = true;
 			for (const entry of pending.values()) entry.resolve({ cancelled: true });
 			pending.clear();
 		},

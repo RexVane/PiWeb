@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+	GrowthStep,
 	SessionSummary,
 	TrajEntry,
 	WebEvent,
@@ -47,6 +48,7 @@ export interface PiWebState {
 	toolPreset: ToolPreset;
 	connected: boolean;
 	error: string | null;
+	compaction: { phase: "start" | "end"; errorMessage?: string; ts: number } | null;
 	/** 自动重试通知（随消息流显示的折叠行，流结束清除） */
 	retryNotice: string | null;
 	/** 扩展对话框队列（按到达顺序，一次显示一个） */
@@ -57,6 +59,8 @@ export interface PiWebState {
 	extensionStatuses: Record<string, string>;
 	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
 	workingMessage: string | null;
+	/** 项目生长：本次连接期间收到的步（完整账本由 useGrowth 拉取后合并），以及运行中工具正在生成的路径 */
+	growth: { steps: GrowthStep[]; pending: string[]; error: string | null };
 }
 
 export interface SessionListItem extends SessionSummary {
@@ -65,16 +69,17 @@ export interface SessionListItem extends SessionSummary {
 	lastStep?: string;
 }
 
-const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
+export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 	const s = { ...state };
 	switch (evt.type) {
 		case "delta": {
-			// 增量追加到正在生成的那条 assistant（stopReason=pending）；错过了 start（中途订阅）就先补一条占位
+			// 新服务端按稳定流 ID 定位；旧协议仍按最近 pending 消息兼容。
 			const msgs = [...s.messages];
-			let i = msgs.length - 1;
-			while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
+			let i = evt.messageId ? msgs.findIndex((message) => message.streamId === evt.messageId || message.id === evt.messageId) : msgs.length - 1;
+			if (!evt.messageId) while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
+			if (evt.messageId && i >= 0 && msgs[i].stopReason && msgs[i].stopReason !== "pending") return s;
 			if (i < 0 || msgs[i].role !== "assistant" || (msgs[i].stopReason ?? "pending") !== "pending") {
-				msgs.push({ role: "assistant", content: [], stopReason: "pending", timestamp: evt.ts });
+				msgs.push({ role: "assistant", content: [], streamId: evt.messageId, stopReason: "pending", timestamp: evt.ts });
 				i = msgs.length - 1;
 			}
 			{
@@ -99,38 +104,27 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 		}
 		case "message": {
 			const msgs = [...s.messages];
+			const same = msgs.findIndex((message) =>
+				(!!evt.message.id && message.id === evt.message.id) ||
+				(!!evt.message.streamId && message.streamId === evt.message.streamId));
+			if (same >= 0) {
+				// snapshot 可能已包含 final，但 SDK 的扩展 message_end 还没返回；不能丢掉权威 end。
+				if (evt.phase === "end") msgs[same] = { ...msgs[same], ...evt.message };
+				s.messages = msgs;
+				return s;
+			}
 			if (evt.phase === "start") {
-				if (evt.message.role === "assistant") {
-					// 追加占位 assistant（或复用最后一个空的）
-					const last = msgs[msgs.length - 1];
-					if (last?.role === "assistant" && last.content.length === 0) {
-						msgs[msgs.length - 1] = evt.message;
-					} else msgs.push(evt.message);
-				} else if (evt.message.role === "user") {
-					// 只有同一消息重发（id 相同）才去重；相邻两条 user 消息必须都保留，
-					// 否则第二条的 end 会覆盖第一条（如快照末尾已是 user 再发新消息）。
-					const last = msgs[msgs.length - 1];
-					const isResend = last?.role === "user" && !!evt.message.id && last.id === evt.message.id;
-					if (!isResend) msgs.push(evt.message);
-				}
-			} else if (evt.message.role === "assistant") {
-				// end：用权威版本替换正在生成的那条（pending 占位）；找不到（中途订阅错过了 start）就追加，
-				// 绝不能回头覆盖上一轮已完成的助手消息
-				let i = msgs.length - 1;
-				while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
-				if (i >= 0 && msgs[i].role === "assistant" && (msgs[i].stopReason ?? "pending") === "pending") msgs[i] = evt.message;
-				else msgs.push(evt.message);
-			} else if (evt.message.role === "user") {
-				// end：替换最后一条用户消息（权威版本，带落盘的 entry id）
-				for (let i = msgs.length - 1; i >= 0; i--) {
-					if (msgs[i].role === "user") {
-						msgs[i] = evt.message;
-						break;
-					}
-				}
+				if (evt.message.role === "user" || evt.message.role === "assistant") msgs.push(evt.message);
 			} else if (evt.message.role !== "toolResult") {
-				// custom/other：start 阶段没有占位，end 只能追加，不能回溯覆盖历史消息
-				msgs.push(evt.message);
+				// 无稳定流 ID 的旧服务端：只在本轮末尾匹配 pending，不按时间戳覆盖历史消息。
+				let index = -1;
+				if (!evt.message.streamId) {
+					const last = msgs[msgs.length - 1];
+					if (evt.message.role === "assistant" && last?.role === "assistant" && (last.stopReason ?? "pending") === "pending") index = msgs.length - 1;
+					if (evt.message.role === "user" && last?.role === "user" && !last.id && !last.streamId) index = msgs.length - 1;
+				}
+				if (index >= 0) msgs[index] = evt.message;
+				else msgs.push(evt.message);
 			}
 			s.messages = msgs;
 			return s;
@@ -172,6 +166,7 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			if (s.snapshot) s.snapshot = { ...s.snapshot, stats: evt.stats, contextUsage: evt.contextUsage };
 			return s;
 		case "compaction":
+			s.compaction = { phase: evt.phase, errorMessage: evt.errorMessage, ts: evt.ts };
 			return s;
 		case "traj": {
 			if (s.snapshot) {
@@ -187,7 +182,13 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			if (s.snapshot) s.snapshot = { ...s.snapshot, name: evt.name };
 			return s;
 		case "tools":
-			if (s.snapshot) s.snapshot = { ...s.snapshot, tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) } };
+			if (evt.toolPreset) s.toolPreset = evt.toolPreset;
+			if (s.snapshot) s.snapshot = {
+				...s.snapshot,
+				toolPreset: evt.toolPreset ?? s.snapshot.toolPreset,
+				customActiveTools: evt.customActiveTools === undefined ? s.snapshot.customActiveTools : evt.customActiveTools,
+				tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) },
+			};
 			return s;
 		case "resources":
 			if (s.snapshot) {
@@ -203,6 +204,7 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			return s;
 		case "extension_ui": {
 			if (evt.method === "select" || evt.method === "confirm" || evt.method === "input") {
+				if (s.extensionDialogs.some((dialog) => dialog.id === evt.id)) return s;
 				s.extensionDialogs = [
 					...s.extensionDialogs,
 					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, placeholder: evt.placeholder, timeout: evt.timeout, ts: evt.ts },
@@ -219,12 +221,26 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			}
 			return s;
 		}
+		case "extension_ui_resolved":
+			s.extensionDialogs = s.extensionDialogs.filter((dialog) => dialog.id !== evt.id);
+			return s;
 		case "status":
 			if (s.snapshot) s.snapshot = { ...s.snapshot, isStreaming: evt.isStreaming };
 			if (!evt.isStreaming) {
 				s.retryNotice = null;
 				s.workingMessage = null;
 			}
+			return s;
+		case "growth": {
+			const steps = s.growth.steps.some((x) => x.seq === evt.step.seq) ? s.growth.steps.map((x) => (x.seq === evt.step.seq ? evt.step : x)) : [...s.growth.steps, evt.step];
+			s.growth = { steps, pending: [], error: null };
+			return s;
+		}
+		case "growth_pending":
+			s.growth = { ...s.growth, pending: evt.paths };
+			return s;
+		case "growth_error":
+			s.growth = { ...s.growth, pending: [], error: evt.message };
 			return s;
 		case "error":
 			// 自动重试属流程内通知：随消息流显示、流结束清除，不走 6 秒错误条
@@ -235,6 +251,18 @@ const fold = (state: PiWebState, evt: WebEvent): PiWebState => {
 			return s;
 	}
 };
+
+export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: ExtensionDialog[] = []): ExtensionDialog[] {
+	// undefined 仅用于兼容旧服务端；新快照的空数组必须清除已答/取消的旧对话框。
+	if (snapshot.extensionUiRequests === undefined) return previous;
+	const dialogs = new Map<string, ExtensionDialog>();
+	for (const request of snapshot.extensionUiRequests) {
+		if (request.method === "select" || request.method === "confirm" || request.method === "input") {
+			dialogs.set(request.id, { ...request, method: request.method, title: request.title ?? "" });
+		}
+	}
+	return [...dialogs.values()];
+}
 
 function savedToolPreset(): ToolPreset {
 	if (typeof window === "undefined") return "standard";
@@ -277,11 +305,13 @@ const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
 	toolPreset,
 	connected: false,
 	error: null,
+	compaction: null,
 	retryNotice: null,
 	extensionDialogs: [],
 	extensionNotices: [],
 	extensionStatuses: {},
 	workingMessage: null,
+	growth: { steps: [], pending: [], error: null },
 });
 
 function pathKey(value: string): string {
@@ -293,6 +323,8 @@ function pathKey(value: string): string {
 
 export function usePiWeb() {
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
+	const [sessionListError, setSessionListError] = useState<string | null>(null);
+	const [sessionListRetryNonce, setSessionListRetryNonce] = useState(0);
 	const [currentId, setCurrentId] = useState<string | null>(null);
 	const [currentPath, setCurrentPath] = useState<string | null>(null);
 	const [state, setState] = useState<PiWebState>(emptyState);
@@ -302,8 +334,24 @@ export function usePiWeb() {
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
+	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<EventSource | null>(null);
+	const promptRequestsRef = useRef(new Set<string>());
+	const presetRestoreAttemptRef = useRef<string | null>(null);
+	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
+	const activeSessionRef = useRef(currentId);
+	activeSessionRef.current = currentId;
 	const subscribedSessionRef = useRef<string | null>(null);
+	const retrySessionList = useCallback(() => setSessionListRetryNonce((value) => value + 1), []);
+	const clearCompaction = useCallback(() => setState((current) => ({ ...current, compaction: null })), []);
+	useEffect(() => {
+		const notice = state.compaction;
+		if (!notice || notice.phase !== "end") return;
+		const timer = setTimeout(() => {
+			setState((current) => current.compaction?.ts === notice.ts ? { ...current, compaction: null } : current);
+		}, 8_000);
+		return () => clearTimeout(timer);
+	}, [state.compaction]);
 
 	const idOf = useCallback((path: string) => {
 		const bytes = new TextEncoder().encode(path);
@@ -351,6 +399,12 @@ export function usePiWeb() {
 	useEffect(() => {
 		refreshWorkspaces();
 	}, [refreshWorkspaces]);
+
+	/** 会话改名成功后先把列表里的名字改掉，不等下一次轮询（轮询 3 秒 + 服务端 1.2 秒列表缓存） */
+	const patchSessionName = useCallback((sessionPath: string, name: string) => {
+		const key = pathKey(sessionPath);
+		setSessions((prev) => prev.map((s) => (pathKey(s.path) === key ? { ...s, name } : s)));
+	}, []);
 
 	const renameWorkspace = useCallback(async (dir: string, name: string) => {
 		try {
@@ -472,6 +526,8 @@ export function usePiWeb() {
 		let alive = true;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let controller: AbortController | undefined;
+		// 上一次列表的 ETag：内容没变服务端答 304，跳过解析与 setState（侧栏不会每 3 秒白白重渲染一次）
+		let lastEtag: string | null = null;
 		const schedule = () => {
 			if (!alive || document.visibilityState !== "visible") return;
 			timer = setTimeout(() => void load(false), 3000);
@@ -480,9 +536,16 @@ export function usePiWeb() {
 			if (!alive || (!force && document.visibilityState !== "visible")) return;
 			controller = new AbortController();
 			try {
-				const r = await fetch("/api/sessions", { signal: controller.signal });
+				const r = await fetch("/api/sessions", { signal: controller.signal, headers: lastEtag ? { "If-None-Match": lastEtag } : undefined });
+				if (r.status === 304) {
+					if (alive) setSessionListError(null);
+					return;
+				}
 				const j = await r.json();
-				if (!alive || !j.success) return;
+				if (!alive) return;
+				if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+				setSessionListError(null);
+				lastEtag = r.headers.get("etag");
 				const running: Record<string, { streaming: boolean; lastStep?: string }> = j.data.running ?? {};
 				const registry = j.data.workspaceRegistry;
 				if (registry) {
@@ -495,9 +558,8 @@ export function usePiWeb() {
 					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
 				);
 			} catch (error) {
-				if (!(error instanceof DOMException && error.name === "AbortError")) {
-					/* A later poll retries transient list failures. */
-				}
+				if (alive && !(error instanceof DOMException && error.name === "AbortError"))
+					setSessionListError(error instanceof Error ? error.message : "session list request failed");
 			} finally {
 				controller = undefined;
 				schedule();
@@ -517,7 +579,7 @@ export function usePiWeb() {
 			controller?.abort();
 			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
-	}, []);
+	}, [sessionListRetryNonce]);
 
 	// 模型目录
 	const refreshModels = useCallback(async () => {
@@ -547,10 +609,13 @@ export function usePiWeb() {
 		setState((current) => reconnectingCurrentSession
 			? { ...current, connected: false }
 			: { ...emptyState(savedToolPreset()), connected: false });
+		let retryDelayMs = 2000;
 		const connect = () => {
 			const es = new EventSource(`/api/agent/${currentId}/events`);
 			esRef.current = es;
-			es.onopen = () => setState((s) => ({ ...s, connected: true }));
+			es.onopen = () => {
+				setState((s) => ({ ...s, connected: true }));
+			};
 			es.onerror = () => {
 				setState((s) => ({ ...s, connected: false }));
 				// 浏览器对非 200 响应会永久放弃 EventSource 自动重连
@@ -559,9 +624,11 @@ export function usePiWeb() {
 				if (esRef.current !== es) return;
 				es.close();
 				esRef.current = null;
+				const delay = retryDelayMs;
+				retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
 				retryTimer = setTimeout(() => {
 					if (esRef.current === null) connect();
-				}, 2000);
+				}, delay);
 			};
 			es.onmessage = (e) => {
 				let parsed: any;
@@ -572,23 +639,28 @@ export function usePiWeb() {
 					return;
 				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
+					retryDelayMs = 2000;
 					const snap = parsed.snapshot as WebSnapshot;
+					setSnapshotEpoch((epoch) => epoch + 1);
 					setState((prev) => ({
 						snapshot: snap,
 						messages: snap.messages,
 						tools: toolsFromMessages(snap.messages, snap.isStreaming),
-						toolPreset: savedToolPreset(),
+						toolPreset: snap.toolPreset,
 						connected: true,
 						error: null,
+						compaction: null,
 						retryNotice: null,
-						// 重连拿新快照时不丢还没应答的扩展对话框（服务端仍在等）
-						extensionDialogs: prev.extensionDialogs,
+						// 服务器当前 pending 集合是权威来源，刷新可恢复、已答请求不能复活。
+						extensionDialogs: extensionDialogsFromSnapshot(snap, prev.extensionDialogs),
 						extensionNotices: prev.extensionNotices,
 						extensionStatuses: {},
 						workingMessage: null,
+						// 重连的快照不带生长账本；连接期间已收到的步保留，useGrowth 会按 seq 与拉取结果去重
+						growth: { ...prev.growth, error: snap.growthError ?? null },
 					}));
 				} else {
-					setState((s) => fold(s, parsed as WebEvent));
+					setState((s) => foldPiWebEvent(s, parsed as WebEvent));
 				}
 			};
 		};
@@ -607,6 +679,9 @@ export function usePiWeb() {
 			setState((s) => ({ ...s, error: "no session" }));
 			return { success: false, error: "no session" };
 		}
+		const isPrompt = cmd.cmd === "prompt";
+		if (isPrompt && promptRequestsRef.current.has(target)) return { success: false, error: "prompt acceptance pending" };
+		if (isPrompt) promptRequestsRef.current.add(target);
 		try {
 			const r = await fetch(`/api/agent/${target}`, {
 				method: "POST",
@@ -620,6 +695,8 @@ export function usePiWeb() {
 			const message = error instanceof Error ? error.message : "request failed";
 			setState((s) => ({ ...s, error: message }));
 			return { success: false, error: message };
+		} finally {
+			if (isPrompt) promptRequestsRef.current.delete(target);
 		}
 	}, [currentId]);
 
@@ -712,10 +789,19 @@ export function usePiWeb() {
 	}, [sessions, openSession]);
 
 	const setToolPreset = useCallback(
-		(preset: ToolPreset) => {
+		async (preset: ToolPreset) => {
+			await presetRestorePromiseRef.current;
+			if (activeSessionRef.current !== currentId) return;
+			if (currentId) {
+				const result = await sendCommand({ cmd: "setToolPreset", preset });
+				if (!result?.success) return;
+			}
 			localStorage.setItem("piweb.toolPreset", preset);
-			setState((s) => ({ ...s, toolPreset: preset }));
-			if (currentId) void sendCommand({ cmd: "setToolPreset", preset });
+			if (activeSessionRef.current === currentId) setState((s) => ({
+				...s,
+				toolPreset: preset,
+				snapshot: s.snapshot ? { ...s.snapshot, toolPreset: preset } : null,
+			}));
 		},
 		[currentId, sendCommand],
 	);
@@ -728,19 +814,37 @@ export function usePiWeb() {
 	const answerExtensionDialog = useCallback(
 		async (id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => {
 			setState((s) => ({ ...s, extensionDialogs: s.extensionDialogs.filter((d) => d.id !== id) }));
-			await sendCommand({ cmd: "extensionUiResponse", requestId: id, ...response });
+			const target = currentId;
+			const result = await sendCommand({ cmd: "extensionUiResponse", requestId: id, ...response });
+			if (!result?.success && activeSessionRef.current === target) resync();
 		},
-		[sendCommand],
+		[currentId, resync, sendCommand],
 	);
 	const dismissExtensionNotice = useCallback((id: string) => setState((s) => ({ ...s, extensionNotices: s.extensionNotices.filter((n) => n.id !== id) })), []);
 	const clearError = useCallback(() => setState((s) => ({ ...s, error: null })), []);
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
 	const setError = useCallback((message: string) => setState((s) => ({ ...s, error: message })), []);
 
-	// 工具权限是 PiWeb 的会话护栏，不写入 Pi JSONL；恢复会话时只重放此项，不覆盖模型与思考级别。
+	// 工具权限不写入 Pi JSONL。每次收到服务端快照后恢复本地选择；运行中延后到空闲。
 	useEffect(() => {
-		if (currentId) void sendCommand({ cmd: "setToolPreset", preset: savedToolPreset() });
-	}, [currentId, sendCommand]);
+		if (!currentId || !state.connected || !state.snapshot || state.snapshot.isStreaming || state.snapshot.customActiveTools != null) return;
+		const preset = savedToolPreset();
+		if (state.snapshot.toolPreset === preset) return;
+		const attemptKey = `${currentId}:${snapshotEpoch}`;
+		if (presetRestoreAttemptRef.current === attemptKey) return;
+		presetRestoreAttemptRef.current = attemptKey;
+		const sessionId = currentId;
+		const restore = sendCommand({ cmd: "setToolPreset", preset }).then((result) => {
+			if (result?.success && activeSessionRef.current === sessionId && savedToolPreset() === preset) setState((current) => ({
+				...current,
+				toolPreset: preset,
+				snapshot: current.snapshot ? { ...current.snapshot, toolPreset: preset } : null,
+			}));
+		}).finally(() => {
+			if (presetRestorePromiseRef.current === restore) presetRestorePromiseRef.current = null;
+		});
+		presetRestorePromiseRef.current = restore;
+	}, [currentId, snapshotEpoch, state.connected, state.snapshot, sendCommand]);
 
 	// dsh sessionVisible 合同：当前会话豁免归档过滤——归档当前会话不关闭、
 	// 主列表保持可见可聊，已归档区也不显示它（取消归档前菜单按真实归档态切换）。
@@ -757,6 +861,8 @@ export function usePiWeb() {
 
 	return {
 		sessions: visibleSessions,
+		sessionListError,
+		retrySessionList,
 		archivedSessions,
 		/** 原始归档路径列表（含被豁免的当前会话，供菜单显示真实归档态） */
 		archivedSessionPaths,
@@ -769,6 +875,7 @@ export function usePiWeb() {
 		workspaceAliases,
 		getWorkspaceName,
 		renameWorkspace,
+		patchSessionName,
 		archiveSession,
 		unarchiveSession,
 		resync,
@@ -785,6 +892,7 @@ export function usePiWeb() {
 		closeSession,
 		setToolPreset,
 		clearError,
+		clearCompaction,
 		setError,
 		answerExtensionDialog,
 		dismissExtensionNotice,

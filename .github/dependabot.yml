@@ -8,6 +8,7 @@ updates:
       pi-engine:
         patterns:
           - "@earendil-works/pi-coding-agent"
+          - "@earendil-works/pi-ai"
       web-stack:
         patterns:
           - next

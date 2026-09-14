@@ -40,6 +40,8 @@ export interface GitInfo {
 	behind: number;
 	detached: boolean;
 	files: GitFileEntry[];
+	/** 状态读取失败时文件变更未知；不能把空 files 解读为工作区干净。 */
+	statusError?: string;
 	commits: GitCommit[];
 }
 
@@ -60,7 +62,7 @@ const EMPTY: GitInfo = {
 const MAX_DIFF_BYTES = 400 * 1024;
 
 function runGit(cwd: string, args: string[], maxBuffer = 4 * 1024 * 1024): Promise<string> {
-	return exec("git", args, { cwd, timeout: 15_000, maxBuffer, windowsHide: true }).then((r) => r.stdout);
+	return exec("git", args, { cwd, timeout: 15_000, maxBuffer, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } }).then((r) => r.stdout);
 }
 
 function kindOf(x: string, y: string): GitFileEntry["kind"] {
@@ -95,6 +97,7 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 	let ahead = 0;
 	let behind = 0;
 	let detached = false;
+	let statusError: string | undefined;
 	const files: GitFileEntry[] = [];
 	try {
 		// porcelain v2 是结构化输出，不依赖 "No branch" 这类措辞；-z 让含空格/非 ASCII 的路径也稳定
@@ -148,8 +151,10 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 				});
 			}
 		}
-	} catch {
-		// status 失败（如索引损坏）：分支与提交仍可展示
+	} catch (error) {
+		// 分支与提交可继续展示，但文件状态未知，绝不能回退为「工作区干净」。
+		const stderr = (error as { stderr?: unknown })?.stderr;
+		statusError = (typeof stderr === "string" ? stderr.trim() : error instanceof Error ? error.message : String(error)) || "git status failed";
 	}
 
 	let commits: GitCommit[] = [];
@@ -173,7 +178,7 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 			/* keep null */
 		}
 	}
-	return { available: true, isRepo: true, root, branch, upstream, ahead, behind, detached, files, commits };
+	return { available: true, isRepo: true, root, branch, upstream, ahead, behind, detached, files, commits, ...(statusError ? { statusError } : {}) };
 }
 
 export interface GitDiffResult {
@@ -203,17 +208,32 @@ export async function gitDiff(cwdValue: unknown, relPath: unknown, mode: unknown
 	const rel = path.relative(root, abs).replace(/\\/g, "/");
 	if (mode === "untracked") {
 		// 未跟踪文件：合成一个全新增的 patch，让前端用同一套 diff 视图展示
-		const stat = await fs.stat(abs).catch(() => null);
+		const realRoot = await fs.realpath(root);
+		const realFile = await fs.realpath(abs).catch(() => { throw new BoundaryError("file not found"); });
+		if (!isPathInside(realRoot, realFile)) throw new BoundaryError("path escapes the repository");
+		const stat = await fs.stat(realFile).catch(() => null);
 		if (!stat?.isFile()) throw new BoundaryError("file not found");
-		const buffer = await fs.readFile(abs);
-		if (buffer.includes(0)) return { patch: "", truncated: false, binary: true };
-		const text = buffer.subarray(0, MAX_DIFF_BYTES).toString("utf8").replace(/\r/g, "");
+		const buffer = Buffer.alloc(Math.min(stat.size, MAX_DIFF_BYTES + 1));
+		const handle = await fs.open(realFile, "r");
+		let bytesRead = 0;
+		try {
+			while (bytesRead < buffer.length) {
+				const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+				if (read.bytesRead === 0) break;
+				bytesRead += read.bytesRead;
+			}
+		} finally {
+			await handle.close();
+		}
+		const head = buffer.subarray(0, bytesRead);
+		if (head.includes(0)) return { patch: "", truncated: false, binary: true };
+		const text = head.subarray(0, MAX_DIFF_BYTES).toString("utf8").replace(/\r/g, "");
 		const lines = text.split("\n");
 		if (lines[lines.length - 1] === "") lines.pop();
 		const body = lines.map((l) => `+${l}`).join("\n");
 		return {
 			patch: `--- /dev/null\n+++ b/${rel}\n@@ -0,0 +1,${lines.length} @@\n${body}\n`,
-			truncated: buffer.length > MAX_DIFF_BYTES,
+			truncated: stat.size > MAX_DIFF_BYTES,
 			binary: false,
 		};
 	}

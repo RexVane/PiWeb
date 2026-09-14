@@ -3,17 +3,20 @@
 /**
  * 输入卡（对齐 dsh ui-conversation InputBar 结构）：
  * 22px 圆角胶囊 + elevation-soft；按钮行 = ＋命令 ｜ 模型 ｜ 圆环 ｜ 停止/发送圆钮。
- * dsh 语义：运行中 + 空文案 → 停止圆钮；有文案 → 发送即排队 steer；Enter 发送 / Shift+Enter 换行。
+ * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
+ * 排队中的消息列在输入卡上方，↑（空输入框时）取回编辑。Enter 发送 / Shift+Enter 换行。
  */
 import { useEffect, useRef, useState } from "react";
 import {
 	IconFileOutline16,
 	IconSendArrowUp14,
 	IconStopFill16,
+	IconTerminalOutline14,
 } from "@/components/icons";
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
+import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import type { ImageAttachment } from "@/lib/types";
 
 export interface SlashCommand {
@@ -24,6 +27,22 @@ export interface SlashCommand {
 	/** 提示模板的参数提示（frontmatter argument-hint） */
 	argumentHint?: string;
 }
+
+export interface ChatDraft {
+	text: string;
+	images: ImageAttachment[];
+	uploads: Array<{ name: string; path: string; size: number }>;
+	adopted?: SlashCommand | null;
+}
+
+export type ChatDraftUpdate = ChatDraft | ((previous: ChatDraft) => ChatDraft);
+export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [] };
+
+type SendResult = { success: boolean; error?: string };
+const MAX_UPLOAD_FILES = 16;
+
+/** abort / clearQueue 命令的返回：服务端清出来的排队文本，放回输入框用 */
+type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
 
 export function ChatInput({
 	disabled,
@@ -50,7 +69,14 @@ export function ChatInput({
 	onSelectLevel,
 	onClearQueue,
 	draft,
-	insert,
+	initialDraft,
+	onDraftChange,
+	onUploadError,
+	onUploadProgress,
+	uploadFailure,
+	pendingUploadCount = 0,
+	pendingSend = false,
+	onSendPendingChange,
 }: {
 	disabled?: boolean;
 	isStreaming: boolean;
@@ -70,26 +96,49 @@ export function ChatInput({
 	queue: { steering: string[]; followUp: string[] };
 	commands?: SlashCommand[];
 	onCommand?: (name: string, args: string) => void;
-	onSend: (text: string, images: ImageAttachment[]) => void;
-	onSteer: (text: string, images: ImageAttachment[]) => void;
-	onFollowUp?: (text: string, images: ImageAttachment[]) => void;
-	onAbort: () => void;
+	onSend: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
+	onSteer: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
+	onFollowUp?: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
+	/** 停止：服务端先清空队列再中止，并返回被清掉的文本，这里把它们放回输入框 */
+	onAbort: () => Promise<QueueResult | void> | void;
 	onSelectModel: (provider: string, id: string) => void;
 	onSelectLevel: (level: string) => void;
-	onClearQueue?: () => void;
-	draft?: { key: number; text: string } | null;
-	/** 在光标处插入文本（文件面板「引用」、Git 面板「让 pi 提交」），不覆盖已有草稿 */
-	insert?: { key: number; text: string } | null;
+	/** 清空队列并返回被清掉的文本（取回编辑 / 丢弃都走它） */
+	onClearQueue?: () => Promise<QueueResult | void> | void;
+	/** Parent-owned, session-scoped draft. Async work always updates this same target. */
+	draft?: ChatDraft;
+	initialDraft?: ChatDraft;
+	onDraftChange?: (update: ChatDraftUpdate) => void;
+	onUploadError?: (message: string) => void;
+	onUploadProgress?: (delta: 1 | -1) => void;
+	uploadFailure?: string;
+	pendingUploadCount?: number;
+	pendingSend?: boolean;
+	onSendPendingChange?: (pending: boolean) => void;
 }) {
-	const [text, setText] = useState("");
-	const [images, setImages] = useState<ImageAttachment[]>([]);
-	const imagesRef = useRef<ImageAttachment[]>([]);
+	const [localDraft, setLocalDraft] = useState<ChatDraft>(initialDraft ?? EMPTY_CHAT_DRAFT);
+	const currentDraft = draft ?? localDraft;
+	const draftRef = useRef(currentDraft);
+	draftRef.current = currentDraft;
+	const changeDraft = (update: ChatDraftUpdate) => {
+		const next = typeof update === "function" ? update(draftRef.current) : update;
+		draftRef.current = next;
+		if (draft === undefined) setLocalDraft(next);
+		onDraftChange?.(update);
+	};
+	const { text, images, uploads } = currentDraft;
+	const adopted = currentDraft.adopted ?? null;
+	const setText = (value: string | ((previous: string) => string)) => changeDraft((previous) => ({ ...previous, text: typeof value === "function" ? value(previous.text) : value }));
+	const setAdopted = (value: SlashCommand | null) => changeDraft((previous) => ({ ...previous, adopted: value }));
 	const pendingReads = useRef<Promise<void>[]>([]);
+	const inFlightUploads = useRef(0);
+	const mountedRef = useRef(true);
+	const sendingRef = useRef(false);
+	const [sending, setSending] = useState(false);
 	const [attachmentError, setAttachmentError] = useState("");
-	/** 拖入的普通文件（非图片）：上传到 ~/.pi/agent/web-uploads，发送时以路径引用（dsh 附件语义） */
-	const [uploads, setUploads] = useState<Array<{ name: string; path: string; size: number }>>([]);
-	const uploadsRef = useRef<Array<{ name: string; path: string; size: number }>>([]);
-	const [uploadBusy, setUploadBusy] = useState(false);
+	const [uploadCount, setUploadCount] = useState(0);
+	const uploadBusy = uploadCount > 0 || pendingUploadCount > 0;
+	const sendBusy = sending || pendingSend;
 	const [dragActive, setDragActive] = useState(false);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
@@ -99,34 +148,20 @@ export function ChatInput({
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
 	const isBlocked = !model?.id;
+	const enterBehavior = useEnterBehavior();
+	const queuedCount = queue.steering.length + queue.followUp.length;
+	const [restoreTick, setRestoreTick] = useState(0);
 
 	useEffect(() => {
-		if (!insert) return;
-		setText((prev) => {
-			const ta = taRef.current;
-			const pos = ta && ta.selectionStart !== null ? ta.selectionStart : prev.length;
-			const before = prev.slice(0, pos);
-			const after = prev.slice(pos);
-			const sep = before && !/\s$/.test(before) ? " " : "";
-			return `${before}${sep}${insert.text}${after}`;
-		});
-		setCmdDismissed(false);
-		requestAnimationFrame(() => {
-			autoSize();
-			taRef.current?.focus();
-		});
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [insert]);
-
+		mountedRef.current = true;
+		return () => { mountedRef.current = false; };
+	}, []);
 	useEffect(() => {
-		if (!draft) return;
-		setText(draft.text);
-		setCmdDismissed(false);
-		requestAnimationFrame(() => {
-			autoSize();
-			taRef.current?.focus();
-		});
-	}, [draft]);
+		setAttachmentError(uploadFailure ?? "");
+	}, [uploadFailure]);
+	useEffect(() => {
+		autoSize();
+	}, [text]);
 
 	// 斜杠命令模式：文本以 / 开头且未输入参数空格
 	const slash = text.startsWith("/") ? text.slice(1) : "";
@@ -135,6 +170,12 @@ export function ChatInput({
 	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.split(" ")[0].toLowerCase()));
 	const visibleCommands = filteredCommands;
 	const commandMode = typedCommandMode;
+	// 命令菜单滚动：.popover 的 overflow:hidden 会压掉 overflow-y-auto（unlayered CSS 优先），
+	// 内联 overflowY 强制可滚；键盘导航时把选中项滚进视野
+	const cmdMenuRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		cmdMenuRef.current?.querySelector('button[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+	}, [cmdIdx, visibleCommands.length]);
 	const effectiveIdx = Math.min(cmdIdx, Math.max(0, visibleCommands.length - 1));
 
 	const runEntry = (entry: SlashCommand) => {
@@ -155,7 +196,8 @@ export function ChatInput({
 			return;
 		} else {
 			// 技能 / 模板 / 扩展命令：交给 pi 展开执行（SDK 的 prompt() 会识别 /skill:x、/template、扩展命令）
-			onSend(`/${entry.name}${args ? ` ${args}` : ""}`, []);
+			doSend(undefined, `/${entry.name}${args ? ` ${args}` : ""}`);
+			return;
 		}
 		setText("");
 		setCmdIdx(0);
@@ -170,115 +212,150 @@ export function ChatInput({
 		ta.style.height = `${Math.min(ta.scrollHeight, 336)}px`;
 	};
 
-	const doSend = () => {
-		const trimmed = text.trim();
-		// FileReader 可能尚未完成（粘贴后立刻回车）：先等所有读取结束，
-		// 再从 ref 取最新附件，避免漏发或图片窜到下一条消息。
+	const doSend = (override?: "steer" | "followUp", forcedText?: string) => {
+		if (disabled || isBlocked || sendingRef.current || pendingSend || uploadBusy) return;
+		sendingRef.current = true;
+		setSending(true);
+		onSendPendingChange?.(true);
+		const raw = (forcedText ?? draftRef.current.text).trim();
+		const trimmed = adopted ? `/${adopted.name}${raw ? ` ${raw}` : ""}` : raw;
 		void (async () => {
-			if (pendingReads.current.length) {
-				await Promise.allSettled(pendingReads.current);
-				pendingReads.current = [];
-			}
-			const attachments = imagesRef.current;
-			const files = uploadsRef.current;
-			if (!trimmed && attachments.length === 0 && files.length === 0) return;
-			// 直接敲 "/compact 只留结论" 这类 Web 内置命令：走命令处理，不能当普通文本发给模型
-			if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0) {
-				const [head, ...rest] = trimmed.slice(1).split(/\s+/);
-				const builtin = (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
-				if (builtin) {
-					onCommand?.(builtin.name, rest.join(" "));
-					setText("");
-					setCmdDismissed(false);
-					requestAnimationFrame(autoSize);
+			try {
+				if (pendingReads.current.length) await Promise.allSettled(pendingReads.current);
+				const submitted = draftRef.current;
+				const attachments = [...submitted.images];
+				const files = [...submitted.uploads];
+				if (!trimmed && attachments.length === 0 && files.length === 0) return;
+				if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0) {
+					const [head, ...rest] = trimmed.slice(1).split(/\s+/);
+					const builtin = (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
+					if (builtin) {
+						if (builtin.name === "model") setModelOpen(true);
+						else onCommand?.(builtin.name, rest.join(" "));
+						changeDraft((previous) => ({ ...previous, text: "", adopted: null }));
+						setCmdDismissed(false);
+						return;
+					}
+				}
+				const compose = (base: string) =>
+					files.length ? `${base}${base ? "\n\n" : ""}${files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n")}` : base;
+				let result: SendResult;
+				if (isStreaming) {
+					const mode = override ?? (enterBehavior === "steer" ? "steer" : "followUp");
+					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(trimmed), attachments);
+					else result = await onSteer(compose(trimmed), attachments);
+				} else result = await onSend(compose(trimmed), attachments);
+				if (!result?.success) {
+					if (forcedText) setText(forcedText);
+					if (result?.error && mountedRef.current) setAttachmentError(result.error);
 					return;
 				}
+				// Acceptance, not completion of streaming, releases the composer. Only remove
+				// this submitted snapshot, including after unmount/session migration.
+				changeDraft((previous) => ({
+					...previous,
+					text: previous.text === submitted.text ? "" : previous.text,
+					adopted: previous.adopted === submitted.adopted ? null : previous.adopted,
+					images: previous.images.filter((image) => !attachments.includes(image)),
+					uploads: previous.uploads.filter((file) => !files.some((sent) => sent.path === file.path)),
+				}));
+			} catch (error) {
+				if (forcedText) setText(forcedText);
+				if (mountedRef.current) setAttachmentError(error instanceof Error ? error.message : String(error));
+			} finally {
+				sendingRef.current = false;
+				onSendPendingChange?.(false);
+				if (mountedRef.current) setSending(false);
 			}
-			// 普通文件以路径行附在消息尾部，模型经 read/bash 等工具访问（dsh FileAttachmentRef 语义）
-			const compose = (base: string) =>
-				files.length ? `${base}${base ? "\n\n" : ""}${files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n")}` : base;
-			if (isStreaming) {
-				// Enter 键行为（设置）：排队发送 = followUp；插话 = steer
-				const behavior = localStorage.getItem("piweb.enterBehavior") ?? "queue";
-				if (behavior === "steer") onSteer(compose(trimmed), attachments);
-				else if (onFollowUp) onFollowUp(compose(trimmed), attachments);
-				else onSteer(compose(trimmed), attachments);
-			} else onSend(compose(trimmed), attachments);
-			setText("");
-			imagesRef.current = [];
-			setImages([]);
-			uploadsRef.current = [];
-			setUploads([]);
-			requestAnimationFrame(autoSize);
 		})();
 	};
 
+	/** 把服务端清出来的排队文本放回输入框（接在已有草稿前面；pi 终端 Esc / Alt+Up、Claude Code ↑ 同款） */
+	const restoreQueued = (r: QueueResult | void) => {
+		const texts = [...(r?.data?.steering ?? []), ...(r?.data?.followUp ?? [])];
+		if (!texts.length) return;
+		setText((prev) => [texts.join("\n\n"), prev].filter((s) => s.trim()).join("\n\n"));
+		setCmdDismissed(true);
+		setRestoreTick((n) => n + 1);
+	};
+	useEffect(() => {
+		if (!restoreTick) return;
+		autoSize();
+		taRef.current?.focus();
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [restoreTick]);
+	const stopAndRestore = async () => restoreQueued(await onAbort());
+	const pullQueue = async () => restoreQueued(await onClearQueue?.());
+
 	const pickFiles = (files: FileList | File[] | null) => {
-		if (!files) return;
+		if (!files || disabled || isBlocked || sendingRef.current || pendingSend) return;
 		for (const f of Array.from(files)) {
 			if (["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type)) {
 				if (f.size > 20 * 1024 * 1024) {
 					setAttachmentError(t.imageTooLarge);
 					continue;
 				}
-				const read = new Promise<void>((resolve) => {
-					const reader = new FileReader();
-					reader.onload = () => {
-					const dataUrl = String(reader.result);
-					const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-					const next = imagesRef.current;
-					if (next.length >= 20) setAttachmentError(t.imageCountLimit);
-					else {
-						imagesRef.current = [...next, { type: "image", data: base64, mimeType: f.type }];
-						setImages(imagesRef.current);
-					}
-					resolve();
-				};
-				reader.onerror = () => resolve();
-				reader.readAsDataURL(f);
-			});
-			pendingReads.current.push(read);
-			} else {
-				// 非图片文件：上传到本机 uploads 目录，发送时以路径引用
-				void uploadFile(f);
-			}
+					const read = new Promise<void>((resolve) => {
+						const reader = new FileReader();
+						reader.onload = () => {
+							const dataUrl = String(reader.result);
+							const image: ImageAttachment = { type: "image", data: dataUrl.slice(dataUrl.indexOf(",") + 1), mimeType: f.type };
+							changeDraft((previous) => previous.images.length >= 20 ? previous : { ...previous, images: [...previous.images, image] });
+							resolve();
+						};
+						reader.onerror = () => resolve();
+						reader.onabort = () => resolve();
+						reader.readAsDataURL(f);
+					});
+					pendingReads.current.push(read);
+					void read.finally(() => { pendingReads.current = pendingReads.current.filter((pending) => pending !== read); });
+				} else {
+					void uploadFile(f);
+				}
 		}
 	};
 
-	const uploadFile = async (f: File) => {
+	const uploadFile = async (f: File): Promise<boolean> => {
 		if (f.size > 100 * 1024 * 1024) {
 			setAttachmentError(t.uploadTooLarge);
-			return;
+			return false;
 		}
-		if (uploadsRef.current.length >= 16) {
+		if (draftRef.current.uploads.length + Math.max(inFlightUploads.current, pendingUploadCount) >= MAX_UPLOAD_FILES) {
 			setAttachmentError(t.uploadCountLimit);
-			return;
+			return false;
 		}
-		setUploadBusy(true);
+		inFlightUploads.current += 1;
+		onUploadProgress?.(1);
+		setUploadCount((count) => count + 1);
 		setAttachmentError("");
 		try {
-			const dataUrl = await new Promise<string>((resolve, reject) => {
-				const reader = new FileReader();
-				reader.onload = () => resolve(String(reader.result));
-				reader.onerror = () => reject(reader.error);
-				reader.readAsDataURL(f);
-			});
-			const r = await fetch("/api/files", {
+			const r = await fetch(`/api/files?action=upload&name=${encodeURIComponent(f.name)}`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action: "upload", name: f.name, data: dataUrl.slice(dataUrl.indexOf(",") + 1) }),
+				headers: { "Content-Type": "application/octet-stream", "x-upload-size": String(f.size) },
+				body: f,
 			});
 			const j = await r.json();
-			if (!j.success) throw new Error(j.error || "upload failed");
-			uploadsRef.current = [...uploadsRef.current, { name: j.data.name, path: j.data.path, size: j.data.size }];
-			setUploads(uploadsRef.current);
+			if (!r.ok || !j.success) throw new Error(j.error || "upload failed");
+			if (j.data?.size !== f.size) throw new Error("upload size mismatch");
+			const uploaded = { name: j.data.name, path: j.data.path, size: j.data.size };
+			changeDraft((previous) => previous.uploads.some((file) => file.path === uploaded.path)
+				? previous
+				: { ...previous, uploads: [...previous.uploads, uploaded] });
+			return true;
 		} catch (e) {
-			setAttachmentError(`${t.uploadFailed}：${e instanceof Error ? e.message : String(e)}`);
+			const message = `${t.uploadFailed}：${e instanceof Error ? e.message : String(e)}`;
+			onUploadError?.(message);
+			if (mountedRef.current) setAttachmentError(message);
+			return false;
 		} finally {
-			setUploadBusy(false);
+			inFlightUploads.current -= 1;
+			onUploadProgress?.(-1);
+			if (mountedRef.current) setUploadCount((count) => Math.max(0, count - 1));
 		}
 	};
 
+	const pickFilesRef = useRef(pickFiles);
+	pickFilesRef.current = pickFiles;
 	// 全窗口拖放（照 dsh ComposerAttachments）：拖文件悬停时整窗高亮，任意位置松开即接收
 	useEffect(() => {
 		const withFiles = (e: DragEvent) => e.dataTransfer !== null && e.dataTransfer.types.includes("Files");
@@ -305,7 +382,7 @@ export function ChatInput({
 			if (e.dataTransfer === null) return;
 			e.preventDefault();
 			reset();
-			pickFiles(e.dataTransfer.files);
+				pickFilesRef.current(e.dataTransfer.files);
 		};
 		document.addEventListener("dragenter", onDragEnter);
 		document.addEventListener("dragover", onDragOver);
@@ -325,7 +402,28 @@ export function ChatInput({
 	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0;
 
 	return (
-		<div ref={wrapRef} className="relative w-full">
+		<div ref={wrapRef} className="relative w-full" data-testid="composer">
+			{/* 排队中的消息（Claude Code 同款：列在输入卡上方；↑ 取回编辑，或直接丢弃） */}
+			{queuedCount > 0 && (
+				<div className="pw-queue">
+					{queue.steering.map((q, i) => (
+						<div key={`s${i}`} className="pw-queue-row" title={q}>
+							<span className="pw-queue-tag">{t.modeSteer}</span>
+							<span className="pw-queue-text">{q}</span>
+						</div>
+					))}
+					{queue.followUp.map((q, i) => (
+						<div key={`f${i}`} className="pw-queue-row" title={q}>
+							<span className="pw-queue-tag">{t.modeQueue}</span>
+							<span className="pw-queue-text">{q}</span>
+						</div>
+					))}
+					<div className="pw-queue-foot">
+						<button type="button" onClick={() => void pullQueue()}>{t.queueEdit}</button>
+						<button type="button" onClick={() => void onClearQueue?.()}>{t.queueDrop}</button>
+					</div>
+				</div>
+			)}
 			{attachmentError && (
 				<div className="mb-2 px-2" role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>
 					{attachmentError}
@@ -333,7 +431,7 @@ export function ChatInput({
 			)}
 			{/* 斜杠命令菜单（dsh：悬浮于输入卡上方，同宽） */}
 			{commandMode && visibleCommands.length > 0 && (
-				<div className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog}>
+				<div ref={cmdMenuRef} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog} style={{ overflowY: "auto" }}>
 					<div className="px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 						{t.slashCatalog}
 					</div>
@@ -378,7 +476,8 @@ export function ChatInput({
 							<button
 								className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-[10px]"
 								style={{ background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
-								onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+								disabled={sendBusy}
+								onClick={() => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, index) => index !== i) }))}
 							>
 								✕
 							</button>
@@ -403,10 +502,8 @@ export function ChatInput({
 							<button
 								className="flex h-5 w-5 items-center justify-center rounded-full text-[10px]"
 								style={{ color: "var(--dsw-label-caption)" }}
-								onClick={() => {
-									uploadsRef.current = uploadsRef.current.filter((_, j) => j !== i);
-									setUploads(uploadsRef.current);
-								}}
+								disabled={sendBusy}
+								onClick={() => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, index) => index !== i) }))}
 								aria-label="remove"
 							>
 								✕
@@ -426,15 +523,37 @@ export function ChatInput({
 					border: "0.5px solid var(--dsw-border-l1)",
 				}}
 			>
-				<div className="px-4 pt-3">
+				<div className="px-4 pt-3 flex items-start gap-1.5">
+					{adopted && (
+						<button
+							type="button"
+							className="flex-none flex items-center gap-1 self-start"
+							title={`${t.delete} (Backspace)`}
+							style={{
+								fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))",
+								lineHeight: "var(--piweb-chat-line-height, 1.55)",
+								padding: 0,
+								background: "transparent",
+								border: "none",
+								color: "var(--dsw-label-primary)",
+							}}
+							onClick={() => {
+								setAdopted(null);
+								requestAnimationFrame(() => taRef.current?.focus());
+							}}
+						>
+							<IconTerminalOutline14 size={14} style={{ color: "var(--dsw-accent)", flex: "none" }} />
+							<span style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
+						</button>
+					)}
 					<textarea
 						ref={taRef}
 						value={text}
-						disabled={disabled || isBlocked}
+						disabled={disabled || isBlocked || sendBusy}
 						rows={1}
-						placeholder={!disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
+						placeholder={adopted ? (adopted.argumentHint ?? t.inputPlaceholder) : !disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						suppressHydrationWarning
-						className="block w-full resize-none"
+						className="min-w-0 flex-1 resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
 							onChange={(e) => {
 							setText(e.target.value);
@@ -450,6 +569,12 @@ export function ChatInput({
 							}
 						}}
 						onKeyDown={(e) => {
+							if (adopted && text === "" && (e.key === "Backspace" || e.key === "Escape")) {
+								// 空参数时退格/Esc：摘掉命令胶囊
+								e.preventDefault();
+								setAdopted(null);
+								return;
+							}
 							if (commandMode && visibleCommands.length > 0) {
 								if (e.key === "ArrowDown") {
 									e.preventDefault();
@@ -471,10 +596,31 @@ export function ChatInput({
 									runEntry(visibleCommands[effectiveIdx]);
 									return;
 								}
+								if (e.key === "Tab") {
+									// 采纳：把命令渲染成胶囊留在输入框，参数接着补（对齐其他 Agent 平台）
+									e.preventDefault();
+									const entry = visibleCommands[effectiveIdx];
+									if (!entry) return;
+									setAdopted(entry);
+									setText("");
+									setCmdIdx(0);
+									requestAnimationFrame(() => {
+										autoSize();
+										taRef.current?.focus();
+									});
+									return;
+								}
+							}
+							if (e.key === "ArrowUp" && text === "" && queuedCount > 0) {
+								e.preventDefault();
+								void pullQueue();
+								return;
 							}
 							if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 								e.preventDefault();
-								doSend();
+								// Ctrl / ⌘ + Enter：用设置之外的另一种方式发（只在运行中有区别）
+								const alt = e.ctrlKey || e.metaKey;
+								doSend(isStreaming && alt ? (otherBehavior(enterBehavior) === "steer" ? "steer" : "followUp") : undefined);
 							}
 						}}
 					/>
@@ -493,21 +639,7 @@ export function ChatInput({
 					}}
 				>
 					{/* 命令菜单通过输入 / 触发（dsh 同款），不再提供 ＋ 启动按钮 */}
-					{/* 运行中且有草稿：告诉用户 Enter 会怎么发（插话 / 排队） */}
-					{isStreaming && hasDraft ? (
-						<span className="min-w-0 flex-1 truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", paddingLeft: 6 }} suppressHydrationWarning>
-							{(typeof window !== "undefined" ? localStorage.getItem("piweb.enterBehavior") : null) === "steer" ? t.hintSteer : t.hintFollowUp}
-						</span>
-					) : (
-						<div className="flex-1" />
-					)}
-
-					{/* 队列提示 */}
-					{isStreaming && queue.steering.length + queue.followUp.length > 0 && (
-						<button type="button" title={t.clearQueue} onClick={onClearQueue} style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>
-							+{queue.steering.length + queue.followUp.length}
-						</button>
-					)}
+					<div className="flex-1" />
 
 					{/* 模型芯片（右组，dsh 分组菜单；/model 命令可受控打开） */}
 					<ModelSelector
@@ -533,15 +665,27 @@ export function ChatInput({
 						/>
 					)}
 
-					{/* 停止 / 发送圆钮 */}
+					{/* 停止 / 发送圆钮：运行中没草稿 → 停止；运行中有草稿 → 幽灵停止钮 + 发送（发送即按设置插话 / 排队） */}
 					{isStreaming && !hasDraft ? (
-						<button className="btn-primary-circle" title={t.stop} onClick={onAbort}>
+						<button className="btn-primary-circle" title={t.stop} onClick={() => void stopAndRestore()}>
 							<IconStopFill16 size={16} />
 						</button>
 					) : (
-						<button className="btn-primary-circle" title={isStreaming ? t.queueNote : t.send} disabled={!hasDraft || disabled || isBlocked} onClick={doSend}>
-							<IconSendArrowUp14 size={16} />
-						</button>
+						<>
+							{isStreaming && (
+								<button className="btn-ghost-circle" title={t.stop} onClick={() => void stopAndRestore()}>
+									<IconStopFill16 size={14} />
+								</button>
+							)}
+							<button
+								className="btn-primary-circle"
+								title={isStreaming ? (enterBehavior === "steer" ? t.sendSteer : t.sendQueue) : t.send}
+								disabled={!hasDraft || disabled || isBlocked || sendBusy || uploadBusy}
+								onClick={() => doSend()}
+							>
+								<IconSendArrowUp14 size={16} />
+							</button>
+						</>
 					)}
 				</div>
 			</div>

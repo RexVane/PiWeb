@@ -131,13 +131,6 @@ export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 	}
 }
 
-/** 初始化：读取存储的配色与亮暗并应用 */
-export function initPebrelTheme(): PebrelTheme {
-	const theme = loadPebrelTheme();
-	applyPebrelTheme(theme, loadThemeMode());
-	return theme;
-}
-
 /** 系统亮暗变化 / 跨标签同步时重放当前外观 */
 export function syncPebrelTheme(): void {
 	applyPebrelTheme(loadPebrelTheme(), loadThemeMode());

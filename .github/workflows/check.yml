@@ -9,13 +9,22 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22.19.0, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run check
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-test-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"

@@ -11,13 +11,15 @@
 	"scripts": {
 		"dev": "node scripts/dev.mjs",
 		"build": "node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack",
+		"build:release": "node scripts/release.mjs",
 		"start": "node bin/piweb.js",
 		"web": "node bin/pi.js web",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"check": "npm run typecheck && npm run test && npm run build",
 		"sync:provider-icons": "node scripts/sync-provider-icons.mjs",
-		"update:pi": "npm install --save-exact @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest && npm run sync:provider-icons && npm run check"
+		"sync:file-icons": "node scripts/sync-file-icons.mjs",
+		"update:pi": "node scripts/release.mjs --update-pi"
 	},
 	"dependencies": {
 		"@automann/maple-mono-cn": "^7.9.2",
@@ -25,7 +27,9 @@
 		"@earendil-works/pi-coding-agent": "0.85.1",
 		"@lobehub/icons-static-svg": "^1.95.0",
 		"highlight.js": "^11.11.1",
+		"jsonc-parser": "3.3.1",
 		"next": "16.3.4",
+		"proper-lockfile": "4.1.2",
 		"react": "^19.2.4",
 		"react-dom": "^19.2.4",
 		"react-markdown": "^10.1.0",
@@ -34,15 +38,20 @@
 	},
 	"devDependencies": {
 		"@tailwindcss/postcss": "^4.2.2",
+		"@testing-library/dom": "^10.4.2",
+		"@testing-library/react": "^16.3.3",
 		"@types/node": "^26",
+		"@types/proper-lockfile": "4.1.4",
 		"@types/react": "^19",
 		"@types/react-dom": "^19",
+		"jsdom": "^29.1.1",
+		"material-icon-theme": "^5.38.1",
 		"postcss": "^8.5.26",
 		"tailwindcss": "^4.2.2",
 		"typescript": "^7",
 		"vitest": "5.0.0"
 	},
 	"engines": {
-		"node": ">=22"
+		"node": ">=22.19.0"
 	}
 }

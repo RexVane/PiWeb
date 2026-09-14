@@ -1,6 +1,7 @@
 const BASIC_PREFIX = "Basic ";
 
-function equalText(left: string, right: string): boolean {
+/** 恒定时间字符串比较（长度不同也走完全程，不早退） */
+export function equalText(left: string, right: string): boolean {
 	const max = Math.max(left.length, right.length);
 	let mismatch = left.length ^ right.length;
 	for (let i = 0; i < max; i += 1) {
@@ -26,9 +27,19 @@ export function isSafeOrigin(request: Request): boolean {
 	if (!origin) return true;
 	try {
 		const originUrl = new URL(origin);
-		const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-		const expectedHost = forwardedHost || request.headers.get("host") || new URL(request.url).host;
+		const expectedHost = request.headers.get("host") || new URL(request.url).host;
 		return originUrl.host.toLowerCase() === expectedHost.toLowerCase();
+	} catch {
+		return false;
+	}
+}
+
+export function isSafeHost(request: Request, passwordConfigured: boolean): boolean {
+	if (passwordConfigured) return true;
+	try {
+		const host = request.headers.get("host") || new URL(request.url).host;
+		const parsed = new URL(`http://${host}`);
+		return !parsed.username && !parsed.password && parsed.host.toLowerCase() === host.toLowerCase() && isLoopbackHostname(parsed.hostname);
 	} catch {
 		return false;
 	}
