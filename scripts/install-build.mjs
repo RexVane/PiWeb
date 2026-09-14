@@ -101,13 +101,22 @@ export function assertStagingOutsideNodeModules(root) {
 	return parent;
 }
 
-function tryLinkDependencies(root, staging) {
+function linkOrCopyDependencies(root, staging, log) {
+	const target = path.join(root, "node_modules");
+	const linkPath = path.join(staging, "node_modules");
+	// Windows: junction 不需要符号链接权限；跨卷时 junction 也会失败（试回退）。
+	// POSIX（macOS/Linux）: 目录符号链接即可，"junction" 类型会被 libuv 拒绝
+	// （0.3.5 的 Mac 现场：symlinkSync(..., 'junction') 抛 EINVAL）。
+	const type = process.platform === "win32" ? "junction" : "dir";
 	try {
-		fs.symlinkSync(path.join(root, "node_modules"), path.join(staging, "node_modules"), "junction");
-		return true;
+		fs.symlinkSync(target, linkPath, type);
+		return;
 	} catch {
-		return false;
+		/* fall through to the copy */
 	}
+	// 兜底：符号链接不可用（如无权限）时整份复制依赖。慢但保证构建可解析。
+	log("[piweb] Symlink unavailable; copying dependencies into the staging build (slower)...");
+	fs.cpSync(target, linkPath, { recursive: true, verbatimSymlinks: true });
 }
 
 function buildInStaging(root, nextBin, env, log, warn) {
@@ -115,13 +124,6 @@ function buildInStaging(root, nextBin, env, log, warn) {
 	try {
 		staging = fs.mkdtempSync(path.join(stagingParent(root), ".piweb-build-"));
 	} catch {
-		staging = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-build-"));
-	}
-	// junction 不能跨卷：staging 与包不同盘时链接会失败，退回系统临时目录再试一次
-	if (!tryLinkDependencies(root, staging) && path.parse(staging).root !== path.parse(os.tmpdir()).root) {
-		try {
-			fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-		} catch { /* proceed to the tmpdir attempt */ }
 		staging = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-build-"));
 	}
 	try {
@@ -133,10 +135,7 @@ function buildInStaging(root, nextBin, env, log, warn) {
 			const from = path.join(root, file);
 			if (fs.existsSync(from)) fs.copyFileSync(from, path.join(staging, file));
 		}
-		if (!tryLinkDependencies(root, staging)) {
-			warn("[piweb] Could not link dependencies into the staging build (junction unavailable).");
-			return false;
-		}
+		linkOrCopyDependencies(root, staging, log);
 		log(`[piweb] Building in ${staging} ...`);
 		const result = spawnSync(process.execPath, [nextBin, "build", "--webpack"], { cwd: staging, stdio: "inherit", env });
 		const produced = path.join(staging, ".next", "BUILD_ID");
@@ -146,6 +145,8 @@ function buildInStaging(root, nextBin, env, log, warn) {
 		fs.cpSync(path.join(staging, ".next"), target, { recursive: true });
 		return fs.existsSync(path.join(target, "BUILD_ID"));
 	} finally {
+		// 复制兜底时 staging 里是整份 node_modules，必须删掉；rmSync 跟随链接删除
+		// 的是链接本身（Node 14+ 目录符号链接不穿透），真实依赖不受影响。
 		fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 	}
 }
