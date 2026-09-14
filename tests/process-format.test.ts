@@ -3,9 +3,11 @@ import {
 	basename,
 	classifyModelError,
 	cleanCommand,
+	deleteTargetOf,
 	firstSentence,
 	dropEchoSeparators,
 	displayToolName,
+	isDeleteCommand,
 	isListCommand,
 	langOfPath,
 	previewSide,
@@ -179,5 +181,26 @@ describe("basename / langOfPath", () => {
 		expect(langOfPath("src/ChatWindow.tsx")).toBe("TSX");
 		expect(langOfPath("Dockerfile")).toBe("Dockerfile");
 		expect(langOfPath("weird.unknownext")).toBe("");
+	});
+});
+
+describe("isDeleteCommand / deleteTargetOf", () => {
+	it("recognizes delete commands with a target", () => {
+		expect(isDeleteCommand("rm -rf dist")).toBe(true);
+		expect(isDeleteCommand("rm 'src/old file.ts'")).toBe(true);
+		expect(isDeleteCommand("Remove-Item -Recurse build")).toBe(true);
+		expect(isDeleteCommand("del /q tmp.log")).toBe(true);
+		expect(isDeleteCommand("/usr/bin/rm notes.txt")).toBe(true);
+	});
+	it("rejects non-delete commands and bare flags", () => {
+		expect(isDeleteCommand("ls -la")).toBe(false);
+		expect(isDeleteCommand("grep -r rm .")).toBe(false);
+		expect(isDeleteCommand("rm -rf")).toBe(false);
+		expect(isDeleteCommand("")).toBe(false);
+	});
+	it("extracts the first non-flag target with quotes stripped", () => {
+		expect(deleteTargetOf("rm -rf dist")).toBe("dist");
+		expect(deleteTargetOf("rm \"src/old file.ts\"")).toBe("src/old file.ts");
+		expect(deleteTargetOf("Remove-Item -Recurse build")).toBe("build");
 	});
 });

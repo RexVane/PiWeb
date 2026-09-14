@@ -79,7 +79,7 @@ describe("deleteSkill", () => {
 	});
 
 	it("rejects paths outside the discovered skill list", async () => {
-		const filePath = makeSkillDir("global");
+		const filePath = makeSkillDir("project");
 		await expect(deleteSkill(filePath, undefined)).rejects.toThrow();
 		rmSync(path.dirname(path.dirname(filePath)), { recursive: true, force: true });
 	});

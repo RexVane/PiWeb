@@ -71,6 +71,23 @@ export function cleanCommand(command: string, cwd?: string): { text: string; lin
 	return { text, lines: lines.length };
 }
 
+/** bash/PowerShell 删除文件的命令判定：rm / Remove-Item / del / trash 等，且至少带一个非选项参数 */
+export function isDeleteCommand(command: string): boolean {
+	const first = command.trim().split(/\s+/)[0] ?? "";
+	const base = first.split(/[\\/]/).pop() ?? first;
+	const name = base.toLowerCase().replace(/\.(exe|ps1|bat|cmd)$/, "");
+	if (!["rm", "remove-item", "ri", "del", "erase", "unlink", "trash"].includes(name)) return false;
+	const rest = command.trim().split(/\s+/).slice(1);
+	return rest.some((tok) => !tok.startsWith("-"));
+}
+
+/** 从删除命令里提取第一个目标路径（去引号；相对路径解析交给展示层） */
+export function deleteTargetOf(command: string): string {
+	const tokens = command.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+	const target = tokens.slice(1).find((tok) => !tok.startsWith("-"));
+	return target ? target.replace(/^["']|["']$/g, "") : "";
+}
+
 /** 按顶层的 ; && || 切分（引号内不切） */
 function splitTopLevel(cmd: string): string[] {
 	const parts: string[] = [];

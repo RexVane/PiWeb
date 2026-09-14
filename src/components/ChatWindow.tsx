@@ -35,8 +35,10 @@ import type { ContextResource, TrajEntry, TrajTokens, WebContent, WebMessage, We
 import {
 	classifyModelError,
 	cleanCommand,
+	deleteTargetOf,
 	displayToolName,
 	firstSentence,
+	isDeleteCommand,
 	langOfPath,
 	previewSide,
 	relativizeInText,
@@ -457,10 +459,10 @@ const ToolStep = memo(function ToolStep({
 		if (kind !== "write" || !state || state.state !== "done" || state.isError) return null;
 		const parsed = parseUnifiedDiff(state.patch || output);
 		if (parsed) return parsed;
-		// pi 的 write 工具不带 patch：新文件按带行号的正文展示（中性色，不标 +）
+		// pi 的 write 工具不带 patch：新文件按新增行展示（全绿 +），与 edit 的 diff 口径一致
 		if (isWriteTool) {
 			const content = str((args as { content?: unknown } | undefined)?.content);
-			if (content) return content.replace(/\r/g, "").replace(/\n$/, "").split("\n").map((text, i): DiffLine => ({ kind: "ctx", old: i + 1, new: i + 1, text }));
+			if (content) return content.replace(/\r/g, "").replace(/\n$/, "").split("\n").map((text, i): DiffLine => ({ kind: "add", new: i + 1, text }));
 		}
 		return null;
 	}, [args, isWriteTool, kind, output, state]);
@@ -478,6 +480,8 @@ const ToolStep = memo(function ToolStep({
 		return str(a?.path ?? a?.file_path) ?? "";
 	})();
 	const fullCommand = kind === "cmd" ? (str((args as Record<string, unknown>)?.command) ?? str((args as Record<string, unknown>)?.cmd) ?? str((args as Record<string, unknown>)?.script) ?? "") : "";
+	// 删除文件的命令：完成后给红色标记（内容级 diff 不强求）
+	const deletedTarget = kind === "cmd" && !running && !failed && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
 	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
 	const hasDiff = Boolean(diff && diff.length) && !failed;
 	const hasOutput = Boolean(output || state?.encodingLoss);
@@ -488,7 +492,7 @@ const ToolStep = memo(function ToolStep({
 	const diffHidden = diff && diffLines && !open ? diff.length - diffLines.length : 0;
 	const diffStat = hasDiff && diff
 		? isWriteTool && !state?.patch
-			? t.resultWrote.replace("{n}", String(diff.length))
+			? t.diffSummary.replace("{add}", String(diff.length)).replace("{del}", "0")
 			: t.diffSummary.replace("{add}", String(diff.filter((l) => l.kind === "add").length)).replace("{del}", String(diff.filter((l) => l.kind === "del").length))
 		: "";
 	const toggle = () => setOpen((o) => !o);
@@ -508,6 +512,11 @@ const ToolStep = memo(function ToolStep({
 					<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
 				)}
 				{diffStat && <span className="pw-meta">{diffStat}</span>}
+				{deletedTarget && (
+					<span className="pw-meta" style={{ color: "var(--dsw-danger)" }} title={deletedTarget}>
+						{t.deletedFile.replace("{path}", relativizeInText(deletedTarget, cwd || ""))}
+					</span>
+				)}
 				{summary.scriptLines > 1 && <span className="pw-meta">{t.commandLines.replace("{n}", String(summary.scriptLines))}</span>}
 				{running && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
 				{!running && duration >= 1000 && <span className="pw-meta">{fmtSpan(duration)}</span>}
