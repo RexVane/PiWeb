@@ -11,8 +11,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { resolveReleaseRoot } from "../scripts/release.mjs";
 import { readProductionBuild } from "../scripts/build-output.mjs";
 import { hasProductionBuild } from "../scripts/install-build.mjs";
 import { verifyPackedPackage } from "../scripts/verify-package.mjs";
@@ -98,4 +99,59 @@ describe("release gate on the real tarball", () => {
 		});
 		await expect(async () => verifyPackedPackage(root, { log: () => {} })).rejects.toThrow(/build cache/);
 	}, 60_000);
+});
+
+/**
+ * 预构建产物把「构建机」的东西一起带给了用户，这类问题只在真实安装里才暴露：
+ * Next 的 server bundle 会把 import.meta.url 替换成构建时源文件的 URL，于是 0.3.8 的
+ * /api/update 在 Windows 上启动即抛 ERR_INVALID_FILE_URL_PATH（CI 的 POSIX 路径放进
+ * file URL 没有盘符）。这里钉住「被 src 打进 bundle 的脚本不许用 import.meta.url 定位
+ * 磁盘路径」，以及根目录解析在任何平台上都不会抛。
+ */
+describe("bundled scripts must not depend on the build machine's paths", () => {
+	/** src/ 直接 import 的脚本，以及它们互相 import 的脚本（都会进 server bundle）。 */
+	async function bundledScripts() {
+		const found = new Set<string>();
+		const pending = [...(await fs.readFile(path.join(repoRoot, "src", "lib", "update-service.ts"), "utf8")).matchAll(/from "\.\.\/\.\.\/scripts\/([\w.-]+\.mjs)"/g)].map((m) => m[1]);
+		while (pending.length) {
+			const name = pending.pop() as string;
+			if (found.has(name)) continue;
+			found.add(name);
+			const source = await fs.readFile(path.join(repoRoot, "scripts", name), "utf8");
+			for (const match of source.matchAll(/from "\.\/([\w.-]+\.mjs)"/g)) pending.push(match[1]);
+		}
+		return [...found];
+	}
+
+	it("imports the release scripts through src/ (fixture sanity)", async () => {
+		const scripts = await bundledScripts();
+		expect(scripts).toContain("release.mjs");
+		expect(scripts).toContain("build-output.mjs");
+	});
+
+	it("never turns import.meta.url into a filesystem path unvalidated", async () => {
+		// 注释里提到这个名字是解释，不是代码；只检查真正的调用。
+		const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+		const unvalidated = /fileURLToPath\(\s*import\.meta\.url|dirname\(\s*import\.meta\.url|dirname\(\s*fileURLToPath\(\s*import\.meta\.url|new URL\([^)]{0,40}import\.meta\.url/;
+		for (const name of await bundledScripts()) {
+			const code = stripComments(await fs.readFile(path.join(repoRoot, "scripts", name), "utf8"));
+			expect(code, `${name}: 打包后 import.meta.url 是构建机路径，须经 resolveReleaseRoot 校验`).not.toMatch(unvalidated);
+		}
+	});
+
+	it("resolves the installation root without the module URL when it is foreign", async () => {
+		const cwd = await tempDir("piweb-root-");
+		const opts = { cwd, moduleUrl: "file:///home/runner/work/PiWeb/PiWeb/scripts/release.mjs" };
+		// Windows: fileURLToPath 直接抛 ERR_INVALID_FILE_URL_PATH；POSIX: 路径不存在。
+		expect(resolveReleaseRoot({ env: {}, ...opts })).toBe(path.resolve(cwd));
+		expect(resolveReleaseRoot({ env: { PI_WEB_ROOT: cwd }, ...opts })).toBe(path.resolve(cwd));
+	});
+
+	it("still resolves a real checkout from the module URL", async () => {
+		const root = await tempDir("piweb-checkout-");
+		await fs.mkdir(path.join(root, "scripts"), { recursive: true });
+		await fs.writeFile(path.join(root, "scripts", "release.mjs"), "");
+		const moduleUrl = pathToFileURL(path.join(root, "scripts", "release.mjs")).href;
+		expect(resolveReleaseRoot({ env: {}, cwd: os.tmpdir(), moduleUrl })).toBe(path.resolve(root));
+	});
 });

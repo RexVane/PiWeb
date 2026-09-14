@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
@@ -7,7 +8,32 @@ import { assertInstallation, assertLocalPath, readProductionBuild, resolveBuildO
 import { runCommand } from "./process-runner.mjs";
 import { isMainModule } from "./entrypoint.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/**
+ * Root of the PiWeb installation this module belongs to.
+ *
+ * A Next server bundle substitutes `import.meta.url` with the URL of the SOURCE file on
+ * the machine that ran the build, so a published package carries the CI path. That both
+ * throws (`fileURLToPath` rejects a POSIX path inside a file URL on Windows —
+ * ERR_INVALID_FILE_URL_PATH) and points at a directory that does not exist on the user's
+ * machine. The launcher's PI_WEB_ROOT and the working directory are trustworthy; the
+ * module URL is consulted only while it still points at a real checkout.
+ * @param {{env?: Record<string, string | undefined>, cwd?: string, moduleUrl?: string}} [context]
+ * @returns {string}
+ */
+export function resolveReleaseRoot({ env = process.env, cwd = process.cwd(), moduleUrl } = {}) {
+	if (env.PI_WEB_ROOT) return path.resolve(env.PI_WEB_ROOT);
+	if (typeof moduleUrl === "string") {
+		try {
+			const fromModule = path.resolve(path.dirname(fileURLToPath(moduleUrl)), "..");
+			if (existsSync(path.join(fromModule, "scripts", "release.mjs"))) return fromModule;
+		} catch {
+			/* a URL for another platform's layout: fall through to the working directory */
+		}
+	}
+	return path.resolve(cwd);
+}
+
+const ROOT = resolveReleaseRoot({ moduleUrl: import.meta.url });
 const LOCK_PATH = `${RELEASES_DIR}/update.lock`;
 const CONFIG_PATH = `${RELEASES_DIR}/tsconfig.json`;
 
