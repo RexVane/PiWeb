@@ -30,9 +30,12 @@ import { userTurnsFromEntries } from "./growth-turns";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
+import { estimateTokensOf } from "./process-format";
+import { getPiSettings } from "./pi-settings";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
+	ContextBreakdown,
 	ContextResource,
 	GrowthStep,
 	TrajEntry,
@@ -604,6 +607,91 @@ function loadContextResources(cwd: string, loader: AgentSession["resourceLoader"
 	];
 }
 
+/**
+ * 上下文占用的服务端估算分项。systemPrompt 是整段拼接（正文 + memory + skills + 工具列表），
+ * 所以 Memory / Skills 从资源加载器与 systemPrompt 的资源段差分得出：
+ * SDK 的拼接顺序固定为 正文 → context files → skills → 工具列表，按内容定位切块。
+ */
+async function buildContextBreakdown(
+	cwd: string,
+	session: AgentSession | null,
+	resources: ContextResource[],
+): Promise<ContextBreakdown> {
+	const breakdown: ContextBreakdown = {
+		systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0, autoCompactBuffer: 0,
+	};
+	if (!session) return breakdown;
+	try {
+		const prompt = session.systemPrompt ?? "";
+		// Memory：AGENTS.md 等注入文件（contextResources 的 project 部分）
+		const memoryText = resources.filter((r) => r.source === "project").map((r) => r.content).join("\n\n");
+		breakdown.memory = estimateTokensOf(memoryText);
+		// Skills：从资源加载器取技能清单，按 system-prompt.js 的 formatSkillsForPrompt 段落定位
+		try {
+			const { skills } = session.resourceLoader.getSkills();
+			if (skills.length && prompt) {
+				const header = prompt.indexOf("## Skills");
+				if (header >= 0) {
+					// skills 段之后是工具列表段（## Available Tools 等）；找不到就取到结尾
+					const next = prompt.slice(header + 1).search(/^## /m);
+					const section = next >= 0 ? prompt.slice(header, header + 1 + next) : prompt.slice(header);
+					breakdown.skills = estimateTokensOf(section);
+				}
+			}
+		} catch {
+			/* loader 不可用则跳过 */
+		}
+		// System Prompt 正文 = 全文减去资源段与 skills 段的近似差分，下限 0
+		const estimatedSections = breakdown.memory + breakdown.skills;
+		breakdown.systemPrompt = Math.max(0, estimateTokensOf(prompt) - estimatedSections);
+		// 工具：builtin 与扩展注册的分开统计（schema + description + guidelines 序列化估算）
+		try {
+			const tools = session.getAllTools();
+			for (const tool of tools) {
+				const size = estimateTokensOf(JSON.stringify({
+					name: tool.name,
+					description: tool.description,
+					parameters: tool.parameters,
+					promptGuidelines: tool.promptGuidelines,
+				}));
+				if ((tool as { sourceInfo?: { source?: string } }).sourceInfo?.source === "builtin") breakdown.systemTools += size;
+				else breakdown.customTools += size;
+			}
+		} catch {
+			/* getAllTools 不可用则跳过 */
+		}
+		// 最新一次压缩的摘要
+		try {
+			const entries = m_smEntries(session);
+			for (let i = entries.length - 1; i >= 0; i -= 1) {
+				const entry = entries[i] as { type?: string; summary?: string };
+				if (entry?.type === "compaction" && typeof entry.summary === "string") {
+					breakdown.compacted = estimateTokensOf(entry.summary);
+					break;
+				}
+			}
+		} catch {
+			/* entries 不可用则跳过 */
+		}
+		// auto-compact 预留 = compaction.reserveTokens（启用时）
+		try {
+			const settings = await getPiSettings();
+			if (settings.compaction.enabled) breakdown.autoCompactBuffer = settings.compaction.reserveTokens;
+		} catch {
+			/* 设置读取失败则保持 0 */
+		}
+	} catch {
+		/* systemPrompt 不可用则保持 0 */
+	}
+	return breakdown;
+}
+
+/** SessionManager 的 getEntries 经由 session 暴露的形态（各版本字段名有差异，这里宽松取） */
+function m_smEntries(session: AgentSession): unknown[] {
+	const s = session as unknown as { sm?: { getEntries?: () => unknown[] }; sessionManager?: { getEntries?: () => unknown[] } };
+	return s.sm?.getEntries?.() ?? s.sessionManager?.getEntries?.() ?? [];
+}
+
 function environmentTrajectory(m: Managed, session: AgentSession | null): TrajEntry[] {
 	const ts = m.ledger.entries[0]?.ts ?? Date.now();
 	const entries: TrajEntry[] = [];
@@ -1051,6 +1139,13 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	} catch {
 		contextResources = [];
 	}
+	// 服务端可得的上下文分项（估算；失败不影响快照）
+	let contextBreakdown: ContextBreakdown | undefined;
+	try {
+		contextBreakdown = await buildContextBreakdown(m.cwd, m.session, contextResources);
+	} catch {
+		contextBreakdown = undefined;
+	}
 
 	// 斜杠命令数据源：技能 / 提示模板 / 扩展命令，加上项目信任与资源诊断
 	const resources = collectResources(m);
@@ -1065,6 +1160,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		name,
 		contextFiles: contextResources.map((resource) => resource.path),
 		contextResources,
+		contextBreakdown,
 		...resources,
 		messages,
 		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]),

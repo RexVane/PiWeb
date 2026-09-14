@@ -833,7 +833,7 @@ export function AppShell() {
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
 											contextWindow={snapshot?.contextUsage?.contextWindow ?? null}
-											contextSource={{ systemChars: contextSystemChars, messages: state.messages }}
+											contextSource={{ systemChars: contextSystemChars, messages: state.messages, breakdown: snapshot?.contextBreakdown }}
 											contextVisible={(snapshot?.messages?.length ?? 0) > 0}
 											model={snapshot?.model}
 											thinkingLevel={snapshot?.thinkingLevel}

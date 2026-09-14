@@ -71,6 +71,34 @@ export function cleanCommand(command: string, cwd?: string): { text: string; lin
 	return { text, lines: lines.length };
 }
 
+/** 上下文 token 估算口径：与 SDK estimateTokens 一致的字符/4 */
+export function estimateTokensOf(text: string): number {
+	return Math.ceil(text.length / 4);
+}
+
+/** 上下文 13 类分段中的 5 个消息分项：按 role / content.type 归类字符数 */
+export function classifyMessageChars(
+	messages: Array<{ role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown }> }>,
+): { user: number; agentText: number; agentThinking: number; agentToolCall: number; toolOutput: number } {
+	const out = { user: 0, agentText: 0, agentThinking: 0, agentToolCall: 0, toolOutput: 0 };
+	for (const message of messages) {
+		for (const content of message.content) {
+			if (content.type === "text") {
+				const chars = content.text?.length ?? 0;
+				if (message.role === "user") out.user += chars;
+				else out.agentText += chars;
+			} else if (content.type === "thinking") {
+				out.agentThinking += content.thinking?.length ?? 0;
+			} else if (content.type === "toolCall") {
+				out.agentToolCall += JSON.stringify(content.arguments ?? "").length;
+			} else if (content.type === "toolResult") {
+				out.toolOutput += (content as { text?: string }).text?.length ?? 0;
+			}
+		}
+	}
+	return out;
+}
+
 /** bash/PowerShell 删除文件的命令判定：rm / Remove-Item / del / trash 等，且至少带一个非选项参数 */
 export function isDeleteCommand(command: string): boolean {
 	const first = command.trim().split(/\s+/)[0] ?? "";

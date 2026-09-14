@@ -211,6 +211,28 @@ export interface ContextResource {
 	source: "project" | "extension";
 }
 
+/**
+ * 上下文占用的服务端估算分项（全部为字符/4 启发式，与 SDK estimateTokens 口径一致）。
+ * 消息类分项（User/Agent Text/Thinking/Tool Call/Tool Output）由前端按消息统计，
+ * 这里只放服务端才能拿到的部分。
+ */
+export interface ContextBreakdown {
+	/** SDK 内建 system prompt 正文（不含 memory/skills/tools 段）的估算 token */
+	systemPrompt: number;
+	/** 内建工具（SDK 自带 bash/read/edit 等）定义的估算 token */
+	systemTools: number;
+	/** 扩展注册的 custom 工具定义的估算 token */
+	customTools: number;
+	/** AGENTS.md 等注入文件（contextResources 的 project 部分） */
+	memory: number;
+	/** 系统提示里的 skills 段 */
+	skills: number;
+	/** 最新一次压缩的摘要正文 */
+	compacted: number;
+	/** auto-compact 预留（compaction.reserveTokens 设置值；未启用为 0） */
+	autoCompactBuffer: number;
+}
+
 /** SSE 连接建立时先发的完整快照 */
 export interface WebSnapshot {
 	seq: number;
@@ -221,6 +243,8 @@ export interface WebSnapshot {
 	contextFiles: string[];
 	/** 注入的上下文资源（AGENTS.md 与扩展附加 prompt，来自 Pi 资源加载器）。 */
 	contextResources: ContextResource[];
+	/** 上下文占用的服务端估算分项（13 类分段里的非消息部分） */
+	contextBreakdown?: ContextBreakdown;
 	/** 斜杠命令数据源：技能 */
 	skills: { name: string; description: string }[];
 	/** 斜杠命令数据源：提示模板（~/.pi/agent/prompts、<cwd>/.pi/prompts 里的 .md） */

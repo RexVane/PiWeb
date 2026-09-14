@@ -84,7 +84,11 @@ export function ChatInput({
 	contextTokens: number | null;
 	contextWindow: number | null;
 	/** 上下文分段数据源：ContextMeter 弹窗打开时才做字符统计 */
-	contextSource?: { systemChars: number; messages: { content: Array<{ type: string; text?: string; thinking?: string }> }[] };
+	contextSource?: {
+		systemChars: number;
+		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string }> }[];
+		breakdown?: import("@/lib/types").ContextBreakdown;
+	};
 	/** 还没有对话时隐藏上下文计量 */
 	contextVisible?: boolean;
 	model?: { provider: string; id: string; name: string };
