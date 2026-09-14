@@ -45,6 +45,8 @@ export interface ProviderView {
 	resolvedAuthSource?: string;
 	authError?: string;
 	keyManaged: boolean;
+	/** auth.json 里已存凭证的类型：OAuth 条目才有专门的删除入口与文案 */
+	storedAuthType?: "api_key" | "oauth";
 	modelCount: number;
 }
 
@@ -97,6 +99,26 @@ export function listModels(): Promise<{
 	return value;
 }
 
+/** auth.json 各条目的凭证类型（与 storedCredentialFor 同样的两层数据结构）；读取失败不影响目录 */
+async function readStoredAuthTypes(): Promise<Map<string, "api_key" | "oauth">> {
+	const out = new Map<string, "api_key" | "oauth">();
+	try {
+		const parsed = JSON.parse(await fs.readFile(path.join(getAgentDir(), "auth.json"), "utf8")) as Record<string, any>;
+		const entries: Array<[string, any]> = [
+			...Object.entries(parsed ?? {}),
+			...Object.entries(parsed?.providers ?? {}),
+		];
+		for (const [id, entry] of entries) {
+			if (out.has(id)) continue;
+			if (entry?.type === "oauth") out.set(id, "oauth");
+			else if (entry && typeof entry === "object" && [entry.apiKey, entry.api_key, entry.key].some((v) => typeof v === "string" && v.trim())) out.set(id, "api_key");
+		}
+	} catch {
+		/* missing or malformed auth.json: no stored credentials to classify */
+	}
+	return out;
+}
+
 async function listModelsUncached(): Promise<{
 	providers: ProviderView[];
 	models: ModelView[];
@@ -104,6 +126,7 @@ async function listModelsUncached(): Promise<{
 	const rt = await getModelRuntime();
 	const builtInProviderIds = await getBuiltInProviderIds();
 	const providers = rt.getProviders() as any[];
+	const storedAuthTypes = await readStoredAuthTypes();
 	const out: ProviderView[] = [];
 	const models: ModelView[] = [];
 	// 认证探测逐个 await 时，N 个已配置供应商就是 N 次串行网络往返；并发做，单个超时不拖累整体
@@ -155,6 +178,7 @@ async function listModelsUncached(): Promise<{
 			resolvedAuthSource,
 			authError,
 			keyManaged: auth?.source === "stored",
+			storedAuthType: auth?.source === "stored" ? storedAuthTypes.get(pid) : undefined,
 			modelCount: list.length,
 		});
 		for (const mm of list) {

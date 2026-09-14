@@ -1140,6 +1140,17 @@ function ModelsSection() {
 								<button className="btn-outline" style={{ height: 28, padding: "0 12px", fontSize: 12 }} onClick={() => startEdit(p.id)}>
 									{t.edit}
 								</button>
+								{p.storedAuthType === "oauth" && (
+									<button
+										style={{ height: 28, padding: "0 12px", fontSize: 12, color: "var(--dsw-danger)" }}
+										onClick={async () => {
+											if (!window.confirm(t.confirmRemoveOAuth.replace("{name}", providerName(p.id)))) return;
+											await call({ action: "removeKey", providerId: p.id });
+										}}
+									>
+										{t.removeOAuth}
+									</button>
+								)}
 								{p.authTypes?.includes("oauth") && (
 									<button
 										className="btn-outline"
@@ -1279,12 +1290,16 @@ function ModelsSection() {
 														style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}
 														disabled={editBusy}
 													onClick={async () => {
-														if (!window.confirm(t.confirmRemoveKey.replace("{name}", p.name))) return;
+														if (p.storedAuthType === "oauth") {
+															if (!window.confirm(t.confirmRemoveOAuth.replace("{name}", p.name))) return;
+														} else {
+															if (!window.confirm(t.confirmRemoveKey.replace("{name}", p.name))) return;
+														}
 														const j = await call({ action: "removeKey", providerId: p.id });
 															if (j.success) setEditing(null);
 														}}
 													>
-														{t.removeKey}
+														{p.storedAuthType === "oauth" ? t.removeOAuth : t.removeKey}
 													</button>
 												)}
 												<button className="btn-outline" style={{ height: 32 }} disabled={editBusy} onClick={() => setEditing(null)}>{t.cancel}</button>
