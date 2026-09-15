@@ -17,7 +17,10 @@ import {
 	type AuthInteraction, type AuthPrompt, type AuthType,
 } from "@earendil-works/pi-ai";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
-
+import { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, type BalanceAmount, type BalanceDetailKey, type BalanceUsage, type ProviderUsage, type QuotaUsage, type QuotaWindow, type XaiUsage } from "./provider-usage";
+// 用量的纯类型/纯函数拆在 provider-usage（客户端安全：设置面板按值导入它们）；这里重导出，路由与测试的导入不变。
+export { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, quotaWindowKind, supportsUsageProbe } from "./provider-usage";
+export type { BalanceAmount, BalanceDetailKey, BalanceUsage, ProviderUsage, QuotaUsage, QuotaWindow, QuotaWindowKind, XaiUsage } from "./provider-usage";
 export interface ModelView {
 	provider: string;
 	id: string;
@@ -222,7 +225,7 @@ export async function removeApiKey(providerId: string): Promise<void> {
 }
 
 /** 已存凭证回退：编辑表单的 key 框为空（「留空保持不变」）时，从这里取。oauth=true 表示来自 OAuth 令牌（部分端点不适用）。 */
-async function storedCredentialFor(providerId: string): Promise<{ key: string; oauth: boolean } | undefined> {
+async function storedCredentialFor(providerId: string): Promise<{ key: string; oauth: boolean; accountId?: string } | undefined> {
 	// 自定义 provider / 内置覆盖层：models.json providers[id].apiKey。
 	// 损坏/权限失败不能静默回退到别的凭证；JSONC 与编辑器使用相同解析规则。
 	const custom = await readCustomProvidersSnapshot(modelsJsonPath());
@@ -237,7 +240,10 @@ async function storedCredentialFor(providerId: string): Promise<{ key: string; o
 		const entry = parsed?.[providerId] ?? parsed?.providers?.[providerId];
 		const key = entry?.apiKey ?? entry?.api_key ?? entry?.key;
 		if (typeof key === "string" && key.trim()) return { key: key.trim(), oauth: false };
-		if (entry?.type === "oauth" && typeof entry?.access === "string" && entry.access.trim()) return { key: entry.access.trim(), oauth: true };
+		if (entry?.type === "oauth" && typeof entry?.access === "string" && entry.access.trim()) {
+			const accountId = typeof entry.accountId === "string" && entry.accountId.trim() ? entry.accountId.trim() : undefined;
+			return { key: entry.access.trim(), oauth: true, ...(accountId === undefined ? {} : { accountId }) };
+		}
 	} catch {
 		/* 同上 */
 	}
@@ -457,35 +463,440 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	}
 }
 
-// ---------- xAI 订阅配额（响应头 x-ratelimit-*） ----------
+// ---------- 订阅配额 / 余额（各提供商各自的只读端点） ----------
 
-export interface ProviderUsage {
-	model: string;
-	requestLimit: number;
-	requestRemaining: number;
-	tokenLimit: number;
-	tokenRemaining: number;
-	probedAt: number;
-}
 
 const usageCache = new Map<string, { at: number; value: ProviderUsage | null }>();
 const USAGE_TTL_MS = 5 * 60_000;
 
 /**
- * 探测提供商的实时配额。xAI 不提供周限查询端点，只能从一次最小对话请求的
- * x-ratelimit-* 响应头读取 limit/remaining（窗口周期 xAI 未在头部标注）。
- * 目前仅 xai（OAuth 订阅）接入；探测结果缓存 5 分钟。
+ * 探测提供商的实时配额 / 余额。只有确实提供只读用量端点的提供商接入，
+ * 没有端点的宁可留空也不做假开关。结果统一缓存 5 分钟，force 跳过缓存。
  */
 export async function providerUsage(providerId: string, force = false): Promise<ProviderUsage | null> {
-	if (providerId !== "xai") return null;
+	const probe = usageProbeFor(providerId);
+	if (!probe) return null;
 	const cached = usageCache.get(providerId);
 	if (!force && cached && Date.now() - cached.at < USAGE_TTL_MS) return cached.value;
-	const value = await probeXaiUsage();
+	const value = await probe();
 	usageCache.set(providerId, { at: Date.now(), value });
 	return value;
 }
 
-async function probeXaiUsage(): Promise<ProviderUsage | null> {
+
+function usageProbeFor(providerId: string): (() => Promise<ProviderUsage | null>) | null {
+	switch (providerId) {
+		case "xai": return probeXaiUsage;
+		case "openai-codex": return probeCodexUsage;
+		case "anthropic": return probeAnthropicUsage;
+		case "deepseek": return probeDeepSeekBalance;
+		case "openrouter": return probeOpenRouterBalance;
+		case "moonshotai": return () => probeMoonshotBalance("moonshotai");
+		case "moonshotai-cn": return () => probeMoonshotBalance("moonshotai-cn");
+		case "kimi-coding": return probeKimiCodingUsage;
+		case "github-copilot": return probeCopilotUsage;
+		case "vercel-ai-gateway": return probeVercelGatewayBalance;
+		case "opencode-go": return probeOpencodeUsage;
+		default: return null;
+	}
+}
+
+// ---------- Codex 周限（ChatGPT backend-api，只读） ----------
+
+const CODEX_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage";
+const USAGE_TIMEOUT_MS = 10_000;
+
+
+/**
+ * 共用的一次性只读探测：超时即放弃并取消响应体，任何失败都返回 undefined，
+ * 由各调用方决定降级方式（有的回退到本地可得的套餐，有的整体留空）。
+ */
+async function fetchUsageJson(url: string, init: RequestInit, timeoutMs = USAGE_TIMEOUT_MS): Promise<unknown | undefined> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const response = await fetch(url, { ...init, signal: controller.signal });
+		if (!response.ok) {
+			void response.body?.cancel().catch(() => {});
+			return undefined;
+		}
+		return await response.json();
+	} catch {
+		return undefined;
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+
+/** 端点不可用时，只要本地能确定套餐就仍然给出套餐，避免整块空白。 */
+function quotaWithPlanOnly(planType: string | undefined): QuotaUsage | null {
+	return planType === undefined ? null : { kind: "quota", planType, windows: [], probedAt: Date.now() };
+}
+
+/** 载荷里只认对象，数组与标量一律视为无数据。 */
+function asRecord(input: unknown): Record<string, any> | undefined {
+	return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, any>) : undefined;
+}
+
+/** ISO 字符串 → ISO 字符串；无法解析时返回 undefined 而不是把原始值透传出去。 */
+function isoOrUndefined(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const parsed = new Date(value);
+	return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
+}
+
+/** 从 access token 的 JWT 本地读套餐声明：端点不可用时界面仍显示套餐。 */
+export function planTypeFromAccessToken(accessToken: string): string | undefined {
+	try {
+		const payload = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64").toString("utf8")) as Record<string, any>;
+		const value = payload?.["https://api.openai.com/auth"]?.chatgpt_plan_type;
+		return typeof value === "string" && value.trim() ? value.trim() : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * /wham/usage 载荷里只取界面需要的部分。窗口组合随套餐不同：常见是 5 小时窗 +
+ * 7 天窗，有的套餐只有 7 天窗，Go 这类只有 30 天窗（secondary_window 直接是
+ * null）。所以不假设窗口数量与位置，把实际给出的窗口全列出来按时长升序排列，
+ * 由界面如实标注每一项的周期。字段缺失即未知，不做猜测。
+ */
+export function parseCodexUsagePayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	if (!root) return { windows: [] };
+	const rateLimit = asRecord(root.rate_limit);
+	const windows = [rateLimit?.primary_window, rateLimit?.secondary_window]
+		.map(asRecord)
+		.flatMap((candidate): QuotaWindow[] => {
+			if (!candidate) return [];
+			if (typeof candidate.limit_window_seconds !== "number" || candidate.limit_window_seconds <= 0) return [];
+			if (typeof candidate.used_percent !== "number" || !Number.isFinite(candidate.used_percent)) return [];
+			let resetAt: string | undefined;
+			if (Number.isSafeInteger(candidate.reset_at) && candidate.reset_at > 0) {
+				const reset = new Date(candidate.reset_at * 1000);
+				if (Number.isFinite(reset.getTime())) resetAt = reset.toISOString();
+			}
+			return [{
+				limitWindowSeconds: candidate.limit_window_seconds,
+				remainingPercent: Math.min(100, Math.max(0, Math.round(100 - candidate.used_percent))),
+				...(resetAt === undefined ? {} : { resetAt }),
+			}];
+		})
+		.sort(byWindowLength);
+	const plan = root.plan_type;
+	return {
+		...(typeof plan === "string" && plan.trim() ? { planType: plan.trim() } : {}),
+		windows,
+	};
+}
+
+async function probeCodexUsage(): Promise<QuotaUsage | null> {
+	const credential = await storedCredentialFor("openai-codex");
+	if (!credential) return null;
+	// JWT 里的套餐声明本地可得，端点失败时用它兜底，界面不至于整块空白
+	const fallbackPlan = planTypeFromAccessToken(credential.key);
+	const payload = await fetchUsageJson(CODEX_USAGE_ENDPOINT, {
+		headers: {
+			Authorization: `Bearer ${credential.key}`,
+			...(credential.accountId ? { "chatgpt-account-id": credential.accountId } : {}),
+		},
+	});
+	if (payload === undefined) return quotaWithPlanOnly(fallbackPlan);
+	const parsed = parseCodexUsagePayload(payload);
+	const planType = parsed.planType ?? fallbackPlan;
+	return { kind: "quota", ...parsed, ...(planType === undefined ? {} : { planType }), probedAt: Date.now() };
+}
+
+// ---------- Claude 订阅（Anthropic 只读用量端点） ----------
+
+const ANTHROPIC_USAGE_ENDPOINT = "https://api.anthropic.com/api/oauth/usage";
+/** OAuth 令牌访问该端点需要显式带上的 beta 头。 */
+const ANTHROPIC_USAGE_BETA = "oauth-2025-04-20";
+const HOUR_SECONDS = 60 * 60;
+
+/**
+ * /api/oauth/usage 把窗口放在 five_hour / seven_day / seven_day_opus 三个固定字段，
+ * utilization 是 0-100 的「已用」百分比（同名的 anthropic-ratelimit-unified-* 响应头
+ * 给的是 0-1 比例，两处口径不同）。字段缺失就是没有该窗口，不按 0 补齐。
+ */
+export function parseAnthropicUsagePayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	if (!root) return { windows: [] };
+	const pick = (key: string, seconds: number, variant?: string): QuotaWindow[] => {
+		const entry = asRecord(root[key]);
+		if (!entry || typeof entry.utilization !== "number" || !Number.isFinite(entry.utilization)) return [];
+		const resetAt = isoOrUndefined(entry.resets_at);
+		return [{
+			limitWindowSeconds: seconds,
+			remainingPercent: Math.min(100, Math.max(0, Math.round(100 - entry.utilization))),
+			...(resetAt === undefined ? {} : { resetAt }),
+			...(variant === undefined ? {} : { variant }),
+		}];
+	};
+	const windows = [
+		...pick("five_hour", 5 * HOUR_SECONDS),
+		...pick("seven_day", WEEKLY_WINDOW_SECONDS),
+		...pick("seven_day_opus", WEEKLY_WINDOW_SECONDS, "opus"),
+	].sort(byWindowLength);
+	return { windows };
+}
+
+async function probeAnthropicUsage(): Promise<QuotaUsage | null> {
+	const credential = await storedCredentialFor("anthropic");
+	// 该端点只认订阅 OAuth 令牌；API key 走的是按量计费，没有这组窗口
+	if (!credential?.oauth) return null;
+	const payload = await fetchUsageJson(ANTHROPIC_USAGE_ENDPOINT, {
+		headers: { Authorization: `Bearer ${credential.key}`, "anthropic-beta": ANTHROPIC_USAGE_BETA },
+	});
+	if (payload === undefined) return null;
+	const parsed = parseAnthropicUsagePayload(payload);
+	return parsed.windows.length === 0 ? null : { kind: "quota", ...parsed, probedAt: Date.now() };
+}
+
+// ---------- 余额制提供商（各家官方余额端点） ----------
+
+/** 金额字段统一按「有限数字」校验后保留两位；其余一律视为无数据。 */
+function amountOrUndefined(value: unknown, currency?: string): BalanceAmount | undefined {
+	if (typeof value === "number" && Number.isFinite(value)) return { amount: value.toFixed(2), ...(currency === undefined ? {} : { currency }) };
+	if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+		return { amount: Number(value).toFixed(2), ...(currency === undefined ? {} : { currency }) };
+	}
+	return undefined;
+}
+
+/** DeepSeek：GET /user/balance，金额是字符串，币种跟着账户（CNY 或 USD）。 */
+export function parseDeepSeekBalancePayload(value: unknown): Omit<BalanceUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	const infos = Array.isArray(root?.balance_infos) ? root.balance_infos.map(asRecord).filter(Boolean) : [];
+	const info = infos[0];
+	if (!info) return { details: [] };
+	const currency = typeof info.currency === "string" && info.currency.trim() ? info.currency.trim() : undefined;
+	const details: BalanceUsage["details"] = [];
+	const granted = amountOrUndefined(info.granted_balance, currency);
+	if (granted) details.push({ key: "granted", ...granted });
+	const toppedUp = amountOrUndefined(info.topped_up_balance, currency);
+	if (toppedUp) details.push({ key: "toppedUp", ...toppedUp });
+	const total = amountOrUndefined(info.total_balance, currency);
+	return { ...(total === undefined ? {} : { primary: total }), details };
+}
+
+/** OpenRouter：GET /api/v1/key，额度以美元计；无上限的 key 没有 limit_remaining。 */
+export function parseOpenRouterKeyPayload(value: unknown): Omit<BalanceUsage, "kind" | "probedAt"> {
+	const data = asRecord(asRecord(value)?.data);
+	if (!data) return { details: [] };
+	const details: BalanceUsage["details"] = [];
+	const limit = amountOrUndefined(data.limit, "USD");
+	if (limit) details.push({ key: "limit", ...limit });
+	const used = amountOrUndefined(data.usage, "USD");
+	if (used) details.push({ key: "used", ...used });
+	const remaining = amountOrUndefined(data.limit_remaining, "USD");
+	if (remaining) return { primary: remaining, details };
+	// 无上限时没有剩余额度可显示，退回累计已用
+	return used ? { primaryKey: "used", primary: used, details } : { details };
+}
+
+/** Moonshot / Kimi：GET /v1/users/me/balance，国内站记 CNY、海外站记 USD，两者密钥不通用。 */
+export function parseMoonshotBalancePayload(value: unknown, currency: string): Omit<BalanceUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	const data = asRecord(root?.data);
+	if (!data || root?.status === false) return { details: [] };
+	const details: BalanceUsage["details"] = [];
+	const voucher = amountOrUndefined(data.voucher_balance, currency);
+	if (voucher) details.push({ key: "voucher", ...voucher });
+	const cash = amountOrUndefined(data.cash_balance, currency);
+	if (cash) details.push({ key: "cash", ...cash });
+	const available = amountOrUndefined(data.available_balance, currency);
+	return { ...(available === undefined ? {} : { primary: available }), details };
+}
+
+const MOONSHOT_HOSTS: Record<string, { base: string; currency: string }> = {
+	moonshotai: { base: "https://api.moonshot.ai", currency: "USD" },
+	"moonshotai-cn": { base: "https://api.moonshot.cn", currency: "CNY" },
+};
+
+async function probeDeepSeekBalance(): Promise<BalanceUsage | null> {
+	const credential = await storedCredentialFor("deepseek");
+	if (!credential) return null;
+	const payload = await fetchUsageJson("https://api.deepseek.com/user/balance", {
+		headers: { Authorization: `Bearer ${credential.key}` },
+	});
+	if (payload === undefined) return null;
+	return { kind: "balance", ...parseDeepSeekBalancePayload(payload), probedAt: Date.now() };
+}
+
+async function probeOpenRouterBalance(): Promise<BalanceUsage | null> {
+	const credential = await storedCredentialFor("openrouter");
+	if (!credential) return null;
+	const payload = await fetchUsageJson("https://openrouter.ai/api/v1/key", {
+		headers: { Authorization: `Bearer ${credential.key}` },
+	});
+	if (payload === undefined) return null;
+	return { kind: "balance", ...parseOpenRouterKeyPayload(payload), probedAt: Date.now() };
+}
+
+async function probeMoonshotBalance(providerId: "moonshotai" | "moonshotai-cn"): Promise<BalanceUsage | null> {
+	const credential = await storedCredentialFor(providerId);
+	if (!credential) return null;
+	const host = MOONSHOT_HOSTS[providerId];
+	const payload = await fetchUsageJson(`${host.base}/v1/users/me/balance`, {
+		headers: { Authorization: `Bearer ${credential.key}` },
+	});
+	if (payload === undefined) return null;
+	return { kind: "balance", ...parseMoonshotBalancePayload(payload, host.currency), probedAt: Date.now() };
+}
+
+// ---------- 订阅制订阅额度（Kimi Code / GitHub Copilot / OpenCode Go） ----------
+
+/** 0-1 的 used_ratio 或 0-100 的已用百分比统一转成剩余百分比。 */
+function remainingFromUsed(used: number): number {
+	return Math.min(100, Math.max(0, Math.round(100 - used)));
+}
+
+/** 短周期在前；没有周期的窗口（Copilot 类别、rolling）排在最后。 */
+function byWindowLength(left: QuotaWindow, right: QuotaWindow): number {
+	return (left.limitWindowSeconds ?? Number.POSITIVE_INFINITY) - (right.limitWindowSeconds ?? Number.POSITIVE_INFINITY);
+}
+
+/**
+ * Kimi Code：GET /coding/v1/usages。四个固定键给 used_ratio（0-1 的小数，与
+ * Claude 的 0-100 口径不同）和 reset_time；月度总额度与月度代码额度周期相同，
+ * 靠 variant 区分。
+ */
+export function parseKimiCodingUsagePayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
+	const usages = asRecord(asRecord(value)?.usages);
+	if (!usages) return { windows: [] };
+	const pick = (key: string, seconds: number, variant?: string): QuotaWindow[] => {
+		const entry = asRecord(usages[key]);
+		if (!entry || typeof entry.used_ratio !== "number" || !Number.isFinite(entry.used_ratio)) return [];
+		const resetAt = isoOrUndefined(entry.reset_time);
+		return [{
+			limitWindowSeconds: seconds,
+			remainingPercent: remainingFromUsed(entry.used_ratio * 100),
+			...(resetAt === undefined ? {} : { resetAt }),
+			...(variant === undefined ? {} : { variant }),
+		}];
+	};
+	const windows = [
+		...pick("limit_5h", 5 * HOUR_SECONDS),
+		...pick("limit_7d", WEEKLY_WINDOW_SECONDS),
+		...pick("limit_month_total", MONTHLY_WINDOW_SECONDS),
+		...pick("limit_month_code", MONTHLY_WINDOW_SECONDS, "code"),
+	].sort(byWindowLength);
+	return { windows };
+}
+
+/**
+ * GitHub Copilot：GET /copilot_internal/user（VS Code 自己就用这条，未进官方
+ * REST 文档）。quota_snapshots 按用途分档而不是按时间窗口，percent_remaining 是
+ * 0-100 的剩余百分比；unlimited 的档位没有可跟踪的额度，跳过不占位置。
+ */
+export function parseCopilotUserPayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	if (!root) return { windows: [] };
+	const snapshots = asRecord(root.quota_snapshots);
+	const plan = root.copilot_plan;
+	const resetAt = isoOrUndefined(root.quota_reset_date);
+	const names: Array<[string, string]> = [["premium_interactions", "premium"], ["chat", "chat"], ["completions", "completions"]];
+	const windows = names.flatMap(([raw, name]): QuotaWindow[] => {
+		const snapshot = asRecord(snapshots?.[raw]);
+		if (!snapshot) return [];
+		if (snapshot.has_quota === false || snapshot.unlimited === true) return [];
+		if (typeof snapshot.percent_remaining !== "number" || !Number.isFinite(snapshot.percent_remaining)) return [];
+		return [{
+			remainingPercent: Math.min(100, Math.max(0, Math.round(snapshot.percent_remaining))),
+			...(resetAt === undefined ? {} : { resetAt }),
+			name,
+		}];
+	});
+	return {
+		...(typeof plan === "string" && plan.trim() ? { planType: plan.trim() } : {}),
+		windows,
+	};
+}
+
+/** Vercel AI Gateway：GET /v1/credits，美元字符串形式的余额与累计已用。 */
+export function parseVercelGatewayCreditsPayload(value: unknown): Omit<BalanceUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	if (!root) return { details: [] };
+	const details: BalanceUsage["details"] = [];
+	const used = amountOrUndefined(root.total_used, "USD");
+	if (used) details.push({ key: "used", ...used });
+	const balance = amountOrUndefined(root.balance, "USD");
+	return { ...(balance === undefined ? {} : { primary: balance }), details };
+}
+
+/**
+ * OpenCode Go：GET /zen/go/v1/usage。三个窗口的 percent 是「已用」百分比
+ * （服务端字段名就是 usagePercent），剩余要反算。rolling 的周期服务端不返回，
+ * 所以只给名字不给时长；weekly / monthly 按名字标注。
+ */
+export function parseOpencodeUsagePayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
+	const usage = asRecord(asRecord(value)?.usage);
+	if (!usage) return { windows: [] };
+	const pick = (key: string, seconds?: number): QuotaWindow[] => {
+		const entry = asRecord(usage[key]);
+		if (!entry || typeof entry.percent !== "number" || !Number.isFinite(entry.percent)) return [];
+		const resetAt = isoOrUndefined(entry.resetsAt);
+		return [{
+			...(seconds === undefined ? { name: key } : { limitWindowSeconds: seconds }),
+			remainingPercent: remainingFromUsed(entry.percent),
+			...(resetAt === undefined ? {} : { resetAt }),
+		}];
+	};
+	const windows = [
+		...pick("rolling"),
+		...pick("weekly", WEEKLY_WINDOW_SECONDS),
+		...pick("monthly", MONTHLY_WINDOW_SECONDS),
+	].sort(byWindowLength);
+	return { windows };
+}
+
+async function probeKimiCodingUsage(): Promise<QuotaUsage | null> {
+	const credential = await storedCredentialFor("kimi-coding");
+	if (!credential) return null;
+	const payload = await fetchUsageJson("https://api.kimi.com/coding/v1/usages", {
+		headers: { Authorization: `Bearer ${credential.key}`, Accept: "application/json" },
+	});
+	if (payload === undefined) return null;
+	const parsed = parseKimiCodingUsagePayload(payload);
+	return parsed.windows.length === 0 ? null : { kind: "quota", ...parsed, probedAt: Date.now() };
+}
+
+async function probeCopilotUsage(): Promise<QuotaUsage | null> {
+	const credential = await storedCredentialFor("github-copilot");
+	if (!credential?.oauth) return null;
+	// 凭据本身就是 Copilot 令牌（tid=...），直接可用于这个内部端点
+	const payload = await fetchUsageJson("https://api.github.com/copilot_internal/user", {
+		headers: { Authorization: `Bearer ${credential.key}`, Accept: "application/json" },
+	});
+	if (payload === undefined) return null;
+	const parsed = parseCopilotUserPayload(payload);
+	return parsed.windows.length === 0 && parsed.planType === undefined ? null : { kind: "quota", ...parsed, probedAt: Date.now() };
+}
+
+async function probeVercelGatewayBalance(): Promise<BalanceUsage | null> {
+	const credential = await storedCredentialFor("vercel-ai-gateway");
+	if (!credential) return null;
+	const payload = await fetchUsageJson("https://ai-gateway.vercel.sh/v1/credits", {
+		headers: { Authorization: `Bearer ${credential.key}` },
+	});
+	if (payload === undefined) return null;
+	return { kind: "balance", ...parseVercelGatewayCreditsPayload(payload), probedAt: Date.now() };
+}
+
+async function probeOpencodeUsage(): Promise<QuotaUsage | null> {
+	const credential = await storedCredentialFor("opencode-go");
+	if (!credential) return null;
+	const payload = await fetchUsageJson("https://opencode.ai/zen/go/v1/usage", {
+		headers: { Authorization: `Bearer ${credential.key}`, Accept: "application/json" },
+	});
+	if (payload === undefined) return null;
+	const parsed = parseOpencodeUsagePayload(payload);
+	return parsed.windows.length === 0 ? null : { kind: "quota", ...parsed, probedAt: Date.now() };
+}
+
+async function probeXaiUsage(): Promise<XaiUsage | null> {
 	const credential = await storedCredentialFor("xai");
 	if (!credential) return null;
 	const key = credential.key;
@@ -519,7 +930,7 @@ async function probeXaiUsage(): Promise<ProviderUsage | null> {
 		const tokenLimit = get("x-ratelimit-limit-tokens");
 		const tokenRemaining = get("x-ratelimit-remaining-tokens");
 		if (![requestLimit, requestRemaining, tokenLimit, tokenRemaining].every(Number.isFinite)) return null;
-		return { model, requestLimit, requestRemaining, tokenLimit, tokenRemaining, probedAt: Date.now() };
+		return { kind: "xai", model, requestLimit, requestRemaining, tokenLimit, tokenRemaining, probedAt: Date.now() };
 	} catch {
 		return null;
 	} finally {

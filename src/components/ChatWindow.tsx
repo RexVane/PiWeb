@@ -1014,7 +1014,7 @@ function isFinalAnswer(m: WebMessage): boolean {
 	return hasText && !hasTool && sr !== "toolUse" && sr !== "pending" && sr !== "error" && sr !== "aborted";
 }
 
-function TurnBlock({
+function TurnBlockView({
 	turn,
 	messages,
 	tools,
@@ -1194,6 +1194,48 @@ export function SessionStatsBar({
 		</div>
 	);
 }
+
+type TurnBlockProps = Parameters<typeof TurnBlockView>[0];
+
+/**
+ * 回合级跳过：流式期间只有正在变的那条消息身份会变（foldPiWebEvent 只替换被改动的消息），
+ * 历史回合用到的数据全部保持身份，于是 200 条消息的会话里历史回合可以整体跳过重渲染。
+ */
+function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolean {
+	if (
+		prev.cwd !== next.cwd ||
+		prev.isStreaming !== next.isStreaming ||
+		prev.isLast !== next.isLast ||
+		prev.lastAssistantIndex !== next.lastAssistantIndex ||
+		prev.retryNotice !== next.retryNotice ||
+		prev.streamStartedAt !== next.streamStartedAt ||
+		prev.runningTool !== next.runningTool ||
+		prev.outputTokens !== next.outputTokens ||
+		prev.workingMessage !== next.workingMessage ||
+		prev.contextFiles !== next.contextFiles ||
+		prev.onFork !== next.onFork ||
+		prev.onEditMessage !== next.onEditMessage ||
+		prev.onInspectTool !== next.onInspectTool ||
+		prev.onOpenFile !== next.onOpenFile
+	) return false;
+	// buildTurns 每次重建回合对象：比较内容而不是引用
+	if (prev.turn.key !== next.turn.key || prev.turn.userIndex !== next.turn.userIndex) return false;
+	if (prev.turn.assistantIndexes.length !== next.turn.assistantIndexes.length) return false;
+	if (!prev.turn.assistantIndexes.every((value, index) => value === next.turn.assistantIndexes[index])) return false;
+	const indexes = [prev.turn.userIndex, ...prev.turn.assistantIndexes].filter((index) => index >= 0);
+	if (!indexes.every((index) => prev.messages[index] === next.messages[index])) return false;
+	// 只比较本回合引用到的工具条目：tools 外层容器每次工具事件都会换身份
+	const toolIds: string[] = [];
+	for (const index of indexes) {
+		for (const part of prev.messages[index]?.content ?? []) {
+			const call = part as { type?: string; id?: string };
+			if (call.type === "toolCall" && call.id) toolIds.push(call.id);
+		}
+	}
+	return toolIds.every((id) => prev.tools[id] === next.tools[id]);
+}
+
+const TurnBlock = memo(TurnBlockView, turnBlockPropsEqual);
 
 export function ChatWindow({
 	messages,

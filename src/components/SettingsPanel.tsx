@@ -35,7 +35,8 @@ import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
-import type { ProviderUsage, ProviderView } from "@/lib/models-service";
+import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
+import type { ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
 
 type Section = "general" | "models" | "tools" | "skills" | "plugins";
@@ -886,7 +887,7 @@ function ModelsSection() {
 	}, [oauthProvider, load]);
 
 	// xAI 订阅配额（x-ratelimit-* 响应头；后端 5 分钟缓存，force 跳过）
-	const [xaiUsage, setXaiUsage] = useState<ProviderUsage | null>(null);
+	const [xaiUsage, setXaiUsage] = useState<XaiUsage | null>(null);
 	const [usageBusy, setUsageBusy] = useState(false);
 	const [usageError, setUsageError] = useState(false);
 	const fetchUsage = useCallback(async (force: boolean) => {
@@ -903,6 +904,106 @@ function ModelsSection() {
 			setUsageBusy(false);
 		}
 	}, []);
+
+	// 窗口制/余额制配额：各提供商走各自的只读端点（后端 5 分钟缓存，force 跳过）
+	const [providerUsages, setProviderUsages] = useState<Record<string, ProviderUsage | null>>({});
+	const [usageBusyId, setUsageBusyId] = useState<string | null>(null);
+	const [usageFailedIds, setUsageFailedIds] = useState<Record<string, boolean>>({});
+	const fetchProviderUsage = useCallback(async (providerId: string, force: boolean) => {
+		setUsageBusyId(providerId);
+		setUsageFailedIds((prev) => ({ ...prev, [providerId]: false }));
+		try {
+			const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "providerUsage", providerId, force }) });
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || "usage probe failed");
+			setProviderUsages((prev) => ({ ...prev, [providerId]: j.data.usage ?? null }));
+		} catch {
+			setUsageFailedIds((prev) => ({ ...prev, [providerId]: true }));
+		} finally {
+			setUsageBusyId((current) => (current === providerId ? null : current));
+		}
+	}, []);
+
+	// 这些端点都是只读探测、不消耗额度，登录后自动取一次；xAI 那条会发一次可能计费的请求，仍然只手动触发
+	const requestedUsage = useRef(new Set<string>());
+	useEffect(() => {
+		for (const p of providers) {
+			if (!p.authReady || !supportsUsageProbe(p.id) || p.id === "xai" || requestedUsage.current.has(p.id)) continue;
+			requestedUsage.current.add(p.id);
+			void fetchProviderUsage(p.id, false);
+		}
+	}, [providers, fetchProviderUsage]);
+
+	// 窗口时长 → 标签：7 天叫「周限」、30 天叫「月限」，更短的按小时/天如实标注
+	const quotaWindowLabel = (seconds: number): string => {
+		const kind = quotaWindowKind(seconds);
+		if (kind === "weekly") return t.usageWindowWeekly;
+		if (kind === "monthly") return t.usageWindowMonthly;
+		return (kind === "hours" ? t.usageWindowHours : t.usageWindowDays).replace("{n}", String(Math.round(seconds / (kind === "hours" ? 3600 : 86400))));
+	};
+	// 服务端不给周期时（Copilot 的额度类别、OpenCode 的 rolling）按名字标注
+	const quotaWindowName = (name: string): string => {
+		if (name === "premium") return t.usageWindowPremium;
+		if (name === "chat") return t.usageWindowChat;
+		if (name === "completions") return t.usageWindowCompletions;
+		if (name === "rolling") return t.usageWindowRolling;
+		return titleCase(name);
+	};
+	const quotaVariantLabel = (variant: string): string => {
+		if (variant === "opus") return t.usageVariantOpus;
+		if (variant === "code") return t.usageVariantCode;
+		return titleCase(variant);
+	};
+	const quotaWindowHeading = (w: QuotaWindow): string => {
+		if (w.limitWindowSeconds !== undefined) return `${quotaWindowLabel(w.limitWindowSeconds)}${w.variant ? ` (${quotaVariantLabel(w.variant)})` : ""}`;
+		return w.name ? quotaWindowName(w.name) : "";
+	};
+
+	// 余额明细项的标签由界面翻译，服务端只给语义 key
+	const balanceDetailLabel = (key: BalanceDetailKey): string => {
+		if (key === "granted") return t.usageBalanceGranted;
+		if (key === "toppedUp") return t.usageBalanceToppedUp;
+		if (key === "voucher") return t.usageBalanceVoucher;
+		if (key === "cash") return t.usageBalanceCash;
+		if (key === "used") return t.usageBalanceUsed;
+		return t.usageBalanceLimit;
+	};
+	const fmtAmount = (value: BalanceAmount): string => `${value.currency === "USD" ? "$" : value.currency === "CNY" ? "¥" : ""}${value.amount}${value.currency && value.currency !== "USD" && value.currency !== "CNY" ? ` ${value.currency}` : ""}`;
+
+	// 一个提供商的配额行：窗口制显示每个窗口的剩余与重置，余额制显示主余额与明细
+	const renderProviderUsage = (providerId: string) => {
+		const usage = providerUsages[providerId];
+		const busy = usageBusyId === providerId;
+		const failed = usageFailedIds[providerId];
+		return (
+			<>
+				<div className="flex items-center gap-2">
+					{!usage && <span>{failed ? t.usageProbeFailed : busy ? t.queryingQuota : providerId === "xai" ? t.usageXaiDisclosure : t.usageReadOnlyDisclosure}</span>}
+					{usage?.kind === "quota" && usage.planType && <span>{t.usagePlan} {titleCase(usage.planType)}</span>}
+					{usage?.kind === "balance" && usage.primary && (
+						<span>{usage.primaryKey === "used" ? t.usageBalanceUsed : t.usageQuotaRemaining} <span style={{ color: "var(--dsw-label-secondary)" }}>{fmtAmount(usage.primary)}</span></span>
+					)}
+					<button type="button" className="pw-chip" disabled={busy} title={providerId === "xai" ? t.usageXaiDisclosure : t.usageReadOnlyDisclosure} onClick={() => void fetchProviderUsage(providerId, true)}>
+						{busy ? t.usageProbing : usage ? t.usageRefresh : t.usageProbe}
+					</button>
+				</div>
+				{usage?.kind === "balance" && usage.details.length > 0 && (
+					<span>{usage.details.map((detail) => `${balanceDetailLabel(detail.key)} ${fmtAmount(detail)}`).join(" · ")}</span>
+				)}
+				{usage?.kind === "quota" && usage.windows.length === 0 && <span>{t.usageQuotaRemaining} —</span>}
+				{usage?.kind === "quota" && usage.windows.map((w, index) => (
+					<div key={`${w.limitWindowSeconds ?? w.name ?? "window"}-${w.variant ?? ""}-${index}`} className="flex items-center gap-2">
+						<span style={{ width: 84, flex: "none" }}>{quotaWindowHeading(w)}</span>
+						<span style={{ width: 92, flex: "none" }}>{t.usageQuotaRemaining} {w.remainingPercent}%</span>
+						<span>{t.usageReset} {fmtQuotaReset(w.resetAt)}</span>
+						<div className="h-1 overflow-hidden rounded-full" style={{ width: 120, flex: "none", background: "var(--dsw-border-l2)" }}>
+							<div className="h-full rounded-full" style={{ width: `${w.remainingPercent}%`, background: quotaToneColor(w.remainingPercent) }} />
+						</div>
+					</div>
+				))}
+			</>
+		);
+	};
 
 	const notify = (ok: boolean, msg?: string) => {
 		setToast({ ok, msg: msg ?? (ok ? t.toastSaved : t.toastError) });
@@ -1198,6 +1299,12 @@ function ModelsSection() {
 									<button type="button" className="pw-chip" disabled={usageBusy} title={t.usageProbeDisclosure} onClick={() => void fetchUsage(true)}>
 										{usageBusy ? t.usageProbing : xaiUsage ? t.usageRefresh : t.usageProbe}
 									</button>
+								</div>
+							)}
+
+							{supportsUsageProbe(p.id) && p.id !== "xai" && p.authReady && (
+								<div className="mt-1.5 flex flex-col gap-1.5 px-4" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
+									{renderProviderUsage(p.id)}
 								</div>
 							)}
 
@@ -1499,6 +1606,24 @@ function ModelsSection() {
 function fmtQuotaTokens(value: number): string {
 	if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
 	return value.toLocaleString();
+}
+
+/** 套餐值来自服务端声明（如 "pro"/"plus"），首字母大写后直接跟在标签后显示。 */
+function titleCase(value: string): string {
+	return value.length === 0 ? value : value[0].toUpperCase() + value.slice(1);
+}
+
+function fmtQuotaReset(value: string | undefined): string {
+	if (!value) return "—";
+	const date = new Date(value);
+	return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+/** 剩余越少越警示：<30% 红、≤60% 黄、其余常规。 */
+function quotaToneColor(percent: number): string {
+	if (percent < 30) return "var(--dsw-danger)";
+	if (percent <= 60) return "var(--dsw-warning)";
+	return "var(--dsw-success)";
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

@@ -30,6 +30,7 @@ import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui"
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
+import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
 import { estimateTokensOf } from "./process-format";
@@ -968,6 +969,17 @@ export function reap(): void {
 }
 
 setInterval(reap, 60_000).unref?.();
+
+/** 归档会话的保留期清理：只删「已归档且长期无活动」的会话；正在使用的会话一律跳过 */
+function isSessionInUse(sessionPath: string): boolean {
+	const key = process.platform === "win32" ? sessionPath.toLowerCase() : sessionPath;
+	for (const managed of sessions.keys()) {
+		if ((process.platform === "win32" ? managed.toLowerCase() : managed) === key) return true;
+	}
+	return false;
+}
+
+startArchivedSessionRetention({ isActive: isSessionInUse, log: (message) => console.log(message) });
 
 // ---------- 资源清单（技能 / 提示模板 / 扩展命令 / 信任 / 诊断） ----------
 

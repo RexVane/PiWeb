@@ -4,6 +4,7 @@
  * 中央状态：会话列表轮询、当前会话 SSE 订阅、事件折叠（快照→增量）、命令发送。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import type {
 	GrowthStep,
 	SessionSummary,
@@ -334,6 +335,8 @@ export function usePiWeb() {
 	const [currentId, setCurrentId] = useState<string | null>(null);
 	const [currentPath, setCurrentPath] = useState<string | null>(null);
 	const [state, setState] = useState<PiWebState>(emptyState);
+	/** 当前 SSE 连接的增量批量器：按帧合并事件，避免每个 token 一次整树渲染 */
+	const batcherRef = useRef<EventBatcher<WebEvent> | null>(null);
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
 	const [addedWorkspaces, setAddedWorkspaces] = useState<string[]>([]);
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
@@ -637,6 +640,11 @@ export function usePiWeb() {
 					if (esRef.current === null) connect();
 				}, delay);
 			};
+			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
+			const batcher = createEventBatcher<WebEvent>({
+				flush: (events) => setState((s) => events.reduce((acc, evt) => foldPiWebEvent(acc, evt), s)),
+			});
+			batcherRef.current = batcher;
 			es.onmessage = (e) => {
 				let parsed: any;
 				try {
@@ -646,6 +654,8 @@ export function usePiWeb() {
 					return;
 				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
+					// 快照是权威状态：之前缓冲的增量已经过时，直接丢弃
+					batcher.cancel();
 					retryDelayMs = 2000;
 					const snap = parsed.snapshot as WebSnapshot;
 					setSnapshotEpoch((epoch) => epoch + 1);
@@ -667,13 +677,15 @@ export function usePiWeb() {
 						growth: { ...prev.growth, error: snap.growthError ?? null },
 					}));
 				} else {
-					setState((s) => foldPiWebEvent(s, parsed as WebEvent));
+					batcher.push(parsed as WebEvent);
 				}
 			};
 		};
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		connect();
 		return () => {
+			batcherRef.current?.cancel();
+			batcherRef.current = null;
 			if (retryTimer) clearTimeout(retryTimer);
 			esRef.current?.close();
 			esRef.current = null;
