@@ -10,11 +10,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { encodeSessionDir, importedFileName, importedKey, listImportedKeys, writeImportedSession } from "../src/lib/session-import/writer";
 import type { ImportedEntry, ImportedSession } from "../src/lib/session-import/types";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { readSession } from "../src/lib/session-reader";
 
 let root: string;
 let agentDir: string;
 let cwd: string;
+const priorAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 beforeEach(async () => {
 	root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-import-writer-")));
@@ -22,9 +24,13 @@ beforeEach(async () => {
 	cwd = path.join(root, "workspace");
 	await fs.mkdir(agentDir, { recursive: true });
 	await fs.mkdir(cwd, { recursive: true });
+	// SessionManager 会按 PI_CODING_AGENT_DIR 推算默认会话目录：指到临时目录，别碰真实的 agent 目录
+	process.env.PI_CODING_AGENT_DIR = agentDir;
 });
 
 afterEach(async () => {
+	if (priorAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = priorAgentDir;
 	await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -135,11 +141,15 @@ describe("写出的会话文件是合法 pi 会话", () => {
 		expect(lines.find((entry) => entry.type === "session_info")?.name).toBe("【Claude】这段对话到底在说些什么呢");
 	});
 
-	it("会话目录编码与 SDK 的 SessionManager 一致", () => {
-		expect(encodeSessionDir("D:\\AIApp\\PiWeb")).toBe("--D--AIApp-PiWeb--");
-		// POSIX 上 /home/me/project 就是本机路径；Windows 上会被解析成当前盘，断言不成立
-		if (process.platform !== "win32") expect(encodeSessionDir("/home/me/project")).toBe("--home-me-project--");
-		// 不变量：一定是 -- 开头结尾、且不含路径分隔符
+	it("会话目录编码与 SDK 的 SessionManager 逐字一致", async () => {
+		// 直接和 SDK 算出来的目录名比：这是导入能被 pi 读到的前提。
+		// 注意不能用 "D:\\AIApp\\PiWeb" 这类字面路径去断言——在 POSIX 上它只是含反斜杠的相对路径，
+		// path.resolve 会拼到当前工作目录后（CI 上就是这么挂的），所以用真实临时目录比。
+		const sm = SessionManager.create(cwd);
+		expect(path.basename(sm.getSessionDir())).toBe(encodeSessionDir(cwd));
+		// Windows 上另外验证一下盘符风格
+		if (process.platform === "win32") expect(encodeSessionDir("D:\\AIApp\\PiWeb")).toBe("--D--AIApp-PiWeb--");
+		// 不变量：一定是 -- 开头结尾、内部不含路径分隔符或冒号（否则目录会散开）
 		const encoded = encodeSessionDir(cwd);
 		expect(encoded).toMatch(/^--.+--$/);
 		expect(encoded.slice(2, -2)).not.toMatch(/[/\\:]/);
