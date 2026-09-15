@@ -8,8 +8,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/i18n";
-import { IconCopyOutline16, IconCheckOutline14, IconRefreshOutline14, IconCloseOutline14 } from "@/components/icons";
-import { copyText } from "@/lib/clipboard";
+import { IconRefreshOutline14, IconCloseOutline14 } from "@/components/icons";
 
 export type PromptSourceKind = "system" | "append" | "agents" | "skill" | "template" | "tool" | "assembled";
 
@@ -37,6 +36,8 @@ export interface PromptToolView {
 export interface PromptSourcesData {
 	sources: PromptSource[];
 	assembledSystemPrompt?: string;
+	/** 压缩摘要（同样进入上下文） */
+	compactedSummary?: string;
 	tools?: PromptToolView[];
 	sessionReady: boolean;
 }
@@ -70,8 +71,6 @@ export function PromptPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [opening, setOpening] = useState<string | null>(null);
-	const [inline, setInline] = useState<{ title: string; content: string } | null>(null);
-	const [copied, setCopied] = useState(false);
 
 	const load = useCallback(async () => {
 		setBusy(true);
@@ -199,7 +198,21 @@ export function PromptPanel({
 									type="button"
 									className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
 									style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-									onClick={() => setInline({ title: `${tool.name}`, content: [tool.description ?? "", tool.promptGuidelines?.join("\n") ?? "", tool.parameters ? JSON.stringify(tool.parameters, null, 2) : ""].filter(Boolean).join("\n\n") })}
+									title={tool.name}
+									onClick={() =>
+										onOpenContent?.(
+											`tool-${tool.name}.md`,
+											[
+												`# ${tool.name}`,
+												tool.source === "builtin" ? t.promptToolBuiltin : t.promptToolExtension,
+												tool.description ?? "",
+												...(tool.promptGuidelines?.length ? [t.promptGuidelines, ...tool.promptGuidelines.map((line) => `- ${line}`)] : []),
+												...(tool.parameters ? [t.promptParameters, "```json", JSON.stringify(tool.parameters, null, 2), "```"] : []),
+											]
+												.filter(Boolean)
+												.join("\n\n"),
+										)
+									}
 								>
 									<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-primary)" }}>{tool.name}</span>
 									<span className="flex-none rounded-md px-1.5 py-0.5" style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}>
@@ -218,38 +231,27 @@ export function PromptPanel({
 							type="button"
 							className="w-full rounded-lg px-2 py-1.5 text-left"
 							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-							onClick={() => setInline({ title: t.promptKindAssembled, content: data.assembledSystemPrompt ?? "" })}
+							title={t.promptAssembledKey}
+							onClick={() => onOpenContent?.("system-prompt.md", data.assembledSystemPrompt ?? "")}
 						>
 							<span className="truncate" style={{ color: "var(--dsw-label-primary)" }}>{t.promptAssembledKey}</span>
 						</button>
 					</section>
 				)}
 
-				{inline && (
-					<div className="mt-2">
-						<div className="mb-1 flex items-center gap-2">
-							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{inline.title}</span>
-							<button
-								type="button"
-								className="icon-btn"
-								style={{ width: 24, height: 24 }}
-								title={copied ? t.copySuccess : t.copy}
-								aria-label={t.copy}
-								onClick={() => {
-									void copyText(inline.content).then((ok) => {
-										setCopied(ok);
-										setTimeout(() => setCopied(false), 1200);
-									});
-								}}
-							>
-								{copied ? <IconCheckOutline14 size={13} /> : <IconCopyOutline16 size={13} />}
-							</button>
-							<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.close} aria-label={t.close} onClick={() => setInline(null)}>
-								<IconCloseOutline14 size={13} />
-							</button>
-						</div>
-						<pre className="pw-output" style={{ maxHeight: 420, overflow: "auto", margin: 0 }}>{inline.content}</pre>
-					</div>
+				{data?.compactedSummary && (
+					<section className="mb-3">
+						<div className="mb-1 px-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.promptKindCompacted}</div>
+						<button
+							type="button"
+							className="w-full rounded-lg px-2 py-1.5 text-left"
+							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+							title={t.promptCompactedKey}
+							onClick={() => onOpenContent?.("compacted-summary.md", data.compactedSummary ?? "")}
+						>
+							<span className="truncate" style={{ color: "var(--dsw-label-primary)" }}>{t.promptCompactedKey}</span>
+						</button>
+					</section>
 				)}
 			</div>
 		</div>

@@ -45,8 +45,10 @@ export interface PromptToolView {
 
 export interface PromptSourcesResult {
 	sources: PromptSource[];
-	/** 热会话才有：组装后发给模型的完整系统提示词 */
+	/** 热会话才有：实际发给模型的完整系统提示词（含你的 AGENTS.md、技能段、工具清单与追加段——不做任何过滤） */
 	assembledSystemPrompt?: string;
+	/** 热会话才有：压缩摘要（compact 后进入上下文的历史摘要，平时在界面上看不见） */
+	compactedSummary?: string;
 	/** 热会话才有：每个工具的定义 */
 	tools?: PromptToolView[];
 	/** 冷会话（agent 未启动）时为 false，界面据此说明为什么缺少合成项 */
@@ -63,6 +65,9 @@ export interface PromptSessionLike {
 		promptGuidelines?: string[];
 		sourceInfo?: { source?: string; origin?: string; scope?: string };
 	}>;
+	/** 会话条目入口：SDK 里字段名有 sm / sessionManager 两种（压缩摘要从这里取） */
+	sm?: { getEntries?: () => unknown[] };
+	sessionManager?: { getEntries?: () => unknown[] };
 }
 
 interface SourceInfoLike {
@@ -140,6 +145,26 @@ async function fileSize(filePath: string | undefined): Promise<number | undefine
 	}
 }
 
+/** 最近一次压缩的摘要（与上下文计量同一套取法：从会话条目的最后一条 compaction 往前找） */
+export function latestCompactionSummary(session: PromptSessionLike): string | undefined {
+	try {
+		const entries = sessionEntries(session);
+		for (let i = entries.length - 1; i >= 0; i -= 1) {
+			const entry = entries[i] as { type?: string; summary?: string };
+			if (entry?.type === "compaction" && typeof entry.summary === "string" && entry.summary.trim()) return entry.summary;
+		}
+	} catch {
+		/* 条目不可用则跳过 */
+	}
+	return undefined;
+}
+
+/** 会话条目入口在 SDK 里有两个字段名（sm / sessionManager），两种都认 */
+function sessionEntries(session: PromptSessionLike): unknown[] {
+	const s = session as unknown as { sm?: { getEntries?: () => unknown[] }; sessionManager?: { getEntries?: () => unknown[] } };
+	return s.sm?.getEntries?.() ?? s.sessionManager?.getEntries?.() ?? [];
+}
+
 /** 列出当前工作区的全部提示词来源（冷会话也能列全文件类来源） */
 export async function listPromptSources({
 	cwd,
@@ -168,6 +193,8 @@ export async function listPromptSources({
 
 	const withSizes = await Promise.all(raw.map(async (entry) => ({ ...entry, bytes: await fileSize(entry.path) })));
 	const sources = buildPromptSources(withSizes);
+	// 压缩摘要：compact 之后它以摘要形式进入上下文，界面上平时看不到，这里一并列出
+	const compacted = session ? latestCompactionSummary(session) : undefined;
 
 	const tools = session
 		? session.getAllTools().map((tool) => ({
@@ -182,6 +209,7 @@ export async function listPromptSources({
 	return {
 		sources,
 		...(session?.systemPrompt ? { assembledSystemPrompt: session.systemPrompt } : {}),
+		...(compacted ? { compactedSummary: compacted } : {}),
 		...(tools ? { tools } : {}),
 		sessionReady: Boolean(session),
 	};

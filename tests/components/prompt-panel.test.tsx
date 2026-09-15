@@ -63,15 +63,25 @@ describe("PromptPanel", () => {
 		await waitFor(() => expect(onOpenContent).toHaveBeenCalledWith("/ws/AGENTS.md", "内容:/ws/AGENTS.md"));
 	});
 
-	it("expands tool prompts and the assembled system prompt in place", async () => {
+	it("hands tool prompts and the system prompt to the centered viewer", async () => {
+		const { onOpenContent } = setup();
+		await waitFor(() => expect(screen.getByText("read")).toBeTruthy());
+		fireEvent.click(screen.getByText("read"));
+		await waitFor(() => expect(onOpenContent).toHaveBeenCalledWith("tool-read.md", expect.stringContaining("读取文件")));
+		// 参数 schema 以 JSON 代码块形式进入查看器内容
+		expect(onOpenContent.mock.calls.at(-1)?.[1]).toContain("```json");
+
+		fireEvent.click(screen.getByText("当前生效的系统提示词"));
+		await waitFor(() => expect(onOpenContent).toHaveBeenCalledWith("system-prompt.md", "你是 pi。"));
+	});
+
+	it("does not render prompt bodies inside the side list", async () => {
 		setup();
 		await waitFor(() => expect(screen.getByText("read")).toBeTruthy());
 		fireEvent.click(screen.getByText("read"));
-		await waitFor(() => expect(screen.getByText(/读取文件/)).toBeTruthy());
-		expect(screen.getByText(/"type": "object"/)).toBeTruthy();
-
-		fireEvent.click(screen.getByText("当前生效的完整系统提示词"));
-		await waitFor(() => expect(screen.getByText("你是 pi。")).toBeTruthy());
+		// 侧栏只负责"选择查看哪个"，正文交给居中查看器
+		expect(screen.queryByText("你是 pi。")).toBeNull();
+		expect(document.querySelector("pre.pw-output")).toBeNull();
 	});
 
 	it("explains missing synthesized entries while the session is cold", async () => {

@@ -28,6 +28,10 @@ Full SSE snapshots with ordered deltas and automatic replay via `Last-Event-ID`.
 
 Sessions grouped by project folder, with a native folder picker (Windows / macOS / Linux), rename and archive. Session tree branches, draft recovery, and JSONL / HTML export.
 
+### Import Local Sessions
+
+Bring conversation history from Codex, Claude Code, Grok, ZCode, dsh, and opencode on this machine into pi sessions without loss: text, thinking, tool calls and their results, timestamps, and usage are all kept, and the source data is **read-only** — nothing in the other tools is modified. If the original project directory still exists locally the session lands in that workspace; otherwise it falls back to one you pick. Find it under Settings → Import sessions. The 15 most recent conversations per source are listed, and anything already imported is marked and cannot be imported twice.
+
 ### Project Growth Tree
 
 Every step the agent takes on your codebase is snapshotted: navigate the timeline round by round, see added/modified/deleted files, and open line-level diffs for any file at any step — even if the workspace has no git history of its own.

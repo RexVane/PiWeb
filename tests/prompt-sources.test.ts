@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildPromptSources, classifyPromptOrigin, listPromptSources, readPromptSource } from "../src/lib/prompt-sources";
+import { buildPromptSources, classifyPromptOrigin, latestCompactionSummary, listPromptSources, readPromptSource } from "../src/lib/prompt-sources";
 
 const prior = process.env.PI_CODING_AGENT_DIR;
 let agentDir: string;
@@ -116,5 +116,43 @@ describe("listPromptSources / readPromptSource（真实资源加载器）", () =
 		await write(path.resolve(outside), "不该被读到");
 		await expect(readPromptSource(path.resolve(outside), ws)).rejects.toThrow(/not part of the discovered/);
 		await fs.rm(path.resolve(outside), { force: true });
+	});
+});
+
+describe("上下文里会影响模型的内容都要如实列出", () => {
+	it("系统提示词就是完整生效版本，不做任何过滤", async () => {
+		const full = [
+			"你是 pi。",
+			"",
+			'<project_instructions path="/ws/AGENTS.md">',
+			"只属于自己的约定",
+			"</project_instructions>",
+			"",
+			"<available_skills>",
+			"- demo-skill",
+			"</available_skills>",
+			"",
+		].join("\n");
+		const session = { systemPrompt: full, getAllTools: () => [] };
+		const result = await listPromptSources({ cwd: ws, session });
+		// 一字不改：含用户的记忆、技能段、工具清单，界面上不该出现"过滤后"的版本
+		expect(result.assembledSystemPrompt).toBe(full);
+	});
+
+	it("压缩摘要也列出来（它同样进入上下文但平时看不见）", async () => {
+		const entries = [
+			{ type: "message", message: { role: "user" } },
+			{ type: "compaction", summary: "之前聊到了登录流程与两个未修的 bug。" },
+			{ type: "message", message: { role: "assistant" } },
+		];
+		expect(latestCompactionSummary({ systemPrompt: "x", getAllTools: () => [], sessionManager: { getEntries: () => entries } } as never)).toBe("之前聊到了登录流程与两个未修的 bug。");
+
+		const session = { systemPrompt: "x", getAllTools: () => [], sm: { getEntries: () => entries } };
+		const result = await listPromptSources({ cwd: ws, session });
+		expect(result.compactedSummary).toBe("之前聊到了登录流程与两个未修的 bug。");
+
+		// 没有压缩记录时不出现这一项
+		const fresh = await listPromptSources({ cwd: ws, session: { systemPrompt: "x", getAllTools: () => [], sm: { getEntries: () => [] } } });
+		expect(fresh.compactedSummary).toBeUndefined();
 	});
 });
