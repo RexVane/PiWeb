@@ -99,21 +99,38 @@ export function classifyMessageChars(
 	return out;
 }
 
-/** bash/PowerShell 删除文件的命令判定：rm / Remove-Item / del / trash 等，且至少带一个非选项参数 */
+/** 删除文件的命令：rm / Remove-Item / del / trash 等，且至少带一个非选项参数 */
+const DELETE_COMMANDS = new Set(["rm", "remove-item", "ri", "del", "erase", "unlink", "trash"]);
+
+/**
+ * 单条命令是否是删除。只看该段的第一个词，所以必须按 ; && || 先切段——
+ * `cd src && rm main.py` 这种链式写法以前整条都判不出来。
+ */
+function isDeleteSegment(segment: string): boolean {
+	const tokens = segment.trim().split(/\s+/).filter(Boolean);
+	if (!tokens.length) return false;
+	const base = (tokens[0].split(/[\\/]/).pop() ?? tokens[0]).toLowerCase().replace(/\.(exe|ps1|bat|cmd)$/, "");
+	// git rm <path>：删除动作在第二个词
+	if (base === "git") return tokens[1]?.toLowerCase() === "rm" && tokens.slice(2).some((tok) => !tok.startsWith("-"));
+	if (!DELETE_COMMANDS.has(base)) return false;
+	return tokens.slice(1).some((tok) => !tok.startsWith("-"));
+}
+
+/** bash/PowerShell 删除文件的命令判定（支持链式命令，逐段判断，避免误判整条） */
 export function isDeleteCommand(command: string): boolean {
-	const first = command.trim().split(/\s+/)[0] ?? "";
-	const base = first.split(/[\\/]/).pop() ?? first;
-	const name = base.toLowerCase().replace(/\.(exe|ps1|bat|cmd)$/, "");
-	if (!["rm", "remove-item", "ri", "del", "erase", "unlink", "trash"].includes(name)) return false;
-	const rest = command.trim().split(/\s+/).slice(1);
-	return rest.some((tok) => !tok.startsWith("-"));
+	return splitTopLevel(command).some(isDeleteSegment);
 }
 
 /** 从删除命令里提取第一个目标路径（去引号；相对路径解析交给展示层） */
 export function deleteTargetOf(command: string): string {
-	const tokens = command.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
-	const target = tokens.slice(1).find((tok) => !tok.startsWith("-"));
-	return target ? target.replace(/^["']|["']$/g, "") : "";
+	for (const segment of splitTopLevel(command)) {
+		if (!isDeleteSegment(segment)) continue;
+		const tokens = segment.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+		const skip = tokens[0]?.toLowerCase() === "git" ? 2 : 1;
+		const target = tokens.slice(skip).find((tok) => !tok.startsWith("-"));
+		if (target) return target.replace(/^["']|["']$/g, "");
+	}
+	return "";
 }
 
 /** 按顶层的 ; && || 切分（引号内不切） */

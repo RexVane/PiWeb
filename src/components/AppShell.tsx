@@ -14,8 +14,11 @@ import { SessionSidebar } from "@/components/SessionSidebar";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
-const TrajectoryView = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajectoryView), { ssr: false });
 const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
+
+/** 会话/工作区路径比较（Windows 大小写与分隔符差异不该影响判断） */
+const samePath = (a: string, b: string): boolean =>
+	a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) => m.ProjectPanel), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
@@ -132,7 +135,6 @@ export function AppShell() {
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
 	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [tab, setTab] = useState<"chat" | "traj">("chat");
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	const [gitDetailsOpen, setGitDetailsOpen] = useState(false);
 	const [heroCwd, setHeroCwd] = useState("");
@@ -342,17 +344,49 @@ export function AppShell() {
 		[currentPath, currentId, sendCommand, openSession, resync],
 	);
 
+	/**
+	 * 原地编辑用户消息后重新发送：服务端在同一会话文件内回到该消息（navigateTree），
+	 * 再用新文本重新提问——被编辑消息之后的分支作废，模型从这里重新回答。
+	 * 旧的插话（steering）撤回/编辑/发送不变。
+	 */
+	const doEditMessage = useCallback(
+		async (entryId: string, text: string) => {
+			if (!currentId) return;
+			if (isStreaming) {
+				setError(t.editWhileRunning);
+				return;
+			}
+			const moved = await sendCommand({ cmd: "navigate", entryId });
+			if (!moved?.success || moved.data?.cancelled) {
+				setError(moved?.error ?? t.editMessageFailed);
+				return;
+			}
+			// 被编辑消息之后的尾部要立刻从视图里消失，再发新提问
+			resync();
+			const sent = await sendCommand({ cmd: "prompt", text });
+			if (!sent?.success) setError(sent?.error ?? t.editMessageFailed);
+		},
+		[currentId, isStreaming, resync, sendCommand, setError, t.editMessageFailed, t.editWhileRunning],
+	);
+
 	const doArchiveSession = useCallback(
 		async (path: string) => {
 			try {
-				// dsh 合同：归档不关会话——当前会话被归档后保持打开且在主列表可见
-				// （usePiWeb 的可见性规则对 currentPath 豁免），继续可聊。
 				await archiveSession(path);
 			} catch {
 				// usePiWeb exposes the request failure in the shared error banner.
 			}
+			// 归档后会话立刻离开工作区列表（服务端同时让它收工）。正在看的会话被归档时
+			// 必须切走：先取同一工作区的另一个可见会话，没有就回到空态（工作区仍留在侧栏）。
+			if (!currentPath || !samePath(path, currentPath)) return;
+			const cwd = sessions.find((s) => samePath(s.path, currentPath))?.cwd;
+			const next =
+				sessions.find((s) => !samePath(s.path, path) && cwd && samePath(s.cwd, cwd)) ??
+				sessions.find((s) => !samePath(s.path, path));
+			if (next) openSession(next.path);
+			else closeSession();
 		},
-		[archiveSession],
+		[archiveSession, closeSession, currentPath, openSession, sessions],
 	);
 	const doUnarchiveSession = useCallback(
 		async (path: string) => {
@@ -444,7 +478,6 @@ export function AppShell() {
 			if (name === "compact") void sendCommand({ cmd: "compact", instructions: args || undefined });
 			else if (name === "export" && currentId) window.open(`/api/sessions/${currentId}/export?format=jsonl`, "_blank");
 			else if (name === "new") {
-				setTab("chat");
 				closeSession();
 			} else if (name === "fork" && currentId) {
 				void sendCommand({ cmd: "fork" }).then((r) => {
@@ -646,14 +679,12 @@ export function AppShell() {
 					}}
 					onNew={() => {
 						// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
-						setTab("chat");
 						const cur = sessions.find((s) => s.path === currentPath)?.cwd;
 						setHeroCwd(cur || heroCwd || knownCwds[0] || "");
 						closeSession();
 					}}
 					onNewInWorkspace={(cwd) => {
 						// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
-						setTab("chat");
 						setHeroCwd(cwd);
 						closeSession();
 					}}
@@ -757,26 +788,11 @@ export function AppShell() {
 									)}
 								</div>
 							)}
-							<div className="mt-1.5 flex items-center gap-5">
-								<button className="tab-underline" data-active={tab === "chat"} onClick={() => setTab("chat")}>
-									{t.tabChat}
-								</button>
-								<button
-									className="tab-underline"
-									data-active={tab === "traj"}
-									onClick={() => {
-										setTab("traj");
-										void sendCommand({ cmd: "prepare" });
-									}}
-								>
-									{t.tabTrajectory}
-								</button>
-							</div>
+							{/* 轨迹页签已移除：轨迹按需查看（对话里的工具行 → 轨迹详情），不再占用主区域 */}
 						</div>
 
-						{/* 内容 */}
-						{tab === "chat" ? (
-							!snapshot ? (
+						{/* 内容：只有对话区，轨迹按需在详情栏查看 */}
+						{!snapshot ? (
 								// 切换会话时快照未到：居中加载指示，避免空白/占位符闪现
 								<div className="flex min-h-0 flex-1 items-center justify-center">
 									<span
@@ -813,6 +829,7 @@ export function AppShell() {
 									onOpenTrajectory={openToolTrajectory}
 									onOpenFile={openInEditor}
 									onFork={handleFork}
+									onEditMessage={doEditMessage}
 								/>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
@@ -861,22 +878,11 @@ export function AppShell() {
 												{Object.entries(state.extensionStatuses).map(([k, v]) => <span key={k}>{v}</span>)}
 											</div>
 										)}
-									</div>
+										</div>
 								</div>
-							</div>
-							)
-						) : (
-							<div className="min-h-0 flex-1">
-								<TrajectoryView
-									entries={snapshot?.trajectory ?? []}
-									selected={selected}
-									onSelect={(entry) => {
-									setSelected(entry);
-									setGitDetailsOpen(false);
-									}}
-								/>
-							</div>
-						)}
+								</div>
+								)
+						}
 					</>
 				)}
 			</div>

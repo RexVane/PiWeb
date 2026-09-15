@@ -2,9 +2,11 @@
  * agent-manager：AgentSession 池 + pi 事件 → Web 事件翻译 + SSE 订阅管理。
  * 打开会话即惰性冷启动（createAgentSession），空闲回收，事件先快照后增量。
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import {
 	getResourceLoader,
 	createSessionResourceLoader,
@@ -180,6 +182,51 @@ function linkInflightFinal(m: Managed, session: AgentSession): boolean {
 function patchOf(details: unknown): string | undefined {
 	const patch = (details as { patch?: unknown } | undefined)?.patch;
 	return typeof patch === "string" && patch.trim() ? patch.slice(0, 60_000) : undefined;
+}
+
+/**
+ * write 工具不产 patch（SDK 的 write.js 里没有 patch 字段），覆盖已有文件时前端只能把
+ * 全部内容当新增行——删掉的行永远不会标红。这里在工具开始执行（文件还没被写）时读一份
+ * 旧内容，结束时用 SDK 的 generateUnifiedPatch 生成和 edit 同格式的 patch，
+ * 于是「新增绿 / 删除红」在两条写入路径上一致。新文件没有旧内容，仍按新增行展示。
+ */
+const WRITE_BASE_MAX_BYTES = 512 * 1024;
+const writeBases = new Map<string, string>();
+
+function writeArgsOf(args: unknown): { target: string; content: string | undefined } {
+	const a = args as { path?: unknown; file_path?: unknown; content?: unknown } | undefined;
+	const target = typeof a?.path === "string" ? a.path : typeof a?.file_path === "string" ? a.file_path : "";
+	return { target, content: typeof a?.content === "string" ? a.content : undefined };
+}
+
+export function captureWriteBase(cwd: string, sessionPath: string, toolCallId: string, args: unknown): void {
+	const { target } = writeArgsOf(args);
+	if (!target) return;
+	try {
+		const abs = path.isAbsolute(target) ? target : path.resolve(cwd, target);
+		const stat = statSync(abs);
+		if (!stat.isFile() || stat.size > WRITE_BASE_MAX_BYTES) return;
+		const previous = readFileSync(abs, "utf8");
+		if (previous.includes("\u0000")) return; // 二进制不做行级 diff
+		if (writeBases.size > 256) writeBases.clear();
+		writeBases.set(`${sessionPath}\u0000${toolCallId}`, previous);
+	} catch {
+		/* 新文件或读不到：没有旧内容，走全绿兜底 */
+	}
+}
+
+export function takeWritePatch(cwd: string, sessionPath: string, toolCallId: string, args: unknown): string | undefined {
+	const key = `${sessionPath}\u0000${toolCallId}`;
+	const previous = writeBases.get(key);
+	writeBases.delete(key);
+	if (previous === undefined) return undefined;
+	const { target, content } = writeArgsOf(args);
+	if (content === undefined || content === previous) return undefined;
+	try {
+		return generateUnifiedPatch(target, previous, content).slice(0, 60_000);
+	} catch {
+		return undefined;
+	}
 }
 
 function coercePartial(p: unknown): string | undefined {
@@ -426,6 +473,8 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		}
 		case "tool_execution_start":
+			// write 覆盖前先留一份旧内容，结束时才能给出真实的新增/删除 diff
+			if (evt.toolName?.toLowerCase() === "write") captureWriteBase(m.cwd, m.sessionPath, evt.toolCallId, evt.args);
 			publish(m, {
 				type: "tool",
 				id: evt.toolCallId,
@@ -460,7 +509,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				result: result.text || undefined,
 				isError: evt.isError,
 				encodingLoss: result.encodingLoss || undefined,
-				patch: patchOf((evt as any).result?.details),
+				patch: patchOf((evt as any).result?.details) ?? (evt.toolName?.toLowerCase() === "write" ? takeWritePatch(m.cwd, m.sessionPath, evt.toolCallId, (evt as any).args) : undefined),
 				ts: now,
 			});
 			publishUsage(m);
@@ -514,7 +563,15 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			else publish(m, { type: "model", thinkingLevel: (evt as any).level, ts: now });
 			break;
 		case "auto_retry_start":
-			publish(m, { type: "error", message: `自动重试 ${(evt as any).attempt}/${(evt as any).maxAttempts}：${(evt as any).errorMessage ?? ""}`, ts: now });
+			// 重试是流程内通知：发一条结构化 retry 事件（界面聚合成「重试 n/max」一行），
+			// 不再走 error 通道，免得每次尝试都多出一条报错。
+			publish(m, {
+				type: "retry",
+				attempt: Number((evt as any).attempt) || 0,
+				maxAttempts: Number((evt as any).maxAttempts) || 0,
+				message: String((evt as any).errorMessage ?? ""),
+				ts: now,
+			});
 			break;
 		default:
 			break;
@@ -881,6 +938,11 @@ export function disposeSession(m: Managed): void {
 	sessions.delete(m.sessionPath);
 }
 
+/**
+ * 让某个会话立刻收工：中断正在跑的回合并回收 agent。
+ * 归档用它——归档后会话从工作区消失，若它的回合还在后台跑，用户看不见却仍在消耗 token。
+ * 只影响这一个会话，其它会话的运行不受影响（LRU/空闲回收同样跳过 busy 的会话）。
+ */
 export async function disposeSessionPath(sessionPath: string): Promise<void> {
 	const m = sessions.get(sessionPath);
 	if (!m) return;

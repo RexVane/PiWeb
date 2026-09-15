@@ -242,9 +242,15 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 		case "growth_error":
 			s.growth = { ...s.growth, pending: [], error: evt.message };
 			return s;
+		case "retry":
+			// 只保留最后一次尝试：重试过程在界面上是「重试 3/5」这一条，而不是五行报错
+			s.retryNotice = evt.maxAttempts
+				? `重试 ${evt.attempt}/${evt.maxAttempts}${evt.message ? `：${evt.message}` : ""}`
+				: `重试 ${evt.attempt}${evt.message ? `：${evt.message}` : ""}`;
+			return s;
 		case "error":
-			// 自动重试属流程内通知：随消息流显示、流结束清除，不走 6 秒错误条
-			if (/^自动重试/.test(evt.message)) s.retryNotice = evt.message;
+			// 旧服务端把自动重试塞在 error 里：同样按通知处理，不占错误条
+			if (/^(自动重试|重试)/.test(evt.message)) s.retryNotice = evt.message;
 			else s.error = evt.message;
 			return s;
 		default:
@@ -847,18 +853,16 @@ export function usePiWeb() {
 		presetRestorePromiseRef.current = restore;
 	}, [currentId, snapshotEpoch, state.connected, state.snapshot, sendCommand]);
 
-	// 会话可见性规则：当前会话豁免归档过滤——归档当前会话不关闭、
-	// 主列表保持可见可聊，已归档区也不显示它（取消归档前菜单按真实归档态切换）。
+	// 会话可见性规则：归档即离开工作区列表——包括当前会话（归档后切到相邻会话或空态），
+	// 归档区显示全部已归档会话。
 	const visibleSessions = useMemo(() => {
 		const set = new Set(archivedSessionPaths.map(pathKey));
-		const currentKey = currentPath ? pathKey(currentPath) : null;
-		return sessions.filter((s) => !set.has(pathKey(s.path)) || (currentKey != null && pathKey(s.path) === currentKey));
-	}, [sessions, archivedSessionPaths, currentPath]);
+		return sessions.filter((s) => !set.has(pathKey(s.path)));
+	}, [sessions, archivedSessionPaths]);
 	const archivedSessions = useMemo(() => {
 		const set = new Set(archivedSessionPaths.map(pathKey));
-		const currentKey = currentPath ? pathKey(currentPath) : null;
-		return sessions.filter((s) => set.has(pathKey(s.path)) && !(currentKey != null && pathKey(s.path) === currentKey));
-	}, [sessions, archivedSessionPaths, currentPath]);
+		return sessions.filter((s) => set.has(pathKey(s.path)));
+	}, [sessions, archivedSessionPaths]);
 
 	return {
 		sessions: visibleSessions,

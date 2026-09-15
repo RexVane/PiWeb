@@ -228,7 +228,8 @@ describe("real SDK session resource isolation", () => {
 		try {
 			expect(await manager.execute(m, { cmd: "prompt", text: "offline retry" })).toMatchObject({ ok: true });
 			first.push({ type: "error", reason: "error", error: raw });
-			await vi.waitFor(() => expect(m.buffer.some((frame) => JSON.parse(frame.json).message?.startsWith?.("自动重试"))).toBe(true));
+			// 自动重试现在是结构化的 retry 事件（界面聚合成「重试 n/max」一条），不再走 error 通道
+			await vi.waitFor(() => expect(m.buffer.some((frame) => { const e = JSON.parse(frame.json); return e.type === "retry" && e.maxAttempts > 0; })).toBe(true));
 			expect((await manager.buildSnapshot(m)).isStreaming).toBe(true);
 			expect(m.buffer.map((frame) => JSON.parse(frame.json)).filter((event) => event.type === "status").every((event) => event.isStreaming)).toBe(true);
 			for (const command of [{ cmd: "reload" }, { cmd: "setActiveTools", names: ["bash"] }, { cmd: "setToolPreset", preset: "full" }] as const) {

@@ -66,4 +66,20 @@ describe("PiWeb SSE event folding", () => {
 		expect(settled.retryNotice).toBeNull();
 		expect(settled.snapshot?.isStreaming).toBe(false);
 	});
+
+	it("aggregates auto-retries into one counter row instead of one error per attempt", () => {
+		const initial = { snapshot: { isStreaming: true }, retryNotice: null, error: null } as unknown as PiWebState;
+		const first = foldPiWebEvent(initial, { type: "retry", attempt: 1, maxAttempts: 5, message: "429 rate limit", ts: 1 });
+		expect(first.retryNotice).toBe("重试 1/5：429 rate limit");
+		// 每条重试都替换上一条：界面上始终只有一行，且不会落到 6 秒错误条
+		const third = foldPiWebEvent(first, { type: "retry", attempt: 3, maxAttempts: 5, message: "429 rate limit", ts: 2 });
+		expect(third.retryNotice).toBe("重试 3/5：429 rate limit");
+		expect(third.error).toBeNull();
+		// 旧服务端把重试塞在 error 里：同样按通知处理
+		const legacy = foldPiWebEvent(initial, { type: "error", message: "自动重试 2/5：boom", ts: 3 });
+		expect(legacy.retryNotice).toBe("自动重试 2/5：boom");
+		expect(legacy.error).toBeNull();
+		const real = foldPiWebEvent(initial, { type: "error", message: "No API key for X", ts: 4 });
+		expect(real.error).toBe("No API key for X");
+	});
 });

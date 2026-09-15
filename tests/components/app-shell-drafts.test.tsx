@@ -42,7 +42,8 @@ function deferred<T>() {
 const response = (data: unknown) => ({ ok: true, json: async () => ({ success: true, data }) });
 const textarea = () => screen.getByRole("textbox") as HTMLTextAreaElement;
 const go = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
-const remount = () => { go("轨迹"); go("对话"); };
+// 轨迹页签已移除：用「切到别的会话再切回来」制造同样的重挂载（草稿与待接收状态由父层持有）
+const remount = (returnTo = "Open A") => { go("Open B"); go(returnTo); };
 beforeEach(() => { localStorage.clear(); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -109,8 +110,10 @@ describe("AppShell session-owned composer drafts", () => {
 		await waitFor(() => expect(mocks.sendCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: "prompt", text: "hero prompt" }), expect.any(String)));
 		expect(textarea().value).toBe("hero prompt");
 		expect(textarea().disabled).toBe(true);
-		remount();
-		expect(textarea().disabled).toBe(true);
+		// 轨迹页签移除后没有「原地重挂载」入口：切走再进 Hero 是一份新草稿，
+		// 待接收状态属于已创建的会话（下方断言验证它没有丢）。
+		remount("New hero");
+		expect(textarea().disabled).toBe(false);
 		go("Open B");
 		fireEvent.change(textarea(), { target: { value: "unrelated B" } });
 		await act(async () => accepted.resolve({ success, error: success ? undefined : "rejected" }));
@@ -118,7 +121,7 @@ describe("AppShell session-owned composer drafts", () => {
 		go("Open created");
 		expect(textarea().value).toBe(success ? "" : "hero prompt");
 		expect(textarea().disabled).toBe(false);
-		remount();
+		remount("Open created");
 		expect(textarea().value).toBe(success ? "" : "hero prompt");
 		go("New hero");
 		expect(textarea().value).toBe("");

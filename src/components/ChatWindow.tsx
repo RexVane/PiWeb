@@ -193,6 +193,7 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 function MessageActions({
 	text,
 	onFork,
+	onEdit,
 	durationMs,
 	usage,
 	time,
@@ -200,6 +201,8 @@ function MessageActions({
 }: {
 	text: string;
 	onFork?: () => void | Promise<unknown>;
+	/** 用户消息：原地编辑后重新发送（模型从这条消息重新回答） */
+	onEdit?: () => void;
 	/** 回合墙钟耗时（最终回答时间戳 − 回合首条用户消息时间戳），dsh runMs 的对应物 */
 	durationMs?: number;
 	usage?: TrajTokens & { cost?: { total?: number } };
@@ -235,6 +238,11 @@ function MessageActions({
 				{copied ? <IconCheckOutline14 size={14} /> : <IconCopyOutline16 size={14} />}
 			</button>
 			{copyFailed && <span role="alert" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{t.copyFailed}</span>}
+			{onEdit && (
+				<button className="icon-btn" title={t.editMessage} aria-label={t.editMessage} onClick={onEdit}>
+					<IconEditOutline16 size={14} />
+				</button>
+			)}
 			{onFork && (
 				<button
 					className="icon-btn"
@@ -456,7 +464,8 @@ const ToolStep = memo(function ToolStep({
 	const output = state?.result ?? state?.partialResult ?? "";
 	const isWriteTool = name.toLowerCase() === "write";
 	const diff = useMemo(() => {
-		if (kind !== "write" || !state || state.state !== "done" || state.isError) return null;
+		// 失败的编辑同样渲染 diff：出错信息单独展示，不因为失败就把红绿藏掉
+		if (kind !== "write" || !state || state.state !== "done") return null;
 		const parsed = parseUnifiedDiff(state.patch || output);
 		if (parsed) return parsed;
 		// pi 的 write 工具不带 patch：新文件按新增行展示（全绿 +），与 edit 的 diff 口径一致
@@ -483,11 +492,13 @@ const ToolStep = memo(function ToolStep({
 	// 删除文件的命令：完成后给红色标记（内容级 diff 不强求）
 	const deletedTarget = kind === "cmd" && !running && !failed && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
 	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
-	const hasDiff = Boolean(diff && diff.length) && !failed;
+	const hasDiff = Boolean(diff && diff.length);
 	const hasOutput = Boolean(output || state?.encodingLoss);
 	const canExpand = hasOutput && !hasDiff && !running;
 	const duration = state?.startedAt && state?.endedAt ? state.endedAt - state.startedAt : 0;
 	const showPreview = Boolean(preview.head) || preview.lines.length > 0;
+	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
+	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));
 	const diffLines = hasDiff && diff ? (open ? diff : diff.slice(0, DIFF_PREVIEW)) : null;
 	const diffHidden = diff && diffLines && !open ? diff.length - diffLines.length : 0;
 	const diffStat = hasDiff && diff
@@ -586,7 +597,7 @@ const ToolStep = memo(function ToolStep({
 					)}
 				</div>
 			)}
-			{open && canExpand && (
+			{showFullOutput && (
 				<div className="pw-output">
 					{fullCommand && <div className="cmdline">{fullCommand}</div>}
 					{state?.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn)" }}>{t.encodingLossWarning}</p>}
@@ -892,12 +903,56 @@ const FinalAnswer = memo(function FinalAnswer({
 });
 
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message }: { message: WebMessage }) {
+const UserMessage = memo(function UserMessage({ message, onEditMessage }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void }) {
+	const { t } = useI18n();
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("\n");
 	const images = message.content.filter((content) => content.type === "image");
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(text);
+	const canEdit = Boolean(onEditMessage && message.id && text);
+	if (editing) {
+		return (
+			<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
+				<div className="msg-user-bubble w-full">
+					<textarea
+						className="w-full resize-none bg-transparent outline-none"
+						style={{ minHeight: 68, font: "inherit", color: "inherit" }}
+						value={draft}
+						aria-label={t.editMessage}
+						autoFocus
+						onChange={(e) => setDraft(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
+							if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+						}}
+					/>
+				</div>
+				<div className="mt-1.5 flex items-center gap-2">
+					<button type="button" className="btn-outline" style={{ height: 26, padding: "0 10px", fontSize: 12 }} onClick={() => setEditing(false)}>
+						{t.cancel}
+					</button>
+					<button
+						type="button"
+						className="btn-primary-white"
+						style={{ height: 26, padding: "0 12px", fontSize: 12 }}
+						disabled={!draft.trim() || draft.trim() === text.trim()}
+						onClick={submit}
+					>
+						{t.sendEdit}
+					</button>
+				</div>
+			</div>
+		);
+	}
+	function submit() {
+		const next = draft.trim();
+		if (!next || next === text.trim() || !onEditMessage || !message.id) return;
+		setEditing(false);
+		onEditMessage(message.id, next);
+	}
 	return (
 		// 回合边界：用户消息前留 28px（比回合内 8px 大得多），长对话里一眼找到“这一轮从哪开始”
 		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
@@ -916,8 +971,15 @@ const UserMessage = memo(function UserMessage({ message }: { message: WebMessage
 			)}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
 			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
-			{/* 用户消息只有复制操作，不提供分支；时钟在图标左侧（dsh clock=start） */}
-			{text && <MessageActions text={text} clockStart={message.timestamp !== undefined} time={message.timestamp} />}
+			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
+			{text && (
+				<MessageActions
+					text={text}
+					clockStart={message.timestamp !== undefined}
+					time={message.timestamp}
+					onEdit={canEdit ? () => { setDraft(text); setEditing(true); } : undefined}
+				/>
+			)}
 		</div>
 	);
 });
@@ -967,6 +1029,7 @@ function TurnBlock({
 	outputTokens,
 	workingMessage,
 	onFork,
+	onEditMessage,
 	onInspectTool,
 	onOpenFile,
 }: {
@@ -984,6 +1047,8 @@ function TurnBlock({
 	outputTokens?: number;
 	workingMessage?: string | null;
 	onFork?: (entryId: string) => void;
+	/** 编辑该回合的用户消息并重新发送（模型从这条消息重新回答） */
+	onEditMessage?: (entryId: string, text: string) => void;
 	onInspectTool?: (toolCallId: string) => void;
 	onOpenFile?: (path: string) => void;
 }) {
@@ -1035,7 +1100,7 @@ function TurnBlock({
 
 	return (
 		<>
-			{user && <UserMessage message={user} />}
+			{user && <UserMessage message={user} onEditMessage={onEditMessage} />}
 			{showProcess && (
 				<div className="pw-turn">
 					{contextFiles?.map((resource, i) => (
@@ -1136,6 +1201,7 @@ export function ChatWindow({
 	contextFiles,
 	cwd,
 	onFork,
+	onEditMessage,
 	isStreaming = false,
 	error,
 	connected = true,
@@ -1171,6 +1237,7 @@ export function ChatWindow({
 	trajectory?: TrajEntry[];
 	onOpenTrajectory?: (toolCallId: string) => void;
 	/** 在本机编辑器打开工具行涉及的文件 */
+	onEditMessage?: (entryId: string, text: string) => void;
 	onOpenFile?: (path: string) => void;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -1254,6 +1321,7 @@ export function ChatWindow({
 							outputTokens={stats?.tokens.output}
 							workingMessage={workingMessage}
 							onFork={onFork}
+							onEditMessage={onEditMessage}
 							onInspectTool={onOpenTrajectory}
 							onOpenFile={onOpenFile}
 						/>

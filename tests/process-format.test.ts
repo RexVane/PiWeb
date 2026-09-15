@@ -192,6 +192,19 @@ describe("isDeleteCommand / deleteTargetOf", () => {
 		expect(isDeleteCommand("del /q tmp.log")).toBe(true);
 		expect(isDeleteCommand("/usr/bin/rm notes.txt")).toBe(true);
 	});
+	it("recognizes deletions inside chained commands (逐段判断，不再只看第一个词)", () => {
+		expect(isDeleteCommand("cd src && rm main.py")).toBe(true);
+		expect(isDeleteCommand("npm run build; rm -rf dist")).toBe(true);
+		expect(isDeleteCommand("git rm old.txt")).toBe(true);
+		expect(isDeleteCommand("cd /tmp || Remove-Item cache -Recurse")).toBe(true);
+		expect(deleteTargetOf("cd src && rm main.py")).toBe("main.py");
+		expect(deleteTargetOf("git rm old.txt")).toBe("old.txt");
+	});
+	it("does not treat a delete-looking word as a deletion", () => {
+		expect(isDeleteCommand("mkdir -p src/app && printf 'x' > src/app/main.py")).toBe(false);
+		expect(isDeleteCommand("git stash")).toBe(false);
+		expect(isDeleteCommand("npm run rm")).toBe(false);
+	});
 	it("rejects non-delete commands and bare flags", () => {
 		expect(isDeleteCommand("ls -la")).toBe(false);
 		expect(isDeleteCommand("grep -r rm .")).toBe(false);

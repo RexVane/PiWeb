@@ -142,6 +142,8 @@ export type WebEvent =
 	  }
 	| { type: "extension_ui_resolved"; id: string; ts: number }
 	| { type: "error"; message: string; ts: number }
+	/** 自动重试：流程内通知，界面聚合成一条「重试 n/max」，不作为错误条目累积 */
+	| { type: "retry"; attempt: number; maxAttempts: number; message: string; ts: number }
 	/** 项目生长：记录了一步（工具结束 / 回合结束 / 外部修改 / 会话基线） */
 	| { type: "growth"; step: GrowthStep; ts: number }
 	/** 项目生长：改盘类工具运行期间目录监听看到的新路径（累计；空数组 = 清空） */

@@ -11,6 +11,7 @@ import {
 	setAlias,
 } from "@/lib/workspace-store";
 import { encodeSessionId } from "@/lib/pi";
+import { disposeSessionPath } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 
 export const dynamic = "force-dynamic";
@@ -53,6 +54,9 @@ export async function POST(req: Request) {
 		if (body.action === "archiveSession") {
 			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
+			// 归档即收工：会话随即从工作区消失，不能让它继续在后台跑（看不见却仍消耗 token）。
+			// 只影响这一个会话，其它运行中的会话不受影响。
+			await disposeSessionPath(sessionPath);
 			const archivedSessions = await archiveSession(sessionPath);
 			return NextResponse.json({ success: true, data: { archivedSessions } });
 		}
