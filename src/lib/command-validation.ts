@@ -15,6 +15,7 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"fork",
 	"cycleModel",
 	"navigate",
+	"editAndResend",
 	"clearQueue",
 	"extensionUiResponse",
 	"reload",

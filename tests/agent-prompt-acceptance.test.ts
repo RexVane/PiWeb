@@ -13,8 +13,8 @@ function deferred<T = void>() {
 	const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
 	return { promise, resolve, reject };
 }
-function fixture(prompt: (...args: any[]) => Promise<void>) {
-	const session = { prompt: vi.fn(prompt), isStreaming: false, isIdle: true };
+function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string, unknown> = {}) {
+	const session = { prompt: vi.fn(prompt), isStreaming: false, isIdle: true, ...extra };
 	const m = {
 		session, creating: null, disposed: false, promptSubmitting: false, runActive: false,
 		resourceReloading: false, resourceReloadPending: false, cwd: "test", sessionPath: "test",
@@ -77,6 +77,43 @@ describe("prompt acceptance boundary", () => {
 			expect(session.prompt).toHaveBeenLastCalledWith(behavior, expect.objectContaining({ streamingBehavior: behavior }));
 		}
 		expect(m.growth!.prepare).not.toHaveBeenCalled();
+	});
+
+	it("editAndResend stops the running turn first, then navigates and re-prompts", async () => {
+		const order: string[] = [];
+		const { m, session } = fixture(async () => { order.push("prompt"); }, {
+			abort: vi.fn(async () => { order.push("abort"); session.isStreaming = false; session.isIdle = true; }),
+			navigateTree: vi.fn(async (entryId: string) => { order.push(`navigate:${entryId}`); return { cancelled: false }; }),
+		});
+		session.isStreaming = true;
+		session.isIdle = false;
+		const result = await execute(m, { cmd: "editAndResend", entryId: "entry-1", text: "改过的内容" });
+		expect(result).toEqual({ ok: true });
+		// 必须"先停下、再回到该消息、再重新提问"，否则服务端会拒绝并发操作
+		expect(order).toEqual(["abort", "navigate:entry-1", "prompt"]);
+		expect(session.prompt).toHaveBeenCalledWith("改过的内容");
+		expect(m.promptSubmitting).toBe(false);
+	});
+
+	it("editAndResend skips the abort when nothing is running", async () => {
+		const abort = vi.fn(async () => {});
+		const navigateTree = vi.fn(async () => ({ cancelled: false }));
+		const { m, session } = fixture(async () => {}, { abort, navigateTree });
+		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-2", text: "新内容" })).toEqual({ ok: true });
+		expect(abort).not.toHaveBeenCalled();
+		expect(navigateTree).toHaveBeenCalledWith("entry-2");
+		expect(session.prompt).toHaveBeenCalledWith("新内容");
+	});
+
+	it("editAndResend rejects a missing entry or empty text without touching the session", async () => {
+		const abort = vi.fn(async () => {});
+		const navigateTree = vi.fn(async () => ({ cancelled: false }));
+		const { m, session } = fixture(async () => {}, { abort, navigateTree });
+		expect(await execute(m, { cmd: "editAndResend", text: "只有文本" })).toMatchObject({ ok: false, error: "missing entryId" });
+		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-3", text: "   " })).toMatchObject({ ok: false, error: "empty prompt" });
+		expect(abort).not.toHaveBeenCalled();
+		expect(navigateTree).not.toHaveBeenCalled();
+		expect(session.prompt).not.toHaveBeenCalled();
 	});
 
 	it("blocks tool changes and reload while accepting or awaiting settled", async () => {

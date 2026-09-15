@@ -978,12 +978,12 @@ function ModelsSection() {
 		return (
 			<>
 				<div className="flex items-center gap-2">
-					{!usage && <span>{failed ? t.usageProbeFailed : busy ? t.queryingQuota : providerId === "xai" ? t.usageXaiDisclosure : t.usageReadOnlyDisclosure}</span>}
+					{!usage && <span>{failed ? t.usageProbeFailed : busy ? t.queryingQuota : t.usageReadOnlyDisclosure}</span>}
 					{usage?.kind === "quota" && usage.planType && <span>{t.usagePlan} {titleCase(usage.planType)}</span>}
 					{usage?.kind === "balance" && usage.primary && (
 						<span>{usage.primaryKey === "used" ? t.usageBalanceUsed : t.usageQuotaRemaining} <span style={{ color: "var(--dsw-label-secondary)" }}>{fmtAmount(usage.primary)}</span></span>
 					)}
-					<button type="button" className="pw-chip" disabled={busy} title={providerId === "xai" ? t.usageXaiDisclosure : t.usageReadOnlyDisclosure} onClick={() => void fetchProviderUsage(providerId, true)}>
+					<button type="button" className="pw-chip" disabled={busy} title={t.usageReadOnlyDisclosure} onClick={() => void fetchProviderUsage(providerId, true)}>
 						{busy ? t.usageProbing : usage ? t.usageRefresh : t.usageProbe}
 					</button>
 				</div>
@@ -1230,69 +1230,71 @@ function ModelsSection() {
 					const editingThis = editing === p.id;
 					return (
 						<div key={p.id}>
-							<div className="flex items-center gap-3 rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-								<ProviderBrand id={p.id} name={providerName(p.id)} size={34} />
-								<div className="min-w-0 flex-1">
-									<div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{providerName(p.id)}</div>
-									<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-										{p.id}{p.baseUrl ? ` · ${p.baseUrl}` : ""}
+							{/* 卡片：身份/操作行在上，额度显示放在同一个框内的第二段（分隔线区分） */}
+							<div className="flex flex-col rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+								<div className="flex items-center gap-3">
+									<ProviderBrand id={p.id} name={providerName(p.id)} size={34} />
+									<div className="min-w-0 flex-1">
+										<div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{providerName(p.id)}</div>
+										<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+											{p.id}{p.baseUrl ? ` · ${p.baseUrl}` : ""}
+										</div>
 									</div>
-								</div>
-								{isCustom && (
+									{isCustom && (
+										<span
+											className="rounded-md px-1.5 py-0.5"
+											style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
+										>
+											{t.customBadge}
+										</span>
+									)}
+									<span
+										className="inline-block h-2 w-2 rounded-full"
+										style={{ background: p.authReady ? "var(--dsw-success)" : "var(--dsw-danger)" }}
+										title={p.authError || (p.authReady ? t.providerReady : t.authUnavailable)}
+									/>
 									<span
 										className="rounded-md px-1.5 py-0.5"
 										style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
 									>
-										{t.customBadge}
+										{t.credentialSource.replace("{source}", credentialSource(p))}
 									</span>
-								)}
-								<span
-									className="inline-block h-2 w-2 rounded-full"
-									style={{ background: p.authReady ? "var(--dsw-success)" : "var(--dsw-danger)" }}
-									title={p.authError || (p.authReady ? t.providerReady : t.authUnavailable)}
-								/>
-								<span
-									className="rounded-md px-1.5 py-0.5"
-									style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
-								>
-									{t.credentialSource.replace("{source}", credentialSource(p))}
-								</span>
-								<button className="btn-outline" style={{ height: 28, padding: "0 12px", fontSize: 12 }} onClick={() => startEdit(p.id)}>
-									{t.edit}
-								</button>
-								{p.storedAuthType === "oauth" && (
-									<button
-										style={{ height: 28, padding: "0 12px", fontSize: 12, color: "var(--dsw-danger)" }}
-										onClick={async () => {
-											if (!window.confirm(t.confirmRemoveOAuth.replace("{name}", providerName(p.id)))) return;
-											await call({ action: "removeKey", providerId: p.id });
-										}}
-									>
-										{t.removeOAuth}
+									<button className="btn-outline" style={{ height: 28, padding: "0 12px", fontSize: 12 }} onClick={() => startEdit(p.id)}>
+										{t.edit}
 									</button>
-								)}
-								{p.authTypes?.includes("oauth") && (
-									<button
-										className="btn-outline"
-										style={{ height: 28, padding: "0 12px", fontSize: 12 }}
-										onClick={() => {
-											setOauthDone(null);
-											void call({ action: "loginStart", providerId: p.id });
-											setOauthProvider(p.id);
-										}}
-									>
-										{t.oauthLogin}
-									</button>
-								)}
-								{customIds.has(p.id) && (
-									<button style={{ fontSize: 12.5, color: "var(--dsw-danger)" }} onClick={() => deleteCustom(p.id)}>
-										{t.delete}
-									</button>
-								)}
+									{p.storedAuthType === "oauth" && (
+										<button
+											style={{ height: 28, padding: "0 12px", fontSize: 12, color: "var(--dsw-danger)" }}
+											onClick={async () => {
+												if (!window.confirm(t.confirmRemoveOAuth.replace("{name}", providerName(p.id)))) return;
+												await call({ action: "removeKey", providerId: p.id });
+											}}
+										>
+											{t.removeOAuth}
+										</button>
+									)}
+									{p.authTypes?.includes("oauth") && (
+										<button
+											className="btn-outline"
+											style={{ height: 28, padding: "0 12px", fontSize: 12 }}
+											onClick={() => {
+												setOauthDone(null);
+												void call({ action: "loginStart", providerId: p.id });
+												setOauthProvider(p.id);
+											}}
+										>
+											{t.oauthLogin}
+										</button>
+									)}
+									{customIds.has(p.id) && (
+										<button style={{ fontSize: 12.5, color: "var(--dsw-danger)" }} onClick={() => deleteCustom(p.id)}>
+											{t.delete}
+										</button>
+									)}
 							</div>
 
 							{p.id === "xai" && p.authReady && (
-								<div className="mt-1.5 flex items-center gap-2 px-4" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
+								<div className="mt-3 flex items-center gap-2 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)", fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
 									{xaiUsage ? (
 										<span>{t.usageQuotaLabel} · {xaiUsage.model} · {t.usageRequests} {xaiUsage.requestRemaining.toLocaleString()}/{xaiUsage.requestLimit.toLocaleString()} · Tokens {fmtQuotaTokens(xaiUsage.tokenRemaining)}/{fmtQuotaTokens(xaiUsage.tokenLimit)}</span>
 									) : <span>{usageError ? t.usageProbeFailed : t.usageProbeDisclosure}</span>}
@@ -1303,10 +1305,11 @@ function ModelsSection() {
 							)}
 
 							{supportsUsageProbe(p.id) && p.id !== "xai" && p.authReady && (
-								<div className="mt-1.5 flex flex-col gap-1.5 px-4" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
+								<div className="mt-3 flex flex-col gap-1.5 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)", fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
 									{renderProviderUsage(p.id)}
 								</div>
 							)}
+							</div>
 
 							{editingThis && (
 								<div className="mt-2 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>

@@ -28,6 +28,7 @@ import {
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
 import { languageForPath } from "@/lib/highlight";
+import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
@@ -53,29 +54,6 @@ import {
 type Dict = Record<string, string>;
 type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
 
-async function copyText(text: string): Promise<boolean> {
-	try {
-		if (navigator.clipboard?.writeText) {
-			await navigator.clipboard.writeText(text);
-			return true;
-		}
-	} catch {
-		// Non-secure local-network contexts need the legacy fallback below.
-	}
-	const field = document.createElement("textarea");
-	field.value = text;
-	field.style.position = "fixed";
-	field.style.opacity = "0";
-	document.body.appendChild(field);
-	field.select();
-	try {
-		return document.execCommand("copy");
-	} catch {
-		return false;
-	} finally {
-		field.remove();
-	}
-}
 
 /** dsh message-chrome formatRunDuration：整秒，分钟档秒数补零 */
 function formatRunDuration(ms: number, t: Dict): string {
@@ -112,17 +90,24 @@ const Markdown = memo(function Markdown({ text }: { text: string }) {
 	);
 });
 
-/** 流式中的最后一段正文：纯文本逐字追加 + 闪烁光标，结束后再切 Markdown（避免每个 delta 重解析整段） */
-function StreamingText({ text }: { text: string }) {
-	return (
-		<div className="md">
-			<p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
-				{text}
-				<span className="stream-cursor" aria-hidden />
-			</p>
-		</div>
-	);
-}
+
+/**
+ * 流式正文：边流边按 Markdown 渲染（标题/列表/代码块在生成过程中就成形）。
+ *
+ * 不是每个 delta 都重解析整段——那样会随回答变长线性变慢；这里按 ~100ms 节流，
+ * 只在最新文本稳定下来时才交给 Markdown，回合结束时外层会切到精确的最终渲染。
+ */
+const STREAM_MARKDOWN_THROTTLE_MS = 100;
+
+const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { text: string }) {
+	const [shown, setShown] = useState(text);
+	useEffect(() => {
+		if (text === shown) return;
+		const timer = setTimeout(() => setShown(text), STREAM_MARKDOWN_THROTTLE_MS);
+		return () => clearTimeout(timer);
+	}, [text, shown]);
+	return <Markdown text={shown} />;
+});
 
 /** dsh TurnTimePanel 的简化版：耗时胶囊常驻，点击弹层看本回合 token 用量 */
 function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: TrajTokens & { cost?: { total?: number } }; t: Dict }) {
@@ -642,7 +627,7 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 const NarrationBlock = memo(function NarrationBlock({ text, live, error }: { text: string; live?: boolean; error?: boolean }) {
 	return (
 		<div className="pw-narr" data-error={error || undefined}>
-			{live ? <StreamingText text={text} /> : <Markdown text={text} />}
+			{live ? <StreamingMarkdown text={text} /> : <Markdown text={text} />}
 		</div>
 	);
 });

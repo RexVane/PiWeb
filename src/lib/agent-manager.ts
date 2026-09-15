@@ -684,17 +684,15 @@ async function buildContextBreakdown(
 		// Memory：AGENTS.md 等注入文件（contextResources 的 project 部分）
 		const memoryText = resources.filter((r) => r.source === "project").map((r) => r.content).join("\n\n");
 		breakdown.memory = estimateTokensOf(memoryText);
-		// Skills：从资源加载器取技能清单，按 system-prompt.js 的 formatSkillsForPrompt 段落定位
+		// Skills：从资源加载器取技能清单，按 SDK 的 formatSkillsForPrompt 段落定位。
+		// 该段落没有 Markdown 标题（原文以 "The following skills provide specialized instructions…" 开头，
+		// 结尾是 </available_skills>），以前按 "## Skills" 找永远找不到，技能段一直是 0。
 		try {
 			const { skills } = session.resourceLoader.getSkills();
 			if (skills.length && prompt) {
-				const header = prompt.indexOf("## Skills");
-				if (header >= 0) {
-					// skills 段之后是工具列表段（## Available Tools 等）；找不到就取到结尾
-					const next = prompt.slice(header + 1).search(/^## /m);
-					const section = next >= 0 ? prompt.slice(header, header + 1 + next) : prompt.slice(header);
-					breakdown.skills = estimateTokensOf(section);
-				}
+				const start = prompt.indexOf("The following skills provide specialized instructions");
+				const end = prompt.indexOf("</available_skills>");
+				if (start >= 0 && end > start) breakdown.skills = estimateTokensOf(prompt.slice(start, end + "</available_skills>".length));
 			}
 		} catch {
 			/* loader 不可用则跳过 */
@@ -1441,6 +1439,35 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				if (!entryId) return { ok: false, error: "missing entryId" };
 				const r = await session.navigateTree(entryId);
 				return { ok: !r?.cancelled, data: { cancelled: r?.cancelled === true, editorText: r?.editorText } };
+			}
+			case "editAndResend": {
+				// 编辑用户消息并重发：先停在跑的回合（用户改口即表示不要这一轮的输出），
+				// 再回到该消息之前用新文本重新提问。放在服务端串行做，避免客户端"先 abort 再发"的竞态。
+				const entryId = String((cmd as any).entryId ?? "");
+				const text = (cmd.text ?? "").trim();
+				if (!entryId) return { ok: false, error: "missing entryId" };
+				if (!text) return { ok: false, error: "empty prompt" };
+				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
+				m.promptSubmitting = true;
+				try {
+					const session = await ensureSession(m);
+					if (m.disposed) throw new Error("session is disposed");
+					if (session.isStreaming || m.runActive) {
+						await session.abort().catch(() => undefined);
+						// 等 SDK 真正回到空闲（abort 是异步的；最多等 5 秒，超时就按当前状态继续）
+						for (let i = 0; i < 50 && !m.disposed && (session.isStreaming || m.runActive); i += 1) {
+							await new Promise((resolve) => setTimeout(resolve, 100));
+						}
+					}
+					if (m.disposed) throw new Error("session is disposed");
+					const moved = await session.navigateTree(entryId);
+					if (moved?.cancelled) return { ok: false, error: "edit cancelled" };
+					await growthOf(m).prepare().catch(() => undefined);
+					await session.prompt(text);
+					return { ok: true };
+				} finally {
+					m.promptSubmitting = false;
+				}
 			}
 			case "rename": {
 				const name = (cmd.text ?? "").trim();

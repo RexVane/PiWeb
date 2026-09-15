@@ -302,6 +302,7 @@ export interface AgentCommand {
 		| "fork"
 		| "cycleModel"
 		| "navigate"
+		| "editAndResend"
 		| "clearQueue"
 		| "setActiveTools"
 		| "extensionUiResponse"

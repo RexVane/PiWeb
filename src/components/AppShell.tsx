@@ -11,6 +11,7 @@ import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
+import { PromptPanel } from "@/components/PromptPanel";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
@@ -23,6 +24,7 @@ const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) 
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
 import {
+	IconAgentPresetOutline16,
 	IconCheckOutline14,
 	IconChevronDown14,
 	IconFolderClose16,
@@ -137,6 +139,8 @@ export function AppShell() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	const [gitDetailsOpen, setGitDetailsOpen] = useState(false);
+	/** 提示词来源面板（右侧详情列） */
+	const [promptsOpen, setPromptsOpen] = useState(false);
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
@@ -200,6 +204,7 @@ export function AppShell() {
 	useEffect(() => {
 		setSelected(null);
 		setGitDetailsOpen(false);
+		setPromptsOpen(false);
 	}, [currentPath]);
 
 	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
@@ -345,28 +350,22 @@ export function AppShell() {
 	);
 
 	/**
-	 * 原地编辑用户消息后重新发送：服务端在同一会话文件内回到该消息（navigateTree），
-	 * 再用新文本重新提问——被编辑消息之后的分支作废，模型从这里重新回答。
-	 * 旧的插话（steering）撤回/编辑/发送不变。
+	 * 原地编辑用户消息后重新发送：服务端先停在跑的回合（用户改口即表示不要这一轮），
+	 * 再在同一会话文件内回到该消息之前（navigateTree），用新文本重新提问——
+	 * 被编辑消息之后的分支作废，模型从这里重新回答。旧的插话（steering）撤回/编辑/发送不变。
 	 */
 	const doEditMessage = useCallback(
 		async (entryId: string, text: string) => {
 			if (!currentId) return;
-			if (isStreaming) {
-				setError(t.editWhileRunning);
+			const done = await sendCommand({ cmd: "editAndResend", entryId, text });
+			if (!done?.success) {
+				setError(done?.error ?? t.editMessageFailed);
 				return;
 			}
-			const moved = await sendCommand({ cmd: "navigate", entryId });
-			if (!moved?.success || moved.data?.cancelled) {
-				setError(moved?.error ?? t.editMessageFailed);
-				return;
-			}
-			// 被编辑消息之后的尾部要立刻从视图里消失，再发新提问
+			// 被编辑消息之后的尾部要从视图里消失（服务端已切断该分支）
 			resync();
-			const sent = await sendCommand({ cmd: "prompt", text });
-			if (!sent?.success) setError(sent?.error ?? t.editMessageFailed);
 		},
-		[currentId, isStreaming, resync, sendCommand, setError, t.editMessageFailed, t.editWhileRunning],
+		[currentId, resync, sendCommand, setError, t.editMessageFailed],
 	);
 
 	const doArchiveSession = useCallback(
@@ -605,7 +604,7 @@ export function AppShell() {
 
 	// 三栏网格
 	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${projectOpen ? `${projectWidth}px` : "0px"} minmax(0,1fr) ${
-		selected || gitDetailsOpen ? `${detailsWidth}px` : "0px"
+		selected || gitDetailsOpen || promptsOpen ? `${detailsWidth}px` : "0px"
 	}`;
 	const projectColumn = projectOpen && (
 		<div
@@ -777,6 +776,22 @@ export function AppShell() {
 									>
 										<IconFolderOpenOutline16 size={15} />
 									</button>
+									{/* 提示词来源：系统提示词 / 记忆 / 技能 / 模板 / 工具提示词集中列出，点开即看 */}
+									<button
+										type="button"
+										className="icon-btn"
+										style={{ width: 30, height: 30, background: promptsOpen ? "var(--dsw-active)" : undefined }}
+										title={t.promptPanel}
+										aria-label={t.promptPanel}
+										data-testid="prompt-panel-toggle"
+										onClick={() => {
+											setPromptsOpen((open) => !open);
+											setSelected(null);
+											setGitDetailsOpen(false);
+										}}
+									>
+										<IconAgentPresetOutline16 size={15} />
+									</button>
 								</div>
 							{projectTrust?.required && !projectTrust.trusted && (
 								<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }} role="status">
@@ -887,8 +902,8 @@ export function AppShell() {
 				)}
 			</div>
 
-			{/* 轨迹或 Git 详情栏 */}
-			{(selected || gitDetailsOpen) && (
+			{/* 提示词来源 / 轨迹 / Git 详情栏 */}
+			{(selected || gitDetailsOpen || promptsOpen) && (
 				<div
 					className="flex min-h-0 flex-col overflow-hidden"
 					style={isNarrow ? {
@@ -901,7 +916,15 @@ export function AppShell() {
 					} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
 				>
 					<div className="min-h-0 flex-1">
-						{selected ? (
+						{promptsOpen ? (
+							<PromptPanel
+								cwd={panelCwd}
+								sessionId={currentId}
+								refreshKey={currentId}
+								onOpenContent={(path, content) => viewer.openStatic(path, content)}
+								onClose={() => setPromptsOpen(false)}
+							/>
+						) : selected ? (
 							<TrajInspector entry={selected} onClose={() => setSelected(null)} />
 						) : (
 							<GitPanel cwd={panelCwd} refreshKey={panelRefreshKey} onClose={() => setGitDetailsOpen(false)} onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)} onOpenFile={openInEditor} />
@@ -918,7 +941,7 @@ export function AppShell() {
 					onPointerDown={onDrag("sidebar")}
 				/>
 			)}
-			{!isNarrow && (selected || gitDetailsOpen) && (
+			{!isNarrow && (selected || gitDetailsOpen || promptsOpen) && (
 				<div
 					className="fixed top-0 h-full w-2 cursor-col-resize"
 					style={{ left: `calc(100vw - ${detailsWidth}px - 4px)`, zIndex: 40 }}
