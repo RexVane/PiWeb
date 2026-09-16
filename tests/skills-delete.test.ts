@@ -15,10 +15,19 @@ const mockState = vi.hoisted(() => ({ agentDir: "" }));
 
 /**
  * 建路径一律从**展开后**的临时目录起步：CI 的 Windows runner 上 os.tmpdir() 是 8.3 短名
- * （`C:\Users\RUNNER~1\...`），而 deleteSkill 返回的是 realpath 展开后的路径，两边不统一断言就对不上。
+ * （`C:\Users\RUNNER~1\...`），而 deleteSkill 返回的是它自己 realpath 之后的路径，两边不统一断言就对不上。
+ *
+ * 注意必须用**异步** realpath：Windows 上 fs.realpathSync 不展开 8.3 短名
+ * （本机实测 realpathSync("C:\PROGRA~1") 原样返回，而 fs.promises.realpath 给出 "C:\Program Files"），
+ * 产品代码用的是异步版，测试跟着用同一个 API 才不会假红。
  */
-function realTmp(): string {
-	return fs.realpathSync(os.tmpdir());
+function realTmp(): Promise<string> {
+	return fs.promises.realpath(os.tmpdir());
+}
+
+/** 产品返回的是 realpath 之后的位置；断言前用同一个 API 取一份期望值 */
+function expanded(target: string): Promise<string> {
+	return fs.promises.realpath(target);
 }
 
 /** 删目录链接：Windows 的 junction 是目录（rmdir），POSIX 的 symlink 要 unlink */
@@ -36,7 +45,8 @@ function removeDirLink(link: string): void {
 
 vi.mock("@/lib/pi", () => ({
 	// 真实 listSkills 走 resourceLoader.getSkills()；这里用受控技能列表替换加载器
-	getAgentDir: () => mockState.agentDir || path.join(fs.realpathSync(os.tmpdir()), "piweb-test-agent"),
+	// 故意返回"配置原样"的路径（不做展开）：产品侧的 toComparablePath 负责展开
+	getAgentDir: () => mockState.agentDir || path.join(os.tmpdir(), "piweb-test-agent"),
 	getResourceLoader: () => ({ getSkills: () => ({ skills: [...fakeSkills.values()] }) }),
 	reloadAllLoaders: vi.fn(async () => undefined),
 	resourceLoaderReady: vi.fn(async () => undefined),
@@ -68,7 +78,8 @@ describe("deleteSkill", () => {
 		const filePath = path.join(dir, "SKILL.md");
 		fakeSkills.set("my-skill", { name: "my-skill", filePath });
 		try {
-			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: dir });
+			const expected = await expanded(dir); // 删之前先取展开形式，产品返回的就是这个
+			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected });
 			expect(fs.existsSync(dir)).toBe(false);
 		} finally {
 			rmSync(agentDir, { recursive: true, force: true });
@@ -76,7 +87,7 @@ describe("deleteSkill", () => {
 	});
 
 	it("removes the skill directory for a project skill", async () => {
-		const cwd = fs.realpathSync(mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-")));
+		const cwd = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-"));
 		const filePath = makeSkillDir("project");
 		// classifyScope: 不在 agent 目录下的绝对路径 + cwd 前缀不匹配时落 package；放进 cwd 下即 project
 		const dir = path.join(cwd, "my-skill");
@@ -85,7 +96,8 @@ describe("deleteSkill", () => {
 		writeFileSync(path.join(dir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
 		const projectFile = path.join(dir, "SKILL.md");
 		fakeSkills.set("my-skill", { name: "my-skill", filePath: projectFile });
-		await expect(deleteSkill(projectFile, cwd)).resolves.toEqual({ removed: dir });
+		const expected = await expanded(dir);
+		await expect(deleteSkill(projectFile, cwd)).resolves.toEqual({ removed: expected });
 		expect(fs.existsSync(dir)).toBe(false);
 		rmSync(cwd, { recursive: true, force: true });
 	});
@@ -120,8 +132,9 @@ describe("deleteSkill", () => {
 	 * 所以这条用例同时挡住了"用归一化代替展开"这种假修复。
 	 */
 	it("agent 目录是同目录的另一种写法（junction / 8.3 短名）时，全局技能仍然可以删", async () => {
-		const realDir = path.join(realTmp(), "piweb-agent-real");
-		const linkDir = path.join(realTmp(), "piweb-agent-link");
+		const tmp = await realTmp();
+		const realDir = path.join(tmp, "piweb-agent-real");
+		const linkDir = path.join(tmp, "piweb-agent-link");
 		const skillDir = path.join(realDir, "skills", "my-skill");
 		fs.rmSync(realDir, { recursive: true, force: true });
 		removeDirLink(linkDir); // 上一次留下的链接（若有）
@@ -132,7 +145,8 @@ describe("deleteSkill", () => {
 		fakeSkills.set("my-skill", { name: "my-skill", filePath });
 		mockState.agentDir = linkDir;
 		try {
-			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: skillDir });
+			const expected = await expanded(skillDir);
+			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected });
 			expect(fs.existsSync(skillDir)).toBe(false);
 		} finally {
 			removeDirLink(linkDir); // 只删链接本身，不动目标
