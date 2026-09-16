@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/showcase.png" alt="PiWeb UI Showcase" width="840" />
+  <img src="assets/main.png" alt="PiWeb UI Showcase" width="840" />
 </p>
 
 ---
