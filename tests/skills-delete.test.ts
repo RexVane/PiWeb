@@ -10,10 +10,12 @@ import path from "node:path";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 
 const fakeSkills = new Map<string, { name: string; filePath: string; description?: string; disableModelInvocation?: boolean; baseDir?: string }>();
+/** agent 目录的"配置写法"可被单个用例改写（见下面的 8.3 短名回归用例） */
+const mockState = vi.hoisted(() => ({ agentDir: "" }));
 
 vi.mock("@/lib/pi", () => ({
 	// 真实 listSkills 走 resourceLoader.getSkills()；这里用受控技能列表替换加载器
-	getAgentDir: () => path.join(os.tmpdir(), "piweb-test-agent"),
+	getAgentDir: () => mockState.agentDir || path.join(os.tmpdir(), "piweb-test-agent"),
 	getResourceLoader: () => ({ getSkills: () => ({ skills: [...fakeSkills.values()] }) }),
 	reloadAllLoaders: vi.fn(async () => undefined),
 	resourceLoaderReady: vi.fn(async () => undefined),
@@ -32,6 +34,7 @@ function makeSkillDir(scope: "project" | "package"): string {
 
 afterEach(() => {
 	fakeSkills.clear();
+	mockState.agentDir = "";
 });
 
 describe("deleteSkill", () => {
@@ -82,5 +85,42 @@ describe("deleteSkill", () => {
 		const filePath = makeSkillDir("project");
 		await expect(deleteSkill(filePath, undefined)).rejects.toThrow();
 		rmSync(path.dirname(path.dirname(filePath)), { recursive: true, force: true });
+	});
+
+	/**
+	 * 回归：配置里的 agent 目录与"发现到的技能路径"是同一个目录的两种写法时，不能被判成 package 技能。
+	 *
+	 * 删技能时 resolveDiscoveredPath 交出的是 realpath 形式，而 agentDir 是配置里的原样字符串，
+	 * 两边直接比字符串就会漏掉。CI 的 Windows runner 上 os.tmpdir() 是 8.3 短名
+	 * （C:\Users\RUNNER~1\...，展开后是 C:\Users\runneradmin\...）就是这么红的；真实用户路径里
+	 * 带短名或 junction 时同样会中招。
+	 *
+	 * 这里用 junction 复现同一类差异——**只有 realpath 能识破 junction，path.resolve 不能**，
+	 * 所以这条用例同时挡住了"用归一化代替展开"这种假修复。
+	 */
+	it("agent 目录是同目录的另一种写法（junction / 8.3 短名）时，全局技能仍然可以删", async () => {
+		const realTmp = fs.realpathSync(os.tmpdir());
+		const realDir = path.join(realTmp, "piweb-agent-real");
+		const linkDir = path.join(realTmp, "piweb-agent-link");
+		const skillDir = path.join(realDir, "skills", "my-skill");
+		fs.rmSync(realDir, { recursive: true, force: true });
+		try {
+			fs.rmdirSync(linkDir);
+		} catch {
+			/* 上一次留下的链接已不存在 */
+		}
+		mkdirSync(skillDir, { recursive: true });
+		writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
+		fs.symlinkSync(realDir, linkDir, "junction");
+		const filePath = path.join(skillDir, "SKILL.md");
+		fakeSkills.set("my-skill", { name: "my-skill", filePath });
+		mockState.agentDir = linkDir;
+		try {
+			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: skillDir });
+			expect(fs.existsSync(skillDir)).toBe(false);
+		} finally {
+			fs.rmdirSync(linkDir); // 只删链接本身，不动目标
+			fs.rmSync(realDir, { recursive: true, force: true });
+		}
 	});
 });

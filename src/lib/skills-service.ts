@@ -18,13 +18,48 @@ export interface SkillView {
 	baseDir: string;
 }
 
-function classifyScope(filePath: string, cwd?: string): SkillView["scope"] {
-	const norm = filePath.replace(/\\/g, "/").toLowerCase();
-	const agentDir = getAgentDir().replace(/\\/g, "/").toLowerCase();
-	const home = os.homedir().replace(/\\/g, "/").toLowerCase();
-	if (norm.startsWith(`${agentDir}/`) || norm.startsWith(`${home}/.agents/`) || norm.startsWith(`${home}/.pi/`))
+/**
+ * 路径比较用的规范形式：展开真实路径 → 统一分隔符 → 去掉结尾斜杠 → Windows 下大小写不敏感。
+ *
+ * realpath 这一步是必须的：同一个目录可以有多种写法——Windows 的 8.3 短名（`C:\Users\RUNNER~1`）、
+ * 含 `..` 的路径、junction / symlink。删技能、开关技能时 `resolveDiscoveredPath` 交出的是 **realpath 形式**，
+ * 而 agentDir 是配置里的原样字符串，两边直接比字符串就会把"本来就在 agent 目录下"的全局技能
+ * 判成 package 技能而拒绝删除（CI 的 Windows runner 上就是这样红的，真实用户只要路径里带短名也会中招）。
+ */
+async function toComparablePath(target: string): Promise<string> {
+	let resolved: string;
+	try {
+		resolved = await fs.realpath(target);
+	} catch {
+		resolved = path.resolve(target); // 路径还不存在（如待创建的技能目录）：退化成普通规范化
+	}
+	return resolved.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+interface ScopeContext {
+	/** 全部已展开成可比较形式 */
+	agentDir: string;
+	home: string;
+	cwd?: string;
+}
+
+/** 每次调用只展开一次来源路径，避免逐个技能重复 realpath */
+async function scopeContext(cwd?: string): Promise<ScopeContext> {
+	return {
+		agentDir: await toComparablePath(getAgentDir()),
+		home: await toComparablePath(os.homedir()),
+		cwd: cwd ? await toComparablePath(cwd) : undefined,
+	};
+}
+
+/** 严格判断"在某个目录里面"：必须落在分隔符之后，避免 /ws 误匹配 /ws-other */
+const within = (target: string, root: string) => target.startsWith(`${root}/`);
+
+async function classifyScope(filePath: string, context: ScopeContext): Promise<SkillView["scope"]> {
+	const norm = await toComparablePath(filePath);
+	if (within(norm, context.agentDir) || within(norm, `${context.home}/.agents`) || within(norm, `${context.home}/.pi`))
 		return "global";
-	if (cwd && norm.startsWith(path.resolve(cwd).replace(/\\/g, "/").toLowerCase())) return "project";
+	if (context.cwd && within(norm, context.cwd)) return "project";
 	if (norm.includes("/node_modules/")) return "package";
 	return "package";
 }
@@ -37,6 +72,7 @@ export async function listSkills(cwd?: string): Promise<SkillView[]> {
 		await resourceLoaderReady(dir);
 		const loader = getResourceLoader(dir);
 		const { skills } = loader.getSkills();
+		const context = await scopeContext(dir);
 		for (const s of skills) {
 			if (seen.has(s.filePath)) continue;
 			seen.add(s.filePath);
@@ -45,7 +81,7 @@ export async function listSkills(cwd?: string): Promise<SkillView[]> {
 				description: s.description,
 				filePath: s.filePath,
 				disabled: s.disableModelInvocation,
-				scope: classifyScope(s.filePath, dir),
+				scope: await classifyScope(s.filePath, context),
 				baseDir: s.baseDir,
 			});
 		}
@@ -85,7 +121,8 @@ export async function setSkillDisabled(filePath: string, disabled: boolean, cwd?
 	await fs.writeFile(authorized, next, "utf8");
 	// 就地重载加载器并让活跃会话重建系统提示（技能列表在系统提示里）；全局技能影响所有目录
 	await reloadAllLoaders();
-	const scope = classifyScope(authorized, cwd);
+	const context = await scopeContext(cwd);
+	const scope = await classifyScope(authorized, context);
 	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
 	return { changed: true };
 }
@@ -100,21 +137,21 @@ export async function readSkillFile(filePath: string, cwd?: string): Promise<str
 export async function deleteSkill(filePath: string, cwd?: string): Promise<{ removed: string }> {
 	const skills = await listSkills(cwd);
 	const authorized = await resolveDiscoveredPath(filePath, skills.map((skill) => skill.filePath));
-	if (classifyScope(authorized, cwd) === "package") {
+	const context = await scopeContext(cwd);
+	if ((await classifyScope(authorized, context)) === "package") {
 		throw new Error("package-managed skill: disable it instead (it is reinstalled with the package)");
 	}
 	const skillDir = path.dirname(authorized);
 	// 只删技能目录本身，不能误删父目录（全局技能目录 ~/.pi/agent/skills、项目 .agents/skills 等）
-	const agentDir = getAgentDir().replace(/\\/g, "/");
-	const normalizedSkillDir = skillDir.replace(/\\/g, "/");
-	const knownRoots = [`${agentDir}/skills`, `${agentDir}/web-skills`];
-	if (!knownRoots.some((root) => normalizedSkillDir.toLowerCase() === root.toLowerCase())) {
+	const normalizedSkillDir = await toComparablePath(skillDir);
+	const knownRoots = [`${context.agentDir}/skills`, `${context.agentDir}/web-skills`];
+	if (!knownRoots.includes(normalizedSkillDir)) {
 		// 非已知根：项目内技能目录，至少确认 SKILL.md 直接位于其下且目录名非空
 		if (path.basename(skillDir) === "") throw new Error("refusing to delete workspace root");
 	}
 	await fs.rm(skillDir, { recursive: true, force: true });
 	await reloadAllLoaders();
-	const scope = classifyScope(authorized, cwd);
+	const scope = await classifyScope(authorized, context);
 	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
 	return { removed: skillDir };
 }
