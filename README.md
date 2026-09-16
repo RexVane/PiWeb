@@ -22,7 +22,7 @@
 
 Full SSE snapshots with ordered deltas and automatic replay via `Last-Event-ID`. The thinking process and inline tool execution cards stream live.
 
-<p align="center"><img src="assets/showcase.png" alt="Streaming chat with tool cards" width="840" /></p>
+<p align="center"><img src="assets/main.png" alt="Streaming chat with tool cards" width="840" /></p>
 
 ### Workspaces & Sessions
 
