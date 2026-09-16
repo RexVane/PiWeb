@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/showcase.png" alt="PiWeb 界面展示" width="840" />
+  <img src="assets/main.png" alt="PiWeb 界面展示" width="840" />
 </p>
 
 ---
@@ -22,7 +22,7 @@
 
 SSE 完整快照 + 有序增量同步，支持 `Last-Event-ID` 断线补发；思考链（Thinking）与工具调用卡片内联实时展示。
 
-<p align="center"><img src="assets/showcase.png" alt="流式对话与工具卡片" width="840" /></p>
+<p align="center"><img src="assets/main.png" alt="流式对话与工具卡片" width="840" /></p>
 
 ### 工作区与会话
 
@@ -32,10 +32,14 @@ SSE 完整快照 + 有序增量同步，支持 `Last-Event-ID` 断线补发；�
 
 把本机 Codex / Claude Code / Grok / ZCode / dsh / opencode 的历史对话无损导成 pi 会话：文本、思考、工具调用与结果、时间戳、用量都保留，源数据**只读**，不改动源工具的任何文件。源项目目录还在本机就导回原工作区，否则落到你选的兜底工作区。入口在「设置 → 导入会话」，每个来源默认只列最近 15 条，已导过的会被标记且不会重复导入。
 
+
 ### 项目生长树
 
 智能体对代码库的每一步操作都会拍快照：按轮次导航时间轴，查看新增/修改/删除的文件，任意一步、任意文件的行级 diff 都能打开——即使项目本身没有 git 历史也能用。
-
+<p align="center"><img src="assets/微信图片_20260915203510_488_15.png" alt="项目生长树" width="840" /></p>
+<p align="center"><img src="assets/微信图片_20260916124237_491_15.png" alt="项目生长树" width="840" /></p>
+<p align="center"><img src="assets/微信图片_20260915203535_489_15.png" alt="项目生长树" width="840" /></p>
+<p align="center"><img src="assets/微信图片_20260915203600_490_15.png" alt="项目生长树" width="840" /></p>
 ### 上下文计量
 
 点击输入框旁的圆环，上下文窗口拆成 13 段展示——System Prompt、System/Custom Tools、Memory（AGENTS.md）、Skills、各类消息、Compacted Data、Auto-Compact Buffer 与 Free Space。
