@@ -34,6 +34,13 @@ PiWeb 和 pi 是两个独立的程序，PiWeb 也不是 pi 的另一个版本：
 
 <p align="center"><img src="assets/outline.jpg" alt="对话导航：加粗的是你发过的消息" width="840" /></p>
 
+### 对话里的轨迹与文件
+
+工具卡片上就有两个入口：**在轨迹中查看**把这一步放进轨迹面板——输入 / 模型 / 工具三条车道的时间轴，支持等距 / 时间 / 间隔三种排布与搜索，每行给出 token 与用时，详情分摘要、预览、原始、来源四档；**在编辑器中打开**直接打开这次操作碰的那个本地文件。改文件的卡片本身也内联整段 diff（新增绿、删除红，附 +N −M 行数），长改动折叠成预览，展开看全。
+
+<p align="center"><img src="assets/trace-1.jpg" alt="工具卡片上的两个入口与内联 diff" width="840" /></p>
+<p align="center"><img src="assets/trace-2.png" alt="轨迹入口按钮" /> <img src="assets/trace-3.png" alt="入口按钮细节" /> <img src="assets/trace-4.png" alt="入口按钮细节" /></p>
+
 ### 工作区与会话
 
 会话按项目文件夹分组，原生文件夹选择器（Windows / macOS / Linux），支持重命名与归档；归档的会话收在侧栏「已归档」里，随时查看或取消归档，**归档后 30 天没有活动就自动删除**，不用手动清理。另有会话树分支跳转、草稿恢复、JSONL / HTML 导出。
