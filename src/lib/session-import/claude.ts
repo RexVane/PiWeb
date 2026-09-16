@@ -19,6 +19,15 @@ const SYNTHETIC_PREFIXES = ["<command-name>", "<command-message>", "<local-comma
 
 const isSynthetic = (text: string) => SYNTHETIC_PREFIXES.some((prefix) => text.startsWith(prefix));
 
+/**
+ * 子代理的转写不能当作会话：Claude Code 把它们放在
+ * `<项目>/<会话 uuid>/subagents/` 下（含更深的 workflows/wf_<id>/ 层，本机 236 个子代理文件 vs 70 个主会话）。
+ * 那是主代理派出去的活，不是你在用的那条对话。
+ * 这些文件里的记录全是 isSidechain，本来也会被 isMessageLine 挡掉，
+ * 这里再按路径显式排除一次：意图更清楚，也不怕以后格式变化。
+ */
+const isSubagentTranscript = (file: string) => file.split(/[/\\]/).includes("subagents");
+
 function isMessageLine(record: Record<string, unknown>): boolean {
 	return (record.type === "user" || record.type === "assistant") && record.isSidechain !== true && Boolean(record.message);
 }
@@ -115,6 +124,7 @@ export const claudeSource: ImportSourceModule = {
 		const out: ExternalSessionSummary[] = [];
 		for (const { file, mtime } of candidates) {
 			if (reachedLimit(out.length, limit)) break; // 只读最近的若干条：后面的文件根本不打开
+			if (isSubagentTranscript(file)) continue; // 主代理派给子代理的活不算会话
 			let head: string;
 			try {
 				head = await readHead(file);

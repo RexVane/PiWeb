@@ -37,6 +37,21 @@ interface Meta {
 	createdAt?: number;
 	model?: string;
 	provider?: string;
+	/** true = 这条 rollout 是别的线程派出来的（子代理），不是主对话 */
+	subagent?: boolean;
+}
+
+/**
+ * 子代理线程的判定，依据 session_meta.payload（本机 51 个 rollout 里有 22 个是子代理）：
+ *  - parent_thread_id：它的存在就说明这条线程由另一条线程派生
+ *  - source 是对象（`{"subagent":{…}}`）而主线程是字符串 "cli" / "vscode"
+ *  - thread_source：主线程恒为 "user"，子代理是 "subagent" / "guardian_review"
+ * 三个条件在本机实测完全一致（22 个子代理全部同时命中，29 个主线程一个都不命中）。
+ */
+function isSubagentMeta(payload: Record<string, unknown>): boolean {
+	if (typeof payload.parent_thread_id === "string" && payload.parent_thread_id) return true;
+	if (payload.source && typeof payload.source === "object") return true;
+	return typeof payload.thread_source === "string" && payload.thread_source !== "user";
 }
 
 function metaFrom(records: Record<string, unknown>[]): Meta {
@@ -49,6 +64,7 @@ function metaFrom(records: Record<string, unknown>[]): Meta {
 		meta.createdAt = toEpochMs(payload.timestamp) ?? toEpochMs(record.timestamp);
 		if (typeof payload.model_provider === "string") meta.provider = payload.model_provider;
 		if (typeof payload.model === "string") meta.model = payload.model;
+		if (isSubagentMeta(payload)) meta.subagent = true;
 	}
 	// 模型有时只在 turn_context 里出现
 	for (const record of records) {
@@ -109,6 +125,7 @@ export const codexSource: ImportSourceModule = {
 			}
 			const records = [...eachJsonLine(head)].slice(0, 300);
 			const meta = metaFrom(records);
+			if (meta.subagent) continue; // 主代理派给子代理的活，不算会话
 			const hasMessage = records.some((record) => record.type === "response_item");
 			if (!hasMessage) continue;
 			out.push({

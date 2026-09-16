@@ -39,6 +39,15 @@ import type { ImportedEntry, ImportedMessage } from "../src/lib/session-import/t
 let root: string;
 const TS = Date.UTC(2026, 8, 13, 4, 10, 51);
 
+/** dsh 的真实文件是多帧 zstd 拼接，这里按同样方式合成（单帧解压只能拿到第一帧） */
+function multiFrame(lines: string[], perFrame = 2): Buffer {
+	const frames: Buffer[] = [];
+	for (let index = 0; index < lines.length; index += perFrame) {
+		frames.push(zlib.zstdCompressSync(Buffer.from(`${lines.slice(index, index + perFrame).join("\n")}\n`, "utf8")));
+	}
+	return Buffer.concat(frames);
+}
+
 beforeEach(async () => {
 	root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-import-src-")));
 	for (const key of Object.keys(roots) as Array<keyof typeof roots>) roots[key] = path.join(root, key);
@@ -198,15 +207,6 @@ describe("Grok CLI", () => {
 });
 
 describe("dsh", () => {
-	/** 真实文件是多帧 zstd 拼接，这里按同样方式合成 */
-	function multiFrame(lines: string[], perFrame = 2): Buffer {
-		const frames: Buffer[] = [];
-		for (let index = 0; index < lines.length; index += perFrame) {
-			frames.push(zlib.zstdCompressSync(Buffer.from(`${lines.slice(index, index + perFrame).join("\n")}\n`, "utf8")));
-		}
-		return Buffer.concat(frames);
-	}
-
 	async function fixture() {
 		const dir = path.join(roots.dsh, "--D-AIApp-PiWeb--", "session-9de5f238-e4e1-4b51-b557-cf77c60e7cee");
 		const lines = [
@@ -417,5 +417,63 @@ describe("只扫最近的若干条（界面默认每组 15 条）", () => {
 		const source = createOcFamilySource("zcode", () => file);
 		expect((await source.scan({ limit: 2 })).map((summary) => summary.externalId)).toEqual(["new", "mid"]);
 		expect((await source.scan({ limit: 0 })).map((summary) => summary.externalId)).toEqual(["new", "mid", "old"]);
+	});
+});
+
+describe("子代理会话不算会话（要的是主代理那条对话）", () => {
+	/** claude 的子代理转写放在 <项目>/<会话>/subagents/ 下，内容是主代理派出去的活 */
+	it("claude：subagents/ 目录下的转写不列（哪怕记录本身不像侧链）", async () => {
+		const sub = path.join(roots.claude, "-proj", "main-session-uuid", "subagents", "agent-x.jsonl");
+		await write(sub, [
+			JSON.stringify({ type: "user", cwd: "/ws", timestamp: new Date(TS).toISOString(), message: { role: "user", content: "子代理收到的任务" } }),
+			JSON.stringify({ type: "assistant", timestamp: new Date(TS + 1000).toISOString(), message: { role: "assistant", content: [{ type: "text", text: "子代理的回复" }] } }),
+		].join("\n"));
+		await write(path.join(roots.claude, "-proj", "main.jsonl"), [
+			JSON.stringify({ type: "user", cwd: "/ws", timestamp: new Date(TS).toISOString(), message: { role: "user", content: "主会话" } }),
+		].join("\n"));
+		const summaries = await claudeSource.scan({ limit: 0 });
+		expect(summaries.map((summary) => summary.externalId)).toEqual(["main"]);
+	});
+
+	it("codex：别的线程派出来的 rollout（parent_thread_id）不列", async () => {
+		const parent = { timestamp: new Date(TS).toISOString(), type: "session_meta", payload: { cwd: "/ws", model: "gpt-5", thread_source: "user", source: "cli" } };
+		const child = { timestamp: new Date(TS).toISOString(), type: "session_meta", payload: { cwd: "/ws", model: "gpt-5", parent_thread_id: "01a07260-cb45", thread_source: "subagent", source: { subagent: { other: "guardian" } } } };
+		const message = { timestamp: new Date(TS).toISOString(), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "派给子代理的活" }] } };
+		await write(path.join(roots.codex, "2026", "09", "13", "rollout-main.jsonl"), [parent, message].map((r) => JSON.stringify(r)).join("\n"));
+		await write(path.join(roots.codex, "2026", "09", "13", "rollout-child.jsonl"), [child, message].map((r) => JSON.stringify(r)).join("\n"));
+		const summaries = await codexSource.scan({ limit: 0 });
+		expect(summaries.map((summary) => summary.externalId)).toEqual(["rollout-main"]);
+	});
+
+	it("grok：session_kind 以 subagent 开头的会话不列", async () => {
+		const make = async (id: string, kind?: string) => {
+			const dir = path.join(roots.grok, "D%3A%5C", id);
+			await write(path.join(dir, "summary.json"), JSON.stringify({ session_summary: id, num_messages: 2, created_at: TS, session_kind: kind, info: { cwd: "D:\\" } }));
+			await write(path.join(dir, "chat_history.jsonl"), [
+				JSON.stringify({ type: "user", content: "你好" }),
+				JSON.stringify({ type: "assistant", content: "在" }),
+			].join("\n"));
+		};
+		await make("main-session");
+		await make("sub-session", "subagent");
+		await make("sub-fork", "subagent_fork");
+		const summaries = await grokSource.scan({ limit: 0 });
+		expect(summaries.map((summary) => summary.externalId)).toEqual(["main-session"]);
+	});
+
+	it("dsh：header 里 delegationDepth > 0 的会话不列", async () => {
+		const make = async (id: string, depth: number) => {
+			const dir = path.join(roots.dsh, "--D--ws--", id);
+			await fs.mkdir(dir, { recursive: true });
+			await fs.writeFile(path.join(dir, "session.jsonl.zstd"), multiFrame([
+				JSON.stringify({ type: "session", version: 3, id, createdAt: TS, cwd: "D:\ws", delegationDepth: depth }),
+				JSON.stringify({ type: "user/message", seq: 1, time: TS, data: { content: [{ type: "text", text: "你好" }], source: { kind: "user" }, role: "user" } }),
+				JSON.stringify({ type: "assistant/message", seq: 2, time: TS + 1000, data: { message: { role: "assistant", content: [{ type: "text", text: "在" }] } } }),
+			]));
+		};
+		await make("session-main", 0);
+		await make("session-sub", 1);
+		const summaries = await dshSource.scan({ limit: 0 });
+		expect(summaries.map((summary) => summary.externalId)).toEqual(["session-main"]);
 	});
 });

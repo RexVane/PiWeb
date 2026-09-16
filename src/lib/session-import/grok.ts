@@ -79,6 +79,9 @@ export const grokSource: ImportSourceModule = {
 			if (mtime === undefined) continue; // 没有正文就没什么可导
 			const info = summary.info as Record<string, unknown> | undefined;
 			const numMessages = Number(summary.num_messages ?? summary.num_chat_messages);
+			// 子代理会话（grok 的 spawn_subagent：subagent / subagent_fork / subagent_resume，本机 24 条）
+			// 以及它们的派生：agent_name 是 general-purpose / explore 之类，不是你在用的那条对话
+			if (typeof summary.session_kind === "string" && summary.session_kind.startsWith("subagent")) continue;
 			if (numMessages === 0) continue; // 开了没用的空会话
 			// 只有系统提示与合成提醒（system_reminder）的会话读不出对话，别列进列表
 			if (!(await hasRealMessage(history))) continue;

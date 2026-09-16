@@ -36,6 +36,11 @@ interface DshHeader {
 	id?: string;
 	cwd?: string;
 	createdAt?: number;
+	/**
+	 * 主代理为 0；> 0 表示这条会话是主代理派给子代理的活（本机 198 个会话里有 55 个）。
+	 * 那是子任务，不该混进"我的对话"列表里。
+	 */
+	delegationDepth?: number;
 }
 
 function parseRecords(text: string): { header: DshHeader; records: Record<string, unknown>[] } {
@@ -51,7 +56,12 @@ function parseRecords(text: string): { header: DshHeader; records: Record<string
 			continue;
 		}
 		if (parsed.type === "session") {
-			header = { id: typeof parsed.id === "string" ? parsed.id : undefined, cwd: typeof parsed.cwd === "string" ? parsed.cwd : undefined, createdAt: toEpochMs(parsed.createdAt) };
+			header = {
+				id: typeof parsed.id === "string" ? parsed.id : undefined,
+				cwd: typeof parsed.cwd === "string" ? parsed.cwd : undefined,
+				createdAt: toEpochMs(parsed.createdAt),
+				delegationDepth: typeof parsed.delegationDepth === "number" ? parsed.delegationDepth : undefined,
+			};
 			continue;
 		}
 		records.push(parsed);
@@ -138,6 +148,7 @@ export const dshSource: ImportSourceModule = {
 			}
 			const { header, records } = parseRecords(head.text);
 			if (!header.id) continue;
+			if (header.delegationDepth) continue; // 主代理派给子代理的会话，不算"我的对话"
 			// 建了却从没用过的会话（只有 header 与几条配置）：整个文件都解出来却没有消息，不该列进列表
 			if (head.complete && !records.some((record) => record.type === "user/message" || record.type === "assistant/message")) continue;
 			let title: string | undefined;
