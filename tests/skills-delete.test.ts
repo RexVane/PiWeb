@@ -10,12 +10,33 @@ import path from "node:path";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 
 const fakeSkills = new Map<string, { name: string; filePath: string; description?: string; disableModelInvocation?: boolean; baseDir?: string }>();
-/** agent 目录的"配置写法"可被单个用例改写（见下面的 8.3 短名回归用例） */
+/** agent 目录的"配置写法"可被单个用例改写（见下面的 junction 回归用例） */
 const mockState = vi.hoisted(() => ({ agentDir: "" }));
+
+/**
+ * 建路径一律从**展开后**的临时目录起步：CI 的 Windows runner 上 os.tmpdir() 是 8.3 短名
+ * （`C:\Users\RUNNER~1\...`），而 deleteSkill 返回的是 realpath 展开后的路径，两边不统一断言就对不上。
+ */
+function realTmp(): string {
+	return fs.realpathSync(os.tmpdir());
+}
+
+/** 删目录链接：Windows 的 junction 是目录（rmdir），POSIX 的 symlink 要 unlink */
+function removeDirLink(link: string): void {
+	try {
+		fs.unlinkSync(link);
+	} catch {
+		try {
+			fs.rmdirSync(link);
+		} catch {
+			/* 已经不存在 */
+		}
+	}
+}
 
 vi.mock("@/lib/pi", () => ({
 	// 真实 listSkills 走 resourceLoader.getSkills()；这里用受控技能列表替换加载器
-	getAgentDir: () => mockState.agentDir || path.join(os.tmpdir(), "piweb-test-agent"),
+	getAgentDir: () => mockState.agentDir || path.join(fs.realpathSync(os.tmpdir()), "piweb-test-agent"),
 	getResourceLoader: () => ({ getSkills: () => ({ skills: [...fakeSkills.values()] }) }),
 	reloadAllLoaders: vi.fn(async () => undefined),
 	resourceLoaderReady: vi.fn(async () => undefined),
@@ -55,7 +76,7 @@ describe("deleteSkill", () => {
 	});
 
 	it("removes the skill directory for a project skill", async () => {
-		const cwd = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-"));
+		const cwd = fs.realpathSync(mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-")));
 		const filePath = makeSkillDir("project");
 		// classifyScope: 不在 agent 目录下的绝对路径 + cwd 前缀不匹配时落 package；放进 cwd 下即 project
 		const dir = path.join(cwd, "my-skill");
@@ -99,16 +120,11 @@ describe("deleteSkill", () => {
 	 * 所以这条用例同时挡住了"用归一化代替展开"这种假修复。
 	 */
 	it("agent 目录是同目录的另一种写法（junction / 8.3 短名）时，全局技能仍然可以删", async () => {
-		const realTmp = fs.realpathSync(os.tmpdir());
-		const realDir = path.join(realTmp, "piweb-agent-real");
-		const linkDir = path.join(realTmp, "piweb-agent-link");
+		const realDir = path.join(realTmp(), "piweb-agent-real");
+		const linkDir = path.join(realTmp(), "piweb-agent-link");
 		const skillDir = path.join(realDir, "skills", "my-skill");
 		fs.rmSync(realDir, { recursive: true, force: true });
-		try {
-			fs.rmdirSync(linkDir);
-		} catch {
-			/* 上一次留下的链接已不存在 */
-		}
+		removeDirLink(linkDir); // 上一次留下的链接（若有）
 		mkdirSync(skillDir, { recursive: true });
 		writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
 		fs.symlinkSync(realDir, linkDir, "junction");
@@ -119,7 +135,7 @@ describe("deleteSkill", () => {
 			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: skillDir });
 			expect(fs.existsSync(skillDir)).toBe(false);
 		} finally {
-			fs.rmdirSync(linkDir); // 只删链接本身，不动目标
+			removeDirLink(linkDir); // 只删链接本身，不动目标
 			fs.rmSync(realDir, { recursive: true, force: true });
 		}
 	});
