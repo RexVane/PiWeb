@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/main.jpg" alt="PiWeb 界面展示" width="840" />
+  <img src="assets/main.png" alt="PiWeb 界面展示" width="840" />
 </p>
 
 ---
@@ -26,46 +26,46 @@ PiWeb 和 pi 是两个独立的程序，PiWeb 也不是 pi 的另一个版本：
 
 边流边渲染 Markdown——标题、列表、代码块在回答还没写完时就已成形，不是整段结束才排版；思考过程与工具调用以卡片内联实时展示。版面克制：会话在左、大纲在右，两侧都可收起，屏幕留给对话本身。
 
-<p align="center"><img src="assets/main.jpg" alt="主页面：流式对话与工具卡片" width="840" /></p>
+<p align="center"><img src="assets/main.png" alt="主页面：流式对话与工具卡片" width="840" /></p>
 
 ### 对话导航
 
 对话区右侧的大纲：**加粗的是你发过的消息**，其余是助手回答里的各级标题。收起时是一列长短不一的横线（标题层级越深越短），悬停展开成列表；滚动时自动高亮当前所在的位置，点一下平滑跳过去。
 
-<p align="center"><img src="assets/outline.jpg" alt="对话导航：加粗的是你发过的消息" width="840" /></p>
+<p align="center"><img src="assets/outline.png" alt="对话导航：加粗的是你发过的消息" width="840" /></p>
 
 ### 对话里的轨迹与文件
 
 工具卡片上就有两个入口：**在轨迹中查看**把这一步放进轨迹面板——输入 / 模型 / 工具三条车道的时间轴，支持等距 / 时间 / 间隔三种排布与搜索，每行给出 token 与用时，详情分摘要、预览、原始、来源四档；**在编辑器中打开**直接打开这次操作碰的那个本地文件。改文件的卡片本身也内联整段 diff（新增绿、删除红，附 +N −M 行数），长改动折叠成预览，展开看全。
 
-<p align="center"><img src="assets/trace-1.jpg" alt="工具卡片上的两个入口与内联 diff" width="840" /></p>
+<p align="center"><img src="assets/trace-1.png" alt="工具卡片上的两个入口与内联 diff" width="840" /></p>
 <p align="center"><img src="assets/trace-2.png" alt="轨迹入口按钮" /> <img src="assets/trace-3.png" alt="入口按钮细节" /> <img src="assets/trace-4.png" alt="入口按钮细节" /></p>
 
 ### 工作区与会话
 
 会话按项目文件夹分组，原生文件夹选择器（Windows / macOS / Linux），支持重命名与归档；归档的会话收在侧栏「已归档」里，随时查看或取消归档，**归档后 30 天没有活动就自动删除**，不用手动清理。另有会话树分支跳转、草稿恢复、JSONL / HTML 导出。
 
-<p align="center"><img src="assets/archive.jpg" alt="已归档：归档的会话收在一处" width="400" /></p>
+<p align="center"><img src="assets/archive.png" alt="已归档：归档的会话收在一处" width="400" /></p>
 
 ### 导入本地会话
 
 把本机 Codex / Claude Code / Grok / ZCode / dsh / opencode 的对话无损导成 pi 会话：文本、思考、工具调用与结果、时间戳、用量全部保留，源数据**只读**，不改动源工具的任何文件。每个来源只列最近 15 条**主会话**——主代理派给子代理的活自动忽略，你要的是自己那条对话。源项目目录还在本机就导回原工作区，否则落到你选的兜底工作区；已导过的会被标记，不会重复导入。
 
-<p align="center"><img src="assets/import.jpg" alt="设置 → 导入会话：选来源、勾选、导入" width="840" /></p>
+<p align="center"><img src="assets/import.png" alt="设置 → 导入会话：选来源、勾选、导入" width="840" /></p>
 
 ### 项目生长树
 
 pi 的每次文件操作都拍一张快照，按「你发一条消息 = 一轮」分组：每轮列出**相对上一轮**的新增 / 修改 / 删除，任意文件点开就是行级 diff，可以逐轮 review，也能在轮内按「步」细分到单次操作。没有文件改动的轮会注明，不会悄悄跳过；整棵记录独立于 git，项目本身没有版本历史也照样能用。
 
-<p align="center"><img src="assets/growth-1.jpg" alt="项目生长树（一）" width="840" /></p>
-<p align="center"><img src="assets/growth-2.jpg" alt="项目生长树（二）" width="840" /></p>
+<p align="center"><img src="assets/growth-1.png" alt="项目生长树（一）" width="840" /></p>
+<p align="center"><img src="assets/growth-2.png" alt="项目生长树（二）" width="840" /></p>
 
 ### 文件查看器
 
 项目文件在页面里直接打开，不必切编辑器：居中窗口、多标签页，`+` 模糊搜索找文件。同一个文件三种看法——**变更**（整文件 diff，新增绿、删除红，一键跳上一处 / 下一处改动）、**内容**（行号 + 语法高亮，被删文件显示删除前）、**渲染**（Markdown 直接成文）。看中的片段可引用进输入框，或用本地编辑器打开。
 
-<p align="center"><img src="assets/viewer-1.jpg" alt="文件查看器（一）" width="840" /></p>
-<p align="center"><img src="assets/viewer-2.jpg" alt="文件查看器（二）" width="840" /></p>
+<p align="center"><img src="assets/viewer-1.png" alt="文件查看器（一）" width="840" /></p>
+<p align="center"><img src="assets/viewer-2.png" alt="文件查看器（二）" width="840" /></p>
 
 ### 上下文计量
 
@@ -75,16 +75,16 @@ pi 的每次文件操作都拍一张快照，按「你发一条消息 = 一轮�
 
 顶栏按钮打开右侧面板，把进入模型上下文的提示词全部列出来：系统提示词与追加段、项目记忆 `AGENTS.md`、各技能的 `SKILL.md`、提示模板、工具定义，以及组装后实际发给模型的那一份与压缩摘要；每行标注来源（项目 / 个人 / 包 / 扩展）。点一行就在中间查看器里读原文。列表按当前工作区实时枚举，之后装的插件或包里带提示词，刷新即出现。
 
-<p align="center"><img src="assets/prompts-1.jpg" alt="提示词来源（一）" width="840" /></p>
-<p align="center"><img src="assets/prompts-2.jpg" alt="提示词来源（二）" width="840" /></p>
+<p align="center"><img src="assets/prompts-1.png" alt="提示词来源（一）" width="840" /></p>
+<p align="center"><img src="assets/prompts-2.png" alt="提示词来源（二）" width="840" /></p>
 
 ### 模型与供应商管理
 
 内置 40 家供应商，API Key 或 OAuth 授权登录都行——Anthropic、GitHub Copilot、OpenAI Codex、xAI、OpenRouter、Kimi、Radius 支持 OAuth 一键登录。名单之外的照样能用：自定义提供商填地址、协议与模型名即可，落进 `models.json`；本地网关（Ollama 等）自动补占位 Key。模型目录一键拉取，额度与余额（Claude / Codex / xAI / DeepSeek 等 11 家）直接显示在卡片里。
 
-<p align="center"><img src="assets/providers-1.jpg" alt="提供商配置（一）" width="840" /></p>
-<p align="center"><img src="assets/providers-2.jpg" alt="提供商配置（二）" width="840" /></p>
-<p align="center"><img src="assets/providers-3.jpg" alt="提供商配置（三）" width="840" /></p>
+<p align="center"><img src="assets/providers-1.png" alt="提供商配置（一）" width="840" /></p>
+<p align="center"><img src="assets/providers-2.png" alt="提供商配置（二）" width="840" /></p>
+<p align="center"><img src="assets/providers-3.png" alt="提供商配置（三）" width="840" /></p>
 
 ### 插件与技能
 
