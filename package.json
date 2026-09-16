@@ -28,7 +28,7 @@
 		"src",
 		"scripts",
 		"public",
-		"assets/showcase.png",
+		"assets",
 		"next.config.ts",
 		"tsconfig.json",
 		"postcss.config.mjs",
