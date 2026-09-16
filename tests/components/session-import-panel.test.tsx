@@ -65,21 +65,52 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?:
 }
 
 describe("导入会话面板", () => {
-	it("扫出来的会话按来源分组，默认一条都不勾选", async () => {
+	it("一次只列一个来源，默认落在第一个有会话的来源上，且默认一条都不勾选", async () => {
 		setup();
 		const claudeGroup = await screen.findByTestId("import-group-claude");
 		expect(claudeGroup.textContent).toContain("Claude 的会话");
-		expect(await screen.findByTestId("import-group-zcode")).toBeTruthy();
+		// 其它来源的会话不铺在这一屏里
+		expect(screen.queryByTestId("import-group-zcode")).toBeNull();
+		expect(screen.queryByText("ZCode 的会话")).toBeNull();
 
 		const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
-		expect(checkboxes).toHaveLength(3);
+		expect(checkboxes).toHaveLength(1); // 只渲染当前来源的行
 		expect(checkboxes.every((box) => !box.checked)).toBe(true);
 		// 没勾选时导入按钮禁用
 		expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true);
 	});
 
-	it("已导入的行被禁用并标出来，分组统计里也计入", async () => {
+	it("选择器列出所有有会话的来源并带条数，切换后只显示该来源", async () => {
 		setup();
+		const tabs = await screen.findByTestId("import-source-tabs");
+		expect(tabs.textContent).toContain("Claude Code");
+		expect(tabs.textContent).toContain("ZCode");
+
+		fireEvent.click(screen.getByTestId("import-source-zcode"));
+		expect((await screen.findByTestId("import-group-zcode")).textContent).toContain("ZCode 的会话");
+		expect(screen.queryByText("Claude 的会话")).toBeNull();
+
+		// 选中的来源高亮（aria-selected 供读屏与测试共用）
+		expect(screen.getByTestId("import-source-zcode").getAttribute("aria-selected")).toBe("true");
+		expect(screen.getByTestId("import-source-claude").getAttribute("aria-selected")).toBe("false");
+	});
+
+	it("切换来源不会丢掉另一个来源上已勾选的行", async () => {
+		const { posts } = setup();
+		fireEvent.click((await screen.findByText("Claude 的会话")).closest("label")?.querySelector("input") as HTMLInputElement);
+		fireEvent.click(screen.getByTestId("import-source-zcode"));
+		fireEvent.click((await screen.findByText("ZCode 的会话")).closest("label")?.querySelector("input") as HTMLInputElement);
+
+		// 两个来源各勾了一条，按钮计数是合计
+		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }, { source: "zcode", externalId: "z1" }], fallbackCwd: "/ws" });
+	});
+
+	it("已导入的行被禁用并标出来，来源统计里也计入", async () => {
+		setup();
+		fireEvent.click(await screen.findByTestId("import-source-zcode"));
 		const importedRow = await screen.findByText("已经导过的");
 		const checkbox = importedRow.closest("label")?.querySelector("input") as HTMLInputElement;
 		expect(checkbox.disabled).toBe(true);
@@ -113,16 +144,19 @@ describe("导入会话面板", () => {
 		await waitFor(() => expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true));
 	});
 
-	it("全选只作用于本组，且跳过已导入的行", async () => {
+	it("全选只作用于当前来源，且跳过已导入的行", async () => {
 		const { posts } = setup();
-		await screen.findByTestId("import-group-zcode");
-		// zcode 组是第 2 个分组
-		const groups = screen.getAllByText("全选本组");
-		fireEvent.click(groups[1]);
+		fireEvent.click((await screen.findByText("Claude 的会话")).closest("label")?.querySelector("input") as HTMLInputElement); // 先勾一条别的来源的
+		fireEvent.click(await screen.findByTestId("import-source-zcode"));
+		const selectAll = await screen.findByText("全选本组");
+		fireEvent.click(selectAll);
 
-		expect((screen.getByTestId("import-run") as HTMLButtonElement).textContent).toContain("(1)");
+		// zcode 这一组只有 z1 可勾（z2 已导入），再加上前面那条 claude 的
+		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
 		fireEvent.click(screen.getByTestId("import-run"));
-		await waitFor(() => expect(posts[0].body).toEqual({ sessions: [{ source: "zcode", externalId: "z1" }], fallbackCwd: "/ws" }));
+		await waitFor(() =>
+			expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }, { source: "zcode", externalId: "z1" }], fallbackCwd: "/ws" }),
+		);
 	});
 
 	it("兜底工作区是可选项且默认为当前工作区，不允许手输", async () => {

@@ -124,6 +124,17 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		});
 	}, [summaries, importedKeys]);
 
+	/**
+	 * 一次只显示一个来源：六个工具各列 15 条就是 90 行，全铺出来既难找也没必要。
+	 * 默认落在第一个有会话的来源上（SOURCE_ORDER 的顺序），用户切换后不被扫描结果重置。
+	 */
+	const [activeSource, setActiveSource] = useState("");
+	useEffect(() => {
+		if (activeSource && groups.some((group) => group.source === activeSource)) return;
+		setActiveSource(groups[0]?.source ?? "");
+	}, [groups, activeSource]);
+	const activeGroup = groups.find((group) => group.source === activeSource);
+
 	const toggle = (summary: Summary) => {
 		if (importedKeys.has(key(summary))) return;
 		setSelected((previous) => {
@@ -276,25 +287,51 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 			{!scanning && !summaries.length && !errors.length && <div style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>{t.importEmpty}</div>}
 
-			{groups.map((group) => (
-				<div key={group.source} className="flex flex-col gap-2" data-testid={`import-group-${group.source}`}>
+			{/* 来源选择器：选中哪个就只列哪个工具的会话 */}
+			{groups.length > 0 && (
+				<div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={t.importPickSource} data-testid="import-source-tabs">
+					{groups.map((group) => {
+						const active = group.source === activeSource;
+						return (
+							<button
+								key={group.source}
+								type="button"
+								role="tab"
+								aria-selected={active}
+								className="rounded-full px-3 py-1 transition-colors"
+								style={{
+									fontSize: 12,
+									border: `0.5px solid ${active ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`,
+									background: active ? "var(--dsw-accent)" : "transparent",
+									color: active ? "#fff" : "var(--dsw-label-tertiary)",
+								}}
+								onClick={() => setActiveSource(group.source)}
+								data-testid={`import-source-${group.source}`}
+							>
+								{sourceLabel(group.source)}
+								<span style={{ marginLeft: 6, opacity: 0.75 }}>{group.rows.length}</span>
+							</button>
+						);
+					})}
+				</div>
+			)}
+
+			{activeGroup && (
+				<div className="flex flex-col gap-2" data-testid={`import-group-${activeGroup.source}`}>
 					<div className="flex items-center gap-2">
-						<span className="rounded-full px-2 py-0.5" style={{ fontSize: 10.5, background: "var(--dsw-hover)", color: "var(--dsw-label-tertiary)" }}>
-							{sourceLabel(group.source)}
-						</span>
 						<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-							{t.importGroupCount.replace("{n}", String(group.rows.length)).replace("{imported}", String(group.imported))}
+							{t.importGroupCount.replace("{n}", String(activeGroup.rows.length)).replace("{imported}", String(activeGroup.imported))}
 						</span>
 						<div className="flex-1" />
-						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }} onClick={() => selectGroup(group.rows, true)}>
+						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }} onClick={() => selectGroup(activeGroup.rows, true)}>
 							{t.importSelectAll}
 						</button>
-						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }} onClick={() => selectGroup(group.rows, false)}>
+						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }} onClick={() => selectGroup(activeGroup.rows, false)}>
 							{t.importSelectNone}
 						</button>
 					</div>
 					<div className="flex flex-col gap-1.5">
-						{group.rows.map((row) => {
+						{activeGroup.rows.map((row) => {
 							const rowKey = key(row);
 							const done = importedKeys.has(rowKey);
 							const checked = selected.has(rowKey);
@@ -327,7 +364,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 						})}
 					</div>
 				</div>
-			))}
+			)}
 		</div>
 	);
 }
