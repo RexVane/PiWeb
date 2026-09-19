@@ -105,6 +105,8 @@ piweb
 
 The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI. Requires Node.js ≥ 22.19.0 (24 recommended); Git is needed for growth-history features.
 
+On Windows x64 and ARM64, npm automatically installs PiWeb's matching managed [niubash](https://github.com/unixwin/niubash) portable runtime. PiWeb uses it as the `bash` tool through the official Pi SDK—no separate shell install and no changes to `~/.pi/agent/settings.json`. macOS and Linux continue to use Pi's normal system Bash selection. If the optional Windows runtime is omitted or fails integrity validation, PiWeb logs a warning and falls back to Pi's configured/default Bash.
+
 ### Update
 
 ```bash
@@ -146,4 +148,4 @@ Set `PI_WEB_PASSWORD` to enable the login page and HTTP Basic Auth (user `pi`). 
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The optional Windows runtime packages redistribute niubash, rubash, and WinuxCmd under their upstream licenses; the pinned notices are in [`third-party/managed-niubash`](third-party/managed-niubash).

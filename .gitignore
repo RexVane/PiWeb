@@ -22,3 +22,10 @@ probe_*.py
 .DS_Store
 Thumbs.db
 PiWeb_Audit_*.md
+
+# generated from pinned official niubash archives during release
+/platform-packages/*/runtime/
+/platform-packages/*/runtime-manifest.json
+/platform-packages/*/licenses/
+/platform-packages/*/.runtime-*/
+/platform-packages/*/.licenses-*/

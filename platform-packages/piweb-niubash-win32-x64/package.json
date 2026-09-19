@@ -1,0 +1,38 @@
+{
+	"name": "@rexvane/piweb-niubash-win32-x64",
+	"version": "1.1.4-piweb.0",
+	"description": "Managed niubash runtime for PiWeb on Windows x64",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/RexVane/PiWeb.git",
+		"directory": "platform-packages/piweb-niubash-win32-x64"
+	},
+	"homepage": "https://github.com/RexVane/PiWeb#readme",
+	"type": "commonjs",
+	"main": "index.cjs",
+	"exports": {
+		".": "./index.cjs",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"index.cjs",
+		"runtime",
+		"runtime-manifest.json",
+		"licenses",
+		"README.md",
+		"LICENSE"
+	],
+	"os": [
+		"win32"
+	],
+	"cpu": [
+		"x64"
+	],
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

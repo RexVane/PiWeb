@@ -28,3 +28,20 @@ jobs:
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-test-agent
           PI_OFFLINE: "1"
           NEXT_TELEMETRY_DISABLED: "1"
+
+  niubash:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/prepare-niubash-packages.mjs --current
+      - run: node scripts/smoke-managed-niubash.mjs

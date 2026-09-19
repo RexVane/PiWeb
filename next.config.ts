@@ -13,8 +13,12 @@ export default (phase: string): NextConfig => {
 		// Webpack's dev chunk names are stable. A per-process prefix prevents an older
 		// browser cache entry from hydrating HTML emitted by a newer dev server.
 		assetPrefix: development ? `/_piweb-dev/${devAssetId}` : undefined,
-		// pi SDK 与其动态加载的扩展都运行在服务端（Node runtime），不对客户端打包
-		serverExternalPackages: ["@earendil-works/pi-coding-agent"],
+		// pi SDK、动态扩展与 Windows 平台运行时都留在服务端由 Node 原生加载。
+		serverExternalPackages: [
+			"@earendil-works/pi-coding-agent",
+			"@rexvane/piweb-niubash-win32-x64",
+			"@rexvane/piweb-niubash-win32-arm64",
+		],
 		// Image prompts allow 268 MB of base64 plus text and JSON framing.
 		experimental: { proxyClientMaxBodySize: "272mb" },
 	};

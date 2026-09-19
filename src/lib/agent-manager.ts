@@ -35,6 +35,7 @@ import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
 import { estimateTokensOf } from "./process-format";
 import { getPiSettings } from "./pi-settings";
+import { createManagedNiubashTools } from "./managed-niubash";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
@@ -799,6 +800,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				modelRuntime: await getModelRuntime(),
 				resourceLoader: loader,
 				settingsManager: getSettingsManager(m.cwd),
+				// Windows: 同名 bash 覆盖 SDK 内置工具，指向托管 niubash；其它平台返回 []，走 Pi 默认。
+				customTools: createManagedNiubashTools(m.cwd),
 			});
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");

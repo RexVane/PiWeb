@@ -53,6 +53,18 @@ describe("published package covers the whole production build", () => {
 		expect(manifest.files.filter((entry: string) => entry.startsWith(".next/"))).toEqual([]);
 	});
 
+	it("pins Windows niubash to OS/CPU-specific optional packages", async () => {
+		const manifest = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8"));
+		for (const arch of ["x64", "arm64"] as const) {
+			const name = `@rexvane/piweb-niubash-win32-${arch}`;
+			expect(manifest.optionalDependencies[name]).toBe("1.1.4-piweb.0");
+			const packageRoot = path.join(repoRoot, "platform-packages", `piweb-niubash-win32-${arch}`);
+			const platformManifest = JSON.parse(await fs.readFile(path.join(packageRoot, "package.json"), "utf8"));
+			expect(platformManifest).toMatchObject({ name, version: "1.1.4-piweb.0", os: ["win32"], cpu: [arch] });
+			expect(platformManifest.files).toEqual(expect.arrayContaining(["runtime", "runtime-manifest.json", "licenses"]));
+		}
+	});
+
 	it("treats a BUILD_ID without its runtime manifests as no usable build (self-heal path)", async () => {
 		const root = await tempDir("piweb-truncated-");
 		await writeBuild(root, { manifests: false });

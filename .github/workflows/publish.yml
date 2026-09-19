@@ -57,6 +57,33 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "releasing @rexvane/piweb@$version"
 
+      # Windows 平台包：直接分发官方 niubash portable 归档（完整 winuxcmd/、bundles/，
+      # 不是只拿 niu.exe），版本固定为 <niubash 版本>-piweb.N，因此只在缺失时发布一次；
+      # 主包的 optionalDependencies 精确锁定该版本，npm 按 os/cpu 自动挑对应包。
+      - name: Prepare the managed Windows shell packages
+        run: node scripts/prepare-niubash-packages.mjs
+
+      - name: Publish the managed Windows shell packages
+        run: |
+          set -euo pipefail
+          for dir in platform-packages/*/; do
+            name="$(node -p "require('./$dir/package.json').name")"
+            version="$(node -p "require('./$dir/package.json').version")"
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already published; leaving it untouched"
+              continue
+            fi
+            ( cd "$dir" && npm publish --provenance --access public )
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # 这里**故意不重写 lockfile**：平台包用"无版本的可选占位条目"就已经满足 npm ci（实测退出码 0），
+      # 安装方会按 package.json 里的精确版本去 registry 取。反过来，`npm install --package-lock-only`
+      # 在任一平台上都会剪掉 @tailwindcss/oxide-wasm32-wasi 下那批 @emnapi 条目、留下悬空引用，
+      # 下一次 CI 的 npm ci 直接 EUSAGE（Missing: @emnapi/wasi-threads@1.2.3 from lock file）。
+      # 需要更新 lock 时：从干净检出手工补条目，先跑 `npm ci --dry-run` 复验再提交。
+
       # 预构建：发布物自带 .next 产物（排除 cache），用户安装后零编译直接运行——
       # 安装时构建在 macOS 上踩了一串坑（staging 目录/junction/执行位），成品发布根除。
       - name: Prebuild the production bundle
@@ -69,7 +96,7 @@ jobs:
           du -sh .next
 
       # 打包前用真实 tarball 校验 .next 完整（files 是白名单，漏一个 Next 清单
-      # 就会发出「装得上、起不来」的包），避免再出现 required-server-files.json 缺失。
+      # 就会发出「装得上、起不来」的包），同时校验两个 Windows 平台包的每个 runtime 文件哈希。
       - name: Verify the packed artifact runs
         run: npm run verify:package
 

@@ -105,6 +105,8 @@ piweb
 
 包只注册 `piweb` 一个命令，与官方 `pi` CLI 互不冲突。需要 Node.js ≥ 22.19.0（推荐 24）；生长树功能需要安装 Git。
 
+Windows x64 / ARM64 上，npm 会自动安装与架构匹配的 PiWeb 托管版 [niubash](https://github.com/unixwin/niubash) 完整 portable runtime。PiWeb 只通过官方 Pi SDK 把它接到 `bash` 工具：无需另装 shell，也不会修改 `~/.pi/agent/settings.json`。macOS / Linux 仍沿用 Pi 默认的系统 Bash 选择；如果 Windows 可选运行时被省略或完整性校验失败，PiWeb 会明确告警并回退到 Pi 配置的/默认 Bash。
+
 ### 更新
 
 ```bash
@@ -145,4 +147,4 @@ piweb -H 0.0.0.0         # 局域网访问（必须设置 PI_WEB_PASSWORD）
 
 ## 开源协议
 
-[MIT](LICENSE)
+[MIT](LICENSE)。Windows 可选运行时包按各上游协议分发 niubash、rubash 与 WinuxCmd；固定版本的协议文本见 [`third-party/managed-niubash`](third-party/managed-niubash)。

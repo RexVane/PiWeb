@@ -13,9 +13,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { readProductionBuild } from "./build-output.mjs";
 import { isMainModule } from "./entrypoint.mjs";
+import {
+	MANAGED_NIUBASH_ASSETS,
+	NIUBASH_DISTRIBUTION_VERSION,
+	validateManagedNiubashPackage,
+} from "./managed-niubash-assets.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -66,9 +72,56 @@ export function verifyPackedPackage(root, { log = console.log } = {}) {
 	}
 }
 
+/** Pack and inspect one actual OS/CPU package, including every runtime hash and license. */
+export function verifyPackedManagedNiubashPackage(packageRoot, asset, { log = console.log } = {}) {
+	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `piweb-niubash-pack-${asset.arch}-`));
+	try {
+		const packed = JSON.parse(runNpm(["pack", "--json", "--pack-destination", tmp], { cwd: packageRoot }));
+		const entry = Array.isArray(packed) ? packed[0] : packed;
+		if (!entry?.filename) throw new Error(`npm pack produced no tarball for ${asset.packageName}`);
+		const files = (entry.files ?? []).map((file) => String(file.path).replaceAll("\\", "/").replace(/^package\//, ""));
+		for (const required of [
+			"package.json", "index.cjs", "runtime-manifest.json", "runtime/niu.exe",
+			"runtime/winuxcmd/usr/bin/winuxcmd.exe", "runtime/bundles/oh-my-niu/bundle.toml",
+			"licenses/NIUBASH.txt", "licenses/RUBASH.txt", "licenses/WINUXCMD.txt",
+		]) {
+			if (!files.includes(required)) throw new Error(`${asset.packageName} tarball is missing ${required}`);
+		}
+		const unpacked = path.join(tmp, "unpacked");
+		fs.mkdirSync(unpacked, { recursive: true });
+		run("tar", ["-xzf", entry.filename, "-C", "unpacked"], { cwd: tmp });
+		const installedRoot = path.join(unpacked, "package");
+		const checked = validateManagedNiubashPackage(installedRoot, asset, { allowExtraRuntimeFiles: false });
+		const require = createRequire(path.join(installedRoot, "package.json"));
+		const exported = require(path.join(installedRoot, "index.cjs"));
+		if (exported.packageName !== asset.packageName || exported.arch !== asset.arch
+			|| exported.shellPath !== path.join(installedRoot, "runtime", "niu.exe")) {
+			throw new Error(`${asset.packageName} has an invalid runtime export`);
+		}
+		const bytes = fs.statSync(path.join(tmp, entry.filename)).size;
+		log(`[piweb] ${entry.filename}: ${checked.files} runtime files, ${(bytes / 1024 / 1024).toFixed(1)} MB.`);
+		return { filename: entry.filename, files, bytes, runtimeFiles: checked.files };
+	} finally {
+		fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+	}
+}
+
+export function verifyManagedNiubashPackages(root, { log = console.log } = {}) {
+	const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+	const results = [];
+	for (const asset of Object.values(MANAGED_NIUBASH_ASSETS)) {
+		if (manifest.optionalDependencies?.[asset.packageName] !== NIUBASH_DISTRIBUTION_VERSION) {
+			throw new Error(`PiWeb must use exact optional dependency ${asset.packageName}@${NIUBASH_DISTRIBUTION_VERSION}`);
+		}
+		results.push(verifyPackedManagedNiubashPackage(path.join(root, "platform-packages", asset.directory), asset, { log }));
+	}
+	return results;
+}
+
 if (isMainModule(import.meta.url)) {
 	try {
 		verifyPackedPackage(DEFAULT_ROOT);
+		verifyManagedNiubashPackages(DEFAULT_ROOT);
 	} catch (error) {
 		console.error(`[piweb] ${error instanceof Error ? error.message : error}`);
 		process.exitCode = 1;

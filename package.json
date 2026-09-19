@@ -39,9 +39,9 @@
 		"build": "node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack",
 		"build:release": "node scripts/release.mjs",
 		"postinstall": "node scripts/postinstall.mjs",
+		"prepare:niubash": "node scripts/prepare-niubash-packages.mjs",
 		"prepublishOnly": "npm run typecheck && npm run test",
 		"start": "node bin/piweb.js",
-		"web": "node bin/pi.js web",
 		"typecheck": "tsc --noEmit",
 		"verify:package": "node scripts/verify-package.mjs",
 		"test": "vitest run",
@@ -72,6 +72,10 @@
 		"remark-gfm": "^4.0.1",
 		"tailwindcss": "^4.2.2",
 		"typescript": "^7"
+	},
+	"optionalDependencies": {
+		"@rexvane/piweb-niubash-win32-arm64": "1.1.4-piweb.0",
+		"@rexvane/piweb-niubash-win32-x64": "1.1.4-piweb.0"
 	},
 	"devDependencies": {
 		"@testing-library/dom": "^10.4.2",
