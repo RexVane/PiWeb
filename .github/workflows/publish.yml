@@ -73,7 +73,9 @@ jobs:
               echo "$name@$version is already published; leaving it untouched"
               continue
             fi
-            ( cd "$dir" && npm publish --provenance --access public )
+            # 版本是 1.1.4-piweb.0（预发布），npm 要求显式 --tag；用专用 tag 而不是 latest，
+            # 主包按精确版本引用，解析不依赖 dist-tag。
+            ( cd "$dir" && npm publish --provenance --access public --tag piweb )
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
