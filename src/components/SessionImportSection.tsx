@@ -36,6 +36,8 @@ interface ImportOutcome {
 	reason?: string;
 	messageCount?: number;
 	workspace?: string;
+	/** 已成功导入，但源里的运行时注入/加密内容等无法作为对话还原 */
+	skipped?: string[];
 }
 
 interface ImportReport {
@@ -60,6 +62,8 @@ function dayOf(ms?: number): string {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+const summaryKey = (summary: Pick<Summary, "source" | "externalId">) => `${summary.source}:${summary.externalId}`;
+
 export function SessionImportSection({ cwd }: { cwd: string }) {
 	const { t } = useI18n();
 	const [summaries, setSummaries] = useState<Summary[]>([]);
@@ -83,9 +87,14 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 				setFailure(json.error || t.toastError);
 				return;
 			}
-			setSummaries(json.data.sessions ?? []);
+			const nextSummaries = (json.data.sessions ?? []) as Summary[];
+			const nextImported = new Set<string>(json.data.imported ?? []);
+			const selectable = new Set(nextSummaries.map(summaryKey));
+			setSummaries(nextSummaries);
 			setErrors(json.data.errors ?? []);
-			setImportedKeys(new Set<string>(json.data.imported ?? []));
+			setImportedKeys(nextImported);
+			// 重新扫描后，源会话可能已经消失或被另一个请求导入；不要留下幽灵选择
+			setSelected((previous) => new Set([...previous].filter((item) => selectable.has(item) && !nextImported.has(item))));
 		} catch (error) {
 			setFailure(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -109,8 +118,6 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		void scan();
 	}, [scan]);
 
-	const key = (summary: Summary) => `${summary.source}:${summary.externalId}`;
-
 	const groups = useMemo(() => {
 		const bySource = new Map<string, Summary[]>();
 		for (const summary of summaries) {
@@ -120,27 +127,30 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		}
 		return SOURCE_ORDER.filter((source) => bySource.has(source)).map((source) => {
 			const rows = [...(bySource.get(source) as Summary[])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
-			return { source, rows, imported: rows.filter((row) => importedKeys.has(key(row))).length };
+			return { source, rows, imported: rows.filter((row) => importedKeys.has(summaryKey(row))).length };
 		});
 	}, [summaries, importedKeys]);
 
 	/**
 	 * 一次只显示一个来源：六个工具各列 15 条就是 90 行，全铺出来既难找也没必要。
-	 * 默认落在第一个有会话的来源上（SOURCE_ORDER 的顺序），用户切换后不被扫描结果重置。
+	 * 首次打开默认落到“最近活动会话”所在的来源；用户切换后保持选择。
+	 * 直接派生有效来源，不用 effect 回填，避免初始化 effect 覆盖用户刚完成的点击。
 	 */
 	const [activeSource, setActiveSource] = useState("");
-	useEffect(() => {
-		if (activeSource && groups.some((group) => group.source === activeSource)) return;
-		setActiveSource(groups[0]?.source ?? "");
-	}, [groups, activeSource]);
-	const activeGroup = groups.find((group) => group.source === activeSource);
+	const defaultSource = groups.reduce<{ source: string; at: number } | null>((latest, group) => {
+		const first = group.rows[0];
+		const at = first?.updatedAt ?? first?.createdAt ?? 0;
+		return !latest || at > latest.at ? { source: group.source, at } : latest;
+	}, null)?.source ?? "";
+	const visibleSource = activeSource && groups.some((group) => group.source === activeSource) ? activeSource : defaultSource;
+	const activeGroup = groups.find((group) => group.source === visibleSource);
 
 	const toggle = (summary: Summary) => {
-		if (importedKeys.has(key(summary))) return;
+		if (importedKeys.has(summaryKey(summary))) return;
 		setSelected((previous) => {
 			const next = new Set(previous);
-			if (next.has(key(summary))) next.delete(key(summary));
-			else next.add(key(summary));
+			if (next.has(summaryKey(summary))) next.delete(summaryKey(summary));
+			else next.add(summaryKey(summary));
 			return next;
 		});
 	};
@@ -149,9 +159,9 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		setSelected((previous) => {
 			const next = new Set(previous);
 			for (const row of rows) {
-				if (importedKeys.has(key(row))) continue;
-				if (checked) next.add(key(row));
-				else next.delete(key(row));
+				if (importedKeys.has(summaryKey(row))) continue;
+				if (checked) next.add(summaryKey(row));
+				else next.delete(summaryKey(row));
 			}
 			return next;
 		});
@@ -159,7 +169,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 	const run = async () => {
 		if (!selected.size) return;
-		const items = summaries.filter((summary) => selected.has(key(summary))).map((summary) => ({ source: summary.source, externalId: summary.externalId }));
+		const items = summaries.filter((summary) => selected.has(summaryKey(summary))).map((summary) => ({ source: summary.source, externalId: summary.externalId }));
 		setImporting(true);
 		setFailure(null);
 		setReport(null);
@@ -198,6 +208,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 	const failures = report?.results.filter((result) => result.status === "failed") ?? [];
 	const skipped = report?.results.filter((result) => result.status === "skipped") ?? [];
+	const importedWithNotes = report?.results.filter((result) => result.status === "imported" && result.skipped?.length) ?? [];
 
 	return (
 		<div className="flex flex-col gap-4" data-testid="session-import">
@@ -277,6 +288,11 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							{sourceLabel(result.source)} · {result.title || result.externalId} — {result.reason}
 						</div>
 					))}
+					{importedWithNotes.map((result) => (
+						<div key={`note-${result.source}-${result.externalId}`} className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+							{sourceLabel(result.source)} · {result.title || result.externalId} — {result.skipped?.join("；")}
+						</div>
+					))}
 					{failures.map((result) => (
 						<div key={`fail-${result.source}-${result.externalId}`} className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}>
 							{sourceLabel(result.source)} · {result.title || result.externalId} — {result.reason}
@@ -291,7 +307,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			{groups.length > 0 && (
 				<div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={t.importPickSource} data-testid="import-source-tabs">
 					{groups.map((group) => {
-						const active = group.source === activeSource;
+						const active = group.source === visibleSource;
 						return (
 							<button
 								key={group.source}
@@ -332,7 +348,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 					</div>
 					<div className="flex flex-col gap-1.5">
 						{activeGroup.rows.map((row) => {
-							const rowKey = key(row);
+							const rowKey = summaryKey(row);
 							const done = importedKeys.has(rowKey);
 							const checked = selected.has(rowKey);
 							return (

@@ -6,10 +6,10 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { eachJsonLine, listFiles, readHead, reachedLimit, sortByRecency } from "./files";
+import { eachJsonLine, listFiles, readHead, reachedLimit, statMtime } from "./files";
 import { grokRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
-import { cleanTitle, compactBlocks, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
+import { cleanTitle, compactBlocks, dataUrlImageBlock, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
 
 const ROOT = grokRoot;
 
@@ -30,10 +30,10 @@ function decodeProjectDir(name: string): string | undefined {
 function importable(records: Record<string, unknown>[]): boolean {
 	for (const record of records) {
 		if (record.type === "assistant" || record.type === "tool_result") return true;
-		if (record.type === "reasoning" && typeof record.summary === "string" && record.summary.trim()) return true;
+		if (record.type === "reasoning" && reasoningText(record.summary)) return true;
 		if (record.type !== "user" || record.synthetic_reason) continue;
 		const blocks = userBlocks(record.content);
-		if (blocks.some((block) => block.type === "text" && block.text.replace(/<[^>]+>/g, "").trim())) return true;
+		if (blocks.some((block) => block.type === "image" || (block.type === "text" && block.text.replace(/<[^>]+>/g, "").trim()))) return true;
 	}
 	return false;
 }
@@ -46,41 +46,69 @@ async function hasRealMessage(history: string): Promise<boolean> {
 	}
 }
 
-/** user 的 content 可能是字符串或块数组 */function userBlocks(content: unknown): ImportedBlock[] {
+/** user 的 content 可能是字符串、文本块或 data URL 图片块 */
+function userBlocks(content: unknown): ImportedBlock[] {
 	if (typeof content === "string") return compactBlocks([textBlock(content)]);
 	if (!Array.isArray(content)) return [];
 	return compactBlocks(content.flatMap((raw): Array<ImportedBlock | null> => {
 		if (typeof raw === "string") return [textBlock(raw)];
 		const block = raw as Record<string, unknown>;
 		if (typeof block?.text === "string") return [textBlock(block.text)];
+		if (block?.type === "image") return [dataUrlImageBlock(block.url, block.mime ?? block.mimeType)];
 		return [];
 	}));
+}
+
+/** Grok 新版把 reasoning.summary 从字符串改成了 summary_text 块数组；两代格式都要读 */
+function reasoningText(summary: unknown): string {
+	if (typeof summary === "string") return summary.trim();
+	if (!Array.isArray(summary)) return "";
+	return summary
+		.map((item) => {
+			if (typeof item === "string") return item;
+			const block = item as { text?: unknown; summary_text?: unknown };
+			return typeof block?.text === "string" ? block.text : typeof block?.summary_text === "string" ? block.summary_text : "";
+		})
+		.filter(Boolean)
+		.join("\n")
+		.trim();
 }
 
 export const grokSource: ImportSourceModule = {
 	id: "grok",
 
 	async scan(options?: ScanOptions): Promise<ExternalSessionSummary[]> {
-		// 先按 chat_history 的 mtime 排序（只 stat，不读内容），再从最近往下读：
-		// summary.json 里有标题/模型/时间/消息数，读它即可，正文只在确认有真实对话时碰一下头部
 		const limit = options?.limit ?? 0;
 		const files = await listFiles(ROOT(), { match: (name) => name === "summary.json" });
-		const candidates = await sortByRecency(files.map((file) => path.join(path.dirname(file), "chat_history.jsonl")));
-		const out: ExternalSessionSummary[] = [];
-		for (const { file: history, mtime } of candidates) {
-			if (reachedLimit(out.length, limit)) break; // 只读最近的若干条
-			const dir = path.dirname(history);
-			let summary: Record<string, unknown>;
+		// summary.updated_at / last_active_at 是 Grok 的权威活动时间。必须先按它排序再 LIMIT，
+		// 不能用复制、恢复备份时会变化的 chat_history mtime 决定“最近 15 条”。
+		const candidates = (await Promise.all(files.map(async (summaryFile) => {
+			const dir = path.dirname(summaryFile);
+			const history = path.join(dir, "chat_history.jsonl");
 			try {
-				summary = JSON.parse(await fs.readFile(path.join(dir, "summary.json"), "utf8")) as Record<string, unknown>;
+				const summary = JSON.parse(await fs.readFile(summaryFile, "utf8")) as Record<string, unknown>;
+				const mtime = await statMtime(history);
+				if (mtime === undefined) return null;
+				return {
+					dir,
+					history,
+					summary,
+					mtime,
+					updatedAt: toEpochMs(summary.updated_at ?? summary.last_active_at) ?? mtime,
+				};
 			} catch {
-				continue;
+				return null;
 			}
-			if (mtime === undefined) continue; // 没有正文就没什么可导
+		}))).filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+			.sort((left, right) => right.updatedAt - left.updatedAt);
+
+		const out: ExternalSessionSummary[] = [];
+		for (const { dir, history, summary, mtime, updatedAt } of candidates) {
+			if (reachedLimit(out.length, limit)) break;
 			const info = summary.info as Record<string, unknown> | undefined;
-			const numMessages = Number(summary.num_messages ?? summary.num_chat_messages);
+			// num_messages 包含 trace/内部事件；num_chat_messages 才对应 chat_history 的会话记录数
+			const numMessages = Number(summary.num_chat_messages ?? summary.num_messages);
 			// 子代理会话（grok 的 spawn_subagent：subagent / subagent_fork / subagent_resume，本机 24 条）
-			// 以及它们的派生：agent_name 是 general-purpose / explore 之类，不是你在用的那条对话
 			if (typeof summary.session_kind === "string" && summary.session_kind.startsWith("subagent")) continue;
 			if (numMessages === 0) continue; // 开了没用的空会话
 			// 只有系统提示与合成提醒（system_reminder）的会话读不出对话，别列进列表
@@ -92,7 +120,7 @@ export const grokSource: ImportSourceModule = {
 				projectPath: typeof info?.cwd === "string" ? info.cwd : decodeProjectDir(path.basename(path.dirname(dir))),
 				model: typeof summary.current_model_id === "string" ? summary.current_model_id : undefined,
 				createdAt: toEpochMs(summary.created_at) ?? mtime,
-				updatedAt: toEpochMs(summary.updated_at ?? summary.last_active_at) ?? mtime,
+				updatedAt,
 				...(Number.isFinite(numMessages) ? { messageCount: numMessages } : {}),
 				location: history,
 			});
@@ -111,17 +139,18 @@ export const grokSource: ImportSourceModule = {
 		const skipped: string[] = [];
 		let encryptedReasoning = 0;
 		let synthetic = 0;
+		let runtimeContext = 0;
 		let model = summary.model;
 
 		for (const record of eachJsonLine(text)) {
 			const timestamp = toEpochMs(record.timestamp ?? record.time ?? record.created_at) ?? summary.createdAt ?? Date.now();
 			switch (record.type) {
 				case "system":
-					continue; // 系统提示不进对话
+					runtimeContext += 1;
+					continue; // 系统提示由 pi 按目标工作区重新生成，不冒充用户消息
 				case "user": {
 					const blocks = userBlocks(record.content);
-					const plain = blocks.map((block) => (block.type === "text" ? block.text : "")).join("\n").trim();
-					if (record.synthetic_reason || !plain) {
+					if (record.synthetic_reason || !blocks.length) {
 						synthetic += 1;
 						continue;
 					}
@@ -145,8 +174,8 @@ export const grokSource: ImportSourceModule = {
 					continue;
 				}
 				case "reasoning": {
-					const text = typeof record.summary === "string" ? record.summary : "";
-					if (text.trim()) entries.push({ type: "message", message: { role: "assistant", content: [{ type: "thinking", thinking: text }], timestamp, ...(model ? { model } : {}) } });
+					const text = reasoningText(record.summary);
+					if (text) entries.push({ type: "message", message: { role: "assistant", content: [{ type: "thinking", thinking: text }], timestamp, ...(model ? { model } : {}) } });
 					else encryptedReasoning += 1; // 加密推理无正文可导：计数后汇总成一行，不要刷屏
 					continue;
 				}
@@ -163,6 +192,7 @@ export const grokSource: ImportSourceModule = {
 
 		if (synthetic) skipped.push(`跳过 ${synthetic} 条合成输入`);
 		if (encryptedReasoning) skipped.push(`跳过 ${encryptedReasoning} 条仅含加密内容的推理记录`);
+		if (runtimeContext) skipped.push(`跳过 ${runtimeContext} 条源工具运行时上下文（pi 会按当前工作区重新生成）`);
 		if (!entries.some((entry) => entry.type === "message")) return null;
 		return { summary: { ...summary, model }, entries, skipped };
 	},

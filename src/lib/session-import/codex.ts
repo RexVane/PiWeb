@@ -7,10 +7,10 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { eachJsonLine, listFiles, readHead, reachedLimit, sortByRecency } from "./files";
+import { eachJsonLine, listFiles, readHead, readTail, reachedLimit, statMtime } from "./files";
 import { codexRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
-import { cleanTitle, compactBlocks, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
+import { cleanTitle, compactBlocks, dataUrlImageBlock, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
 
 const ROOT = codexRoot;
 
@@ -80,6 +80,7 @@ function messageBlocks(payload: Record<string, unknown>): ImportedBlock[] {
 	if (!Array.isArray(content)) return compactBlocks([textBlock(typeof content === "string" ? content : undefined)]);
 	return compactBlocks(content.flatMap((raw): Array<ImportedBlock | null> => {
 		const block = raw as Record<string, unknown>;
+		if (block?.type === "input_image") return [dataUrlImageBlock(block.image_url, block.mime_type)];
 		if (typeof block?.text === "string") return [textBlock(block.text)];
 		return [];
 	}));
@@ -93,6 +94,17 @@ function reasoningText(payload: Record<string, unknown>): ImportedBlock | null {
 		return text.trim() ? { type: "thinking", thinking: text } : null;
 	}
 	return null;
+}
+
+/** 文件 mtime 可能因复制/恢复失真；Codex 每行自带时间，末尾记录才是权威的最近活动时间 */
+function latestTimestamp(records: Record<string, unknown>[]): number | undefined {
+	let latest: number | undefined;
+	for (const record of records) {
+		const payload = record.payload as Record<string, unknown> | undefined;
+		const at = toEpochMs(record.timestamp) ?? toEpochMs(payload?.timestamp);
+		if (at !== undefined) latest = Math.max(latest ?? at, at);
+	}
+	return latest;
 }
 
 /** 标题：Codex 不写标题字段，用首条真人用户消息（rollout 头几十行里就有） */
@@ -113,10 +125,22 @@ export const codexSource: ImportSourceModule = {
 
 	async scan(options?: ScanOptions): Promise<ExternalSessionSummary[]> {
 		const limit = options?.limit ?? 0;
-		const candidates = await sortByRecency(await listFiles(ROOT(), { match: (name) => name.startsWith("rollout-") && name.endsWith(".jsonl") }));
+		const files = await listFiles(ROOT(), { match: (name) => name.startsWith("rollout-") && name.endsWith(".jsonl") });
+		// 只读每个文件末尾 64KB 就能按记录时间正确排序；不能先按 mtime 截断，否则复制过的旧文件会挤掉真正最近的会话。
+		const candidates = await Promise.all(files.map(async (file) => {
+			const mtime = await statMtime(file);
+			try {
+				const updatedAt = latestTimestamp([...eachJsonLine(await readTail(file))]);
+				return { file, mtime, updatedAt: updatedAt ?? mtime };
+			} catch {
+				return { file, mtime, updatedAt: mtime };
+			}
+		}));
+		candidates.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0));
+
 		const out: ExternalSessionSummary[] = [];
-		for (const { file, mtime } of candidates) {
-			if (reachedLimit(out.length, limit)) break; // 只读最近的若干条
+		for (const { file, mtime, updatedAt } of candidates) {
+			if (reachedLimit(out.length, limit)) break;
 			let head: string;
 			try {
 				head = await readHead(file);
@@ -136,7 +160,7 @@ export const codexSource: ImportSourceModule = {
 				model: meta.model,
 				provider: meta.provider,
 				createdAt: meta.createdAt ?? mtime,
-				updatedAt: mtime,
+				updatedAt,
 				location: file,
 			});
 		}
@@ -154,11 +178,18 @@ export const codexSource: ImportSourceModule = {
 		const skipped: string[] = [];
 		let synthetic = 0;
 		let reasoningSkipped = 0;
+		let runtimeContext = 0;
 		let meta: Meta = { cwd: summary.projectPath, createdAt: summary.createdAt, model: summary.model, provider: summary.provider };
 
 		for (const record of eachJsonLine(text)) {
 			if (record.type === "session_meta") {
 				meta = { ...meta, ...metaFrom([record]) };
+				const payload = record.payload as Record<string, unknown> | undefined;
+				if (payload?.base_instructions) runtimeContext += 1;
+				continue;
+			}
+			if (record.type === "world_state" || record.type === "turn_context") {
+				runtimeContext += 1;
 				continue;
 			}
 			if (record.type !== "response_item") continue;
@@ -169,11 +200,15 @@ export const codexSource: ImportSourceModule = {
 			switch (payload.type) {
 				case "message": {
 					const role = payload.role;
-					if (role === "developer") continue; // 系统提示，不进对话
+					if (role === "developer") {
+						runtimeContext += 1; // 系统/开发者上下文由 pi 按当前工作区重新生成
+						continue;
+					}
 					const blocks = messageBlocks(payload);
 					const plain = blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n").trim();
 					if (role === "user") {
-						if (!plain || isSynthetic(plain)) {
+						// 只有图片的真人输入也必须保留；纯文本的环境/AGENTS 注入仍不冒充用户消息
+						if (!blocks.length || (plain && isSynthetic(plain))) {
 							synthetic += 1;
 							continue;
 						}
@@ -217,6 +252,7 @@ export const codexSource: ImportSourceModule = {
 
 		if (synthetic) skipped.push(`跳过 ${synthetic} 条合成输入`);
 		if (reasoningSkipped) skipped.push(`跳过 ${reasoningSkipped} 条仅含加密内容的推理记录`);
+		if (runtimeContext) skipped.push(`跳过 ${runtimeContext} 条源工具运行时上下文（pi 会按当前工作区重新生成）`);
 		if (!entries.some((entry) => entry.type === "message")) return null;
 		return { summary: { ...summary, ...meta, projectPath: meta.cwd, model: meta.model, provider: meta.provider }, entries, skipped };
 	},

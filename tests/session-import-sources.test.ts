@@ -117,6 +117,19 @@ describe("Claude Code", () => {
 		// 时间戳逐条保留，不是导入时刻
 		expect(assistant.timestamp).toBe(TS + 1000);
 	});
+
+	it("只有图片、没有文字的用户消息不会被丢掉", async () => {
+		const file = path.join(roots.claude, "-proj", "image-only.jsonl");
+		await write(file, JSON.stringify({
+			type: "user",
+			cwd: "/ws",
+			timestamp: new Date(TS).toISOString(),
+			message: { role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }] },
+		}));
+		const summary = (await claudeSource.scan()).find((item) => item.externalId === "image-only")!;
+		const messages = messagesOf((await claudeSource.read(summary))!.entries);
+		expect(messages[0].content).toEqual([{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }]);
+	});
 });
 
 describe("Codex CLI", () => {
@@ -124,7 +137,7 @@ describe("Codex CLI", () => {
 		const file = path.join(roots.codex, "2026", "09", "13", "rollout-2026-09-13T18-03-08-01a09a38-7d6c-7b40-8d8a-c4e384b101b5.jsonl");
 		await write(file, [
 			JSON.stringify({ timestamp: new Date(TS).toISOString(), type: "session_meta", payload: { cwd: "D:\\AIApp\\PiWeb", timestamp: new Date(TS).toISOString(), model: "gpt-5-codex", model_provider: "openai", base_instructions: "x".repeat(20000) } }),
-			JSON.stringify({ timestamp: new Date(TS).toISOString(), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "修复这个 bug" }] } }),
+			JSON.stringify({ timestamp: new Date(TS).toISOString(), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "修复这个 bug" }, { type: "input_image", image_url: "data:image/png;base64,aGVsbG8=" }] } }),
 			JSON.stringify({ timestamp: new Date(TS).toISOString(), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "# Files mentioned by the user:\nfoo.ts" }] } }),
 			JSON.stringify({ timestamp: new Date(TS + 1000).toISOString(), type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "定位到类型错误" }] } }),
 			JSON.stringify({ timestamp: new Date(TS + 1000).toISOString(), type: "response_item", payload: { type: "reasoning", encrypted_content: "gAAAA..." } }),
@@ -144,13 +157,18 @@ describe("Codex CLI", () => {
 		const read = await codexSource.read(summary);
 		const messages = messagesOf(read!.entries);
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "assistant", "assistant", "toolResult"]);
+		expect(messages[0].content[1]).toEqual({ type: "image", data: "aGVsbG8=", mimeType: "image/png" });
 		const reasoning = messages[1] as Extract<ImportedMessage, { role: "assistant" }>;
 		expect(reasoning.content[0]).toEqual({ type: "thinking", thinking: "定位到类型错误" });
 		const call = messages[3] as Extract<ImportedMessage, { role: "assistant" }>;
 		expect(call.content[0]).toMatchObject({ type: "toolCall", id: "call_1", name: "shell", arguments: { command: "npm test" } });
 		expect((messages[4] as Extract<ImportedMessage, { role: "toolResult" }>).toolCallId).toBe("call_1");
-		// 跳过计数汇总成两行，不逐条刷屏
-		expect(read!.skipped).toEqual(["跳过 1 条合成输入", "跳过 1 条仅含加密内容的推理记录"]);
+		// 跳过计数按类别汇总，不逐条刷屏；系统上下文会由 pi 按目标工作区重建
+		expect(read!.skipped).toEqual([
+			"跳过 1 条合成输入",
+			"跳过 1 条仅含加密内容的推理记录",
+			"跳过 1 条源工具运行时上下文（pi 会按当前工作区重新生成）",
+		]);
 	});
 });
 
@@ -162,7 +180,8 @@ describe("Grok CLI", () => {
 			JSON.stringify({ type: "system", content: "系统提示" }),
 			JSON.stringify({ type: "user", content: "把这个整理一下" }),
 			JSON.stringify({ type: "user", content: "注入的提醒", synthetic_reason: "reminder" }),
-			JSON.stringify({ type: "reasoning", summary: "先看目录" }),
+			// Grok 新版的 summary 是块数组，不再是纯字符串
+			JSON.stringify({ type: "reasoning", summary: [{ type: "summary_text", text: "先看目录" }] }),
 			JSON.stringify({ type: "reasoning", encrypted_content: "gAAAA" }),
 			JSON.stringify({ type: "assistant", content: "好的", tool_calls: [{ id: "call_9", name: "read_file", arguments: "{\"path\":\"a\"}" }] }),
 			JSON.stringify({ type: "tool_result", tool_call_id: "call_9", content: "文件内容" }),
@@ -182,7 +201,11 @@ describe("Grok CLI", () => {
 		const call = messages[2] as Extract<ImportedMessage, { role: "assistant" }>;
 		expect(call.content.map((block) => block.type)).toEqual(["text", "toolCall"]);
 		expect(call.content[1]).toMatchObject({ id: "call_9", name: "read_file", arguments: { path: "a" } });
-		expect(read!.skipped).toEqual(["跳过 1 条合成输入", "跳过 1 条仅含加密内容的推理记录"]);
+		expect(read!.skipped).toEqual([
+			"跳过 1 条合成输入",
+			"跳过 1 条仅含加密内容的推理记录",
+			"跳过 1 条源工具运行时上下文（pi 会按当前工作区重新生成）",
+		]);
 	});
 
 	it("只有系统提示与合成提醒、没有真实对话的会话不列进列表", async () => {
@@ -195,6 +218,20 @@ describe("Grok CLI", () => {
 		await fixture();
 		const summaries = await grokSource.scan();
 		expect(summaries.map((summary) => summary.externalId)).toEqual(["01a0a4d5-728e-76d0-92d6-ba247553e656"]);
+	});
+
+	it("新版 reasoning 块数组与用户 data URL 图片都能完整导入", async () => {
+		const dir = path.join(roots.grok, "D%3A%5C", "session-media");
+		await write(path.join(dir, "summary.json"), JSON.stringify({ num_chat_messages: 2, num_messages: 99, info: { cwd: "D:\\" } }));
+		await write(path.join(dir, "chat_history.jsonl"), [
+			JSON.stringify({ type: "user", content: [{ type: "image", url: "data:image/png;base64,aGVsbG8=" }] }),
+			JSON.stringify({ type: "reasoning", summary: [{ type: "summary_text", text: "看图" }] }),
+		].join("\n"));
+		const summary = (await grokSource.scan()).find((item) => item.externalId === "session-media")!;
+		expect(summary.messageCount).toBe(2); // 用 chat 数，不用包含内部 trace 的 num_messages
+		const messages = messagesOf((await grokSource.read(summary))!.entries);
+		expect(messages[0].content[0]).toEqual({ type: "image", data: "aGVsbG8=", mimeType: "image/png" });
+		expect(messages[1].content[0]).toEqual({ type: "thinking", thinking: "看图" });
 	});
 
 	it("没有 summary.json 的 cwd 时从目录名解出来", async () => {
@@ -396,6 +433,36 @@ describe("只扫最近的若干条（界面默认每组 15 条）", () => {
 		await write(path.join(roots.claude, "-proj", "s04.jsonl"), JSON.stringify({ type: "summary", summary: "没有消息" }));
 		const capped = await claudeSource.scan({ limit: 2 });
 		expect(capped.map((summary) => summary.externalId)).toEqual(["s03", "s02"]);
+	});
+
+	it("Codex 按记录里的活动时间而不是文件 mtime 选最近 N 条", async () => {
+		const make = async (id: string, activity: number, mtime: number) => {
+			const file = path.join(roots.codex, "2026", "09", "13", `rollout-${id}.jsonl`);
+			await write(file, [
+				JSON.stringify({ timestamp: new Date(activity - 1000).toISOString(), type: "session_meta", payload: { cwd: "/ws", timestamp: new Date(activity - 1000).toISOString() } }),
+				JSON.stringify({ timestamp: new Date(activity).toISOString(), type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: id }] } }),
+			].join("\n"));
+			await fs.utimes(file, new Date(mtime), new Date(mtime));
+		};
+		await make("old-content-new-mtime", TS, TS + 20_000);
+		await make("new-content-old-mtime", TS + 10_000, TS);
+		const [latest] = await codexSource.scan({ limit: 1 });
+		expect(latest.externalId).toBe("rollout-new-content-old-mtime");
+		expect(latest.updatedAt).toBe(TS + 10_000);
+	});
+
+	it("Grok 按 summary.updated_at 而不是复制后的文件 mtime 选最近 N 条", async () => {
+		const make = async (id: string, activity: number, mtime: number) => {
+			const dir = path.join(roots.grok, "D%3A%5C", id);
+			await write(path.join(dir, "summary.json"), JSON.stringify({ updated_at: activity, num_chat_messages: 1, info: { cwd: "D:\\" } }));
+			const history = await write(path.join(dir, "chat_history.jsonl"), JSON.stringify({ type: "user", content: id }));
+			await fs.utimes(history, new Date(mtime), new Date(mtime));
+		};
+		await make("old-content-new-mtime", TS, TS + 20_000);
+		await make("new-content-old-mtime", TS + 10_000, TS);
+		const [latest] = await grokSource.scan({ limit: 1 });
+		expect(latest.externalId).toBe("new-content-old-mtime");
+		expect(latest.updatedAt).toBe(TS + 10_000);
 	});
 
 	it("SQLite 来源把上限压进 SQL，且按最近活动排序", async () => {

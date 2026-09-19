@@ -13,6 +13,20 @@ export async function readHead(file: string, bytes = 64 * 1024): Promise<string>
 	}
 }
 
+/** 读文件末尾若干字节；首行可能是被截断的半行，JSONL 解析时会自然跳过 */
+export async function readTail(file: string, bytes = 64 * 1024): Promise<string> {
+	const handle = await fs.open(file, "r");
+	try {
+		const size = (await handle.stat()).size;
+		const length = Math.min(size, bytes);
+		const buffer = Buffer.alloc(length);
+		const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+		return buffer.subarray(0, bytesRead).toString("utf8");
+	} finally {
+		await handle.close();
+	}
+}
+
 /** 逐行解析 JSONL；单行坏掉只跳过该行，不放弃整个文件 */
 export function* eachJsonLine(text: string): Generator<Record<string, unknown>> {
 	for (const line of text.split("\n")) {

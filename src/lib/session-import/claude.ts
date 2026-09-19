@@ -160,6 +160,7 @@ export const claudeSource: ImportSourceModule = {
 		const skipped: string[] = [];
 		let sidechains = 0;
 		let synthetic = 0;
+		let runtimeContext = 0;
 		let projectPath = summary.projectPath;
 		let model = summary.model;
 		let provider: string | undefined;
@@ -167,6 +168,12 @@ export const claudeSource: ImportSourceModule = {
 		for (const record of eachJsonLine(text)) {
 			if (record.isSidechain === true) {
 				sidechains += 1;
+				continue;
+			}
+			// Claude 的 attachment/system 是技能列表、token 提醒、环境快照等运行时上下文；
+			// pi 会按目标工作区生成自己的版本，不能伪装成真人 user 消息，但要在报告中明确告知。
+			if (record.type === "attachment" || record.type === "system") {
+				runtimeContext += 1;
 				continue;
 			}
 			if (typeof record.cwd === "string" && record.cwd.trim()) projectPath = projectPath ?? record.cwd;
@@ -206,9 +213,12 @@ export const claudeSource: ImportSourceModule = {
 			if (record.type === "user") {
 				const { text: textBlocks, results } = splitUserContent((message as { content?: unknown }).content);
 				const plain = textBlocks.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-				const keepText = textBlocks.filter((block) => block.type !== "text");
+				const nonText = textBlocks.filter((block) => block.type !== "text");
 				if (plain && !isSynthetic(plain.trim()) && !/^Caveat:/i.test(plain.trim())) {
-					entries.push({ type: "message", message: { role: "user", content: [...keepText, { type: "text", text: plain }], timestamp } as ImportedMessage });
+					entries.push({ type: "message", message: { role: "user", content: [...nonText, { type: "text", text: plain }], timestamp } as ImportedMessage });
+				} else if (!plain && nonText.length) {
+					// 图片可以是用户消息的全部内容，不能因为没有文字就把整轮丢掉
+					entries.push({ type: "message", message: { role: "user", content: nonText, timestamp } as ImportedMessage });
 				} else if (plain) {
 					synthetic += 1;
 				}
@@ -223,6 +233,7 @@ export const claudeSource: ImportSourceModule = {
 
 		if (sidechains) skipped.push(`跳过 ${sidechains} 条侧链（子代理）记录`);
 		if (synthetic) skipped.push(`跳过 ${synthetic} 条合成输入（命令回显/系统提醒）`);
+		if (runtimeContext) skipped.push(`跳过 ${runtimeContext} 条源工具运行时上下文（pi 会按当前工作区重新生成）`);
 		if (!entries.some((entry) => entry.type === "message")) return null;
 		return { summary: { ...summary, projectPath, model, provider }, entries, skipped };
 	},

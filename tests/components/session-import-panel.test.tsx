@@ -49,7 +49,7 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?:
 				skipped: 1,
 				failed: 1,
 				results: [
-					{ source: "claude", externalId: "c1", title: "Claude 的会话", status: "imported", messageCount: 12, workspace: "/ws" },
+					{ source: "claude", externalId: "c1", title: "Claude 的会话", status: "imported", messageCount: 12, workspace: "/ws", skipped: ["跳过 1 条运行时上下文"] },
 					{ source: "zcode", externalId: "z1", title: "ZCode 的会话", status: "skipped", reason: "已经导入过" },
 					{ source: "dsh", externalId: "d1", title: "dsh 的会话", status: "failed", reason: "源会话已不存在" },
 				],
@@ -78,6 +78,15 @@ describe("导入会话面板", () => {
 		expect(checkboxes.every((box) => !box.checked)).toBe(true);
 		// 没勾选时导入按钮禁用
 		expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true);
+	});
+
+	it("首次打开默认显示最近活动会话所在的来源", async () => {
+		setup({ sessions: [
+			session({ source: "claude", externalId: "c1", title: "较早的 Claude", updatedAt: Date.UTC(2026, 8, 10) }),
+			session({ source: "zcode", externalId: "z1", title: "最新的 ZCode", updatedAt: Date.UTC(2026, 8, 19) }),
+		] });
+		expect((await screen.findByTestId("import-group-zcode")).textContent).toContain("最新的 ZCode");
+		expect(screen.getByTestId("import-source-zcode").getAttribute("aria-selected")).toBe("true");
 	});
 
 	it("选择器列出所有有会话的来源并带条数，切换后只显示该来源", async () => {
@@ -140,6 +149,7 @@ describe("导入会话面板", () => {
 		expect(report.textContent).toContain("成功 1 · 跳过 1 · 失败 1");
 		expect(report.textContent).toContain("已经导入过");
 		expect(report.textContent).toContain("源会话已不存在");
+		expect(report.textContent).toContain("跳过 1 条运行时上下文");
 		// 导入后面板重新扫描，并把选择清空
 		await waitFor(() => expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true));
 	});

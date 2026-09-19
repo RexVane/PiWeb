@@ -121,6 +121,18 @@ export function compactBlocks(blocks: Array<ImportedBlock | null | undefined>): 
 	return blocks.filter((block): block is ImportedBlock => Boolean(block));
 }
 
+/** 外部工具常把图片内联成 data URL；只接受 base64，避免把本地路径或远程 URL 塞进 pi 会话 */
+export function dataUrlImageBlock(value: unknown, explicitMime?: unknown): ImportedBlock | null {
+	if (typeof value !== "string") return null;
+	const match = /^data:([^;,]+);base64,(.+)$/s.exec(value);
+	if (!match) return null;
+	return {
+		type: "image",
+		data: match[2],
+		mimeType: typeof explicitMime === "string" && explicitMime.trim() ? explicitMime : match[1],
+	};
+}
+
 /** 工具返回值可能是字符串、对象或数组，统一成内容块 */
 export function outputBlocks(value: unknown): ImportedBlock[] {
 	if (typeof value === "string") return compactBlocks([textBlock(value)]);
