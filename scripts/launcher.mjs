@@ -169,7 +169,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	const options = parseLauncherArgs(args, env);
 	const log = dependencies.log ?? console.log;
 	if (options.help) {
-		log("Usage: pi web [-p, --port <port>] [-H, --hostname <host>] [--dev] [--no-open]");
+		log("Usage: piweb [-p, --port <port>] [-H, --hostname <host>] [--dev] [--no-open]");
 		log("默认绑定 127.0.0.1:30141；端口被占自动 +1。开发模式仅允许本机监听。");
 		log("对外监听必须使用生产构建与 PI_WEB_PASSWORD。构建/恢复发布：npm run build:release。");
 		return 0;

@@ -74,7 +74,7 @@ describe("relativizeInText / cleanCommand paths", () => {
 		expect(cleanCommand("ls -la D:/AIApp/PiWeb", "D:/AIApp/PiWeb").text).toBe("ls -la .");
 		expect(cleanCommand("cat D:/AIApp/PiWeb/package.json", "D:\\AIApp\\PiWeb").text).toBe("cat package.json");
 		expect(cleanCommand('type "D:\\AIApp\\PiWeb\\src\\a.ts"', "D:/AIApp/PiWeb").text).toBe('type "src\\a.ts"');
-		expect(cleanCommand("wc -l /d/AIApp/PiWeb/src/lib/*.ts /d/AIApp/PiWeb/bin/pi.js", "D:/AIApp/PiWeb").text).toBe("wc -l src/lib/*.ts bin/pi.js");
+		expect(cleanCommand("wc -l /d/AIApp/PiWeb/src/lib/*.ts /d/AIApp/PiWeb/bin/piweb.js", "D:/AIApp/PiWeb").text).toBe("wc -l src/lib/*.ts bin/piweb.js");
 	});
 	it("does not touch sibling directories that merely share the prefix", () => {
 		expect(relativizeInText("ls D:/AIApp/PiWebX D:/AIApp/PiWeb2/a", "D:/AIApp/PiWeb")).toBe("ls D:/AIApp/PiWebX D:/AIApp/PiWeb2/a");
