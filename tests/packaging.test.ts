@@ -138,7 +138,11 @@ describe("bundled scripts must not depend on the build machine's paths", () => {
 	it("imports the release scripts through src/ (fixture sanity)", async () => {
 		const scripts = await bundledScripts();
 		expect(scripts).toContain("release.mjs");
+		expect(scripts).not.toContain("verify-release-config.mjs");
 		expect(scripts).toContain("build-output.mjs");
+		const manifest = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8"));
+		expect(manifest.files).toContain("scripts");
+		await expect(fs.access(path.join(repoRoot, "scripts", "verify-release-config.mjs"))).resolves.toBeUndefined();
 	});
 
 	it("never turns import.meta.url into a filesystem path unvalidated", async () => {

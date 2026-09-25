@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { createRequire } from "node:module";
+import * as nodeModule from "node:module";
 import path from "node:path";
 import { createBashToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { APP_ROOT } from "./app-root";
@@ -56,12 +56,16 @@ type LoadedPackage = { entryPath: string; value: unknown };
  * 这与平台包发布后的目录布局一一对应，不引入第二套解析规则。
  */
 export function resolveManagedNiubashPackageEntry(packageName: string, arch: SupportedArch, root = APP_ROOT): LoadedPackage {
-	const require = createRequire(path.join(root, "package.json"));
+	// 必须通过命名空间调用。webpack 会改写从 node:module 具名导入的 createRequire：
+	// 参数不是字符串字面量时把调用擦掉，运行时变成对 undefined 调用 resolve。
+	const loadPackage = nodeModule.createRequire(path.join(root, "package.json"));
+	const resolveEntry = loadPackage.resolve.bind(loadPackage);
 	try {
-		return { entryPath: require.resolve(packageName), value: require(packageName) };
+		const entryPath = resolveEntry(packageName);
+		return { entryPath, value: loadPackage(packageName) };
 	} catch (error) {
 		const checkoutEntry = path.join(root, "platform-packages", PACKAGE_BY_ARCH[arch].directory, "index.cjs");
-		if (fs.existsSync(checkoutEntry)) return { entryPath: checkoutEntry, value: require(checkoutEntry) };
+		if (fs.existsSync(checkoutEntry)) return { entryPath: checkoutEntry, value: loadPackage(checkoutEntry) };
 		throw error;
 	}
 }

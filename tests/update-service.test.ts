@@ -76,7 +76,7 @@ describe("checked staged releases", () => {
 		const initialConfig = await fs.readFile(path.join(root, "tsconfig.json"), "utf8");
 		const run = mockCommands(root);
 		const result = await prepareRelease({ root, run, env: { PI_WEB_PASSWORD: "do-not-pass" } });
-		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? args[1] : `${command} ${args.join(" ")}`)).toEqual(["--verify-config", "npm run check"]);
+		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? path.basename(args[0]) : `${command} ${args.join(" ")}`)).toEqual(["verify-release-config.mjs", "npm run check"]);
 		expect(result).toMatchObject({ needsRestart: true, buildId: "new-build", version: "1.0.0" });
 		expect(result.buildDir).toMatch(/^\.next-releases\/[A-Za-z0-9_-]+$/);
 		expect(await manifest(root)).toMatchObject({ schema: 1, state: "ready", buildDir: result.buildDir, buildId: "new-build" });

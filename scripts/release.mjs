@@ -2,8 +2,7 @@ import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { fileURLToPath } from "node:url";
 import { assertInstallation, assertLocalPath, readProductionBuild, resolveBuildOutput, RELEASES_DIR, RELEASE_MANIFEST } from "./build-output.mjs";
 import { runCommand } from "./process-runner.mjs";
 import { isMainModule } from "./entrypoint.mjs";
@@ -77,21 +76,6 @@ async function writeReleaseTypeConfig(root, buildDir) {
 	});
 }
 
-/** Run in a fresh process, after install/pull, so cached config/Next modules cannot lie. */
-export async function verifyReleaseConfig(root = process.cwd(), env = process.env) {
-	const installation = assertInstallation(root);
-	const buildDir = resolveBuildOutput(installation, env.PIWEB_BUILD_DIR);
-	if (!buildDir.startsWith(`${RELEASES_DIR}/`)) throw new Error("release requires an isolated build output");
-	const require = createRequire(path.join(installation, "package.json"));
-	const module = await import(pathToFileURL(require.resolve("next/dist/server/config.js")).href);
-	const loadConfig = typeof module.default === "function" ? module.default : module.default.default;
-	const { PHASE_PRODUCTION_BUILD } = require("next/constants");
-	const config = await loadConfig(PHASE_PRODUCTION_BUILD, installation, { silent: true });
-	if (config.distDir !== buildDir || config.typescript?.tsconfigPath !== CONFIG_PATH || config.typescript?.ignoreBuildErrors) {
-		throw new Error("Next config does not honor the isolated release directory/typecheck; refusing to build over the serving output");
-	}
-}
-
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 const PI_AI_PACKAGE = "@earendil-works/pi-ai";
 
@@ -150,7 +134,7 @@ export async function prepareRelease({ root = ROOT, env = process.env, run = run
 		signal?.throwIfAborted();
 		assertInstallation(installation);
 		await writeReleaseTypeConfig(installation, buildDir);
-		await run(process.execPath, [path.join(installation, "scripts", "release.mjs"), "--verify-config"], {
+		await run(process.execPath, [path.join(installation, "scripts", "verify-release-config.mjs")], {
 			cwd: installation, env: childEnv, timeoutMs: 60_000, signal,
 		});
 		await run("npm", ["run", "check"], { cwd: installation, env: childEnv, timeoutMs: 600_000, signal });
@@ -175,19 +159,15 @@ if (isMainModule(import.meta.url)) {
 	process.once("SIGINT", cancel);
 	process.once("SIGTERM", cancel);
 	try {
-		if (process.argv.length === 3 && process.argv[2] === "--verify-config") {
-			await verifyReleaseConfig();
-		} else {
-			const updatePi = process.argv.length === 3 && process.argv[2] === "--update-pi";
-			if (process.argv.length > 2 && !updatePi) throw new Error("Usage: node scripts/release.mjs [--update-pi]");
-			console.log("[piweb] Checking and building an isolated release; the existing server is not restarted.");
-			if (updatePi) console.log("[piweb] Pi dependency update: use a maintenance window with no active sessions; node_modules is shared.");
-			const release = await prepareRelease({
-				signal: controller.signal,
-				prepare: updatePi ? async (context) => { await installPiUpdate(context); } : undefined,
-			});
-			console.log(`[piweb] Release ready: ${release.buildDir} (${release.buildId}). Restart PiWeb manually when idle to use it.`);
-		}
+		const updatePi = process.argv.length === 3 && process.argv[2] === "--update-pi";
+		if (process.argv.length > 2 && !updatePi) throw new Error("Usage: node scripts/release.mjs [--update-pi]");
+		console.log("[piweb] Checking and building an isolated release; the existing server is not restarted.");
+		if (updatePi) console.log("[piweb] Pi dependency update: use a maintenance window with no active sessions; node_modules is shared.");
+		const release = await prepareRelease({
+			signal: controller.signal,
+			prepare: updatePi ? async (context) => { await installPiUpdate(context); } : undefined,
+		});
+		console.log(`[piweb] Release ready: ${release.buildDir} (${release.buildId}). Restart PiWeb manually when idle to use it.`);
 	} catch (error) {
 		console.error(`[piweb] Release failed: ${error instanceof Error ? error.message : error}`);
 		process.exitCode = 1;
