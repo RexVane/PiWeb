@@ -20,6 +20,16 @@
 
 PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it is a web shell that drives the pi already installed on your machine through the official SDK, leaving pi itself untouched. The two **share one set of state** — the same agent directory (`~/.pi/agent`) holds your settings, models and credentials, sessions, skills and packages — so a conversation started in the pi CLI shows up in the browser right away, and the other way round. Updating is **two separate things**: the pi engine and PiWeb each carry their own version and their own update entry point (the two "Check for updates" rows in Settings), and upgrading one leaves the other alone. What runs underneath is native pi; plugin compatibility in the browser, interactive plugins especially, is not finished yet — for now plugins can be managed rather than fully driven from the page.
 
+## Workflows and Delegation
+
+Use the **+** button in the composer's lower-left corner to choose **Agent / Plan / Goal** per session. Agent uses the existing tool preset. Plan uses read-only tools and stops for explicit approval; "Execute plan" temporarily restores the current tool preset for that run, then returns to read-only planning. Goal retains the first prompt as the objective and asks the agent to verify progress on later turns; it does not start unlimited follow-up turns automatically. Workflow state is stored as a custom entry in the native pi session.
+
+Plan's tool restriction is not a sandbox for locally installed, trusted pi extensions. Approval is tied to the latest proposed plan and is rejected if the conversation changes after that plan.
+
+Click a sent user message to edit and resend it in place, even without changing its text. PiWeb reruns the conversation from that message and keeps the previous branch in the native session history rather than adding a new message at the bottom.
+
+With the standard or full tool preset, `piweb_delegate` can run up to three independent research tasks in parallel. Each temporary subagent uses the current model and read-only file tools. It cannot run commands, edit files, or delegate again. Reports return to the parent; these are not independent Worker sessions. The explicit read-only preset does not automatically enable delegation.
+
 ## Features
 
 ### Real-Time Streaming Chat

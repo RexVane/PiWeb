@@ -36,6 +36,8 @@ import { BoundaryError } from "./path-security";
 import { estimateTokensOf } from "./process-format";
 import { getPiSettings } from "./pi-settings";
 import { createManagedNiubashTools } from "./managed-niubash";
+import { createDelegationTool } from "./delegation";
+import { awaitingGoalMessage, isWorkflowMode, planCanRun, readWorkflow, saveWorkflow, workflowInstruction, type WorkflowState } from "./workflow";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
@@ -66,6 +68,7 @@ interface Managed {
 	ledger: TrajLedger;
 	lastActive: number;
 	toolPreset: ToolPreset;
+	workflow: WorkflowState;
 	/** 显式逐项选择优先于 preset；保留失效名称以便资源重新启用后恢复用户选择。 */
 	customActiveTools?: string[];
 	resourceVersion: number;
@@ -527,6 +530,20 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		case "agent_settled":
 			m.runActive = false;
+			if (m.workflow.mode === "plan") {
+				if (m.workflow.planStatus === "planning") {
+					const answer = [...(m.session?.messages ?? [])].reverse().find((message) => message.role === "assistant");
+					const ready = answer?.role === "assistant" && answer.stopReason === "stop" && answer.content.some((part) => part.type === "text" && part.text.trim());
+					const entry = ready ? m.sm.getBranch().slice().reverse().find((item) => item.type === "message" && item.message.role === "assistant" && item.message.stopReason === "stop") : undefined;
+					setWorkflow(m, { ...m.workflow, planStatus: entry ? "ready" : "idle", planId: entry?.id });
+				} else if (m.workflow.planStatus === "executing") {
+					// 执行报错或被中止时方案仍待执行：以当前叶节点为新的批准锚点，可以直接再次执行。
+					const answer = [...(m.session?.messages ?? [])].reverse().find((message) => message.role === "assistant");
+					const failed = answer?.role === "assistant" && (answer.stopReason === "error" || answer.stopReason === "aborted");
+					const anchor = failed ? m.sm.getLeafId() : null;
+					setWorkflow(m, anchor ? { ...m.workflow, planStatus: "ready", planId: anchor } : { ...m.workflow, planStatus: "idle", planId: undefined });
+				}
+			}
 			publish(m, { type: "status", isStreaming: false, state: "idle", ts: now });
 			publishUsage(m);
 			if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
@@ -636,6 +653,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		ledger: new TrajLedger(initialTrajectory),
 		lastActive: Date.now(),
 		toolPreset: "readonly",
+		workflow: readWorkflow(sm),
 		resourceVersion: 0,
 		resourceReloadPending: false,
 		resourceReloading: false,
@@ -789,7 +807,22 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 	if (m.session) return m.session;
 	m.creating = (async () => {
 		await resourceLoaderReady(m.cwd);
-		const loader = await createSessionResourceLoader(m.cwd);
+		const loader = await createSessionResourceLoader(m.cwd, [{
+			name: "piweb-workflow",
+			hidden: true,
+			factory: (pi) => {
+				pi.on("before_agent_start", (event) => {
+					const instruction = workflowInstruction(m.workflow);
+					if (instruction) {
+						if (event.systemPromptOptions.forceSystemPrompt !== undefined) event.systemPromptOptions.forceSystemPrompt += `\n\n${instruction}`;
+						else event.systemPromptOptions.sections.piweb_workflow = instruction;
+					} else delete event.systemPromptOptions.sections.piweb_workflow;
+					if (m.workflow.mode === "plan" && m.workflow.planStatus !== "executing") {
+						event.systemPromptOptions.selectedTools = event.systemPromptOptions.selectedTools.filter((name) => [...TOOL_PRESETS.readonly, "piweb_delegate"].includes(name));
+					}
+				});
+			},
+		}]);
 		let created: AgentSession | undefined;
 		try {
 			if (m.disposed) throw new Error("session is disposed");
@@ -801,7 +834,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				resourceLoader: loader,
 				settingsManager: getSettingsManager(m.cwd),
 				// Windows: 同名 bash 覆盖 SDK 内置工具，指向托管 niubash；其它平台返回 []，走 Pi 默认。
-				customTools: createManagedNiubashTools(m.cwd),
+				customTools: [...createManagedNiubashTools(m.cwd), createDelegationTool(m.cwd, () => m.session)],
 			});
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");
@@ -848,7 +881,9 @@ function isManagedBusy(m: Managed): boolean {
 
 function allowedToolNames(m: Managed, session: AgentSession): string[] {
 	const allowed = m.customActiveTools ?? (m.toolPreset === "full" ? undefined : TOOL_PRESETS[m.toolPreset]);
-	return listAllToolNames(session).filter((name) => !allowed || allowed.includes(name));
+	const effective = allowed ? [...allowed, ...(m.customActiveTools || m.toolPreset === "readonly" ? [] : ["piweb_delegate"])] : undefined;
+	const planning = m.workflow.mode === "plan" && m.workflow.planStatus !== "executing";
+	return listAllToolNames(session).filter((name) => (!effective || effective.includes(name)) && (!planning || [...TOOL_PRESETS.readonly, "piweb_delegate"].includes(name)));
 }
 
 function applyToolPolicy(m: Managed, session: AgentSession): void {
@@ -857,6 +892,20 @@ function applyToolPolicy(m: Managed, session: AgentSession): void {
 
 function publishTools(m: Managed, session: AgentSession): void {
 	publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), toolPreset: m.toolPreset, customActiveTools: m.customActiveTools ?? null, ts: Date.now() });
+}
+
+function setWorkflow(m: Managed, next: WorkflowState): void {
+	saveWorkflow(m.sm, next);
+	m.workflow = next;
+	publishWorkflow(m);
+}
+
+function publishWorkflow(m: Managed): void {
+	if (m.session && !m.disposed) {
+		applyToolPolicy(m, m.session);
+		publishTools(m, m.session);
+	}
+	publish(m, { type: "workflow", workflow: m.workflow, ts: Date.now() });
 }
 
 /** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界收敛到服务端选择。 */
@@ -1244,6 +1293,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		thinkingLevel,
 		thinkingLevels,
 		toolPreset: m.toolPreset,
+		workflow: m.workflow,
 		customActiveTools: m.customActiveTools ?? null,
 		extensionUiRequests: m.ui?.getPendingRequests() ?? [],
 		tools,
@@ -1303,6 +1353,28 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 			case "prepare":
 				await ensureSession(m);
 				return { ok: true };
+			case "setWorkflowMode": {
+				if (!isWorkflowMode(cmd.mode)) return { ok: false, error: "invalid workflow mode" };
+				if (isManagedBusy(m)) return { ok: false, error: "cannot change workflow while the agent is running" };
+				// 重选当前模式不重置：否则会清掉 Goal 目标或待执行的方案，并多写一条记录。
+				if (cmd.mode === m.workflow.mode) return { ok: true };
+				setWorkflow(m, { mode: cmd.mode, planStatus: "idle", goal: "" });
+				return { ok: true };
+			}
+			case "approvePlan": {
+				if (!planCanRun(m.workflow)) return { ok: false, error: "there is no plan awaiting approval" };
+				if (isManagedBusy(m)) return { ok: false, error: "session is busy" };
+				const branch = m.sm.getBranch();
+				const planIndex = branch.findIndex((entry) => entry.id === m.workflow.planId);
+				if (planIndex < 0 || branch.slice(planIndex + 1).some((entry) => entry.type === "message")) {
+					return { ok: false, error: "the plan is no longer the latest conversation; request a new plan" };
+				}
+				const ready = m.workflow;
+				setWorkflow(m, { ...ready, planStatus: "executing" });
+				const result = await execute(m, { cmd: "prompt", text: "Execute the plan you just proposed. Verify the changes and report any unfinished work." });
+				if (!result.ok) setWorkflow(m, ready);
+				return result;
+			}
 			case "prompt": {
 				const text = (cmd.text ?? "").trim();
 				if (!text && !cmd.images?.length) return { ok: false, error: "empty prompt" };
@@ -1314,6 +1386,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if (m.disposed) throw new Error("session is disposed");
 					// 只有用户显式选择 steer/followUp 才排队；旧的普通提交不能悄悄成为 steering。
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
+					if (m.workflow.mode === "plan" && (session.isStreaming || m.runActive)) return { ok: false, error: "wait for the current plan or execution to finish" };
 					if (!session.isStreaming) {
 						// 基线快照不能无限阻塞首条 prompt（git 不可用时每次探测至多 30s 超时）：
 						// 5s 内没完成就放行 prompt，快照后台补拍（工具结束后照常记步，外部修改兜底）。
@@ -1323,11 +1396,18 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 						]);
 					}
 					if (m.disposed) throw new Error("session is disposed");
-					return await new Promise<CommandResult>((resolve) => {
+					const previousWorkflow = m.workflow;
+					if (m.workflow.mode === "plan" && m.workflow.planStatus !== "executing") {
+						setWorkflow(m, { ...m.workflow, planStatus: "planning", planId: undefined });
+					} else if (m.workflow.mode === "goal" && !m.workflow.goal && text) {
+						setWorkflow(m, { ...m.workflow, goal: text.slice(0, 8_000) });
+					}
+					const result = await new Promise<CommandResult>((resolve) => {
 						let accepted = false;
 						const run = session.prompt(text, {
 							images: cmd.images,
 							streamingBehavior: cmd.behavior,
+							expandPromptTemplates: m.workflow.mode !== "plan" || m.workflow.planStatus === "executing",
 							source: "rpc",
 							preflightResult: (success) => {
 								if (success) {
@@ -1344,7 +1424,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 							if (accepted) publish(m, { type: "error", message, ts: Date.now() });
 							else resolve({ ok: false, error: message });
 						});
-					});
+						});
+					if (!result.ok && m.workflow !== previousWorkflow) setWorkflow(m, previousWorkflow);
+					return result;
 				} finally {
 					m.promptSubmitting = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
@@ -1353,6 +1435,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 			}
 			case "steer":
 			case "followUp": {
+				if (m.workflow.mode === "plan") return { ok: false, error: "Plan mode does not queue prompts" };
 				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
 				const session = await ensureSession(m);
 				if (m.promptSubmitting || m.resourceReloading || !session.isStreaming) return { ok: false, error: "session is not accepting queued messages" };
@@ -1441,6 +1524,10 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const entryId = String((cmd as any).entryId ?? "");
 				if (!entryId) return { ok: false, error: "missing entryId" };
 				const r = await session.navigateTree(entryId);
+				if (!r?.cancelled) {
+					m.workflow = readWorkflow(m.sm);
+					publishWorkflow(m);
+				}
 				return { ok: !r?.cancelled, data: { cancelled: r?.cancelled === true, editorText: r?.editorText } };
 			}
 			case "editAndResend": {
@@ -1450,6 +1537,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const text = (cmd.text ?? "").trim();
 				if (!entryId) return { ok: false, error: "missing entryId" };
 				if (!text) return { ok: false, error: "empty prompt" };
+				const target = m.sm.getEntry(entryId);
+				if (target?.type !== "message" || target.message.role !== "user") return { ok: false, error: "message is not editable" };
+				const images = Array.isArray(target.message.content) ? target.message.content.filter((part) => part.type === "image") : [];
 				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
 				m.promptSubmitting = true;
 				try {
@@ -1463,11 +1553,64 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 						}
 					}
 					if (m.disposed) throw new Error("session is disposed");
-					const moved = await session.navigateTree(entryId);
+					// SDK 对当前叶节点直接返回 no-op；先移开叶节点，才能把最后一条用户消息也原位重发。
+					const originalLeafId = m.sm.getLeafId();
+					const leafWasTarget = originalLeafId === entryId;
+					if (leafWasTarget) {
+						if (target.parentId) m.sm.branch(target.parentId);
+						else m.sm.resetLeaf();
+					}
+					let moved;
+					try {
+						moved = await session.navigateTree(entryId);
+					} catch (error) {
+						if (leafWasTarget) m.sm.branch(entryId);
+						throw error;
+					}
+					if (moved?.cancelled && leafWasTarget) m.sm.branch(entryId);
 					if (moved?.cancelled) return { ok: false, error: "edit cancelled" };
+					m.workflow = readWorkflow(m.sm);
+					publishWorkflow(m);
 					await growthOf(m).prepare().catch(() => undefined);
-					await session.prompt(text);
-					return { ok: true };
+					const previousWorkflow = m.workflow;
+					if (m.workflow.mode === "plan") setWorkflow(m, { ...m.workflow, planStatus: "planning", planId: undefined });
+					// 编辑的正是定下目标的那条消息时，目标跟着改；旧目标记录是它的祖先，回退分支不会带走它。
+					else if (m.workflow.mode === "goal" && awaitingGoalMessage(m.sm) && m.workflow.goal !== text.slice(0, 8_000)) {
+						setWorkflow(m, { ...m.workflow, goal: text.slice(0, 8_000) });
+					}
+					const options = { images, expandPromptTemplates: m.workflow.mode !== "plan" };
+					return await new Promise<CommandResult>((resolve) => {
+						let accepted = false;
+						const run = session.prompt(text, {
+							...options,
+							preflightResult: (success) => {
+								if (success) {
+									accepted = true;
+									resolve({ ok: true, data: { accepted: true } });
+								}
+							},
+						});
+						void run.then(() => {
+							if (!accepted) resolve({ ok: true });
+						}, (error) => {
+							const message = String(error?.message ?? error);
+							if (accepted) {
+								publish(m, { type: "error", message, ts: Date.now() });
+								return;
+							}
+							// Rejected preflight never wrote the edited turn; restore the old branch before the client resyncs.
+							try {
+								if (originalLeafId) m.sm.branch(originalLeafId);
+								else m.sm.resetLeaf();
+								session.refreshContext();
+								m.workflow = readWorkflow(m.sm);
+								publishWorkflow(m);
+							} catch {
+								if (m.workflow !== previousWorkflow) setWorkflow(m, previousWorkflow);
+							}
+							resolve({ ok: false, error: message });
+						});
+					});
 				} finally {
 					m.promptSubmitting = false;
 				}

@@ -39,7 +39,7 @@ import { useFileViewer } from "@/hooks/useFileViewer";
 import type { TreeNode } from "@/lib/growth-tree";
 import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
-import type { ImageAttachment, TrajEntry } from "@/lib/types";
+import type { ImageAttachment, TrajEntry, WorkflowMode } from "@/lib/types";
 
 // dsh ui-layout columns.ts 几何常量
 const SIDEBAR_MIN = 264;
@@ -91,6 +91,7 @@ export function AppShell() {
 		removeWorkspace,
 		refreshModels,
 		sendCommand,
+		editAndResend,
 		newSession,
 		openSession,
 		closeSession,
@@ -146,6 +147,7 @@ export function AppShell() {
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
+	const [heroMode, setHeroMode] = useState<WorkflowMode>("agent");
 	const [isNarrow, setIsNarrow] = useState(false);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 	useEffect(() => {
@@ -359,15 +361,9 @@ export function AppShell() {
 	const doEditMessage = useCallback(
 		async (entryId: string, text: string) => {
 			if (!currentId) return;
-			const done = await sendCommand({ cmd: "editAndResend", entryId, text });
-			if (!done?.success) {
-				setError(done?.error ?? t.editMessageFailed);
-				return;
-			}
-			// 被编辑消息之后的尾部要从视图里消失（服务端已切断该分支）
-			resync();
+			await editAndResend(entryId, text);
 		},
-		[currentId, resync, sendCommand, setError, t.editMessageFailed],
+		[currentId, editAndResend],
 	);
 
 	const doArchiveSession = useCallback(
@@ -435,6 +431,7 @@ export function AppShell() {
 			provider: effective?.provider,
 			modelId: effective?.id,
 			thinking: heroThinking || undefined,
+			mode: heroMode,
 		});
 		if (!p) return { success: false };
 		// Bind before the new-session render. In-flight ChatInput callbacks still own
@@ -745,8 +742,10 @@ export function AppShell() {
 							}}
 							defaultModel={defaultModel}
 							heroModelLevels={heroModelLevels}
-							heroThinking={heroThinking}
-							onSelectHeroThinking={setHeroThinking}
+								heroThinking={heroThinking}
+								onSelectHeroThinking={setHeroThinking}
+								heroMode={heroMode}
+								onSelectHeroMode={setHeroMode}
 						/>
 						{/* 草稿阶段的错误行内显示（不再弹右下角） */}
 						{state.error && (
@@ -882,6 +881,9 @@ export function AppShell() {
 											providerNames={providerNames}
 											authByProvider={authByProvider}
 											queue={snapshot?.queue ?? { steering: [], followUp: [] }}
+											workflow={snapshot?.workflow}
+											onWorkflowModeChange={(mode) => sendCommand({ cmd: "setWorkflowMode", mode })}
+											onApprovePlan={() => sendCommand({ cmd: "approvePlan" })}
 											commands={slashCommands}
 											onCommand={runSlashCommand}
 											onSend={sendPrompt}
@@ -1067,6 +1069,8 @@ function Hero({
 	heroModelLevels,
 	heroThinking,
 	onSelectHeroThinking,
+	heroMode,
+	onSelectHeroMode,
 }: {
 	draft: ChatDraft;
 	onDraftChange: (update: ChatDraftUpdate) => void;
@@ -1096,6 +1100,8 @@ function Hero({
 	heroModelLevels: string[];
 	heroThinking: string;
 	onSelectHeroThinking: (level: string) => void;
+	heroMode: WorkflowMode;
+	onSelectHeroMode: (mode: WorkflowMode) => void;
 }) {
 	const { t } = useI18n();
 	const [wsMenu, setWsMenu] = useState(false);
@@ -1215,6 +1221,8 @@ function Hero({
 					providerNames={providerNames}
 					authByProvider={authByProvider}
 					queue={{ steering: [], followUp: [] }}
+					workflow={{ mode: heroMode, planStatus: "idle", goal: "" }}
+					onWorkflowModeChange={onSelectHeroMode}
 					onSend={onSend}
 					onSteer={() => ({ success: false })}
 					onAbort={() => {}}

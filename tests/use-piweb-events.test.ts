@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { extensionDialogsFromSnapshot, foldPiWebEvent, type PiWebState } from "../src/hooks/usePiWeb";
+import { extensionDialogsFromSnapshot, foldPiWebEvent, previewEditedBranch, type PiWebState } from "../src/hooks/usePiWeb";
 import type { WebMessage, WebSnapshot } from "../src/lib/types";
 
 describe("PiWeb SSE event folding", () => {
+	it("previews an edited user turn in place and removes the obsolete branch", () => {
+		const older: WebMessage = { role: "user", id: "older", content: [{ type: "text", text: "before" }] };
+		const target: WebMessage = { role: "user", id: "target", content: [
+			{ type: "text", text: "original" },
+			{ type: "image", data: "image-data", mimeType: "image/png" },
+		] };
+		const messages: WebMessage[] = [older, { role: "assistant", content: [{ type: "text", text: "old answer" }] }, target,
+			{ role: "assistant", content: [{ type: "text", text: "obsolete answer" }] },
+			{ role: "user", id: "later", content: [{ type: "text", text: "obsolete follow-up" }] }];
+		const preview = previewEditedBranch(messages, "target", "revised");
+		expect(preview).toEqual([older, messages[1], { ...target, content: [
+			{ type: "text", text: "revised" }, target.content[1],
+		] }]);
+		expect(messages).toHaveLength(5);
+		expect(previewEditedBranch(messages, "target", "original")?.[2].content[0]).toEqual({ type: "text", text: "original" });
+		expect(previewEditedBranch(messages, "missing", "text")).toBeNull();
+	});
+
 	it("keeps compaction progress and failure visible in session state", () => {
 		const initial = { compaction: null } as PiWebState;
 		const started = foldPiWebEvent(initial, { type: "compaction", phase: "start", ts: 1 });

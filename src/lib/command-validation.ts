@@ -1,4 +1,4 @@
-import type { AgentCommand, ImageAttachment, ToolPreset } from "./types";
+import type { AgentCommand, ImageAttachment, ToolPreset, WorkflowMode } from "./types";
 
 const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"prepare",
@@ -10,6 +10,8 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"setModel",
 	"setThinkingLevel",
 	"setToolPreset",
+	"setWorkflowMode",
+	"approvePlan",
 	"setActiveTools",
 	"rename",
 	"fork",
@@ -21,6 +23,7 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"reload",
 ]);
 const TOOL_PRESETS = new Set<ToolPreset>(["readonly", "standard", "full"]);
+const WORKFLOW_MODES = new Set<WorkflowMode>(["agent", "plan", "goal"]);
 const STREAMING_BEHAVIORS = new Set(["steer", "followUp"]);
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_TEXT = 1_000_000;
@@ -78,6 +81,10 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 			if (typeof raw.preset !== "string" || !TOOL_PRESETS.has(raw.preset as ToolPreset)) throw new Error("invalid tool preset");
 			command.preset = raw.preset as ToolPreset;
 		}
+		if (raw.mode !== undefined) {
+			if (typeof raw.mode !== "string" || !WORKFLOW_MODES.has(raw.mode as WorkflowMode)) throw new Error("invalid workflow mode");
+			command.mode = raw.mode as WorkflowMode;
+		}
 		if (raw.behavior !== undefined) {
 			if (typeof raw.behavior !== "string" || !STREAMING_BEHAVIORS.has(raw.behavior)) throw new Error("invalid streaming behavior");
 			command.behavior = raw.behavior as "steer" | "followUp";
@@ -108,6 +115,7 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (command.cmd === "setModel" && (!command.provider || !command.modelId)) throw new Error("provider and modelId are required");
 		if (command.cmd === "setThinkingLevel" && !command.level) throw new Error("level is required");
 		if (command.cmd === "setToolPreset" && !command.preset) throw new Error("preset is required");
+		if (command.cmd === "setWorkflowMode" && !command.mode) throw new Error("mode is required");
 		if (command.cmd === "setActiveTools" && !command.names) throw new Error("names are required");
 		if (command.cmd === "navigate" && !command.entryId) throw new Error("entryId is required");
 		return { ok: true, command };

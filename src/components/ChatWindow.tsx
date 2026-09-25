@@ -22,6 +22,7 @@ import {
 	IconFileOutline16,
 	IconRefreshOutline14,
 	IconSearchOutline16,
+	IconSendArrowUp14,
 	IconTerminalOutline14,
 	IconThinkOutline14,
 	IconWarningOutline16,
@@ -897,72 +898,77 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	const images = message.content.filter((content) => content.type === "image");
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(text);
+	const [editorWidth, setEditorWidth] = useState(132);
+	const editRef = useRef<HTMLTextAreaElement>(null);
+	const bubbleRef = useRef<HTMLDivElement>(null);
 	const canEdit = Boolean(onEditMessage && message.id && text);
+	useEffect(() => {
+		if (!editing || !editRef.current) return;
+		editRef.current.style.height = "0px";
+		editRef.current.style.height = `${Math.min(320, editRef.current.scrollHeight)}px`;
+	}, [draft, editing]);
+	const imageStrip = images.length > 0 && (
+		<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
+			{images.map((image, index) => (
+				<img key={index} src={`data:${image.mimeType};base64,${image.data}`} alt="" className="max-h-72 max-w-full rounded-2xl object-contain" style={{ border: "0.5px solid var(--dsw-border-l2)" }} />
+			))}
+		</div>
+	);
+	function beginEdit() {
+		if (!canEdit) return;
+		setEditorWidth(Math.max(132, Math.ceil(bubbleRef.current?.getBoundingClientRect().width ?? 132)));
+		setDraft(text);
+		setEditing(true);
+	}
 	if (editing) {
 		return (
 			<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
-				<div className="msg-user-bubble w-full">
+				{imageStrip}
+				<div className="msg-user-bubble pw-user-editor" style={{ width: editorWidth }}>
 					<textarea
-						className="w-full resize-none bg-transparent outline-none"
-						style={{ minHeight: 68, font: "inherit", color: "inherit" }}
+						ref={editRef}
+						className="pw-user-editor-input"
 						value={draft}
 						aria-label={t.editMessage}
 						autoFocus
 						onChange={(e) => setDraft(e.target.value)}
 						onKeyDown={(e) => {
 							if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
-							if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+							if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
 						}}
 					/>
-				</div>
-				<div className="mt-1.5 flex items-center gap-2">
-					<button type="button" className="btn-outline" style={{ height: 26, padding: "0 10px", fontSize: 12 }} onClick={() => setEditing(false)}>
-						{t.cancel}
-					</button>
-					<button
-						type="button"
-						className="btn-primary-white"
-						style={{ height: 26, padding: "0 12px", fontSize: 12 }}
-						disabled={!draft.trim() || draft.trim() === text.trim()}
-						onClick={submit}
-					>
-						{t.sendEdit}
-					</button>
+					<div className="pw-user-editor-actions">
+						<button type="button" className="pw-user-editor-cancel" aria-label={t.cancel} title={t.cancel} onClick={() => setEditing(false)}><IconCloseOutline14 size={14} /></button>
+						<button type="button" className="pw-user-editor-send" aria-label={t.sendEdit} title={t.sendEdit} disabled={!draft.trim()} onClick={submit}><IconSendArrowUp14 size={15} /></button>
+					</div>
 				</div>
 			</div>
 		);
 	}
 	function submit() {
 		const next = draft.trim();
-		if (!next || next === text.trim() || !onEditMessage || !message.id) return;
+		if (!next || !onEditMessage || !message.id) return;
 		setEditing(false);
 		onEditMessage(message.id, next);
 	}
 	return (
 		// 回合边界：用户消息前留 28px（比回合内 8px 大得多），长对话里一眼找到“这一轮从哪开始”
 		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
-			{images.length > 0 && (
-				<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
-					{images.map((image, index) => (
-						<img
-							key={index}
-							src={`data:${image.mimeType};base64,${image.data}`}
-							alt=""
-							className="max-h-72 max-w-full rounded-2xl object-contain"
-							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-						/>
-					))}
-				</div>
-			)}
+			{imageStrip}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
-			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
+			{text && <div ref={bubbleRef} className={`msg-user-bubble${canEdit ? " pw-user-message-clickable" : ""}`} onClick={canEdit ? (event) => {
+				if ((event.target as HTMLElement).closest("a, button, input, textarea, [role='button']")) return;
+				const selection = window.getSelection();
+				if (selection && !selection.isCollapsed) return;
+				beginEdit();
+			} : undefined}><Markdown text={text} /></div>}
 			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
 			{text && (
 				<MessageActions
 					text={text}
 					clockStart={message.timestamp !== undefined}
 					time={message.timestamp}
-					onEdit={canEdit ? () => { setDraft(text); setEditing(true); } : undefined}
+					onEdit={canEdit ? beginEdit : undefined}
 				/>
 			)}
 		</div>

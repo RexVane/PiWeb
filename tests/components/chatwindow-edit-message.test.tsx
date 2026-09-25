@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * 用户消息的原地编辑重发：复制图标右边多一个编辑按钮，点开后原地编辑，
- * 点「重新发送」把（本条消息 id, 新文本）交给上层——上层 navigate + prompt 让模型重新回答。
+ * 用户消息的原地编辑重发：点击气泡或编辑按钮后原地编辑，
+ * 再发送时把（本条消息 id, 文本）交给上层，由会话树重跑这一分支。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -29,12 +29,10 @@ function renderWindow(onEditMessage?: (entryId: string, text: string) => void) {
 }
 
 describe("user message edit affordance", () => {
-	it("offers edit next to copy and resends the edited text", () => {
+	it("opens the editor by clicking the message and resends edited text", () => {
 		const onEdit = vi.fn();
 		renderWindow(onEdit);
-
-		const editButton = screen.getByRole("button", { name: "编辑这条消息" });
-		fireEvent.click(editButton);
+		fireEvent.click(screen.getByText("hello world"));
 
 		const editor = screen.getByRole("textbox", { name: "编辑这条消息" }) as HTMLTextAreaElement;
 		expect(editor.value).toBe("hello world");
@@ -45,12 +43,14 @@ describe("user message edit affordance", () => {
 		expect(onEdit).toHaveBeenCalledWith("entry-1", "hello edited");
 	});
 
-	it("keeps the edit button disabled while the draft is unchanged", () => {
+	it("allows resending the same text from the original message", () => {
 		const onEdit = vi.fn();
 		renderWindow(onEdit);
 		fireEvent.click(screen.getByRole("button", { name: "编辑这条消息" }));
-		expect((screen.getByRole("button", { name: "重新发送" }) as HTMLButtonElement).disabled).toBe(true);
-		expect(onEdit).not.toHaveBeenCalled();
+		const send = screen.getByRole("button", { name: "重新发送" }) as HTMLButtonElement;
+		expect(send.disabled).toBe(false);
+		fireEvent.click(send);
+		expect(onEdit).toHaveBeenCalledWith("entry-1", "hello world");
 	});
 
 	it("cancel returns to the plain bubble without notifying the parent", () => {

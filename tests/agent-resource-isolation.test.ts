@@ -51,6 +51,189 @@ async function create() {
 }
 
 describe("real SDK session resource isolation", () => {
+	it("keeps Plan read-only until approval and restores its mode from the native session", async () => {
+		const { m, session } = await create();
+		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
+		expect(await manager.execute(m, { cmd: "setWorkflowMode", mode: "plan" })).toMatchObject({ ok: true });
+		expect(session.getActiveToolNames()).toContain("piweb_delegate");
+		expect(session.getActiveToolNames()).not.toContain("bash");
+		expect(session.getActiveToolNames()).not.toContain("write");
+		expect(await manager.execute(m, { cmd: "approvePlan" })).toMatchObject({ ok: false });
+		expect((await manager.buildSnapshot(m)).workflow).toMatchObject({ mode: "plan", planStatus: "idle" });
+	});
+
+	it("makes the Plan approval gate explicit across an offline model turn", async () => {
+		const { m, session } = await create();
+		await manager.execute(m, { cmd: "setToolPreset", preset: "standard" });
+		await manager.execute(m, { cmd: "setWorkflowMode", mode: "plan" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const first = createAssistantMessageEventStream();
+		const second = createAssistantMessageEventStream();
+		let calls = 0;
+		session.agent.streamFunction = () => (++calls === 1 ? first : second) as never;
+		const answer = (text: string) => ({
+			role: "assistant" as const, content: [{ type: "text" as const, text }], api: model.api,
+			provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: "stop" as const,
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		});
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "Plan a safe change" })).toMatchObject({ ok: true });
+			expect(session.systemPrompt).toContain("Planning mode");
+			first.push({ type: "done", reason: "stop", message: answer("A concrete plan") });
+			await session.waitForIdle();
+			await vi.waitFor(() => expect(m.workflow.planStatus).toBe("ready"));
+			expect(session.getActiveToolNames()).not.toContain("bash");
+			expect(await manager.execute(m, { cmd: "approvePlan" })).toMatchObject({ ok: true });
+			expect(m.workflow.planStatus).toBe("executing");
+			expect(session.getActiveToolNames()).toContain("bash");
+			second.push({ type: "done", reason: "stop", message: answer("Implemented") });
+			await session.waitForIdle();
+			await vi.waitFor(() => expect(m.workflow.planStatus).toBe("idle"));
+			expect(session.getActiveToolNames()).not.toContain("bash");
+			manager.disposeSession(m);
+			const reopened = manager.getManaged(m.sessionPath);
+			managed.push(reopened);
+			expect((await manager.buildSnapshot(reopened)).workflow).toMatchObject({ mode: "plan", planStatus: "idle" });
+		} finally {
+			auth.mockRestore();
+		}
+	});
+
+	it("rejects approval when the conversation has moved past the proposed plan", async () => {
+		const { m, session } = await create();
+		await manager.execute(m, { cmd: "setWorkflowMode", mode: "plan" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const stream = createAssistantMessageEventStream();
+		session.agent.streamFunction = () => stream as never;
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "Propose a plan" })).toMatchObject({ ok: true });
+			stream.push({ type: "done", reason: "stop", message: {
+				role: "assistant", content: [{ type: "text", text: "A safe plan" }], api: model.api,
+				provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: "stop",
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			} });
+			await session.waitForIdle();
+			await vi.waitFor(() => expect(m.workflow.planStatus).toBe("ready"));
+			expect(m.workflow.planId).toBeTruthy();
+			m.sm.appendMessage({ role: "user", content: "The requirements changed", timestamp: Date.now() });
+			expect(await manager.execute(m, { cmd: "approvePlan" })).toMatchObject({ ok: false, error: expect.stringContaining("no longer the latest") });
+			expect(m.workflow.planStatus).toBe("ready");
+		} finally {
+			auth.mockRestore();
+		}
+	});
+
+	it("keeps a Goal objective across a native session reopen", async () => {
+		const { m, session } = await create();
+		await manager.execute(m, { cmd: "setWorkflowMode", mode: "goal" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const stream = createAssistantMessageEventStream();
+		session.agent.streamFunction = () => stream as never;
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "Make the test suite pass" })).toMatchObject({ ok: true });
+			expect(m.workflow.goal).toBe("Make the test suite pass");
+			expect(session.systemPrompt).toContain("Make the test suite pass");
+			stream.push({ type: "done", reason: "stop", message: {
+				role: "assistant", content: [{ type: "text", text: "Verified" }], api: model.api,
+				provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: "stop",
+				usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			} });
+			await session.waitForIdle();
+			manager.disposeSession(m);
+			const reopened = manager.getManaged(m.sessionPath);
+			managed.push(reopened);
+			expect((await manager.buildSnapshot(reopened)).workflow).toMatchObject({ mode: "goal", goal: "Make the test suite pass" });
+		} finally {
+			auth.mockRestore();
+		}
+	});
+
+	it("keeps a ready plan approvable after the execution turn fails", async () => {
+		const { m, session } = await create();
+		await manager.execute(m, { cmd: "setToolPreset", preset: "standard" });
+		await manager.execute(m, { cmd: "setWorkflowMode", mode: "plan" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream(), createAssistantMessageEventStream()];
+		let calls = 0;
+		session.agent.streamFunction = () => streams[calls++] as never;
+		const assistant = (text: string, stopReason: "stop" | "error") => ({
+			role: "assistant" as const, content: [{ type: "text" as const, text }], api: model.api,
+			provider: model.provider, model: model.id, timestamp: Date.now(), stopReason,
+			...(stopReason === "error" ? { errorMessage: "invalid request: unsupported parameter" } : {}),
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		});
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "Plan a safe change" })).toMatchObject({ ok: true });
+			streams[0].push({ type: "done", reason: "stop", message: assistant("A concrete plan", "stop") });
+			await session.waitForIdle();
+			await vi.waitFor(() => expect(m.workflow.planStatus).toBe("ready"));
+			expect(await manager.execute(m, { cmd: "approvePlan" })).toMatchObject({ ok: true });
+			streams[1].push({ type: "error", reason: "error", error: assistant("", "error") });
+			await session.waitForIdle();
+			await vi.waitFor(() => expect(m.workflow.planStatus).toBe("ready"));
+			expect(session.getActiveToolNames()).not.toContain("bash");
+			expect(await manager.execute(m, { cmd: "approvePlan" })).toMatchObject({ ok: true });
+			expect(session.getActiveToolNames()).toContain("bash");
+			streams[2].push({ type: "done", reason: "stop", message: assistant("Implemented", "stop") });
+			await session.waitForIdle();
+			await vi.waitFor(() => expect(m.workflow.planStatus).toBe("idle"));
+			expect(calls).toBe(3);
+		} finally {
+			auth.mockRestore();
+		}
+	});
+
+	it("updates the Goal when its defining message is edited and keeps it for later edits or reselecting Goal", async () => {
+		const { m, session } = await create();
+		await manager.execute(m, { cmd: "setWorkflowMode", mode: "goal" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const streams = Array.from({ length: 4 }, () => createAssistantMessageEventStream());
+		let calls = 0;
+		session.agent.streamFunction = () => streams[calls++] as never;
+		const reply = (index: number, text: string) => streams[index].push({ type: "done", reason: "stop", message: {
+			role: "assistant", content: [{ type: "text", text }], api: model.api,
+			provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: "stop",
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		} });
+		const userEntry = (text: string) => m.sm.getBranch().find((entry) => entry.type === "message" && entry.message.role === "user" && JSON.stringify(entry.message.content).includes(text))!.id;
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "Old objective" })).toMatchObject({ ok: true });
+			reply(0, "Working");
+			await session.waitForIdle();
+			expect(await manager.execute(m, { cmd: "editAndResend", entryId: userEntry("Old objective"), text: "New objective" })).toMatchObject({ ok: true });
+			expect(m.workflow.goal).toBe("New objective");
+			expect(session.systemPrompt).toContain("Objective: New objective");
+			reply(1, "Working again");
+			await session.waitForIdle();
+			expect(await manager.execute(m, { cmd: "prompt", text: "Also add docs" })).toMatchObject({ ok: true });
+			reply(2, "Docs added");
+			await session.waitForIdle();
+			expect(await manager.execute(m, { cmd: "editAndResend", entryId: userEntry("Also add docs"), text: "Also add tests" })).toMatchObject({ ok: true });
+			expect(m.workflow.goal).toBe("New objective");
+			reply(3, "Tests added");
+			await session.waitForIdle();
+			expect(await manager.execute(m, { cmd: "setWorkflowMode", mode: "goal" })).toMatchObject({ ok: true });
+			expect(m.workflow.goal).toBe("New objective");
+		} finally {
+			auth.mockRestore();
+		}
+	});
+
 	it("isolates same-cwd A/B runtimes and keeps discovery and B alive after disposing A", async () => {
 		const a = await create();
 		const b = await create();
@@ -257,4 +440,3 @@ describe("real SDK session resource isolation", () => {
 		}
 	});
 });
-

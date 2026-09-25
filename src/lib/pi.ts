@@ -9,6 +9,7 @@ import {
 	type SettingsManager,
 	DefaultPackageManager,
 	DefaultResourceLoader,
+	type InlineExtension,
 	ModelRuntime,
 	ProjectTrustStore,
 	SessionManager,
@@ -157,10 +158,10 @@ function loaderKey(cwd: string): string {
 }
 
 /** 每个热会话必须拥有自己的扩展 runtime；这里只创建，不加入发现缓存。 */
-export async function createSessionResourceLoader(cwd: string): Promise<DefaultResourceLoader> {
+export async function createSessionResourceLoader(cwd: string, extensionFactories: InlineExtension[] = []): Promise<DefaultResourceLoader> {
 	const settingsManager = getSettingsManager(cwd);
 	settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
-	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager });
+	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories });
 	const reload = loader.reload.bind(loader);
 	loader.reload = async (options) => {
 		settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);

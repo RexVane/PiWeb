@@ -8,16 +8,22 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
+	IconCheckOutline14,
+	IconChevronRight14,
+	IconCloseOutline14,
 	IconFileOutline16,
 	IconSendArrowUp14,
 	IconStopFill16,
 	IconTerminalOutline14,
+	IconWorkflowAgent16,
+	IconWorkflowGoal16,
+	IconWorkflowPlan16,
 } from "@/components/icons";
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
-import type { ImageAttachment } from "@/lib/types";
+import type { ImageAttachment, WorkflowMode, WorkflowState } from "@/lib/types";
 
 export interface SlashCommand {
 	name: string;
@@ -71,6 +77,9 @@ export function ChatInput({
 	onSelectModel,
 	onSelectLevel,
 	onClearQueue,
+	workflow,
+	onWorkflowModeChange,
+	onApprovePlan,
 	draft,
 	initialDraft,
 	onDraftChange,
@@ -115,6 +124,9 @@ export function ChatInput({
 	onSelectLevel: (level: string) => void;
 	/** 清空队列并返回被清掉的文本（取回编辑 / 丢弃都走它） */
 	onClearQueue?: () => Promise<QueueResult | void> | void;
+	workflow?: WorkflowState;
+	onWorkflowModeChange?: (mode: WorkflowMode) => void | Promise<{ success?: boolean } | void>;
+	onApprovePlan?: () => void | Promise<{ success?: boolean; error?: string } | void>;
 	/** Parent-owned, session-scoped draft. Async work always updates this same target. */
 	draft?: ChatDraft;
 	initialDraft?: ChatDraft;
@@ -152,15 +164,70 @@ export function ChatInput({
 	const [dragActive, setDragActive] = useState(false);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
+	const [workflowOpen, setWorkflowOpen] = useState(false);
+	const [pendingWorkflowMode, setPendingWorkflowMode] = useState<WorkflowMode | null>(null);
+	const [approvalPending, setApprovalPending] = useState(false);
+	const [approvalError, setApprovalError] = useState("");
+	const approvalInFlightRef = useRef(false);
+	const workflowRequestRef = useRef(0);
+	const workflowInFlightRef = useRef(false);
+	const queuedWorkflowRef = useRef<{ mode: WorkflowMode; request: number } | null>(null);
 	const [cmdIdx, setCmdIdx] = useState(0);
 	const [cmdDismissed, setCmdDismissed] = useState(false);
 	const taRef = useRef<HTMLTextAreaElement>(null);
 	const wrapRef = useRef<HTMLDivElement>(null);
+	const workflowRef = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
 	const isBlocked = !model?.id;
 	const enterBehavior = useEnterBehavior();
 	const queuedCount = queue.steering.length + queue.followUp.length;
 	const [restoreTick, setRestoreTick] = useState(0);
+	const activeWorkflowMode = pendingWorkflowMode ?? workflow?.mode ?? "agent";
+
+	useEffect(() => {
+		if (pendingWorkflowMode !== null && workflow?.mode === pendingWorkflowMode) setPendingWorkflowMode(null);
+	}, [workflow?.mode, pendingWorkflowMode]);
+	useEffect(() => { setApprovalError(""); }, [workflow?.mode, workflow?.planStatus, workflow?.planId]);
+
+	const approvePlan = async () => {
+		if (!onApprovePlan || approvalInFlightRef.current || isStreaming || disabled) return;
+		approvalInFlightRef.current = true;
+		setApprovalPending(true);
+		setApprovalError("");
+		try {
+			const result = await onApprovePlan();
+			if (result && result.success === false && mountedRef.current) setApprovalError(result.error || t.planApprovalFailed);
+		} catch (error) {
+			if (mountedRef.current) setApprovalError(error instanceof Error ? error.message : t.planApprovalFailed);
+		} finally {
+			approvalInFlightRef.current = false;
+			if (mountedRef.current) setApprovalPending(false);
+		}
+	};
+
+	const flushWorkflowMode = async () => {
+		if (workflowInFlightRef.current || !queuedWorkflowRef.current || !onWorkflowModeChange) return;
+		const { mode, request } = queuedWorkflowRef.current;
+		queuedWorkflowRef.current = null;
+		workflowInFlightRef.current = true;
+		try {
+			const result = await onWorkflowModeChange(mode);
+			if (mountedRef.current && request === workflowRequestRef.current && result && result.success === false) setPendingWorkflowMode(null);
+		} catch {
+			if (mountedRef.current && request === workflowRequestRef.current) setPendingWorkflowMode(null);
+		} finally {
+			workflowInFlightRef.current = false;
+			if (mountedRef.current && queuedWorkflowRef.current) void flushWorkflowMode();
+		}
+	};
+
+	const selectWorkflowMode = (mode: WorkflowMode) => {
+		if (!onWorkflowModeChange) return;
+		const request = ++workflowRequestRef.current;
+		setPendingWorkflowMode(mode);
+		queuedWorkflowRef.current = { mode, request };
+		void flushWorkflowMode();
+	};
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -169,6 +236,23 @@ export function ChatInput({
 	useEffect(() => {
 		setAttachmentError(uploadFailure ?? "");
 	}, [uploadFailure]);
+	useEffect(() => {
+		if (!workflowOpen) return;
+		const closeOnPointer = (event: PointerEvent) => {
+			if (!workflowRef.current?.contains(event.target as Node)) setWorkflowOpen(false);
+		};
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			setWorkflowOpen(false);
+			workflowRef.current?.querySelector<HTMLButtonElement>(".pw-workflow-add")?.focus();
+		};
+		document.addEventListener("pointerdown", closeOnPointer);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("pointerdown", closeOnPointer);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, [workflowOpen]);
 	useEffect(() => {
 		autoSize();
 	}, [text]);
@@ -410,10 +494,35 @@ export function ChatInput({
 	}, []);
 
 	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0;
+	const workflowName = activeWorkflowMode === "plan" ? t.workflowPlan : activeWorkflowMode === "goal" ? t.workflowGoal : t.workflowAgent;
+	const workflowPlaceholder = activeWorkflowMode === "plan" ? t.workflowPlanPlaceholder : activeWorkflowMode === "goal" ? t.workflowGoalPlaceholder : t.inputPlaceholder;
 	const composerExpanded = text.length > 56 || text.includes("\n") || images.length > 0 || uploads.length > 0 || Boolean(adopted);
 
 	return (
 		<div ref={wrapRef} className="pw-composer-shell relative w-full" data-expanded={composerExpanded || undefined} data-testid="composer">
+			{activeWorkflowMode === "plan" && workflow?.mode === "plan" && workflow.planStatus === "ready" && onApprovePlan && (
+				<section className="pw-plan-ready" aria-label={t.planReady}>
+					<div className="pw-plan-ready-content">
+						<span className="pw-plan-ready-icon" aria-hidden="true"><IconWorkflowPlan16 size={16} /></span>
+						<div className="pw-plan-ready-copy">
+							<strong>{t.planReady}</strong>
+							<span>{t.planReadyHint}</span>
+						</div>
+					</div>
+					<div className="pw-plan-ready-actions">
+						<button type="button" className="pw-plan-ready-refine" disabled={disabled || approvalPending} onClick={() => taRef.current?.focus()}>{t.planRefine}</button>
+						<button type="button" className="pw-plan-ready-approve" disabled={isStreaming || disabled || approvalPending} onClick={() => { void approvePlan(); }}>{approvalPending ? t.planApproving : t.planApprove}<IconChevronRight14 size={14} aria-hidden="true" /></button>
+					</div>
+					{approvalError && <p className="pw-plan-ready-error" role="alert">{approvalError}</p>}
+				</section>
+			)}
+			{activeWorkflowMode === "goal" && workflow?.mode === "goal" && workflow.goal && (
+				<div className="pw-goal-active" title={workflow.goal}>
+					<IconWorkflowGoal16 size={14} aria-hidden="true" />
+					<span className="pw-goal-active-label">{t.goalActive}</span>
+					<span className="pw-goal-active-text">{workflow.goal}</span>
+				</div>
+			)}
 			{/* 排队中的消息（Claude Code 同款：列在输入卡上方；↑ 取回编辑，或直接丢弃） */}
 			{queuedCount > 0 && (
 				<div className="pw-queue">
@@ -525,7 +634,7 @@ export function ChatInput({
 			)}
 
 			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
-			<div className="pw-composer relative w-full">
+			<div className="pw-composer relative w-full" data-mode={activeWorkflowMode}>
 				<div className="pw-composer-body flex items-start gap-1.5">
 					{adopted && (
 						<button
@@ -554,7 +663,7 @@ export function ChatInput({
 						value={text}
 						disabled={disabled || isBlocked || sendBusy}
 						rows={1}
-						placeholder={adopted ? (adopted.argumentHint ?? t.inputPlaceholder) : !disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
+						placeholder={adopted ? (adopted.argumentHint ?? workflowPlaceholder) : !disabled && isBlocked ? t.blockedComposer : workflowPlaceholder}
 						suppressHydrationWarning
 						className="min-w-0 flex-1 resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
@@ -631,8 +740,34 @@ export function ChatInput({
 
 				{/* 按钮行：左侧只保留命令入口；图片通过拖放或粘贴添加。 */}
 				<div className="pw-composer-toolbar flex items-center gap-2">
-					{/* 命令菜单通过输入 / 触发（dsh 同款），不再提供 ＋ 启动按钮 */}
-					<div className="flex-1" />
+					{workflow && onWorkflowModeChange && (
+						<div ref={workflowRef} className="relative flex shrink-0 items-center gap-2">
+							<button type="button" className="pw-workflow-add" disabled={isStreaming || disabled} aria-label={`${t.workflowMenu}: ${workflowName}`} title={t.workflowMenu} aria-haspopup="menu" aria-expanded={workflowOpen} onClick={() => setWorkflowOpen((open) => !open)}>
+								<span className="pw-workflow-plus" aria-hidden="true" />
+							</button>
+							{activeWorkflowMode !== "agent" && (
+								<span className="pw-workflow-current" data-mode={activeWorkflowMode}>
+									<span className="pw-workflow-current-icon" aria-hidden="true">{activeWorkflowMode === "plan" ? <IconWorkflowPlan16 size={14} /> : <IconWorkflowGoal16 size={14} />}</span>
+									<span>{workflowName}</span>
+									<button type="button" className="pw-workflow-current-dismiss" disabled={isStreaming || disabled} aria-label={`${t.workflowClear}: ${workflowName}`} title={t.workflowClear} onClick={() => { selectWorkflowMode("agent"); taRef.current?.focus(); }}><IconCloseOutline14 size={10} aria-hidden="true" /></button>
+								</span>
+							)}
+							{workflowOpen && (
+								<div className="popover pw-workflow-menu" role="menu">
+									<div className="pw-workflow-menu-label">{t.workflowMenu}</div>
+									{(["agent", "plan", "goal"] as const).map((mode) => (
+										<button key={mode} type="button" className="pw-workflow-option" data-mode={mode} role="menuitemradio" aria-checked={activeWorkflowMode === mode} onClick={() => { setWorkflowOpen(false); selectWorkflowMode(mode); taRef.current?.focus(); }}>
+											<span className="pw-workflow-option-icon" aria-hidden="true">{mode === "agent" ? <IconWorkflowAgent16 size={16} /> : mode === "plan" ? <IconWorkflowPlan16 size={16} /> : <IconWorkflowGoal16 size={16} />}</span>
+											<strong className="pw-workflow-option-name">{mode === "agent" ? t.workflowAgent : mode === "plan" ? t.workflowPlan : t.workflowGoal}</strong>
+											<span className="pw-workflow-option-description">{mode === "agent" ? t.workflowAgentHint : mode === "plan" ? t.workflowPlanHint : t.workflowGoalHint}</span>
+											<IconCheckOutline14 className="pw-workflow-option-check" size={14} aria-hidden="true" />
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+					)}
+					{!workflow && <div className="flex-1" />}
 
 					{/* 模型芯片（右组，dsh 分组菜单；/model 命令可受控打开） */}
 					<ModelSelector

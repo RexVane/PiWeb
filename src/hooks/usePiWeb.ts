@@ -13,6 +13,7 @@ import type {
 	WebMessage,
 	WebSnapshot,
 	ToolPreset,
+	WorkflowMode,
 } from "@/lib/types";
 
 export interface ToolCardState {
@@ -62,6 +63,22 @@ export interface PiWebState {
 	workingMessage: string | null;
 	/** 项目生长：本次连接期间收到的步（完整账本由 useGrowth 拉取后合并），以及运行中工具正在生成的路径 */
 	growth: { steps: GrowthStep[]; pending: string[]; error: string | null };
+}
+
+export function previewEditedBranch(messages: WebMessage[], entryId: string, text: string): WebMessage[] | null {
+	const index = messages.findIndex((message) => message.role === "user" && message.id === entryId);
+	if (index < 0) return null;
+	const original = messages[index];
+	return [
+		...messages.slice(0, index),
+		{
+			...original,
+			content: [
+				{ type: "text" as const, text },
+				...original.content.filter((part) => part.type === "image"),
+			],
+		},
+	];
 }
 
 export interface SessionListItem extends SessionSummary {
@@ -190,6 +207,9 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				customActiveTools: evt.customActiveTools === undefined ? s.snapshot.customActiveTools : evt.customActiveTools,
 				tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) },
 			};
+			return s;
+		case "workflow":
+			if (s.snapshot) s.snapshot = { ...s.snapshot, workflow: evt.workflow };
 			return s;
 		case "resources":
 			if (s.snapshot) {
@@ -335,6 +355,8 @@ export function usePiWeb() {
 	const [currentId, setCurrentId] = useState<string | null>(null);
 	const [currentPath, setCurrentPath] = useState<string | null>(null);
 	const [state, setState] = useState<PiWebState>(emptyState);
+	const stateRef = useRef(state);
+	stateRef.current = state;
 	/** 当前 SSE 连接的增量批量器：按帧合并事件，避免每个 token 一次整树渲染 */
 	const batcherRef = useRef<EventBatcher<WebEvent> | null>(null);
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
@@ -346,6 +368,7 @@ export function usePiWeb() {
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
+	const resync = useCallback(() => setResyncNonce((nonce) => nonce + 1), []);
 	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<EventSource | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
@@ -353,6 +376,7 @@ export function usePiWeb() {
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
 	const activeSessionRef = useRef(currentId);
 	activeSessionRef.current = currentId;
+	const editSyncRef = useRef<{ sessionId: string; phase: "submitting" | "resyncing"; error?: string } | null>(null);
 	const subscribedSessionRef = useRef<string | null>(null);
 	const retrySessionList = useCallback(() => setSessionListRetryNonce((value) => value + 1), []);
 	const clearCompaction = useCallback(() => setState((current) => ({ ...current, compaction: null })), []);
@@ -621,14 +645,17 @@ export function usePiWeb() {
 		esRef.current?.close();
 		esRef.current = null;
 		if (!currentId) {
+			editSyncRef.current = null;
 			subscribedSessionRef.current = null;
 			setState(emptyState(savedToolPreset()));
 			return;
 		}
 		const reconnectingCurrentSession = subscribedSessionRef.current === currentId;
+		if (!reconnectingCurrentSession) editSyncRef.current = null;
 		subscribedSessionRef.current = currentId;
+		const editResync = editSyncRef.current?.sessionId === currentId && editSyncRef.current.phase === "resyncing";
 		setState((current) => reconnectingCurrentSession
-			? { ...current, connected: false }
+			? { ...current, connected: editResync ? current.connected : false }
 			: { ...emptyState(savedToolPreset()), connected: false });
 		let retryDelayMs = 2000;
 		const connect = () => {
@@ -653,7 +680,10 @@ export function usePiWeb() {
 			};
 			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
 			const batcher = createEventBatcher<WebEvent>({
-				flush: (events) => setState((s) => events.reduce((acc, evt) => foldPiWebEvent(acc, evt), s)),
+				flush: (events) => {
+					if (editSyncRef.current?.sessionId === currentId) return;
+					setState((s) => events.reduce((acc, evt) => foldPiWebEvent(acc, evt), s));
+				},
 			});
 			batcherRef.current = batcher;
 			es.onmessage = (e) => {
@@ -665,6 +695,9 @@ export function usePiWeb() {
 					return;
 				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
+					const editSync = editSyncRef.current;
+					if (editSync?.sessionId === currentId && editSync.phase === "submitting") return;
+					if (editSync?.sessionId === currentId) editSyncRef.current = null;
 					// 快照是权威状态：之前缓冲的增量已经过时，直接丢弃
 					batcher.cancel();
 					retryDelayMs = 2000;
@@ -676,7 +709,7 @@ export function usePiWeb() {
 						tools: toolsFromMessages(snap.messages, snap.isStreaming),
 						toolPreset: snap.toolPreset,
 						connected: true,
-						error: null,
+						error: editSync?.sessionId === currentId ? editSync.error ?? null : null,
 						compaction: null,
 						retryNotice: null,
 						// 服务器当前 pending 集合是权威来源，刷新可恢复、已答请求不能复活。
@@ -688,6 +721,7 @@ export function usePiWeb() {
 						growth: { ...prev.growth, error: snap.growthError ?? null },
 					}));
 				} else {
+					if (editSyncRef.current?.sessionId === currentId) return;
 					batcher.push(parsed as WebEvent);
 				}
 			};
@@ -730,9 +764,42 @@ export function usePiWeb() {
 		}
 	}, [currentId]);
 
+	const editAndResend = useCallback(async (entryId: string, text: string) => {
+		if (editSyncRef.current?.sessionId === currentId) return { success: false, error: "edit already in progress" };
+		if (!currentId || !previewEditedBranch(stateRef.current.messages, entryId, text)) return { success: false, error: "message is not editable" };
+		editSyncRef.current = { sessionId: currentId, phase: "submitting" };
+		batcherRef.current?.cancel();
+		setState((previous) => {
+			const messages = previewEditedBranch(previous.messages, entryId, text);
+			if (!messages) return previous;
+			return {
+				...previous,
+				messages,
+				tools: toolsFromMessages(messages),
+				snapshot: previous.snapshot ? { ...previous.snapshot, messages, isStreaming: true } : null,
+				error: null,
+				retryNotice: null,
+				workingMessage: null,
+			};
+		});
+		const result = await sendCommand({ cmd: "editAndResend", entryId, text });
+		if (editSyncRef.current?.sessionId === currentId) {
+			editSyncRef.current = {
+				sessionId: currentId,
+				phase: "resyncing",
+				error: result?.success ? undefined : result?.error ?? "Failed to edit message",
+			};
+			batcherRef.current?.cancel();
+			esRef.current?.close();
+			esRef.current = null;
+			resync();
+		}
+		return result;
+	}, [currentId, resync, sendCommand]);
+
 	const newSession = useCallback(async (
 		cwd: string,
-		overrides: { provider?: string; modelId?: string; thinking?: string } = {},
+		overrides: { provider?: string; modelId?: string; thinking?: string; mode?: WorkflowMode } = {},
 	): Promise<string | null> => {
 		try {
 			const r = await fetch("/api/agent/new", {
@@ -746,6 +813,7 @@ export function usePiWeb() {
 				const id = idOf(p);
 				// 工具预设取通用设置的持久化选择；模型/思考级别由 Hero 页显式下发
 				const setup: Record<string, unknown>[] = [{ cmd: "setToolPreset", preset: savedToolPreset() }];
+				if (overrides.mode && overrides.mode !== "agent") setup.push({ cmd: "setWorkflowMode", mode: overrides.mode });
 				if (overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId });
 				if (overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
 				for (const command of setup) {
@@ -839,7 +907,6 @@ export function usePiWeb() {
 	// ---------- 会话预设已移除：工具档位见通用设置/工具启用情况，模型与思考级别由 Hero 页显式下发 ----------
 
 	/** 强制重连 SSE 拿新快照（navigate 等场景） */
-	const resync = useCallback(() => setResyncNonce((n) => n + 1), []);
 	/** 应答扩展对话框（select/confirm/input）；cancelled=true 表示用户关掉了 */
 	const answerExtensionDialog = useCallback(
 		async (id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => {
@@ -917,6 +984,7 @@ export function usePiWeb() {
 		removeWorkspace,
 		refreshModels,
 		sendCommand,
+		editAndResend,
 		newSession,
 		openSession,
 		closeSession,

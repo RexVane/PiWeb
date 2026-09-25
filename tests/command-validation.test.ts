@@ -27,6 +27,13 @@ describe("agent command validation", () => {
 		expect(result).toEqual({ ok: false, error: "invalid tool preset" });
 	});
 
+	it("accepts workflow commands and rejects invalid modes", () => {
+		expect(parseAgentCommand({ cmd: "setWorkflowMode", mode: "plan" })).toMatchObject({ ok: true, command: { mode: "plan" } });
+		expect(parseAgentCommand({ cmd: "approvePlan" })).toMatchObject({ ok: true });
+		expect(parseAgentCommand({ cmd: "setWorkflowMode" })).toEqual({ ok: false, error: "mode is required" });
+		expect(parseAgentCommand({ cmd: "setWorkflowMode", mode: "admin" })).toEqual({ ok: false, error: "invalid workflow mode" });
+	});
+
 	it("rejects malformed and unsupported images", () => {
 		expect(
 			parseAgentCommand({ cmd: "prompt", images: [{ type: "image", mimeType: "image/svg+xml", data: "PHN2Zz4=" }] }).ok,

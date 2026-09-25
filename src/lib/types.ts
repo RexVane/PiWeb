@@ -116,6 +116,7 @@ export type WebEvent =
 	| { type: "traj"; entry: TrajEntry; ts: number }
 	| { type: "name"; name: string; ts: number }
 	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; ts: number }
+	| { type: "workflow"; workflow: WorkflowState; ts: number }
 	| {
 			/** 资源（扩展/技能/模板/命令）重载后的新清单；前端据此刷新 / 菜单与设置面板 */
 			type: "resources";
@@ -266,6 +267,7 @@ export interface WebSnapshot {
 	thinkingLevel?: string;
 	thinkingLevels: string[];
 	toolPreset: ToolPreset;
+	workflow: WorkflowState;
 	/** custom 白名单优先于 preset；null 表示使用 preset，省略兼容旧服务端。 */
 	customActiveTools?: string[] | null;
 	/** 当前待应答的扩展请求；快照是权威集合，不重放已答请求。 */
@@ -281,6 +283,14 @@ export interface WebSnapshot {
 // ---------- 浏览器 → 服务器 命令 ----------
 
 export type ToolPreset = "readonly" | "standard" | "full";
+
+export type WorkflowMode = "agent" | "plan" | "goal";
+export interface WorkflowState {
+	mode: WorkflowMode;
+	planStatus: "idle" | "planning" | "ready" | "executing";
+	planId?: string;
+	goal: string;
+}
 
 export interface ImageAttachment {
 	type: "image";
@@ -299,6 +309,8 @@ export interface AgentCommand {
 		| "setModel"
 		| "setThinkingLevel"
 		| "setToolPreset"
+		| "setWorkflowMode"
+		| "approvePlan"
 		| "rename"
 		| "fork"
 		| "cycleModel"
@@ -315,6 +327,7 @@ export interface AgentCommand {
 	modelId?: string;
 	level?: string;
 	preset?: ToolPreset;
+	mode?: WorkflowMode;
 	entryId?: string;
 	behavior?: "steer" | "followUp";
 	direction?: "forward" | "backward";
