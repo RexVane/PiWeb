@@ -1174,12 +1174,12 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			}
 			for (let i = messages.length - 1; i >= 0 && !compactedSinceLastAssistant; i--) {
 				const msg = messages[i];
-				if (msg.role === "assistant" && msg.usage) {
-					lastTurnTokens =
+				if (msg.role === "assistant" && msg.usage && msg.stopReason !== "error" && msg.stopReason !== "aborted") {
+					lastTurnTokens = Number(msg.usage.totalTokens ?? 0) || (
 						Number(msg.usage.input ?? 0) +
 						Number(msg.usage.cacheRead ?? 0) +
 						Number(msg.usage.cacheWrite ?? 0) +
-						Number(msg.usage.output ?? 0);
+						Number(msg.usage.output ?? 0));
 					break;
 				}
 			}

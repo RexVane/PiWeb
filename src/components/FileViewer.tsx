@@ -463,7 +463,7 @@ export function FileViewer({
 						<div className="pw-viewer-toolbar hairline-b">
 							<div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2" style={{ background: "var(--dsw-hover)", height: 26, maxWidth: 360 }}>
 								<IconSearchOutline16 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
-								<input value={treeFilter} onChange={(e) => setTreeFilter(e.target.value)} placeholder={t.growthFilter} className="min-w-0 flex-1 bg-transparent" style={{ fontSize: 12 }} />
+								<input value={treeFilter} onChange={(e) => setTreeFilter(e.target.value)} aria-label={t.growthFilter} placeholder={t.growthFilter} className="min-w-0 flex-1 bg-transparent" style={{ fontSize: 12 }} />
 							</div>
 							<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 								{roundNumber ? t.growthRoundLabel.replace("{n}", String(roundNumber)) : ""}

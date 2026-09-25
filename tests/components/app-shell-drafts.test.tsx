@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 
-const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn(), archiveSession: vi.fn() }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
@@ -13,10 +13,12 @@ vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({}) }));
 vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>
+	<div data-testid="current-path">{props.currentPath}</div>
 	<button onClick={() => props.onOpen("/session-a")}>Open A</button>
 	<button onClick={() => props.onOpen("/session-b")}>Open B</button>
 	<button onClick={() => props.onOpen("/created")}>Open created</button>
 	<button onClick={() => props.onNewInWorkspace("/workspace")}>New hero</button>
+	<button onClick={() => props.onArchive("/session-a")}>Archive A</button>
 </> }));
 vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 	const [currentPath, setCurrentPath] = useState<string | null>("/session-a");
@@ -29,25 +31,37 @@ vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 		getWorkspaceName: (cwd: string) => cwd, sendCommand: mocks.sendCommand,
 		newSession: async (...args: unknown[]) => { const path = await mocks.newSession(...args); if (path) setCurrentPath(path); return path; },
 		openSession: setCurrentPath, closeSession: () => setCurrentPath(null),
-		renameWorkspace: noop, patchSessionName: noop, archiveSession: noop, unarchiveSession: noop, resync: noop,
+		renameWorkspace: noop, patchSessionName: noop, archiveSession: mocks.archiveSession, unarchiveSession: noop, resync: noop,
 		setGroupBy: noop, setOrderBy: noop, addWorkspaceByPicker: noop, removeWorkspace: noop, refreshModels: noop,
 		setToolPreset: noop, clearError: noop, clearCompaction: noop, setError: noop, answerExtensionDialog: noop, dismissExtensionNotice: noop,
 	};
 } }));
 function deferred<T>() {
 	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((yes) => { resolve = yes; });
-	return { promise, resolve };
+	let reject!: (reason: Error) => void;
+	const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+	return { promise, resolve, reject };
 }
 const response = (data: unknown) => ({ ok: true, json: async () => ({ success: true, data }) });
 const textarea = () => screen.getByRole("textbox") as HTMLTextAreaElement;
 const go = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
 // 轨迹页签已移除：用「切到别的会话再切回来」制造同样的重挂载（草稿与待接收状态由父层持有）
 const remount = (returnTo = "Open A") => { go("Open B"); go(returnTo); };
-beforeEach(() => { localStorage.clear(); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
+beforeEach(() => { localStorage.clear(); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); mocks.archiveSession.mockReset().mockResolvedValue(undefined); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
+	it("keeps the current session open when archiving it fails", async () => {
+		const failed = deferred<void>();
+		mocks.archiveSession.mockReturnValueOnce(failed.promise);
+		render(<AppShell />);
+		go("Archive A");
+		expect(mocks.archiveSession).toHaveBeenCalledWith("/session-a");
+		await act(async () => failed.reject(new Error("archive failed")));
+		expect(screen.getByTestId("current-path").textContent).toBe("/session-a");
+		go("Archive A");
+		await waitFor(() => expect(screen.getByTestId("current-path").textContent).toBe("/session-b"));
+	});
 	it("consumes file references directly into the target draft without remount/session replay", async () => {
 		render(<AppShell />);
 		fireEvent.click(screen.getByTestId("project-toggle"));

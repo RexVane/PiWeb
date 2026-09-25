@@ -56,6 +56,9 @@ export function ChatInput({
 	thinkingLevel,
 	thinkingLevels,
 	models,
+	modelLoading,
+	modelLoadError,
+	onRetryModels,
 	providerNames,
 	authByProvider,
 	queue,
@@ -95,6 +98,9 @@ export function ChatInput({
 	thinkingLevel?: string;
 	thinkingLevels: string[];
 	models: ModelChoice[];
+	modelLoading?: boolean;
+	modelLoadError?: string | null;
+	onRetryModels?: () => void;
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
 	queue: { steering: string[]; followUp: string[] };
@@ -404,9 +410,10 @@ export function ChatInput({
 	}, []);
 
 	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0;
+	const composerExpanded = text.length > 56 || text.includes("\n") || images.length > 0 || uploads.length > 0 || Boolean(adopted);
 
 	return (
-		<div ref={wrapRef} className="relative w-full" data-testid="composer">
+		<div ref={wrapRef} className="pw-composer-shell relative w-full" data-expanded={composerExpanded || undefined} data-testid="composer">
 			{/* 排队中的消息（Claude Code 同款：列在输入卡上方；↑ 取回编辑，或直接丢弃） */}
 			{queuedCount > 0 && (
 				<div className="pw-queue">
@@ -518,16 +525,8 @@ export function ChatInput({
 			)}
 
 			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
-			<div
-				className="relative w-full"
-				style={{
-					borderRadius: 22,
-					background: "var(--dsw-input-major)",
-					boxShadow: "var(--dsw-elevation-soft)",
-					border: "0.5px solid var(--dsw-border-l1)",
-				}}
-			>
-				<div className="px-4 pt-3 flex items-start gap-1.5">
+			<div className="pw-composer relative w-full">
+				<div className="pw-composer-body flex items-start gap-1.5">
 					{adopted && (
 						<button
 							type="button"
@@ -631,17 +630,7 @@ export function ChatInput({
 				</div>
 
 				{/* 按钮行：左侧只保留命令入口；图片通过拖放或粘贴添加。 */}
-				<div
-					className="flex items-center gap-2"
-					style={{
-						paddingLeft: 8,
-						paddingRight: 12,
-						paddingBottom: 8,
-						paddingTop: 4,
-						height: 40,
-						containerType: "inline-size",
-					}}
-				>
+				<div className="pw-composer-toolbar flex items-center gap-2">
 					{/* 命令菜单通过输入 / 触发（dsh 同款），不再提供 ＋ 启动按钮 */}
 					<div className="flex-1" />
 
@@ -651,6 +640,9 @@ export function ChatInput({
 						thinkingLevel={thinkingLevel}
 						thinkingLevels={thinkingLevels}
 						models={models}
+						modelLoading={modelLoading}
+						modelLoadError={modelLoadError}
+						onRetryModels={onRetryModels}
 						providerNames={providerNames}
 						authByProvider={authByProvider}
 						onSelectModel={onSelectModel}

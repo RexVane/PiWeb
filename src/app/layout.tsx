@@ -5,23 +5,23 @@ import "@automann/maple-mono-cn/medium.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
-	title: "pi",
-	description: "Web UI for the pi coding agent",
+	title: "PiWeb | Workbench",
+	description: "A focused workbench for the pi coding agent",
 };
 
 export const viewport: Viewport = {
 	width: "device-width",
 	initialScale: 1,
 	themeColor: [
-		{ media: "(prefers-color-scheme: light)", color: "#fcfbf9" },
-		{ media: "(prefers-color-scheme: dark)", color: "#2e3440" },
+		{ media: "(prefers-color-scheme: light)", color: "#f2f5ee" },
+		{ media: "(prefers-color-scheme: dark)", color: "#101816" },
 	],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="zh-CN" suppressHydrationWarning>
-			<body suppressHydrationWarning>
+		<html lang="zh-CN" data-pebrel-theme="piweb" suppressHydrationWarning>
+			<body data-pebrel-theme="piweb" suppressHydrationWarning>
 				{children}
 			</body>
 		</html>

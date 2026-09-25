@@ -14,6 +14,7 @@ export function toTrajTokens(u: any): TrajTokens | undefined {
 	if (typeof u.output === "number") t.output = u.output;
 	if (typeof u.cacheRead === "number") t.cacheRead = u.cacheRead;
 	if (typeof u.cacheWrite === "number") t.cacheWrite = u.cacheWrite;
+	if (typeof u.totalTokens === "number") t.totalTokens = u.totalTokens;
 	return Object.keys(t).length ? t : undefined;
 }
 

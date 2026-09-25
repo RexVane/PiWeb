@@ -23,6 +23,8 @@ describe("ProjectPanel Git unknown state", () => {
 			? vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: info }) })
 			: vi.fn().mockRejectedValue(new Error("request failed")));
 		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} onAskCommit={vi.fn()} />);
+		const filter = screen.getByRole("textbox");
+		expect(filter.getAttribute("aria-label")).toBe(filter.getAttribute("placeholder"));
 		await act(async () => { await vi.advanceTimersByTimeAsync(300); });
 		const error = screen.getByTestId("growth-git-error");
 		expect(error.textContent).toMatch(/Git 状态读取失败|Git status unavailable/);

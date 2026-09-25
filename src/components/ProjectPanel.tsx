@@ -223,6 +223,7 @@ export function ProjectPanel({
 				<input
 					value={filter}
 					onChange={(e) => setFilter(e.target.value)}
+					aria-label={t.growthFilter}
 					placeholder={t.growthFilter}
 					className="min-w-0 flex-1 bg-transparent"
 					style={{ fontSize: 12 }}

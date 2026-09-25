@@ -1084,7 +1084,7 @@ function TurnBlockView({
 	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || (isLast && Boolean(retryNotice));
 
 	return (
-		<>
+		<div className="pw-conversation-turn">
 			{user && <UserMessage message={user} onEditMessage={onEditMessage} />}
 			{showProcess && (
 				<div className="pw-turn">
@@ -1115,7 +1115,7 @@ function TurnBlockView({
 				</div>
 			)}
 			{finalIdx >= 0 && <FinalAnswer message={messages[finalIdx]} onFork={onFork} showActions={!isStreaming || !isLast} turnStartMs={user?.timestamp} />}
-		</>
+		</div>
 	);
 }
 
@@ -1315,10 +1315,10 @@ export function ChatWindow({
 	};
 
 	return (
-		<div className="relative flex h-full min-h-0 flex-col">
+		<div className="pw-chat-window relative flex h-full min-h-0 flex-col">
 			<div
 				ref={scrollRef}
-				className="min-h-0 flex-1 overflow-y-auto"
+				className="pw-chat-scroll min-h-0 flex-1 overflow-y-auto"
 				role="log"
 				aria-live="polite"
 				aria-relevant="additions"
@@ -1330,7 +1330,7 @@ export function ChatWindow({
 					if (atBottom) setUnseen(0);
 				}}
 			>
-				<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
+				<div className="pw-chat-flow mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
 					{turns.map((turn, ti) => (
 						<TurnBlock
 							key={turn.key}

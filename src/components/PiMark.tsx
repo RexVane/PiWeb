@@ -34,46 +34,13 @@ export function PiMark({
 /** 品牌簇：对齐 dsh 品牌模板 [Logo] [Name] [BADGE] */
 export function BrandPi({ compact = false }: { compact?: boolean }) {
 	if (compact) {
-		return <PiMark size={18} />;
+		return <PiMark size={18} style={{ color: "var(--dsw-accent)" }} />;
 	}
 	return (
-		<div
-			className="inline-flex items-center select-none"
-			style={{
-				color: "var(--dsw-label-primary)",
-				gap: 6,
-			}}
-		>
-			<PiMark size={17} />
-			<span
-				className="inline-flex items-center"
-				style={{
-					fontSize: 16.5,
-					fontWeight: 600,
-					letterSpacing: "-0.02em",
-					color: "var(--dsw-label-primary)",
-					lineHeight: 1,
-				}}
-			>
-				pi
-			</span>
-			<span
-				className="inline-flex items-center justify-center font-bold"
-				style={{
-					fontSize: 9.5,
-					letterSpacing: "0.06em",
-					height: 15,
-					paddingLeft: 4.5,
-					paddingRight: 4.5,
-					borderRadius: 4,
-					background: "var(--dsw-label-primary)",
-					color: "var(--dsw-bg-base)",
-					lineHeight: 1,
-					textTransform: "uppercase",
-				}}
-			>
-				HARNESS
-			</span>
+		<div className="pw-brand select-none">
+			<span className="pw-brand-symbol"><PiMark size={18} style={{ color: "var(--dsw-accent)" }} /></span>
+			<span className="pw-brand-name">piweb</span>
+			<span className="pw-brand-meta">CODE WORKBENCH</span>
 		</div>
 	);
 }

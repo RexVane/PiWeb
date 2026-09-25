@@ -72,6 +72,8 @@ export function AppShell() {
 		currentPath,
 		state,
 		models,
+		modelLoading,
+		modelLoadError,
 		addedWorkspaces,
 		removedWorkspaces,
 		workspaceAliases,
@@ -374,6 +376,7 @@ export function AppShell() {
 				await archiveSession(path);
 			} catch {
 				// usePiWeb exposes the request failure in the shared error banner.
+				return;
 			}
 			// 归档后会话立刻离开工作区列表（服务端同时让它收工）。正在看的会话被归档时
 			// 必须切走：先取同一工作区的另一个可见会话，没有就回到空态（工作区仍留在侧栏）。
@@ -636,7 +639,7 @@ export function AppShell() {
 
 	return (
 		<div
-			className="grid h-screen w-screen overflow-hidden"
+			className="pw-shell grid h-screen w-screen overflow-hidden"
 			style={{
 				gridTemplateColumns: gridCols,
 				transition: dragging ? "none" : "grid-template-columns var(--ds-duration-slow) var(--ds-ease-in-out)",
@@ -645,7 +648,7 @@ export function AppShell() {
 		>
 			{/* 侧栏 */}
 			<div
-				className="min-h-0 overflow-hidden"
+				className="pw-sidebar-surface min-h-0 overflow-hidden"
 				style={isNarrow ? {
 					position: "fixed",
 					inset: "0 auto 0 0",
@@ -708,7 +711,7 @@ export function AppShell() {
 			{!isNarrow && (projectColumn || <div aria-hidden="true" />)}
 
 			{/* 会话区 */}
-			<div className="pi-main flex min-h-0 min-w-0 flex-col">
+			<div className={`pi-main pw-main flex min-h-0 min-w-0 flex-col${currentId ? "" : " pw-main-hero"}`}>
 				{!currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
 						<Hero
@@ -728,6 +731,9 @@ export function AppShell() {
 							getWorkspaceName={getWorkspaceName}
 							onSend={heroSend}
 							models={modelChoices}
+							modelLoading={modelLoading}
+							modelLoadError={modelLoadError}
+							onRetryModels={() => void refreshModels()}
 							providerNames={providerNames}
 							authByProvider={authByProvider}
 							addWorkspaceByPicker={addWorkspaceByPicker}
@@ -759,11 +765,12 @@ export function AppShell() {
 				) : (
 					<>
 							{/* 头部：标题行 + 页签行（dsh 两行式） */}
-							<div className="hairline-b px-5 pb-0 pt-3">
+							<div className="pw-session-header hairline-b px-5 pb-0 pt-3">
 								<div className="flex items-center gap-3">
-									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
-										{title}
-									</span>
+									<div className="pw-session-heading min-w-0 flex-1">
+										<span className="pw-session-eyebrow">PIWEB / SESSION</span>
+										<span className="pw-session-title truncate">{title}</span>
+									</div>
 									{/* 项目生长入口；轨迹详情由对话内工具行点击唤起 */}
 									<button
 										type="button"
@@ -846,19 +853,19 @@ export function AppShell() {
 									onFork={handleFork}
 									onEditMessage={doEditMessage}
 								/>
-								<div className="px-4 pb-3 pt-2">
+								<div className="pw-session-composer px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ChatInput
 											key={draftKey}
-												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
-												onDraftChange={saveSessionDraft}
-												onUploadError={(message) => failUpload(draftKey, message)}
-												onUploadProgress={(delta) => trackUpload(draftKey, delta)}
-												uploadFailure={uploadFailures[draftKey]}
-												pendingUploadCount={uploadCounts[draftKey] ?? 0}
-												pendingSend={pendingSends[draftKey] ?? false}
-												onSendPendingChange={(pending) => trackSend(draftKey, pending)}
+											draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
+											onDraftChange={saveSessionDraft}
+											onUploadError={(message) => failUpload(draftKey, message)}
+											onUploadProgress={(delta) => trackUpload(draftKey, delta)}
+											uploadFailure={uploadFailures[draftKey]}
+											pendingUploadCount={uploadCounts[draftKey] ?? 0}
+											pendingSend={pendingSends[draftKey] ?? false}
+											onSendPendingChange={(pending) => trackSend(draftKey, pending)}
 											isStreaming={isStreaming}
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
@@ -869,6 +876,9 @@ export function AppShell() {
 											thinkingLevel={snapshot?.thinkingLevel}
 											thinkingLevels={snapshot?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
 											models={modelChoices}
+											modelLoading={modelLoading}
+											modelLoadError={modelLoadError}
+											onRetryModels={() => void refreshModels()}
 											providerNames={providerNames}
 											authByProvider={authByProvider}
 											queue={snapshot?.queue ?? { steering: [], followUp: [] }}
@@ -893,7 +903,7 @@ export function AppShell() {
 												{Object.entries(state.extensionStatuses).map(([k, v]) => <span key={k}>{v}</span>)}
 											</div>
 										)}
-										</div>
+									</div>
 								</div>
 								</div>
 								)
@@ -1045,6 +1055,9 @@ function Hero({
 	getWorkspaceName,
 	onSend,
 	models,
+	modelLoading,
+	modelLoadError,
+	onRetryModels,
 	providerNames,
 	authByProvider,
 	addWorkspaceByPicker,
@@ -1071,6 +1084,9 @@ function Hero({
 	getWorkspaceName?: (cwd: string) => string;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<{ success: boolean }>;
 	models: ModelChoice[];
+	modelLoading: boolean;
+	modelLoadError: string | null;
+	onRetryModels: () => void;
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
 	addWorkspaceByPicker: () => Promise<string | null>;
@@ -1107,15 +1123,16 @@ function Hero({
 	const currentLabel = cwd ? (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) : t.startWith;
 
 	return (
-		<div className="flex h-full min-h-0 flex-col items-center justify-center px-6">
+		<div className="pw-hero flex h-full min-h-0 flex-col items-center justify-center px-6">
 			{/* 品牌行：仅 π 标 */}
-			<div className="mb-5 flex items-center justify-center gap-3">
-				<PiMark size={40} />
-			</div>
 
 			{/* 工作区芯片行 + 输入卡 同宽容器（芯片行与卡片左对齐） */}
-			<div className="w-full flex flex-col items-stretch mx-auto" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
-				<div ref={menuRef} className="mb-3 flex items-center gap-3" style={{ paddingLeft: 7 }}>
+			<div className="pw-hero-content w-full flex flex-col items-stretch mx-auto" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
+				<div className="pw-hero-intro">
+				<div className="pw-hero-identity"><span className="pw-hero-mark" aria-hidden="true"><PiMark size={22} style={{ color: "var(--dsw-accent)" }} /></span><span>PIWEB / WORKBENCH</span><span className="pw-hero-index">01 / READY</span></div>
+				<h1 className="pw-hero-title">{t.heroTitle}</h1>
+				<p className="pw-hero-description">{t.heroDescription}</p>
+				<div ref={menuRef} className="pw-hero-workspace mb-3 flex items-center gap-3">
 					<div className="relative">
 						<button className="hero-chip" data-open={wsMenu} onClick={() => setWsMenu((v) => !v)}>
 							<IconFolderClose16 className="hero-chip-icon" size={16} />
@@ -1169,6 +1186,7 @@ function Hero({
 						)}
 					</div>
 				</div>
+				</div>
 
 				{/* 输入卡 */}
 				<ChatInput
@@ -1191,6 +1209,9 @@ function Hero({
 					thinkingLevel={heroThinking || undefined}
 					thinkingLevels={heroModelLevels}
 					models={models}
+					modelLoading={modelLoading}
+					modelLoadError={modelLoadError}
+					onRetryModels={onRetryModels}
 					providerNames={providerNames}
 					authByProvider={authByProvider}
 					queue={{ steering: [], followUp: [] }}

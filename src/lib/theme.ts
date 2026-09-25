@@ -5,6 +5,7 @@
  */
 
 export type PebrelTheme =
+	| 'piweb'
 	| 'silver-steel'
 	| 'limestone-coal'
 	| 'linen-moss'
@@ -16,6 +17,7 @@ export type PebrelTheme =
 export type ThemeMode = 'light' | 'dark' | 'system';
 
 export const PEBREL_THEME_IDS: PebrelTheme[] = [
+	'piweb',
 	'dsh',
 	'silver-steel',
 	'limestone-coal',
@@ -26,11 +28,12 @@ export const PEBREL_THEME_IDS: PebrelTheme[] = [
 
 export const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
 
-export const DEFAULT_PEBREL_THEME: PebrelTheme = 'dsh';
+export const DEFAULT_PEBREL_THEME: PebrelTheme = 'piweb';
 export const DEFAULT_THEME_MODE: ThemeMode = 'system';
 
 const THEME_KEY = 'piweb.pebrelTheme';
 const MODE_KEY = 'piweb.theme';
+const DESIGN_VERSION_KEY = 'piweb.designVersion';
 
 export function isPebrelTheme(value: string | null): value is PebrelTheme {
 	return !!value && (PEBREL_THEME_IDS as string[]).includes(value);
@@ -44,6 +47,11 @@ export function loadPebrelTheme(): PebrelTheme {
 	if (typeof window === 'undefined') return DEFAULT_PEBREL_THEME;
 	try {
 		const saved = localStorage.getItem(THEME_KEY);
+		if (saved === 'dsh' && localStorage.getItem(DESIGN_VERSION_KEY) !== '1') {
+			localStorage.setItem(THEME_KEY, 'piweb');
+			localStorage.setItem(DESIGN_VERSION_KEY, '1');
+			return 'piweb';
+		}
 		if (isPebrelTheme(saved)) return saved;
 	} catch {
 		/* ignore */
@@ -126,6 +134,7 @@ export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 	try {
 		localStorage.setItem(THEME_KEY, theme);
 		localStorage.setItem(MODE_KEY, effectiveMode);
+		localStorage.setItem(DESIGN_VERSION_KEY, '1');
 	} catch {
 		/* ignore */
 	}

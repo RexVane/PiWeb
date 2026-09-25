@@ -135,13 +135,13 @@ export function SettingsPanel({
 				</div>
 
 				{/* 右侧内容 */}
-				<div className="flex min-w-0 flex-1 flex-col">
+				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 					<div className="flex items-center gap-2 px-6 py-3.5">
 						<div className="flex-1" />
 						<button className="btn-outline" style={{ height: 32, fontSize: 13 }} onClick={() => window.open("/api/config", "_blank")}>
 							<IconDownloadOutline16 size={14} /> {t.openConfigFile}
 						</button>
-						<button className="icon-btn" onClick={onClose}>
+						<button className="icon-btn" aria-label={t.close} onClick={onClose}>
 							<IconCloseOutline14 size={15} />
 						</button>
 					</div>
@@ -169,7 +169,7 @@ function GeneralSection({
 	setLang: (l: "zh" | "en") => void;
 }) {
 	const { t } = useI18n();
-	const [theme, setTheme] = useState<PebrelTheme>("dsh");
+	const [theme, setTheme] = useState<PebrelTheme>("piweb");
 	const [themeMode, setThemeMode] = useState<ThemeMode>("system");
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
@@ -179,6 +179,8 @@ function GeneralSection({
 	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
 	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
+	const [logoutPending, setLogoutPending] = useState(false);
+	const [logoutError, setLogoutError] = useState(false);
 	const [settingsLoading, setSettingsLoading] = useState(true);
 	const [settingsSaving, setSettingsSaving] = useState(false);
 	const [settingsError, setSettingsError] = useState<"load" | "save" | null>(null);
@@ -334,6 +336,7 @@ function GeneralSection({
 	};
 
 	const themes: { id: PebrelTheme; label: string; light: string; dark: string; accent: string }[] = [
+		{ id: "piweb", label: t.themePiWeb, light: "#F2F5EE", dark: "#101816", accent: "#55B993" },
 		{ id: "dsh", label: t.themeDsh, light: "#F9FAFB", dark: "#151517", accent: "#4176E6" },
 		{ id: "silver-steel", label: t.themeSilverSteel, light: "#F3F4F6", dark: "#1A1C24", accent: "#94A3B8" },
 		{ id: "limestone-coal", label: t.themeLimestoneCoal, light: "#F0EFEB", dark: "#171717", accent: "#CEB27E" },
@@ -361,7 +364,7 @@ function GeneralSection({
 			/>
 			</Row>
 			<RowColumn title={t.appearance}>
-				<div className="flex w-full flex-wrap gap-2">
+				<div className="settings-theme-grid flex w-full flex-wrap gap-2">
 					{themes.map((th) => (
 						<button
 							key={th.id}
@@ -392,7 +395,7 @@ function GeneralSection({
 				</div>
 			</RowColumn>
 			<RowColumn title={t.appearanceMode}>
-				<div className="flex w-full flex-wrap gap-2">
+				<div className="settings-appearance-mode-grid flex w-full flex-wrap gap-2">
 					{([
 						{ id: "light", label: t.themeLight },
 						{ id: "dark", label: t.themeDark },
@@ -437,7 +440,7 @@ function GeneralSection({
 			</Row>
 			<Row title={t.autoCompact} desc={t.autoCompactDesc}>
 				<div className="flex items-center gap-2">
-					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.compaction.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.compaction.enabled ?? false} onClick={() => void patchPiSettings({ compaction: { enabled: !piSettings?.compaction.enabled } })}>
+					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.compaction.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-label={t.autoCompact} aria-checked={piSettings?.compaction.enabled ?? false} onClick={() => void patchPiSettings({ compaction: { enabled: !piSettings?.compaction.enabled } })}>
 						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.compaction.enabled ? 18 : 2 }} />
 					</button>
 					{numberInput("compaction", "reserveTokens", t.reserveTokens)}
@@ -446,7 +449,7 @@ function GeneralSection({
 			</Row>
 			<Row title={t.autoRetry} desc={t.autoRetryDesc}>
 				<div className="flex items-center gap-2">
-					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.retry.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.retry.enabled ?? false} onClick={() => void patchPiSettings({ retry: { enabled: !piSettings?.retry.enabled } })}>
+					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.retry.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-label={t.autoRetry} aria-checked={piSettings?.retry.enabled ?? false} onClick={() => void patchPiSettings({ retry: { enabled: !piSettings?.retry.enabled } })}>
 						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.retry.enabled ? 18 : 2 }} />
 					</button>
 					{numberInput("retry", "maxRetries", t.maxRetries)}
@@ -479,12 +482,24 @@ function GeneralSection({
 			</Row>
 			{webAuth?.enabled ? (
 				<Row title={t.webAuth} desc={t.webAuthOn}>
+					{logoutError && <span role="alert" style={{ color: "var(--dsw-danger)", fontSize: 12 }}>{t.logoutFailed}</span>}
 					<button
 						className="btn-outline"
 						style={{ height: 30, padding: "0 14px", fontSize: 12.5 }}
+						disabled={logoutPending}
 						onClick={async () => {
-							await fetch("/api/web-auth", { method: "DELETE" }).catch(() => {});
-							window.location.href = "/login";
+							if (logoutPending) return;
+							setLogoutPending(true);
+							setLogoutError(false);
+							try {
+								const response = await fetch("/api/web-auth", { method: "DELETE" });
+								const result = await response.json();
+								if (!response.ok || !result.success) throw new Error("logout failed");
+								window.location.href = "/login";
+							} catch {
+								setLogoutError(true);
+								setLogoutPending(false);
+							}
 						}}
 					>
 						{t.logout}
@@ -695,7 +710,7 @@ function SelectOption({
 
 function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
 	return (
-		<div className="hairline-b flex items-center justify-between gap-6 pb-5">
+		<div className="settings-row hairline-b flex items-center justify-between gap-6 pb-5">
 			<div className="min-w-0">
 				<div style={{ fontSize: 14, fontWeight: 400 }}>{title}</div>
 				{desc && (
@@ -704,7 +719,7 @@ function Row({ title, desc, children }: { title: string; desc?: string; children
 					</div>
 				)}
 			</div>
-			<div className="flex-none">{children}</div>
+			<div className="settings-row-control flex-none">{children}</div>
 		</div>
 	);
 }
@@ -1760,49 +1775,54 @@ interface SkillRow {
 function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileContent?: (path: string, content: string) => void }) {
 	const { t } = useI18n();
 	const [skills, setSkills] = useState<SkillRow[]>([]);
+	const [error, setError] = useState<string | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [busyFile, setBusyFile] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
-		const r = await fetch(`/api/skills${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
-		const j = await r.json();
-		if (j.success) setSkills(j.data.skills);
-	}, [cwd]);
+		setLoading(true);
+		try {
+			const r = await fetch(`/api/skills${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || t.toastError);
+			setSkills(j.data.skills);
+			setError(null);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : t.toastError);
+		} finally {
+			setLoading(false);
+		}
+	}, [cwd, t.toastError]);
 
 	useEffect(() => {
 		void load();
 	}, [load]);
 
-	const toggle = async (s: SkillRow) => {
-		const r = await fetch("/api/skills", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "toggle", filePath: s.filePath, disabled: !s.disabled, cwd }),
-		});
-		if ((await r.json()).success) void load();
+	const action = async (s: SkillRow, kind: "toggle" | "read" | "delete") => {
+		if (busyFile) return;
+		setBusyFile(s.filePath);
+		setError(null);
+		try {
+			const r = await fetch("/api/skills", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: kind, filePath: s.filePath, ...(kind === "toggle" ? { disabled: !s.disabled } : {}), cwd }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || t.toastError);
+			if (kind === "read") onOpenFileContent?.(s.filePath, j.data.content);
+			else await load();
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : t.toastError);
+		} finally {
+			setBusyFile(null);
+		}
 	};
 
 	// 查看技能文档：弹大窗口查看器（与项目文件查看器同款，Markdown 可切渲染/源码）
-	const view = async (s: SkillRow) => {
-		const r = await fetch("/api/skills", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "read", filePath: s.filePath, cwd }),
-		});
-		const j = await r.json();
-		if (j.success) onOpenFileContent?.(s.filePath, j.data.content);
-	};
-
-	const [deleteError, setDeleteError] = useState<string | null>(null);
 	const remove = async (s: SkillRow) => {
 		if (!window.confirm(t.confirmDeleteSkill.replace("{name}", s.name))) return;
-		setDeleteError(null);
-		const r = await fetch("/api/skills", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "delete", filePath: s.filePath, cwd }),
-		});
-		const j = await r.json();
-		if (j.success) void load();
-		else setDeleteError(j.error || t.toastError);
+		await action(s, "delete");
 	};
 
 	const scopeLabel = (s: SkillRow["scope"]) => (s === "global" ? t.scopeGlobal : s === "project" ? t.scopeProject : t.scopePackage);
@@ -1810,13 +1830,15 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 	return (
 		<div className="flex flex-col gap-4">
 			<div style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.skillsDesc}</div>
-			{deleteError && (
+			{error && (
 				<div role="alert" className="rounded-lg px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", color: "var(--dsw-danger)" }}>
-					{deleteError}
+					{error} <button type="button" className="underline" onClick={() => void load()}>{t.settingsRetry}</button>
 				</div>
 			)}
-			{skills.length === 0 && (
-				<div style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>—</div>
+			{!error && skills.length === 0 && (
+				<div role="status" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
+					{loading ? t.skillsLoading : t.skillsEmpty}
+				</div>
 			)}
 			<div className="flex flex-col gap-2">
 				{skills.map((s) => (
@@ -1839,7 +1861,8 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 							<button
 								className="rounded-lg px-2.5 py-1"
 								style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}
-								onClick={() => view(s)}
+								disabled={busyFile !== null}
+								onClick={() => void action(s, "read")}
 							>
 								{t.viewSkillFile}
 							</button>
@@ -1848,6 +1871,7 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 									className="rounded-lg px-2.5 py-1"
 									style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}
 									title={t.deleteSkillHint}
+									disabled={busyFile !== null}
 									onClick={() => void remove(s)}
 								>
 									{t.delete}
@@ -1862,8 +1886,10 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 								className="relative h-5 w-9 flex-none rounded-full transition-colors"
 								style={{ background: s.disabled ? "var(--dsw-border-l3)" : "var(--dsw-accent)" }}
 								role="switch"
+								aria-label={s.name}
 								aria-checked={!s.disabled}
-								onClick={() => toggle(s)}
+								disabled={busyFile !== null}
+								onClick={() => void action(s, "toggle")}
 							>
 							<span
 								className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
@@ -1893,6 +1919,7 @@ function PluginsSection({ cwd }: { cwd: string }) {
 	const [busy, setBusy] = useState(false);
 	const [busyKey, setBusyKey] = useState<string | null>(null);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string; loading?: boolean } | null>(null);
+	const [loadError, setLoadError] = useState<string | null>(null);
 	const [menuKey, setMenuKey] = useState<string | null>(null);
 	const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -1906,13 +1933,17 @@ function PluginsSection({ cwd }: { cwd: string }) {
 	}, []);
 
 	const load = useCallback(async () => {
-		const r = await fetch(`/api/plugins${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
-		const j = await r.json();
-		if (j.success) {
+		try {
+			const r = await fetch(`/api/plugins${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || t.toastError);
 			setPackages(j.data.packages);
 			setExtensions(j.data.extensions);
+			setLoadError(null);
+		} catch (error) {
+			setLoadError(error instanceof Error ? error.message : t.toastError);
 		}
-	}, [cwd]);
+	}, [cwd, t.toastError]);
 
 	useEffect(() => {
 		void load();
@@ -2012,6 +2043,11 @@ function PluginsSection({ cwd }: { cwd: string }) {
 				<div className="mt-1" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
 					{t.pluginPageDesc}
 				</div>
+				{loadError && (
+					<div role="alert" className="mt-3 rounded-xl px-3 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)", background: "var(--dsw-hover)" }}>
+						{loadError} <button type="button" className="underline" onClick={() => void load()}>{t.settingsRetry}</button>
+					</div>
+				)}
 			</div>
 
 			{toast && (
@@ -2092,8 +2128,11 @@ function PluginsSection({ cwd }: { cwd: string }) {
 								try {
 									const r = await fetch("/api/plugins", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reload", cwd }) });
 									const j = await r.json();
-									notify(j.success, j.success ? t.reloadedSessions.replace("{loaders}", String(j.data?.loaders ?? 0)).replace("{sessions}", String(j.data?.sessions ?? 0)) : j.error);
-									if (j.success) await load();
+									if (!r.ok || !j.success) throw new Error(j.error || t.toastError);
+									notify(true, t.reloadedSessions.replace("{loaders}", String(j.data?.loaders ?? 0)).replace("{sessions}", String(j.data?.sessions ?? 0)));
+									await load();
+								} catch (error) {
+									notify(false, error instanceof Error ? error.message : t.toastError);
 								} finally {
 									setBusy(false);
 								}

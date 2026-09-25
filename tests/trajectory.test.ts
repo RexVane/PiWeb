@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { TrajLedger, buildTrajectoryFromEntries } from "../src/lib/trajectory";
+import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "../src/lib/trajectory";
 
 describe("trajectory timing", () => {
+	it("keeps Pi's native totalTokens for context usage fallbacks", () => {
+		expect(toTrajTokens({ input: 10, output: 2, totalTokens: 15 })).toMatchObject({ input: 10, output: 2, totalTokens: 15 });
+	});
+
 	it("continues sequence numbers after restored history", () => {
 		const ledger = new TrajLedger([
 			{ seq: 7, kind: "user", ts: 1_000, detail: "restored" },

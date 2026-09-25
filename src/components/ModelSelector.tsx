@@ -21,6 +21,9 @@ export function ModelSelector({
 	thinkingLevel,
 	thinkingLevels,
 	models,
+	modelLoading = false,
+	modelLoadError,
+	onRetryModels,
 	providerNames,
 	authByProvider,
 	onSelectModel,
@@ -32,6 +35,9 @@ export function ModelSelector({
 	thinkingLevel?: string;
 	thinkingLevels: string[];
 	models: ModelChoice[];
+	modelLoading?: boolean;
+	modelLoadError?: string | null;
+	onRetryModels?: () => void;
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
 	onSelectModel: (provider: string, id: string) => void;
@@ -102,7 +108,8 @@ export function ModelSelector({
 		});
 	}, [open, pane]);
 
-	const hasModel = Boolean(model?.id);
+	// Pi uses this sentinel when no usable model can be restored.
+	const hasModel = Boolean(model?.id && !(model.provider === "unknown" && model.id === "unknown"));
 	const modelName = hasModel ? (model?.name || model?.id || "") : "";
 	const effortLabel = hasModel && thinkingLevel && thinkingLevel !== "off" ? thinkingLevel : undefined;
 	const triggerTitle = hasModel
@@ -110,10 +117,10 @@ export function ModelSelector({
 		: t.selectModel;
 
 	return (
-		<div ref={ref} className="relative">
+		<div ref={ref} className="pw-model-selector relative min-w-0">
 			<button
 				type="button"
-				className="chip"
+				className="chip min-w-0 max-w-full"
 				data-open={open}
 				title={triggerTitle}
 				aria-label={triggerTitle}
@@ -124,7 +131,7 @@ export function ModelSelector({
 					setPane("model");
 				}}
 			>
-				<span className="max-w-[220px] truncate" suppressHydrationWarning>{hasModel ? modelName : t.selectModel}</span>
+				<span className="min-w-0 max-w-[220px] truncate" suppressHydrationWarning>{hasModel ? modelName : t.selectModel}</span>
 				{effortLabel && (
 					<span style={{ color: "var(--dsw-label-caption)", flex: "none", fontSize: 13 }}>
 						{effortLabel}
@@ -198,9 +205,15 @@ export function ModelSelector({
 					{pane === "model" && (
 						<div className="flex min-h-0 flex-col">
 							<div ref={listRef} className="max-h-[340px] overflow-y-auto py-1">
-								{groups.length === 0 && (
+								{modelLoadError && (
+									<div role="alert" className="px-3 py-2" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>
+										<span title={modelLoadError}>{t.modelsLoadFailed}</span>{" "}
+										{onRetryModels && <button type="button" className="underline" onClick={onRetryModels}>{t.settingsRetry}</button>}
+									</div>
+								)}
+								{groups.length === 0 && (modelLoading || !modelLoadError) && (
 									<div className="px-3 py-3" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
-										{t.emptyModels}
+										{modelLoading ? t.modelsLoading : t.emptyModels}
 									</div>
 								)}
 								{groups.map((g) => (

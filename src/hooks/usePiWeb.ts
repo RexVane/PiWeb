@@ -338,6 +338,9 @@ export function usePiWeb() {
 	/** 当前 SSE 连接的增量批量器：按帧合并事件，避免每个 token 一次整树渲染 */
 	const batcherRef = useRef<EventBatcher<WebEvent> | null>(null);
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
+	const [modelLoading, setModelLoading] = useState(true);
+	const [modelLoadError, setModelLoadError] = useState<string | null>(null);
+	const modelRequestRef = useRef(0);
 	const [addedWorkspaces, setAddedWorkspaces] = useState<string[]>([]);
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
@@ -593,12 +596,20 @@ export function usePiWeb() {
 
 	// 模型目录
 	const refreshModels = useCallback(async () => {
+		const request = ++modelRequestRef.current;
+		setModelLoading(true);
+		setModelLoadError(null);
 		try {
 			const r = await fetch("/api/models");
 			const j = await r.json();
-			if (j.success) setModels({ providers: j.data.providers, models: j.data.models });
-		} catch {
-			/* ignore */
+			if (!r.ok || !j.success || !Array.isArray(j.data?.providers) || !Array.isArray(j.data?.models)) {
+				throw new Error(j.error || `request failed (${r.status})`);
+			}
+			if (request === modelRequestRef.current) setModels({ providers: j.data.providers, models: j.data.models });
+		} catch (error) {
+			if (request === modelRequestRef.current) setModelLoadError(error instanceof Error ? error.message : "model catalog unavailable");
+		} finally {
+			if (request === modelRequestRef.current) setModelLoading(false);
 		}
 	}, []);
 	useEffect(() => {
@@ -887,6 +898,8 @@ export function usePiWeb() {
 		currentPath,
 		state,
 		models,
+		modelLoading,
+		modelLoadError,
 		addedWorkspaces,
 		removedWorkspaces,
 		workspaceAliases,

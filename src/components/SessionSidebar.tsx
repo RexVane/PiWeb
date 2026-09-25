@@ -406,16 +406,11 @@ export function SessionSidebar({
 		return (
 			<div
 				key={s.path}
-				className="group relative flex items-center rounded-xl transition-colors"
+				className="pw-session-row group relative flex items-center transition-colors"
+				data-selected={selected || undefined}
 				style={{
 					background: selected ? "var(--dsw-active)" : "transparent",
-					paddingLeft: indented ? 38 : 10,
-					paddingRight: 8,
-					paddingTop: 6,
-					paddingBottom: 6,
-					// 选中/悬停框之间留缝，不互相粘连
-					marginTop: 2,
-					marginBottom: 2,
+					paddingLeft: indented ? 32 : s.streaming ? 16 : 8,
 				}}
 				onMouseEnter={(e) => {
 					if (!selected) e.currentTarget.style.background = "var(--dsw-hover)";
@@ -448,8 +443,8 @@ export function SessionSidebar({
 					<button
 						className="icon-btn"
 						style={{ width: 22, height: 22 }}
-						title="..."
-						aria-label="session-actions"
+						title={t.sessionActions}
+						aria-label={t.sessionActions}
 						onClick={(e) => {
 							e.stopPropagation();
 							setSessionMenu(sessionMenu === s.path ? null : s.path);
@@ -525,16 +520,12 @@ export function SessionSidebar({
 		return (
 			<div key={g.cwd}>
 				<div
-					className="group relative flex items-center rounded-xl transition-colors"
+					className="pw-workspace-row group relative flex items-center transition-colors"
+					data-current={isCurrent || undefined}
+					data-open={open || undefined}
 					style={{
 						background: open || isCurrent ? "var(--dsw-hover)" : "transparent",
-						paddingLeft: 10,
-						paddingRight: 6,
-						paddingTop: 7,
-						paddingBottom: 7,
-						// 悬停/展开框之间留缝，不互相粘连（与会话行一致）
-						marginTop: 2,
-						marginBottom: 2,
+						paddingLeft: 8,
 					}}
 					onMouseEnter={(e) => {
 						if (!(open || isCurrent)) e.currentTarget.style.background = "var(--dsw-hover)";
@@ -570,8 +561,8 @@ export function SessionSidebar({
 							<button
 								className="icon-btn"
 								style={{ width: 22, height: 22 }}
-								title="..."
-								aria-label="workspace-actions"
+								title={t.workspaceActions}
+								aria-label={t.workspaceActions}
 								onClick={() => {
 									setRowMenu(rowMenu === g.cwd ? null : g.cwd);
 									setSessionMenu(null);
@@ -651,9 +642,9 @@ export function SessionSidebar({
 	};
 
 	return (
-		<div className="flex h-full min-h-0 flex-col">
+		<div className="pw-sidebar flex h-full min-h-0 flex-col">
 			{/* 品牌行 */}
-			<div className="flex items-center gap-1 px-4 pb-2 pt-4">
+			<div className="pw-sidebar-head flex items-center gap-1 px-4 pb-2 pt-4">
 				<BrandPi />
 				<div className="flex-1" />
 				<button className="icon-btn" onClick={onToggleCollapse} title="«">
@@ -662,7 +653,7 @@ export function SessionSidebar({
 			</div>
 
 			{/* 新会话（dsh .newSession） */}
-			<div className="px-3 pt-1">
+			<div className="pw-sidebar-new px-3 pt-1">
 				<button className="btn-new-session w-full" onClick={onNew}>
 					<IconNewChatOutline16 size={14} />
 					{t.newChat}
@@ -676,6 +667,7 @@ export function SessionSidebar({
 						<IconSearchOutline16 size={14} style={{ color: "var(--dsw-label-caption)" }} />
 						<input
 							autoFocus
+							aria-label={t.searchSessions}
 							value={q}
 							onChange={(e) => setQ(e.target.value)}
 							placeholder={t.searchSessions}
@@ -685,6 +677,7 @@ export function SessionSidebar({
 						<button
 							className="icon-btn"
 							style={{ width: 20, height: 20 }}
+							aria-label={t.close}
 							onClick={() => {
 								setQ("");
 								setSearchOpen(false);
@@ -695,7 +688,7 @@ export function SessionSidebar({
 					</div>
 				</div>
 			) : (
-				<div className="flex items-center gap-0.5 px-4 pb-1 pt-3">
+				<div className="pw-sidebar-section-head flex items-center gap-0.5 px-4 pb-1 pt-3">
 					<span style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}>{t.workspaces}</span>
 					<div className="flex-1" />
 					<button className="icon-btn" style={{ width: 26, height: 26 }} title={t.search} onClick={() => setSearchOpen(true)}>
@@ -733,7 +726,7 @@ export function SessionSidebar({
 			)}
 
 			{/* 列表区 */}
-			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+			<div className="pw-sidebar-list min-h-0 flex-1 overflow-y-auto px-3 pb-3">
 				{sessionListError && (
 					<div role="alert" className="mb-2 rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-danger)", fontSize: 12 }}>
 						<div>{t.sessionListLoadFailed}: {sessionListError}</div>
@@ -865,7 +858,7 @@ export function SessionSidebar({
 			</div>
 
 			{/* 设置固定左下角 */}
-			<div className="px-3 py-2.5">
+			<div className="pw-sidebar-footer px-3 py-2.5">
 				<button
 					className="flex w-full items-center gap-2.5 rounded-xl px-4 py-2 text-left transition-colors"
 					style={{ color: "var(--dsw-label-secondary)" }}
@@ -881,11 +874,12 @@ export function SessionSidebar({
 			{/* 重命名弹窗（照用户截图 media_1788745548711.png，通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
 			{mounted && renameTarget && createPortal(
 				<div
-					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
 					onClick={closeRename}
 				>
 					<div
-						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
+						className="glass-modal relative w-full max-w-[420px] rounded-[24px] p-6 shadow-2xl"
+						style={{ color: "var(--dsw-label-primary)", border: "0.5px solid var(--dsw-border-l2)" }}
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
@@ -896,14 +890,14 @@ export function SessionSidebar({
 							type="button"
 							onClick={closeRename}
 							disabled={renamePending}
-							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
+							className="icon-btn absolute right-5 top-5 rounded-full p-1"
 							aria-label={t.close}
 						>
 							<IconCloseOutline14 size={16} />
 						</button>
 
 						{/* 标题 */}
-						<h3 id="rename-dialog-title" className="text-lg font-medium text-white pr-8">
+						<h3 id="rename-dialog-title" className="pr-8 text-lg font-medium">
 							{renameTarget.type === "session"
 								? (t.renameSession || "重命名会话")
 								: (t.renameWorkspace || "重命名工作区")}
@@ -914,6 +908,7 @@ export function SessionSidebar({
 							<input
 								ref={renameInputRef}
 								type="text"
+								aria-label={renameTarget.type === "session" ? t.renameSession : t.renameWorkspace}
 								value={renameValue}
 								disabled={renamePending}
 								onChange={(e) => {
@@ -924,7 +919,8 @@ export function SessionSidebar({
 									if (e.key === "Enter") void handleConfirmRename();
 									if (e.key === "Escape") closeRename();
 								}}
-								className="w-full rounded-full bg-white/[0.05] border border-white/15 px-4 py-2.5 text-[14.5px] text-white outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30 transition"
+								className="w-full rounded-full px-4 py-2.5 text-[14.5px] outline-none transition"
+								style={{ background: "var(--dsw-hover)", border: "1px solid var(--dsw-border-l2)", color: "var(--dsw-label-primary)" }}
 							/>
 						</div>
 						{renameError && (
@@ -937,7 +933,7 @@ export function SessionSidebar({
 								type="button"
 								onClick={closeRename}
 								disabled={renamePending}
-								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 hover:bg-[#383838] transition"
+								className="btn-outline"
 							>
 								{t.cancel}
 							</button>
@@ -945,7 +941,7 @@ export function SessionSidebar({
 								type="button"
 								onClick={() => void handleConfirmRename()}
 								disabled={renamePending || !renameValue.trim() || (renameTarget.type === "workspace" && (renameValue.trim() === renameTarget.name || renameWorkspaceConflict))}
-								className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black hover:bg-zinc-200 transition"
+								className="btn-primary-white"
 							>
 								{t.rename}
 							</button>
@@ -958,11 +954,12 @@ export function SessionSidebar({
 			{/* 删除工作区确认弹窗（照用户截图 media_1788745235179.png 与 media_1788746156687.png，通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
 			{mounted && deleteWorkspaceTarget && createPortal(
 				<div
-					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
 					onClick={() => !deleteWorkspacePending && setDeleteWorkspaceTarget(null)}
 				>
 					<div
-						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
+						className="glass-modal relative w-full max-w-[420px] rounded-[24px] p-6 shadow-2xl"
+						style={{ color: "var(--dsw-label-primary)", border: "0.5px solid var(--dsw-border-l2)" }}
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
@@ -973,26 +970,26 @@ export function SessionSidebar({
 							type="button"
 							onClick={() => setDeleteWorkspaceTarget(null)}
 							disabled={deleteWorkspacePending}
-							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
+							className="icon-btn absolute right-5 top-5 rounded-full p-1"
 							aria-label={t.close}
 						>
 							<IconCloseOutline14 size={16} />
 						</button>
 
 						{/* 标题 */}
-						<h3 id="delete-workspace-dialog-title" className="text-lg font-medium text-white pr-8">
+						<h3 id="delete-workspace-dialog-title" className="pr-8 text-lg font-medium">
 							{t.deleteWorkspace}
 						</h3>
 
 						{/* 描述文本 */}
-						<p className="mt-3 text-[14.5px] leading-relaxed text-zinc-300">
+						<p className="mt-3 text-[14.5px] leading-relaxed" style={{ color: "var(--dsw-label-secondary)" }}>
 							{(t.deleteWorkspaceConfirm || "将把“{name}”从工作区列表中移除。文件夹与会话记录会保留，其会话将显示在“未分组”下。").replace(
 								"{name}",
 								deleteWorkspaceTarget.name,
 							)}
 						</p>
 						{deleteWorkspacePending && (
-							<p className="mt-4 text-sm text-zinc-400" role="status">{t.deleteWorkspacePending}</p>
+							<p className="mt-4 text-sm" style={{ color: "var(--dsw-label-caption)" }} role="status">{t.deleteWorkspacePending}</p>
 						)}
 						{deleteWorkspaceError && (
 							<p className="mt-4 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{deleteWorkspaceError}</p>
@@ -1004,7 +1001,7 @@ export function SessionSidebar({
 								type="button"
 								onClick={() => setDeleteWorkspaceTarget(null)}
 								disabled={deleteWorkspacePending}
-								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 transition hover:border-white/25 hover:bg-[#383838]"
+								className="btn-outline"
 							>
 								{t.cancel}
 							</button>
@@ -1012,7 +1009,8 @@ export function SessionSidebar({
 								type="button"
 								onClick={() => void handleConfirmDeleteWorkspace()}
 								disabled={deleteWorkspacePending}
-								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] transition hover:border-[#f87171]/40 hover:bg-[#383838] hover:text-[#ef4444]"
+								className="btn-outline"
+								style={{ color: "var(--dsw-danger)" }}
 							>
 								{t.deleteWorkspace}
 							</button>

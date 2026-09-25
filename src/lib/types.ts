@@ -25,6 +25,7 @@ export interface TrajTokens {
 	output?: number;
 	cacheRead?: number;
 	cacheWrite?: number;
+	totalTokens?: number;
 }
 
 export interface TrajEntry {

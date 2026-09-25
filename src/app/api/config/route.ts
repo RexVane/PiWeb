@@ -9,7 +9,10 @@ export const dynamic = "force-dynamic";
 export async function GET() {
 	try {
 		const file = path.join(getAgentDir(), "settings.json");
-		const content = await fs.readFile(file, "utf8");
+		const content = await fs.readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return "{}\n";
+			throw error;
+		});
 		return new Response(content, {
 			headers: {
 				"Content-Type": "application/json; charset=utf-8",
