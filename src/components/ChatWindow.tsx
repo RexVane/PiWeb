@@ -956,7 +956,7 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
 			{imageStrip}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
-			{text && <div ref={bubbleRef} className={`msg-user-bubble${canEdit ? " pw-user-message-clickable" : ""}`} onClick={canEdit ? (event) => {
+			{text && <div ref={bubbleRef} className={`msg-user-bubble clay-bubble-user${canEdit ? " pw-user-message-clickable" : ""}`} onClick={canEdit ? (event) => {
 				if ((event.target as HTMLElement).closest("a, button, input, textarea, [role='button']")) return;
 				const selection = window.getSelection();
 				if (selection && !selection.isCollapsed) return;

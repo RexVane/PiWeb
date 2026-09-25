@@ -161,6 +161,16 @@ export function SettingsPanel({
 
 // ---------- General ----------
 
+const THEME_OPTIONS: Array<{ id: PebrelTheme; labelKey: string; nameZh: string; nameEn: string; light: string; dark: string; accent: string }> = [
+	{ id: "piweb", labelKey: "themePiWeb", nameZh: "PiWeb · 工作台", nameEn: "PiWeb · Workbench", light: "#34D399", dark: "#A7F3D0", accent: "#34D399" },
+	{ id: "ocean-ink", labelKey: "themeOceanInk", nameZh: "海与墨", nameEn: "Ocean Ink", light: "#38BDF8", dark: "#0284C7", accent: "#38BDF8" },
+	{ id: "silver-steel", labelKey: "themeSilverSteel", nameZh: "银钢", nameEn: "Silver Steel", light: "#E2E8F0", dark: "#475569", accent: "#94A3B8" },
+	{ id: "limestone-coal", labelKey: "themeLimestoneCoal", nameZh: "石灰与煤炭", nameEn: "Limestone & Coal", light: "#FB923C", dark: "#1E293B", accent: "#FB923C" },
+	{ id: "linen-moss", labelKey: "themeLinenMoss", nameZh: "亚麻与苔绿", nameEn: "Linen & Moss", light: "#FFDCC5", dark: "#006C4B", accent: "#006C4B" },
+	{ id: "nord-paper", labelKey: "themeNordPaper", nameZh: "北欧纸墨", nameEn: "Nordic Paper", light: "#F6FAFE", dark: "#00668A", accent: "#00668A" },
+	{ id: "pebrel", labelKey: "themePebrel", nameZh: "Pebrel", nameEn: "Pebrel", light: "#818CF8", dark: "#EEF2FF", accent: "#818CF8" },
+];
+
 function GeneralSection({
 	lang,
 	setLang,
@@ -335,15 +345,17 @@ function GeneralSection({
 		}
 	};
 
-	const themes: { id: PebrelTheme; label: string; light: string; dark: string; accent: string }[] = [
-		{ id: "piweb", label: t.themePiWeb, light: "#F2F5EE", dark: "#101816", accent: "#55B993" },
-		{ id: "dsh", label: t.themeDsh, light: "#F9FAFB", dark: "#151517", accent: "#4176E6" },
-		{ id: "silver-steel", label: t.themeSilverSteel, light: "#F3F4F6", dark: "#1A1C24", accent: "#94A3B8" },
-		{ id: "limestone-coal", label: t.themeLimestoneCoal, light: "#F0EFEB", dark: "#171717", accent: "#CEB27E" },
-		{ id: "linen-moss", label: t.themeLinenMoss, light: "#F2F2EC", dark: "#1E211E", accent: "#A3B3A3" },
-		{ id: "nord-paper", label: t.themeNordPaper, light: "#FCFBF9", dark: "#2E3440", accent: "#88C0D0" },
-		{ id: "pebrel", label: t.themePebrel, light: "#F3F4F6", dark: "#0F111A", accent: "#52A8FF" },
-	];
+	const themes = useMemo(
+		() =>
+			THEME_OPTIONS.map((th) => ({
+				id: th.id,
+				label: (t as Record<string, string>)[th.labelKey] || (lang === "zh" ? th.nameZh : th.nameEn),
+				light: th.light,
+				dark: th.dark,
+				accent: th.accent,
+			})),
+		[lang, t],
+	);
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -364,38 +376,34 @@ function GeneralSection({
 			/>
 			</Row>
 			<RowColumn title={t.appearance}>
-				<div className="settings-theme-grid flex w-full flex-wrap gap-2">
-					{themes.map((th) => (
-						<button
-							key={th.id}
-							className="flex flex-col items-center justify-center gap-1 transition-colors"
-							style={{
-								flex: "1 1 150px",
-								padding: "20px 32px",
-								borderRadius: 20,
-								border: `0.5px solid ${theme === th.id ? "var(--dsw-border-strong)" : "var(--dsw-border-l4)"}`,
-								background: theme === th.id ? "var(--dsw-module-platform)" : "transparent",
-								color: "var(--dsw-label-primary)",
-								fontSize: 14,
-								lineHeight: "22px",
-							}}
-							aria-pressed={theme === th.id}
-							onClick={() => pickTheme(th.id)}
-						>
-							<span className="flex items-center overflow-hidden rounded-md" style={{ border: "0.5px solid var(--dsw-border-l3)", width: 42, height: 20 }}>
-								<span style={{ background: th.light, flex: 1, height: "100%" }} />
-								<span style={{ background: th.dark, flex: 1, height: "100%" }} />
-							</span>
-							<span className="flex items-center gap-1.5">
-								<span className="inline-block rounded-full" style={{ width: 8, height: 8, background: th.accent }} />
-								{th.label}
-							</span>
-						</button>
-					))}
+				<div className="settings-theme-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 w-full">
+					{themes.map((th) => {
+						const isSelected = theme === th.id;
+						return (
+							<button
+								key={th.id}
+								type="button"
+								className={`clay-card flex flex-col items-center justify-center p-3.5 rounded-2xl transition-all hover:-translate-y-0.5 ${
+									isSelected ? "ring-2 ring-emerald-500 shadow-md bg-white dark:bg-slate-800" : "bg-white/70 dark:bg-slate-900/60 opacity-80 hover:opacity-100"
+								}`}
+								aria-pressed={isSelected}
+								onClick={() => pickTheme(th.id)}
+							>
+								<div className="flex items-center overflow-hidden rounded-lg mb-2 shadow-inner border border-slate-200/50 dark:border-slate-700/50" style={{ width: 48, height: 22 }}>
+									<span style={{ background: th.light, flex: 1, height: "100%" }} />
+									<span style={{ background: th.dark, flex: 1, height: "100%" }} />
+								</div>
+								<div className="flex items-center gap-1.5 text-xs font-medium text-slate-800 dark:text-slate-100">
+									<span className="w-2 h-2 rounded-full inline-block flex-none" style={{ background: th.accent }} />
+									<span className="truncate">{th.label}</span>
+								</div>
+							</button>
+						);
+					})}
 				</div>
 			</RowColumn>
 			<RowColumn title={t.appearanceMode}>
-				<div className="settings-appearance-mode-grid flex w-full flex-wrap gap-2">
+				<div className="clay-inset flex p-1 rounded-2xl bg-slate-100/90 dark:bg-slate-900/80 gap-1 w-full max-w-sm">
 					{([
 						{ id: "light", label: t.themeLight },
 						{ id: "dark", label: t.themeDark },
@@ -403,17 +411,12 @@ function GeneralSection({
 					] as { id: ThemeMode; label: string }[]).map((mode) => (
 						<button
 							key={mode.id}
-							className="flex flex-col items-center justify-center gap-1 transition-colors"
-							style={{
-								flex: "1 1 120px",
-								padding: "16px 24px",
-								borderRadius: 20,
-								border: `0.5px solid ${themeMode === mode.id ? "var(--dsw-border-strong)" : "var(--dsw-border-l4)"}`,
-								background: themeMode === mode.id ? "var(--dsw-module-platform)" : "transparent",
-								color: "var(--dsw-label-primary)",
-								fontSize: 14,
-								lineHeight: "22px",
-							}}
+							type="button"
+							className={`flex-1 py-1.5 px-3 rounded-xl text-xs font-semibold transition-all ${
+								themeMode === mode.id
+									? "clay-btn-soft text-slate-800 dark:text-slate-100 shadow-sm"
+									: "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+							}`}
 							aria-pressed={themeMode === mode.id}
 							onClick={() => pickThemeMode(mode.id)}
 						>
@@ -744,10 +747,10 @@ function RowColumn({ title, desc, children }: { title: string; desc?: string; ch
 /** 字号步进器：− 值 ＋（越界禁用；点中间数值回到 14 默认） */
 function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v: number) => void; max: number }) {
 	return (
-		<div className="flex items-center gap-2">
+		<div className="clay-inset flex items-center gap-1.5 p-1 rounded-2xl bg-slate-100 dark:bg-slate-900">
 			<button
-				className="icon-btn"
-				style={{ width: 26, height: 26, border: "0.5px solid var(--dsw-border-l3)", borderRadius: 8 }}
+				type="button"
+				className="clay-btn clay-btn-soft w-7 h-7 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 disabled:opacity-40"
 				disabled={value <= 12}
 				onClick={() => onChange(value - 1)}
 				aria-label="decrease font size"
@@ -755,15 +758,16 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 				−
 			</button>
 			<button
-				style={{ minWidth: 48, textAlign: "center", fontSize: 13, color: value === 14 ? "var(--dsw-label-tertiary)" : "var(--dsw-label-primary)" }}
-				title="reset"
+				type="button"
+				className="px-2 text-center text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-emerald-500 transition-colors"
+				title="reset to 14px"
 				onClick={() => onChange(14)}
 			>
 				{value} px
 			</button>
 			<button
-				className="icon-btn"
-				style={{ width: 26, height: 26, border: "0.5px solid var(--dsw-border-l3)", borderRadius: 8 }}
+				type="button"
+				className="clay-btn clay-btn-soft w-7 h-7 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-200 disabled:opacity-40"
 				disabled={value >= max}
 				onClick={() => onChange(value + 1)}
 				aria-label="increase font size"
@@ -1248,8 +1252,8 @@ function ModelsSection() {
 					const editingThis = editing === p.id;
 					return (
 						<div key={p.id}>
-							{/* 卡片：身份/操作行在上，额度显示放在同一个框内的第二段（分隔线区分） */}
-							<div className="flex flex-col rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+							{/* 卡片：身份/操作行在上，额度显示放在同一个框内的第二段（柔和粘土拟物风格） */}
+							<div className="clay-card flex flex-col rounded-2xl px-4 py-3 bg-white/80 dark:bg-slate-900/80 shadow-sm transition-all hover:shadow-md" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
 								<div className="flex items-center gap-3">
 									<ProviderBrand id={p.id} name={providerName(p.id)} size={34} />
 									<div className="min-w-0 flex-1">
@@ -1491,6 +1495,15 @@ function ModelsSection() {
 				</button>
 			</div>
 
+			{/* 路由状态提示 */}
+			<div className="clay-card p-4 rounded-2xl flex items-center gap-3 bg-gradient-to-r from-emerald-50/50 to-sky-50/50 dark:from-emerald-950/20 dark:to-sky-950/20 text-xs text-slate-600 dark:text-slate-300 border border-emerald-100/60 dark:border-emerald-950/40">
+				<span className="text-emerald-500 font-bold flex items-center gap-1.5 flex-none">
+					<span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+					路由提示:
+				</span>
+				<span>请求使用当前选定的模型与供应商；此处未配置自动故障转移。</span>
+			</div>
+
 			{adding ? (
 				<ProviderSetupModal
 					mode={adding}
@@ -1701,59 +1714,115 @@ function ToolsSection({
 	return (
 		<div className="flex flex-col gap-5">
 			<div>
-				<div style={{ fontSize: 14, fontWeight: 400 }}>{t.toolsSection}</div>
+				<div style={{ fontSize: 16, fontWeight: 600, color: "var(--dsw-label-primary)" }}>{t.toolsSection}</div>
 				<div className="mt-0.5" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
-					{t.toolsSectionDesc}
+					当前会话生效的工具与权限预设；主会话不提供系统级沙盒隔离
 				</div>
 			</div>
 
-			<Row title={t.securityToolPreset} desc={t.securityToolPresetDesc}>
-				<SelectOption
-					value={toolPreset}
-					options={[
-						{ value: "readonly", label: t.toolReadonly },
-						{ value: "standard", label: t.toolStandard },
-						{ value: "full", label: t.toolFull },
-					]}
-					onChange={(value) => onToolPresetChange(value as ToolPreset)}
-				/>
-			</Row>
+			{/* 3-tier permission modes (Screen 5) */}
+			<div className="flex flex-col gap-2">
+				<div className="text-xs font-medium text-slate-500">运行权限预设</div>
+				<div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+					<button
+						type="button"
+						className={`clay-card p-3 rounded-2xl text-left transition-all ${
+							toolPreset === "readonly" ? "ring-2 ring-emerald-500 bg-white dark:bg-slate-800 shadow-md" : "bg-white/70 dark:bg-slate-900/60 opacity-85 hover:opacity-100"
+						}`}
+						onClick={() => onToolPresetChange("readonly")}
+					>
+						<div className="font-semibold text-xs text-slate-800 dark:text-slate-100 flex items-center justify-between">
+							<span>{t.toolReadonly}</span>
+							{toolPreset === "readonly" && <IconCheckOutline14 className="text-emerald-500" size={13} />}
+						</div>
+						<div className="text-[11px] text-slate-500 mt-1 leading-relaxed">仅读取文件与搜索，禁止修改系统或执行命令</div>
+					</button>
+
+					<button
+						type="button"
+						className={`clay-card p-3 rounded-2xl text-left transition-all ${
+							toolPreset === "standard" ? "ring-2 ring-emerald-500 bg-white dark:bg-slate-800 shadow-md" : "bg-white/70 dark:bg-slate-900/60 opacity-85 hover:opacity-100"
+						}`}
+						onClick={() => onToolPresetChange("standard")}
+					>
+						<div className="font-semibold text-xs text-slate-800 dark:text-slate-100 flex items-center justify-between">
+							<span>{t.toolStandard}</span>
+							{toolPreset === "standard" && <IconCheckOutline14 className="text-emerald-500" size={13} />}
+						</div>
+						<div className="text-[11px] text-slate-500 mt-1 leading-relaxed">常规开发工具集，终端执行与高危修改需确认</div>
+					</button>
+
+					<button
+						type="button"
+						className={`clay-card p-3 rounded-2xl text-left transition-all ${
+							toolPreset === "full" ? "ring-2 ring-emerald-500 bg-white dark:bg-slate-800 shadow-md" : "bg-white/70 dark:bg-slate-900/60 opacity-85 hover:opacity-100"
+						}`}
+						onClick={() => onToolPresetChange("full")}
+					>
+						<div className="font-semibold text-xs text-slate-800 dark:text-slate-100 flex items-center justify-between">
+							<span>{t.toolFull}</span>
+							{toolPreset === "full" && <IconCheckOutline14 className="text-emerald-500" size={13} />}
+						</div>
+						<div className="text-[11px] text-slate-500 mt-1 leading-relaxed">允许所有内置与扩展工具无障碍全自动调用</div>
+					</button>
+				</div>
+			</div>
+
+			{/* Telemetry card / Context caching widget */}
+			<div className="clay-card p-3 rounded-2xl bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/50 dark:border-emerald-900/40 flex items-center justify-between text-xs">
+				<div className="flex items-center gap-2">
+					<span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+					<span className="font-medium text-slate-700 dark:text-slate-200">会话工具:</span>
+					<span className="text-emerald-600 dark:text-emerald-400 font-semibold">{active.size}/{all.length} 已启用</span>
+				</div>
+				<div className="text-slate-400 text-[11px] font-mono">
+					按当前会话工具清单统计
+				</div>
+			</div>
 
 			{all.length === 0 ? (
-				<div className="rounded-2xl p-4" style={{ border: "0.5px dashed var(--dsw-border-l3)", fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
+				<div className="clay-card rounded-2xl p-6 text-center text-xs text-slate-400">
 					{t.toolsNoSession}
 				</div>
 			) : (
-				<div className="flex flex-col gap-2.5">
-					<div className="flex items-center gap-2" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
-						<span style={{ fontWeight: 600 }}>{t.toolsCurrentSession}</span>
+				<div className="flex flex-col gap-2">
+					<div className="flex items-center justify-between text-xs text-slate-500 px-1">
+						<span className="font-medium">{t.toolsCurrentSession}</span>
 						<span>{t.toolsActiveCount.replace("{n}", String(active.size)).replace("{total}", String(all.length))}</span>
 					</div>
 					{all.map((tool) => {
 						const on = active.has(tool.name);
 						const desc = tool.description || describe(tool.name);
 						return (
-							<div key={tool.name} className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-								<div className="min-w-0 flex-1">
-									<div style={{ fontSize: 13.5, fontWeight: 500, fontFamily: "var(--font-mono)" }}>{tool.name}</div>
+							<div key={tool.name} className="clay-card flex items-center justify-between p-3 rounded-2xl transition-all hover:translate-x-0.5">
+								<div className="min-w-0 flex-1 pr-3">
+									<div className="flex items-center gap-2">
+										<span className="clay-code-pill px-2.5 py-0.5 text-xs font-mono font-bold text-slate-800 dark:text-slate-200">
+											{tool.name}
+										</span>
+									</div>
 									{desc && (
-										<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+										<div className="truncate text-xs text-slate-500 mt-1">
 											{desc}
 										</div>
 									)}
 								</div>
 								<button
-									className="relative h-5 w-9 flex-none rounded-full transition-colors"
-									style={{ background: on ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }}
+									type="button"
+									className={`clay-btn w-12 h-6 rounded-full transition-all duration-200 p-0.5 flex items-center ${
+										on ? "clay-btn-mint justify-end" : "bg-slate-200 dark:bg-slate-700 text-slate-400 justify-start"
+									}`}
 									role="switch"
 									aria-checked={on}
 									aria-label={tool.name}
 									disabled={!onSetTools || (on && active.size <= 1)}
 									onClick={() => toggle(tool.name)}
 								>
-									<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: on ? 18 : 2 }} />
+									<span className="w-5 h-5 rounded-full bg-white shadow-md flex items-center justify-center text-[10px] font-bold text-emerald-600">
+										{on ? "✓" : "−"}
+									</span>
 								</button>
-						</div>
+							</div>
 						);
 					})}
 				</div>

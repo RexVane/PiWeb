@@ -214,6 +214,7 @@ export function GitPanel({
 			)}
 
 			<div className="min-h-0 flex-1 overflow-y-auto">
+				{!cwd && <div className="rounded-xl px-3 py-4 text-sm" style={{ color: "var(--dsw-label-caption)", background: "var(--dsw-hover)" }}>请先在工作台选择工作区，再查看 Git 差异。</div>}
 				{/* ---------- 差异视图 ---------- */}
 				{view && (
 					<div>

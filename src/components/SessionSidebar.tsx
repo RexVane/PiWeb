@@ -97,6 +97,10 @@ export function SessionSidebar({
 	onOpenSettings,
 	onAddWorkspace,
 	draftCwd,
+	gitBranch = "—",
+	gitStatus = "未选择",
+	canAskCommit = false,
+	onAskCommit,
 }: {
 	sessions: SessionListItem[];
 	sessionListError?: string | null;
@@ -129,6 +133,10 @@ export function SessionSidebar({
 	onAddWorkspace: () => void;
 	/** 新会话草稿所在的工作区：条目显示在该分组内，发送第一条消息才真正创建 */
 	draftCwd?: string | null;
+	gitBranch?: string;
+	gitStatus?: string;
+	canAskCommit?: boolean;
+	onAskCommit?: () => void;
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
@@ -652,9 +660,9 @@ export function SessionSidebar({
 				</button>
 			</div>
 
-			{/* 新会话（dsh .newSession） */}
+			{/* 新会话（柔和粘土拟物风格） */}
 			<div className="pw-sidebar-new px-3 pt-1">
-				<button className="btn-new-session w-full" onClick={onNew}>
+				<button className="clay-btn clay-btn-mint w-full py-2.5 px-4 text-xs font-semibold tracking-wide flex items-center justify-center gap-2 text-white shadow-md rounded-2xl transition-all" onClick={onNew}>
 					<IconNewChatOutline16 size={14} />
 					{t.newChat}
 				</button>
@@ -857,17 +865,34 @@ export function SessionSidebar({
 				)}
 			</div>
 
-			{/* 设置固定左下角 */}
-			<div className="pw-sidebar-footer px-3 py-2.5">
+			{/* Git 状态卡片与设置 */}
+			<div className="pw-sidebar-footer px-3 py-2 flex flex-col gap-2">
+				<div className="clay-card p-2.5 rounded-2xl border border-slate-200/50 dark:border-slate-800/50 bg-white/70 dark:bg-slate-900/70">
+					<div className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-200">
+						<div className="flex items-center gap-1.5">
+							<IconBranchOutline16 size={13} className="text-emerald-500" />
+							<span className="font-mono truncate" title={gitBranch}>{gitBranch}</span>
+						</div>
+						<span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${gitStatus === "干净" ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60" : "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60"}`}>
+							{gitStatus}
+						</span>
+					</div>
+					<button
+						type="button"
+						className="mt-2 w-full py-1 px-2.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+						disabled={!canAskCommit}
+						onClick={onAskCommit}
+					>
+						<span>让 pi 提交</span>
+						<span>→</span>
+					</button>
+				</div>
 				<button
-					className="flex w-full items-center gap-2.5 rounded-xl px-4 py-2 text-left transition-colors"
-					style={{ color: "var(--dsw-label-secondary)" }}
-					onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-					onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+					className="clay-btn clay-btn-soft flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors"
 					onClick={onOpenSettings}
 				>
-					<IconSettingsOutline16 size={16} />
-					<span style={{ fontSize: "var(--dsh-content-font-size)" }}>{t.settings}</span>
+					<IconSettingsOutline16 size={15} />
+					<span>{t.settings}</span>
 				</button>
 			</div>
 

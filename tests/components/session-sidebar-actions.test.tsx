@@ -62,3 +62,12 @@ it("archives from the session menu without opening the session", async () => {
 	expect(onArchive).toHaveBeenCalledWith("/session");
 	expect(onOpen).not.toHaveBeenCalled();
 });
+
+it("uses the supplied Git status and delegates commit drafting to AppShell", () => {
+	const onAskCommit = vi.fn();
+	const props = mount({ gitBranch: "feature/bridge", gitStatus: "3 改动", canAskCommit: true, onAskCommit });
+	expect(screen.getByText("feature/bridge")).toBeTruthy();
+	expect(screen.getByText("3 改动")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: /让 pi 提交/ }));
+	expect(props.onAskCommit).toHaveBeenCalledOnce();
+});

@@ -6,6 +6,7 @@
 
 export type PebrelTheme =
 	| 'piweb'
+	| 'ocean-ink'
 	| 'silver-steel'
 	| 'limestone-coal'
 	| 'linen-moss'
@@ -16,8 +17,61 @@ export type PebrelTheme =
 /** dsh 的 THEME_PREFERENCES：浅色/深色/跟随系统 */
 export type ThemeMode = 'light' | 'dark' | 'system';
 
+export interface ThemeMeta {
+	id: PebrelTheme;
+	name: string;
+	description: string;
+	colors: [string, string];
+}
+
+export const THEME_CATALOG: ThemeMeta[] = [
+	{
+		id: 'piweb',
+		name: 'PiWeb · 工作台',
+		description: '粘土薄荷原装配方',
+		colors: ['#34D399', '#A7F3D0'],
+	},
+	{
+		id: 'ocean-ink',
+		name: '海与墨',
+		description: '湛蓝深邃与清爽青靛',
+		colors: ['#38BDF8', '#0284C7'],
+	},
+	{
+		id: 'silver-steel',
+		name: '银钢',
+		description: '坚实质感与精密中性',
+		colors: ['#E2E8F0', '#475569'],
+	},
+	{
+		id: 'limestone-coal',
+		name: '石灰与煤炭',
+		description: '暖橙炭黑微拟物风格',
+		colors: ['#FB923C', '#1E293B'],
+	},
+	{
+		id: 'linen-moss',
+		name: '亚麻与苔绿',
+		description: '自然植物纤维温润感',
+		colors: ['#FFDCC5', '#006C4B'],
+	},
+	{
+		id: 'nord-paper',
+		name: '北欧纸墨',
+		description: '哑光书纸触觉明度',
+		colors: ['#F6FAFE', '#00668A'],
+	},
+	{
+		id: 'pebrel',
+		name: 'Pebrel',
+		description: '柔和薰衣草紫与鹅卵石质感',
+		colors: ['#818CF8', '#EEF2FF'],
+	},
+];
+
 export const PEBREL_THEME_IDS: PebrelTheme[] = [
 	'piweb',
+	'ocean-ink',
 	'dsh',
 	'silver-steel',
 	'limestone-coal',

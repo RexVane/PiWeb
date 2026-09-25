@@ -305,7 +305,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 			{/* 来源选择器：选中哪个就只列哪个工具的会话 */}
 			{groups.length > 0 && (
-				<div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={t.importPickSource} data-testid="import-source-tabs">
+				<div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-slate-100/80 dark:bg-slate-900/60" role="tablist" aria-label={t.importPickSource} data-testid="import-source-tabs">
 					{groups.map((group) => {
 						const active = group.source === visibleSource;
 						return (
@@ -314,18 +314,16 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 								type="button"
 								role="tab"
 								aria-selected={active}
-								className="rounded-full px-3 py-1 transition-colors"
-								style={{
-									fontSize: 12,
-									border: `0.5px solid ${active ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`,
-									background: active ? "var(--dsw-accent)" : "transparent",
-									color: active ? "#fff" : "var(--dsw-label-tertiary)",
-								}}
+								className={`clay-btn rounded-xl px-3.5 py-1.5 transition-all text-xs font-medium flex items-center gap-1.5 ${
+									active
+										? "clay-btn-peach text-white shadow-sm font-semibold"
+										: "clay-btn-soft text-slate-600 dark:text-slate-300"
+								}`}
 								onClick={() => setActiveSource(group.source)}
 								data-testid={`import-source-${group.source}`}
 							>
-								{sourceLabel(group.source)}
-								<span style={{ marginLeft: 6, opacity: 0.75 }}>{group.rows.length}</span>
+								<span>{sourceLabel(group.source)}</span>
+								<span className={`text-[10px] px-1.5 py-0.2 rounded-full ${active ? "bg-white/30 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-500"}`}>{group.rows.length}</span>
 							</button>
 						);
 					})}
@@ -339,10 +337,10 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							{t.importGroupCount.replace("{n}", String(activeGroup.rows.length)).replace("{imported}", String(activeGroup.imported))}
 						</span>
 						<div className="flex-1" />
-						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }} onClick={() => selectGroup(activeGroup.rows, true)}>
+						<button className="clay-btn clay-btn-soft rounded-lg px-2.5 py-1 text-xs" onClick={() => selectGroup(activeGroup.rows, true)}>
 							{t.importSelectAll}
 						</button>
-						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }} onClick={() => selectGroup(activeGroup.rows, false)}>
+						<button className="clay-btn clay-btn-soft rounded-lg px-2.5 py-1 text-xs text-slate-400" onClick={() => selectGroup(activeGroup.rows, false)}>
 							{t.importSelectNone}
 						</button>
 					</div>
@@ -354,20 +352,22 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							return (
 								<label
 									key={rowKey}
-									className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2"
-									style={{ border: `0.5px solid ${checked ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`, opacity: done ? 0.55 : 1 }}
+									className={`clay-card flex cursor-pointer items-center gap-3 rounded-2xl px-3.5 py-2.5 transition-all hover:translate-x-0.5 ${
+										checked ? "ring-2 ring-emerald-500 bg-white dark:bg-slate-800" : "bg-white/70 dark:bg-slate-900/60"
+									}`}
+									style={{ opacity: done ? 0.55 : 1 }}
 								>
 									<input type="checkbox" checked={checked} disabled={done} onChange={() => toggle(row)} />
 									<div className="min-w-0 flex-1">
-										<div className="truncate" style={{ fontSize: 12.5 }} title={row.title}>
+										<div className="truncate text-xs font-medium text-slate-800 dark:text-slate-100" title={row.title}>
 											{row.title || t.importUntitled}
 										</div>
-										<div className="truncate" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }} title={row.projectPath}>
+										<div className="truncate text-[11px] text-slate-400" title={row.projectPath}>
 											{row.projectPath || t.importNoProject}
 										</div>
 									</div>
 									{done && (
-										<span className="rounded-full px-2 py-0.5" style={{ fontSize: 10, background: "var(--dsw-hover)", color: "var(--dsw-label-caption)" }}>
+										<span className="clay-badge rounded-full px-2 py-0.5 text-[10px] bg-slate-100 text-slate-400">
 											{t.importAlready}
 										</span>
 									)}

@@ -1,17 +1,22 @@
 import { NextResponse } from "next/server";
 import type { ProjectTrust } from "@/lib/security-service";
 import { getSecurity, setProjectTrust } from "@/lib/security-service";
-import { reloadLoader, setProjectTrust as setProjectTrustDecision } from "@/lib/pi";
+import { reloadLoader, resolveProjectTrust, setProjectTrust as setProjectTrustDecision } from "@/lib/pi";
 import { reloadSessionsForCwd } from "@/lib/agent-manager";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
 	try {
+		const params = new URL(req.url).searchParams;
+		if (params.has("cwd")) {
+			const cwd = await resolveWorkspacePath(params.get("cwd"));
+			return NextResponse.json({ success: true, data: resolveProjectTrust(cwd) });
+		}
 		return NextResponse.json({ success: true, data: await getSecurity() });
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: err instanceof BoundaryError ? 400 : 500 });
 	}
 }
 
