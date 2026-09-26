@@ -1370,19 +1370,19 @@ function Hero({
 						<div className="flex items-center gap-2">
 							<span className="font-extrabold tracking-wider text-slate-900 dark:text-slate-100 text-xs sm:text-sm">PIWEB</span>
 							<span className="text-slate-400">/</span>
-							<span className="text-[10px] tracking-widest text-slate-600 dark:text-slate-400 font-bold uppercase">WORKBENCH</span>
+							<span className="text-[10px] tracking-widest text-slate-600 dark:text-slate-400 font-bold uppercase">{t.heroBadge}</span>
 						</div>
 						<span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600" />
 						<div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full clay-inset border border-slate-200 dark:border-slate-800">
 							<span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-							<span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-300 font-bold tracking-wider">01 / READY</span>
+							<span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-300 font-bold tracking-wider">{t.heroReady}</span>
 						</div>
 					</div>
 					<h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50 mb-2 drop-shadow-sm">
-						让想法落到代码。
+						{t.heroTitle}
 					</h1>
 					<p className="text-sm text-slate-600 dark:text-slate-300 max-w-lg mx-auto leading-relaxed font-medium">
-						规划、执行、验证。一个专注于交付的轻量工作台。
+						{t.heroDescription}
 					</p>
 
 					{/* 工作区选择器 */}
@@ -1436,7 +1436,7 @@ function Hero({
 						</div>
 						<div className="px-3 py-1.5 rounded-full clay-inset text-slate-700 dark:text-slate-300 text-xs font-mono font-semibold flex items-center gap-1.5 border border-slate-200 dark:border-slate-800">
 							<span className="text-amber-500">⚡</span>
-							<span>在当前工作区执行</span>
+							<span>{t.heroRunsHere}</span>
 						</div>
 					</div>
 				</div>
@@ -1479,31 +1479,30 @@ function Hero({
 					/>
 					<div className="flex items-center justify-between px-2 pt-2 text-slate-500 dark:text-slate-400 font-mono text-xs font-medium">
 						<div className="flex items-center gap-3">
-							<span className="flex items-center gap-1"><kbd className="px-1.5 py-0.5 rounded clay-inset font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700">⏎</kbd> 发送</span>
-							<span className="flex items-center gap-1"><kbd className="px-1.5 py-0.5 rounded clay-inset font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700">⇧ ⏎</kbd> 换行</span>
+							<span className="flex items-center gap-1"><kbd className="px-1.5 py-0.5 rounded clay-inset font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700">⏎</kbd> {t.heroSend}</span>
+							<span className="flex items-center gap-1"><kbd className="px-1.5 py-0.5 rounded clay-inset font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700">⇧ ⏎</kbd> {t.heroNewline}</span>
 						</div>
 						<div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-semibold">
 							<IconShieldOutline16 size={13} />
-							<span>主会话无系统级沙盒隔离</span>
+							<span>{t.heroNoSandbox}</span>
 						</div>
 					</div>
 				</div>
 
-				{/* Telemetry bottom bar */}
 				<div className="flex items-center justify-center gap-4 text-slate-600 dark:text-slate-300 text-xs font-semibold tracking-wider">
 					<div className="flex items-center gap-1.5">
 						<span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-						<span>极速热加载</span>
+						<span>{t.heroSharedState}</span>
 					</div>
 					<span>•</span>
 					<div className="flex items-center gap-1.5">
 						<span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-						<span>MCP 扩展全兼容</span>
+						<span>{t.heroPathChecks}</span>
 					</div>
 					<span>•</span>
 					<div className="flex items-center gap-1.5">
 						<span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-						<span>端侧安全加固</span>
+						<span>{t.heroOptionalLogin}</span>
 					</div>
 				</div>
 			</div>

@@ -298,3 +298,12 @@
   - `.agents/`、`.gemini/` 是本机 MCP 配置，未纳入提交。
 - 影响文件：见本次提交；进度本文件。
 - 下一步：推送 `main` 后执行 `gh workflow run publish --ref main`，等发布流程结束再拉取它回写的版本号。
+
+## 2026-09-27 02:48 +08:00 | grok-4.7 | 发布 0.3.16，并改介绍页与仓库简介
+- 改了什么：
+  - 发布流程 `36263139818` 成功。npm 先提示包还在处理，约四分钟后官方 registry 能读到 `@rexvane/piweb@0.3.16`。GitHub Release 是 https://github.com/RexVane/PiWeb/releases/tag/v0.3.16 ，版本提交 `7ca8923` 已拉回本地。
+  - 首页介绍原先写死中文，并同时写「无系统级沙盒」和「端侧安全加固」，还写了「极速热加载」「MCP 扩展全兼容」。现改为中英文字串：说明通过官方 SDK 驱动本机 pi，底部只保留共用配置、路径校验、对外访问需密码，以及主会话没有系统级沙盒。
+  - README 中英安装示例从 `0.3.16` 之前的 `0.3.4` 改成 `0.3.16`，补上智能体群和测试检查器。GitHub About 改为与 `package.json` 相同的说明，主页指向 README。
+  - 删了不参与运行的本地目录和文件：`pi/`、`.zcode/`、`.next/`、`.next-releases/`、`.vitest/`、空的 `images/`、`probe_tools.py`、旧审查稿 `PiWeb_Audit_2026-09-13.md`、`state/*.log`。正在跑的开发产物 `.next-dev-webpack` 留着。`.agents/`、`.gemini/` 含本机 MCP 配置，未提交也未删。
+- 影响文件：`src/i18n.tsx`、`src/components/AppShell.tsx`、`README.md`、`README_zh.md`、`state/progress.md`。
+- 下一步：把介绍改动推上 `main`。推送不会再次发布 npm。

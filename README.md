@@ -100,6 +100,14 @@ A header button opens a panel listing every prompt that reaches the model's cont
 
 Install, update, and uninstall pi packages directly from the UI. Enable/disable or delete skills; every change applies to running sessions immediately.
 
+### Agent Swarm
+
+From a clean, trusted Git repository, start one to three explicit tasks. Each task runs in its own Git worktree with file tools only — no shell, extensions, or automatic tests. Finished reports and patches stay for review. Accepting a patch updates the main workspace files and does not stage or commit them.
+
+### Test Inspector
+
+List test files under the workspace `tests/` directory, open one, and run that file with the project's Vitest. The page shows pass, fail, skip, and the command output. It does not invent coverage or memory numbers, and project trust is not an operating-system sandbox.
+
 ### Security
 
 Optional login via `PI_WEB_PASSWORD` (required for non-loopback binds), origin validation on write actions, strict path boundary checks, and tool presets (Read Only / Workspace Write / Full Access).
@@ -129,7 +137,7 @@ so `npm install -g @rexvane/piweb` behaves identically; if your registry is a mi
 syncs with a delay, add `--registry=https://registry.npmjs.org` to get a release the moment
 it is published. Restart `piweb` afterwards to serve the new version.
 
-Or install a specific version: `npm install -g @rexvane/piweb@0.3.4`.
+Or install a specific version: `npm install -g @rexvane/piweb@0.3.16`.
 
 ### Uninstall
 
