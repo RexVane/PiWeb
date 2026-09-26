@@ -36,6 +36,7 @@ import {
 	IconPanelLeftOutline16,
 	IconProjectAddOutline16,
 	IconSettingsOutline16,
+	IconShieldOutline16,
 	IconWorkflowAgent16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
@@ -94,6 +95,7 @@ export function AppShell() {
 		setGroupBy,
 		setOrderBy,
 		addWorkspaceByPicker,
+		addWorkspaceByPath,
 		removeWorkspace,
 		refreshModels,
 		sendCommand,
@@ -671,28 +673,159 @@ export function AppShell() {
 	);
 
 	return (
-		<div
-			className="pw-shell grid h-screen w-screen overflow-hidden"
-			style={{
-				gridTemplateColumns: gridCols,
-				transition: dragging ? "none" : "grid-template-columns var(--ds-duration-slow) var(--ds-ease-in-out)",
-				background: "var(--dsw-bg-base)",
-			}}
-		>
-			{/* 侧栏 */}
-			<div
-				className="pw-sidebar-surface min-h-0 overflow-hidden"
-				style={isNarrow ? {
-					position: "fixed",
-					inset: "0 auto 0 0",
-					width: "min(86vw, 340px)",
-					zIndex: 90,
-					background: "var(--dsw-sidebar-fill)",
-					transform: mobileSidebarOpen ? "translateX(0)" : "translateX(-105%)",
-					transition: "transform var(--ds-duration-normal) var(--ds-ease-in-out)",
-					boxShadow: mobileSidebarOpen ? "var(--dsw-elevation-prominent)" : "none",
-				} : { background: "var(--dsw-sidebar-fill)" }}
+		<div className="flex flex-col h-screen w-screen overflow-hidden bg-clay-bg text-clay-slate-text antialiased">
+			{/* 全局粘土顶部导航栏 (Screen 1, 2, 3, 8) */}
+			<header className="pw-top-navbar h-14 px-6 flex items-center justify-between border-b border-white/60 bg-white/70 backdrop-blur-md z-30 shrink-0 select-none">
+				{/* Left: Engine brand badge + Code Workbench capsule */}
+				<div className="flex items-center gap-3 min-w-0">
+					<div className="w-9 h-9 clay-badge bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white font-black text-lg shadow-sm">
+						π
+					</div>
+					<div className="flex items-baseline gap-2">
+						<span className="font-extrabold text-lg tracking-tight text-slate-900 dark:text-slate-100">piweb</span>
+						<span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 tracking-wide uppercase border border-emerald-300 dark:border-emerald-800">Code Workbench</span>
+					</div>
+				</div>
+
+				{/* Center: Session Breadcrumb Status Pill */}
+				<div className="hidden lg:flex items-center gap-2 px-3 py-1.5 clay-inset bg-white dark:bg-slate-900 rounded-full text-xs font-medium border border-slate-200 dark:border-slate-800 min-w-0">
+					<span className={`w-2.5 h-2.5 rounded-full flex-none ${state.connected ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+					<span className="font-bold text-slate-800 dark:text-slate-200">PiWeb</span>
+					<span className="text-slate-400">/</span>
+					<span className="font-semibold text-slate-600 dark:text-slate-400">SESSION</span>
+					<span className="text-slate-400">/</span>
+					<span className="text-slate-900 dark:text-slate-100 max-w-xs truncate font-bold">
+						{currentId ? title : (heroCwd ? (getWorkspaceName ? getWorkspaceName(heroCwd) : basename(heroCwd)) : t.newChat)}
+					</span>
+				</div>
+
+				{/* Center/Nav: View Switcher Pill Tabs */}
+				<nav aria-label="视图切换" className="clay-inset flex min-w-0 items-center overflow-x-auto p-1 rounded-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 gap-1 text-xs font-semibold">
+					<button
+						type="button"
+						className={`px-3.5 py-1 rounded-full transition-all duration-150 ${
+							activeTopView === "workbench"
+								? "clay-btn-peach text-white font-bold shadow-sm"
+								: "text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+						}`}
+						onClick={() => setActiveTopView("workbench")}
+					>
+						工作台
+					</button>
+					<button
+						type="button"
+						className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full transition-all duration-150 ${
+							activeTopView === "diff"
+								? "clay-btn-peach text-white font-bold shadow-sm"
+								: "text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+						}`}
+						onClick={() => { setPanelRefreshKey((key) => key + 1); setActiveTopView("diff"); }}
+					>
+						<span>差异对比</span>
+						<span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+							activeTopView === "diff" ? "bg-white/30 text-white" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
+						}`}>
+							{gitSummary?.isRepo ? gitSummary.files.length : "—"}
+						</span>
+					</button>
+					<button
+						type="button"
+						className={`shrink-0 px-3.5 py-1 rounded-full transition-all duration-150 ${
+							activeTopView === "tests"
+								? "clay-btn-peach text-white font-bold shadow-sm"
+								: "text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+						}`}
+						onClick={() => setActiveTopView("tests")}
+					>
+						测试检查器
+					</button>
+					<button
+						type="button"
+						className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full transition-all duration-150 ${
+							activeTopView === "swarm"
+								? "clay-btn-peach text-white font-bold shadow-sm"
+								: "text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white"
+						}`}
+						onClick={() => setActiveTopView("swarm")}
+					>
+						<span>智能体群</span>
+					</button>
+				</nav>
+
+				{/* Right: Actions */}
+				<div className="flex items-center gap-2">
+					<button
+						type="button"
+						className="clay-badge hidden md:flex items-center gap-1.5 px-3 py-1 text-xs font-mono text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm font-semibold hover:border-slate-300 transition-all cursor-pointer"
+						title="Git 工作区状态（点击进入差异对比）"
+						onClick={() => {
+							setPanelRefreshKey((key) => key + 1);
+							setActiveTopView("diff");
+						}}
+					>
+						<IconBranchOutline16 size={13} className="text-emerald-500" />
+						<span>{gitBranchLabel}</span>
+						<span className="text-slate-400">·</span>
+						<span className="text-amber-600 dark:text-amber-400 font-bold">{gitStatusLabel}</span>
+					</button>
+					<button
+						type="button"
+						className="w-8 h-8 clay-btn bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+						title={t.projectPanel}
+						aria-label={t.projectPanel}
+						data-testid="project-toggle"
+						onClick={() => toggleProject()}
+					>
+						<IconFolderOpenOutline16 size={15} />
+					</button>
+					<button
+						type="button"
+						className="w-8 h-8 clay-btn bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+						title={t.promptPanel}
+						aria-label={t.promptPanel}
+						data-testid="prompt-panel-toggle"
+						onClick={() => {
+							setPromptsOpen((open) => !open);
+							setSelected(null);
+							setGitDetailsOpen(false);
+						}}
+					>
+						<IconAgentPresetOutline16 size={15} />
+					</button>
+					<button
+						type="button"
+						className="w-8 h-8 clay-btn bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+						title={t.settings}
+						aria-label={t.settings}
+						data-testid="settings-toggle"
+						onClick={() => setSettingsOpen(true)}
+					>
+						<IconSettingsOutline16 size={15} />
+					</button>
+				</div>
+			</header>
+
+			{/* 三栏/四栏悬浮粘土卡片主体容器 */}
+			<main
+				className="pw-shell grid flex-1 min-h-0 overflow-hidden p-3 gap-3 bg-clay-bg"
+				style={{
+					gridTemplateColumns: gridCols,
+					transition: dragging ? "none" : "grid-template-columns var(--ds-duration-slow) var(--ds-ease-in-out)",
+				}}
 			>
+				{/* 侧栏卡片 */}
+				<div
+					className="pw-sidebar-surface clay-surface rounded-3xl p-3 shrink-0 flex flex-col justify-between overflow-hidden shadow-md"
+					style={isNarrow ? {
+						position: "fixed",
+						inset: "0 auto 0 0",
+						width: "min(86vw, 340px)",
+						zIndex: 90,
+						transform: mobileSidebarOpen ? "translateX(0)" : "translateX(-105%)",
+						transition: "transform var(--ds-duration-normal) var(--ds-ease-in-out)",
+						boxShadow: mobileSidebarOpen ? "var(--dsw-elevation-prominent)" : "none",
+					} : undefined}
+				>
 				<SessionSidebar
 					sessions={sessions}
 					sessionListError={sessionListError}
@@ -741,151 +874,21 @@ export function AppShell() {
 					gitStatus={gitStatusLabel}
 					canAskCommit={gitCanCommit}
 					onAskCommit={() => { setActiveTopView("workbench"); insertIntoComposer(t.gitAskCommitPrompt); }}
+					activeTopView={activeTopView}
+					onSelectTopView={(v) => { setActiveTopView(v); setMobileSidebarOpen(false); }}
 				/>
 			</div>
 
-			{/* 四列网格中始终保留项目列，否则关闭项目栏时会话区会落进 0px 列。 */}
-			{!isNarrow && (projectColumn || <div aria-hidden="true" />)}
-
-			{/* 会话区与多视图容器 */}
-			<div className={`pi-main pw-main flex min-h-0 min-w-0 flex-col${currentId ? "" : " pw-main-hero"}`}>
-				{/* 顶部粘土导航栏 (Screen 1 & Screen 2) */}
-				<header className="pw-top-navbar flex items-center justify-between px-5 py-2.5 bg-white/75 dark:bg-slate-900/70 backdrop-blur-md border-b border-slate-200/60 dark:border-slate-800/60 z-30 select-none">
-					{/* Left: Engine brand badge + breadcrumb */}
-					<div className="flex items-center gap-3 min-w-0">
-						<div className="clay-badge hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-white/90 dark:bg-slate-800/90 text-[11px] font-mono font-semibold text-slate-700 dark:text-slate-300">
-							<span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-							<span>PiWeb</span>
-						</div>
-						<div className="flex items-center gap-2 text-xs font-medium text-slate-500 min-w-0">
-							<span className="font-semibold text-slate-700 dark:text-slate-300">PiWeb</span>
-							<span className="text-slate-300 dark:text-slate-600">/</span>
-							<span className="truncate max-w-[180px] text-slate-800 dark:text-slate-200 font-medium">
-								{currentId ? title : (heroCwd ? (getWorkspaceName ? getWorkspaceName(heroCwd) : basename(heroCwd)) : t.newChat)}
-							</span>
-							<span className={`w-1.5 h-1.5 rounded-full inline-block flex-none ${state.connected ? "bg-emerald-500" : "bg-slate-400"}`} />
-						</div>
+				{/* 四列网格中始终保留项目列 */}
+				{!isNarrow && (projectColumn ? (
+					<div className="clay-surface rounded-3xl p-3 shrink-0 flex flex-col overflow-hidden shadow-md">
+						{projectColumn}
 					</div>
+				) : <div aria-hidden="true" />)}
 
-					{/* Center: View Switcher Pill Tabs */}
-					<nav aria-label="视图切换" className="clay-inset flex min-w-0 items-center overflow-x-auto p-1 rounded-full bg-slate-100/90 dark:bg-slate-900/80 gap-1 text-xs font-medium">
-						<button
-							type="button"
-							className={`px-3.5 py-1 rounded-full transition-all duration-150 ${
-								activeTopView === "workbench"
-									? "clay-btn-peach text-white font-semibold shadow-sm"
-									: "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-							}`}
-							onClick={() => setActiveTopView("workbench")}
-						>
-							工作台
-						</button>
-						<button
-							type="button"
-							className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full transition-all duration-150 ${
-								activeTopView === "diff"
-									? "clay-btn-peach text-white font-semibold shadow-sm"
-									: "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-							}`}
-							onClick={() => { setPanelRefreshKey((key) => key + 1); setActiveTopView("diff"); }}
-						>
-							<span>差异对比</span>
-							<span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-								activeTopView === "diff" ? "bg-white/30 text-white" : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-							}`}>
-								{gitSummary?.isRepo ? gitSummary.files.length : "—"}
-							</span>
-						</button>
-						<button
-							type="button"
-							className={`shrink-0 px-3.5 py-1 rounded-full transition-all duration-150 ${
-								activeTopView === "tests"
-									? "clay-btn-peach text-white font-semibold shadow-sm"
-									: "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-							}`}
-							onClick={() => setActiveTopView("tests")}
-						>
-							测试检查器
-						</button>
-						<button
-							type="button"
-							className={`flex items-center gap-1.5 px-3.5 py-1 rounded-full transition-all duration-150 ${
-								activeTopView === "swarm"
-									? "clay-btn-peach text-white font-semibold shadow-sm"
-									: "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-							}`}
-							onClick={() => setActiveTopView("swarm")}
-						>
-							<span>智能体群</span>
-						</button>
-						<button
-							type="button"
-							className={`px-3.5 py-1 rounded-full transition-all duration-150 ${
-								activeTopView === "archive"
-									? "clay-btn-peach text-white font-semibold shadow-sm"
-									: "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-							}`}
-							onClick={() => setActiveTopView("archive")}
-						>
-							归档
-						</button>
-					</nav>
+				{/* 会话区与多视图卡片 (Screen 1 & Screen 3) */}
+				<section className={`pi-main pw-main flex flex-col clay-card rounded-3xl overflow-hidden min-h-0 min-w-0 relative bg-white shadow-md${currentId ? "" : " pw-main-hero"}`}>
 
-					{/* Right: Actions */}
-					<div className="flex items-center gap-2">
-						<button
-							type="button"
-							className="clay-badge hidden md:flex items-center gap-1.5 px-3 py-1 text-xs font-mono text-slate-600 dark:text-slate-300 bg-white/80 dark:bg-slate-800/80 hover:bg-white"
-							title="Git 工作区状态"
-							onClick={() => {
-								setPanelRefreshKey((key) => key + 1);
-								setSelected(null);
-								setGitDetailsOpen((prev) => !prev);
-							}}
-						>
-							<IconBranchOutline16 size={13} className="text-emerald-500" />
-							<span>{gitBranchLabel}</span>
-							<span className="text-slate-300 dark:text-slate-600">·</span>
-							<span className="text-amber-500 font-semibold">{gitStatusLabel}</span>
-						</button>
-						<button
-							type="button"
-							className="icon-btn"
-							style={{ width: 30, height: 30, background: projectOpen ? "var(--dsw-active)" : undefined }}
-							title={`${t.projectPanel} (Ctrl/⌘+Shift+E)`}
-							aria-label={t.projectPanel}
-							data-testid="project-toggle"
-							onClick={() => toggleProject()}
-						>
-							<IconFolderOpenOutline16 size={15} />
-						</button>
-						<button
-							type="button"
-							className="icon-btn"
-							style={{ width: 30, height: 30, background: promptsOpen ? "var(--dsw-active)" : undefined }}
-							title={t.promptPanel}
-							aria-label={t.promptPanel}
-							data-testid="prompt-panel-toggle"
-							onClick={() => {
-								setPromptsOpen((open) => !open);
-								setSelected(null);
-								setGitDetailsOpen(false);
-							}}
-						>
-							<IconAgentPresetOutline16 size={15} />
-						</button>
-						<button
-							type="button"
-							className="icon-btn"
-							style={{ width: 30, height: 30 }}
-							title={t.settings}
-							aria-label={t.settings}
-							onClick={() => setSettingsOpen(true)}
-						>
-							<IconSettingsOutline16 size={15} />
-						</button>
-					</div>
-				</header>
 
 				{/* 视图内容切换 */}
 				{activeTopView === "diff" ? (
@@ -896,7 +899,12 @@ export function AppShell() {
 					</div>
 				) : activeTopView === "tests" ? (
 					<div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 bg-slate-50/50 dark:bg-slate-950/30">
-						<TestInspectorPod cwd={activeWorkspaceCwd} onClose={() => setActiveTopView("workbench")} onSwitchToWorkbench={() => setActiveTopView("workbench")} />
+						<TestInspectorPod
+							cwd={activeWorkspaceCwd}
+							onClose={() => setActiveTopView("workbench")}
+							onSwitchToWorkbench={() => setActiveTopView("workbench")}
+							onSwitchToDiff={() => setActiveTopView("diff")}
+						/>
 					</div>
 				) : activeTopView === "swarm" ? (
 					<div className="flex-1 min-h-0 overflow-hidden p-3 sm:p-4 bg-slate-50/50 dark:bg-slate-950/30">
@@ -1126,38 +1134,39 @@ export function AppShell() {
 						}
 					</>
 				)}
-			</div>
+				</section>
 
-			{/* 提示词来源 / 轨迹 / Git 详情栏 */}
-			{(selected || gitDetailsOpen || promptsOpen) && (
-				<div
-					className="flex min-h-0 flex-col overflow-hidden"
-					style={isNarrow ? {
-						position: "fixed",
-						inset: "0 0 0 auto",
-						width: "min(92vw, 640px)",
-						zIndex: 90,
-						background: "var(--dsw-sidebar-fill)",
-						boxShadow: "var(--dsw-elevation-prominent)",
-					} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
-				>
-					<div className="min-h-0 flex-1">
-						{promptsOpen ? (
-							<PromptPanel
-								cwd={panelCwd}
-								sessionId={currentId}
-								refreshKey={currentId}
-								onOpenContent={(path, content) => viewer.openStatic(path, content)}
-								onClose={() => setPromptsOpen(false)}
-							/>
-						) : selected ? (
-							<TrajInspector entry={selected} onClose={() => setSelected(null)} />
-						) : (
-							<GitPanel cwd={panelCwd} refreshKey={panelRefreshKey} onClose={() => setGitDetailsOpen(false)} onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)} onOpenFile={openInEditor} />
-						)}
-					</div>
-				</div>
-			)}
+				{/* 提示词来源 / 轨迹 / Git 详情栏卡片 */}
+				{(selected || gitDetailsOpen || promptsOpen) && (
+					<aside
+						className="pw-details-surface clay-surface rounded-3xl p-4 shrink-0 flex flex-col overflow-hidden shadow-md"
+						data-purpose="inspector-panel"
+						style={isNarrow ? {
+							position: "fixed",
+							inset: "0 0 0 auto",
+							width: "min(92vw, 640px)",
+							zIndex: 90,
+							boxShadow: "var(--dsw-elevation-prominent)",
+						} : undefined}
+					>
+						<div className="min-h-0 flex-1 flex flex-col">
+							{promptsOpen ? (
+								<PromptPanel
+									cwd={panelCwd}
+									sessionId={currentId}
+									refreshKey={currentId}
+									onOpenContent={(path, content) => viewer.openStatic(path, content)}
+									onClose={() => setPromptsOpen(false)}
+								/>
+							) : selected ? (
+								<TrajInspector entry={selected} onClose={() => setSelected(null)} />
+							) : (
+								<GitPanel cwd={panelCwd} refreshKey={panelRefreshKey} onClose={() => setGitDetailsOpen(false)} onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)} onOpenFile={openInEditor} />
+							)}
+						</div>
+					</aside>
+				)}
+			</main>
 
 			{/* 拖拽手柄 */}
 			{!isNarrow && !sidebarCollapsed && (
@@ -1335,56 +1344,69 @@ function Hero({
 	}, [wsMenu]);
 
 	const pickWorkspace = async () => {
+		setWsMenu(false);
 		const p = await addWorkspaceByPicker();
 		if (p) {
 			setCwd(p);
-			setWsMenu(false);
 		}
 	};
 
 	const currentLabel = cwd ? (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) : t.startWith;
 
 	return (
-		<div className="pw-hero flex h-full min-h-0 flex-col items-center justify-center px-6 py-8 overflow-y-auto">
+		<div className="pw-hero flex h-full min-h-0 flex-col items-center justify-center px-6 py-8 overflow-y-auto relative">
+			{/* Ambient orbs */}
+			<div className="absolute -top-10 left-12 w-64 h-64 bg-emerald-200/40 dark:bg-emerald-950/20 rounded-full filter blur-3xl opacity-60 pointer-events-none" />
+			<div className="absolute top-1/3 -right-16 w-80 h-80 bg-sky-200/40 dark:bg-sky-950/20 rounded-full filter blur-3xl opacity-60 pointer-events-none" />
+			<div className="absolute bottom-6 left-1/4 w-72 h-72 bg-orange-200/30 dark:bg-orange-950/20 rounded-full filter blur-3xl opacity-50 pointer-events-none" />
+
 			{/* 工作区芯片行 + 输入卡 同宽容器 */}
-			<div className="pw-hero-content w-full flex flex-col items-stretch mx-auto my-auto" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
+			<div className="pw-hero-content w-full flex flex-col items-stretch mx-auto my-auto z-10" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 				<div className="pw-hero-intro mb-4 text-center">
-					<div className="flex items-center justify-center gap-2 mb-2">
-						<span className="clay-badge px-3 py-1 flex items-center gap-1.5 bg-white/80 dark:bg-slate-800/80 text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
-							<PiMark size={16} style={{ color: "var(--clay-peach, #FB923C)" }} />
-							<span>PIWEB WORKBENCH</span>
-						<span className="text-emerald-500 font-bold">LOCAL</span>
-						</span>
+					<div className="flex items-center justify-center gap-4 px-4 py-2 rounded-full clay-card mb-3 mx-auto w-fit animate-bounce duration-1000 border border-slate-200 dark:border-slate-800">
+						<div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center shadow-[inset_1px_1px_2px_rgba(255,255,255,0.7)] text-white font-mono font-bold text-sm">
+							π
+						</div>
+						<div className="flex items-center gap-2">
+							<span className="font-extrabold tracking-wider text-slate-900 dark:text-slate-100 text-xs sm:text-sm">PIWEB</span>
+							<span className="text-slate-400">/</span>
+							<span className="text-[10px] tracking-widest text-slate-600 dark:text-slate-400 font-bold uppercase">WORKBENCH</span>
+						</div>
+						<span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600" />
+						<div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full clay-inset border border-slate-200 dark:border-slate-800">
+							<span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+							<span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-300 font-bold tracking-wider">01 / READY</span>
+						</div>
 					</div>
-					<h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-800 dark:text-slate-100 mb-2">
-						让想法落到代码
+					<h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50 mb-2 drop-shadow-sm">
+						让想法落到代码。
 					</h1>
-					<p className="text-sm text-slate-500 dark:text-slate-400 max-w-lg mx-auto leading-relaxed">
-						基于 Pi 智能体引擎的本地工作台 · 按权限预设调用工具
+					<p className="text-sm text-slate-600 dark:text-slate-300 max-w-lg mx-auto leading-relaxed font-medium">
+						规划、执行、验证。一个专注于交付的轻量工作台。
 					</p>
 
 					{/* 工作区选择器 */}
-					<div ref={menuRef} className="pw-hero-workspace mt-4 mb-2 flex items-center justify-center">
+					<div ref={menuRef} className="pw-hero-workspace mt-4 mb-3 flex items-center justify-center gap-2.5">
 						<div className="relative">
 							<button
 								type="button"
-								className="clay-btn clay-btn-soft flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium text-slate-700 dark:text-slate-200"
+								className="clay-btn clay-btn-soft flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 shadow-sm"
 								data-open={wsMenu}
 								onClick={() => setWsMenu((v) => !v)}
 							>
 								<IconFolderClose16 className="text-amber-500 flex-none" size={15} />
 								<span className="max-w-[240px] truncate" suppressHydrationWarning>{currentLabel}</span>
-								<IconChevronDown14 size={13} className="text-slate-400" />
+								<IconChevronDown14 size={13} className="text-slate-500 dark:text-slate-400" />
 							</button>
 							{wsMenu && (
-								<div className="clay-card popover absolute top-full left-1/2 -translate-x-1/2 z-50 w-64 mt-2 p-1.5 rounded-2xl shadow-xl">
-									<div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400">选择工作区</div>
+								<div className="clay-card popover absolute top-full left-1/2 -translate-x-1/2 z-50 w-64 mt-2 p-1.5 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800">
+									<div className="px-3 py-1.5 text-[11px] font-bold text-slate-500 dark:text-slate-400">选择工作区</div>
 									{knownCwds.map((c) => {
 										const itemLabel = getWorkspaceName ? getWorkspaceName(c) : basename(c);
 										return (
 											<button
 												key={c}
-												className="flex w-full items-center gap-2.5 px-3 py-2 text-left rounded-xl transition-colors text-xs"
+												className="flex w-full items-center gap-2.5 px-3 py-2 text-left rounded-xl transition-colors text-xs font-medium"
 												style={{
 													background: cwd === c ? "var(--dsw-accent-soft)" : "transparent",
 													color: cwd === c ? "var(--dsw-accent)" : "inherit",
@@ -1395,14 +1417,15 @@ function Hero({
 												}}
 											>
 												<IconFolderClose16 size={14} style={{ flex: "none", color: cwd === c ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)" }} />
-												<span className="min-w-0 flex-1 truncate">{itemLabel}</span>
+												<span className="min-w-0 flex-1 truncate font-medium">{itemLabel}</span>
 												{cwd === c && <IconCheckOutline14 size={13} style={{ flex: "none" }} />}
 											</button>
 										);
 									})}
 									<div className="my-1 border-t border-slate-200/50 dark:border-slate-800/50" />
 									<button
-										className="flex w-full items-center gap-2.5 px-3 py-2 text-left rounded-xl transition-colors text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+										type="button"
+										className="flex w-full items-center gap-2.5 px-3 py-2 text-left rounded-xl transition-colors text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold"
 										onClick={pickWorkspace}
 									>
 										<IconProjectAddOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
@@ -1411,87 +1434,16 @@ function Hero({
 								</div>
 							)}
 						</div>
+						<div className="px-3 py-1.5 rounded-full clay-inset text-slate-700 dark:text-slate-300 text-xs font-mono font-semibold flex items-center gap-1.5 border border-slate-200 dark:border-slate-800">
+							<span className="text-amber-500">⚡</span>
+							<span>在当前工作区执行</span>
+						</div>
 					</div>
 				</div>
 
-				{/* 3 Quickstarter Bento Cards (Screen 3) */}
-				<div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4 w-full">
-					<button
-						type="button"
-						className="clay-card flex flex-col items-start p-3.5 rounded-2xl text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md group bg-white/90 dark:bg-slate-900/90 border border-emerald-100/60 dark:border-emerald-950/40"
-						onClick={() => {
-							onDraftChange((prev) => ({
-								...prev,
-								text: "请分析当前系统架构，重点评估状态机与分布式调度逻辑，并提出模块化演进方案与优化建议。",
-							}));
-							const ta = document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea');
-							ta?.focus();
-						}}
-					>
-						<div className="flex items-center justify-between w-full mb-1.5">
-							<span className="clay-badge px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-300">
-								架构重构
-							</span>
-							<span className="text-emerald-500 opacity-60 group-hover:opacity-100 transition-opacity text-xs">⚡</span>
-						</div>
-						<div className="font-semibold text-xs text-slate-800 dark:text-slate-100 group-hover:text-emerald-600 transition-colors">
-							系统架构演进
-						</div>
-						<div className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">
-							重构状态机与分布式调度逻辑
-						</div>
-					</button>
-
-					<button
-						type="button"
-						className="clay-card flex flex-col items-start p-3.5 rounded-2xl text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md group bg-white/90 dark:bg-slate-900/90 border border-orange-100/60 dark:border-orange-950/40"
-						onClick={() => {
-							onDraftChange((prev) => ({
-								...prev,
-								text: "请检查当前工作区的 Git 改动，指出可能的行为回归、接口兼容性问题和缺失的测试。",
-							}));
-							const ta = document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea');
-							ta?.focus();
-						}}
-					>
-						<div className="flex items-center justify-between w-full mb-1.5">
-							<span className="clay-badge px-2 py-0.5 text-[10px] font-semibold bg-orange-50 text-orange-600 dark:bg-orange-950/60 dark:text-orange-300">
-								差异审计
-							</span>
-							<span className="text-orange-500 opacity-60 group-hover:opacity-100 transition-opacity text-xs">🔍</span>
-						</div>
-						<div className="font-semibold text-xs text-slate-800 dark:text-slate-100 group-hover:text-orange-600 transition-colors">
-							改动审查
-						</div>
-						<div className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">
-							检查当前工作区的 Git 改动与测试风险
-						</div>
-					</button>
-
-					<button
-						type="button"
-						className="clay-card flex flex-col items-start p-3.5 rounded-2xl text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md group bg-white/90 dark:bg-slate-900/90 border border-indigo-100/60 dark:border-indigo-950/40"
-						onClick={() => {
-							onOpenSwarm?.();
-						}}
-					>
-						<div className="flex items-center justify-between w-full mb-1.5">
-							<span className="clay-badge px-2 py-0.5 text-[10px] font-semibold bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300">
-								群组协同
-							</span>
-							<span className="text-indigo-500 opacity-60 group-hover:opacity-100 transition-opacity text-xs">👥</span>
-						</div>
-						<div className="font-semibold text-xs text-slate-800 dark:text-slate-100 group-hover:text-indigo-600 transition-colors">
-							Swarm 群组协同
-						</div>
-						<div className="text-[11px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">
-							派生隔离工作树，执行并行子任务与补丁审查
-						</div>
-					</button>
-				</div>
-
 				{/* 输入卡 */}
-				<ChatInput
+				<div className="w-full mb-4">
+					<ChatInput
 						draft={draft}
 						onDraftChange={onDraftChange}
 						onUploadError={onUploadError}
@@ -1500,31 +1452,60 @@ function Hero({
 						pendingUploadCount={pendingUploadCount}
 						pendingSend={pendingSend}
 						onSendPendingChange={onSendPendingChange}
-					commands={commands}
-					onCommand={onCommand}
-					isStreaming={false}
-					contextPercent={null}
-					contextTokens={null}
-					contextWindow={null}
-					contextVisible={false}
-					model={heroModel ? models.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) ?? { provider: heroModel.provider, id: heroModel.id, name: heroModel.id, reasoning: false, contextWindow: 0 } : defaultModel}
-					thinkingLevel={heroThinking || undefined}
-					thinkingLevels={heroModelLevels}
-					models={models}
-					modelLoading={modelLoading}
-					modelLoadError={modelLoadError}
-					onRetryModels={onRetryModels}
-					providerNames={providerNames}
-					authByProvider={authByProvider}
-					queue={{ steering: [], followUp: [] }}
-					workflow={{ mode: heroMode, planStatus: "idle", goal: "" }}
-					onWorkflowModeChange={onSelectHeroMode}
-					onSend={onSend}
-					onSteer={() => ({ success: false })}
-					onAbort={() => {}}
-					onSelectModel={onSelectHeroModel}
-					onSelectLevel={onSelectHeroThinking}
-				/>
+						commands={commands}
+						onCommand={onCommand}
+						isStreaming={false}
+						contextPercent={null}
+						contextTokens={null}
+						contextWindow={null}
+						contextVisible={false}
+						model={heroModel ? models.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) ?? { provider: heroModel.provider, id: heroModel.id, name: heroModel.id, reasoning: false, contextWindow: 0 } : defaultModel}
+						thinkingLevel={heroThinking || undefined}
+						thinkingLevels={heroModelLevels}
+						models={models}
+						modelLoading={modelLoading}
+						modelLoadError={modelLoadError}
+						onRetryModels={onRetryModels}
+						providerNames={providerNames}
+						authByProvider={authByProvider}
+						queue={{ steering: [], followUp: [] }}
+						workflow={{ mode: heroMode, planStatus: "idle", goal: "" }}
+						onWorkflowModeChange={onSelectHeroMode}
+						onSend={onSend}
+						onSteer={() => ({ success: false })}
+						onAbort={() => {}}
+						onSelectModel={onSelectHeroModel}
+						onSelectLevel={onSelectHeroThinking}
+					/>
+					<div className="flex items-center justify-between px-2 pt-2 text-slate-500 dark:text-slate-400 font-mono text-xs font-medium">
+						<div className="flex items-center gap-3">
+							<span className="flex items-center gap-1"><kbd className="px-1.5 py-0.5 rounded clay-inset font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700">⏎</kbd> 发送</span>
+							<span className="flex items-center gap-1"><kbd className="px-1.5 py-0.5 rounded clay-inset font-bold text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700">⇧ ⏎</kbd> 换行</span>
+						</div>
+						<div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-semibold">
+							<IconShieldOutline16 size={13} />
+							<span>主会话无系统级沙盒隔离</span>
+						</div>
+					</div>
+				</div>
+
+				{/* Telemetry bottom bar */}
+				<div className="flex items-center justify-center gap-4 text-slate-600 dark:text-slate-300 text-xs font-semibold tracking-wider">
+					<div className="flex items-center gap-1.5">
+						<span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+						<span>极速热加载</span>
+					</div>
+					<span>•</span>
+					<div className="flex items-center gap-1.5">
+						<span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+						<span>MCP 扩展全兼容</span>
+					</div>
+					<span>•</span>
+					<div className="flex items-center gap-1.5">
+						<span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+						<span>端侧安全加固</span>
+					</div>
+				</div>
 			</div>
 		</div>
 	);

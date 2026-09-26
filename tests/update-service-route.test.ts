@@ -9,6 +9,7 @@ vi.mock("../src/lib/update-service", () => ({
 }));
 
 import { POST } from "../src/app/api/update/route";
+import { beginActivity, RuntimeBusyError } from "../src/lib/runtime-activity";
 
 function request(body: unknown) {
 	return new Request("http://127.0.0.1/api/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -22,6 +23,23 @@ beforeEach(() => {
 });
 
 describe("update API input and maintenance guard", () => {
+	it.each(["session", "swarm", "tests"] as const)("refuses updates while registered %s work is active", async (kind) => {
+		const release = beginActivity(kind);
+		try {
+			expect((await POST(request({ target: "pi", action: "update" }))).status).toBe(409);
+			expect(mocks.runUpdate).not.toHaveBeenCalled();
+		} finally { release(); }
+	});
+
+	it("blocks new jobs throughout an update and releases the gate on failure", async () => {
+		mocks.runUpdate.mockImplementationOnce(async () => {
+			for (const kind of ["session", "swarm", "tests"] as const) expect(() => beginActivity(kind)).toThrow(RuntimeBusyError);
+			throw new Error("release failed");
+		});
+		expect((await POST(request({ target: "pi", action: "update" }))).status).toBe(500);
+		const release = beginActivity("swarm");
+		release();
+	});
 	it.each([null, [], "piweb", 42, true, {}, { target: "shell", action: "update" }, { target: "pi", action: "install arbitrary" }])("rejects invalid body %j before touching update state", async (body) => {
 		const response = await POST(request(body));
 		expect(response.status).toBe(400);

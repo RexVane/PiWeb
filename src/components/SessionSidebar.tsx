@@ -30,6 +30,8 @@ import {
 	IconSettingsOutline16,
 	IconTrashOutline16,
 	IconTriangleRightFill14,
+	IconAgentPresetOutline16,
+	IconWorkflowAgent16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { SessionListItem } from "@/hooks/usePiWeb";
@@ -101,6 +103,8 @@ export function SessionSidebar({
 	gitStatus = "未选择",
 	canAskCommit = false,
 	onAskCommit,
+	activeTopView = "workbench",
+	onSelectTopView,
 }: {
 	sessions: SessionListItem[];
 	sessionListError?: string | null;
@@ -137,6 +141,8 @@ export function SessionSidebar({
 	gitStatus?: string;
 	canAskCommit?: boolean;
 	onAskCommit?: () => void;
+	activeTopView?: "workbench" | "diff" | "tests" | "swarm" | "archive";
+	onSelectTopView?: (view: "workbench" | "diff" | "tests" | "swarm" | "archive") => void;
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
@@ -400,9 +406,6 @@ export function SessionSidebar({
 					<IconSearchOutline16 size={17} />
 				</button>
 				<div className="flex-1" />
-				<button className="rail-btn" title={t.settings} onClick={onOpenSettings}>
-					<IconSettingsOutline16 size={17} />
-				</button>
 			</div>
 		);
 	}
@@ -668,6 +671,108 @@ export function SessionSidebar({
 				</button>
 			</div>
 
+			{/* Git 状态卡片 (Screen 1 & 2) */}
+			<div className="px-3 pt-2">
+				<div className="clay-card p-2.5 rounded-2xl border border-slate-200/50 dark:border-slate-800/50 bg-white/70 dark:bg-slate-900/70">
+					<div className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-200">
+						<div className="flex items-center gap-1.5">
+							<IconBranchOutline16 size={13} className="text-emerald-500" />
+							<span className="font-mono truncate max-w-[90px]" title={gitBranch}>{gitBranch}</span>
+						</div>
+						<span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${gitStatus === "干净" ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60" : "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60"}`}>
+							{gitStatus}
+						</span>
+					</div>
+					<div className="flex items-center justify-between pt-2">
+						<span className="text-[11px] text-slate-400">就绪待审查</span>
+						<button
+							type="button"
+							className="px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 rounded-xl clay-btn clay-btn-soft transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+							disabled={!canAskCommit}
+							onClick={onAskCommit}
+						>
+							<span>让 pi 提交</span>
+						</button>
+					</div>
+				</div>
+			</div>
+
+			{/* 快速视图切换导航 (Screen 1 & 3 & 4) */}
+			<div className="px-3 pt-2">
+				<nav className="flex flex-col gap-1">
+					<button
+						type="button"
+						className={`flex items-center justify-between px-3 py-1.5 rounded-xl transition-all text-xs font-medium ${
+							activeTopView === "workbench"
+								? "clay-card text-emerald-700 dark:text-emerald-300 font-bold bg-white dark:bg-slate-800 shadow-sm"
+								: "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+						}`}
+						onClick={() => onSelectTopView?.("workbench")}
+					>
+						<span className="flex items-center gap-2">
+							<IconFolderOpenOutline16 size={14} className={activeTopView === "workbench" ? "text-emerald-500" : "text-slate-400"} />
+							<span>工作区文件</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						className={`flex items-center justify-between px-3 py-1.5 rounded-xl transition-all text-xs font-medium ${
+							activeTopView === "diff"
+								? "clay-card text-emerald-700 dark:text-emerald-300 font-bold bg-white dark:bg-slate-800 shadow-sm"
+								: "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+						}`}
+						onClick={() => onSelectTopView?.("diff")}
+					>
+						<span className="flex items-center gap-2">
+							<IconEditOutline16 size={14} className={activeTopView === "diff" ? "text-emerald-500" : "text-slate-400"} />
+							<span>改动检查器</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						className={`flex items-center justify-between px-3 py-1.5 rounded-xl transition-all text-xs font-medium ${
+							activeTopView === "tests"
+								? "clay-card text-emerald-700 dark:text-emerald-300 font-bold bg-white dark:bg-slate-800 shadow-sm"
+								: "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+						}`}
+						onClick={() => onSelectTopView?.("tests")}
+					>
+						<span className="flex items-center gap-2">
+							<IconWorkflowAgent16 size={14} className={activeTopView === "tests" ? "text-emerald-500" : "text-slate-400"} />
+							<span>测试套件</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						className={`flex items-center justify-between px-3 py-1.5 rounded-xl transition-all text-xs font-medium ${
+							activeTopView === "swarm"
+								? "clay-card text-emerald-700 dark:text-emerald-300 font-bold bg-white dark:bg-slate-800 shadow-sm"
+								: "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+						}`}
+						onClick={() => onSelectTopView?.("swarm")}
+					>
+						<span className="flex items-center gap-2">
+							<IconAgentPresetOutline16 size={14} className={activeTopView === "swarm" ? "text-emerald-500" : "text-slate-400"} />
+							<span>智能体群组</span>
+						</span>
+					</button>
+					<button
+						type="button"
+						className={`flex items-center justify-between px-3 py-1.5 rounded-xl transition-all text-xs font-medium ${
+							activeTopView === "archive"
+								? "clay-card text-emerald-700 dark:text-emerald-300 font-bold bg-white dark:bg-slate-800 shadow-sm"
+								: "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60"
+						}`}
+						onClick={() => onSelectTopView?.("archive")}
+					>
+						<span className="flex items-center gap-2">
+							<IconArchiveOutline20 size={14} className={activeTopView === "archive" ? "text-emerald-500" : "text-slate-400"} />
+							<span>归档</span>
+						</span>
+					</button>
+				</nav>
+			</div>
+
 			{/* 工作区标题行 / 搜索框（互替，照 dsh） */}
 			{searchOpen ? (
 				<div className="px-3 pb-1 pt-3">
@@ -865,35 +970,9 @@ export function SessionSidebar({
 				)}
 			</div>
 
-			{/* Git 状态卡片与设置 */}
-			<div className="pw-sidebar-footer px-3 py-2 flex flex-col gap-2">
-				<div className="clay-card p-2.5 rounded-2xl border border-slate-200/50 dark:border-slate-800/50 bg-white/70 dark:bg-slate-900/70">
-					<div className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-200">
-						<div className="flex items-center gap-1.5">
-							<IconBranchOutline16 size={13} className="text-emerald-500" />
-							<span className="font-mono truncate" title={gitBranch}>{gitBranch}</span>
-						</div>
-						<span className={`text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded ${gitStatus === "干净" ? "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60" : "text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60"}`}>
-							{gitStatus}
-						</span>
-					</div>
-					<button
-						type="button"
-						className="mt-2 w-full py-1 px-2.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-						disabled={!canAskCommit}
-						onClick={onAskCommit}
-					>
-						<span>让 pi 提交</span>
-						<span>→</span>
-					</button>
-				</div>
-				<button
-					className="clay-btn clay-btn-soft flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors"
-					onClick={onOpenSettings}
-				>
-					<IconSettingsOutline16 size={15} />
-					<span>{t.settings}</span>
-				</button>
+			{/* 底部版本号 */}
+			<div className="pw-sidebar-footer px-3 py-2 border-t border-slate-200/60 dark:border-slate-800/60 flex items-center justify-center text-xs text-slate-400 font-mono text-[11px] shrink-0">
+				<span>PiWeb v0.3.15</span>
 			</div>
 
 			{/* 重命名弹窗（照用户截图 media_1788745548711.png，通过 createPortal 挂载到 document.body 确保浏览器正居中） */}

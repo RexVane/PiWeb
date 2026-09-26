@@ -4,7 +4,7 @@
  * 工具提示词与组装后的系统提示词不是文件，在面板内就地展开。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PromptPanel } from "@/components/PromptPanel";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -40,6 +40,58 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe("PromptPanel", () => {
+	it("ignores old catalogs after the workspace changes", async () => {
+		let resolveOld!: (value: ReturnType<typeof response>) => void;
+		const old = new Promise<ReturnType<typeof response>>((resolve) => { resolveOld = resolve; });
+		const catalog = (name: string) => ({ sources: [{ kind: "agents", name, path: `/${name}`, origin: { scope: "project" } }], sessionReady: false });
+		vi.stubGlobal("fetch", vi.fn((url: string) => url.includes("cwd=old") ? old : Promise.resolve(response(catalog("new.md")))));
+		const { rerender } = render(<PromptPanel cwd="old" sessionId={null} onClose={vi.fn()} />);
+		rerender(<PromptPanel cwd="new" sessionId={null} onClose={vi.fn()} />);
+		expect(await screen.findByText("new.md")).toBeTruthy();
+		await act(async () => resolveOld(response(catalog("old.md"))));
+		expect(screen.queryByText("old.md")).toBeNull();
+		expect(screen.getByText("new.md")).toBeTruthy();
+	});
+
+	it("does not replace the current catalog with an old request error", async () => {
+		let rejectOld!: (error: Error) => void;
+		const old = new Promise<ReturnType<typeof response>>((_resolve, reject) => { rejectOld = reject; });
+		vi.stubGlobal("fetch", vi.fn((url: string) => url.includes("cwd=old") ? old : Promise.resolve(response({ sources: [{ kind: "agents", name: "new.md", origin: { scope: "project" } }], sessionReady: false }))));
+		const { rerender } = render(<PromptPanel cwd="old" sessionId={null} onClose={vi.fn()} />);
+		rerender(<PromptPanel cwd="new" sessionId={null} onClose={vi.fn()} />);
+		expect(await screen.findByText("new.md")).toBeTruthy();
+		await act(async () => rejectOld(new Error("stale request failed")));
+		expect(screen.queryByText("stale request failed")).toBeNull();
+		expect(screen.getByText("new.md")).toBeTruthy();
+	});
+
+	it.each(["workspace", "session", "unmount"])("does not open a delayed file after %s changes", async (change) => {
+		let resolveRead!: (value: ReturnType<typeof response>) => void;
+		const read = new Promise<ReturnType<typeof response>>((resolve) => { resolveRead = resolve; });
+		vi.stubGlobal("fetch", vi.fn((url: string) => url === "/api/prompts" ? read : Promise.resolve(response({ sources: [{ kind: "agents", name: "old.md", path: "/old.md", origin: { scope: "project" } }], sessionReady: false }))));
+		const onOpenContent = vi.fn();
+		const { rerender, unmount } = render(<PromptPanel cwd="old" sessionId="s1" onOpenContent={onOpenContent} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText("old.md"));
+		if (change === "unmount") unmount();
+		else rerender(<PromptPanel cwd={change === "workspace" ? "new" : "old"} sessionId="s2" onOpenContent={onOpenContent} onClose={vi.fn()} />);
+		await act(async () => resolveRead(response({ content: "stale file" })));
+		expect(onOpenContent).not.toHaveBeenCalled();
+	});
+
+	it("does not let an older refresh overwrite a newer catalog", async () => {
+		let resolveOld!: (value: ReturnType<typeof response>) => void;
+		const old = new Promise<ReturnType<typeof response>>((resolve) => { resolveOld = resolve; });
+		const catalog = (name: string) => ({ sources: [{ kind: "agents", name, origin: { scope: "project" } }], sessionReady: false });
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response(catalog("first.md"))).mockReturnValueOnce(old).mockResolvedValueOnce(response(catalog("latest.md"))));
+		const { rerender } = render(<PromptPanel cwd="same" sessionId={null} refreshKey={1} onClose={vi.fn()} />);
+		expect(await screen.findByText("first.md")).toBeTruthy();
+		rerender(<PromptPanel cwd="same" sessionId={null} refreshKey={2} onClose={vi.fn()} />);
+		rerender(<PromptPanel cwd="same" sessionId={null} refreshKey={3} onClose={vi.fn()} />);
+		expect(await screen.findByText("latest.md")).toBeTruthy();
+		await act(async () => resolveOld(response(catalog("older.md"))));
+		expect(screen.queryByText("older.md")).toBeNull();
+		expect(screen.getByText("latest.md")).toBeTruthy();
+	});
 	it("groups every prompt source and shows where it comes from", async () => {
 		setup();
 		await waitFor(() => expect(screen.getByText("SYSTEM.md")).toBeTruthy());

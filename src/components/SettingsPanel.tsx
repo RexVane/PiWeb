@@ -95,57 +95,80 @@ export function SettingsPanel({
 			}}
 		>
 			<div
-				className="settings-dialog glass-modal flex overflow-hidden"
+				className="settings-dialog clay-card relative flex flex-col gap-4 overflow-hidden bg-white/95 dark:bg-slate-900/95 p-6 shadow-2xl backdrop-blur-md"
 				style={{
-					width: 800,
-					maxWidth: "calc(100vw - 48px)",
-					height: "min(800px, calc(100vh - 48px))",
-					borderRadius: 32,
-					boxShadow: "var(--dsw-elevation-prominent)",
+					width: 960,
+					maxWidth: "calc(100vw - 32px)",
+					height: "min(840px, calc(100vh - 48px))",
+					borderRadius: 36,
 				}}
 			>
-				{/* 左导航（dsh trigger：h42 r12，active 填充） */}
-				<div className="settings-nav flex w-52 flex-none flex-col gap-0.5 py-4 pl-4 pr-3">
-					<div className="settings-title px-2 pb-3" style={{ fontSize: 16, fontWeight: 500 }}>
-						{t.settings}
+				{/* Top Header Bar (Screen 4-7) */}
+				<div className="flex items-center justify-between pb-3 border-b border-slate-200/60 dark:border-slate-800/60 shrink-0">
+					<div className="flex items-center gap-3">
+						<div className="w-10 h-10 rounded-2xl clay-inset flex items-center justify-center text-emerald-600 dark:text-emerald-400 flex-none">
+							<IconSettingsOutline16 size={20} />
+						</div>
+						<div className="flex flex-col">
+							<div className="flex items-center gap-2">
+								<h1 className="text-base sm:text-lg font-extrabold text-slate-800 dark:text-slate-100 tracking-tight">全局设置中心</h1>
+								<span className="px-2.5 py-0.5 rounded-full clay-inset text-emerald-600 dark:text-emerald-400 font-mono text-[11px] font-semibold">config.json</span>
+							</div>
+							<p className="text-xs text-slate-400 hidden sm:block">管理工作台外观基调、语言偏好、模型调度与集成插件环境</p>
+						</div>
 					</div>
-					{navItems.map((n) => (
+					<div className="flex items-center gap-2">
 						<button
-							key={n.id}
-							className="flex h-[42px] items-center gap-2 rounded-xl px-3 text-left transition-colors"
-							style={{
-								paddingLeft: 8,
-								paddingRight: 10,
-								fontSize: 14,
-								background: section === n.id ? "var(--dsw-active)" : "transparent",
-								color: section === n.id ? "var(--dsw-label-primary)" : "var(--dsw-label-secondary)",
-							}}
-							onMouseEnter={(e) => {
-								if (section !== n.id) e.currentTarget.style.background = "var(--dsw-hover)";
-							}}
-							onMouseLeave={(e) => {
-								if (section !== n.id) e.currentTarget.style.background = "transparent";
-							}}
-							onClick={() => setSection(n.id)}
+							type="button"
+							className="clay-btn clay-btn-soft px-3 py-1.5 text-xs text-slate-700 dark:text-slate-200 flex items-center gap-1.5"
+							onClick={() => window.open("/api/config", "_blank")}
 						>
-							{section === n.id ? <span style={{ color: "var(--dsw-accent)" }}>{n.icon}</span> : n.icon}
-							{n.label}
+							<IconDownloadOutline16 size={14} className="text-sky-500" />
+							<span>{t.openConfigFile}</span>
 						</button>
-					))}
-				</div>
-
-				{/* 右侧内容 */}
-				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
-					<div className="flex items-center gap-2 px-6 py-3.5">
-						<div className="flex-1" />
-						<button className="btn-outline" style={{ height: 32, fontSize: 13 }} onClick={() => window.open("/api/config", "_blank")}>
-							<IconDownloadOutline16 size={14} /> {t.openConfigFile}
-						</button>
-						<button className="icon-btn" aria-label={t.close} onClick={onClose}>
+						<button
+							type="button"
+							className="clay-btn clay-btn-soft w-8 h-8 rounded-full text-slate-500 hover:text-rose-500 transition-colors"
+							aria-label={t.close}
+							onClick={onClose}
+						>
 							<IconCloseOutline14 size={15} />
 						</button>
 					</div>
-					<div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+				</div>
+
+				{/* 12-Column Grid Body */}
+				<div className="grid grid-cols-12 gap-5 min-h-0 flex-1 overflow-hidden">
+					{/* Left Sub-Navigation Menu (3 cols) */}
+					<div className="col-span-12 md:col-span-3 flex flex-col gap-3 min-h-0 overflow-y-auto">
+						<div className="clay-inset p-2 rounded-2xl flex flex-col gap-1.5 shrink-0">
+							{navItems.map((n) => {
+								const isSelected = section === n.id;
+								return (
+									<button
+										key={n.id}
+										type="button"
+										className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+											isSelected
+												? "clay-card text-emerald-700 dark:text-emerald-300 font-bold bg-white dark:bg-slate-800 shadow-sm"
+												: "text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-800/60"
+										}`}
+										onClick={() => setSection(n.id)}
+									>
+										<div className="flex items-center gap-2.5">
+											<span className={isSelected ? "text-emerald-500" : "text-slate-400"}>{n.icon}</span>
+											<span>{n.label}</span>
+										</div>
+										{isSelected && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+									</button>
+								);
+							})}
+						</div>
+
+					</div>
+
+					{/* Right Configuration Content Area (9 cols) */}
+					<div className="col-span-12 md:col-span-9 min-h-0 flex-1 overflow-y-auto pr-2">
 						{section === "general" && <GeneralSection lang={lang} setLang={setLang} />}
 						{section === "models" && <ModelsSection />}
 						{section === "skills" && <SkillsSection cwd={cwd} onOpenFileContent={onOpenFileContent} />}
@@ -1222,13 +1245,19 @@ function ModelsSection() {
 
 	return (
 		<div className="flex flex-col gap-5">
-			<div>
-				<div style={{ fontSize: 14, fontWeight: 400 }}>{t.modelsTitle}</div>
-				<div className="mt-0.5" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
-					{t.modelsDesc}
+			{/* Notice Banner (Screen 6 Soft Claymorphism) */}
+			<div className="p-4 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/50 dark:border-emerald-800/40 flex items-start gap-3">
+				<div className="w-8 h-8 rounded-full bg-white dark:bg-slate-800 text-emerald-600 clay-card flex-shrink-0 flex items-center justify-center mt-0.5 shadow-sm">
+					<IconModelOutline16 size={16} />
 				</div>
-				<div className="mt-1" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
-					{t.customModelIdentityNotice}
+				<div className="flex flex-col gap-1 min-w-0">
+					<span className="font-bold text-slate-800 dark:text-slate-100 text-sm">{t.modelsTitle}</span>
+					<p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+						{t.modelsDesc}
+					</p>
+					<p className="text-[11px] text-slate-400 dark:text-slate-400">
+						{t.customModelIdentityNotice}
+					</p>
 				</div>
 			</div>
 
@@ -1471,27 +1500,27 @@ function ModelsSection() {
 				})}
 			</div>
 
-			{/* 两个添加按钮 */}
-			<div className="flex gap-3">
+			{/* 两个添加按钮: Large Tactile Extruded Clay Buttons (Screen 6) */}
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
 				<button
-					className="flex flex-1 items-center justify-center gap-2 rounded-2xl px-4 py-3.5 transition-colors"
-					style={{ border: "0.5px solid var(--dsw-border-l3)", fontSize: 14 }}
-					onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-					onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+					type="button"
+					className="py-3.5 px-5 rounded-2xl clay-card text-slate-800 dark:text-slate-100 font-bold flex items-center justify-center gap-2 hover:-translate-y-0.5 active:translate-y-0.5 transition-all cursor-pointer group shadow-sm hover:shadow"
 					onClick={() => setAdding("builtin")}
 				>
-					<IconPlusOutline16 size={15} />
-					{t.addProvider}
+					<div className="w-7 h-7 rounded-full clay-inset flex items-center justify-center text-emerald-600 group-hover:scale-110 transition-transform">
+						<IconPlusOutline16 size={15} />
+					</div>
+					<span>{t.addProvider}</span>
 				</button>
 				<button
-					className="flex flex-1 items-center justify-center gap-2 rounded-2xl px-4 py-3.5 transition-colors"
-					style={{ border: "0.5px solid var(--dsw-border-l3)", fontSize: 14 }}
-					onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-					onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+					type="button"
+					className="py-3.5 px-5 rounded-2xl clay-card text-slate-800 dark:text-slate-100 font-bold flex items-center justify-center gap-2 hover:-translate-y-0.5 active:translate-y-0.5 transition-all cursor-pointer group shadow-sm hover:shadow"
 					onClick={() => setAdding("custom")}
 				>
-					<IconPlusOutline16 size={15} />
-					{t.addCustomProvider}
+					<div className="w-7 h-7 rounded-full clay-inset flex items-center justify-center text-orange-600 group-hover:scale-110 transition-transform">
+						<IconPlusOutline16 size={15} />
+					</div>
+					<span>{t.addCustomProvider}</span>
 				</button>
 			</div>
 

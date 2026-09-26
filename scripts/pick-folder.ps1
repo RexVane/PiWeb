@@ -82,6 +82,10 @@ public class PiFolderPicker {
     }
   }
 
+  public static bool ShouldRetryWithoutOwner(int hr, IntPtr hwnd) {
+    return hr == unchecked((int)0x80070578) && hwnd != IntPtr.Zero;
+  }
+
   public static string Pick(string title) {
     try {
       EnableDpiAwareness();
@@ -90,8 +94,13 @@ public class PiFolderPicker {
       dlg.GetOptions(out options);
       dlg.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
       if (!string.IsNullOrEmpty(title)) dlg.SetTitle(title);
-      dlg.SetOkButtonLabel(OkLabel);
-      int hr = dlg.Show(GetForegroundWindow());
+      IntPtr hwnd = GetForegroundWindow();
+      int hr = dlg.Show(hwnd);
+      if (hr == unchecked((int)0x800704C7)) return "";
+      // Retry only an invalid owner handle, never a user cancellation or arbitrary failure.
+      if (ShouldRetryWithoutOwner(hr, hwnd)) {
+        hr = dlg.Show(IntPtr.Zero);
+      }
       if (hr != 0) return "";
       IShellItem item;
       dlg.GetResult(out item);

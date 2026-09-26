@@ -33,7 +33,8 @@ async function toComparablePath(target: string): Promise<string> {
 	} catch {
 		resolved = path.resolve(target); // 路径还不存在（如待创建的技能目录）：退化成普通规范化
 	}
-	return resolved.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+	const normalized = resolved.replace(/\\/g, "/").replace(/\/+$/, "");
+	return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 interface ScopeContext {
@@ -57,10 +58,10 @@ const within = (target: string, root: string) => target.startsWith(`${root}/`);
 
 async function classifyScope(filePath: string, context: ScopeContext): Promise<SkillView["scope"]> {
 	const norm = await toComparablePath(filePath);
+	if (norm.includes("/node_modules/")) return "package";
 	if (within(norm, context.agentDir) || within(norm, `${context.home}/.agents`) || within(norm, `${context.home}/.pi`))
 		return "global";
 	if (context.cwd && within(norm, context.cwd)) return "project";
-	if (norm.includes("/node_modules/")) return "package";
 	return "package";
 }
 
@@ -121,7 +122,7 @@ export async function setSkillDisabled(filePath: string, disabled: boolean, cwd?
 	await fs.writeFile(authorized, next, "utf8");
 	// 就地重载加载器并让活跃会话重建系统提示（技能列表在系统提示里）；全局技能影响所有目录
 	await reloadAllLoaders();
-	const context = await scopeContext(cwd);
+	const context = await scopeContext(cwd ?? process.cwd());
 	const scope = await classifyScope(authorized, context);
 	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
 	return { changed: true };
@@ -137,17 +138,23 @@ export async function readSkillFile(filePath: string, cwd?: string): Promise<str
 export async function deleteSkill(filePath: string, cwd?: string): Promise<{ removed: string }> {
 	const skills = await listSkills(cwd);
 	const authorized = await resolveDiscoveredPath(filePath, skills.map((skill) => skill.filePath));
-	const context = await scopeContext(cwd);
+	const context = await scopeContext(cwd ?? process.cwd());
 	if ((await classifyScope(authorized, context)) === "package") {
 		throw new Error("package-managed skill: disable it instead (it is reinstalled with the package)");
 	}
 	const skillDir = path.dirname(authorized);
-	// 只删技能目录本身，不能误删父目录（全局技能目录 ~/.pi/agent/skills、项目 .agents/skills 等）
 	const normalizedSkillDir = await toComparablePath(skillDir);
-	const knownRoots = [`${context.agentDir}/skills`, `${context.agentDir}/web-skills`];
-	if (!knownRoots.includes(normalizedSkillDir)) {
-		// 非已知根：项目内技能目录，至少确认 SKILL.md 直接位于其下且目录名非空
-		if (path.basename(skillDir) === "") throw new Error("refusing to delete workspace root");
+	const workspace = cwd ?? process.cwd();
+	const roots = [path.parse(skillDir).root, getAgentDir(), os.homedir(), workspace];
+	for (const base of [getAgentDir(), os.homedir(), workspace]) {
+		for (const relative of ["skills", "web-skills", ".git", ".agents", ".agents/skills", ".pi", ".pi/skills", ".pi/agent", ".pi/agent/skills"]) {
+			roots.push(path.join(base, relative));
+		}
+	}
+	const protectedRoots = await Promise.all(roots.map(toComparablePath));
+	// A discovered root-level SKILL.md never authorizes deleting its collection or workspace.
+	if (protectedRoots.some((root) => root === normalizedSkillDir || within(root, normalizedSkillDir))) {
+		throw new Error("refusing to delete protected skill collection or workspace root");
 	}
 	await fs.rm(skillDir, { recursive: true, force: true });
 	await reloadAllLoaders();

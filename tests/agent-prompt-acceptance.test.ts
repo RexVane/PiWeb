@@ -5,6 +5,7 @@ vi.mock("../src/lib/growth-tracker", () => ({
 	createGrowthTracker: () => ({ version: 1, prepare: async () => {}, onEvent: () => {}, dispose: () => {} }),
 }));
 import { execute } from "../src/lib/agent-manager";
+import { beginMaintenance, RuntimeBusyError } from "../src/lib/runtime-activity";
 
 type Managed = Parameters<typeof execute>[0];
 function deferred<T = void>() {
@@ -29,6 +30,19 @@ function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string
 afterEach(() => vi.restoreAllMocks());
 
 describe("prompt acceptance boundary", () => {
+	it("tracks an accepted prompt until completion and rejects new prompts during maintenance", async () => {
+		const running = deferred();
+		const { m, session } = fixture(async (_text, opts) => { opts.preflightResult(true); await running.promise; });
+		expect(await execute(m, { cmd: "prompt", text: "hello" })).toMatchObject({ ok: true });
+		try { expect(() => beginMaintenance()).toThrow(RuntimeBusyError); }
+		finally { running.resolve(); }
+		await vi.waitFor(() => { const release = beginMaintenance(); release(); });
+		const release = beginMaintenance();
+		try {
+			expect(await execute(m, { cmd: "prompt", text: "blocked" })).toMatchObject({ ok: false, error: expect.stringContaining("maintenance") });
+			expect(session.prompt).toHaveBeenCalledTimes(1);
+		} finally { release(); }
+	});
 	it("returns acceptance before run completion and reports a later rejection through SSE", async () => {
 		const running = deferred();
 		const { m, session } = fixture(async (_text, opts) => {

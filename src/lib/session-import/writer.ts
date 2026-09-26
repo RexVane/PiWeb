@@ -235,9 +235,14 @@ export async function writeImportedSession(session: ImportedSession, options: Wr
 	const dir = path.join(options.agentDir, "sessions", encodeSessionDir(options.cwd));
 	await fs.mkdir(dir, { recursive: true });
 	const target = path.join(dir, importedFileName(summary.source, summary.externalId, createdAt));
-	const temporary = `${target}.${process.pid}.tmp`;
-	await fs.writeFile(temporary, `${lines.join("\n")}\n`, "utf8");
-	await fs.rename(temporary, target);
+	const temporary = `${target}.${randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(temporary, `${lines.join("\n")}\n`, { encoding: "utf8", flag: "wx" });
+		// Publish a complete file atomically without replacing an existing imported session.
+		await fs.link(temporary, target);
+	} finally {
+		await fs.rm(temporary, { force: true });
+	}
 	return { path: target, messageCount: messages.messages.length, skipped };
 }
 

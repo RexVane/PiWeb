@@ -5,6 +5,7 @@ import os from "node:os";
 import { BoundaryError } from "../src/lib/path-security";
 import { listTestFiles, readTestFile, runTestFile, summarizeVitestReport } from "../src/lib/test-run-service";
 import { getSwarm, resolveSwarmToolPath, startSwarm } from "../src/lib/swarm-service";
+import { beginMaintenance } from "../src/lib/runtime-activity";
 
 describe("frontend backend bridge", () => {
   const cwd = process.cwd();
@@ -34,6 +35,17 @@ describe("frontend backend bridge", () => {
       await expect(resolveSwarmToolPath(root, "../outside.ts")).rejects.toBeInstanceOf(BoundaryError);
       await expect(resolveSwarmToolPath(root, ".git/config")).rejects.toBeInstanceOf(BoundaryError);
       await expect(resolveSwarmToolPath(root, "node_modules/pkg/index.js")).rejects.toBeInstanceOf(BoundaryError);
+      if (process.platform === "win32") {
+        await fs.writeFile(path.join(root, ".git"), "protected pointer");
+        await expect(resolveSwarmToolPath(root, ".GIT")).rejects.toThrow("protected");
+        await expect(resolveSwarmToolPath(root, ".GIT::$DATA")).rejects.toThrow("protected");
+        await expect(resolveSwarmToolPath(root, "NODE_MODULES/pkg/index.js")).rejects.toThrow("protected");
+        expect(await fs.readFile(path.join(root, ".git"), "utf8")).toBe("protected pointer");
+        await fs.rm(path.join(root, ".git"));
+      }
+      await fs.mkdir(path.join(root, ".git"));
+      await fs.symlink(path.join(root, ".git"), path.join(root, "metadata-alias"), "junction");
+      await expect(resolveSwarmToolPath(root, "metadata-alias/new-file")).rejects.toThrow("protected");
     } finally {
       const base = path.resolve(os.tmpdir());
       if (root.startsWith(`${base}${path.sep}`)) await fs.rm(root, { recursive: true, force: true });
@@ -47,6 +59,17 @@ describe("frontend backend bridge", () => {
     expect(result.passed).toBeGreaterThan(0);
     expect(result.tests.length).toBe(result.passed);
   }, 60_000);
+
+  it("returns conflict for test and swarm starts during update maintenance", async () => {
+    const release = beginMaintenance();
+    try {
+      const tests = await import("../src/app/api/tests/route");
+      const swarm = await import("../src/app/api/swarm/route");
+      const request = (body: unknown) => new Request("http://localhost/api", { method: "POST", body: JSON.stringify(body) });
+      expect((await tests.POST(request({ cwd, file: "tests/semver.test.ts" }))).status).toBe(409);
+      expect((await swarm.POST(request({ cwd, tasks: [{ title: "x", instruction: "x" }] }))).status).toBe(409);
+    } finally { release(); }
+  });
 
   it("allows only one test run per workspace", async () => {
     const results = await Promise.allSettled([

@@ -202,3 +202,99 @@
   - 未启动 PiWeb 服务、未调用真实模型、未推送远端；因此运行时交互与真实智能体调用仍待用户允许启动后验证。
 - 影响文件：`src/components/SwarmCoordinatorPod.tsx`, `tests/components/swarm-coordinator.test.tsx`, `docs/frontend-backend-bridge.md`, `state/progress.md`。
 - 下一步：在用户允许启动后，用干净且已信任的 Git 仓库手动验证真实智能体运行、补丁审查与采纳链路。
+
+## 2026-09-26 15:33 +08:00 | gpt-5 | 详细审查前的远端锁定与现状快照
+- 改了什么：
+  - 核对远端仅有 `origin=https://github.com/RexVane/PiWeb.git`，不存在 `upstream`；执行上游推送锁定命令得到 `No such remote 'upstream'`，未创建未知远端，也不会推送。
+  - 记录审查基线：当前提交 `6e3146a`，包版本 `0.3.15`，Node `v24.12.0`；12 个已有修改文件涉及界面、主题、会话钩子及目录选择脚本，另有未跟踪 `.agents/`、`.gemini/`，全部保留。
+  - 本轮只进行详细检查与验证，不主动修改业务代码；先核对本地 Next.js 文档，再审查安全边界、核心服务、前端异步状态及发布链路。
+- 影响文件：`state/progress.md`。
+- 下一步：执行类型检查、全量测试和生产构建，结合代码与最小复现记录按严重程度排序的审查结果；不调用收费模型、不修改用户配置或现有工作区数据。
+
+## 2026-09-26 15:57 +08:00 | gpt-5 | 完成详细审查与隔离验证
+- 改了什么：
+  - 新增 `state/audit-2026-09-26.md`，记录当前工作树的 10 项问题、影响路径、复现条件和修复建议；其中 3 项 P1 涉及技能根目录递归误删、Windows 智能体群 Git 元数据大小写绕过，以及界面承诺不存在的系统沙盒/断网隔离。
+  - 区分新增界面回归和既有后端缺陷：其余问题包括虚构测试指标、单文件筛选实际匹配多文件、提示词面板旧响应覆盖、并发导入共用临时文件、目录选择取消后重开、全局禁止文本选择及更新忙碌检查遗漏群任务和测试任务。
+  - 在临时目录和 Git 仓库中运行 7 项审查探针，验证大小写别名和主仓库索引影响、技能集合根删除调用、导入临时文件竞争、旧提示词响应覆盖及无测试时的虚构指标；破坏性删除被拦截，Windows Git 完整影响复现明确限定 `core.hideDotFiles=false`，没有触碰用户仓库数据。验证后移除两个临时测试文件，未修改业务代码。
+  - 类型检查通过；全量离线测试 83 个文件通过、601 项通过、1 项跳过；生产构建通过。官方 npm 注册表的生产依赖及全量依赖审计均为 0 个已报告漏洞，不将其视为应用安全证明。
+  - 用临时密码、临时 agent 目录和本机回环地址启动隔离生产服务，10 项 HTTP 冒烟覆盖健康、认证、配置、跨源拒绝、文件预览、路径穿越、无效测试请求和退出，全部通过；服务已关闭，未调用收费模型、未运行真实更新、未修改个人配置或推送远端。
+  - 保留用户原有 12 个修改文件及 `.agents/`、`.gemini/`；`git diff --check` 仅发现既有 `AppShell.tsx:891` 尾随空白，未擅自清理。真实浏览器/移动端布局、系统目录对话框及实际模型调用仍未验证，报告明确列出这些边界。
+- 影响文件：`state/audit-2026-09-26.md`、`state/progress.md`；临时审查用例已删除，验证日志留在被忽略的 `state/*.log`。
+- 下一步：由用户确认修复范围，优先处理三项 P1，再补齐真实指标、精确测试筛选和异步/并发回归；本轮仅审查，不自动修改业务代码。
+
+## 2026-09-26 16:17 +08:00 | gpt-5 | 开始修复审查全部问题
+- 改了什么：
+  - 用户已要求修复全部 10 项问题；复核工作树与审查结束时一致，保留原有界面、主题和会话草稿改动，不回退用户代码。
+  - 远端仍仅有 `origin=https://github.com/RexVane/PiWeb.git`；上游推送锁定返回 `No such remote 'upstream'`，未新增远端或推送。
+  - 本轮按安全边界、运行结果真实性、异步/并发和界面交互分组修复，并为原报告中的复现条件补长期回归测试；不引入真实模型调用或执行包更新。
+- 影响文件：`state/progress.md`。
+- 下一步：先修复根目录删除和 Windows 元数据别名，再实现精确测试筛选、导入互斥及统一更新维护门禁。
+
+## 2026-09-26 16:22 +08:00 | gpt-5 | 修复后端删除边界与执行并发
+- 改了什么：
+  - 技能删除改为显式保护真实集合根、工作区根和其祖先；路径比较只在 Windows 忽略大小写，并优先将 `node_modules` 技能判为包管理，避免项目内依赖被递归删除。
+  - 群任务工具同时检查输入路径和真实目标，Windows 元数据大小写别名及指向保护路径的链接都会拒绝，列表和搜索也使用相同保护规则。
+  - 新增精确测试执行脚本，保留工作区 Vitest 配置，发现规格后仅执行真实路径等于目标文件的规格；不再依赖 CLI 包含匹配。
+  - 会话导入增加同进程队列和跨进程文件锁，覆盖来源查重与写入；临时文件使用随机名称与独占创建，完整文件通过硬链接原子发布且不覆盖已有导入。
+  - 新增进程共享活动登记与维护门禁，主会话命令和后台 prompt、群任务、测试运行均登记；更新期间禁止新工作启动，退出更新时释放门禁。首轮类型检查通过，接下来补回归验证生命周期和故障释放。
+  ```ts
+  // src/lib/runtime-activity.ts:20
+  if (registry.maintenance || registry.active.size) {
+    throw new RuntimeBusyError("work is active; wait for sessions, swarms and tests to finish before entering the maintenance window");
+  }
+  registry.maintenance = true;
+  // src/lib/session-import/writer.ts:238
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  await fs.writeFile(temporary, `${lines.join("\n")}\n`, { encoding: "utf8", flag: "wx" });
+  await fs.link(temporary, target);
+  ```
+- 影响文件：`src/lib/skills-service.ts`、`src/lib/swarm-service.ts`、`src/lib/test-run-service.ts`、`scripts/run-test-file.mjs`、`src/lib/runtime-activity.ts`、`src/lib/agent-manager.ts`、`src/app/api/update/route.ts`、`src/lib/session-import/lock.ts`、`src/lib/session-import/index.ts`、`src/lib/session-import/writer.ts`、`state/progress.md`。
+- 下一步：修复界面真实性、提示词响应归属、目录取消和文本选择，再运行针对性回归。
+
+## 2026-09-26 16:26 +08:00 | gpt-5 | 修复界面真实性与请求归属
+- 改了什么：
+  - 测试检查器去掉硬编码版本、覆盖率、内存、轮次、Worker PID 和 Git 改动数量，未采集数据明确标注；展示真实工作区与后端执行状态，不再声称断网或系统沙盒隔离。
+  - 主界面明确提示在当前工作区执行且无系统级沙盒；移除 body、应用根和检查器根的全局禁止选择，聊天 Markdown 显式允许选择，保留导航与源码行号的局部禁选。
+  - 提示词目录数据绑定 cwd/session 所有者，刷新会取消旧列表及读取请求；旧响应、错误和完成回调均需校验请求身份，切换或卸载后不会打开旧文件。
+  - Windows 目录选择器识别用户取消并立即结束，仅对无效 owner 句柄重试；测试与群任务在更新维护期间统一返回 HTTP 409。会话冷启动也纳入维护活动登记。
+- 影响文件：`src/components/TestInspectorPod.tsx`、`src/components/PromptPanel.tsx`、`src/components/AppShell.tsx`、`src/components/ChatWindow.tsx`、`src/app/layout.tsx`、`scripts/pick-folder.ps1`、`src/app/api/tests/route.ts`、`src/app/api/swarm/route.ts`、`src/lib/agent-manager.ts`、`state/progress.md`。
+- 下一步：补全部审查条件的长期回归测试，执行定向验证并修复发现的兼容性问题。
+
+## 2026-09-26 16:32 +08:00 | gpt-5 | 补齐修复回归并完成首轮定向验证
+- 改了什么：
+  - 新增维护门禁和精确文件执行用例，检查每种工作活动、重复释放、更新失败释放，以及 `.ts` / `.tsx` / 嵌套同名文件不会被误执行；精确执行同时验证原有 alias 和 setupFiles 仍生效。
+  - 技能删除新增集合根、工作区根、项目内包技能保护；路径边界覆盖 Windows 大小写别名和保护目录链接；导入覆盖跨工作区并发幂等、完整文件不覆盖及临时文件清理。
+  - 主会话回归确认 prompt 已接受但未完成时仍阻止更新；更新 API 覆盖群任务和测试任务忙碌状态，维护期间的新启动被拒绝，失败后能重新运行。
+  - 前端回归覆盖旧目录列表、刷新、读取和错误返回，工作区/会话切换及卸载后旧读取不会打开查看器；检查器断言没有虚构指标或隔离承诺。
+  - 首轮定向 10 个测试文件、95 项全部通过，类型检查通过；继续增加真实目录选择 C# 判定测试和消息选区不触发编辑回归，未弹出系统对话框。
+- 影响文件：`tests/runtime-activity.test.ts`、`tests/test-file-selection.test.ts`、`tests/skills-delete.test.ts`、`tests/backend-bridge.test.ts`、`tests/session-import-service.test.ts`、`tests/session-import-writer.test.ts`、`tests/update-service-route.test.ts`、`tests/agent-prompt-acceptance.test.ts`、`tests/components/test-inspector.test.tsx`、`tests/components/prompt-panel.test.tsx`、`tests/folder-picker.test.ts`、`tests/components/chatwindow-edit-message.test.tsx`、`scripts/pick-folder.ps1`、`state/progress.md`。
+- 下一步：复核实现和差异，运行全量离线测试与生产构建，再验证生产接口和浏览器文本选择。
+
+## 2026-09-26 16:36 +08:00 | gpt-5 | 完成边界复核并启动全量验证
+- 改了什么：
+  - 边界复核补充 Git 技能目录保护及 Windows 默认数据流别名保护，保留正常项目/全局子技能删除；真实群任务回归检查工作活动一直登记到保存和清理完成。
+  - 更新前后端契约文档，说明精确规格筛选、实际执行权限和进程级维护门禁的能力边界，不把项目资源信任或离线标志描述成系统隔离。
+  - 提取目录选择器实际 C# 重试判定，新增成功、取消、任意错误、无效 owner 和空 owner 五种分支验证；聊天用例验证已有文本选区不会被点击编辑吃掉。
+  - 清理本轮已触及 `AppShell.tsx` 的一处既有尾随空白，`git diff --check` 和类型检查均通过；已启动隔离 agent 目录下的全量离线回归与生产构建，未执行真实更新。
+- 影响文件：`src/lib/skills-service.ts`、`src/lib/swarm-service.ts`、`scripts/pick-folder.ps1`、`src/components/AppShell.tsx`、`docs/frontend-backend-bridge.md`、`tests/skills-delete.test.ts`、`tests/backend-bridge.test.ts`、`tests/swarm-service.test.ts`、`tests/folder-picker.test.ts`、`tests/components/chatwindow-edit-message.test.tsx`、`tests/components/prompt-panel.test.tsx`、`state/progress.md`。
+- 下一步：读取全量验证结果，再用隔离生产服务检查跨路由维护互斥及浏览器内容选择。
+
+## 2026-09-26 16:47 +08:00 | gpt-5 | 全部十项修复最终验证通过
+- 改了什么：
+  - 将 10 项修复的实现与回归证据追加到审查报告，保留原始问题快照；安全声明修复为如实说明执行权限，没有声称新增不存在的系统沙盒。
+  - 全量离线测试 86 个文件通过，636 项通过、1 项跳过，相比审查基线增加 35 项通过用例；生产编译、TypeScript、静态页面和路由生成全部通过，`git diff --check` 通过。
+  - 隔离生产服务验证健康、未认证拒绝、登录、信任读取/临时配置、精确测试执行和退出；真实测试运行期间另一条更新路由返回 409，证明独立路由构建共享维护登记，没有进入安装或更新准备步骤。
+  - Edge 中用一次性会话验证正文和代码的真实选择样式及拖选，分别选中消息子串和代码片段，未误打开编辑器；测试面板已无旧的固定数值和安全承诺，明确显示未采集指标及实际权限说明。
+  - 发布包 dry-run 确认新增执行脚本、活动门禁和导入锁进入包；没有发布、真实更新、收费模型调用、提交或远端推送。临时浏览器页及两个回环服务均已关闭；样例 agent 数据保留在系统 Temp，清理被环境策略拒绝，不影响用户真实配置和会话。
+  - 文档明确剩余边界：真实系统目录对话框交互、跨平台和全量移动端仍待人工验证；精确规格执行已验证本机 Vitest 5，导入原子发布依赖文件系统硬链接，维护门禁保护单个服务器进程而非独立实例集群。
+- 影响文件：`state/audit-2026-09-26.md`、`state/progress.md`；业务与测试修复文件见前四条进度记录，验证日志位于被忽略的 `state/fix-*.log`。
+- 下一步：用户可审阅当前工作树后提交并走 PR；本轮已完成全部 10 项修复，不自动提交、推送或启动真实模型任务。
+
+## 2026-09-27 02:35 +08:00 | grok-4.7 | 提交未发布代码并触发 GitHub 发布
+- 改了什么：
+  - 用户确认 `0.3.15` 是已发布旧版，当前工作区才是还在测试的最新代码，并要求直接更新 GitHub、发布这批代码。
+  - 远端仍只有 `origin=https://github.com/RexVane/PiWeb.git`，没有 `upstream`。提交推到自己的 `main`，不新建分支。
+  - 纳入提交的是审查后的工作区：技能删除与群任务路径边界、精确测试筛选、会话导入锁、进程级更新维护门禁，以及测试检查器去掉虚构指标和沙盒承诺。版本号仍留 `0.3.15`，由 `.github/workflows/publish.yml` 在发布时自动 `npm version patch`，通过类型检查、测试和预构建后再发 npm，并回推版本提交与 `v*` 标签。
+  - `.agents/`、`.gemini/` 是本机 MCP 配置，未纳入提交。
+- 影响文件：见本次提交；进度本文件。
+- 下一步：推送 `main` 后执行 `gh workflow run publish --ref main`，等发布流程结束再拉取它回写的版本号。

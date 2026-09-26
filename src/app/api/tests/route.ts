@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { BoundaryError } from "@/lib/path-security";
 import { listTestFiles, readTestFile, runTestFile } from "@/lib/test-run-service";
+import { RuntimeBusyError } from "@/lib/runtime-activity";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,6 @@ export async function POST(req: Request) {
     const body = await req.json();
     return NextResponse.json({ success: true, data: await runTestFile(body?.cwd, body?.file) });
   } catch (error) {
-    return NextResponse.json({ success: false, error: String((error as Error).message ?? error) }, { status: error instanceof BoundaryError || error instanceof SyntaxError ? 400 : 500 });
+    return NextResponse.json({ success: false, error: String((error as Error).message ?? error) }, { status: error instanceof RuntimeBusyError ? 409 : error instanceof BoundaryError || error instanceof SyntaxError ? 400 : 500 });
   }
 }

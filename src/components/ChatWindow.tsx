@@ -79,7 +79,7 @@ function formatMessageClock(time: number, t: Dict): string {
 
 const Markdown = memo(function Markdown({ text }: { text: string }) {
 	return (
-		<div className="md">
+		<div className="md select-text">
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
 				rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}

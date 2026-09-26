@@ -137,6 +137,18 @@ describe("去向：源项目还在就导回原工作区，否则用兜底工作�
 });
 
 describe("幂等与失败报告", () => {
+	it("serializes concurrent imports across different fallback workspaces", async () => {
+		await seedClaude("concurrent", path.join(root, "gone"));
+		const selection = [{ source: "claude" as const, externalId: "concurrent" }];
+		const reports = await Promise.all([
+			importSessions(selection, { agentDir, fallbackCwd: project }),
+			importSessions(selection, { agentDir, fallbackCwd: fallback }),
+		]);
+		expect(reports.reduce((sum, report) => sum + report.imported, 0)).toBe(1);
+		expect(reports.reduce((sum, report) => sum + report.skipped, 0)).toBe(1);
+		expect(reports.reduce((sum, report) => sum + report.failed, 0)).toBe(0);
+		expect((await scanAllSources(agentDir)).imported).toEqual(["claude:concurrent"]);
+	});
 	it("已导入过的会话再导入是 skipped（不会产生第二个文件）", async () => {
 		await seedClaude("s1", project);
 		const first = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });

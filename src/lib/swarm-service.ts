@@ -7,6 +7,7 @@ import { DefaultResourceLoader, SessionManager, createAgentSession, defineTool, 
 import { Type } from "typebox";
 import { BoundaryError, isPathInside, resolveWorkspacePath, samePath } from "./path-security";
 import { getAgentDir, getModelRuntime, getSettingsManager, resolveProjectTrust, withResourceLock } from "./pi";
+import { beginActivity } from "./runtime-activity";
 
 const exec = promisify(execFile);
 const STORE = path.join(getAgentDir(), "piweb-swarms");
@@ -95,12 +96,19 @@ function checkedInput(value: unknown): SwarmTaskInput[] {
     return { title: title.trim(), instruction: instruction.trim() };
   });
 }
+function protectedComponent(part: string): boolean {
+  const name = process.platform === "win32" ? part.toLowerCase().split(":")[0].replace(/[. ]+$/, "") : part;
+  return name === ".git" || name === "node_modules";
+}
+function assertToolTarget(root: string, target: string): void {
+  if (!isPathInside(root, target)) throw new BoundaryError("path escapes isolated worktree");
+  if (path.relative(root, target).split(path.sep).some(protectedComponent)) throw new BoundaryError("protected worktree path");
+}
 export async function resolveSwarmToolPath(root: string, value: string): Promise<string> {
   if (typeof value !== "string" || !value.trim() || value.length > 4096) throw new BoundaryError("invalid file path");
   const target = path.resolve(root, value);
-  if (!isPathInside(root, target)) throw new BoundaryError("path escapes isolated worktree");
-  const rel = path.relative(root, target).split(path.sep);
-  if (rel.some((part) => part === ".git" || part === "node_modules")) throw new BoundaryError("protected worktree path");
+  assertToolTarget(root, target);
+  const canonicalRoot = await fs.realpath(root);
   let ancestor = target;
   for (;;) {
     const real = await fs.realpath(ancestor).catch((error: NodeJS.ErrnoException) => {
@@ -108,7 +116,7 @@ export async function resolveSwarmToolPath(root: string, value: string): Promise
       throw error;
     });
     if (real) {
-      if (!isPathInside(root, real)) throw new BoundaryError("symlink escapes isolated worktree");
+      assertToolTarget(canonicalRoot, real);
       break;
     }
     const parent = path.dirname(ancestor);
@@ -136,7 +144,7 @@ function fileTools(root: string): ToolDefinition[] {
       async execute(_id, args) {
         const dir = await resolveSwarmToolPath(root, args.path);
         const entries = (await fs.readdir(dir, { withFileTypes: true }))
-          .filter((entry) => entry.name !== ".git" && entry.name !== "node_modules")
+          .filter((entry) => !protectedComponent(entry.name))
           .slice(0, 200).map((entry) => `${entry.isDirectory() ? "dir " : "file"} ${entry.name}`);
         return toolText(entries.join("\n") || "(empty)");
       },
@@ -152,8 +160,8 @@ function fileTools(root: string): ToolDefinition[] {
         async function walk(dir: string): Promise<void> {
           if (scanned >= 1000 || found.length >= 100) return;
           for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-            if (entry.name === ".git" || entry.name === "node_modules" || entry.isSymbolicLink()) continue;
-            const file = path.join(dir, entry.name);
+            if (protectedComponent(entry.name) || entry.isSymbolicLink()) continue;
+            const file = await resolveSwarmToolPath(root, path.join(dir, entry.name));
             if (entry.isDirectory()) await walk(file);
             else if (entry.isFile()) {
               scanned += 1;
@@ -274,6 +282,15 @@ async function runTask(job: SwarmJob, index: number, signal: AbortSignal): Promi
   }
 }
 export async function startSwarm(cwdValue: unknown, taskValue: unknown): Promise<SwarmJob> {
+  const releaseActivity = beginActivity("swarm");
+  try {
+    return await startSwarmActive(cwdValue, taskValue, releaseActivity);
+  } catch (error) {
+    releaseActivity();
+    throw error;
+  }
+}
+async function startSwarmActive(cwdValue: unknown, taskValue: unknown, releaseActivity: () => void): Promise<SwarmJob> {
   const tasks = checkedInput(taskValue);
   const { cwd, root, base } = await workspace(cwdValue);
   if ([...jobs.values()].some((job) => samePath(job.root, root) && job.status === "running")) throw new BoundaryError("a swarm is already running for this repository");
@@ -298,7 +315,7 @@ export async function startSwarm(cwdValue: unknown, taskValue: unknown): Promise
     job.finishedAt = Date.now();
     controllers.delete(job.id);
     await save(job).catch(() => undefined);
-  });
+  }).finally(releaseActivity);
   return publicJob(job);
 }
 export async function getSwarm(id: string): Promise<SwarmJob> {

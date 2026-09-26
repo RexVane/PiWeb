@@ -32,7 +32,7 @@ vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 		newSession: async (...args: unknown[]) => { const path = await mocks.newSession(...args); if (path) setCurrentPath(path); return path; },
 		openSession: setCurrentPath, closeSession: () => setCurrentPath(null),
 		renameWorkspace: noop, patchSessionName: noop, archiveSession: mocks.archiveSession, unarchiveSession: noop, resync: noop,
-		setGroupBy: noop, setOrderBy: noop, addWorkspaceByPicker: noop, removeWorkspace: noop, refreshModels: noop,
+		setGroupBy: noop, setOrderBy: noop, addWorkspaceByPicker: noop, addWorkspaceByPath: noop, removeWorkspace: noop, refreshModels: noop,
 		setToolPreset: noop, clearError: noop, clearCompaction: noop, setError: noop, answerExtensionDialog: noop, dismissExtensionNotice: noop,
 	};
 } }));

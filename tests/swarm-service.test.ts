@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
+import { beginMaintenance, RuntimeBusyError } from "../src/lib/runtime-activity";
 const worker = vi.hoisted(() => ({
   fail: false,
   failIndex: -1,
@@ -111,6 +112,7 @@ describe("isolated swarm patch lifecycle", () => {
       { title: "Second", instruction: "Change file.txt" },
     ]);
     try {
+      expect(() => beginMaintenance()).toThrow(RuntimeBusyError);
       let job = started;
       for (let attempt = 0; attempt < 100 && (job.tasks[0].status !== "completed" || !worker.release); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -130,6 +132,7 @@ describe("isolated swarm patch lifecycle", () => {
       job = await service.getSwarm(started.id);
     }
     expect(job.status).toBe("completed");
+    await vi.waitFor(() => { const release = beginMaintenance(); release(); });
     expect((await service.acceptSwarmTask(started.id, 0, root)).tasks[0].accepted).toBe(true);
   }, 30_000);
 

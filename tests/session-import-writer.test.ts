@@ -54,6 +54,21 @@ async function readLines(file: string): Promise<Record<string, any>[]> {
 }
 
 describe("写出的会话文件是合法 pi 会话", () => {
+	it("publishes one complete file without overwriting concurrent imports or leaking temporary files", async () => {
+		const make = (text: string) => session([{ type: "message", message: { role: "user", content: [{ type: "text", text }], timestamp: 1_700_000_000_000 } }]);
+		const results = await Promise.allSettled([
+			writeImportedSession(make("first"), { cwd, agentDir }),
+			writeImportedSession(make("second"), { cwd, agentDir }),
+		]);
+		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+		const written = results.find((result) => result.status === "fulfilled");
+		if (written?.status !== "fulfilled") throw new Error("expected one completed import");
+		const before = await fs.readFile(written.value.path, "utf8");
+		expect((await readLines(written.value.path)).filter((line) => line.type === "message")).toHaveLength(1);
+		await expect(writeImportedSession(make("replacement"), { cwd, agentDir })).rejects.toMatchObject({ code: "EEXIST" });
+		expect(await fs.readFile(written.value.path, "utf8")).toBe(before);
+		expect(await fs.readdir(path.dirname(written.value.path))).toEqual([path.basename(written.value.path)]);
+	});
 	it("header 是 version 3、cwd 是目标工作区，父链单链且首条为 null", async () => {
 		const written = await writeImportedSession(session([
 			{ type: "message", message: { role: "user", content: [{ type: "text", text: "你好" }], timestamp: 1_700_000_000_000 } },

@@ -16,6 +16,17 @@ function deferred<T>() {
 }
 
 describe("TestInspectorPod", () => {
+	it("does not fabricate metrics or claim an execution sandbox before a run", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => response({ files: [], runner: "vitest" })));
+		render(<TestInspectorPod cwd="/repo" />);
+		expect(await screen.findByText("此工作区没有测试文件。")).toBeTruthy();
+		for (const literal of ["94.2%", "88.5%", "48.2 MB", "48211", "48212", "v1.4.0", "第 2 轮", "100% 隔离安全", "Pool: 2", "彻底截断", "0 个文件改动"]) {
+			expect(document.body.textContent).not.toContain(literal);
+		}
+		expect(screen.getByText("覆盖率：未采集")).toBeTruthy();
+		expect(screen.getByText("无系统沙盒隔离")).toBeTruthy();
+		expect(screen.getByText(/测试继承服务进程环境变量/)).toBeTruthy();
+	});
 	it("loads actual test files and source, then runs only the selected file", async () => {
 		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 			if (url === "/api/tests?cwd=%2Frepo") return response({ files: ["tests/a.test.ts", "tests/b.spec.ts"], runner: "vitest" });

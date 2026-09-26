@@ -33,6 +33,7 @@ import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajecto
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
+import { beginActivity } from "./runtime-activity";
 import { estimateTokensOf } from "./process-format";
 import { getPiSettings } from "./pi-settings";
 import { createManagedNiubashTools } from "./managed-niubash";
@@ -802,6 +803,12 @@ function publishEnvironmentTrajectory(m: Managed, session: AgentSession): void {
 }
 
 export async function ensureSession(m: Managed): Promise<AgentSession> {
+	const release = beginActivity("session");
+	try { return await ensureSessionActive(m); }
+	finally { release(); }
+}
+
+async function ensureSessionActive(m: Managed): Promise<AgentSession> {
 	if (m.disposed) throw new Error("session is disposed");
 	if (m.creating) return m.creating;
 	if (m.session) return m.session;
@@ -1347,6 +1354,24 @@ export interface CommandResult {
 }
 
 export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
+	let release: (() => void) | undefined;
+	try {
+		if (!["abort", "clearQueue", "extensionUiResponse"].includes(cmd.cmd)) release = beginActivity("session");
+		return await executeCommand(m, cmd);
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	} finally {
+		release?.();
+	}
+}
+
+function trackedPrompt(session: AgentSession, ...args: Parameters<AgentSession["prompt"]>): ReturnType<AgentSession["prompt"]> {
+	const release = beginActivity("session");
+	try { return session.prompt(...args).finally(release); }
+	catch (error) { release(); throw error; }
+}
+
+async function executeCommand(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
 	touch(m);
 	try {
 		switch (cmd.cmd) {
@@ -1404,7 +1429,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					}
 					const result = await new Promise<CommandResult>((resolve) => {
 						let accepted = false;
-						const run = session.prompt(text, {
+						const run = trackedPrompt(session, text, {
 							images: cmd.images,
 							streamingBehavior: cmd.behavior,
 							expandPromptTemplates: m.workflow.mode !== "plan" || m.workflow.planStatus === "executing",
@@ -1581,7 +1606,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					const options = { images, expandPromptTemplates: m.workflow.mode !== "plan" };
 					return await new Promise<CommandResult>((resolve) => {
 						let accepted = false;
-						const run = session.prompt(text, {
+						const run = trackedPrompt(session, text, {
 							...options,
 							preflightResult: (success) => {
 								if (success) {

@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatWindow } from "@/components/ChatWindow";
 import type { WebMessage } from "@/lib/types";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); window.getSelection()?.removeAllRanges(); });
 
 const userMessage = {
 	role: "user",
@@ -29,6 +29,16 @@ function renderWindow(onEditMessage?: (entryId: string, text: string) => void) {
 }
 
 describe("user message edit affordance", () => {
+	it("keeps selected message text selectable without opening the editor", () => {
+		renderWindow(vi.fn());
+		const message = screen.getByText("hello world");
+		const range = document.createRange();
+		range.selectNodeContents(message);
+		window.getSelection()?.addRange(range);
+		fireEvent.click(message);
+		expect(window.getSelection()?.toString()).toBe("hello world");
+		expect(screen.queryByRole("textbox", { name: "编辑这条消息" })).toBeNull();
+	});
 	it("opens the editor by clicking the message and resends edited text", () => {
 		const onEdit = vi.fn();
 		renderWindow(onEdit);

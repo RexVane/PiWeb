@@ -18,6 +18,7 @@ import { dshSource } from "./dsh";
 import { zcodeSource } from "./zcode";
 import { opencodeSource } from "./opencode";
 import { importedKey, listImportedKeys, findImported, writeImportedSession } from "./writer";
+import { withImportLock } from "./lock";
 
 export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 	claude: claudeSource,
@@ -146,6 +147,10 @@ async function oversize(location: string): Promise<boolean> {
 }
 
 export async function importSessions(items: ImportSelection[], options: ImportOptions): Promise<ImportReport> {
+	return withImportLock(options.agentDir, () => importSessionsLocked(items, options));
+}
+
+async function importSessionsLocked(items: ImportSelection[], options: ImportOptions): Promise<ImportReport> {
 	const results: ImportOutcome[] = [];
 	const workspaces = new Set<string>();
 	const fallback = (await isDirectory(options.fallbackCwd)) ? path.resolve(options.fallbackCwd as string) : undefined;

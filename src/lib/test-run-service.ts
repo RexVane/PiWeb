@@ -6,6 +6,8 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
 import { resolveProjectTrust } from "./pi";
+import { APP_ROOT } from "./app-root";
+import { beginActivity } from "./runtime-activity";
 
 const exec = promisify(execFile);
 const running = new Set<string>();
@@ -76,9 +78,10 @@ export function summarizeVitestReport(data: any, stdout: string, stderr: string)
   };
 }
 export async function runTestFile(cwdValue: unknown, fileValue: unknown): Promise<TestRunResult> {
-  const { cwd, relative } = await testFile(cwdValue, fileValue);
+  const { cwd, file, relative } = await testFile(cwdValue, fileValue);
   if (!resolveProjectTrust(cwd).trusted) throw new BoundaryError("trust this project before running tests");
   if (running.has(cwd)) throw new BoundaryError("a test run is already active for this workspace");
+  const releaseActivity = beginActivity("tests");
   running.add(cwd);
   const started = Date.now();
   const reportFile = path.join(os.tmpdir(), `piweb-vitest-${randomUUID()}.json`);
@@ -91,7 +94,7 @@ export async function runTestFile(cwdValue: unknown, fileValue: unknown): Promis
     });
     if (!isPathInside(path.join(cwd, "node_modules"), vitest)) throw new BoundaryError("Vitest entry escapes node_modules");
     try {
-      const result = await exec(process.execPath, [vitest, "run", relative, "--reporter=json", `--outputFile=${reportFile}`], {
+      const result = await exec(process.execPath, [path.join(APP_ROOT, "scripts/run-test-file.mjs"), cwd, file, reportFile], {
         cwd, timeout: 180_000, maxBuffer: 2_000_000, windowsHide: true,
         env: { ...process.env, CI: "1", FORCE_COLOR: "0", NO_COLOR: "1" },
       });
@@ -113,6 +116,7 @@ export async function runTestFile(cwdValue: unknown, fileValue: unknown): Promis
     };
   } finally {
     running.delete(cwd);
+    releaseActivity();
     await fs.rm(reportFile, { force: true }).catch(() => undefined);
   }
 }

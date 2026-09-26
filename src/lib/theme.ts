@@ -141,13 +141,17 @@ function applyLightDark(mode: ThemeMode): void {
 	if (isDark) {
 		root.setAttribute('data-ds-dark-theme', '');
 		root.removeAttribute('data-ds-light-theme');
+		root.classList.add('dark');
 		body?.setAttribute('data-ds-dark-theme', '');
 		body?.removeAttribute('data-ds-light-theme');
+		body?.classList.add('dark');
 	} else {
 		root.removeAttribute('data-ds-dark-theme');
 		root.setAttribute('data-ds-light-theme', '');
+		root.classList.remove('dark');
 		body?.removeAttribute('data-ds-dark-theme');
 		body?.setAttribute('data-ds-light-theme', '');
+		body?.classList.remove('dark');
 	}
 	root.style.colorScheme = isDark ? 'dark' : 'light';
 }

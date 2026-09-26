@@ -69,6 +69,47 @@ afterEach(() => {
 });
 
 describe("deleteSkill", () => {
+	it.each(["", "skills", "web-skills", ".git", ".agents", ".agents/skills", ".pi", ".pi/skills"])("protects workspace and collection root %s", async (relative) => {
+		const root = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-root-"));
+		const dir = path.join(root, relative);
+		mkdirSync(dir, { recursive: true });
+		const filePath = path.join(dir, "SKILL.md");
+		writeFileSync(filePath, "---\nname: root\n---\n");
+		writeFileSync(path.join(root, "keep.txt"), "keep");
+		fakeSkills.set("root", { name: "root", filePath });
+		try {
+			await expect(deleteSkill(filePath, root)).rejects.toThrow(/protected.*root/);
+			expect(fs.existsSync(filePath)).toBe(true);
+			expect(fs.readFileSync(path.join(root, "keep.txt"), "utf8")).toBe("keep");
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+
+	it.each(["", "skills", "web-skills"])("protects global agent collection root %s", async (relative) => {
+		const root = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-agent-root-"));
+		mockState.agentDir = root;
+		const dir = path.join(root, relative);
+		mkdirSync(dir, { recursive: true });
+		const filePath = path.join(dir, "SKILL.md");
+		writeFileSync(filePath, "---\nname: root\n---\n");
+		fakeSkills.set("root", { name: "root", filePath });
+		try {
+			await expect(deleteSkill(filePath)).rejects.toThrow(/protected.*root/);
+			expect(fs.existsSync(filePath)).toBe(true);
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
+
+	it("refuses package skills even inside the active workspace", async () => {
+		const root = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-local-pkg-"));
+		const dir = path.join(root, "node_modules", "pkg", "skill");
+		mkdirSync(dir, { recursive: true });
+		const filePath = path.join(dir, "SKILL.md");
+		writeFileSync(filePath, "---\nname: pkg\n---\n");
+		fakeSkills.set("pkg", { name: "pkg", filePath });
+		try {
+			await expect(deleteSkill(filePath, root)).rejects.toThrow(/package-managed/);
+			expect(fs.existsSync(filePath)).toBe(true);
+		} finally { rmSync(root, { recursive: true, force: true }); }
+	});
 	it("removes the skill directory for a global skill (under the agent dir)", async () => {
 		// classifyScope 只认 ~/.pi/agent 等真实目录；测试里模拟 agent 目录在其下建技能
 		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");

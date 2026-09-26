@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkForUpdate, runUpdate, UpdateBusyError, type UpdateTarget } from "@/lib/update-service";
 import { activeStatus } from "@/lib/agent-manager";
+import { beginMaintenance, RuntimeBusyError } from "@/lib/runtime-activity";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +25,15 @@ export async function POST(req: Request) {
 		};
 		// Check before even taking a release lock; rechecked before each mutating step.
 		await assertIdle();
-		return NextResponse.json({ success: true, data: await runUpdate(target, { assertIdle }) });
+		const releaseMaintenance = beginMaintenance();
+		try {
+			return NextResponse.json({ success: true, data: await runUpdate(target, { assertIdle }) });
+		} finally {
+			releaseMaintenance();
+		}
 	} catch (error) {
 		return NextResponse.json({ success: false, error: error instanceof Error ? error.message : String(error) }, {
-			status: error instanceof UpdateBusyError ? 409 : 500,
+			status: error instanceof UpdateBusyError || error instanceof RuntimeBusyError ? 409 : 500,
 		});
 	}
 }

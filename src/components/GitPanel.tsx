@@ -181,27 +181,29 @@ export function GitPanel({
 		: t.gitPanel;
 
 	return (
-		<div className="flex h-full min-h-0 flex-col p-4">
-			<div className="mb-3 flex items-center gap-2">
+		<div className="flex h-full min-h-0 flex-col p-4 select-none">
+			<div className="mb-3 flex items-center gap-2 pb-2 border-b border-slate-200/60 dark:border-slate-800/60">
 				{view ? (
-					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.gitBack} onClick={() => changeView(null)}>
+					<button className="w-7 h-7 rounded-full clay-btn-soft flex items-center justify-center text-slate-600 hover:text-slate-900 transition-transform active:scale-95" title={t.gitBack} onClick={() => changeView(null)}>
 						<IconChevronLeft14 size={13} />
 					</button>
 				) : (
-					<IconGitOutline16 size={15} style={{ flex: "none" }} />
+					<div className="w-7 h-7 rounded-full clay-inset flex items-center justify-center text-emerald-600">
+						<IconGitOutline16 size={15} />
+					</div>
 				)}
-				<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, fontWeight: 600 }} title={view?.kind === "file" ? view.path : undefined}>
+				<span className="min-w-0 flex-1 truncate font-bold text-sm text-slate-800 dark:text-slate-100" title={view?.kind === "file" ? view.path : undefined}>
 					{headerTitle}
 				</span>
 				{view?.kind === "file" && onOpenFile && info?.root && (
-					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.fileOpenEditor} onClick={() => onOpenFile(`${info.root}/${view.path}`)}>
+					<button className="w-7 h-7 rounded-full clay-btn-soft flex items-center justify-center text-slate-600 hover:text-slate-900 transition-transform active:scale-95" title={t.fileOpenEditor} onClick={() => onOpenFile(`${info.root}/${view.path}`)}>
 						<IconFileOutline16 size={13} />
 					</button>
 				)}
-				<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.panelRefresh} onClick={() => (view ? void loadDiff(view) : void load())}>
-					<IconRefreshOutline14 size={13} />
+				<button className="w-7 h-7 rounded-full clay-btn-soft flex items-center justify-center text-slate-600 hover:text-slate-900 transition-transform active:scale-95" title={t.panelRefresh} onClick={() => (view ? void loadDiff(view) : void load())}>
+					<IconRefreshOutline14 size={13} className={loading || diffLoading ? "piweb-spin" : undefined} />
 				</button>
-				<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.close} onClick={onClose}>
+				<button className="w-7 h-7 rounded-full clay-btn-soft flex items-center justify-center text-slate-600 hover:text-rose-600 transition-colors" title={t.close} onClick={onClose}>
 					<IconCloseOutline14 size={13} />
 				</button>
 			</div>
@@ -268,8 +270,7 @@ export function GitPanel({
 						{!error && info.files.length > 0 && onAskCommit && (
 							<button
 								type="button"
-								className="btn-outline self-start"
-								style={{ height: 28, padding: "0 12px", fontSize: 12 }}
+								className="clay-btn clay-btn-mint text-white font-semibold px-3.5 py-1.5 rounded-full text-xs self-start shadow-sm active:scale-95"
 								onClick={onAskCommit}
 								title={t.gitAskCommitPrompt}
 							>

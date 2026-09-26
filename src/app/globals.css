@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-ds-dark-theme], [data-ds-dark-theme] *, .dark, .dark *));
+
 /* ============================================================
    Pi Web 视觉令牌
    浅色默认，深色用 body[data-ds-dark-theme]
@@ -2426,7 +2428,6 @@ body[data-pebrel-theme="piweb"][data-ds-dark-theme] {
 .msg-actions { margin-top: 4px; opacity: .62; }
 .pw-hero { position: relative; overflow: auto; }
 .pw-hero-content { position: relative; padding: 18px 0 26px; animation: pw-hero-enter 420ms cubic-bezier(.2,.7,.2,1) both; }
-.pw-hero-content::before { position: absolute; top: 0; left: max(0px, calc(50% - 270px)); width: 56px; height: 2px; background: var(--dsw-accent); content: ""; }
 .pw-hero-intro { width: 100%; max-width: 540px; margin-inline: auto; }
 .pw-hero-identity { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; color: var(--dsw-accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
 .pw-hero-mark { display: grid; width: 39px; height: 39px; place-items: center; border: 1px solid var(--dsw-border-l3); border-radius: 10px; background: var(--dsw-accent-soft); }
@@ -2542,20 +2543,20 @@ html[data-ds-dark-theme] .pw-composer {
 	--clay-bg: #F0F4F8;
 	--clay-surface: #FFFFFF;
 	--clay-sidebar: #F8FAFC;
-	--clay-mint: #34D399;
+	--clay-mint: #10B981;
 	--clay-mint-deep: #059669;
 	--clay-mint-soft: #ECFDF5;
 	--clay-peach: #FB923C;
 	--clay-peach-deep: #EA580C;
 	--clay-peach-soft: #FFF7ED;
-	--clay-sky: #38BDF8;
-	--clay-sky-deep: #0284C7;
+	--clay-sky: #0284C7;
+	--clay-sky-deep: #0369A1;
 	--clay-sky-soft: #F0F9FF;
-	--clay-lavender: #818CF8;
+	--clay-lavender: #6366F1;
 	--clay-lavender-soft: #EEF2FF;
-	--clay-slate-text: #334155;
-	--clay-subtext: #64748B;
-	--clay-muted: #94A3B8;
+	--clay-slate-text: #0F172A;
+	--clay-subtext: #475569;
+	--clay-muted: #64748B;
 
 	--clay-shadow-card: 12px 14px 28px rgba(166, 178, 198, 0.35),
 		-10px -10px 24px rgba(255, 255, 255, 0.95),
@@ -2574,13 +2575,15 @@ html[data-ds-dark-theme] .pw-composer {
 }
 
 html[data-ds-dark-theme],
-body[data-ds-dark-theme] {
+body[data-ds-dark-theme],
+html.dark,
+body.dark {
 	--clay-bg: #13171F;
 	--clay-surface: #1E232D;
 	--clay-sidebar: #181C24;
-	--clay-slate-text: #F1F5F9;
-	--clay-subtext: #94A3B8;
-	--clay-muted: #64748B;
+	--clay-slate-text: #F8FAFC;
+	--clay-subtext: #CBD5E1;
+	--clay-muted: #94A3B8;
 	--clay-shadow-card: 12px 14px 28px rgba(0, 0, 0, 0.45),
 		-8px -8px 20px rgba(255, 255, 255, 0.04),
 		inset 1px 1px 2px rgba(255, 255, 255, 0.1),
@@ -2593,34 +2596,48 @@ body[data-ds-dark-theme] {
 
 .clay-card {
 	background: var(--clay-surface);
+	color: var(--clay-slate-text);
 	border-radius: 1.5rem;
 	box-shadow: var(--clay-shadow-card);
 	border: 1px solid rgba(255, 255, 255, 0.8);
 	transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-html[data-ds-dark-theme] .clay-card {
+html[data-ds-dark-theme] .clay-card,
+html.dark .clay-card {
 	border-color: rgba(255, 255, 255, 0.08);
 }
 
 .clay-surface {
 	background: var(--clay-sidebar);
+	color: var(--clay-slate-text);
 	border-radius: 1.75rem;
 	box-shadow: var(--clay-shadow-surface);
 	border: 1px solid rgba(255, 255, 255, 0.9);
 }
-html[data-ds-dark-theme] .clay-surface {
+html[data-ds-dark-theme] .clay-surface,
+html.dark .clay-surface {
 	border-color: rgba(255, 255, 255, 0.06);
 }
 
 .clay-inset {
 	background: #EFF3F8;
+	color: var(--clay-slate-text);
 	border-radius: 1.25rem;
 	box-shadow: var(--clay-shadow-inset);
 	border: 1px solid rgba(226, 232, 240, 0.6);
 }
-html[data-ds-dark-theme] .clay-inset {
+html[data-ds-dark-theme] .clay-inset,
+html.dark .clay-inset {
 	background: #141820;
 	border-color: rgba(255, 255, 255, 0.05);
+}
+
+.clay-code-window {
+	background-color: #0d1117 !important;
+	border-radius: 1.25rem;
+	box-shadow: inset 4px 4px 12px rgba(0, 0, 0, 0.6), inset -2px -2px 6px rgba(255, 255, 255, 0.04);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	color: #f0f6fc !important;
 }
 
 .clay-btn {
