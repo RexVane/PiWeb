@@ -21,6 +21,10 @@ export interface UpdateCheck {
 	canUpdate: boolean;
 	/** Only piweb: commits behind the branch which the update command pulls. */
 	behind?: number;
+	/** npm installation: the command the user runs with piweb stopped; there is no in-place update. */
+	command?: string;
+	/** npm installation, pi engine: each PiWeb release pins its engine, so pi only updates with PiWeb. */
+	bundled?: boolean;
 }
 
 export interface UpdateResult {
@@ -45,6 +49,20 @@ function assertTarget(target: UpdateTarget): void {
 	if (target !== "piweb" && target !== "pi") throw new Error("unknown target");
 }
 
+/** The published package that npm installations update to. */
+export const PIWEB_PACKAGE = "@rexvane/piweb";
+export const PIWEB_NPM_UPDATE_COMMAND = `npm install -g ${PIWEB_PACKAGE}@latest`;
+
+/**
+ * An npm installation (<prefix>/node_modules/@rexvane/piweb) has no Git checkout to pull and no dev
+ * dependencies to validate and build a release with, so it cannot update itself in place. npm replaces
+ * the whole package folder (the build being served included, and Windows locks loaded native modules),
+ * so the user stops piweb, runs the npm command and starts it again; the pi engine is pinned per release.
+ */
+export function isNpmInstallation(root: string): boolean {
+	return path.resolve(root).split(/[\\/]/).includes("node_modules");
+}
+
 async function readPackageVersion(filePath: string): Promise<string> {
 	const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as { version?: unknown };
 	if (typeof raw.version !== "string" || !raw.version) throw new Error(`no version field in ${filePath}`);
@@ -67,9 +85,16 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		const installation = await checkedRoot();
 		const command = (cmd: string, args: string[], timeoutMs: number) => run(cmd, args, { cwd: installation, env: commandEnv, timeoutMs });
 		const { piWeb, piEngine } = await versions();
+		const npmInstallation = isNpmInstallation(installation);
 		if (target === "pi") {
 			const latest = (await command("npm", ["view", PI_PACKAGE, "version"], 30_000)).trim().split(/\r?\n/)[0];
-			return { current: piEngine, latest, canUpdate: isNewer(latest, piEngine) };
+			return { current: piEngine, latest, canUpdate: isNewer(latest, piEngine), ...(npmInstallation ? { bundled: true } : {}) };
+		}
+		if (npmInstallation) {
+			// Compare with the registry the user's npm is configured for; there are no commits to count.
+			const latest = (await command("npm", ["view", PIWEB_PACKAGE, "version"], 30_000)).trim().split(/\r?\n/)[0];
+			if (!latest) throw new Error(`cannot read the published version of ${PIWEB_PACKAGE}`);
+			return { current: piWeb, latest, canUpdate: isNewer(latest, piWeb), command: PIWEB_NPM_UPDATE_COMMAND };
 		}
 		await command("git", ["fetch", "origin", "main", "--tags"], 30_000);
 		const behind = Number((await command("git", ["rev-list", "--count", "HEAD..origin/main"], 15_000)).trim());
@@ -83,6 +108,9 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 	async function runUpdate(target: UpdateTarget, { assertIdle = async () => {} }: { assertIdle?: () => Promise<void> } = {}): Promise<UpdateResult> {
 		assertTarget(target);
 		if (updateRunning) throw new UpdateBusyError("an update is already running");
+		if (isNpmInstallation(await checkedRoot())) {
+			throw new Error(`This PiWeb was installed with npm and cannot update itself. Stop piweb, run \`${PIWEB_NPM_UPDATE_COMMAND}\`, then start piweb again.`);
+		}
 		updateRunning = true;
 		try {
 			const installation = await checkedRoot();

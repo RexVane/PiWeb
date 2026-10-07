@@ -521,13 +521,18 @@ function VersionLink({ href, value }: { href: string; value?: string }) {
 	);
 }
 
-type UpdatePhase = "idle" | "checking" | "available" | "updating" | "latest" | "updated" | "error";
+type UpdatePhase = "idle" | "checking" | "available" | "manual" | "updating" | "latest" | "updated" | "error";
 
-/** 检查更新 / 更新控件：piweb 走 git pull + npm install，pi 走 npm install @latest（服务端固定参数） */
+/**
+ * 检查更新 / 更新控件：piweb 走 git pull + npm install，pi 走 npm install @latest（服务端固定参数）。
+ * npm 安装不能就地更新：有新版时显示要在终端运行的命令；pi 引擎随 PiWeb 发布版本一起更新。
+ */
 function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 	const { t } = useI18n();
 	const [phase, setPhase] = useState<UpdatePhase>("idle");
 	const [latest, setLatest] = useState("");
+	const [manual, setManual] = useState<{ command?: string; bundled?: boolean }>({});
+	const [copied, setCopied] = useState(false);
 	const [error, setError] = useState("");
 	const busy = phase === "checking" || phase === "updating";
 
@@ -548,7 +553,8 @@ function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 			if (!j.success) throw new Error(j.error);
 			if (j.data.canUpdate) {
 				setLatest(j.data.latest);
-				setPhase("available");
+				setManual({ command: j.data.command, bundled: j.data.bundled });
+				setPhase(j.data.command || j.data.bundled ? "manual" : "available");
 			} else {
 				setPhase("latest");
 			}
@@ -592,6 +598,29 @@ function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 			<button type="button" className="btn-primary-white" style={{ height: 26, padding: "0 12px", fontSize: 12 }} onClick={() => void run()}>
 				{t.updateTo.replace("{v}", latest)}
 			</button>
+		);
+	}
+	if (phase === "manual") {
+		const command = manual.command;
+		return (
+			<span className="flex flex-col items-end gap-1" style={{ maxWidth: 320, textAlign: "right" }}>
+				<span style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
+					{(manual.bundled ? t.updateBundled : t.updateManual).replace("{v}", latest)}
+				</span>
+				{command && (
+					<span className="flex items-center gap-1.5">
+						<code style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, padding: "2px 6px", borderRadius: 6, background: "var(--dsw-hover)" }}>{command}</code>
+						<button
+							type="button"
+							className="btn-outline"
+							style={{ height: 22, padding: "0 8px", fontSize: 11.5 }}
+							onClick={() => void navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {})}
+						>
+							{copied ? t.copied : t.copy}
+						</button>
+					</span>
+				)}
+			</span>
 		);
 	}
 	if (phase === "updated") {

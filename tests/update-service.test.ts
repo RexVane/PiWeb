@@ -225,3 +225,36 @@ describe("update service transactions", () => {
 		expect(run.mock.calls.some(([, args]) => args[0] === "tag")).toBe(false);
 	});
 });
+
+describe("npm installations", () => {
+	async function npmInstallation() {
+		const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-npm-")));
+		roots.push(base);
+		const root = path.join(base, "lib", "node_modules", "@rexvane", "piweb");
+		await fs.mkdir(root, { recursive: true });
+		await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "@rexvane/piweb", version: "1.0.0" }));
+		return root;
+	}
+
+	it("checks the registry instead of Git, offers the npm command, and ties pi to PiWeb releases", async () => {
+		const root = await npmInstallation();
+		const run = vi.fn(async (_command: string, args: string[]) => (args[1] === "@rexvane/piweb" ? "1.2.0\n" : "2.0.0\n"));
+		const service = createUpdateService({ root, run });
+		expect(await service.checkForUpdate("piweb")).toEqual({ current: "1.0.0", latest: "1.2.0", canUpdate: true, command: "npm install -g @rexvane/piweb@latest" });
+		expect(await service.checkForUpdate("pi")).toEqual({ current: "1.0.0", latest: "2.0.0", canUpdate: true, bundled: true });
+		expect(run.mock.calls.map(([command, args]) => `${command} ${args.join(" ")}`)).toEqual([
+			"npm view @rexvane/piweb version", "npm view @earendil-works/pi-coding-agent version",
+		]);
+	});
+
+	it("refuses to update itself in place and says what to run, without running anything", async () => {
+		const root = await npmInstallation();
+		const run = vi.fn(async () => "");
+		const service = createUpdateService({ root, run });
+		for (const target of ["piweb", "pi"] as const) {
+			await expect(service.runUpdate(target)).rejects.toThrow("npm install -g @rexvane/piweb@latest");
+		}
+		expect(run).not.toHaveBeenCalled();
+		await expect(fs.access(path.join(root, ".next-releases"))).rejects.toThrow();
+	});
+});
