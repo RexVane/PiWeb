@@ -1,5 +1,18 @@
 # 进度
 
+## 2026-10-07 11:54 +08:00 | claude-opus-5-5 | 方向变更：开发者模式改「pi 的眼睛」+ 生长树改「每轮一个 git commit」（M0 收尾）
+- 为什么改：iframe 嵌入有几个根治不了的问题——跨源碰不到 DOM、要注入或代理、X-Frame-Options/CSP 白屏、第三方上下文里应用登录 Cookie 发不出去、侧栏最宽 640px；托管 dev server 也划不来。用户拍板改方向，计划全文见 `C:\Users\guica\.claude\plans\bubbly-meandering-dream.md`
+- 用户确认的决定：
+  1. 生长树全面用 git：每轮结束 commit 一次（专用引用 `refs/piweb/rounds/<key>`，不动 HEAD/分支/用户暂存区），每一轮的改动 = `git diff 上一轮 这一轮`，元信息写进 commit trailers，去掉逐工具快照、`ledger.jsonl`、`fs.watch` 外部修改监听；按轮显示（头部=提问首行+文件数+行数，文件只列本轮改动，时间轴柱高=改动行数，灰柱=用户两轮之间自己的修改，对话里每条提问下加「本轮改了 N 个文件」）
+  2. 开发者模式改「pi 的眼睛」：系统 Edge/Chrome 无头 + CDP，给 pi 浏览器工具；**截图只给 pi 看**（验证自己改的界面），对话流里展示；不做每轮截图存档；「截图上点选元素」放最后一批
+  3. iframe 版本只保留定位内核
+- M0 做了什么：
+  - 提交定位内核四处修复（`46fe95f`，11 个用例）
+  - iframe 面板与其测试移入 `backups/2026-10-07-iframe-dev-preview/`，AppShell/i18n/proxy 的接线改动以 `reverted-wiring.patch` 存档后还原（proxy 放行在新方案里用不上）
+  - `tsconfig.json` 排除 `backups/`（`400568d`）：备份文件引用了已撤掉的文案和模块，会让类型检查失败
+- 验证：`tsc --noEmit` 通过；全量 vitest 380 通过 + 1 跳过（= 385 − 撤掉的 5 项面板测试）
+- 下一步：A1 生长写入改为 `commitRound`
+
 ## 2026-10-07 11:21 +08:00 | claude-opus-5-5 | 开发者模式 MVP 完成（面板 + 接线）+ 定位内核四处修复
 - 改了什么：
   - 新增 `src/components/DevPreviewPanel.tsx`：地址栏（按工作区存 `piweb.devPreviewUrl:${cwd}`，补 `http://`，**只放行 http(s)**，防 `javascript:` 落进 iframe src 在 PiWeb 源执行）、iframe 直连、检查开关、未接入引导卡（片段 + 复制 + 让 pi 帮我接入 + X-Frame-Options 提示）、结果列表（查看 / 编辑器 / 发给 pi）
