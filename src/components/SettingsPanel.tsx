@@ -22,9 +22,7 @@ import {
 	IconSettingsOutline16,
 	IconShieldOutline16,
 	IconSkillOutline16,
-	IconTrashOutline16,
 } from "@/components/icons";
-import { thinkingLevelDesc } from "@/components/ModelSelector";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import {
 	ModelCatalog,
@@ -37,19 +35,7 @@ import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
-import type { ModelView, ProviderUsage, ProviderView } from "@/lib/models-service";
-import type { PiSettings, PiSettingsPatch } from "@/lib/pi-settings";
-import {
-	clampThinkingLevel,
-	isThinkingLevel,
-	MAX_THINKING_BUDGET,
-	modelKey,
-	PI_DEFAULT_THINKING_BUDGETS,
-	PI_DEFAULT_THINKING_LEVEL,
-	THINKING_BUDGET_LEVELS,
-	THINKING_LEVELS,
-	type ThinkingBudgetLevel,
-} from "@/lib/thinking";
+import type { ProviderUsage, ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
 
 type Section = "general" | "models" | "tools" | "skills" | "plugins";
@@ -788,224 +774,9 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 
 // ---------- Models ----------
 
-/** 设置页默认模型 / 按模型强度用到的目录字段 */
-type CatalogModel = Pick<ModelView, "provider" | "id" | "name" | "reasoning" | "thinkingLevels">;
-type ModelDefaultSettings = Pick<PiSettings, "thinking" | "defaultModel">;
-
-const budgetDraftsFrom = (budgets: ModelDefaultSettings["thinking"]["budgets"]) =>
-	Object.fromEntries(THINKING_BUDGET_LEVELS.map((level) => [level, budgets[level] === undefined ? "" : String(budgets[level])])) as Record<ThinkingBudgetLevel, string>;
-
-/**
- * 设置 → 模型顶部：pi 的默认模型、默认思考强度、按模型的默认强度与思考预算。
- * 直接读写 settings.json 里 pi 自己的键（defaultProvider/defaultModel、defaultThinkingLevel、modelThinkingLevels、thinkingBudgets），终端 pi 同样生效。
- */
-function ModelDefaultsBlock({ providers, catalog }: { providers: ProviderView[]; catalog: CatalogModel[] }) {
-	const { t } = useI18n();
-	const [settings, setSettings] = useState<ModelDefaultSettings | null>(null);
-	const [status, setStatus] = useState<"loading" | "ready" | "loadError" | "saveError">("loading");
-	const [saving, setSaving] = useState(false);
-	const [budgetDrafts, setBudgetDrafts] = useState(() => budgetDraftsFrom({}));
-	const [addKey, setAddKey] = useState("");
-
-	const load = useCallback(async () => {
-		setStatus("loading");
-		try {
-			const response = await fetch("/api/pi-settings");
-			const result = await response.json();
-			if (!response.ok || !result.success) throw new Error(result.error);
-			setSettings({ thinking: result.data.thinking, defaultModel: result.data.defaultModel });
-			setBudgetDrafts(budgetDraftsFrom(result.data.thinking.budgets));
-			setStatus("ready");
-		} catch {
-			setStatus("loadError");
-		}
-	}, []);
-	useEffect(() => {
-		void load();
-	}, [load]);
-
-	const save = async (patch: PiSettingsPatch) => {
-		if (!settings || saving) return;
-		setSaving(true);
-		try {
-			const response = await fetch("/api/pi-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-			const result = await response.json();
-			if (!response.ok || !result.success) throw new Error(result.error);
-			setSettings({ thinking: result.data.thinking, defaultModel: result.data.defaultModel });
-			setBudgetDrafts(budgetDraftsFrom(result.data.thinking.budgets));
-			setStatus("ready");
-		} catch {
-			setStatus("saveError");
-		} finally {
-			setSaving(false);
-		}
-	};
-
-	const providerLabel = (id: string) => providers.find((provider) => provider.id === id)?.name ?? id;
-	const byKey = useMemo(() => new Map(catalog.map((model) => [modelKey(model.provider, model.id), model])), [catalog]);
-	// 只列认证就绪的提供商：没有凭证的模型设成默认，pi 会跳过它
-	const available = useMemo(() => {
-		const ready = new Set(providers.filter((provider) => provider.authReady).map((provider) => provider.id));
-		return catalog.filter((model) => ready.has(model.provider));
-	}, [providers, catalog]);
-	const groups = useMemo(() => {
-		const out = new Map<string, CatalogModel[]>();
-		for (const model of available) out.set(model.provider, [...(out.get(model.provider) ?? []), model]);
-		return [...out];
-	}, [available]);
-	const modelLabel = (key: string) => {
-		const model = byKey.get(key);
-		return model ? `${model.name || model.id} · ${providerLabel(model.provider)}` : key;
-	};
-	const levelOptions = (levels: readonly string[]) => levels.map((level) => ({ value: level, label: `${level} · ${thinkingLevelDesc(t, level)}` }));
-
-	const disabled = !settings || saving;
-	const defaultKey = settings?.defaultModel ? modelKey(settings.defaultModel.provider, settings.defaultModel.modelId) : "";
-	const modelLevels = Object.entries(settings?.thinking.modelLevels ?? {});
-	// 可加单独强度的：有多个档位（会思考）且还没设置过的模型
-	const addable = available.filter((model) => model.thinkingLevels.length > 1 && !settings?.thinking.modelLevels[modelKey(model.provider, model.id)]);
-
-	const pickDefaultModel = (key: string) => {
-		const model = byKey.get(key);
-		if (!key) void save({ defaultModel: null });
-		else if (model) void save({ defaultModel: { provider: model.provider, modelId: model.id } });
-	};
-
-	const addModelLevel = () => {
-		const model = byKey.get(addKey);
-		if (!model || !settings) return;
-		// 先填它现在实际会用的强度（全局默认钳到它支持的档位），再在列表里调
-		const level = clampThinkingLevel(settings.thinking.defaultLevel ?? PI_DEFAULT_THINKING_LEVEL, model.thinkingLevels);
-		if (isThinkingLevel(level)) void save({ thinking: { modelLevels: { [addKey]: level } } });
-		setAddKey("");
-	};
-
-	const commitBudget = (level: ThinkingBudgetLevel) => {
-		if (!settings) return;
-		const raw = budgetDrafts[level].trim();
-		const current = settings.thinking.budgets[level];
-		if (!raw) {
-			if (current !== undefined) void save({ thinking: { budgets: { [level]: null } } });
-			return;
-		}
-		const value = Number(raw);
-		if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_THINKING_BUDGET) {
-			setStatus("saveError");
-			return;
-		}
-		if (value !== current) void save({ thinking: { budgets: { [level]: value } } });
-	};
-
-	const caption = { fontSize: 12, color: "var(--dsw-label-caption)" } as const;
-	const selectStyle = { background: "transparent", maxWidth: 300, textOverflow: "ellipsis" } as const;
-
-	return (
-		<section aria-label={t.modelDefaultsTitle} className="flex flex-col gap-3.5 rounded-2xl px-4 py-3.5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-			<div>
-				<div style={{ fontSize: 13.5, fontWeight: 500 }}>{t.modelDefaultsTitle}</div>
-				<div className="mt-0.5" style={caption}>{t.modelDefaultsDesc}</div>
-			</div>
-			{(status === "loading" || status === "loadError" || status === "saveError") && (
-				<div role={status === "loading" ? "status" : "alert"} className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", color: status === "loading" ? "var(--dsw-label-secondary)" : "var(--dsw-danger)" }}>
-					<span className="flex-1">{status === "loadError" ? t.settingsLoadFailed : status === "saveError" ? t.settingsSaveFailed : t.settingsLoading}</span>
-					{status === "loadError" && <button type="button" className="pw-chip" onClick={() => void load()}>{t.settingsRetry}</button>}
-				</div>
-			)}
-			<div className="flex items-center justify-between gap-4">
-				<label htmlFor="pw-default-model" style={{ fontSize: 13 }}>{t.defaultModelLabel}</label>
-				<select id="pw-default-model" className="select-chip" style={selectStyle} value={defaultKey} disabled={disabled} onChange={(event) => pickDefaultModel(event.target.value)}>
-					<option value="">{t.defaultModelAuto}</option>
-					{defaultKey && !available.some((model) => modelKey(model.provider, model.id) === defaultKey) && (
-						<option value={defaultKey} disabled>{t.defaultModelUnavailable.replace("{name}", modelLabel(defaultKey))}</option>
-					)}
-					{groups.map(([provider, models]) => (
-						<optgroup key={provider} label={providerLabel(provider)}>
-							{models.map((model) => <option key={model.id} value={modelKey(model.provider, model.id)}>{model.name || model.id}</option>)}
-						</optgroup>
-					))}
-				</select>
-			</div>
-			<div className="flex items-center justify-between gap-4">
-				<div className="min-w-0">
-					<div style={{ fontSize: 13 }}>{t.defaultThinkingLabel}</div>
-					<div className="mt-0.5" style={caption}>{t.defaultThinkingDesc}</div>
-				</div>
-				<div className="flex-none">
-					<SelectOption
-						value={settings?.thinking.defaultLevel ?? ""}
-						disabled={disabled}
-						width={200}
-						options={[{ value: "", label: t.defaultThinkingUnset }, ...levelOptions(THINKING_LEVELS)]}
-						onChange={(value) => void save({ thinking: { defaultLevel: isThinkingLevel(value) ? value : null } })}
-					/>
-				</div>
-			</div>
-			<div className="flex flex-col gap-2">
-				<div>
-					<div style={{ fontSize: 13 }}>{t.modelThinkingLabel}</div>
-					<div className="mt-0.5" style={caption}>{t.modelThinkingDesc}</div>
-				</div>
-				{settings && modelLevels.length === 0 && <div style={caption}>{t.modelThinkingEmpty}</div>}
-				{modelLevels.map(([key, level]) => (
-					<div key={key} role="group" aria-label={modelLabel(key)} className="flex items-center gap-2">
-						<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13 }} title={key}>{modelLabel(key)}</span>
-						<div className="flex-none">
-							<SelectOption
-								value={level}
-								disabled={disabled}
-								width={200}
-								options={levelOptions(byKey.get(key)?.thinkingLevels ?? THINKING_LEVELS)}
-								onChange={(value) => { if (isThinkingLevel(value)) void save({ thinking: { modelLevels: { [key]: value } } }); }}
-							/>
-						</div>
-						<button type="button" className="icon-btn" disabled={disabled} aria-label={`${t.modelThinkingRemove} ${modelLabel(key)}`} title={t.modelThinkingRemove} onClick={() => void save({ thinking: { modelLevels: { [key]: null } } })}>
-							<IconTrashOutline16 size={14} />
-						</button>
-					</div>
-				))}
-				{addable.length > 0 && (
-					<div className="flex items-center gap-2">
-						<select aria-label={t.modelThinkingPick} className="select-chip min-w-0 flex-1" style={{ ...selectStyle, maxWidth: "none" }} value={addKey} disabled={disabled} onChange={(event) => setAddKey(event.target.value)}>
-							<option value="">{t.modelThinkingPick}</option>
-							{addable.map((model) => <option key={modelKey(model.provider, model.id)} value={modelKey(model.provider, model.id)}>{modelLabel(modelKey(model.provider, model.id))}</option>)}
-						</select>
-						<button type="button" className="pw-chip" disabled={disabled || !addKey} onClick={addModelLevel}>{t.modelThinkingAdd}</button>
-					</div>
-				)}
-			</div>
-			<details>
-				<summary className="cursor-pointer" style={{ fontSize: 13 }}>{t.thinkingBudgetsLabel}</summary>
-				<div className="mt-1" style={caption}>{t.thinkingBudgetsDesc}</div>
-				<div className="mt-2 flex flex-wrap gap-3">
-					{THINKING_BUDGET_LEVELS.map((level) => (
-						<label key={level} className="flex items-center gap-1.5" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
-							{level}
-							<input
-								type="number"
-								min={1}
-								max={MAX_THINKING_BUDGET}
-								aria-label={t.thinkingBudgetFor.replace("{level}", level)}
-								placeholder={String(PI_DEFAULT_THINKING_BUDGETS[level])}
-								value={budgetDrafts[level]}
-								disabled={disabled}
-								onChange={(event) => setBudgetDrafts((drafts) => ({ ...drafts, [level]: event.target.value }))}
-								onBlur={() => commitBudget(level)}
-								onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-								className="rounded-lg px-2 py-1"
-								style={{ width: 92, textAlign: "right", background: "var(--dsw-hover)" }}
-							/>
-						</label>
-					))}
-				</div>
-			</details>
-		</section>
-	);
-}
-
 function ModelsSection() {
 	const { t } = useI18n();
 	const [providers, setProviders] = useState<ProviderView[]>([]);
-	const [catalog, setCatalog] = useState<CatalogModel[]>([]);
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
 	const [customRevision, setCustomRevision] = useState<string | null>(null);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
@@ -1087,7 +858,6 @@ function ModelsSection() {
 				throw new Error("invalid model configuration");
 			}
 			setProviders(j.data.providers);
-			setCatalog(j.data.models ?? []);
 			setSecretProviderIds(new Set(j.data.customProviders?.secretProviderIds ?? []));
 			setCustom({ ...parsed, providers: parsed.providers ?? {} });
 			setCustomRevision(typeof j.data.customProviders?.revision === "string" ? j.data.customProviders.revision : null);
@@ -1357,8 +1127,6 @@ function ModelsSection() {
 					{t.customModelIdentityNotice}
 				</div>
 			</div>
-
-			<ModelDefaultsBlock providers={providers} catalog={catalog} />
 
 			{toast && (
 				<div
