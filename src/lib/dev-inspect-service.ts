@@ -12,6 +12,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
+import { COMPONENT_FILE_KEY, FRAMEWORK_SOURCE_KEYS } from "./source-hint-keys";
 
 export interface SourceHit {
 	/** 相对工作区的路径（"/" 分隔） */
@@ -178,6 +179,28 @@ function endsWithSegments(rel: string, suffix: string): boolean {
 	return a === b || a.endsWith(`/${b}`);
 }
 
+/**
+ * 线索里的文件路径 → 工作区内的真实文件：先按原样（绝对路径或相对工作区根）找；
+ * 对不上时（dev server 跑在 monorepo 子包里，apps/web 下的 "src/App.tsx"）按路径后缀找回。
+ */
+async function resolveHintFile(root: string, file: string, listFiles: () => Promise<{ files: WorkspaceFile[] }>): Promise<string[]> {
+	const exact = await resolveInsideFile(root, path.isAbsolute(file) ? path.resolve(file) : path.resolve(root, file));
+	if (exact) return [exact];
+	const suffix = relativeSuffix(file);
+	if (!suffix) return [];
+	const { files } = await listFiles();
+	const matches = files
+		.filter((candidate) => endsWithSegments(candidate.rel, suffix))
+		.sort((a, b) => a.rel.length - b.rel.length || a.rel.localeCompare(b.rel))
+		.slice(0, MAX_SUFFIX_MATCHES);
+	const found: string[] = [];
+	for (const match of matches) {
+		const real = await resolveInsideFile(root, match.abs);
+		if (real) found.push(real);
+	}
+	return found;
+}
+
 async function hitsFromAttrs(
 	root: string,
 	attrs: Record<string, unknown>,
@@ -191,33 +214,24 @@ async function hitsFromAttrs(
 		seen.add(`${rel}:${line}`);
 		hits.push({ path: rel, line, lineText: await readLineText(real, line), kind: "source-attr" });
 	};
-	for (const key of SOURCE_ATTR_KEYS) {
+	for (const key of [...SOURCE_ATTR_KEYS, ...FRAMEWORK_SOURCE_KEYS]) {
 		const raw = attrs[key];
 		if (typeof raw !== "string" || !raw.trim()) continue;
 		const m = LOC_RE.exec(raw.trim());
 		if (!m || !m[1]) continue;
-		const file = m[1];
 		const line = m[2] ? Number(m[2]) : 1;
 		if (!Number.isSafeInteger(line) || line < 1) continue;
-		const exact = await resolveInsideFile(root, path.isAbsolute(file) ? path.resolve(file) : path.resolve(root, file));
-		if (exact) {
-			await push(exact, line);
-			continue;
-		}
-		// 相对路径对不上工作区根：dev server 跑在 monorepo 子包里（apps/web 下的 "src/App.tsx"），按路径后缀找回
-		const suffix = relativeSuffix(file);
-		if (!suffix) continue;
-		const { files } = await listFiles();
-		const matches = files
-			.filter((candidate) => endsWithSegments(candidate.rel, suffix))
-			.sort((a, b) => a.rel.length - b.rel.length || a.rel.localeCompare(b.rel))
-			.slice(0, MAX_SUFFIX_MATCHES);
-		for (const match of matches) {
-			const real = await resolveInsideFile(root, match.abs);
-			if (real) await push(real, line);
-		}
+		for (const real of await resolveHintFile(root, m[1], listFiles)) await push(real, line);
 	}
 	return hits;
+}
+
+/** vue-file 线索 → 工作区内的组件文件（相对路径）；值只取文件部分，带 ?query 的去掉 */
+async function componentFilesFromAttrs(root: string, attrs: Record<string, unknown>, listFiles: () => Promise<{ files: WorkspaceFile[] }>): Promise<string[]> {
+	const raw = attrs[COMPONENT_FILE_KEY];
+	if (typeof raw !== "string" || !raw.trim()) return [];
+	const file = raw.trim().replace(/\?.*$/, "");
+	return (await resolveHintFile(root, file, listFiles)).map((real) => toRel(root, real));
 }
 
 // ---------- 第 2/3 级：文本搜索与 i18n 两跳 ----------
@@ -268,10 +282,11 @@ async function scanFiles(files: WorkspaceFile[], needles: string[], limit: numbe
 	return { hits, read };
 }
 
-type RankedHit = SourceHit & { dictKey?: string; ext?: string };
+type RankedHit = SourceHit & { dictKey?: string; ext?: string; inComponent?: boolean };
 
 function rankOf(hit: RankedHit): number {
 	if (hit.kind === "source-attr") return 0;
+	if (hit.inComponent) return 0;
 	if (hit.kind === "i18n-usage") return 1;
 	if (hit.kind === "text" && hit.ext && COMPONENT_EXTENSIONS.has(hit.ext) && !hit.dictKey) return 1;
 	if (hit.kind === "text" && hit.dictKey) return 3;
@@ -292,14 +307,25 @@ export async function locateSource(cwdValue: unknown, input: { text?: unknown; a
 
 	const attrHits = await hitsFromAttrs(root, attrs, listFiles);
 	if (attrHits.length > 0) return { results: attrHits.slice(0, MAX_RESULTS), searchedFiles: 0 };
-	if (text.length < 2) throw new BoundaryError("missing usable text or source attributes");
+	// 只知道所在组件文件（Vue）：文本命中落在这些文件里的排最前；文本找不到时退回组件文件本身
+	const componentFiles = await componentFilesFromAttrs(root, attrs, listFiles);
+	const componentHits = async (): Promise<SourceHit[]> =>
+		Promise.all(componentFiles.map(async (rel) => ({ path: rel, line: 1, lineText: await readLineText(path.join(root, rel), 1), kind: "source-attr" as const })));
+	if (text.length < 2) {
+		if (componentFiles.length > 0) return { results: await componentHits(), searchedFiles: 0 };
+		throw new BoundaryError("missing usable text or source attributes");
+	}
 
 	const { files, truncated } = await listFiles();
 	const first = await scanFiles(files, [text], MAX_RESULTS);
 	const textHits = first.hits.get(text)!;
 	const results: RankedHit[] = textHits.map((h) => ({
 		path: h.file.rel, line: h.line, lineText: h.lineText, kind: "text" as const, dictKey: h.dictKey, ext: h.file.ext,
+		inComponent: componentFiles.includes(h.file.rel),
 	}));
+	if (results.length === 0 && componentFiles.length > 0) {
+		return { results: await componentHits(), searchedFiles: first.read, truncated: truncated || undefined };
+	}
 
 	// i18n 两跳：字典行命中的 key → 找使用处（各语言字典里同 key 的行不算使用处）
 	const dictKeys = [...new Set(textHits.map((h) => h.dictKey).filter((k): k is string => Boolean(k && k.length >= 3)))].slice(0, 3);
@@ -322,7 +348,7 @@ export async function locateSource(cwdValue: unknown, input: { text?: unknown; a
 		return true;
 	});
 	return {
-		results: deduped.slice(0, MAX_RESULTS).map(({ dictKey, ext, ...hit }) => hit),
+		results: deduped.slice(0, MAX_RESULTS).map(({ dictKey, ext, inComponent, ...hit }) => hit),
 		searchedFiles: first.read,
 		truncated: truncated || deduped.length > MAX_RESULTS || undefined,
 	};

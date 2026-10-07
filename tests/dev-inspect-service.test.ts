@@ -112,4 +112,28 @@ describe("dev-inspect-service", () => {
 		expect((await locateSource(work, { text: "Hello World" })).results).toHaveLength(1);
 		expect((await locateSource(work, { text: "hello world" })).results).toEqual([]);
 	});
+
+	it("resolves framework source hints read from the page (React / Svelte lines, Vue component files)", async () => {
+		const real = await fs.realpath(work);
+		await fs.mkdir(path.join(work, "apps", "web", "src", "components"), { recursive: true });
+		await fs.writeFile(path.join(work, "apps", "web", "src", "Card.tsx"), "a\nb\nreturn <div>卡片</div>;\n");
+		await fs.writeFile(path.join(work, "apps", "web", "src", "components", "Hello.vue"), "<template>\n  <h1>标题</h1>\n  <p>问候语</p>\n</template>\n");
+		await fs.writeFile(path.join(work, "apps", "web", "src", "other.ts"), "export const s = '问候语';\n");
+
+		// React：绝对路径 + 行号，精确命中，不再做文本搜索
+		const react = await locateSource(work, { text: "随便", attrs: { "react-source": `${real}/apps/web/src/Card.tsx:3:8` } });
+		expect(react.results).toEqual([expect.objectContaining({ path: "apps/web/src/Card.tsx", line: 3, kind: "source-attr" })]);
+		// Svelte：相对 dev server 根的路径，按后缀在 monorepo 里找回
+		const svelte = await locateSource(work, { attrs: { "svelte-source": "src/Card.tsx:2" } });
+		expect(svelte.results[0]).toMatchObject({ path: "apps/web/src/Card.tsx", line: 2 });
+		// Vue：只到组件文件——组件里的文本命中排最前，其他文件的同名文本排后
+		const vue = await locateSource(work, { text: "问候语", attrs: { "vue-file": "/somewhere/else/src/components/Hello.vue?vue&type=template" } });
+		expect(vue.results.map((r) => `${r.path}:${r.line}`)).toEqual(["apps/web/src/components/Hello.vue:3", "apps/web/src/other.ts:1"]);
+		// 文本不够长或搜不到时退回组件文件本身
+		const vueOnly = await locateSource(work, { text: "x", attrs: { "vue-file": `${real}/apps/web/src/components/Hello.vue` } });
+		expect(vueOnly.results).toEqual([expect.objectContaining({ path: "apps/web/src/components/Hello.vue", line: 1, lineText: "<template>" })]);
+		// 线索指向工作区外的文件：忽略，回到文本搜索
+		const outside = await locateSource(work, { text: "卡片", attrs: { "react-source": "/etc/passwd:1" } });
+		expect(outside.results[0]).toMatchObject({ path: "apps/web/src/Card.tsx", kind: "text" });
+	});
 });

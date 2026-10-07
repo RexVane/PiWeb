@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
+import { ElementPickContext, type ElementPickApi } from "@/components/ElementPicker";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -131,6 +132,13 @@ export function AppShell() {
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
+	// 在 pi 的截图上点选的元素进当前会话的草稿（元素芯片）；一条消息最多带 20 个
+	const elementPick = useMemo<ElementPickApi | null>(
+		() => currentId
+			? { sessionId: currentId, onPick: (element) => saveSessionDraft((draft) => (draft.elements?.length ?? 0) >= 20 ? draft : { ...draft, elements: [...(draft.elements ?? []), element] }) }
+			: null,
+		[currentId, saveSessionDraft],
+	);
 	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [tab, setTab] = useState<"chat" | "traj">("chat");
@@ -234,6 +242,7 @@ export function AppShell() {
 				reasoning: m.reasoning,
 				thinkingLevels: m.thinkingLevels,
 				contextWindow: m.contextWindow,
+				vision: m.vision === true || (Array.isArray(m.input) && m.input.includes("image")),
 			})),
 		[models],
 	);
@@ -811,6 +820,7 @@ export function AppShell() {
 								</div>
 							) : (
 							<div className="flex min-h-0 flex-1 flex-col justify-end">
+								<ElementPickContext.Provider value={elementPick}>
 								<ChatWindow
 									key={currentId ?? "none"}
 									messages={state.messages}
@@ -833,6 +843,7 @@ export function AppShell() {
 									roundBadges={roundBadges}
 									onShowRound={showRound}
 								/>
+								</ElementPickContext.Provider>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}

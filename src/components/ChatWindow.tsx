@@ -28,6 +28,7 @@ import {
 	IconWarningOutline16,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
+import { ElementPicker, isBrowserTool, useElementPick } from "@/components/ElementPicker";
 import { languageForPath } from "@/lib/highlight";
 import { OutlineRail } from "@/components/OutlineRail";
 import { useI18n } from "@/i18n";
@@ -460,6 +461,9 @@ const ToolStep = memo(function ToolStep({
 }) {
 	const [open, setOpen] = useState(false);
 	const [zoom, setZoom] = useState<number | null>(null);
+	const [picking, setPicking] = useState(false);
+	const pickApi = useElementPick();
+	const canPick = pickApi !== null && isBrowserTool(name);
 	const { t } = useI18n();
 	const tt = t as unknown as Dict;
 	const kind = toolKind(name);
@@ -591,9 +595,23 @@ const ToolStep = memo(function ToolStep({
 							<img src={`data:${image.mimeType};base64,${image.data}`} alt={t.viewScreenshot} />
 						</button>
 					))}
+					{canPick && (
+						<button type="button" className="pw-shot-pick" title={t.pickElementHint} onClick={() => setPicking(true)}>
+							<IconBrowseOutline14 size={13} style={{ flex: "none" }} />
+							{t.pickElement}
+						</button>
+					)}
 				</div>
 			)}
-			{zoom !== null && state?.images?.[zoom] && <ImageZoom src={`data:${state.images[zoom].mimeType};base64,${state.images[zoom].data}`} label={t.close} onClose={() => setZoom(null)} />}
+			{zoom !== null && state?.images?.[zoom] && (
+				<ImageZoom
+					src={`data:${state.images[zoom].mimeType};base64,${state.images[zoom].data}`}
+					label={t.close}
+					onClose={() => setZoom(null)}
+					pick={canPick ? { label: t.pickElement, onPick: () => { setZoom(null); setPicking(true); } } : undefined}
+				/>
+			)}
+			{picking && pickApi && <ElementPicker api={pickApi} onClose={() => setPicking(false)} />}
 			{diffLines && diffLines.length > 0 && (
 				<div className="pw-diff">
 					<DiffView lines={diffLines} language={languageForPath(argPath)} />
@@ -922,8 +940,8 @@ export interface RoundBadge {
 	del: number;
 }
 
-/** 截图放大：挂到 body 上，Esc / 点遮罩关闭 */
-function ImageZoom({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
+/** 截图放大：挂到 body 上，Esc / 点遮罩关闭；pi 浏览器工具的截图顶部带「选元素」入口 */
+function ImageZoom({ src, label, onClose, pick }: { src: string; label: string; onClose: () => void; pick?: { label: string; onPick: () => void } }) {
 	useEffect(() => {
 		const onKey = (e: globalThis.KeyboardEvent) => {
 			if (e.key === "Escape") onClose();
@@ -932,8 +950,21 @@ function ImageZoom({ src, label, onClose }: { src: string; label: string; onClos
 		return () => document.removeEventListener("keydown", onKey);
 	}, [onClose]);
 	return createPortal(
-		<div className="pw-zoom modal-mask fixed inset-0 z-[120] flex items-center justify-center p-6" role="dialog" aria-label={label} onClick={onClose}>
-			<img src={src} alt="" className="max-h-full max-w-full rounded-xl object-contain" style={{ boxShadow: "var(--dsw-elevation-prominent)" }} />
+		<div className="pw-zoom modal-mask fixed inset-0 z-[120] flex flex-col items-center justify-center gap-3 p-6" role="dialog" aria-label={label} onClick={onClose}>
+			{pick && (
+				<div className="pw-pick-bar" onClick={(e) => e.stopPropagation()}>
+					<button type="button" className="pw-pick-done" onClick={pick.onPick}>
+						<IconBrowseOutline14 size={14} style={{ flex: "none", color: "var(--dsw-accent)" }} />
+						{pick.label}
+					</button>
+				</div>
+			)}
+			<img
+				src={src}
+				alt=""
+				className="max-w-full rounded-xl object-contain"
+				style={{ boxShadow: "var(--dsw-elevation-prominent)", maxHeight: pick ? "calc(100% - 52px)" : "100%" }}
+			/>
 		</div>,
 		document.body,
 	);

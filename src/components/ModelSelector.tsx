@@ -14,6 +14,8 @@ export interface ModelChoice {
 	reasoning: boolean;
 	thinkingLevels?: string[];
 	contextWindow: number;
+	/** 能看图（模型 input 含 image）：点选的页面元素会附上裁剪图 */
+	vision?: boolean;
 }
 
 export function ModelSelector({

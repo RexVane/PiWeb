@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { CdpConnection, pipeTransport } from "./cdp";
+import { elementAtPointScript, sanitizePickedElement, type ElementBox, type PickedElementInfo } from "./inspect";
 import { locateBrowser } from "./locate";
 
 const IDLE_MS = 10 * 60 * 1000;
@@ -19,6 +20,8 @@ const NAV_TIMEOUT_MS = 15_000;
 const SETTLE_MS = 500;
 /** 整页截图的最大高度（超长页面只截前面这一段） */
 const MAX_FULL_PAGE_HEIGHT = 6000;
+/** 元素裁剪图的最长边：够模型看清，又不撑大消息 */
+const MAX_REGION_EDGE = 640;
 
 export const DEVICES = {
 	desktop: { width: 1280, height: 800, mobile: false },
@@ -400,9 +403,29 @@ export class BrowserTab {
 		return box;
 	}
 
-	async screenshot(opts: { fullPage?: boolean; selector?: string; quality?: number } = {}): Promise<Screenshot> {
+	/** 视口里某一点的元素与源码线索（截图上点选元素）；那里没有元素返回 null */
+	async elementAt(x: number, y: number): Promise<PickedElementInfo | null> {
+		return sanitizePickedElement(await this.evaluate<unknown>(elementAtPointScript(x, y)));
+	}
+
+	/**
+	 * region：元素的视口包围盒 + 当时的滚动位置。只截视口里可见的那部分（元素可能比视口还大），
+	 * 长边超过 MAX_REGION_EDGE 时按比例缩小。
+	 */
+	async screenshot(opts: { fullPage?: boolean; selector?: string; region?: { box: ElementBox; scroll: { x: number; y: number } }; quality?: number } = {}): Promise<Screenshot> {
 		let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
-		if (opts.selector) {
+		if (opts.region) {
+			const view = DEVICES[this.device];
+			const { box, scroll } = opts.region;
+			const pad = 6;
+			const left = Math.max(0, box.x - pad);
+			const top = Math.max(0, box.y - pad);
+			const width = Math.min(view.width, box.x + box.width + pad) - left;
+			const height = Math.min(view.height, box.y + box.height + pad) - top;
+			if (!(width >= 1 && height >= 1)) throw new Error("the element is not visible in the viewport");
+			const scale = Math.min(1, MAX_REGION_EDGE / Math.max(width, height));
+			clip = { x: left + scroll.x, y: top + scroll.y, width, height, scale };
+		} else if (opts.selector) {
 			const box = await this.boxOf(opts.selector);
 			const pad = 8;
 			clip = { x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad), width: Math.max(1, box.width + pad * 2), height: Math.max(1, box.height + pad * 2), scale: 1 };
@@ -417,7 +440,8 @@ export class BrowserTab {
 			...(clip ? { clip, captureBeyondViewport: true } : {}),
 		});
 		const view = DEVICES[this.device];
-		return { data: r.data, width: clip?.width ?? view.width, height: clip?.height ?? view.height };
+		if (!clip) return { data: r.data, width: view.width, height: view.height };
+		return { data: r.data, width: Math.round(clip.width * clip.scale), height: Math.round(clip.height * clip.scale) };
 	}
 
 	async click(target: { selector?: string; x?: number; y?: number }): Promise<void> {

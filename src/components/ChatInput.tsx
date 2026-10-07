@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
+	IconBrowseOutline14,
 	IconFileOutline16,
 	IconSendArrowUp14,
 	IconStopFill16,
@@ -16,6 +17,7 @@ import {
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
+import { describeElements, MAX_MESSAGE_IMAGES, type DraftElement } from "@/lib/element-draft";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import type { ImageAttachment } from "@/lib/types";
 
@@ -32,6 +34,8 @@ export interface ChatDraft {
 	text: string;
 	images: ImageAttachment[];
 	uploads: Array<{ name: string; path: string; size: number }>;
+	/** 在 pi 的截图上点选的页面元素（元素芯片） */
+	elements?: DraftElement[];
 	adopted?: SlashCommand | null;
 }
 
@@ -131,7 +135,10 @@ export function ChatInput({
 		onDraftChange?.(update);
 	};
 	const { text, images, uploads } = currentDraft;
+	const elements = currentDraft.elements ?? [];
 	const adopted = currentDraft.adopted ?? null;
+	/** 当前模型能看图：元素芯片的裁剪图随消息附上 */
+	const vision = models.some((m) => m.provider === model?.provider && m.id === model?.id && m.vision === true);
 	const setText = (value: string | ((previous: string) => string)) => changeDraft((previous) => ({ ...previous, text: typeof value === "function" ? value(previous.text) : value }));
 	const setAdopted = (value: SlashCommand | null) => changeDraft((previous) => ({ ...previous, adopted: value }));
 	const pendingReads = useRef<Promise<void>[]>([]);
@@ -229,8 +236,9 @@ export function ChatInput({
 				const submitted = draftRef.current;
 				const attachments = [...submitted.images];
 				const files = [...submitted.uploads];
-				if (!trimmed && attachments.length === 0 && files.length === 0) return;
-				if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0) {
+				const picked = [...(submitted.elements ?? [])];
+				if (!trimmed && attachments.length === 0 && files.length === 0 && picked.length === 0) return;
+				if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0 && picked.length === 0) {
 					const [head, ...rest] = trimmed.slice(1).split(/\s+/);
 					const builtin = (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
 					if (builtin) {
@@ -241,14 +249,19 @@ export function ChatInput({
 						return;
 					}
 				}
-				const compose = (base: string) =>
-					files.length ? `${base}${base ? "\n\n" : ""}${files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n")}` : base;
+				// 元素描述排在附件行之后；能看图的模型把裁剪图接在用户自己的图片后面
+				const described = describeElements(picked, t, vision ? { firstNumber: attachments.length + 1, max: Math.max(0, MAX_MESSAGE_IMAGES - attachments.length) } : undefined);
+				const outgoing = described.crops.length ? [...attachments, ...described.crops] : attachments;
+				const compose = (base: string) => {
+					const withFiles = files.length ? `${base}${base ? "\n\n" : ""}${files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n")}` : base;
+					return described.text ? `${withFiles}${withFiles ? "\n\n" : ""}${described.text}` : withFiles;
+				};
 				let result: SendResult;
 				if (isStreaming) {
 					const mode = override ?? (enterBehavior === "steer" ? "steer" : "followUp");
-					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(trimmed), attachments);
-					else result = await onSteer(compose(trimmed), attachments);
-				} else result = await onSend(compose(trimmed), attachments);
+					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(trimmed), outgoing);
+					else result = await onSteer(compose(trimmed), outgoing);
+				} else result = await onSend(compose(trimmed), outgoing);
 				if (!result?.success) {
 					if (forcedText) setText(forcedText);
 					if (result?.error && mountedRef.current) setAttachmentError(result.error);
@@ -262,6 +275,7 @@ export function ChatInput({
 					adopted: previous.adopted === submitted.adopted ? null : previous.adopted,
 					images: previous.images.filter((image) => !attachments.includes(image)),
 					uploads: previous.uploads.filter((file) => !files.some((sent) => sent.path === file.path)),
+					elements: (previous.elements ?? []).filter((element) => !picked.some((sent) => sent.key === element.key)),
 				}));
 			} catch (error) {
 				if (forcedText) setText(forcedText);
@@ -403,7 +417,7 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0;
+	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || elements.length > 0;
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
@@ -508,6 +522,39 @@ export function ChatInput({
 								style={{ color: "var(--dsw-label-caption)" }}
 								disabled={sendBusy}
 								onClick={() => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, index) => index !== i) }))}
+								aria-label="remove"
+							>
+								✕
+							</button>
+						</div>
+					))}
+				</div>
+			)}
+
+			{/* 附件轨：在 pi 的截图上点选的页面元素（发送时拼进正文，模型能看图时附裁剪图） */}
+			{elements.length > 0 && (
+				<div className="mb-2 flex flex-wrap gap-2 px-1" data-testid="element-chips">
+					{elements.map((element) => (
+						<div
+							key={element.key}
+							className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
+							style={{ border: "0.5px solid var(--dsw-border-l2)", background: "var(--dsw-hover)" }}
+							title={`${element.selector}\n${element.pageUrl}`}
+						>
+							{element.crop ? (
+								<img src={`data:${element.crop.mimeType};base64,${element.crop.data}`} alt="" className="h-5 w-5 flex-none rounded object-cover" />
+							) : (
+								<IconBrowseOutline14 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+							)}
+							<span className="max-w-[200px] truncate" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>{element.label}</span>
+							<span className="max-w-[220px] truncate" style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+								{element.locations[0] ? `${element.locations[0].path}:${element.locations[0].line}` : t.elementChipNoSource}
+							</span>
+							<button
+								className="flex h-5 w-5 items-center justify-center rounded-full text-[10px]"
+								style={{ color: "var(--dsw-label-caption)" }}
+								disabled={sendBusy}
+								onClick={() => changeDraft((previous) => ({ ...previous, elements: (previous.elements ?? []).filter((item) => item.key !== element.key) }))}
 								aria-label="remove"
 							>
 								✕
