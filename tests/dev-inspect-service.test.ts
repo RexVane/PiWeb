@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { locateSource, normalizeInspectText } from "../src/lib/dev-inspect-service";
+import { listSearchableFiles, locateSource, normalizeInspectText } from "../src/lib/dev-inspect-service";
 
 describe("dev-inspect-service", () => {
 	let work = "";
@@ -51,6 +51,41 @@ describe("dev-inspect-service", () => {
 		expect(inside.results).toEqual([{ path: "src/App.tsx", line: 3, lineText: "line3", kind: "source-attr" }]);
 		const escape = await locateSource(work, { attrs: { "data-source": "../escape.ts:1:1" }, text: "保存设置" });
 		expect(escape.results.every((r) => r.kind !== "source-attr")).toBe(true);
+	});
+
+	it("parses code-inspector-plugin data-insp-path values (file:line:col:tagName)", async () => {
+		await fs.mkdir(path.join(work, "src"), { recursive: true });
+		const file = path.join(work, "src", "App.vue");
+		await fs.writeFile(file, "<template>\n  <div>hi</div>\n  <button>go</button>\n</template>\n");
+		const relative = await locateSource(work, { attrs: { "data-insp-path": "src/App.vue:2:3:div" } });
+		expect(relative.results).toEqual([{ path: "src/App.vue", line: 2, lineText: "<div>hi</div>", kind: "source-attr" }]);
+		const absolute = await locateSource(work, { attrs: { "data-insp-path": `${file}:3:3:el-button` } });
+		expect(absolute.results).toEqual([{ path: "src/App.vue", line: 3, lineText: "<button>go</button>", kind: "source-attr" }]);
+	});
+
+	it("recovers monorepo-relative source paths by suffix inside the workspace", async () => {
+		await fs.mkdir(path.join(work, "apps", "web", "src"), { recursive: true });
+		await fs.mkdir(path.join(work, "apps", "admin", "src"), { recursive: true });
+		await fs.writeFile(path.join(work, "apps", "web", "src", "App.tsx"), "a\nweb line\n");
+		await fs.writeFile(path.join(work, "apps", "admin", "src", "Other.tsx"), "x\n");
+		const result = await locateSource(work, { attrs: { "data-source": "src/App.tsx:2:1" } });
+		expect(result.results).toEqual([{ path: "apps/web/src/App.tsx", line: 2, lineText: "web line", kind: "source-attr" }]);
+		// 含 .. 的相对路径不做后缀找回（只能落到文本搜索）
+		const escape = await locateSource(work, { attrs: { "data-source": "../web/src/App.tsx:2:1" }, text: "web line" });
+		expect(escape.results.every((r) => r.kind === "text")).toBe(true);
+	});
+
+	it("walks source directories first and hidden directories last", async () => {
+		for (const dir of ["zzz", ".storybook", "src", "docs"]) {
+			await fs.mkdir(path.join(work, dir), { recursive: true });
+			await fs.writeFile(path.join(work, dir, "a.ts"), "x\n");
+		}
+		const { files, truncated } = await listSearchableFiles(work);
+		expect(files.map((f) => f.rel)).toEqual(["src/a.ts", "docs/a.ts", "zzz/a.ts", ".storybook/a.ts"]);
+		expect(truncated).toBe(false);
+		const capped = await listSearchableFiles(work, 1);
+		expect(capped.files.map((f) => f.rel)).toEqual(["src/a.ts"]);
+		expect(capped.truncated).toBe(true);
 	});
 
 	it("skips excluded directories and binary files", async () => {
