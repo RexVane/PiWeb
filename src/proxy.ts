@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/auth";
+import { createPasswordThrottle, passwordThrottledResponse } from "@/lib/password-throttle";
 import { SESSION_COOKIE, readCookieHeader, validSessionToken } from "@/lib/web-auth";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -8,6 +9,8 @@ const PUBLIC_PATHS = new Set(["/login", "/api/web-auth"]);
 /** 静态资源不参与认证（dev 的 assetPrefix 是 /_piweb-dev/<id>，生产是 /_next） */
 const ASSET_PREFIXES = ["/_next/", "/_piweb-dev/"];
 const ASSET_PATHS = new Set(["/icon.svg", "/favicon.ico"]);
+/** Basic 认证的防爆破限速（登录表单在 /api/web-auth 里另有一份） */
+const basicThrottle = createPasswordThrottle();
 
 export function proxy(request: NextRequest) {
 	const password = process.env.PI_WEB_PASSWORD;
@@ -24,10 +27,14 @@ export function proxy(request: NextRequest) {
 	if (pathname === "/api/health" && (request.method === "GET" || request.method === "HEAD")) return NextResponse.next();
 	if (ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix)) || ASSET_PATHS.has(pathname)) return NextResponse.next();
 
-	const authenticated =
-		validBasicAuthorization(request.headers.get("authorization"), password) ||
-		validSessionToken(readCookieHeader(request.headers.get("cookie"), SESSION_COOKIE), password);
-	if (authenticated) return NextResponse.next();
+	if (validSessionToken(readCookieHeader(request.headers.get("cookie"), SESSION_COOKIE), password)) return NextResponse.next();
+	const authorization = request.headers.get("authorization");
+	if (authorization?.startsWith("Basic ")) {
+		// 额度用完时公开路径也回 429：GET /api/web-auth 会再校验一次 Basic，不能让它绕过限速
+		const verdict = basicThrottle.check(authorization, (header) => validBasicAuthorization(header, password));
+		if (verdict === "right") return NextResponse.next();
+		if (typeof verdict === "object") return passwordThrottledResponse(verdict.retryAfterMs);
+	}
 
 	if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 

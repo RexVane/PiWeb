@@ -1,12 +1,16 @@
 /**
  * 网页认证：GET 状态 / POST 登录（写会话 Cookie）/ DELETE 登出（清 Cookie）。
  * 无密码配置时整体关闭（GET 返回 enabled:false，POST 404）。
+ * 登录密码有防爆破限速（GET 里的 Basic 已在 proxy 里限速）。
  */
 import { NextResponse } from "next/server";
 import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/auth";
+import { createPasswordThrottle, passwordThrottledResponse } from "@/lib/password-throttle";
 import { SESSION_COOKIE, clearedCookieOptions, createSessionToken, readCookieHeader, safeNextPath, sessionCookieOptions, validPassword, validSessionToken } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
+
+const loginThrottle = createPasswordThrottle();
 
 function untrusted(request: Request): NextResponse | null {
 	const password = process.env.PI_WEB_PASSWORD;
@@ -63,9 +67,9 @@ export async function POST(request: Request) {
 	if (!body || typeof body !== "object" || Array.isArray(body)) {
 		return NextResponse.json({ success: false, error: "invalid login payload" }, { status: 400 });
 	}
-	if (typeof body.password !== "string" || !validPassword(body.password, password)) {
-		return NextResponse.json({ success: false, error: "invalid password" }, { status: 401 });
-	}
+	const verdict = typeof body.password === "string" ? loginThrottle.check(body.password, (candidate) => validPassword(candidate, password)) : "wrong";
+	if (typeof verdict === "object") return passwordThrottledResponse(verdict.retryAfterMs);
+	if (verdict !== "right") return NextResponse.json({ success: false, error: "invalid password" }, { status: 401 });
 	const response = NextResponse.json({ success: true, data: { next: safeNextPath(typeof body.next === "string" ? body.next : null) } }, { headers: { "Cache-Control": "no-store" } });
 	response.cookies.set(SESSION_COOKIE, createSessionToken(password), sessionCookieOptions(request));
 	return response;

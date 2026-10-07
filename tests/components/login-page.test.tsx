@@ -35,3 +35,13 @@ it("does not accept an external redirect returned by the login endpoint", async 
 	fireEvent.click(screen.getByRole("button", { name: "登录" }));
 	await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
 });
+
+it("says how long to wait when wrong passwords have paused sign-in", async () => {
+	render(<LoginPage />);
+	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/web-auth"));
+	vi.mocked(fetch).mockResolvedValueOnce({ status: 429, headers: new Headers({ "Retry-After": "17" }), json: async () => ({ success: false, error: "too many wrong passwords; try again in 17 s" }) } as Response);
+	fireEvent.change(screen.getByPlaceholderText("密码"), { target: { value: "guess" } });
+	fireEvent.click(screen.getByRole("button", { name: "登录" }));
+	expect((await screen.findByRole("alert")).textContent).toBe("密码错误次数太多，请 17 秒后再试");
+	expect(replace).not.toHaveBeenCalled();
+});

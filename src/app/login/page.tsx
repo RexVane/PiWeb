@@ -63,7 +63,8 @@ function LoginForm() {
 				router.replace(safeNextPath(result.data?.next ?? next));
 				return;
 			}
-			setError(response.status === 401 ? t.loginFailed : result.error || t.loginFailed);
+			if (response.status === 429) setError(t.loginThrottled.replace("{s}", response.headers.get("Retry-After") || "30"));
+			else setError(response.status === 401 ? t.loginFailed : result.error || t.loginFailed);
 			setPassword("");
 			requestAnimationFrame(() => inputRef.current?.focus());
 		} catch {
