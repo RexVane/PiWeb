@@ -2,6 +2,28 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 17:47 +08:00 | claude-opus-5-5 | grok-4.7「此模型不支持」思考的原因；内置提供方覆盖删空时整块移除（`590d2aa`）
+- 起因：用户截图模型菜单里 grok-4.7 显示「思考 · 此模型不支持」，问「为什么模型不支持思考强度？」
+- 原因（只读核对，未改用户配置）：用户 12:03 在 `~/.pi/agent/models.json` 加了 `xai: {api: "openai-responses", models: [{id: "grok-4.7"}]}`，当时 pi 0.85.1 内置 xAI 只有 grok-4.3/4.5/4.6（下载 0.85.1 包核对）；12:49 升 pi 1.0.4（`451d519`）后内置了 Grok 4.7（思考 low/medium/high/xhigh、看图、500K）。pi 规则是 `models` 同 ID 条目整条替换内置定义，于是生效定义回落缺省：reasoning false、只收文字、128K/16K，思考菜单只剩 off。用 pi 的 `ModelRuntime` 只读对比两份定义确认
+- 改了什么：
+  - 删掉这条的路原本走不通：编辑内置提供方、删掉最后一个模型行再保存 → `{api, models: []}`；添加内置提供方只填密钥 → `{}`。两者都被 pi 拒绝（`must specify "baseUrl", "headers", "compat", "modelOverrides", or "models"`），保存失败、密钥也存不上。pi 0.85.1 同规则，是 PiWeb 旧 bug，不是升级带来的
+  - `model-draft.ts` 加 `providerOverrideHasContent`（与 pi `applyModelsJson` 同口径）和 `withBuiltinOverride`：块删空就整块移除；有不下发前端的 apiKey 时保留，让服务端补回。`SettingsPanel.tsx` 的 `saveBuiltinEdit` / `saveBuiltinSetup` 改用它
+  - 「与内置模型同 ID」提示改为先建议删掉这一行直接用内置的（中英）
+  ```ts
+  // src/lib/model-draft.ts:141
+  export function providerOverrideHasContent(config: Readonly<Record<string, unknown>>): boolean {
+  	const overrides = config.modelOverrides;
+  	return (Array.isArray(config.models) && config.models.length > 0)
+  		|| Boolean(config.baseUrl || config.headers || config.compat || config.apiKey || config.oauth)
+  		|| (typeof overrides === "object" && overrides !== null && Object.keys(overrides).length > 0)
+  		|| config.authHeader !== undefined;
+  }
+  ```
+- 验证：`tsc --noEmit` 通过；全量 vitest **76 文件 492 通过 + 1 跳过**；新组件测试在旧 `SettingsPanel` 上失败、新代码通过；契约测试对照 pi 真实校验 11 种块形状。`next build` 留给 CI（本机 build 会生成 `.next/BUILD_ID`，`piweb` 会切生产模式）
+- 注意：提供方行上的「删除」对内置提供方会连带 `removeKey`，会删掉 xAI 的 OAuth 登录，不是删单个模型的地方
+- 影响文件：`src/lib/model-draft.ts`、`src/components/SettingsPanel.tsx`、`src/i18n.tsx`、`tests/model-draft.test.ts`、`tests/models-service-config.test.ts`、`tests/components/settings-model-roundtrip.test.tsx`
+- 下一步：用户在 设置 → 模型 → xAI「编辑」→「自定义设置」里删掉 grok-4.7 行并保存（或授权代改），模型菜单应出现 Grok 4.7 与 low/medium/high/xhigh
+
 ## 2026-10-07 17:02 +08:00 | claude-opus-5-5 | 设置 → 模型：提供方行布局修复（`9ed1519`）+ 去掉「默认模型与思考强度」面板（`918624c`）
 - 起因：用户截图反馈 xAI 那一行按钮被挤成竖排、名称消失；又问「为什么多了这个面板」「那么复杂」「思考强度找 pi 内置的不就行了」，选择「整块去掉」
 - 改了什么：
