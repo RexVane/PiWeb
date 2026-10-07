@@ -1,5 +1,10 @@
 # 进度
 
+## 2026-09-28 11:05 +08:00 | k3 (DeepSeek Harness) | 清理旧影子仓库数据
+- 改了什么：用户明确指示后，删除已成孤儿的 `C:\Users\guica\.pi\agent\web-growth\`（7 个工作区 / 43.6 MB 旧快照历史）
+- 注意：本机还有一个运行中的全局安装旧版 PiWeb（PID 37284，`D:\NodeJs\...\@rexvane\piweb`），它仍是影子仓库代码——若它再触发生长快照会重建该目录；本次去影子仓库改造尚未发布到 npm，待新版本发布并升级全局安装后才会彻底不再出现
+- 影响文件：无代码改动
+
 ## 2026-09-28 10:55 +08:00 | k3 (DeepSeek Harness) | 生长树去影子仓库：快照直入工作区 .git
 - 改了什么：
   - 重写 `growth-service.ts` 存储层：删除 `~/.pi/agent/web-growth/<key>/` 影子裸仓库与 `growthRoot()`/`meta.json`，快照对象直接写入工作区自己的 `.git/objects`
