@@ -28,7 +28,7 @@
   - **General**: Tool presets (Read Only / Workspace Write / Full Access), language (zh/en), appearance, enter key behaviors, and auto-compact.
   - **Models**: Manage 30+ built-in providers, custom providers in `models.json`, and OAuth logins (Claude, Codex, Copilot, etc.). Custom models can declare thinking support, which levels they offer and the value each level sends (pi's `reasoning` / `thinkingLevelMap`), plus image input. The default model, default thinking level, per-model levels and thinking budgets are pi's own `settings.json` keys, shared with pi in the terminal; new sessions start from them, and the model menu marks the defaults and can save the current pick as the new default.
   - **Plugins & Skills**: View and manage extensions and skills directly via Pi's built-in package manager.
-- **Security & Sandboxing**: Optional HTTP Basic Auth via `PI_WEB_PASSWORD`, origin validation on write actions, and strict path boundary checks.
+- **Security & Sandboxing**: Optional password via `PI_WEB_PASSWORD` (browser login page, HTTP Basic for API clients) with a brake on repeated wrong passwords, origin validation on write actions, and strict path boundary checks.
 
 ## Quick Start
 
@@ -42,6 +42,8 @@ piweb
 ```
 
 A global install prepares the production bundle once (during install, or on the first run if the script was skipped) and then starts in production mode. If that build fails, `piweb` reports it instead of falling back to a development server that cannot work without dev dependencies; retry with `npm rebuild -g @rexvane/piweb`. The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI (`npm i -g @earendil-works/pi-coding-agent`) if you have both.
+
+To update an npm install, stop `piweb`, run `npm install -g @rexvane/piweb@latest`, then start it again; when a newer release is out, Check for updates under Settings → General → PiWeb version shows this command. npm replaces the whole package folder, so do not update it under a running `piweb`. The pi engine is pinned by each PiWeb release and updates with it.
 
 ### Inside this repository
 
@@ -68,7 +70,7 @@ npm start          # serves on http://127.0.0.1:30141 (auto-increments if busy)
 -h, --help             Show help
 ```
 
-Environment variables: `PI_WEB_PASSWORD` enables a browser login session and HTTP Basic Auth for API clients (user `pi`). It is **required** for any non-loopback production bind address. Development mode is loopback-only, even with a password; if no production build exists, an external bind fails rather than falling back to an exposed development server. Use HTTPS or a trusted VPN for remote access. `PI_WEB_EDITOR` overrides the editor used by "open in editor" (default `code`). `PI_WEB_BROWSER` points pi's browser tools at a specific Chrome / Edge / Chromium executable (default: auto-detect); the tools only open loopback and private-network pages unless `PI_WEB_BROWSER_ALLOW_PUBLIC=1` is set. Without a password, PiWeb only accepts requests whose `Host` is loopback.
+Environment variables: `PI_WEB_PASSWORD` enables a browser login session and HTTP Basic Auth for API clients (user `pi`). Wrong passwords are throttled for the whole server: after 10 new wrong ones, password checks allow one try every 30 seconds, and signed-in browsers are not affected. It is **required** for any non-loopback production bind address. Development mode is loopback-only, even with a password; if no production build exists, an external bind fails rather than falling back to an exposed development server. Use HTTPS or a trusted VPN for remote access. `PI_WEB_EDITOR` overrides the editor used by "open in editor" (default `code`). `PI_WEB_BROWSER` points pi's browser tools at a specific Chrome / Edge / Chromium executable (default: auto-detect); the tools only open loopback and private-network pages unless `PI_WEB_BROWSER_ALLOW_PUBLIC=1` is set. Without a password, PiWeb only accepts requests whose `Host` is loopback.
 
 `GET /api/health` exposes only a fixed service identifier for credential-free startup probes. Runtime versions are available from the authenticated `/api/version` endpoint. Tool presets limit the tools offered to the agent; they are not an operating-system sandbox, and installed extensions run with the server process's permissions.
 
@@ -100,19 +102,21 @@ npm run check      # Full check (types + tests + build)
 npm run build:release # Validate and stage a production build without replacing the running build
 ```
 
-## Status and known limitations (2026-09-14)
+## Status and known limitations (2026-10-07)
 
 The audit follow-up is merged into this branch and has been through an isolated release plus a local production deployment. It covers the production login build, upload integrity through the Next.js proxy, per-session extension isolation and tool-policy reloads, lossless model/settings writes, composer and pending-extension-UI lifecycle, Git/Growth/diff correctness, and isolated release preparation.
 
-The latest local validation passed TypeScript checking, **355 tests across 52 files** (one additional test skipped), `npm run build`, and `git diff --check`. The skipped test requires Windows symlink privileges or Developer Mode.
+Since then PiWeb gained element picking on pi's browser screenshots, thinking levels that follow pi's own model settings, and editing or withdrawing sent messages. Deleting a skill now follows pi's skill layout (a single-file skill removes only that file), npm installs build and check for updates correctly, and password checks are throttled.
 
-Known limitations: saving the model configuration normalizes it to plain JSON (comments are not preserved, data is); updates replace dependencies in place during a maintenance window rather than being zero-downtime; a custom tool allowlist lives only for the session lifetime; third-party extension module globals are not isolated.
+The latest local validation passed TypeScript checking, **489 tests across 76 files** (one more skipped: a Windows-only PowerShell encoding test), `npm run build`, and `git diff --check`; CI passes on Linux and Windows with Node.js 22.19.0 and 24. The real-browser tests need Chrome, Edge or Chromium and are skipped without one.
+
+Known limitations: saving the model configuration normalizes it to plain JSON (comments are not preserved, data is); updates replace dependencies in place during a maintenance window rather than being zero-downtime; a custom tool allowlist lives only for the session lifetime; third-party extension module globals are not isolated. Editing or withdrawing a sent message rewinds the conversation, not the files the agent already changed (use the growth history for those). Password throttling is server-wide, so while someone keeps guessing, password sign-in waits for everyone. Non-image files dropped into the composer are kept in `~/.pi/agent/web-uploads/` because sessions refer to them by path; remove old ones by hand.
 
 ## Production builds and updates
 
 Use `npm run build:release` when preparing a build while PiWeb is running. It validates types and tests, builds into a fresh `.next-releases/<id>` directory, and only then publishes the build selection for the next start. It does not restart the server or replace the output used by an existing process. `npm start` uses the last successfully prepared release; after a failed or interrupted release attempt it reports the problem instead of silently serving a stale build. Correct the error and run `npm run build:release` again to recover.
 
-The in-app updater uses the same validation path. Source files and npm dependencies are still updated in the installation directory, so perform updates during a maintenance window with no running agent turns. This is not a fully isolated zero-downtime deployment system. Restart PiWeb manually after a successful update; running processes do not automatically switch to the new build.
+The in-app updater uses the same validation path. Source files and npm dependencies are still updated in the installation directory, so perform updates during a maintenance window with no running agent turns. This is not a fully isolated zero-downtime deployment system. Restart PiWeb manually after a successful update; running processes do not automatically switch to the new build. This applies to Git checkouts: for an npm install the updater only compares with the registry and shows the npm command (see Install from npm).
 
 CI runs the full checks on Linux and Windows with Node.js 22.19.0 and 24. Ordinary `npm run build` still uses `.next`, so do not run it against an installation whose active production process is using that directory.
 
