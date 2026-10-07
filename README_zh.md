@@ -26,6 +26,8 @@
 - **输入卡与控制**：支持图片附件（选择 / 粘贴 / 拖放）、两级模型选择与快速循环切换、上下文压缩、停止生成、清空队列及 `/` 斜杠命令面板（内置命令 + Pi 模板 + 技能）。
 - **解耦的工作区与会话**：按项目文件夹分组展示，支持 Windows 原生文件夹选择器；支持空工作区独立留存；删除工作区弹出全局居中确认弹窗，文件夹与会话文件均安全保留并自动归集到“未分组”下。
 - **会话管理**：支持导出会话日志为 JSONL / HTML、会话树分支可视化跳转与草稿恢复、AGENTS.md 上下文注入展示，以及轨迹性能视图（TTFT / 解码耗时）。
+- **项目生长：每轮一个 git commit**：pi 每做完一轮，就把工作区提交一次到工作区自己 `.git` 里的专用引用（不碰你的分支、HEAD 与暂存区）。项目栏按轮显示这一轮相对上一轮改了什么（文件、+/− 行数、完整 diff），你在两轮之间自己的修改单独记一笔；对话里每条提问下都能跳到它那一轮。
+- **pi 的眼睛（无头浏览器工具）**：本机装有 Chrome / Edge / Chromium 时，pi 多出 `browser_open`、`browser_screenshot`、`browser_console`、`browser_click`、`browser_type` 五个工具：在无头浏览器里打开你的 dev server，看截图（模型不能看图时改看页面文本大纲），读控制台报错与失败请求，发现问题自己接着改。截图会显示在对话里。
 - **多功能设置**：
   - **通用**：工具权限预设（只读 / 工作区写入 / 完全访问）、中英双语切换、外观偏好、Enter 键行为、自动重试及自动压缩。
   - **模型**：支持 30+ 官方内置 Provider、添加自定义提供方（写入 `models.json`）及 OAuth 登录（Claude / Codex / Copilot 等）。
@@ -34,7 +36,7 @@
 
 ## 快速开始
 
-**环境要求**：Node.js ≥ 22.19.0（推荐 Node.js 24）；Git 与成长树功能还需要安装 Git。成长树快照直接存储在工作区自己的 `.git` 中：非 Git 目录会在首次快照前自动 `git init`，快照提交挂在专用引用 `refs/piweb/growth/` 下，不触碰你的分支、HEAD 与暂存区。
+**环境要求**：Node.js ≥ 22.19.0（推荐 Node.js 24）；Git 与生长树功能还需要安装 Git。生长记录直接存在工作区自己的 `.git` 中：非 Git 目录会在首次提交前自动 `git init`，每轮一个 commit，挂在专用引用 `refs/piweb/rounds/<key>` 下，不触碰你的分支、HEAD 与暂存区。可选：pi 的浏览器工具需要 Chrome / Edge / Chromium（Windows 自带 Edge）。
 
 ### 通过 npm 全局安装（推荐）
 
@@ -70,11 +72,27 @@ npm start          # 默认 http://127.0.0.1:30141（端口占用自动 +1）
 -h, --help             帮助信息
 ```
 
-环境变量：`PI_WEB_PASSWORD` 开启浏览器登录会话，并为 API 客户端保留 HTTP Basic Auth（用户名 `pi`）；生产模式绑定非本机地址时**必须**设置。开发模式仅允许本机回环地址，即使设置密码也不能对外监听；没有生产构建时，对外启动会明确失败，不会自动暴露开发服务器。远程访问请使用 HTTPS 或可信 VPN。`PI_WEB_EDITOR` 指定「用编辑器打开」使用的编辑器（默认 `code`）。未设密码时只接受 `Host` 为本机回环地址的请求。
+环境变量：`PI_WEB_PASSWORD` 开启浏览器登录会话，并为 API 客户端保留 HTTP Basic Auth（用户名 `pi`）；生产模式绑定非本机地址时**必须**设置。开发模式仅允许本机回环地址，即使设置密码也不能对外监听；没有生产构建时，对外启动会明确失败，不会自动暴露开发服务器。远程访问请使用 HTTPS 或可信 VPN。`PI_WEB_EDITOR` 指定「用编辑器打开」使用的编辑器（默认 `code`）。`PI_WEB_BROWSER` 为 pi 的浏览器工具指定 Chrome / Edge / Chromium 可执行文件（默认自动查找）；浏览器工具默认只打开本机与内网地址，设置 `PI_WEB_BROWSER_ALLOW_PUBLIC=1` 才放开公网。未设密码时只接受 `Host` 为本机回环地址的请求。
 
 `GET /api/health` 仅公开固定服务标识，让启动器无需向未知端口发送凭据。版本信息改由需要认证的 `/api/version` 返回。工具预设限制的是智能体可用工具，不是操作系统沙箱；已安装扩展使用服务进程本身的权限运行。
 
 模型目录探测默认拒绝回环、私网及保留网段地址。如果确实使用本地模型网关，可在启动 PiWeb 前设置 `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1`。此开关只放宽模型目录探测，请仅在可信的 PiWeb 实例上使用。
+
+### 用 git 查看生长历史
+
+每一轮都是普通的 git commit，任何 git 工具都能看：
+
+```bash
+git for-each-ref refs/piweb/rounds/        # 本工作区的引用（每个 worktree 一条）
+git log --stat refs/piweb/rounds/<key>      # 每轮一个 commit：标题是你的提问，Piweb-* trailers 记会话与状态
+```
+
+按轮记录之前的版本在 `refs/piweb/growth/` 下按工具步存快照，另有 `.git/piweb/ledger.jsonl` 账本；当前版本不再读取它们。清理方法：
+
+```bash
+git for-each-ref --format="delete %(refname)" refs/piweb/growth/ | git update-ref --stdin
+rm .git/piweb/ledger.jsonl
+```
 
 ### 开发与测试
 
@@ -117,6 +135,8 @@ Next.js 服务端 (src/app/api, src/lib)
    ├─ security-service 工具预设 + 项目信任
    ├─ plugins-service  pi 包安装/卸载/更新（DefaultPackageManager）+ 扩展清单
    ├─ workspace-store  手动添加的工作区（web-workspaces.json）+ 原生选文件夹
+   ├─ growth-*         项目生长：每轮一个 commit 挂在 refs/piweb/rounds/<key>，时间轴由 git log 读回
+   ├─ browser/*        pi 的眼睛：无头 Chrome / Edge 走 CDP 管道，浏览器工具与截图
    ▼
 @earendil-works/pi-coding-agent  (官方 SDK，pi 未修改)
 ```

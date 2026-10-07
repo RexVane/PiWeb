@@ -22,6 +22,8 @@
 - **Composer & Input**: Image attachments (paste, pick, drag-and-drop), 2-level model selector, model cycling forward/backward, queue management (steering / follow-up), and `/` slash commands.
 - **Decoupled Workspaces & Sessions**: Group sessions by workspace folders, native system folder picker on Windows, rename/delete workspaces with centered confirmation modals, preserve sessions under "Ungrouped", and maintain empty workspaces independently.
 - **Session Exploration**: Session tree branch visualization & navigation, user message draft recovery, export session logs to JSONL / HTML, and trajectory views.
+- **Project Growth, One Git Commit per Round**: Every round pi finishes is committed to a private ref in the workspace's own `.git` (your branches, HEAD and staging area stay untouched). The project panel shows what each round changed versus the previous one — files, +/− lines and the full diff — with your own edits between rounds recorded separately, and every prompt in the chat links to its round.
+- **pi's Eyes (Headless Browser Tools)**: With Chrome, Edge or Chromium installed, pi gets `browser_open`, `browser_screenshot`, `browser_console`, `browser_click` and `browser_type`. It opens your dev server in a headless browser, looks at the screenshot (a text outline for models without vision), reads console errors and failed requests, and fixes what it sees. Screenshots show up inline in the chat.
 - **Comprehensive Settings**:
   - **General**: Tool presets (Read Only / Workspace Write / Full Access), language (zh/en), appearance, enter key behaviors, and auto-compact.
   - **Models**: Manage 30+ built-in providers, custom providers in `models.json`, and OAuth logins (Claude, Codex, Copilot, etc.).
@@ -30,7 +32,7 @@
 
 ## Quick Start
 
-**Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features. Growth snapshots live in the workspace's own `.git`: non-git folders are `git init`-ed automatically before the first snapshot, and snapshot commits hang off a dedicated `refs/piweb/growth/` ref without touching your branches, HEAD or staging area.
+**Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features. Growth history lives in the workspace's own `.git`: non-git folders are `git init`-ed automatically before the first commit, and one commit per round hangs off a dedicated `refs/piweb/rounds/<key>` ref without touching your branches, HEAD or staging area. Optional: Chrome, Edge or Chromium for pi's browser tools (Edge ships with Windows).
 
 ### Install from npm (recommended)
 
@@ -66,11 +68,27 @@ npm start          # serves on http://127.0.0.1:30141 (auto-increments if busy)
 -h, --help             Show help
 ```
 
-Environment variables: `PI_WEB_PASSWORD` enables a browser login session and HTTP Basic Auth for API clients (user `pi`). It is **required** for any non-loopback production bind address. Development mode is loopback-only, even with a password; if no production build exists, an external bind fails rather than falling back to an exposed development server. Use HTTPS or a trusted VPN for remote access. `PI_WEB_EDITOR` overrides the editor used by "open in editor" (default `code`). Without a password, PiWeb only accepts requests whose `Host` is loopback.
+Environment variables: `PI_WEB_PASSWORD` enables a browser login session and HTTP Basic Auth for API clients (user `pi`). It is **required** for any non-loopback production bind address. Development mode is loopback-only, even with a password; if no production build exists, an external bind fails rather than falling back to an exposed development server. Use HTTPS or a trusted VPN for remote access. `PI_WEB_EDITOR` overrides the editor used by "open in editor" (default `code`). `PI_WEB_BROWSER` points pi's browser tools at a specific Chrome / Edge / Chromium executable (default: auto-detect); the tools only open loopback and private-network pages unless `PI_WEB_BROWSER_ALLOW_PUBLIC=1` is set. Without a password, PiWeb only accepts requests whose `Host` is loopback.
 
 `GET /api/health` exposes only a fixed service identifier for credential-free startup probes. Runtime versions are available from the authenticated `/api/version` endpoint. Tool presets limit the tools offered to the agent; they are not an operating-system sandbox, and installed extensions run with the server process's permissions.
 
 Model catalog discovery blocks loopback, private, and reserved network addresses by default. If you intentionally use a local model gateway, set `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1` before starting PiWeb. This relaxes the discovery endpoint only; use it only on a trusted PiWeb instance.
+
+### Growth history in Git
+
+Each round is a regular commit, so any Git tool can read the history:
+
+```bash
+git for-each-ref refs/piweb/rounds/        # this workspace's ref (one per worktree)
+git log --stat refs/piweb/rounds/<key>      # one commit per round: title = your prompt, Piweb-* trailers = session / status
+```
+
+Builds before rounds kept per-tool snapshots under `refs/piweb/growth/` plus `.git/piweb/ledger.jsonl`; the current version no longer reads them. To remove them:
+
+```bash
+git for-each-ref --format="delete %(refname)" refs/piweb/growth/ | git update-ref --stdin
+rm .git/piweb/ledger.jsonl
+```
 
 ### Development
 
@@ -113,6 +131,8 @@ Next.js Server (src/app/api, src/lib)
    ├─ security-service Tool presets & project trust
    ├─ plugins-service  Pi package management (DefaultPackageManager) & extension registry
    ├─ workspace-store  Persistent workspaces registry & native folder picker
+   ├─ growth-*         Project growth: one commit per round on refs/piweb/rounds/<key>, timeline via git log
+   ├─ browser/*        pi's eyes: headless Chrome / Edge over a CDP pipe, browser tools + screenshots
    ▼
 @earendil-works/pi-coding-agent  (Official Pi SDK, zero engine modifications)
 ```
