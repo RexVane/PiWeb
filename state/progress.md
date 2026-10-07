@@ -2,6 +2,21 @@
 
 > 更早的条目：[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 15:05 +08:00 | Claude Code（云端） | 已发消息可编辑重发与撤回（`3b03fa9`）
+- 起因：用户问「发出去的消息如何修改撤回」。此前只能在会话树里跳节点，没有针对某条用户消息的编辑 / 撤回入口，运行中也撤不回
+- 语义：与 pi 终端 `/tree` 选中用户消息相同——`navigateTree(用户消息 entryId)` 把叶子移到它的父节点并交回原文；**不破坏历史**，原分支留在会话 JSONL 里，终端 pi 的 `/tree` 仍能找回
+- 改了什么：
+  - **服务端** `rewind` 命令（`agent-manager.ts`）：校验是当前对话里的用户消息 → 清队列（清出的文本交回前端）→ 运行中先中止（同 Esc）→ `navigateTree` → 广播 `history` → 带 `text/images` 时接着作为新消息发出。全程占住 `promptSubmitting` 提交位，中间插不进别的提问；扩展可经 `session_before_tree` 取消；重发失败时返回 `rewound`，前端把改过的内容放回输入框。prompt 的提交与释放抽成 `submitPrompt` / `releasePromptSlot`，两条命令共用
+  - **接口**：命令失败时也带回 `data`（已清出的排队文本、已回退标记）
+  - **前端**：用户消息操作栏加「编辑」「撤回」（只对已落盘、有 entryId 的消息）。编辑在气泡原位展开：可删原图，Enter 发送 / Shift+Enter 换行 / 输入法组字中不触发 / Esc 取消；提示「之后的 N 轮对话会从当前对话移除（会话文件里仍保留）」，这一轮起改过文件时追加「已改动的文件不会还原」。撤回在没有损失时直接执行，否则先确认；撤回后原文（服务端 `editorText`）、图片与被清出的排队消息放回输入框，排在已有草稿前面
+  - **同步**：新事件 `history`，所有打开该会话的页面收到后安静重连取新快照（不闪「重连中」），旧连接上迟到的帧丢弃
+  - README 中英文补一句
+- 验证：`tsc --noEmit` 通过；全量 vitest **71 文件 471 通过 + 1 跳过**（新增 4 个测试文件：服务端 rewind 6 项——运行中撤回先清队列再中止、空闲时不中止且同一命令内重发、非用户消息 / 不在当前分支拒绝、提交位被占与空内容拒绝、扩展取消时交回队列、重发失败标 rewound；气泡编辑 / 撤回 5 项；撤回内容回输入框 4 项；history 重连 1 项，含去掉旧连接保护时会失败的断言）；`npm run build` 通过；**真实实例冒烟 9 项全过**（生产构建 + 假模型）：编辑第一句时提示后面 1 轮会移出 → Enter 重发后对话只剩改过的那句，模型请求里也只有它 → 慢速流式中途撤回：内容回到输入框、未完成的回复消失、之后不再调模型 → 继续对话时模型上下文跳过撤回的那条 → 刷新后历史就是新分支 → 会话文件里旧分支（第二句、慢一点）仍在
+- 已知限制：不还原文件（pi `/tree` 同样不还原；每轮的生长 commit 可对照恢复）；服务端还没加载的冷会话撤回时会先冷启动 agent；回退到压缩点之前的消息会恢复未压缩的上下文（与 pi `/tree` 一致）
+- 未验证：带图片的编辑重发只在单元测试覆盖，端到端没带图；多个标签页同时编辑同一会话（服务端提交位保证串行，界面上后到的一方会收到忙碌错误）
+- 影响文件：修改 `src/lib/{agent-manager,command-validation,types}.ts`、`src/app/api/agent/[id]/route.ts`、`src/hooks/usePiWeb.ts`、`src/components/{AppShell,ChatWindow,icons}.tsx`、`src/app/globals.css`、`src/i18n.tsx`、README、`tests/command-validation.test.ts`；新增 `tests/agent-rewind.test.ts`、`tests/use-piweb-history.test.tsx`、`tests/components/{message-rewind,app-shell-rewind}.test.tsx`
+- 下一步：审查遗留问题（技能删除可删到集合根、作用域判断缺 realpath、install-build 暂存目录等），各自单独提交
+
 ## 2026-10-07 14:45 +08:00 | Claude Code（云端） | 模型配置对齐 pi 的思考强度（`772d8e7`）
 - 起因：用户反馈「模型配置里没有思考强度」。查下来四处断开：① 自定义模型表单没有 `reasoning` / `thinkingLevelMap` / `input`，自定义模型的思考菜单永远只有 off；② 内置提供商下写同 ID 的模型条目会**整条替换**内置定义，能力随之丢失；③ 新会话页默认取「第一个有凭据的模型」并显式 `setModel`，不看 pi 的 `defaultProvider/defaultModel`（有 AWS 环境凭证时会选到 Bedrock）；④ PiWeb 不暴露 `defaultThinkingLevel` / `modelThinkingLevels` / `thinkingBudgets`
 - 改了什么：
