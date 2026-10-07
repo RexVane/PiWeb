@@ -1,16 +1,21 @@
 "use client";
 
 /**
- * useGrowth：项目生长视图的状态。
- * 账本（拉取 + 实时步按 seq 合并）、轮次导航 / 默认跟随、范围（本步 / 本会话）、
- * 所选快照的文件与变更、当前磁盘全量目录懒加载、展开状态与新变更动画。
+ * useGrowth：项目生长视图的状态（每轮一个 git commit）。
+ * 时间轴（拉取 + 实时 commit 去重合并）、轮次导航 / 默认跟随、范围（本轮 / 本会话累计）、
+ * 所选轮的文件与变更、当前磁盘全量目录懒加载、展开状态与新变更动画。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { allDirPaths, buildTree, dirsToReveal, graftLazy, type TreeNode } from "@/lib/growth-tree";
-import { buildGrowthRounds, type GrowthRound } from "@/lib/growth-rounds";
-import type { GrowthChange, GrowthStep } from "@/lib/types";
+import type { GrowthChange, GrowthRound } from "@/lib/types";
 
-export type GrowthScope = "step" | "session";
+export type GrowthScope = "round" | "session";
+
+/** 时间轴上的一项：pi 的一轮（带轮号）或用户在两轮之间自己的修改（n = null） */
+export interface GrowthEntry extends GrowthRound {
+	/** pi 的第几轮（从 1 起）；「你的修改」为 null */
+	n: number | null;
+}
 
 export interface TreeFile {
 	path: string;
@@ -21,30 +26,24 @@ export interface GrowthApi {
 	available: boolean;
 	loading: boolean;
 	error: string | null;
-	steps: GrowthStep[];
-	rounds: GrowthRound[];
-	/** 本会话第一步（基线） */
-	baseline: GrowthStep | null;
-	latest: GrowthStep | null;
-	selected: GrowthStep | null;
-	selectedRound: GrowthRound | null;
+	/** 本会话的时间轴（时间正序，不含工作区基线） */
+	rounds: GrowthEntry[];
+	selected: GrowthEntry | null;
 	following: boolean;
 	scope: GrowthScope;
 	/** 所选范围的 from/to tree（查看器取 diff 用） */
 	range: { from: string; to: string } | null;
+	/** 所选范围的变更 */
 	changes: GrowthChange[];
-	/** 相对会话基线的全部变更（头部总计） */
-	sessionChanges: GrowthChange[];
 	tree: TreeNode;
-	/** 所选步的全部文件路径（快速打开用） */
+	/** 所选轮的全部文件路径（快速打开用） */
 	filePaths: string[];
 	expanded: Set<string>;
-	/** 最新一步刚改动的路径（入场动画） */
+	/** 最新一轮刚改动的路径（入场动画） */
 	fresh: Set<string>;
-	pending: string[];
 	follow(): void;
 	/** 选中某一轮（时间轴柱）；选到最后一轮等于回到跟随 */
-	selectRound(id: number): void;
+	select(commit: string): void;
 	prev(): void;
 	next(): void;
 	setScope(scope: GrowthScope): void;
@@ -54,7 +53,8 @@ export interface GrowthApi {
 	collapseAll(): void;
 	expandLazy(path: string): Promise<void>;
 	refresh(): Promise<void>;
-	snapshotNow(): Promise<GrowthStep | null>;
+	/** 立即记录：把当前改动提交为「你的修改」；没改动返回 null */
+	recordNow(): Promise<GrowthRound | null>;
 }
 
 export function sessionIdOf(sessionPath: string): string {
@@ -69,19 +69,23 @@ function cwdKey(cwd: string): string {
 	return /^[A-Za-z]:\//.test(norm) || norm.startsWith("//") ? norm.toLowerCase() : norm;
 }
 
-function mergeSteps(fetched: GrowthStep[], live: GrowthStep[]): GrowthStep[] {
+/** 拉取结果在前，本次连接收到的实时 commit 按 commit 哈希去重后接在后面 */
+function mergeRounds(fetched: GrowthRound[], live: GrowthRound[]): GrowthRound[] {
 	if (!live.length) return fetched;
-	const bySeq = new Map<number, GrowthStep>();
-	for (const s of fetched) bySeq.set(s.seq, s);
-	for (const s of live) bySeq.set(s.seq, s);
-	return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+	const known = new Set(fetched.map((round) => round.commit));
+	const extra = live.filter((round) => !known.has(round.commit));
+	return extra.length ? [...fetched, ...extra] : fetched;
+}
+
+/** 去掉工作区基线，给 pi 的轮次编号（「你的修改」不占号） */
+export function numberRounds(rounds: GrowthRound[]): GrowthEntry[] {
+	let n = 0;
+	return rounds.filter((round) => round.kind !== "baseline").map((round) => ({ ...round, n: round.kind === "round" ? (n += 1) : null }));
 }
 
 const REVEAL_LIMIT = 200;
 const FRESH_MS = 2500;
-/** 非跟随态给出的稳定空数组：每次渲染都 new 一个会让下游 effect（查看器取数）反复重跑 */
-const NO_PENDING: string[] = [];
-/** 清单 / 变更缓存条数上限（按 tree 哈希键；长会话几百步也就几 MB，超过就淘汰最早的） */
+/** 清单 / 变更缓存条数上限（按 tree 哈希键；长会话几百轮也就几 MB，超过就淘汰最早的） */
 const CACHE_LIMIT = 300;
 function remember<K, V>(map: Map<K, V>, key: K, value: V): void {
 	if (map.size >= CACHE_LIMIT) map.delete(map.keys().next().value as K);
@@ -94,7 +98,7 @@ interface DiskEntry {
 	size?: number;
 }
 
-/** 磁盘列表里永远不画的目录：版本库内部（快照本来就排除它，节点也没有可看的东西） */
+/** 磁盘列表里永远不画的目录：版本库内部（提交本来就排除它，节点也没有可看的东西） */
 const HIDDEN_DISK_DIRS = new Set([".git"]);
 
 function diskNodes(parent: string, entries: DiskEntry[]): TreeNode[] {
@@ -133,27 +137,24 @@ async function listDiskEntries(cwd: string, dir: string, signal: AbortSignal): P
 export function useGrowth({
 	cwd,
 	sessionPath,
-	liveSteps,
-	pending,
+	liveRounds,
 	runtimeError,
 	active,
+	watchRounds = false,
 	connected,
-	turnStarts = [],
 }: {
 	cwd: string;
 	sessionPath: string | null;
-	/** usePiWeb 在本次连接期间收到的实时步 */
-	liveSteps: GrowthStep[];
-	/** 改盘类工具运行期间目录监听看到的路径 */
-	pending: string[];
-	/** 实时快照失败；成功记录后由事件清除。 */
+	/** usePiWeb 在本次连接期间收到的实时 commit */
+	liveRounds: GrowthRound[];
+	/** 实时提交失败；成功提交后由事件清除。 */
 	runtimeError?: string | null;
-	/** 项目栏或查看器打开时才拉数据 */
+	/** 项目栏或查看器打开：拉磁盘目录、文件清单与范围变更 */
 	active: boolean;
-	/** SSE 重连后补拉断线期间可能漏掉的生长步。 */
+	/** 有会话就拉时间轴（对话里「本轮改了 N 个文件」要用），不必等面板打开 */
+	watchRounds?: boolean;
+	/** SSE 重连后补拉断线期间可能漏掉的 commit。 */
 	connected: boolean;
-	/** 用户消息的时间戳；用于在旧快照缺少回合标记时恢复轮次边界。 */
-	turnStarts?: number[];
 }): GrowthApi {
 	const key = JSON.stringify([cwdKey(cwd), sessionPath ?? ""]);
 	const requestScope = useMemo(() => ({
@@ -181,13 +182,12 @@ export function useGrowth({
 			requestScope.loadingDirs.clear();
 		};
 	}, [requestScope]);
-	const [fetched, setFetched] = useState<{ key: string; steps: GrowthStep[]; available: boolean; error: string | null }>({ key: "", steps: [], available: true, error: null });
+	const [fetched, setFetched] = useState<{ key: string; rounds: GrowthRound[]; available: boolean; error: string | null }>({ key: "", rounds: [], available: true, error: null });
 	const [loading, setLoading] = useState(false);
-	const [selectedRoundId, setSelectedRoundId] = useState<number | null>(null);
-	const [scope, setScopeState] = useState<GrowthScope>("step");
+	const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+	const [scope, setScopeState] = useState<GrowthScope>("round");
 	const [files, setFiles] = useState<{ key: string; tree: string; files: TreeFile[] } | null>(null);
 	const [rangeChanges, setRangeChanges] = useState<{ key: string; changes: GrowthChange[]; error?: string } | null>(null);
-	const [sessionRange, setSessionRange] = useState<{ key: string; changes: GrowthChange[]; error?: string } | null>(null);
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const [fresh, setFresh] = useState<Set<string>>(() => new Set());
 	const [lazyState, setLazyState] = useState(() => ({ scope: requestScope, children: new Map<string, TreeNode[]>() }));
@@ -204,12 +204,12 @@ export function useGrowth({
 	const changesCache = useRef(new Map<string, GrowthChange[]>());
 	const collapsedByUser = useRef(new Set<string>());
 	const freshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-	const lastRevealedSeq = useRef<number>(0);
+	const lastRevealed = useRef<string>("");
 	const previousConnected = useRef(connected);
 
 	useEffect(() => {
 		const saved = localStorage.getItem("piweb.growth.scope");
-		if (saved === "step" || saved === "session") setScopeState(saved);
+		if (saved === "round" || saved === "session") setScopeState(saved);
 	}, []);
 	const setScope = useCallback((s: GrowthScope) => {
 		setScopeState(s);
@@ -241,12 +241,12 @@ export function useGrowth({
 
 	// 切会话：回到跟随、清实时相关状态
 	useEffect(() => {
-		setSelectedRoundId(null);
+		setSelectedCommit(null);
 		setFresh(new Set());
 		setLoading(false);
 		setLazyState({ scope: requestScope, children: new Map() });
 		if (freshTimer.current) clearTimeout(freshTimer.current);
-		lastRevealedSeq.current = 0;
+		lastRevealed.current = "";
 	}, [requestScope]);
 
 	const refresh = useCallback(async () => {
@@ -255,7 +255,7 @@ export function useGrowth({
 		requestScope.refresh?.abort();
 		requestScope.refresh = controller;
 		if (!cwd) {
-			setFetched({ key, steps: [], available: true, error: null });
+			setFetched({ key, rounds: [], available: true, error: null });
 			updateLazy(controller, () => new Map());
 			setLoading(false);
 			requestScope.controllers.delete(controller);
@@ -265,17 +265,20 @@ export function useGrowth({
 		try {
 			const params = new URLSearchParams({ cwd });
 			if (sessionPath) params.set("session", sessionPath);
-			// 两个请求解耦：磁盘目录先到先画，growth 慢（git 探测超时等）不拖住目录树
+			// 两个请求解耦：磁盘目录先到先画，git 慢（探测超时等）不拖住目录树
 			const growthRequest = sessionPath
-				? getJson<{ available: boolean; steps: GrowthStep[] }>(`/api/growth?${params}`, controller.signal).then(
+				? getJson<{ available: boolean; rounds: GrowthRound[] }>(`/api/growth?${params}`, controller.signal).then(
 					(value) => ({ status: "fulfilled" as const, value }),
 					(reason: unknown) => ({ status: "rejected" as const, reason }),
 				)
-				: Promise.resolve({ status: "fulfilled" as const, value: { available: true, steps: [] } });
-			const diskRequest = listDiskEntries(cwd, "", controller.signal).then(
-				(value) => ({ status: "fulfilled" as const, value }),
-				(reason: unknown) => ({ status: "rejected" as const, reason }),
-			);
+				: Promise.resolve({ status: "fulfilled" as const, value: { available: true, rounds: [] as GrowthRound[] } });
+			// 面板关着时只拉时间轴，不列磁盘
+			const diskRequest = active
+				? listDiskEntries(cwd, "", controller.signal).then(
+					(value) => ({ status: "fulfilled" as const, value }),
+					(reason: unknown) => ({ status: "rejected" as const, reason }),
+				)
+				: Promise.resolve({ status: "skipped" as const });
 			void diskRequest.then((diskResult) => {
 				if (!isCurrent(controller)) return;
 				if (diskResult.status === "fulfilled") {
@@ -285,9 +288,9 @@ export function useGrowth({
 			const growthResult = await growthRequest;
 			if (!isCurrent(controller)) return;
 			if (growthResult.status === "fulfilled") {
-				setFetched({ key, steps: growthResult.value.steps ?? [], available: growthResult.value.available !== false, error: null });
+				setFetched({ key, rounds: growthResult.value.rounds ?? [], available: growthResult.value.available !== false, error: null });
 			} else {
-				setFetched({ key, steps: [], available: true, error: growthResult.reason instanceof Error ? growthResult.reason.message : "failed to load" });
+				setFetched({ key, rounds: [], available: true, error: growthResult.reason instanceof Error ? growthResult.reason.message : "failed to load" });
 			}
 			const diskResult = await diskRequest;
 			if (!isCurrent(controller)) return;
@@ -298,22 +301,22 @@ export function useGrowth({
 			if (isCurrent(controller)) setLoading(false);
 			requestScope.controllers.delete(controller);
 		}
-	}, [cwd, sessionPath, key, beginRequest, isCurrent, requestScope, updateLazy]);
+	}, [cwd, sessionPath, key, active, beginRequest, isCurrent, requestScope, updateLazy]);
 
+	const watching = active || watchRounds;
 	useEffect(() => {
-		if (active) void refresh();
+		if (watching) void refresh();
 		return () => requestScope.refresh?.abort();
-	}, [active, refresh, requestScope]);
+	}, [watching, refresh, requestScope]);
 	useEffect(() => {
-		if (active && connected && !previousConnected.current) void refresh();
+		if (watching && connected && !previousConnected.current) void refresh();
 		previousConnected.current = connected;
-	}, [active, connected, refresh]);
+	}, [watching, connected, refresh]);
 
-	const steps = useMemo(() => mergeSteps(fetched.key === key ? fetched.steps : [], liveSteps), [fetched, key, liveSteps]);
-	const baseline = steps[0] ?? null;
-	const latest = steps[steps.length - 1] ?? null;
-	// 磁盘目录只在记下新步时重拉：工具运行中的新路径由目录监听直接画成「生成中」节点，不用每 300ms 重拉一遍全部目录
-	const diskPulse = latest?.seq ?? 0;
+	const rounds = useMemo(() => numberRounds(mergeRounds(fetched.key === key ? fetched.rounds : [], liveRounds)), [fetched, key, liveRounds]);
+	const latest = rounds[rounds.length - 1] ?? null;
+	// 磁盘目录只在提交了新的一轮时重拉，不用每次渲染都重拉一遍全部目录
+	const diskPulse = latest?.commit ?? "";
 	useEffect(() => {
 		if (!active || !cwd || !latest) return;
 		const controller = beginRequest();
@@ -338,16 +341,17 @@ export function useGrowth({
 			clearTimeout(timer);
 		};
 	}, [active, cwd, diskPulse, beginRequest, isCurrent, requestScope, updateLazy]);
-	const rounds = useMemo(() => buildGrowthRounds(steps, turnStarts), [steps, turnStarts]);
-	const following = selectedRoundId === null;
-	const selectedRound = useMemo(
-		() => (following ? rounds[rounds.length - 1] : rounds.find((round) => round.id === selectedRoundId) ?? rounds[rounds.length - 1]) ?? null,
-		[following, rounds, selectedRoundId],
-	);
-	const selected = selectedRound ? selectedRound.last : baseline;
 
-	// 所选步的文件清单；缓存身份包含工作区与会话，迟到结果不写缓存。
+	const following = selectedCommit === null;
+	const selected = useMemo(
+		() => (following ? latest : rounds.find((round) => round.commit === selectedCommit) ?? latest) ?? null,
+		[following, latest, rounds, selectedCommit],
+	);
+	const sessionStart = rounds[0]?.parentTree ?? null;
+
+	// 所选轮的文件清单；缓存身份包含工作区与会话，迟到结果不写缓存。
 	useEffect(() => {
+		if (!active) return;
 		if (!selected || !cwd) {
 			setFiles(null);
 			return;
@@ -374,27 +378,27 @@ export function useGrowth({
 			controller.abort();
 			requestScope.controllers.delete(controller);
 		};
-	}, [selected, cwd, key, beginRequest, isCurrent, requestScope]);
+	}, [active, selected, cwd, key, beginRequest, isCurrent, requestScope]);
 
-	// 所选范围的变更：本步优先用账本内嵌清单；本会话 / 截断时按 tree 对取
+	// 所选范围：本轮 = git diff 上一轮 这一轮；本会话累计 = git diff 会话起点 所选这一轮
 	const range = useMemo(() => {
-		if (!selected || (selectedRound && !selectedRound.recorded)) return null;
-		if (scope === "step") return selectedRound?.fromTree && selectedRound.toTree ? { from: selectedRound.fromTree, to: selectedRound.toTree } : null;
-		return { from: (baseline ?? selected).tree, to: selected.tree };
-	}, [selected, selectedRound, scope, baseline]);
+		if (!selected) return null;
+		if (scope === "round") return { from: selected.parentTree, to: selected.tree };
+		return sessionStart ? { from: sessionStart, to: selected.tree } : null;
+	}, [selected, scope, sessionStart]);
+	// 本轮优先用 commit 自带的变更清单；本会话累计 / 被截断时按 tree 对取
 	const inlineChanges = useMemo<GrowthChange[] | null>(() => {
-		if (!selected || !selectedRound || !selectedRound.recorded) return [];
-		if (scope === "step") return selectedRound.steps.length === 1 && selectedRound.fromTree === selected.parent && !selected.truncated ? selected.changes : null;
-		if (baseline && baseline.seq === selected.seq) return [];
+		if (!selected || !range) return [];
+		if (range.from === range.to) return [];
+		if (scope === "round" && !selected.truncated) return selected.changes;
 		return null;
-	}, [selected, selectedRound, scope, baseline]);
+	}, [selected, range, scope]);
 
 	const loadRange = useCallback(
 		async (from: string, to: string, controller: AbortController): Promise<GrowthChange[]> => {
 			const k = `${key}|${from}..${to}`;
 			const cached = changesCache.current.get(k);
 			if (cached) return cached;
-			if (from === to) return [];
 			const data = await getJson<{ changes: GrowthChange[] }>(`/api/growth?cwd=${encodeURIComponent(cwd)}&from=${from}&to=${to}&changes=1`, controller.signal);
 			if (isCurrent(controller)) remember(changesCache.current, k, data.changes);
 			return data.changes;
@@ -403,7 +407,7 @@ export function useGrowth({
 	);
 
 	useEffect(() => {
-		if (!range || inlineChanges !== null || !cwd) return;
+		if (!active || !range || inlineChanges !== null || !cwd) return;
 		const k = `${key}|${range.from}..${range.to}`;
 		const controller = beginRequest();
 		void loadRange(range.from, range.to, controller)
@@ -418,7 +422,7 @@ export function useGrowth({
 			controller.abort();
 			requestScope.controllers.delete(controller);
 		};
-	}, [range, inlineChanges, cwd, key, loadRange, beginRequest, isCurrent, requestScope]);
+	}, [active, range, inlineChanges, cwd, key, loadRange, beginRequest, isCurrent, requestScope]);
 
 	const changes = useMemo<GrowthChange[]>(() => {
 		if (inlineChanges !== null) return inlineChanges;
@@ -426,42 +430,24 @@ export function useGrowth({
 		return rangeChanges?.key === `${key}|${range.from}..${range.to}` ? rangeChanges.changes : [];
 	}, [inlineChanges, range, rangeChanges, key]);
 
-	// 本会话总计（基线 → 所选步）
-	useEffect(() => {
-		if (!baseline || !selected || !cwd) return;
-		const k = `${key}|${baseline.tree}..${selected.tree}`;
-		const controller = beginRequest();
-		void loadRange(baseline.tree, selected.tree, controller)
-			.then((list) => {
-				if (isCurrent(controller)) setSessionRange({ key: k, changes: list });
-			})
-			.catch((error) => {
-				if (isCurrent(controller)) setSessionRange({ key: k, changes: [], error: error instanceof Error ? error.message : "failed to load session changes" });
-			})
-			.finally(() => requestScope.controllers.delete(controller));
-		return () => {
-			controller.abort();
-			requestScope.controllers.delete(controller);
-		};
-	}, [baseline, selected, cwd, key, loadRange, beginRequest, isCurrent, requestScope]);
-	const sessionChanges = useMemo(() => (baseline && selected && sessionRange?.key === `${key}|${baseline.tree}..${selected.tree}` ? sessionRange.changes : []), [baseline, selected, sessionRange, key]);
-
-	const shownPending = following ? pending : NO_PENDING;
 	const tree = useMemo(() => {
-		const base = buildTree(files?.key === key && selected && files.tree === selected.tree ? files.files : [], changes, shownPending);
+		const base = buildTree(files?.key === key && selected && files.tree === selected.tree ? files.files : [], changes);
 		return graftLazy(base, lazyChildren);
-	}, [files, selected, changes, shownPending, lazyChildren, key]);
+	}, [files, selected, changes, lazyChildren, key]);
 	const filePaths = useMemo(() => {
 		const paths = new Set(files?.key === key && selected && files.tree === selected.tree ? files.files.map((file) => file.path) : []);
 		for (const children of lazyChildren.values()) for (const child of children) if (child.kind === "file") paths.add(child.path);
 		return [...paths];
 	}, [files, selected, lazyChildren, key]);
 
-	// 新步到来（跟随中）：自动展开改动路径上的目录（用户手动收起过的除外）+ 入场动画
+	// 新的一轮到来（跟随中）：自动展开改动路径上的目录（用户手动收起过的除外）+ 入场动画
 	useEffect(() => {
-		if (!latest || !following || latest.seq === lastRevealedSeq.current) return;
-		lastRevealedSeq.current = latest.seq;
-		const list = latest.initial ? [] : latest.changes;
+		if (!latest || !following || latest.commit === lastRevealed.current) return;
+		const first = lastRevealed.current === "";
+		lastRevealed.current = latest.commit;
+		// 打开面板时已有的历史不播动画，只对之后新提交的一轮
+		if (first && !liveRounds.some((round) => round.commit === latest.commit)) return;
+		const list = latest.changes;
 		if (!list.length) return;
 		const dirs = dirsToReveal(list.slice(0, REVEAL_LIMIT)).filter((d) => !collapsedByUser.current.has(d));
 		if (dirs.length) {
@@ -475,25 +461,12 @@ export function useGrowth({
 		setFresh(new Set(list.map((c) => c.path)));
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 		freshTimer.current = setTimeout(() => setFresh(new Set()), FRESH_MS);
-	}, [latest, following, persistExpanded]);
+	}, [latest, following, liveRounds, persistExpanded]);
 	useEffect(() => () => {
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 	}, []);
 
-	// 生成中的路径也把目录撑开
-	useEffect(() => {
-		if (!shownPending.length) return;
-		const dirs = dirsToReveal([], shownPending.slice(0, REVEAL_LIMIT)).filter((d) => !collapsedByUser.current.has(d));
-		if (!dirs.length) return;
-		setExpanded((prev) => {
-			if (dirs.every((d) => prev.has(d))) return prev;
-			const next = new Set(prev);
-			for (const d of dirs) next.add(d);
-			return next;
-		});
-	}, [shownPending]);
-
-	// 手动选步：展开这一步改动的目录
+	// 手动选轮：展开这一轮改动的目录
 	useEffect(() => {
 		if (following || !selected) return;
 		const list = changes.slice(0, REVEAL_LIMIT);
@@ -508,23 +481,23 @@ export function useGrowth({
 	}, [following, selected, changes]);
 
 	const follow = useCallback(() => {
-		setSelectedRoundId(null);
+		setSelectedCommit(null);
 	}, []);
-	const selectRound = useCallback(
-		(id: number) => setSelectedRoundId(rounds.length && rounds[rounds.length - 1].id === id ? null : id),
+	const select = useCallback(
+		(commit: string) => setSelectedCommit(rounds.length && rounds[rounds.length - 1].commit === commit ? null : commit),
 		[rounds],
 	);
 	const prev = useCallback(() => {
-		if (!selectedRound) return;
-		const idx = rounds.findIndex((round) => round.id === selectedRound.id);
-		if (idx > 0) setSelectedRoundId(rounds[idx - 1].id);
-	}, [selectedRound, rounds]);
+		if (!selected) return;
+		const idx = rounds.findIndex((round) => round.commit === selected.commit);
+		if (idx > 0) setSelectedCommit(rounds[idx - 1].commit);
+	}, [selected, rounds]);
 	const next = useCallback(() => {
-		if (!selectedRound) return;
-		const idx = rounds.findIndex((round) => round.id === selectedRound.id);
+		if (!selected) return;
+		const idx = rounds.findIndex((round) => round.commit === selected.commit);
 		if (idx < 0 || idx >= rounds.length - 1) return;
-		setSelectedRoundId(idx + 1 === rounds.length - 1 ? null : rounds[idx + 1].id);
-	}, [selectedRound, rounds]);
+		setSelectedCommit(idx + 1 === rounds.length - 1 ? null : rounds[idx + 1].commit);
+	}, [selected, rounds]);
 
 	const toggleDir = useCallback(
 		(path: string) => {
@@ -591,7 +564,7 @@ export function useGrowth({
 		[cwd, requestScope, beginRequest, isCurrent, updateLazy],
 	);
 
-	const snapshotNow = useCallback(async (): Promise<GrowthStep | null> => {
+	const recordNow = useCallback(async (): Promise<GrowthRound | null> => {
 		if (!sessionPath) return null;
 		const controller = beginRequest();
 		if (!isCurrent(controller)) return null;
@@ -599,15 +572,15 @@ export function useGrowth({
 			const r = await fetch("/api/growth", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action: "snapshot", session: sessionIdOf(sessionPath) }),
+				body: JSON.stringify({ action: "record", session: sessionIdOf(sessionPath) }),
 				signal: controller.signal,
 			});
 			const j = await r.json();
 			if (!isCurrent(controller)) return null;
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
-			const step = (j.data?.step ?? null) as GrowthStep | null;
-			if (step) setFetched((previous) => isCurrent(controller) && previous.key === key ? { ...previous, steps: mergeSteps(previous.steps, [step]) } : previous);
-			return step;
+			const round = (j.data?.round ?? null) as GrowthRound | null;
+			if (round) setFetched((previous) => isCurrent(controller) && previous.key === key ? { ...previous, rounds: mergeRounds(previous.rounds, [round]) } : previous);
+			return round;
 		} finally {
 			requestScope.controllers.delete(controller);
 		}
@@ -616,25 +589,19 @@ export function useGrowth({
 	return {
 		available: fetched.key === key ? fetched.available : true,
 		loading,
-		error: runtimeError ?? (fetched.key === key ? fetched.error : null) ?? (range && rangeChanges?.key === `${key}|${range.from}..${range.to}` ? rangeChanges.error : null) ?? (baseline && selected && sessionRange?.key === `${key}|${baseline.tree}..${selected.tree}` ? sessionRange.error : null) ?? null,
-		steps,
+		error: runtimeError ?? (fetched.key === key ? fetched.error : null) ?? (range && rangeChanges?.key === `${key}|${range.from}..${range.to}` ? rangeChanges.error : null) ?? null,
 		rounds,
-		baseline,
-		latest,
 		selected,
-		selectedRound,
 		following,
 		scope,
 		range,
 		changes,
-		sessionChanges,
 		tree,
 		filePaths,
 		expanded,
 		fresh,
-		pending: shownPending,
 		follow,
-		selectRound,
+		select,
 		prev,
 		next,
 		setScope,
@@ -644,6 +611,6 @@ export function useGrowth({
 		collapseAll,
 		expandLazy,
 		refresh,
-		snapshotNow,
+		recordNow,
 	};
 }

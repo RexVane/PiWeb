@@ -891,8 +891,17 @@ const FinalAnswer = memo(function FinalAnswer({
 	);
 });
 
+/** 对话里提问下方的「本轮改了 N 个文件」：来自项目生长这一轮的 commit */
+export interface RoundBadge {
+	commit: string;
+	files: number;
+	add: number;
+	del: number;
+}
+
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message }: { message: WebMessage }) {
+const UserMessage = memo(function UserMessage({ message, badge, onShowRound }: { message: WebMessage; badge?: RoundBadge; onShowRound?: (commit: string) => void }) {
+	const { t } = useI18n();
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
@@ -900,7 +909,7 @@ const UserMessage = memo(function UserMessage({ message }: { message: WebMessage
 	const images = message.content.filter((content) => content.type === "image");
 	return (
 		// 回合边界：用户消息前留 28px（比回合内 8px 大得多），长对话里一眼找到“这一轮从哪开始”
-		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
+		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={message.id}>
 			{images.length > 0 && (
 				<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
 					{images.map((image, index) => (
@@ -916,6 +925,23 @@ const UserMessage = memo(function UserMessage({ message }: { message: WebMessage
 			)}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
 			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
+			{badge && (
+				<button
+					type="button"
+					className="pw-chip mt-1.5"
+					title={t.chatRoundShow}
+					onClick={() => onShowRound?.(badge.commit)}
+					data-testid="round-badge"
+				>
+					{badge.files ? t.chatRoundChanged.replace("{n}", String(badge.files)) : t.chatRoundNoChanges}
+					{badge.files > 0 && (
+						<>
+							<span style={{ color: "var(--dsw-success)" }}> +{badge.add}</span>
+							<span style={{ color: "var(--dsw-danger)" }}> −{badge.del}</span>
+						</>
+					)}
+				</button>
+			)}
 			{/* 用户消息只有复制操作，不提供分支；时钟在图标左侧（dsh clock=start） */}
 			{text && <MessageActions text={text} clockStart={message.timestamp !== undefined} time={message.timestamp} />}
 		</div>
@@ -969,6 +995,8 @@ function TurnBlock({
 	onFork,
 	onInspectTool,
 	onOpenFile,
+	roundBadge,
+	onShowRound,
 }: {
 	turn: Turn;
 	messages: WebMessage[];
@@ -986,6 +1014,8 @@ function TurnBlock({
 	onFork?: (entryId: string) => void;
 	onInspectTool?: (toolCallId: string) => void;
 	onOpenFile?: (path: string) => void;
+	roundBadge?: RoundBadge;
+	onShowRound?: (commit: string) => void;
 }) {
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
@@ -1035,7 +1065,7 @@ function TurnBlock({
 
 	return (
 		<>
-			{user && <UserMessage message={user} />}
+			{user && <UserMessage message={user} badge={roundBadge} onShowRound={onShowRound} />}
 			{showProcess && (
 				<div className="pw-turn">
 					{contextFiles?.map((resource, i) => (
@@ -1147,6 +1177,8 @@ export function ChatWindow({
 	stats,
 	onOpenTrajectory,
 	onOpenFile,
+	roundBadges,
+	onShowRound,
 }: {
 	messages: WebMessage[];
 	tools: Record<string, ToolCardState>;
@@ -1172,6 +1204,10 @@ export function ChatWindow({
 	onOpenTrajectory?: (toolCallId: string) => void;
 	/** 在本机编辑器打开工具行涉及的文件 */
 	onOpenFile?: (path: string) => void;
+	/** 用户消息 id → 这一轮的改动摘要（项目生长的 commit） */
+	roundBadges?: ReadonlyMap<string, RoundBadge>;
+	/** 点提问下方的「本轮改了 N 个文件」：在项目栏里打开这一轮 */
+	onShowRound?: (commit: string) => void;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const stickToBottom = useRef(true);
@@ -1256,6 +1292,8 @@ export function ChatWindow({
 							onFork={onFork}
 							onInspectTool={onOpenTrajectory}
 							onOpenFile={onOpenFile}
+							roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
+							onShowRound={onShowRound}
 						/>
 					))}
 					{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}

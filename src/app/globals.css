@@ -886,6 +886,11 @@ body[data-ds-dark-theme] {
 	max-width: 85%;
 	font-size: var(--piweb-chat-font-size);
 	line-height: 1.65;
+	transition: box-shadow var(--ds-duration-normal) var(--ds-ease-in-out);
+}
+/* 从项目栏「在对话里看」跳过来：这一轮的提问短暂描边 */
+[data-role="user"][data-flash] .msg-user-bubble {
+	box-shadow: 0 0 0 2px var(--dsw-accent);
 }
 
 /* 消息操作图标行：常显低透明度，悬停变亮（dsh 同款） */
@@ -1768,6 +1773,50 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 /* 轮次导航 */
 .pw-timeline {
 	flex: none;
+}
+/* 生长时间轴：每轮一根柱，底对齐，超出横向滚动；高度由内联样式给（= 改动行数） */
+.pw-tl-rail {
+	display: flex;
+	align-items: flex-end;
+	gap: 3px;
+	height: 34px;
+	padding: 6px 10px 2px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.pw-tl-rail::-webkit-scrollbar {
+	display: none;
+}
+.pw-tl-bar {
+	flex: none;
+	width: 8px;
+	min-height: 3px;
+	border-radius: 2px 2px 1px 1px;
+	opacity: 0.5;
+	transition: opacity var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-tl-bar:hover {
+	opacity: 0.85;
+}
+.pw-tl-bar[data-active] {
+	opacity: 1;
+	box-shadow: 0 0 0 1px var(--dsw-sidebar-fill), 0 0 0 2px var(--dsw-label-secondary);
+}
+/* 你在两轮之间自己的修改：灰色细柱 */
+.pw-tl-bar[data-kind="user"] {
+	width: 4px;
+}
+/* 本轮进行中：虚线占位 */
+.pw-tl-bar[data-running] {
+	height: 14px;
+	border: 1px dashed var(--dsw-label-caption);
+	background: transparent;
+	animation: pw-tl-breathe 1.6s var(--ds-ease-in-out) infinite;
+}
+@keyframes pw-tl-breathe {
+	50% {
+		opacity: 0.2;
+	}
 }
 
 /* 文件查看器：80vw × 80vh 居中，全屏切 100% */

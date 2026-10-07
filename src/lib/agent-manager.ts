@@ -26,7 +26,6 @@ import {
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
-import { userTurnsFromEntries } from "./growth-turns";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
@@ -37,7 +36,7 @@ import type {
 	AgentCommand,
 	ContextBreakdown,
 	ContextResource,
-	GrowthStep,
+	GrowthRound,
 	TrajEntry,
 	ToolPreset,
 	WebEvent,
@@ -79,7 +78,7 @@ interface Managed {
 	inflight: unknown | null;
 	/** 扩展界面请求桥（select/confirm/input/notify → 浏览器） */
 	ui: ExtensionUiBridge | null;
-	/** 项目生长：工作区快照的触发器（首个会话事件时创建，dispose 时释放） */
+	/** 项目生长：每轮一个 git commit 的触发器（首个会话事件时创建，dispose 时释放） */
 	growth: GrowthTracker | null;
 }
 
@@ -529,13 +528,18 @@ function growthOf(m: Managed): GrowthTracker {
 		m.growth.dispose();
 		m.growth = null;
 	}
-	return (m.growth ??= createGrowthTracker({ cwd: m.cwd, sessionPath: m.sessionPath, publish: (evt) => publish(m, evt) }));
+	return (m.growth ??= createGrowthTracker({
+		cwd: m.cwd,
+		sessionPath: m.sessionPath,
+		publish: (evt) => publish(m, evt),
+		entries: () => m.sm.getEntries() as never,
+	}));
 }
 
-/** 手动快照（项目栏「立即快照」）：记下的步同时广播给本会话的订阅者 */
-export async function growthSnapshot(m: Managed, label = ""): Promise<GrowthStep | null> {
+/** 立即记录（项目栏按钮）：把当前改动提交为「你的修改」，同时广播给本会话的订阅者 */
+export async function growthRecord(m: Managed): Promise<GrowthRound | null> {
 	touch(m);
-	return growthOf(m).snapshotNow(label);
+	return growthOf(m).recordNow();
 }
 
 // ---------- 会话生命周期 ----------
@@ -1163,7 +1167,6 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		contextBreakdown,
 		...resources,
 		messages,
-		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]),
 		growthError: m.growth?.getError?.() ?? null,
 		model,
 		thinkingLevel,
@@ -1240,8 +1243,8 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					// 只有用户显式选择 steer/followUp 才排队；旧的普通提交不能悄悄成为 steering。
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
 					if (!session.isStreaming) {
-						// 基线快照不能无限阻塞首条 prompt（git 不可用时每次探测至多 30s 超时）：
-						// 5s 内没完成就放行 prompt，快照后台补拍（工具结束后照常记步，外部修改兜底）。
+						// 先把用户两轮之间的修改单独提交，不混进 pi 这一轮；但不能无限阻塞 prompt
+						// （git 不可用时每次探测至多 30s 超时）：5s 内没完成就放行，提交在后台继续。
 						await Promise.race([
 							growthOf(m).prepare().catch(() => undefined),
 							new Promise<void>((resolve) => setTimeout(resolve, 5000)),

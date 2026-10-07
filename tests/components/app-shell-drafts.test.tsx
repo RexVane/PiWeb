@@ -9,7 +9,7 @@ const model = { id: "test-model", name: "Test", provider: "test", reasoning: fal
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
-vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({}) }));
+vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {} }) }));
 vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>
@@ -25,7 +25,7 @@ vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 		archivedSessions: [], archivedSessionPaths: [], addedWorkspaces: ["/workspace"], removedWorkspaces: [], workspaceAliases: {},
 		currentPath, currentId: currentPath, models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
 		state: { snapshot: currentPath ? { cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: { steering: [], followUp: [] } } : null,
-			messages: [], tools: {}, growth: { steps: [], pending: false }, extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true },
+			messages: [], tools: {}, growth: { rounds: [], error: null }, extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true },
 		getWorkspaceName: (cwd: string) => cwd, sendCommand: mocks.sendCommand,
 		newSession: async (...args: unknown[]) => { const path = await mocks.newSession(...args); if (path) setCurrentPath(path); return path; },
 		openSession: setCurrentPath, closeSession: () => setCurrentPath(null),
