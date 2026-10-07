@@ -2,6 +2,27 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 18:11 +08:00 | claude-opus-5-5 | 保存模型配置后，已打开的会话立即用上新定义（`a267b3d`）
+- 起因：用户 18:01 在设置里对 grok-4.7 点了「用内置能力」并保存（`models.json` 已是完整定义：思考 low–xhigh、看图、500K），回来说「还是不行」
+- 原因（在运行中的服务上只读核实）：`/api/models` 目录已是 Grok 4.7 + low/medium/high/xhigh；但活跃会话（workProject，16:49 建）JSONL 里开局记的是 `thinking_level_change: off`。pi 的 `session.reload()` 只重载设置/资源/扩展，不碰模型；PiWeb 保存后只 `resetModelRuntime()` 给新会话换新 runtime，旧会话的 runtime 和 `session.model` 一直停在保存前 → 菜单仍「此模型不支持」。只有在菜单里主动选模型（`setModel` 从新目录取对象）才会换
+- 改了什么：
+  - `agent-manager.ts` 新增 `refreshSessionModels()`：活跃会话原地 `session.modelRuntime.refresh({ allowNetwork: false })`（多个会话共用的 runtime 只刷一次），当前模型换成新定义（同 pi 私有 `_refreshCurrentModelFromRegistry` 的做法，不记 model_change）；可用档位变了就 `session.setModel(next, { persist: false })` 走 pi 切模型的档位规则（单模型设置 > 全局默认，用户默认 max → Grok 4.7 钳到 xhigh），再 `reapplyDesiredLevel`，最后推 model 事件。页面开着的冷会话按新目录推档位
+  - 冷会话模型/档位还原从 `buildSnapshot` 抽成 `coldModelState()`，语义不变
+  - `models-service.ts` 的 `writeCustomProviders` 在 `reloadSessionsForCwd()` 之后调用它
+  ```ts
+  // src/lib/agent-manager.ts:1052
+  const levels = session.getAvailableThinkingLevels().join();
+  session.agent.state.model = next;
+  if (session.getAvailableThinkingLevels().join() !== levels) {
+  	await session.setModel(next, { persist: false }).catch(() => session.setThinkingLevel(session.thinkingLevel));
+  	reapplyDesiredLevel(m, session);
+  }
+  publishModelState(m, session);
+  ```
+- 验证：`tsc --noEmit` 通过；全量 vitest **77 文件 493 通过 + 1 跳过**；新增 `tests/agent-model-refresh.test.ts`（真实 SDK、离线、禁网）：退化条目建会话只剩 off → `writeCustomProviders` 删掉条目 → 同一会话 reasoning true、档位等于内置、档位按默认 max 钳制、推了 model 事件；修复前的代码挂在 reasoning 断言上
+- 影响文件：`src/lib/agent-manager.ts`、`src/lib/models-service.ts`、`tests/agent-model-refresh.test.ts`
+- 下一步：用户当前会话在模型菜单里重选一次 Grok 4.7（或新开会话）即可生效；以后在设置里保存模型配置，已打开的会话会立即更新
+
 ## 2026-10-07 17:47 +08:00 | claude-opus-5-5 | grok-4.7「此模型不支持」思考的原因；内置提供方覆盖删空时整块移除（`590d2aa`）
 - 起因：用户截图模型菜单里 grok-4.7 显示「思考 · 此模型不支持」，问「为什么模型不支持思考强度？」
 - 原因（只读核对，未改用户配置）：用户 12:03 在 `~/.pi/agent/models.json` 加了 `xai: {api: "openai-responses", models: [{id: "grok-4.7"}]}`，当时 pi 0.85.1 内置 xAI 只有 grok-4.3/4.5/4.6（下载 0.85.1 包核对）；12:49 升 pi 1.0.4（`451d519`）后内置了 Grok 4.7（思考 low/medium/high/xhigh、看图、500K）。pi 规则是 `models` 同 ID 条目整条替换内置定义，于是生效定义回落缺省：reasoning false、只收文字、128K/16K，思考菜单只剩 off。用 pi 的 `ModelRuntime` 只读对比两份定义确认
