@@ -2,6 +2,32 @@
 
 > 更早的条目：[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 12:17 +08:00 | claude-opus-5-5 | A 完成：生长树改为每轮一个 git commit，按轮显示改动（`7e7a501`）
+- 改了什么：
+  - **存储**（`growth-service.ts`）：`snapshot()` 改为 `commitRound()`（:671），每轮 commit 到 `refs/piweb/rounds/<key>`，仍用独立暂存区 `GIT_INDEX_FILE`，不动 HEAD/分支/用户暂存区；元信息写进 commit：
+  ```
+  把保存按钮改成红色            ← 提问首行（按码点截 72 字，控制字符清掉）
+
+  Piweb-Kind: round           ← round / user（你的修改）/ baseline（工作区第一个 commit）
+  Piweb-Session: <会话 JSONL 文件名>
+  Piweb-Prompts: <用户消息 entryId,…>
+  Piweb-Status: done           ← done / aborted / error
+  ```
+  - 删掉 `ledger.jsonl` 与逐工具快照；链头直接 `for-each-ref` 读；`update-ref <ref> new old` 带旧值校验，别的进程抢先提交时按新链头重挂（最多 3 次）
+  - **读取**：`readRounds()`（:794）一次 `git log -z --raw --numstat -M` 读回整条链，`parseRoundLog()`（:482）同时解析状态字母、行数、重命名、二进制和 trailers；按 commit 缓存，链头变了只增量读；只读路径用 fs 判断引用是否存在（含 commondir / packed-refs），不建仓库；`log.showRoot/showSignature/diff.relative` 用 `-c` 关掉，防用户配置污染输出
+  - **触发**（`growth-tracker.ts` 328→~130 行）：`prepare()`（发 prompt 前）调 `recordWorkspaceChanges()` 把两轮之间用户自己的修改记成「你的修改」（工作区还没提交过时记基线）；`agent_start`→`agent_settled` 为一轮（重试的第二次 agent_start 不重开），结束时从会话条目取本轮提问（`growth-turns.ts` 的 `promptsFromEntries`），没改动也提交空 commit，轮号与对话一一对应；删掉 `fs.watch`、外部修改去抖、`growth_pending` 事件
+  - **接口**：`GET /api/growth` 返回 `{available, rounds}`；`POST {action:"record"}` 取代 `snapshot`；tree 相关四个接口不变
+  - **前端**：`useGrowth` 改为按轮（「本轮」用 commit 自带清单、「本会话累计」= 会话起点→所选轮；基线不显示，「你的修改」不占轮号）；加 `watchRounds`：有会话就拉时间轴（对话标签要用），磁盘目录仍只在面板打开时拉；`ProjectPanel` 头部显示提问/时间/文件数/±行数/在对话里看，范围「本轮 | 本会话累计」，「只看改动」默认开；时间轴柱高 = 改动行数（对数缩放）
+  - **对话**：每条提问下加「本轮改了 N 个文件 +a −d」（`ChatWindow` 的 `RoundBadge`），点击打开项目栏并选中这一轮；提问气泡带 `data-message-id`，项目栏「在对话里看」滚过去并描边闪一下
+  - **顺手修的老问题**：`.pw-tl-rail` / `.pw-tl-bar` 从来没有样式定义（git 历史里也没有），旧时间轴的柱子宽度为 0、实际看不见，这次补上
+  - 注册表全局键改为 `__piWebGrowthRounds`：dev 热更新后不复用旧结构（快照 + 账本）的工作区状态；`GROWTH_TRACKER_VERSION` 3→4 让旧 tracker 自动换新
+  - 删除 `growth-rounds.ts`（按时间对齐轮次）与快照里的 `userTurns`；i18n 删 14 个旧键、加 13 个新键，「快照」统一改称「记录」
+- 验证：`tsc --noEmit` 通过；全量 vitest **55 文件 386 通过 + 1 跳过**；真实实例（30141）冒烟：临时目录新建会话 → 立即记录得到基线 → 无改动返回 null → 改文件得到「你的修改」（变更正确）→ 接口读回 `baseline,user` → `git log` 能看到标题与 trailers、HEAD 未诞生、无账本；未在会话库留下文件
+- 未验证：真的跑一轮模型后的 round commit（需要花用户的 token，没发 prompt；已由真实 git 的 tracker 单测覆盖）
+- 旧数据：今天旧版留下的 `refs/piweb/growth/*` 与 `.git/piweb/ledger.jsonl` 不迁移、不删除；清理命令在 M5 写进 README
+- 影响文件：`src/lib/growth-service.ts`、`src/lib/growth-tracker.ts`、`src/lib/growth-turns.ts`、`src/lib/types.ts`、`src/lib/agent-manager.ts`、`src/app/api/growth/route.ts`、`src/hooks/useGrowth.ts`、`src/hooks/usePiWeb.ts`、`src/components/ProjectPanel.tsx`、`src/components/ChatWindow.tsx`、`src/components/FileViewer.tsx`、`src/components/AppShell.tsx`、`src/app/globals.css`、`src/i18n.tsx`，及对应测试（删 `growth-rounds` 两个文件，新增 `tests/components/chat-round-badge.test.tsx`）
+- 下一步：B1 浏览器内核（先做 pipe 传输在 Windows + Edge/Chrome 上的 spike）
+
 ## 2026-10-07 11:54 +08:00 | claude-opus-5-5 | 方向变更：开发者模式改「pi 的眼睛」+ 生长树改「每轮一个 git commit」（M0 收尾）
 - 为什么改：iframe 嵌入有几个根治不了的问题——跨源碰不到 DOM、要注入或代理、X-Frame-Options/CSP 白屏、第三方上下文里应用登录 Cookie 发不出去、侧栏最宽 640px；托管 dev server 也划不来。用户拍板改方向，计划全文见 `C:\Users\guica\.claude\plans\bubbly-meandering-dream.md`
 - 用户确认的决定：
