@@ -2,6 +2,14 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 18:52 +08:00 | muse-spark-1.3-contributor-free | 提交 README 状态段并清理 backups 旧备份
+- 改了什么：
+  - 提交 `README.md` / `README_zh.md` 状态段更新（此前工作区未提交的改动）：同步近三次更新——设置保存模型配置后已打开会话即时生效、回答边生成边渲染 Markdown、内置提供方覆盖删空时整块移除；测试数更新为 **79 文件 496 通过 + 1 跳过**；已知限制补生长记录与浏览器工具条目。`git diff --check` 通过，纯文档改动
+  - 清理磁盘：删除 `backups/2026-10-07-iframe-dev-preview/`（35KB，已被还原的 iframe 实验残留；`backups/` 本就进 `.gitignore`，不进提交）
+  - 未动：`.next-dev-webpack/`（约 258MB 构建缓存，用户选择保留，dev 重建会耗时）、`docs/plan-2026-10-07-growth-browser.md`（历史计划文档，保留）
+- 影响文件：`README.md`、`README_zh.md`（提交）；`backups/`（磁盘删除，未跟踪）
+- 下一步：无待办，等用户反馈
+
 ## 2026-10-07 18:34 +08:00 | claude-opus-5-5 | 重启服务核对 Grok 4.7 思考；回答改为边生成边渲染 Markdown（`fea3690`）
 - 起因：用户「重启看看」（服务此前已停，30141 无监听）；随后问「输出不是实时渲染的吗？」
 - 重启：按原方式在可见 PowerShell 窗口跑 `piweb`（全局命令是到本仓库的 junction，无 `.next/BUILD_ID` → dev），PiWeb 0.3.4 / pi 1.0.4。核对：目录 Grok 4.7 思考 low–xhigh；workProject 会话 18:19 切到 xhigh，之后回复带思考。更正此前说法：16:49 那几条也有推理（44/413/271 tokens）——Grok 4.7 总会思考（内置定义 off 为 null），旧定义下只是没发强度。旧会话开局记的 off 恢复时钳到 low（与终端 pi 同规则），新会话默认 max → xhigh
