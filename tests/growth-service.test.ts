@@ -39,22 +39,17 @@ describe("growth-service parsers", () => {
 
 describe("growth-service snapshots (real git)", () => {
 	let tempDir = "";
-	let previousAgentDir: string | undefined;
 	let work = "";
 	let available = false;
 
 	beforeEach(async () => {
-		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-"));
-		process.env.PI_CODING_AGENT_DIR = path.join(tempDir, "agent");
 		work = path.join(tempDir, "work");
 		await fs.mkdir(work, { recursive: true });
 		available = await isAvailable();
 	});
 
 	afterEach(async () => {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 	});
 
@@ -107,8 +102,8 @@ describe("growth-service snapshots (real git)", () => {
 		expect(content.content).toBe("# hi\nline2 changed\nline3\n");
 		await expect(fileContent(work, step3!.tree, "README.md")).rejects.toThrow(/not found/);
 
-		// 账本可以从磁盘重新读回（新进程）
-		const ledger = await fs.readFile(path.join(tempDir, "agent", "web-growth", workspaceKey(work), "ledger.jsonl"), "utf8");
+		// 账本可以从磁盘重新读回（新进程）：跟随工作区自己的 .git
+		const ledger = await fs.readFile(path.join(work, ".git", "piweb", "ledger.jsonl"), "utf8");
 		expect(ledger.trim().split("\n")).toHaveLength(3);
 	}, 20_000);
 
@@ -125,6 +120,49 @@ describe("growth-service snapshots (real git)", () => {
 		await fs.writeFile(path.join(work, files[0]), "changed");
 		const changed = await snapshot(work, { kind: "tool", label: "edit", session });
 		expect(changed?.changes).toEqual([{ status: "M", path: files[0], add: 1, del: 1 }]);
+	}, 20_000);
+
+	it("auto-initializes a non-git workspace and keeps HEAD unborn", async () => {
+		if (!available) return;
+		const session = path.join(tempDir, "init.jsonl");
+		await fs.writeFile(path.join(work, "a.txt"), "a\n");
+		expect(await fs.stat(path.join(work, ".git")).catch(() => null)).toBeNull();
+
+		const base = await snapshot(work, { kind: "baseline", label: "", session, force: true });
+		expect(base?.initial).toBe(true);
+		// 自动 init 的仓库：HEAD 指向未诞生分支，快照链只挂在专用引用上
+		const head = await fs.readFile(path.join(work, ".git", "HEAD"), "utf8");
+		expect(head.trim()).toMatch(/^ref: refs\/heads\//);
+		const ref = execFileSync("git", ["-C", work, "for-each-ref", "--format=%(refname)", "refs/piweb/"], { encoding: "utf8", windowsHide: true }).trim();
+		expect(ref).toBe(`refs/piweb/growth/${workspaceKey(work)}`);
+		// 用户分支引用一个都不许有
+		expect(execFileSync("git", ["-C", work, "for-each-ref", "refs/heads/"], { encoding: "utf8", windowsHide: true })).toBe("");
+		expect((await listTree(work, base!.tree)).map((f) => f.path)).toEqual(["a.txt"]);
+		// 账本能从工作区 .git 里读回
+		const steps = await readSteps(work, session);
+		expect(steps.map((s) => s.seq)).toEqual([1]);
+	}, 20_000);
+
+	it("nested-initializes a workspace that is a subdirectory of another repository", async () => {
+		if (!available) return;
+		const session = path.join(tempDir, "nested.jsonl");
+		const parent = path.join(tempDir, "parent-repo");
+		const sub = path.join(parent, "sub");
+		await fs.mkdir(sub, { recursive: true });
+		execFileSync("git", ["init", "-q", parent], { windowsHide: true });
+		const parentRefsBefore = execFileSync("git", ["-C", parent, "for-each-ref"], { encoding: "utf8", windowsHide: true });
+		const parentIndexBefore = await fs.readFile(path.join(parent, ".git", "index")).catch(() => null);
+		await fs.writeFile(path.join(sub, "inner.txt"), "inner\n");
+		await fs.writeFile(path.join(parent, "outer.txt"), "outer\n");
+
+		const base = await snapshot(sub, { kind: "baseline", label: "", session, force: true });
+		expect(base?.initial).toBe(true);
+		// 快照范围恰好是工作区：父仓库的 outer.txt 不出现
+		expect((await listTree(sub, base!.tree)).map((f) => f.path)).toEqual(["inner.txt"]);
+		// 父仓库零改动（无新引用、index 原样）
+		expect(execFileSync("git", ["-C", parent, "for-each-ref"], { encoding: "utf8", windowsHide: true })).toBe(parentRefsBefore);
+		const parentIndexAfter = await fs.readFile(path.join(parent, ".git", "index")).catch(() => null);
+		expect(parentIndexAfter === null ? parentIndexBefore === null : parentIndexBefore !== null && parentIndexAfter.equals(parentIndexBefore)).toBe(true);
 	}, 20_000);
 
 	it("preserves baseline and the workspace Git index across non-empty file/directory replacements", async () => {
@@ -164,10 +202,15 @@ describe("growth-service snapshots (real git)", () => {
 		expect((await fileContent(work, base!.tree, "p")).content).toBe("original file\n");
 		expect((await changesBetween(work, base!.tree, file!.tree))).toEqual([{ status: "M", path: "p", add: 1, del: 1 }]);
 		expect(await snapshot(work, { kind: "turn", label: "", session })).toBeNull();
+		// 用户仓库自身的 index / HEAD / config 一个字节都不能动
 		expect((await fs.readFile(path.join(gitDir, "index"))).equals(indexBefore)).toBe(true);
 		expect((await fs.readFile(path.join(gitDir, "HEAD"))).equals(headBefore)).toBe(true);
 		expect((await fs.readFile(path.join(gitDir, "config"))).equals(configBefore)).toBe(true);
-		expect((await fs.readdir(gitDir, { recursive: true })).sort()).toEqual(entriesBefore);
+		// 新增条目只允许是快照对象、专用引用和 piweb 私有目录
+		const entriesAfter = (await fs.readdir(gitDir, { recursive: true })).sort();
+		const fresh = entriesAfter.filter((entry) => !entriesBefore.includes(entry));
+		expect(fresh.every((entry) => /^(objects([\\/]|$)|refs[\\/]piweb([\\/]|$)|piweb([\\/]|$))/.test(entry))).toBe(true);
+		expect(fresh.some((entry) => entry.startsWith("piweb"))).toBe(true);
 	}, 30_000);
 
 	it("removes all type conflicts before adding paths across multiple batches", async () => {

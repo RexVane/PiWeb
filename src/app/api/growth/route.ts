@@ -12,7 +12,7 @@ function status(err: unknown): number {
 }
 
 /**
- * 项目生长（影子仓库快照）只读接口：
+ * 项目生长（工作区快照）只读接口：
  * ?cwd=&session=<jsonl 路径>        本会话的步（省略 session = 工作区全部步）
  * ?cwd=&tree=<hash>&list=1           某一步的文件清单
  * ?cwd=&from=<tree>&to=<tree>&changes=1   两步之间的变更清单

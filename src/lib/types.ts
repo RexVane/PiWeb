@@ -163,7 +163,7 @@ export interface WebStats {
 	decodeTokens: number;
 }
 
-// ---------- 项目生长（影子仓库快照） ----------
+// ---------- 项目生长（工作区快照） ----------
 
 export type GrowthStepKind = "baseline" | "tool" | "turn" | "external" | "manual";
 

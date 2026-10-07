@@ -1,11 +1,18 @@
 /**
- * growth-service：项目生长快照引擎（影子仓库）。
+ * growth-service：项目生长快照引擎（工作区自带 git，无影子仓库）。
  *
- * 每个工作区在 ~/.pi/agent/web-growth/<key>/ 下有一个裸 git 仓库（repo/）和一份账本（ledger.jsonl）。
- * 快照 = 以工作区为 work-tree 往影子索引里 update-index，再 write-tree 得到 tree 哈希；
+ * 快照直接落在工作区自己的 git 仓库里：非 git 目录在首次快照前自动 `git init`；
+ * 工作区若只是别的仓库的子目录，则在自身根目录嵌套 init，保证快照范围恰好等于工作区。
+ * 内容对象存在工作区的 .git/objects（与用户自己的提交天然去重），每步 commit-tree 后挂到
+ * 专用引用 refs/piweb/growth/<key>：不碰 HEAD、不碰用户暂存区、不占分支。
+ * PiWeb 自己的暂存区是 <gitdir>/piweb/index（GIT_INDEX_FILE 传入），账本是
+ * <gitdir>/piweb/ledger.jsonl，排除规则是 <gitdir>/piweb/exclude（绝不改写用户的 info/exclude）。
+ *
+ * 快照 = 以工作区为 work-tree 往独立索引里 update-index，再 write-tree 得到 tree 哈希；
  * 两步之间用 diff-tree 得增删改清单，任意两步任意文件用 git diff 得行级 patch，cat-file 取任意步全文。
- * 每步顺手 commit-tree 到 refs/piweb/growth，让所有快照可达、不会被 gc 清掉。
- * 用户自己的 .git 零改动；非 git 目录同样可用；工作区的 .gitignore 与这里的 info/exclude 都生效。
+ * 每步顺手 commit-tree 到专用引用，让所有快照可达、不会被 gc 清掉。
+ * 工作区的 .gitignore / info/exclude / 全局 excludesFile 与生成的排除文件都生效；
+ * 没有 git、目录不可写或项目过大时本会话停用跟踪。
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -13,22 +20,22 @@ import { existsSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
-import { getAgentDir } from "./pi";
 import type { GrowthChange, GrowthStep, GrowthStepKind } from "./types";
 
-/** 单文件快照上限：超过的不进影子仓库（树里也就看不到它） */
+/** 单文件快照上限：超过的不进快照（树里也就看不到它） */
 export const MAX_FILE_BYTES = 1024 * 1024;
 /** 单次 patch 输出上限 */
 const MAX_PATCH_BYTES = 4 * 1024 * 1024;
 /** 单文件全文预览上限 */
 const MAX_CONTENT_BYTES = 256 * 1024;
-/** 防止意外把依赖/缓存仓库完整哈希入库，导致工作区长时间卡住。 */
+/** 防止意外把依赖/缓存目录完整哈希入库，导致工作区长时间卡住。 */
 const MAX_CANDIDATES = 50_000;
 /** 每步账本里最多记多少条变更；更多的由前端按 tree 对再取 */
 const MAX_CHANGES_PER_STEP = 2000;
-const GROWTH_REF = "refs/piweb/growth";
+/** 快照提交链的专用引用前缀：每个工作区一条 refs/piweb/growth/<key>，多 worktree 互不覆盖 */
+const GROWTH_REF_PREFIX = "refs/piweb/growth";
 
-/** 不进快照的目录 / 文件（写进影子仓库的 info/exclude）；工作区自己的 .gitignore 同样生效 */
+/** 不进快照的目录 / 文件（写进 <gitdir>/piweb/exclude）；工作区自己的 .gitignore 等同样生效 */
 export const EXCLUDE_DIRS = GROWTH_EXCLUDE_DIRS;
 const EXCLUDE_FILES = [".DS_Store", "Thumbs.db", "*.log", ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*"];
 const EXCLUDED_DIR_SET = new Set(EXCLUDE_DIRS.map((d) => d.toLowerCase()));
@@ -47,15 +54,22 @@ export class GrowthError extends Error {
 interface WorkspaceState {
 	key: string;
 	cwd: string;
-	dir: string;
-	repo: string;
+	/** 工作区自己的 git-dir（rev-parse --absolute-git-dir 解析，兼容 worktree 的 gitfile） */
+	gitDir: string;
+	/** PiWeb 专用暂存区（GIT_INDEX_FILE 传入）：用户自己的 index 永不触碰 */
+	indexFile: string;
+	/** PiWeb 专用排除文件（--exclude-from 传入）：不改写用户仓库的 info/exclude */
+	excludeFile: string;
+	/** 步元信息账本：<gitdir>/piweb/ledger.jsonl，跟随工作区的 .git 走 */
 	ledger: string;
+	/** 本工作区快照链的专用引用：refs/piweb/growth/<key> */
+	ref: string;
 	steps: GrowthStep[];
 	lastTree?: string;
 	lastCommit?: string;
 	emptyTree: string;
 	excludeRules?: string;
-	/** 同一工作区的快照串行执行（共用一个影子索引） */
+	/** 同一工作区的快照串行执行（共用同一个 PiWeb 暂存区） */
 	lock: Promise<unknown>;
 }
 
@@ -77,7 +91,7 @@ function comparablePath(p: string): string {
 	return process.platform === "win32" ? norm.toLowerCase() : norm;
 }
 
-/** 工作区目录名：路径 slug + 8 位哈希（Windows 大小写不敏感） */
+/** 工作区目录名：路径 slug + 8 位哈希（Windows 大小写不敏感）；用作引用后缀与注册表键 */
 export function workspaceKey(cwd: string): string {
 	// Canonicalize first: Windows may report an 8.3 short path (RUNNER~1) in one call and
 	// the long path in another, and two spellings must not split one workspace's ledger.
@@ -208,26 +222,84 @@ async function gitOk(): Promise<boolean> {
 	return check;
 }
 
-/** 影子仓库命令：固定 git-dir / work-tree，关掉换行转换与路径转义，输出按字节原样 */
+/**
+ * 快照命令基础配置：关掉换行转换与路径转义，输出按字节原样。
+ * LFS 类 clean 过滤必须禁用：快照要存文件原始字节，而不是指针文本
+ * （用户仓库的 .gitattributes + 全局 filter.lfs.* 配置会同时命中工作区仓库）。
+ */
+const BASE_CONFIG = [
+	"-c", "core.autocrlf=false",
+	"-c", "core.safecrlf=false",
+	"-c", "core.quotepath=false",
+	"-c", "core.fsmonitor=false",
+	"-c", "core.untrackedCache=false",
+	"-c", "filter.lfs.clean=",
+	"-c", "filter.lfs.smudge=",
+	"-c", "filter.lfs.process=",
+	"-c", "filter.lfs.required=false",
+];
+
+/**
+ * 工作区仓库命令：固定 git-dir / work-tree，一律使用 PiWeb 专用暂存区。
+ * GIT_INDEX_FILE 对纯对象读取（cat-file/diff-tree…）无副作用，统一带上避免漏传。
+ */
 async function shadow(ws: WorkspaceState, args: string[], opts: { input?: Buffer | string; maxBuffer?: number; allowFail?: boolean; env?: Env } = {}): Promise<RunResult> {
-	const base = [
-		"--git-dir", ws.repo,
-		"--work-tree", ws.cwd,
-		"-c", "core.autocrlf=false",
-		"-c", "core.safecrlf=false",
-		"-c", "core.quotepath=false",
-		"-c", "core.fsmonitor=false",
-		"-c", "core.untrackedCache=false",
-	];
-	const r = await runGit([...base, ...args], { cwd: ws.cwd, input: opts.input, maxBuffer: opts.maxBuffer, env: opts.env });
+	const base = ["--git-dir", ws.gitDir, "--work-tree", ws.cwd, ...BASE_CONFIG];
+	const env: Env = { GIT_INDEX_FILE: ws.indexFile, ...opts.env };
+	const r = await runGit([...base, ...args], { cwd: ws.cwd, input: opts.input, maxBuffer: opts.maxBuffer, env });
 	if (r.code !== 0 && !opts.allowFail) {
 		throw new GrowthError(`git ${args[0]} failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`);
 	}
 	return r;
 }
 
-function growthRoot(): string {
-	return path.join(getAgentDir(), "web-growth");
+function realpathSafe(p: string): string {
+	try {
+		return realpathSync.native(p);
+	} catch {
+		return p;
+	}
+}
+
+/**
+ * 不启动 git 进程解析工作区的 git-dir（读账本的快速路径）：
+ * `.git` 是目录直接用，是文件则按 worktree/submodule 的 gitfile 解析。
+ * 账本只可能写在「工作区自身仓库」的 git-dir 下，父级仓库不在考虑范围。
+ */
+async function resolveGitDirFast(cwd: string): Promise<string | null> {
+	const dotgit = path.join(cwd, ".git");
+	const stat = await fs.stat(dotgit).catch(() => null);
+	if (stat?.isDirectory()) return dotgit;
+	if (stat?.isFile()) {
+		const text = await fs.readFile(dotgit, "utf8").catch(() => "");
+		const match = /^gitdir:[ \t]*(.+)$/m.exec(text);
+		if (match) return path.resolve(cwd, match[1].trim());
+	}
+	return null;
+}
+
+/**
+ * 解析工作区可用的 git-dir：工作区已是某仓库的工作树根就直接复用；
+ * 否则（非 git 目录、或只是别的仓库的子目录）在工作区根 `git init`。
+ * init 失败（目录不可写等）按终态处理，本会话停用生长跟踪。
+ */
+async function ensureGitDir(cwd: string): Promise<string> {
+	const usable = async (): Promise<string | null> => {
+		const r = await runGit(["rev-parse", "--absolute-git-dir", "--show-toplevel", "--is-bare-repository"], { cwd });
+		if (r.code !== 0) return null;
+		const [gitDir = "", top = "", bare = ""] = r.stdout.toString("utf8").split("\n").map((s) => s.trim());
+		if (!gitDir || bare === "true" || !top) return null;
+		// 快照范围必须恰好等于工作区：落在别的仓库的子目录里时，宁可嵌套 init 自己的仓库
+		if (comparablePath(realpathSafe(top)) !== comparablePath(realpathSafe(cwd))) return null;
+		return gitDir;
+	};
+	const existing = await usable();
+	if (existing) return existing;
+	const r = await runGit(["init", "-q"], { cwd });
+	if (r.code !== 0) throw new GrowthError(`git init failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`, "unavailable");
+	const created = await usable();
+	if (!created) throw new GrowthError("workspace cannot be used as a git repository", "unavailable");
+	return created;
 }
 
 function parseStep(line: string): GrowthStep | null {
@@ -243,22 +315,26 @@ function parseStep(line: string): GrowthStep | null {
 async function createWorkspace(cwd: string): Promise<WorkspaceState> {
 	if (!(await gitOk())) throw new GrowthError("git is not installed", "unavailable");
 	const key = workspaceKey(cwd);
-	const dir = path.join(growthRoot(), key);
-	const repo = path.join(dir, "repo");
-	const ledger = path.join(dir, "ledger.jsonl");
-	await fs.mkdir(dir, { recursive: true });
-	const initialized = await fs.stat(path.join(repo, "HEAD")).then(() => true, () => false);
-	if (!initialized) {
-		const r = await runGit(["init", "-q", "--bare", repo]);
-		if (r.code !== 0) throw new GrowthError(`git init failed: ${r.stderr.trim()}`);
-	}
-	await fs.mkdir(path.join(repo, "info"), { recursive: true });
-	await fs.writeFile(path.join(repo, "info", "exclude"), EXCLUDE_CONTENT, "utf8");
-	await fs.writeFile(path.join(dir, "meta.json"), JSON.stringify({ cwd, key, createdAt: new Date().toISOString() }, null, 2), "utf8");
+	const gitDir = await ensureGitDir(cwd);
+	const piwebDir = path.join(gitDir, "piweb");
+	await fs.mkdir(piwebDir, { recursive: true });
+	const ws: WorkspaceState = {
+		key,
+		cwd,
+		gitDir,
+		indexFile: path.join(piwebDir, "index"),
+		excludeFile: path.join(piwebDir, "exclude"),
+		ledger: path.join(piwebDir, "ledger.jsonl"),
+		ref: `${GROWTH_REF_PREFIX}/${key}`,
+		steps: [],
+		emptyTree: "",
+		lock: Promise.resolve(),
+	};
+	await fs.writeFile(ws.excludeFile, EXCLUDE_CONTENT, "utf8");
 
 	const steps: GrowthStep[] = [];
 	try {
-		for (const line of (await fs.readFile(ledger, "utf8")).split("\n")) {
+		for (const line of (await fs.readFile(ws.ledger, "utf8")).split("\n")) {
 			if (!line.trim()) continue;
 			const s = parseStep(line);
 			if (s) steps.push(s);
@@ -266,7 +342,7 @@ async function createWorkspace(cwd: string): Promise<WorkspaceState> {
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
-	const ws: WorkspaceState = { key, cwd, dir, repo, ledger, steps, emptyTree: "", excludeRules: EXCLUDE_CONTENT, lock: Promise.resolve() };
+	ws.steps = steps;
 	const last = steps[steps.length - 1];
 	ws.lastTree = last?.tree;
 	ws.lastCommit = last?.commit;
@@ -280,10 +356,10 @@ async function getWorkspace(cwdValue: string): Promise<WorkspaceState> {
 	const key = workspaceKey(cwd);
 	let pending = registry.workspaces.get(key);
 	if (pending) {
-		// 影子仓库可能在运行期间被用户清理掉（~/.pi/agent/web-growth/<key>/）：缓存里的状态就指向不存在的 git-dir，
+		// 工作区的 .git 可能在运行期间被用户删掉重建：缓存里的状态就指向不存在的 git-dir，
 		// 之后每次快照都报 not a git repository。发现 HEAD 不在就丢掉缓存重建（账本也一并从头开始）
 		const ws = await pending.catch(() => null);
-		const alive = ws ? await fs.stat(path.join(ws.repo, "HEAD")).then(() => true, () => false) : false;
+		const alive = ws ? await fs.stat(path.join(ws.gitDir, "HEAD")).then(() => true, () => false) : false;
 		if (!alive) {
 			registry.workspaces.delete(key);
 			pending = undefined;
@@ -418,9 +494,12 @@ async function diffTreesRaw(ws: WorkspaceState, from: string, to: string): Promi
 	return changes;
 }
 
-/** 候选路径 → 更新影子索引；返回本次处理的文件数 */
+/** 候选路径 → 更新 PiWeb 专用索引；返回本次处理的文件数 */
 async function refreshIndex(ws: WorkspaceState): Promise<number> {
-	const listed = await shadow(ws, ["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard"]);
+	// --exclude-standard 让工作区的 .gitignore / info/exclude / 全局 excludesFile 生效；
+	// --exclude-from 叠加 PiWeb 自己的排除文件（用户仓库的 info/exclude 一个字节都不改）
+	const excludeFrom = ws.excludeFile.replace(/\\/g, "/");
+	const listed = await shadow(ws, ["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard", `--exclude-from=${excludeFrom}`]);
 	const candidates = Array.from(new Set(listed.stdout.toString("utf8").split("\0").filter((p) => p && !p.endsWith("/"))));
 	if (candidates.length > MAX_CANDIDATES) {
 		const counts = new Map<string, number>();
@@ -476,7 +555,7 @@ async function refreshIndex(ws: WorkspaceState): Promise<number> {
 	}
 	for (let i = 0; i < adds.length; i += INDEX_BATCH) {
 		// Git 的 --replace 只移除与待添加项冲突的索引项，兜底扫描期间的类型转换；
-		// --remove 同时容忍 lstat 后刚被删掉的文件。这些命令始终只操作影子 git-dir。
+		// --remove 同时容忍 lstat 后刚被删掉的文件。这些命令始终只操作 PiWeb 专用索引。
 		await shadow(ws, ["update-index", "--add", "--remove", "--replace", "-z", "--stdin"], { input: `${adds.slice(i, i + INDEX_BATCH).join("\0")}\0` });
 	}
 	return candidates.length;
@@ -488,7 +567,7 @@ export interface SnapshotMeta {
 	session: string;
 	toolCallId?: string;
 	toolName?: string;
-	/** tree 没变也记一步（会话基线用） */
+	/** tree 没变也记一步（会话基线 / 回合终点用） */
 	force?: boolean;
 }
 
@@ -499,7 +578,7 @@ export async function snapshot(cwdValue: string, meta: SnapshotMeta): Promise<Gr
 	const ws = await getWorkspace(cwdValue);
 	return withLock(ws, async () => {
 		if (ws.excludeRules !== EXCLUDE_CONTENT) {
-			await fs.writeFile(path.join(ws.repo, "info", "exclude"), EXCLUDE_CONTENT, "utf8");
+			await fs.writeFile(ws.excludeFile, EXCLUDE_CONTENT, "utf8");
 			ws.excludeRules = EXCLUDE_CONTENT;
 		}
 		await refreshIndex(ws);
@@ -520,7 +599,7 @@ export async function snapshot(cwdValue: string, meta: SnapshotMeta): Promise<Gr
 		const commitArgs = ["commit-tree", tree, "-m", `${meta.kind}: ${meta.label || "snapshot"}`];
 		if (ws.lastCommit) commitArgs.push("-p", ws.lastCommit);
 		const commit = (await shadow(ws, commitArgs, { env })).stdout.toString("utf8").trim();
-		await shadow(ws, ["update-ref", GROWTH_REF, commit]);
+		await shadow(ws, ["update-ref", ws.ref, commit]);
 
 		const step: GrowthStep = {
 			seq: (ws.steps[ws.steps.length - 1]?.seq ?? 0) + 1,
@@ -542,12 +621,7 @@ export async function snapshot(cwdValue: string, meta: SnapshotMeta): Promise<Gr
 		ws.steps.push(step);
 		ws.lastTree = tree;
 		ws.lastCommit = commit;
-		if (step.seq % 100 === 0) {
-			// 维护命令同样串行化，避免与下一张快照同时操作影子仓库。
-			void withLock(ws, async () => {
-				await shadow(ws, ["gc", "--auto", "-q"], { allowFail: true });
-			}).catch(() => undefined);
-		}
+		// 不在用户仓库里主动 gc：对象由 refs/piweb/growth/<key> 保活，仓库维护交还用户
 		return step;
 	});
 }
@@ -558,12 +632,14 @@ export async function isAvailable(): Promise<boolean> {
 	return gitOk();
 }
 
-/** 账本里的步：默认只取某个会话的；省略 session 取工作区全部。只读：还没建过影子仓库的工作区直接返回空 */
+/** 账本里的步：默认只取某个会话的；省略 session 取工作区全部。只读：还没快照过的工作区直接返回空（不创建 .git） */
 export async function readSteps(cwdValue: string, session?: string): Promise<GrowthStep[]> {
 	const cwd = await fs.realpath(path.resolve(cwdValue)).catch(() => path.resolve(cwdValue));
 	const key = workspaceKey(cwd);
 	if (!registry.workspaces.has(key)) {
-		const exists = await fs.stat(path.join(growthRoot(), key, "ledger.jsonl")).then(() => true, () => false);
+		const gitDir = await resolveGitDirFast(cwd);
+		if (!gitDir) return [];
+		const exists = await fs.stat(path.join(gitDir, "piweb", "ledger.jsonl")).then(() => true, () => false);
 		if (!exists) return [];
 	}
 	const ws = await getWorkspace(cwd);

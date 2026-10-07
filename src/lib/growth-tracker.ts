@@ -64,7 +64,7 @@ function relativeToCwd(cwd: string, p: string): string {
 	return rel.replace(/\\/g, "/");
 }
 
-/** 工具链自动生成/频繁改写的文件：进 pending 只会制造蓝点噪音，快照侧由 .gitignore 与影子仓库 exclude 兜底 */
+/** 工具链自动生成/频繁改写的文件：进 pending 只会制造蓝点噪音，快照侧由 .gitignore 与 PiWeb 排除文件兜底 */
 const WATCHER_FILE_NOISE = /(?:^|\/)(?:\.DS_Store|Thumbs\.db|[^/]*\.log|[^/]*\.tsbuildinfo|next-env\.d\.ts)$/;
 
 export function createGrowthTracker(opts: { cwd: string; sessionPath: string; publish: (evt: WebEvent) => void }): GrowthTracker {

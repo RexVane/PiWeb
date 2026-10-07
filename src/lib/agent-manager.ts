@@ -79,7 +79,7 @@ interface Managed {
 	inflight: unknown | null;
 	/** 扩展界面请求桥（select/confirm/input/notify → 浏览器） */
 	ui: ExtensionUiBridge | null;
-	/** 项目生长：影子仓库快照的触发器（首个会话事件时创建，dispose 时释放） */
+	/** 项目生长：工作区快照的触发器（首个会话事件时创建，dispose 时释放） */
 	growth: GrowthTracker | null;
 }
 

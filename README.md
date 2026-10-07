@@ -30,7 +30,7 @@
 
 ## Quick Start
 
-**Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features.
+**Prerequisites**: Node.js ≥ 22.19.0 (Node.js 24 recommended) and Git for repository and growth-history features. Growth snapshots live in the workspace's own `.git`: non-git folders are `git init`-ed automatically before the first snapshot, and snapshot commits hang off a dedicated `refs/piweb/growth/` ref without touching your branches, HEAD or staging area.
 
 ### Install from npm (recommended)
 

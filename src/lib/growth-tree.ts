@@ -4,7 +4,7 @@
  */
 import type { GrowthChange } from "./types";
 
-/** 不进快照的目录（影子仓库 info/exclude 与项目树的懒加载目录共用；浏览器可导入） */
+/** 不进快照的目录（快照排除文件与项目树的懒加载目录共用；浏览器可导入） */
 export const GROWTH_EXCLUDE_DIRS = [
 	"node_modules", ".git", ".next", ".next-dev", ".next-dev-webpack", ".next-dev-clean", "dist", "build", "out",
 	".venv", "venv", "__pycache__", ".cache", "target", ".turbo", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".idea",

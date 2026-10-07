@@ -31,15 +31,10 @@ describe("growth-tracker", () => {
 
 	describe("with real git", () => {
 		let tempDir = "";
-		let previousAgentDir: string | undefined;
 		beforeEach(async () => {
-			previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 			tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-tracker-"));
-			process.env.PI_CODING_AGENT_DIR = path.join(tempDir, "agent");
 		});
 		afterEach(async () => {
-			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 			await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 		});
 
