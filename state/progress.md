@@ -133,21 +133,6 @@
 - 影响文件：新增 `src/lib/browser/{inspect,pick}.ts`、`src/lib/element-draft.ts`、`src/lib/source-hint-keys.ts`、`src/app/api/browser/route.ts`、`src/components/ElementPicker.tsx`；修改 `src/lib/browser/manager.ts`、`src/lib/dev-inspect-service.ts`、`src/components/{AppShell,ChatInput,ChatWindow,ModelSelector}.tsx`、`src/app/api/models/route.ts`、`src/app/globals.css`、`src/i18n.tsx`、README；新增 5 个测试文件
 - 下一步：模型配置对齐 pi 的思考强度（自定义模型的推理 / 档位 / 图片输入，默认思考强度与按模型默认，Hero 跟随 pi 默认模型）；已发消息的撤回与编辑重发；审查遗留问题
 
-## 2026-10-07 12:40 +08:00 | claude-opus-5-5 | B1+B2 完成：pi 的眼睛（无头浏览器工具）（`ea4d0f3`）；误改本地依赖的事故记录
-- 改了什么：
-  - **spike 结论**：`--remote-debugging-pipe`（CDP 走浏览器第 3/4 号管道，不开调试端口）在 Windows + Edge 154 / Chrome 154 实测可用（查版本、开标签、导航、截图、执行脚本全通，启动约 1.2s），不需要端口模式兜底。前几次 EPIPE 是 spike 脚本里 heredoc 把路径反斜杠吞了、浏览器根本没启动，不是管道问题
-  - **内核** `src/lib/browser/`：`locate.ts`（PI_WEB_BROWSER → Chrome → Edge → Chromium，按平台找）、`url-policy.ts`（只开 http(s)，默认只放行本机 / 私网，主机名会解析并要求全部解析结果都非公网；`PI_WEB_BROWSER_ALLOW_PUBLIC=1` 放开）、`cdp.ts`（NUL 分帧、id 关联、事件分发、超时、断管时挂起请求全部失败）、`manager.ts`（进程共用一个浏览器、每会话一个标签页、临时 profile、空闲 10 分钟回收；关闭时等进程退出并删 profile；记录控制台 error/warning、页面异常、请求失败、≥400 响应）
-  - 公网判断从 `models-service.ts` 抽到 `src/lib/net-address.ts` 两边共用（`isPublicModelDiscoveryAddress` 导出名不变），避免浏览器模块 → models-service → agent-manager 的循环依赖
-  - **工具** `tools.ts`：`browser_open / browser_screenshot / browser_console / browser_click / browser_type`；截图 JPEG 作为 `ImageContent` 直接交给模型，模型 `input` 不含 image 时改为文本大纲；只有 browser_open 带一条 promptGuidelines（改完 UI 先看效果、查控制台再说完成）；参数 schema 用 `@earendil-works/pi-ai` 导出的 `Type`（与 SDK 同一个 typebox 实例，不新增依赖）
-  - **注册**：`ensureSession` 在本机找得到浏览器时传 `customTools: createBrowserTools(m.sessionPath)`；`disposeSession` 关对应标签页；`TOOL_PRESETS.standard` 加 5 个浏览器工具（readonly 不加：只读不该有网络能力；full 本就不限）
-  - **展示**：工具结果图片经 `toWebMessage` / `tool_execution_end`（新增 `imagesOf`，最多 4 张）→ `ToolCardState.images` → `ToolStep` 缩略图（点开 portal 放大，Esc 关）；浏览器工具有自己的中英文动词
-  - 测试：`tests/browser-kernel.test.ts`（定位 / 地址策略 / CDP，含从多字节字符中间切开的分帧）、`tests/browser-manager.integration.test.ts`（真实无头浏览器：截图 JPEG、console.error 与 404 记录、点击、输入回车提交、整页与元素截图、手机视口、拒绝连接时提示；找不到浏览器时整组跳过）、`tests/browser-tools.test.ts`、`tests/components/tool-screenshots.test.tsx`
-- 验证：`tsc --noEmit` 通过；全量 vitest **59 文件 406 通过 + 1 跳过**；集成测试后临时目录无 `piweb-browser-*` 残留（补了 `--disable-breakpad/--disable-crash-reporter` 并让关闭流程等 profile 删除完成，此前 Crashpad 晚退出会留下目录）
-- **事故（我造成的）**：为加 typebox 直接依赖跑了 `npm install typebox@1.3.27`，npm 顺带把本地 `node_modules` 按 lock 同步——用户本地原装的 pi SDK（迹象显示是 1.0.x，带 `pi-telemetry`，但从未写进 package.json / lock）被降回 lock 锁定的 0.85.1。随后改用 pi-ai 的 `Type`、还原清单、再同步一次，最终：清单与 HEAD 完全一致、`node_modules` 与 lock 一致（pi 0.85.1），类型检查与全量测试在 0.85.1 上通过。副作用：用户运行中的 dev 服务（30141）webpack 缓存了第一次安装时的嵌套路径 `pi-ai/node_modules/typebox`，第二次同步后该路径消失 → 报 `ENOENT ... pi-ai/node_modules/typebox/build/compile/index.mjs`。修复：停服务 → 删 `.next-dev-webpack/dev/cache`（或整个 `.next-dev-webpack`）→ 重启。若用户本来要用 pi 1.0.x，应走 `npm run update:pi` 正式升级（会更新清单并跑检查），之后需要在 1.0.x 上重新验证本次改动
-- 未验证：真实模型调用浏览器工具的端到端（会花用户 token，未发 prompt）
-- 影响文件：新增 `src/lib/browser/{locate,url-policy,cdp,manager,tools}.ts`、`src/lib/net-address.ts`；修改 `src/lib/agent-manager.ts`、`src/lib/pi.ts`、`src/lib/models-service.ts`、`src/lib/types.ts`、`src/hooks/usePiWeb.ts`、`src/components/ChatWindow.tsx`、`src/app/globals.css`、`src/i18n.tsx`；新增 4 个测试文件
-- 下一步：用户确认 pi SDK 版本取向；B3（截图上点选元素 → 元素芯片）；M5（清理 iframe 遗留 + README）
-
 ## 2026-10-07 13:25 +08:00 | muse-spark-1.3-contributor-free | M5 收尾提交并推送 GitHub，云端可接手
 - 改了什么：
   - 把本地未提交的 M5 收尾一次性提交（`dc96ef8`）：删 `public/piweb-inspect.js` 与 `src/app/api/dev-inspect/route.ts`（iframe 预览残留，按计划移入 `backups/` 后从 git 移除，`backups/` 本就进 `.gitignore` 只留本地）；删 `src/i18n.tsx` 里 22 个 `devPreview*`/`devInspectKind*` 文案键；`README.md`/`README_zh.md` 同步生长树（每轮一个 git commit，`refs/piweb/rounds/<key>`）与 pi 的眼睛（5 个 browser 工具、`PI_WEB_BROWSER`、私网放行）说明
