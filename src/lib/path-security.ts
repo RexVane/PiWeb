@@ -84,7 +84,8 @@ export function samePath(left: string, right: string): boolean {
 	return comparable(left) === comparable(right);
 }
 
-export async function resolveDiscoveredPath(requested: string, allowed: string[]): Promise<string> {
+/** 请求的路径必须是 pi 发现的某一项：交回真实路径，以及命中的那一项（pi 列出的原样写法，符号链接未展开） */
+export async function matchDiscoveredPath(requested: string, allowed: string[]): Promise<{ realPath: string; discovered: string }> {
 	if (typeof requested !== "string" || !path.isAbsolute(requested) || requested.length > 4096) {
 		throw new BoundaryError("invalid resource path");
 	}
@@ -94,8 +95,11 @@ export async function resolveDiscoveredPath(requested: string, allowed: string[]
 	for (const candidate of allowed) {
 		if (!candidate) continue;
 		const realCandidate = await fs.realpath(candidate).catch(() => null);
-		if (realCandidate && samePath(realRequested, realCandidate)) return realRequested;
-
+		if (realCandidate && samePath(realRequested, realCandidate)) return { realPath: realRequested, discovered: candidate };
 	}
 	throw new BoundaryError("resource is not part of the discovered Pi configuration");
+}
+
+export async function resolveDiscoveredPath(requested: string, allowed: string[]): Promise<string> {
+	return (await matchDiscoveredPath(requested, allowed)).realPath;
 }

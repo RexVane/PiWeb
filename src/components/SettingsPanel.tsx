@@ -1847,6 +1847,7 @@ interface SkillRow {
 	filePath: string;
 	disabled: boolean;
 	scope: "global" | "project" | "package";
+	deletable: boolean;
 }
 
 function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileContent?: (path: string, content: string) => void }) {
@@ -1935,7 +1936,7 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 							>
 								{t.viewSkillFile}
 							</button>
-							{s.scope !== "package" && (
+							{s.deletable && (
 								<button
 									className="rounded-lg px-2.5 py-1"
 									style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}
@@ -1948,6 +1949,11 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 							{s.scope === "package" && (
 								<span style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }} title={t.skillDeletePackageHint}>
 									{t.skillDeletePackageHint}
+								</span>
+							)}
+							{s.scope !== "package" && !s.deletable && (
+								<span style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }} title={s.filePath}>
+									{t.skillDeleteManualHint}
 								</span>
 							)}
 							<button
