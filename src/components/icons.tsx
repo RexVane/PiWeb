@@ -5,6 +5,13 @@ import type { SVGProps } from "react";
 
 type P = SVGProps<SVGSVGElement> & { size?: number };
 
+/** 撤回：向左回弯的箭头（撤回已发消息） */
+export const IconUndoOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path d="M5.6 2.2 1.4 5.5l4.2 3.3V6.15h4.15a3.425 3.425 0 1 1 0 6.85H4v1.325h5.75a4.75 4.75 0 1 0 0-9.5H5.6V2.2Z" fill="currentColor" />
+	</svg>
+);
+
 /** ic_ds_new_chat_outline_16 — 圆圈+加号（dsh「新会话」） */
 export const IconNewChatOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>

@@ -39,6 +39,9 @@ describe("agent command validation", () => {
 	it("requires model and navigation identifiers", () => {
 		expect(parseAgentCommand({ cmd: "setModel", provider: "openai" }).ok).toBe(false);
 		expect(parseAgentCommand({ cmd: "navigate" }).ok).toBe(false);
+		expect(parseAgentCommand({ cmd: "rewind", text: "edited" }).ok).toBe(false);
+		const rewind = parseAgentCommand({ cmd: "rewind", entryId: "u1", text: "edited", images: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }] });
+		expect(rewind.ok && rewind.command).toMatchObject({ cmd: "rewind", entryId: "u1", text: "edited" });
 	});
 
 	// ---------- 附件限额 ----------

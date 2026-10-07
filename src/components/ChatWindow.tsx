@@ -25,6 +25,7 @@ import {
 	IconSearchOutline16,
 	IconTerminalOutline14,
 	IconThinkOutline14,
+	IconUndoOutline16,
 	IconWarningOutline16,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
@@ -33,7 +34,7 @@ import { languageForPath } from "@/lib/highlight";
 import { OutlineRail } from "@/components/OutlineRail";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
-import type { ContextResource, TrajEntry, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
+import type { ContextResource, ImageAttachment, TrajEntry, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
 import {
 	classifyModelError,
 	cleanCommand,
@@ -195,6 +196,9 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 function MessageActions({
 	text,
 	onFork,
+	onEdit,
+	onRecall,
+	recalling = false,
 	durationMs,
 	usage,
 	time,
@@ -202,6 +206,11 @@ function MessageActions({
 }: {
 	text: string;
 	onFork?: () => void | Promise<unknown>;
+	/** 用户消息：原地编辑后重发 */
+	onEdit?: () => void;
+	/** 用户消息：撤回，内容放回输入框 */
+	onRecall?: () => void;
+	recalling?: boolean;
 	/** 回合墙钟耗时（最终回答时间戳 − 回合首条用户消息时间戳），dsh runMs 的对应物 */
 	durationMs?: number;
 	usage?: TrajTokens & { cost?: { total?: number } };
@@ -237,6 +246,18 @@ function MessageActions({
 				{copied ? <IconCheckOutline14 size={14} /> : <IconCopyOutline16 size={14} />}
 			</button>
 			{copyFailed && <span role="alert" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{t.copyFailed}</span>}
+			{onEdit && (
+				<button className="icon-btn" title={t.editMessageHint} aria-label={t.editMessage} onClick={onEdit}>
+					<IconEditOutline16 size={14} />
+				</button>
+			)}
+			{onRecall && (
+				<button className="icon-btn" title={t.recallMessageHint} aria-label={t.recallMessage} disabled={recalling} style={{ opacity: recalling ? 0.6 : undefined }} onClick={onRecall}>
+					<span className={recalling ? "piweb-spin" : undefined} style={{ display: "inline-flex" }}>
+						<IconUndoOutline16 size={14} />
+					</span>
+				</button>
+			)}
 			{onFork && (
 				<button
 					className="icon-btn"
@@ -970,32 +991,150 @@ function ImageZoom({ src, label, onClose, pick }: { src: string; label: string; 
 	);
 }
 
+type RewindResult = { success?: boolean; error?: string };
+/** 编辑重发：回到这条消息之前，把改过的内容作为新消息发出 */
+export type EditMessageHandler = (entryId: string, text: string, images: ImageAttachment[]) => Promise<RewindResult | undefined>;
+/** 撤回：回到这条消息之前，内容（连同图片）放回输入框 */
+export type RecallMessageHandler = (entryId: string, text: string, images: ImageAttachment[]) => Promise<RewindResult | undefined>;
+
+const imageAttachmentsOf = (message: WebMessage): ImageAttachment[] =>
+	message.content.flatMap((content) => (content.type === "image" ? [{ type: "image" as const, data: content.data, mimeType: content.mimeType }] : []));
+
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message, badge, onShowRound }: { message: WebMessage; badge?: RoundBadge; onShowRound?: (commit: string) => void }) {
+const UserMessage = memo(function UserMessage({
+	message,
+	badge,
+	onShowRound,
+	laterTurns = 0,
+	filesChanged = false,
+	onEdit,
+	onRecall,
+}: {
+	message: WebMessage;
+	badge?: RoundBadge;
+	onShowRound?: (commit: string) => void;
+	/** 当前对话里排在这条之后的提问数：撤回 / 编辑会把它们移出当前对话 */
+	laterTurns?: number;
+	/** 这一轮或之后的轮次改过文件：撤回 / 编辑不会还原文件 */
+	filesChanged?: boolean;
+	onEdit?: EditMessageHandler;
+	onRecall?: RecallMessageHandler;
+}) {
 	const { t } = useI18n();
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("\n");
 	const images = message.content.filter((content) => content.type === "image");
+	const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
+	const [draft, setDraft] = useState("");
+	const [draftImages, setDraftImages] = useState<ImageAttachment[]>([]);
+	const [busy, setBusy] = useState(false);
+	const editorRef = useRef<HTMLTextAreaElement>(null);
+	// 只有已落盘（有 entry id）的消息能回退；刚发出、还没确认的那条不给入口
+	const entryId = message.id;
+	const warning = [laterTurns > 0 ? t.rewindDropsTurns.replace("{n}", String(laterTurns)) : "", filesChanged ? t.rewindKeepsFiles : ""].filter(Boolean).join(" ");
+
+	useEffect(() => {
+		if (mode !== "edit") return;
+		const editor = editorRef.current;
+		editor?.focus();
+		editor?.setSelectionRange(editor.value.length, editor.value.length);
+	}, [mode]);
+
+	const startEdit = () => {
+		setDraft(text);
+		setDraftImages(imageAttachmentsOf(message));
+		setMode("edit");
+	};
+	const submitEdit = async () => {
+		if (!entryId || !onEdit || busy || (!draft.trim() && !draftImages.length)) return;
+		setBusy(true);
+		try {
+			const result = await onEdit(entryId, draft, draftImages);
+			// 成功后这条消息随新快照消失；失败（未回退）留在编辑态，内容还在
+			if (result?.success) setMode("view");
+		} finally {
+			setBusy(false);
+		}
+	};
+	const recall = async () => {
+		if (!entryId || !onRecall || busy) return;
+		setBusy(true);
+		try {
+			const result = await onRecall(entryId, text, imageAttachmentsOf(message));
+			if (result?.success) setMode("view");
+		} finally {
+			setBusy(false);
+		}
+	};
+
 	return (
 		// 回合边界：用户消息前留 28px（比回合内 8px 大得多），长对话里一眼找到“这一轮从哪开始”
 		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={message.id}>
-			{images.length > 0 && (
-				<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
-					{images.map((image, index) => (
-						<img
-							key={index}
-							src={`data:${image.mimeType};base64,${image.data}`}
-							alt=""
-							className="max-h-72 max-w-full rounded-2xl object-contain"
-							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-						/>
-					))}
+			{mode === "edit" ? (
+				<div className="msg-user-edit" data-testid="message-editor">
+					{draftImages.length > 0 && (
+						<div className="flex flex-wrap gap-2">
+							{draftImages.map((image, index) => (
+								<div key={index} className="relative">
+									<img src={`data:${image.mimeType};base64,${image.data}`} alt="" className="h-16 max-w-[120px] rounded-lg object-cover" style={{ border: "0.5px solid var(--dsw-border-l2)" }} />
+									<button
+										type="button"
+										className="icon-btn absolute -right-1.5 -top-1.5"
+										style={{ width: 18, height: 18, borderRadius: 9, background: "var(--dsw-bg-base)", border: "0.5px solid var(--dsw-border-l3)" }}
+										aria-label={t.editRemoveImage}
+										onClick={() => setDraftImages((current) => current.filter((_, at) => at !== index))}
+									>
+										<IconCloseOutline14 size={10} />
+									</button>
+								</div>
+							))}
+						</div>
+					)}
+					<textarea
+						ref={editorRef}
+						aria-label={t.editMessageInput}
+						value={draft}
+						rows={Math.min(12, Math.max(2, draft.split("\n").length))}
+						disabled={busy}
+						onChange={(event) => setDraft(event.target.value)}
+						onKeyDown={(event) => {
+							if (event.key === "Escape") {
+								event.preventDefault();
+								setMode("view");
+							} else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+								// 与输入框一致：Enter 发送、Shift+Enter 换行，输入法组字中不发送
+								event.preventDefault();
+								void submitEdit();
+							}
+						}}
+					/>
+					{warning && <div className="msg-user-rewind-hint">{warning}</div>}
+					<div className="flex justify-end gap-2">
+						<button type="button" className="btn-outline" disabled={busy} onClick={() => setMode("view")}>{t.cancel}</button>
+						<button type="button" className="btn-primary-white" disabled={busy || (!draft.trim() && !draftImages.length)} onClick={() => void submitEdit()}>{t.send}</button>
+					</div>
 				</div>
+			) : (
+				<>
+					{images.length > 0 && (
+						<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
+							{images.map((image, index) => (
+								<img
+									key={index}
+									src={`data:${image.mimeType};base64,${image.data}`}
+									alt=""
+									className="max-h-72 max-w-full rounded-2xl object-contain"
+									style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+								/>
+							))}
+						</div>
+					)}
+					{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
+					{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
+				</>
 			)}
-			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
-			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
 			{badge && (
 				<button
 					type="button"
@@ -1013,8 +1152,24 @@ const UserMessage = memo(function UserMessage({ message, badge, onShowRound }: {
 					)}
 				</button>
 			)}
-			{/* 用户消息只有复制操作，不提供分支；时钟在图标左侧（dsh clock=start） */}
-			{text && <MessageActions text={text} clockStart={message.timestamp !== undefined} time={message.timestamp} />}
+			{mode === "confirm" && (
+				<div className="msg-user-confirm" role="group" aria-label={t.recallMessage}>
+					<span className="msg-user-rewind-hint">{warning}</span>
+					<button type="button" className="btn-outline" disabled={busy} onClick={() => setMode("view")}>{t.cancel}</button>
+					<button type="button" className="btn-primary-white" disabled={busy} onClick={() => void recall()}>{t.recallConfirm}</button>
+				</div>
+			)}
+			{/* 用户消息：复制、编辑重发、撤回（不提供分支）；时钟在图标左侧（dsh clock=start） */}
+			{mode === "view" && (text || images.length > 0) && (
+				<MessageActions
+					text={text}
+					clockStart={message.timestamp !== undefined}
+					time={message.timestamp}
+					onEdit={entryId && onEdit ? startEdit : undefined}
+					onRecall={entryId && onRecall ? () => (warning ? setMode("confirm") : void recall()) : undefined}
+					recalling={busy}
+				/>
+			)}
 		</div>
 	);
 });
@@ -1068,6 +1223,10 @@ function TurnBlock({
 	onOpenFile,
 	roundBadge,
 	onShowRound,
+	laterTurns,
+	filesChanged,
+	onEditMessage,
+	onRecallMessage,
 }: {
 	turn: Turn;
 	messages: WebMessage[];
@@ -1087,6 +1246,10 @@ function TurnBlock({
 	onOpenFile?: (path: string) => void;
 	roundBadge?: RoundBadge;
 	onShowRound?: (commit: string) => void;
+	laterTurns?: number;
+	filesChanged?: boolean;
+	onEditMessage?: EditMessageHandler;
+	onRecallMessage?: RecallMessageHandler;
 }) {
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
@@ -1136,7 +1299,17 @@ function TurnBlock({
 
 	return (
 		<>
-			{user && <UserMessage message={user} badge={roundBadge} onShowRound={onShowRound} />}
+			{user && (
+				<UserMessage
+					message={user}
+					badge={roundBadge}
+					onShowRound={onShowRound}
+					laterTurns={laterTurns}
+					filesChanged={filesChanged}
+					onEdit={onEditMessage}
+					onRecall={onRecallMessage}
+				/>
+			)}
 			{showProcess && (
 				<div className="pw-turn">
 					{contextFiles?.map((resource, i) => (
@@ -1250,6 +1423,8 @@ export function ChatWindow({
 	onOpenFile,
 	roundBadges,
 	onShowRound,
+	onEditMessage,
+	onRecallMessage,
 }: {
 	messages: WebMessage[];
 	tools: Record<string, ToolCardState>;
@@ -1279,6 +1454,10 @@ export function ChatWindow({
 	roundBadges?: ReadonlyMap<string, RoundBadge>;
 	/** 点提问下方的「本轮改了 N 个文件」：在项目栏里打开这一轮 */
 	onShowRound?: (commit: string) => void;
+	/** 用户消息「编辑」：改完重发 */
+	onEditMessage?: EditMessageHandler;
+	/** 用户消息「撤回」：内容放回输入框 */
+	onRecallMessage?: RecallMessageHandler;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const stickToBottom = useRef(true);
@@ -1304,6 +1483,20 @@ export function ChatWindow({
 	}, [messages]);
 	const turns = useMemo(() => buildTurns(messages), [messages]);
 	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
+	// 撤回 / 编辑某条提问会丢掉什么：之后还有几轮提问、这一轮起有没有改过文件（逐轮从后往前累计）
+	const rewindScope = useMemo(() => {
+		const scope: Array<{ laterTurns: number; filesChanged: boolean } | undefined> = [];
+		let later = 0;
+		let files = false;
+		for (let ti = turns.length - 1; ti >= 0; ti -= 1) {
+			const user = turns[ti].userIndex >= 0 ? messages[turns[ti].userIndex] : undefined;
+			if (!user) continue;
+			files ||= (roundBadges?.get(user.id ?? "")?.files ?? 0) > 0;
+			scope[ti] = { laterTurns: later, filesChanged: files };
+			later += 1;
+		}
+		return scope;
+	}, [turns, messages, roundBadges]);
 
 	useEffect(() => {
 		const grew = messages.length > prevLenRef.current;
@@ -1365,6 +1558,10 @@ export function ChatWindow({
 							onOpenFile={onOpenFile}
 							roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
 							onShowRound={onShowRound}
+							laterTurns={rewindScope[ti]?.laterTurns}
+							filesChanged={rewindScope[ti]?.filesChanged}
+							onEditMessage={onEditMessage}
+							onRecallMessage={onRecallMessage}
 						/>
 					))}
 					{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}

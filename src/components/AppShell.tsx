@@ -7,7 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
-import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
+import { ChatWindow, SessionStatsBar, type EditMessageHandler, type RecallMessageHandler, type RoundBadge } from "@/components/ChatWindow";
+import { MAX_MESSAGE_IMAGES } from "@/lib/element-draft";
 import { ElementPickContext, type ElementPickApi } from "@/components/ElementPicker";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
@@ -55,6 +56,11 @@ function persist(key: string, value: number) {
 function restore(key: string, fallback: number): number {
 	const v = parseInt(localStorage.getItem(key) ?? "", 10);
 	return Number.isNaN(v) ? fallback : v;
+}
+
+/** rewind 命令清出来的排队消息（steering 在前） */
+function queuedTextsOf(data: { cleared?: { steering?: string[]; followUp?: string[] } } | undefined): string[] {
+	return [...(data?.cleared?.steering ?? []), ...(data?.cleared?.followUp ?? [])];
 }
 
 export function AppShell() {
@@ -568,6 +574,33 @@ export function AppShell() {
 		});
 		requestAnimationFrame(() => textarea?.focus());
 	}, [draftKey, updateDraft]);
+	/** 撤回 / 编辑重发后放回这个会话输入框的内容：撤回的那条在前，清出来的排队消息随后，原有草稿在最后 */
+	const restoreToComposer = useCallback((key: string, texts: string[], images: ImageAttachment[] = []) => {
+		const pieces = texts.filter((text) => text.trim());
+		if (!pieces.length && !images.length) return;
+		updateDraft(key, (previous) => ({
+			...previous,
+			text: [...pieces, previous.text].filter((text) => text.trim()).join("\n\n"),
+			images: [...images, ...previous.images].slice(0, MAX_MESSAGE_IMAGES),
+		}));
+		requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus());
+	}, [updateDraft]);
+	const recallMessage = useCallback<RecallMessageHandler>(async (entryId, text, images) => {
+		const key = draftKey;
+		const result = await sendCommand({ cmd: "rewind", entryId });
+		const queued = queuedTextsOf(result?.data);
+		if (result?.success) restoreToComposer(key, [typeof result.data?.editorText === "string" && result.data.editorText ? result.data.editorText : text, ...queued], images);
+		else restoreToComposer(key, queued);
+		return result;
+	}, [draftKey, sendCommand, restoreToComposer]);
+	const editMessage = useCallback<EditMessageHandler>(async (entryId, text, images) => {
+		const key = draftKey;
+		const result = await sendCommand({ cmd: "rewind", entryId, text, images });
+		// 历史已回退但新内容没被接受（如凭证失效）：改过的内容放回输入框，不丢
+		const lost = !result?.success && result?.data?.rewound === true;
+		restoreToComposer(key, [...(lost ? [text] : []), ...queuedTextsOf(result?.data)], lost ? images : []);
+		return result;
+	}, [draftKey, sendCommand, restoreToComposer]);
 	const openInEditor = useCallback(
 		async (filePath: string) => {
 			try {
@@ -882,6 +915,8 @@ export function AppShell() {
 									onFork={handleFork}
 									roundBadges={roundBadges}
 									onShowRound={showRound}
+									onEditMessage={editMessage}
+									onRecallMessage={recallMessage}
 								/>
 								</ElementPickContext.Provider>
 								<div className="px-4 pb-3 pt-2">

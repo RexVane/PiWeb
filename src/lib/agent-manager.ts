@@ -39,6 +39,7 @@ import type {
 	ContextBreakdown,
 	ContextResource,
 	GrowthRound,
+	ImageAttachment,
 	TrajEntry,
 	ToolImage,
 	ToolPreset,
@@ -1236,6 +1237,50 @@ export function unsubscribe(m: Managed, send: (seq: number, json: string) => voi
 
 // ---------- 命令执行 ----------
 
+/**
+ * 交给 pi 一条消息，pi 接受（preflight 通过）即返回。调用方已占住 promptSubmitting。
+ * 空闲时先把用户两轮之间的修改单独提交，不混进 pi 这一轮。
+ */
+async function submitPrompt(m: Managed, session: AgentSession, text: string, images: ImageAttachment[] | undefined, behavior?: "steer" | "followUp"): Promise<CommandResult> {
+	if (!session.isStreaming) {
+		// 不能无限阻塞 prompt（git 不可用时每次探测至多 30s 超时）：5s 内没完成就放行，提交在后台继续。
+		await Promise.race([
+			growthOf(m).prepare().catch(() => undefined),
+			new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+		]);
+	}
+	if (m.disposed) throw new Error("session is disposed");
+	return await new Promise<CommandResult>((resolve) => {
+		let accepted = false;
+		const run = session.prompt(text, {
+			images,
+			streamingBehavior: behavior,
+			source: "rpc",
+			preflightResult: (success) => {
+				if (success) {
+					accepted = true;
+					resolve({ ok: true, data: { accepted: true } });
+				}
+			},
+		});
+		// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
+		void run.then(() => {
+			if (!accepted) resolve({ ok: false, error: "prompt completed without acceptance" });
+		}, (error) => {
+			const message = String(error?.message ?? error);
+			if (accepted) publish(m, { type: "error", message, ts: Date.now() });
+			else resolve({ ok: false, error: message });
+		});
+	});
+}
+
+/** 释放提交位并广播当前状态；提交期间推迟的资源重载在这里补上 */
+function releasePromptSlot(m: Managed): void {
+	m.promptSubmitting = false;
+	if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
+	if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+}
+
 export interface CommandResult {
 	ok: boolean;
 	error?: string;
@@ -1260,41 +1305,43 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if (m.disposed) throw new Error("session is disposed");
 					// 只有用户显式选择 steer/followUp 才排队；旧的普通提交不能悄悄成为 steering。
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
-					if (!session.isStreaming) {
-						// 先把用户两轮之间的修改单独提交，不混进 pi 这一轮；但不能无限阻塞 prompt
-						// （git 不可用时每次探测至多 30s 超时）：5s 内没完成就放行，提交在后台继续。
-						await Promise.race([
-							growthOf(m).prepare().catch(() => undefined),
-							new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-						]);
-					}
-					if (m.disposed) throw new Error("session is disposed");
-					return await new Promise<CommandResult>((resolve) => {
-						let accepted = false;
-						const run = session.prompt(text, {
-							images: cmd.images,
-							streamingBehavior: cmd.behavior,
-							source: "rpc",
-							preflightResult: (success) => {
-								if (success) {
-									accepted = true;
-									resolve({ ok: true, data: { accepted: true } });
-								}
-							},
-						});
-						// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
-						void run.then(() => {
-							if (!accepted) resolve({ ok: false, error: "prompt completed without acceptance" });
-						}, (error) => {
-							const message = String(error?.message ?? error);
-							if (accepted) publish(m, { type: "error", message, ts: Date.now() });
-							else resolve({ ok: false, error: message });
-						});
-					});
+					return await submitPrompt(m, session, text, cmd.images, cmd.behavior);
 				} finally {
-					m.promptSubmitting = false;
-					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
-					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+					releasePromptSlot(m);
+				}
+			}
+			case "rewind": {
+				// 撤回 / 编辑重发：回到这条用户消息之前（pi /tree 选中用户消息同款：叶子移到它的父节点，原分支留在会话文件里），
+				// 带 text / images 时接着把改过的内容作为新消息发出。整个过程占住提交位，中间不会插进别的提问。
+				const entryId = String(cmd.entryId ?? "");
+				const resend = cmd.text !== undefined || cmd.images !== undefined;
+				const text = (cmd.text ?? "").trim();
+				if (resend && !text && !cmd.images?.length) return { ok: false, error: "empty prompt" };
+				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
+				m.promptSubmitting = true;
+				try {
+					const session = await ensureSession(m);
+					if (m.disposed) throw new Error("session is disposed");
+					const entry = m.sm.getEntry(entryId) as { type?: string; message?: { role?: string } } | undefined;
+					if (entry?.type !== "message" || entry.message?.role !== "user") return { ok: false, error: "only a user message can be rewound" };
+					if (!m.sm.getBranch().some((item) => item.id === entryId)) return { ok: false, error: "the message is not in the current conversation" };
+					// 与 Esc 一致：先清队列再中止（不清的话排队消息会在回退后冒出来）；清出来的文本交回前端放进输入框
+					const cleared = session.clearQueue();
+					publish(m, { type: "queue", steering: [], followUp: [], ts: Date.now() });
+					if (m.runActive || !session.isIdle) {
+						await session.abort();
+						publish(m, { type: "status", isStreaming: false, state: "aborted", ts: Date.now() });
+					}
+					if (m.runActive || !session.isIdle) return { ok: false, error: "session is still busy", data: { cleared } };
+					const result = await session.navigateTree(entryId);
+					if (result?.cancelled) return { ok: false, error: "an extension cancelled the rewind", data: { cleared } };
+					publish(m, { type: "history", ts: Date.now() });
+					if (!resend) return { ok: true, data: { editorText: result?.editorText ?? "", cleared } };
+					const sent = await submitPrompt(m, session, text, cmd.images);
+					// 重发失败时历史已经回退：rewound 让前端把改过的内容放回输入框，不至于丢失
+					return { ...sent, data: { ...sent.data, cleared, rewound: true } };
+				} finally {
+					releasePromptSlot(m);
 				}
 			}
 			case "steer":

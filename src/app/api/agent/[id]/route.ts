@@ -12,7 +12,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 		const parsed = parseAgentCommand(await req.json());
 		if (!parsed.ok) return NextResponse.json({ success: false, error: parsed.error }, { status: 400 });
 		const result = await execute(getManaged(sessionPath), parsed.command);
-		if (!result.ok) return NextResponse.json({ success: false, error: result.error }, { status: 400 });
+		// 失败也带上 data：撤回时已清出的排队文本、已回退的标记要交回前端
+		if (!result.ok) return NextResponse.json({ success: false, error: result.error, ...(result.data ? { data: result.data } : {}) }, { status: 400 });
 		return NextResponse.json({ success: true, data: result.data ?? {} });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "request failed";

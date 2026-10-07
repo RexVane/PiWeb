@@ -893,6 +893,51 @@ body[data-ds-dark-theme] {
 	box-shadow: 0 0 0 2px var(--dsw-accent);
 }
 
+/* 编辑已发消息：气泡原地换成编辑卡（强调色描边），下面是会丢掉什么的提示与按钮 */
+.msg-user-edit {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: 85%;
+	max-width: 640px;
+	padding: 10px 14px;
+	border-radius: 18px;
+	background: var(--dsw-input-major);
+	box-shadow: 0 0 0 1.5px var(--dsw-accent);
+}
+.msg-user-edit textarea {
+	width: 100%;
+	resize: vertical;
+	border: 0;
+	outline: none;
+	background: transparent;
+	color: var(--dsw-label-primary);
+	font-size: var(--piweb-chat-font-size);
+	line-height: 1.65;
+}
+.msg-user-rewind-hint {
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--dsw-label-caption);
+}
+.msg-user-confirm {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+	max-width: 85%;
+	margin-top: 6px;
+}
+.msg-user-edit .btn-outline,
+.msg-user-edit .btn-primary-white,
+.msg-user-confirm .btn-outline,
+.msg-user-confirm .btn-primary-white {
+	height: 28px;
+	padding: 0 12px;
+	font-size: 12.5px;
+}
+
 /* 消息操作图标行：常显低透明度，悬停变亮（dsh 同款） */
 .msg-actions {
 	display: flex;

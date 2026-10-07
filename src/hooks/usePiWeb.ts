@@ -337,6 +337,7 @@ export function usePiWeb() {
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
+	const quietResyncRef = useRef(false);
 	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<EventSource | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
@@ -631,7 +632,10 @@ export function usePiWeb() {
 		}
 		const reconnectingCurrentSession = subscribedSessionRef.current === currentId;
 		subscribedSessionRef.current = currentId;
-		setState((current) => reconnectingCurrentSession
+		// 历史改写后的重取快照是主动的，不闪「重连中」
+		const quiet = reconnectingCurrentSession && quietResyncRef.current;
+		quietResyncRef.current = false;
+		if (!quiet) setState((current) => reconnectingCurrentSession
 			? { ...current, connected: false }
 			: { ...emptyState(savedToolPreset()), connected: false });
 		let retryDelayMs = 2000;
@@ -656,11 +660,21 @@ export function usePiWeb() {
 				}, delay);
 			};
 			es.onmessage = (e) => {
+				// 已被替换的连接（历史改写后关掉的旧连接）上迟到的帧属于旧视图，不再处理
+				if (esRef.current !== es) return;
 				let parsed: any;
 				try {
 					parsed = JSON.parse(e.data);
 				} catch {
 					// 单帧损坏（代理截断等）只丢弃该帧，不能让 EventSource 回调抛异常
+					return;
+				}
+				if (parsed.type === "history") {
+					// 撤回 / 编辑重发改写了对话历史：增量没法表达，重连拿新快照（快照之后的事件从快照序号续上）
+					es.close();
+					esRef.current = null;
+					quietResyncRef.current = true;
+					setResyncNonce((nonce) => nonce + 1);
 					return;
 				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
@@ -704,7 +718,8 @@ export function usePiWeb() {
 			setState((s) => ({ ...s, error: "no session" }));
 			return { success: false, error: "no session" };
 		}
-		const isPrompt = cmd.cmd === "prompt";
+		// 编辑重发（rewind 带内容）同样是一次提交：同一会话的提交在途时不能再发
+		const isPrompt = cmd.cmd === "prompt" || (cmd.cmd === "rewind" && (cmd.text !== undefined || cmd.images !== undefined));
 		if (isPrompt && promptRequestsRef.current.has(target)) return { success: false, error: "prompt acceptance pending" };
 		if (isPrompt) promptRequestsRef.current.add(target);
 		try {

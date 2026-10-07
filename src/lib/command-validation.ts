@@ -15,6 +15,7 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"fork",
 	"cycleModel",
 	"navigate",
+	"rewind",
 	"clearQueue",
 	"extensionUiResponse",
 	"reload",
@@ -108,7 +109,7 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (command.cmd === "setThinkingLevel" && !command.level) throw new Error("level is required");
 		if (command.cmd === "setToolPreset" && !command.preset) throw new Error("preset is required");
 		if (command.cmd === "setActiveTools" && !command.names) throw new Error("names are required");
-		if (command.cmd === "navigate" && !command.entryId) throw new Error("entryId is required");
+		if ((command.cmd === "navigate" || command.cmd === "rewind") && !command.entryId) throw new Error("entryId is required");
 		return { ok: true, command };
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message : "invalid command" };

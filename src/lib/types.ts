@@ -104,6 +104,8 @@ export type WebEvent =
 	  }
 	| { type: "status"; isStreaming: boolean; state: string; ts: number }
 	| { type: "queue"; steering: string[]; followUp: string[]; ts: number }
+	/** 对话历史被改写（撤回 / 编辑重发回到了更早的位置）：客户端重新取快照 */
+	| { type: "history"; ts: number }
 	| {
 			type: "model";
 			provider?: string;
@@ -311,6 +313,7 @@ export interface AgentCommand {
 		| "fork"
 		| "cycleModel"
 		| "navigate"
+		| "rewind"
 		| "clearQueue"
 		| "setActiveTools"
 		| "extensionUiResponse"
