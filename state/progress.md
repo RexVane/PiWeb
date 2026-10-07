@@ -2,6 +2,26 @@
 
 > 更早的条目：[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 15:50 +08:00 | Claude Code（云端） | 审查遗留问题修复：技能删除（`9e6d339`）、npm 安装首次构建（`6a6e57b`）与检查更新（`04e600c`）、密码防爆破（`10e8d57`）、CI actions v5（`9f9f64e`）
+- 起因：用户授权「全方面你觉得哪些可以改进的都可以提交出来」。逐条核对此前审查列出的问题在新 main 上是否仍成立，成立且值得的各自单独提交
+- 改了什么：
+  - **技能删除**（`9e6d339`）：旧逻辑总是删 `dirname(技能文件)`——单文件技能 `~/.pi/agent/skills/foo.md` 会删掉全部全局技能，`.agents/skills/group/a.md` 连带删掉 `b.md`，settings 另配的工作区路径（如 `notes/guide.md`）删掉整个 `notes`。来源按路径前缀猜：Windows 短名（`C:\Users\RUNNER~1`）下全局技能被判成包技能，Windows CI 的 skills-delete 因此一直红（run 130–133）；pi 从 git 装的包技能反被判成全局。现在来源用 pi 给的 `sourceInfo`（origin / scope）；目录技能删目录、单文件技能只删文件、符号链接只删链接；只删 pi 默认技能目录里面的条目，集合根上的 SKILL.md 与 settings 另配的路径拒绝并提示手动处理；列表带 `deletable`，设置页只对可删的技能显示删除
+  - **npm 安装首次构建**（`6a6e57b`）：发布包不带 `.next`，全局安装靠首次构建。暂存目录取 `dirname(dirname(root))`，scoped 包（`…/lib/node_modules/@rexvane/piweb`）取到的仍在 `node_modules` 里，被 Next 排除，构建报 `Can't resolve '@/i18n'`——`npm i -g @rexvane/piweb` 在各平台都起不来；退回系统临时目录的分支还用了未导入的 `os`。改为沿路径上溯到不含 `node_modules` 段，建不了再退回系统临时目录；失败提示改成正确包名，并说明再次运行 piweb 即重试
+  - **npm 安装检查更新**（`04e600c`）：npm 安装没有 Git 仓库也没有开发依赖，原「检查更新」跑 `git fetch` 必报错，pi 引擎更新要跑 `npm run check` 必失败。改为 `npm view @rexvane/piweb version` 对照 registry，返回命令 `npm install -g @rexvane/piweb@latest`；pi 引擎标为随 PiWeb 发布版本更新；`runUpdate` 对 npm 安装直接拒绝，不执行任何命令；设置页显示可复制的命令，提示先停止 piweb 再运行、然后重新启动（npm 替换整个安装目录，Windows 还会锁住已加载的原生模块）；`npm link` 的开发安装按真实路径落在 Git 仓库里，仍走 git 更新
+  - **密码防爆破**（`10e8d57`）：`PI_WEB_PASSWORD` 是对外访问的唯一门槛，背后是能执行命令的智能体，原登录接口和 Basic 都不限次数。新的错误密码先给 10 次，之后每 30 秒恢复一次；额度用完时不校验任何密码（猜中的也回 429 + Retry-After）；整个进程一份额度（Next 拿不到可信的客户端地址，按可伪造的请求头分桶等于没限）；只有没见过的错误密码扣额度（加盐摘要记最近 256 个），浏览器反复带旧密码不会把人锁在外面；会话 Cookie 先于 Basic 判定，已登录的浏览器不受影响；Basic 在 proxy 里限速，额度用完时公开路径也回 429（`GET /api/web-auth` 绕不过去），登录表单在路由里另有一份额度；登录页显示「请 N 秒后再试」；额度耗尽时服务端日志提示一次
+  - **CI**（`9f9f64e`）：每个任务都报 Node.js 20 弃用（checkout@v4 / setup-node@v4 被强制跑在 Node 24），check 与 publish 两个工作流升到 v5
+  - README 中英文：npm 安装的更新方式；密码限速说明；状态段日期改为 2026-10-07、补此后的变化与测试数；已知限制补三条（编辑 / 撤回不还原文件、限速是全服一份额度、`web-uploads` 不自动清理）
+- 验证：
+  - `tsc --noEmit` 通过；全量 vitest **76 文件 489 通过 + 1 跳过**（跳过的是仅 Windows 运行的 PowerShell 编码测试）；`npm run build` 通过（只有既有的 release.mjs Critical dependency 警告）；`git diff --check` 通过
+  - 技能删除：旧代码实测删 `solo.md` 删掉整个 `agent/skills`、删 `first.md` 连带删掉 `second.md`；新代码接真实加载器实测 solo / 符号链接（只删链接，源目录完好）/ first（second 保留）/ 项目技能 / 目录技能均正确，settings 另配的技能被拒绝
+  - 首次构建：模拟 scoped 全局安装，旧逻辑在 `lib/node_modules/.piweb-build-*` 构建失败，新逻辑在 `lib/.piweb-build-*` 26 秒构建成功并拷回 `.next`
+  - 密码限速：生产服务器 + 密码实测——10 个新的错误 Basic 之后，正确密码回 429（`/api/version` 与 `/api/web-auth` 都是），已见过的错误密码仍回 401，带 Cookie 的请求 200；登录表单同样；约 30 秒后正确密码恢复 200；日志两份额度各提示一次。另做 5 个变异（去掉去重 / 先判对错再限速 / proxy 不限速 / 路由不限速 / 公开路径放行），测试都能抓到
+  - CI：run 134–136 四个任务全绿，Windows 上的 skills-delete 从红转绿；run 137（HEAD `9f9f64e`，含限速与 v5 actions）四个任务全绿，Node.js 20 弃用警告不再出现
+- 未验证：npm 安装的「检查更新」只有单元测试和组件测试，没对真实 registry 跑过；publish.yml 的 v5 要到下次发布才会运行；Windows 上 npm 覆盖运行中安装时锁文件是推断（所以提示先停止 piweb）
+- 建议（未做）：`~/.pi/agent/web-uploads/` 不自动清理——会话按绝对路径引用这些文件，自动删除会让旧会话里的引用失效，已写进 README 已知限制；以后可考虑按会话引用计数清理，或在设置页给手动清理入口
+- 影响文件：修改 `src/lib/{path-security,skills-service,update-service}.ts`、`src/proxy.ts`、`src/app/api/web-auth/route.ts`、`src/app/login/page.tsx`、`src/components/SettingsPanel.tsx`、`src/i18n.tsx`、`scripts/{install-build,launcher}.mjs`、`.github/workflows/{check,publish}.yml`、README、`tests/{skills-delete,update-service}.test.ts`、`tests/components/login-page.test.tsx`；新增 `src/lib/password-throttle.ts`、`tests/{install-build,password-throttle}.test.ts`、`tests/components/{skills-section,update-control}.test.tsx`
+- 下一步：审查清单已处理完；等用户反馈
+
 ## 2026-10-07 15:05 +08:00 | Claude Code（云端） | 已发消息可编辑重发与撤回（`3b03fa9`）
 - 起因：用户问「发出去的消息如何修改撤回」。此前只能在会话树里跳节点，没有针对某条用户消息的编辑 / 撤回入口，运行中也撤不回
 - 语义：与 pi 终端 `/tree` 选中用户消息相同——`navigateTree(用户消息 entryId)` 把叶子移到它的父节点并交回原文；**不破坏历史**，原分支留在会话 JSONL 里，终端 pi 的 `/tree` 仍能找回
