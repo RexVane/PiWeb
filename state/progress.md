@@ -2,6 +2,19 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 15:58 +08:00 | claude-opus-5-5 | 云端分支快进合入 main 并推送；本机补验 Windows + Edge
+- 改了什么：
+  - 用户选择「直接快进 main 并推送」：`main` 从 `9ee0a84` 快进到云端分支 `claude/funny-lamport-q9lcem` 的 `04be3f5`（14 个提交：B3 点选元素、思考强度对齐 pi、消息编辑重发 / 撤回、技能删除、npm 安装首次构建与检查更新、密码防爆破、CI actions v5、lock 补回 `@emnapi`），无冲突；远端分支保留未删
+  - 本地那段 README 状态段改动与云端 `77e33cd` 重复，存进 `git stash`（`local README status edit (superseded by cloud 77e33cd)`），未提交
+  - progress 超 150 行，按日期把 11:21、11:54 两条搬进 `state/archive/2026-10.md`（`6cb3d31`）
+- 验证（合并前，在用户这台 Windows 机器上）：
+  - GitHub CI：云端分支最新提交 Linux / Windows × Node 22.19 / 24 全部通过；中途 15:05 那次是 Windows 上技能删除测试失败（个人技能被误判为包管理技能），已由 `9e6d339` 真正修复
+  - `tsc --noEmit` 通过；全量 vitest **76 文件 489 通过 + 1 跳过**（Windows + Chrome，与云端报告一致）
+  - 补上云端标注的「未验证：Windows + Edge」：`PI_WEB_BROWSER` 指向 Edge 重跑 `browser-manager.integration` / `browser-pick.integration` / `dev-inspect-service` 三个文件 **23 项全部通过**（无跳过）；测试后无 `piweb-browser-*` 临时目录残留
+- 未验证：真实 React / Vue / Svelte 开发服务器上的点选（集成测试用模拟页面覆盖了各框架元数据形态）
+- 影响文件：仅 `state/progress.md`、`state/archive/2026-10.md`（代码随快进合入，无本地改动）
+- 下一步：等用户在 dev 服务上试用 B3 与新功能的反馈
+
 ## 2026-10-07 15:50 +08:00 | Claude Code（云端） | 审查遗留问题修复：技能删除（`9e6d339`）、npm 安装首次构建（`6a6e57b`）与检查更新（`04e600c`）、密码防爆破（`10e8d57`）、CI actions v5（`9f9f64e`）
 - 起因：用户授权「全方面你觉得哪些可以改进的都可以提交出来」。逐条核对此前审查列出的问题在新 main 上是否仍成立，成立且值得的各自单独提交
 - 改了什么：
