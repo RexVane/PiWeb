@@ -2,6 +2,21 @@
 
 > 更早的条目：[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 14:10 +08:00 | Claude Code（云端） | B3 完成：截图上点选元素 → 元素芯片（`ba13e01`）；CI 锁文件修复（`627df1e`）
+- 改了什么：
+  - **CI 修复**（`627df1e`，已推送）：新 main 的 `npm ci` 报 EUSAGE——lock 里缺 `@tailwindcss/oxide-wasm32-wasi` 内置的 `@emnapi/core` / `@emnapi/runtime` 两条 inBundle 条目，只补这两条，其余 lock 不动
+  - **取元素**（`src/lib/browser/inspect.ts`）：页面内 `elementFromPoint`（穿透 open shadow root），取标签、id、可见文本、DOM 路径、构建期源码属性（上溯 6 层），以及框架开发期线索——React ≤18 `fiber._debugSource`（带组件名）、Vue 3 `__vueParentComponent.type.__file` / Vue 2 `$options.__file`（只到文件）、Svelte `__svelte_meta.loc`（Svelte 4 行号从 0 起且带 `char` 时 +1，Svelte 5 不变）；返回值在服务端逐字段限长清洗
+  - **定位内核**（`dev-inspect-service.ts`）：多认 `react-source` / `svelte-source`（文件:行:列）与 `vue-file`（只到组件文件）三个键；Vue 时组件内的文本命中排最前，文本太短或搜不到退回组件文件第 1 行；线索指向工作区外忽略。键名放在无依赖的 `source-hint-keys.ts`，浏览器内核不因此引入 pi SDK
+  - **截图**（`manager.ts`）：`elementAt(x, y)`；`screenshot({region})` 按元素包围盒裁剪（留 6px 边、裁到视口内、长边超过 640 缩小）
+  - **接口** `POST /api/browser`：`capture`（给该会话标签页重截一张）/ `pick`（取点 + 定位源码 + 裁剪图）；只操作 pi 已打开的页面，不导航、不新开标签页；请求体 4KB 上限；无页面 409、点空 404、找不到浏览器 503
+  - **前端**：浏览器工具截图旁「选元素」，放大层上可连续点选，点中后描边显示元素位置；结果进当前会话输入卡的元素芯片（`ChatDraft.elements`，缩略图 + 标签 + 第一处源码位置，可删）；发送时在附件行之后拼成「标题行 + Markdown 列表」（页面、DOM、源码、组件），当前模型能看图时附上裁剪图（`ModelChoice.vision`，来自模型 `input` 是否含 image），编号接在用户自己的图片之后，总数不超过 20
+  - README 中英文补一句用法
+- 验证：`tsc --noEmit` 通过；全量 vitest **63 文件 430 通过 + 1 跳过**（含新增真实无头浏览器集成测试 9 项：React/Vue/Svelte4/Svelte5/data-source/shadow DOM/超大元素/滚动后裁剪像素校验）；`npm run build` 通过；**真实实例冒烟**（生产构建 + 本地假 OpenAI 兼容模型服务，不花 token）：新会话 → 模型调 `browser_open` 打开测试页 → 截图旁「选元素」→ 点按钮 → 芯片显示 `src/App.tsx:3` → 发送后模型收到元素描述与 1 张裁剪图；用户气泡里元素描述显示为列表（最初按缩进行拼接时被 Markdown 合成一段，已改）
+- 冒烟中发现、留给下一项修：新会话页（Hero）默认模型取「第一个有凭据的模型」并显式 `setModel`，不看 pi 的 `defaultProvider/defaultModel`；思考强度也不读 pi 的默认值
+- 未验证：Windows + Edge 上的点选（集成测试在 Linux Chromium 上跑）；真实 React/Vue/Svelte 开发服务器（用模拟页面覆盖了各框架的元数据形态）
+- 影响文件：新增 `src/lib/browser/{inspect,pick}.ts`、`src/lib/element-draft.ts`、`src/lib/source-hint-keys.ts`、`src/app/api/browser/route.ts`、`src/components/ElementPicker.tsx`；修改 `src/lib/browser/manager.ts`、`src/lib/dev-inspect-service.ts`、`src/components/{AppShell,ChatInput,ChatWindow,ModelSelector}.tsx`、`src/app/api/models/route.ts`、`src/app/globals.css`、`src/i18n.tsx`、README；新增 5 个测试文件
+- 下一步：模型配置对齐 pi 的思考强度（自定义模型的推理 / 档位 / 图片输入，默认思考强度与按模型默认，Hero 跟随 pi 默认模型）；已发消息的撤回与编辑重发；审查遗留问题
+
 ## 2026-10-07 12:40 +08:00 | claude-opus-5-5 | B1+B2 完成：pi 的眼睛（无头浏览器工具）（`ea4d0f3`）；误改本地依赖的事故记录
 - 改了什么：
   - **spike 结论**：`--remote-debugging-pipe`（CDP 走浏览器第 3/4 号管道，不开调试端口）在 Windows + Edge 154 / Chrome 154 实测可用（查版本、开标签、导航、截图、执行脚本全通，启动约 1.2s），不需要端口模式兜底。前几次 EPIPE 是 spike 脚本里 heredoc 把路径反斜杠吞了、浏览器根本没启动，不是管道问题
