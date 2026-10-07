@@ -2,6 +2,18 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 19:12 +08:00 | Claude Code（云端） | 计划：六个订阅合规接入 + 每次做完自动总结 + 开发者模式验收（只写计划，未实施）
+- 起因：用户要参考 pingdotgg/t3code 重新定义 Agent，三个目标——六个订阅（Claude、Gemini 经 Antigravity、Grok、Cursor、Kimi / DeepSeek 经 OpenCode）合规接入、每次做完就总结项目、验收已做的开发者模式；用户要求「先做计划」「在 GitHub 做完计划即可」「先别执行，拉到本地后叫别的模型来做」
+- 做了什么：只读调研 t3code（适配器 + 能力标记、通用 ACP 适配器、每会话 stdio MCP 小桥、检测不建会话）与 PiWeb 的接入点，经一轮设计复核后写成 `docs/plan-2026-10-07-multi-agent.md`。要点：
+  - 保留 Next.js 与 pi 路径；新增外部 Agent 层（`src/lib/providers/`、`external-agent-manager.ts`、`session-router.ts`），一个通用 ACP 适配器先覆盖 Claude（claude-agent-acp）、Grok、Antigravity、OpenCode；Cursor 视 M0 结果走 ACP 或 `@cursor/sdk`
+  - 外部会话记录用 pi 自己的 JSONL（`SessionManager.create` 写到 `~/.pi/agent/web-sessions/`），快照 / 树 / 导出 / 生长历史几乎不用改；每会话一个进程；审批用新的 `PermissionBridge`（`ExtensionUiBridge.ask` 无人看时立即返回默认值）
+  - 总结分两层：确定性本轮卡片（不调模型）→ AI 总结 + 滚动项目总览；都挂在 growth-tracker 新增的 `onRunEnd` 钩子上
+  - 开发者模式先出验收包；已知差距：React 19 / Next 16 项目选元素只能靠文字搜索定位源码（`inspect.ts:87`）
+  - 合规：只驱动用户自己安装登录的官方 Agent，不碰凭据、检测无副作用；**Claude 是最不确定的一家**（PiWeb 在 npm 上算第三方产品），实施前需用户看 Anthropic 当前条款
+- 未做：任何代码改动；真订阅相关的事实（`opencode acp`、Cursor ACP、claude-agent-acp 登录行为、Antigravity Windows 安装）都留到 M0 由用户本机确认
+- 影响文件：`docs/plan-2026-10-07-multi-agent.md`（新增）、`state/progress.md`
+- 下一步：用户拉取后交给别的模型按计划从 M0 开始；M0b 探测脚本需要用户在 Windows 上跑
+
 ## 2026-10-07 18:52 +08:00 | muse-spark-1.3-contributor-free | 提交 README 状态段并清理 backups 旧备份
 - 改了什么：
   - 提交 `README.md` / `README_zh.md` 状态段更新（此前工作区未提交的改动）：同步近三次更新——设置保存模型配置后已打开会话即时生效、回答边生成边渲染 Markdown、内置提供方覆盖删空时整块移除；测试数更新为 **79 文件 496 通过 + 1 跳过**；已知限制补生长记录与浏览器工具条目。`git diff --check` 通过，纯文档改动
