@@ -1,5 +1,59 @@
 # 进度
 
+## 2026-09-28 11:40 +08:00 | deepseek-flash (DeepSeek Harness) | 开发者模式（M1 完成 + M2 半程）交接：计划与现状
+> 本条是**交接条目**：用户要求把计划落到项目里，后续由别的模型接手。计划全文在下方，实现状态见「已完成 / 待办」。
+- 任务目标：用 PiWeb 开发项目时，右侧面板内嵌**用户项目的 dev server 页面**（iframe），开启「检查」后悬停高亮、点击任意元素/文字 → 列出该元素在工作区里对应的源码位置（文件:行号），并可「在 PiWeb 查看 / 编辑器打开 / 发给 pi」。
+
+### 用户已批准的方案（要点，勿擅自改方向）
+- 不代理用户 dev server：iframe **直连**用户地址，跨域通信全走 `postMessage`（避免 WebSocket/HMR/URL 重写复杂度）
+- 不解析 React fiber；精确 file:line 依赖构建期注入的 `data-source` 类属性，无注入时**退化为文本搜索**
+- 三级定位（`locateSource()`）：① `data-source`/`data-insp-path` 等属性直读（行列精确，必须过工作区边界校验）→ ② 精确文本搜索（有界 fs 遍历）→ ③ i18n 两跳（字典行命中 `"key": "文本"` → 提取 key → 搜使用处）
+- 排序：`source-attr`(0) > 组件内文本/i18n 使用处(1) > 其他文本(2) > 字典命中(3)；结果上限 20 条
+
+### postMessage 协议（已定，双端实现需一致）
+- PiWeb → iframe：`{ source:"piweb", type:"inspect-activate" | "inspect-deactivate" | "inspect-ping" }`
+- iframe → PiWeb：`{ source:"piweb-inspect", type:"ready" | "inspect-deactivated" | "element", payload? }`
+- `payload = { text, tag, attrs, domPath, pageUrl }`；PiWeb 侧 `text + attrs` 送 `/api/dev-inspect`
+- 双向 origin 校验：脚本用 `document.currentScript.src` 推导 PiWeb origin；PiWeb 用 iframe URL 的 origin 校验 `event.origin`
+
+### 已完成（已验证）
+1. **Phase 0 善后**：停掉旧全局实例（PID 37284 及其子进程）；发现全局安装 `D:\NodeJs\node_modules\@rexvane\piweb` **本来就是指向本仓库的 junction**，无需再装；已用 `bin/piweb.js --no-open` 重启，30141 端口 `/api/health` 正常（当前跑 dev 模式）
+2. **M1 定位内核**（`npm run typecheck` 通过，`npx vitest run tests/dev-inspect-service.test.ts` **8 个测试全过**）：
+   - `src/lib/dev-inspect-service.ts`：`locateSource(cwd, {text, attrs})` + `normalizeInspectText()`；常量 `MAX_TEXT=200`、`MAX_RESULTS=20`、`MAX_FILE_BYTES=1MB`、`MAX_FILES=5000`；`DICT_PATH_RE` 限定只有 locales/i18n/lang/messages/translations 类路径才做两跳（避免普通对象字面量误触发）
+   - `src/app/api/dev-inspect/route.ts`：POST，body 手写 32KB 上限读取（照抄 `api/files/route.ts` 模式），`export const dynamic = "force-dynamic"`
+   - `tests/dev-inspect-service.test.ts`：8 个用例（文本直中 / i18n 两跳排序 / 对象字面量不两跳 / 属性命中与越界拒绝 / 排除目录与二进制跳过 / 缺参报错 / 文本规范化 / 大小写敏感）
+3. **M2 半程**：
+   - `src/i18n.tsx`：zh（:540-561）+ en（:1089-1110）已加 `devMode`/`devPreview*`/`devInspectKind*` 共 22 个键（`Dict` 类型由 zh 推导，两边必须同步）
+   - `public/piweb-inspect.js`：接入脚本已完成（惰性、只在被 iframe 嵌入时工作、hover 高亮 overlay、click 捕获、ESC 退出、ping/ready）
+
+### 待办（接手者从这里继续）
+1. **`src/components/DevPreviewPanel.tsx`（未创建）** —— 预览面板：
+   - props 建议：`{ cwd, onClose, onViewFile(path), onSendPrompt(text) }`
+   - URL 输入（`localStorage` 键 `piweb.devPreviewUrl:${cwd}`，无协议时补 `http://`）；iframe 直连不 sandbox
+   - 监听 `message`：校验 `event.origin === new URL(loadedUrl).origin && data.source === "piweb-inspect"`；`ready`→脚本就绪；`element`→POST `/api/dev-inspect {cwd,text,attrs}`；`inspect-deactivated`→关检查态
+   - iframe `onLoad` 后发 `inspect-ping`，约 1.2s 无 `ready` → 判定未接入 → 显示接入引导卡（snippet 为 `<script src="${location.origin}/piweb-inspect.js"></script>` + 复制按钮 + 「让 pi 帮我接入」→ `onSendPrompt(t.devPreviewAskPiPrompt.replace("{origin}", location.origin))`）
+   - 结果列表每行：[查看]→`onViewFile(path)`、[编辑器]→POST `/api/files {action:"open",cwd,path,line}`、[发给 pi]→`onSendPrompt(\`${path}:${line}\`)`；空白预览时提示 `t.devPreviewFrameHint`（X-Frame-Options/CSP 限制）
+   - 复用样式：Tailwind 布局 + `icon-btn` / `pw-chip` / `pw-seg` 类 + `--dsw-*` CSS 变量；图标从 `src/components/icons.tsx` 取（如 `IconSearchOutline16`、`IconRefreshOutline14`、`IconCloseOutline14`）
+2. **`src/proxy.ts`**：`ASSET_PATHS`（:10）加 `"/piweb-inspect.js"` —— 否则设了 `PI_WEB_PASSWORD` 时用户页面跨域取不到脚本（matcher 只放行 `_next/`、`_piweb-dev/`、icon）
+3. **`src/components/AppShell.tsx` 集成**：顶栏加「开发者」开关，右侧栏在 `ProjectPanel`（挂载点 :589）与 `DevPreviewPanel` 间切换（复用现有宽度/拖拽设施）；接线：
+   - `insertIntoComposer`（已有，GitPanel 的 `onAskCommit` 同款）→ `onSendPrompt`
+   - 文件查看器：`useFileViewer().open(path, { lazy: true })`（`src/hooks/useFileViewer.ts:28`，`lazy` = 直接读磁盘当前内容）→ `onViewFile`
+   - 编辑器打开：`openInEditor()`（`src/lib/files-service.ts:237`，支持 `path:line`，VS Code 系走 `-g`）
+4. **README.md / README_zh.md**：功能亮点补一条
+5. **验收**：`npm run typecheck` + `npx vitest run`（改造前基线 54 文件 369 通过 + 1 跳过，加新用例后应 ≥377）+ 手工走查（起一个 Vite/Next 项目 → 面板填入地址 → 点文字 → 命中正确文件:行 → 编辑器/查看/发给 pi 三个动作）
+
+### 关键调研结论（接手者不必重查）
+- 鉴权在 `src/proxy.ts`（Next 16 的 proxy 约定，替代 middleware），新 API 自动受保护；**只有静态资源白名单需要手工加**
+- 用户项目的源码属性格式兼容 `code-inspector-plugin` 的 `data-insp-path`
+- 工作区边界统一用 `resolveWorkspacePath` + `isPathInside`（`src/lib/path-security.ts`）
+- Next 16 路由处理器就是仓库现有写法（已查 `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`，与现有 22 个路由一致）
+- 验证命令：`npx vitest run <file>`；本会话文件策略为 danger-full-access，vitest 可直接跑
+
+### 影响文件（本次在途改动）
+- 新增：`src/lib/dev-inspect-service.ts`、`src/app/api/dev-inspect/route.ts`、`tests/dev-inspect-service.test.ts`、`public/piweb-inspect.js`
+- 修改：`src/i18n.tsx`
+- 下一步：按上面「待办」1→5 顺序继续，完成后补一条 progress 并提交
+
 ## 2026-09-28 11:05 +08:00 | k3 (DeepSeek Harness) | 清理旧影子仓库数据
 - 改了什么：用户明确指示后，删除已成孤儿的 `C:\Users\guica\.pi\agent\web-growth\`（7 个工作区 / 43.6 MB 旧快照历史）
 - 注意：本机还有一个运行中的全局安装旧版 PiWeb（PID 37284，`D:\NodeJs\...\@rexvane\piweb`），它仍是影子仓库代码——若它再触发生长快照会重建该目录；本次去影子仓库改造尚未发布到 npm，待新版本发布并升级全局安装后才会彻底不再出现
