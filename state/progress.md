@@ -82,3 +82,11 @@
 - 未做：README 功能亮点（交接待办 4）；手工走查真实 Vite/Next 项目（交接待办 5 后半）
 - 影响文件：`src/components/DevPreviewPanel.tsx`（新）、`src/components/AppShell.tsx`、`src/lib/dev-inspect-service.ts`、`src/proxy.ts`、`src/i18n.tsx`、`tests/components/dev-preview-panel.test.tsx`（新）、`tests/dev-inspect-service.test.ts`、`tests/proxy-auth.test.ts`
 - 下一步：用户确认「输入地址预览」这一入口形态（可选：自动探测 dev server 候选 / PiWeb 托管启动）；代码改动待用户确认后提交
+
+## 2026-10-07 13:25 +08:00 | muse-spark-1.3-contributor-free | M5 收尾提交并推送 GitHub，云端可接手
+- 改了什么：
+  - 把本地未提交的 M5 收尾一次性提交（`dc96ef8`）：删 `public/piweb-inspect.js` 与 `src/app/api/dev-inspect/route.ts`（iframe 预览残留，按计划移入 `backups/` 后从 git 移除，`backups/` 本就进 `.gitignore` 只留本地）；删 `src/i18n.tsx` 里 22 个 `devPreview*`/`devInspectKind*` 文案键；`README.md`/`README_zh.md` 同步生长树（每轮一个 git commit，`refs/piweb/rounds/<key>`）与 pi 的眼睛（5 个 browser 工具、`PI_WEB_BROWSER`、私网放行）说明
+  - 计划文件入仓：`C:\Users\guica\.claude\plans\bubbly-meandering-dream.md` 原样复制为 `docs/plan-2026-10-07-growth-browser.md`（用户选了 docs 位置，老项目不建 `planning/`），云端可直接读 A（生长树）/B（pi 的眼睛）/M5/验证清单
+  - 推送前验证：`npm run typecheck` 通过；全量 `npx vitest run` **59 文件 406 通过 + 1 跳过**（跳过的是 Windows 符号链接权限用例）
+- 影响文件：`README.md`、`README_zh.md`、`src/i18n.tsx`、删除 `public/piweb-inspect.js`、`src/app/api/dev-inspect/route.ts`，新增 `docs/plan-2026-10-07-growth-browser.md`
+- 下一步：云端接手 B3（截图上点选元素 → 元素芯片）与后续迭代；本地 `backups/2026-10-07-iframe-dev-preview/` 仅本地保留不推送
