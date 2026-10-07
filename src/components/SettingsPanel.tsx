@@ -1380,14 +1380,16 @@ function ModelsSection() {
 					const editingThis = editing === p.id;
 					return (
 						<div key={p.id}>
-							<div className="flex items-center gap-3 rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+							{/* 放不下时状态与操作整组换到第二行，不能把按钮压成竖排、把名称压没（OAuth + 自定义覆盖时按钮最多） */}
+							<div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }} data-testid="provider-row">
 								<ProviderBrand id={p.id} name={providerName(p.id)} size={34} />
-								<div className="min-w-0 flex-1">
+								<div className="min-w-[8rem] flex-1">
 									<div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{providerName(p.id)}</div>
 									<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 										{p.id}{p.baseUrl ? ` · ${p.baseUrl}` : ""}
 									</div>
 								</div>
+								<div className="ml-auto flex flex-none flex-wrap items-center justify-end gap-2 whitespace-nowrap" data-testid="provider-actions">
 								{isCustom && (
 									<span
 										className="rounded-md px-1.5 py-0.5"
@@ -1439,6 +1441,7 @@ function ModelsSection() {
 										{t.delete}
 									</button>
 								)}
+								</div>
 							</div>
 
 							{p.id === "xai" && p.authReady && (
