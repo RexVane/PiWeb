@@ -35,6 +35,7 @@ import { useFileViewer } from "@/hooks/useFileViewer";
 import type { TreeNode } from "@/lib/growth-tree";
 import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
+import { defaultThinkingFor, isThinkingLevel, modelKey, THINKING_LEVELS, type ModelDefaults } from "@/lib/thinking";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
 // dsh ui-layout columns.ts 几何常量
@@ -246,11 +247,46 @@ export function AppShell() {
 			})),
 		[models],
 	);
-	const defaultModel = useMemo(() => modelChoices.find((m) => authByProvider[m.provider]), [modelChoices, authByProvider]);
-	const heroModelLevels = useMemo(
-		() => (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-		[heroModel, modelChoices, defaultModel],
+	const modelDefaults: ModelDefaults | null = models?.defaults ?? null;
+	// pi 自己配置的默认模型（settings.json 的 defaultProvider/defaultModel）可用时，新会话就是它：
+	// 显示它，并且发送时不再 setModel，交给 pi 按同样的规则选（项目级设置也随之生效）
+	const piDefaultModel = useMemo(
+		() => modelChoices.find((m) => m.provider === modelDefaults?.provider && m.id === modelDefaults?.modelId && authByProvider[m.provider]),
+		[modelChoices, modelDefaults, authByProvider],
 	);
+	const defaultModel = useMemo(() => piDefaultModel ?? modelChoices.find((m) => authByProvider[m.provider]), [piDefaultModel, modelChoices, authByProvider]);
+	const heroEffectiveModel = heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel;
+	const heroModelLevels = useMemo(
+		() => heroEffectiveModel?.thinkingLevels ?? [...THINKING_LEVELS],
+		[heroEffectiveModel],
+	);
+	// 用户没选档位时新会话会用的强度：按模型设置 → 默认强度 → medium，钳到模型支持的档位
+	const heroDefaultLevel = heroEffectiveModel ? defaultThinkingFor(modelDefaults, heroEffectiveModel.provider, heroEffectiveModel.id, heroModelLevels) : undefined;
+
+	/** 模型菜单「设为默认」：写 pi 的 defaultProvider/defaultModel 与 defaultThinkingLevel（同终端 /model、/thinking 的 Ctrl+S） */
+	const saveDefaultModel = useCallback(async (provider: string, id: string, level: string | undefined) => {
+		const thinking: Record<string, unknown> = {};
+		if (level && isThinkingLevel(level)) {
+			thinking.defaultLevel = level;
+			// 这个模型有单独的默认强度时它优先：一起改掉，否则新会话还是旧强度
+			const key = modelKey(provider, id);
+			if (modelDefaults?.modelThinkingLevels[key]) thinking.modelLevels = { [key]: level };
+		}
+		try {
+			const response = await fetch("/api/pi-settings", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ defaultModel: { provider, modelId: id }, ...(Object.keys(thinking).length ? { thinking } : {}) }),
+			});
+			const result = await response.json().catch(() => null);
+			if (!response.ok || !result?.success) throw new Error(result?.error || `HTTP ${response.status}`);
+			await refreshModels();
+			return true;
+		} catch (error) {
+			setError(t.saveDefaultFailed.replace("{error}", error instanceof Error ? error.message : String(error)));
+			return false;
+		}
+	}, [modelDefaults, refreshModels, setError, t]);
 
 
 	// ---------- 拖拽 ----------
@@ -402,13 +438,15 @@ export function AppShell() {
 			setError(t.pickWorkspaceFirst);
 			return { success: false };
 		}
-		// 用户没手动选过模型时也要把界面显示的默认模型显式下发，
-		// 否则后端不 setModel、SDK 自选的默认与界面显示不一致。
+		// 显示的是 pi 自己的默认模型且用户没改：什么都不下发，pi 新建会话时按同样的规则选模型和强度。
+		// 否则（用户选了模型，或 pi 没配默认 / 默认不可用而显示的是第一个可用模型）显式下发模型，
+		// 并把界面显示的强度一起下发——pi 切模型时可能沿用上一个模型的强度，与显示不一致。
+		const followPi = !heroModel && Boolean(piDefaultModel);
 		const effective = heroModel ?? (defaultModel ? { provider: defaultModel.provider, id: defaultModel.id } : null);
 		const p = await newSession(cwd, {
-			provider: effective?.provider,
-			modelId: effective?.id,
-			thinking: heroThinking || undefined,
+			provider: followPi ? undefined : effective?.provider,
+			modelId: followPi ? undefined : effective?.id,
+			thinking: heroThinking || (followPi ? undefined : heroDefaultLevel),
 		});
 		if (!p) return { success: false };
 		// Bind before the new-session render. In-flight ChatInput callbacks still own
@@ -735,8 +773,10 @@ export function AppShell() {
 							}}
 							defaultModel={defaultModel}
 							heroModelLevels={heroModelLevels}
-							heroThinking={heroThinking}
+							heroThinking={heroThinking || heroDefaultLevel || ""}
 							onSelectHeroThinking={setHeroThinking}
+							modelDefaults={modelDefaults}
+							onSaveDefaultModel={saveDefaultModel}
 						/>
 						{/* 草稿阶段的错误行内显示（不再弹右下角） */}
 						{state.error && (
@@ -884,6 +924,8 @@ export function AppShell() {
 												})
 											}
 											onClearQueue={() => sendCommand({ cmd: "clearQueue" })}
+											modelDefaults={modelDefaults}
+											onSaveDefaultModel={saveDefaultModel}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
 										{Object.keys(state.extensionStatuses).length > 0 && (
@@ -1056,6 +1098,8 @@ function Hero({
 	heroModelLevels,
 	heroThinking,
 	onSelectHeroThinking,
+	modelDefaults,
+	onSaveDefaultModel,
 }: {
 	draft: ChatDraft;
 	onDraftChange: (update: ChatDraftUpdate) => void;
@@ -1083,6 +1127,8 @@ function Hero({
 	heroModelLevels: string[];
 	heroThinking: string;
 	onSelectHeroThinking: (level: string) => void;
+	modelDefaults: ModelDefaults | null;
+	onSaveDefaultModel: (provider: string, id: string, level: string | undefined) => Promise<boolean>;
 }) {
 	const { t } = useI18n();
 	const [wsMenu, setWsMenu] = useState(false);
@@ -1235,6 +1281,8 @@ function Hero({
 					onAbort={() => {}}
 					onSelectModel={onSelectHeroModel}
 					onSelectLevel={onSelectHeroThinking}
+					modelDefaults={modelDefaults}
+					onSaveDefaultModel={onSaveDefaultModel}
 				/>
 			</div>
 		</div>

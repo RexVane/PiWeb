@@ -57,7 +57,7 @@ export interface DiscoveredModel {
 	name?: string;
 }
 
-let builtInProviderIdsPromise: Promise<Set<string>> | null = null;
+let builtInRuntimePromise: Promise<ModelRuntime> | null = null;
 
 /** 目录短缓存：页面挂载与设置关闭都会拉一次；认证探测（每个供应商一次网络往返）不必秒级重复 */
 let listCache: { at: number; value: Promise<{ providers: ProviderView[]; models: ModelView[] }> } | null = null;
@@ -68,19 +68,40 @@ export function invalidateModelList(): void {
 }
 
 /** Read the unmodified SDK catalog through its public modelsPath:null option. */
-function getBuiltInProviderIds(): Promise<Set<string>> {
-	if (!builtInProviderIdsPromise) {
-		builtInProviderIdsPromise = ModelRuntime.create({
+function getBuiltInRuntime(): Promise<ModelRuntime> {
+	if (!builtInRuntimePromise) {
+		builtInRuntimePromise = ModelRuntime.create({
 			modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
 			credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
-		})
-			.then((runtime) => new Set(runtime.getProviders().map((provider) => provider.id)))
-			.catch((error) => {
-				builtInProviderIdsPromise = null;
-				throw error;
-			});
+		}).catch((error) => {
+			builtInRuntimePromise = null;
+			throw error;
+		});
 	}
-	return builtInProviderIdsPromise;
+	return builtInRuntimePromise;
+}
+
+async function getBuiltInProviderIds(): Promise<Set<string>> {
+	return new Set((await getBuiltInRuntime()).getProviders().map((provider) => provider.id));
+}
+
+/** 内置模型定义里可以原样写进 models.json 的能力字段（不含 baseUrl / api / headers：那些跟着提供商走） */
+const BUILTIN_DEFINITION_FIELDS = [
+	"name", "reasoning", "thinkingLevelMap", "input", "inputLimits", "contextWindow", "maxTokens",
+	"cost", "promptCache", "samplingParams", "samplingParamsByThinkingLevel", "compat",
+] as const;
+
+/**
+ * 内置提供商未经 models.json 改动的模型定义。models.json 里同 ID 的 models 条目会整条替换内置定义，
+ * 设置页用它提示「已内置」并在需要时把能力（思考、档位、看图、容量、兼容项）预填进替换条目。
+ */
+export async function getBuiltinModelDefinitions(providerId: string): Promise<Array<Record<string, unknown>>> {
+	const runtime = await getBuiltInRuntime();
+	return (runtime.getModels(providerId) as unknown as Array<Record<string, unknown>>).map((model) => {
+		const definition: Record<string, unknown> = { id: String(model.id) };
+		for (const field of BUILTIN_DEFINITION_FIELDS) if (model[field] !== undefined) definition[field] = structuredClone(model[field]);
+		return definition;
+	});
 }
 
 function envKeyOf(providerId: string): string | null {

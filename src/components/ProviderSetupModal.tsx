@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
@@ -12,8 +12,9 @@ import {
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
-import { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { formatCapacity, modelDraftFromConfig, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
+import { supportedThinkingLevels, thinkingMapFromRows, thinkingRowsFromMap, type ThinkingLevelName, type ThinkingLevelRow } from "@/lib/thinking";
 import styles from "./ProviderSetupModal.module.css";
 
 export { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
@@ -30,6 +31,37 @@ export interface CustomProviderSetup {
 }
 
 type SubmitResult = { success: boolean; error?: string };
+
+/** 内置模型定义（未经 models.json 改动）：models.json 里同 ID 的条目会整条替换它，目录据此标「已内置」并预填能力 */
+export type BuiltinModelDefinition = Readonly<Record<string, unknown>>;
+
+export function useBuiltinModels(providerId: string | null | undefined): readonly BuiltinModelDefinition[] {
+	const [models, setModels] = useState<readonly BuiltinModelDefinition[]>([]);
+	useEffect(() => {
+		setModels([]);
+		if (!providerId) return;
+		let alive = true;
+		fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "builtinModels", providerId }) })
+			.then((response) => response.json())
+			.then((result) => {
+				if (alive && result?.success && Array.isArray(result.data?.models)) setModels(result.data.models);
+			})
+			.catch(() => undefined);
+		return () => {
+			alive = false;
+		};
+	}, [providerId]);
+	return models;
+}
+
+/** 用内置定义起一行：source 就是内置定义本身，保存时整条写进 models.json，替换后能力不丢 */
+function draftFromBuiltin(definition: BuiltinModelDefinition, name?: string): ModelDraft {
+	const draft = modelDraftFromConfig(definition);
+	return { ...draft, name: name?.trim() ? name : draft.name };
+}
+
+/** 内置定义里表单不直接编辑、但替换时需要一起带上的字段 */
+const BUILTIN_EXTRA_FIELDS = ["inputLimits", "cost", "promptCache", "samplingParams", "samplingParamsByThinkingLevel", "compat"] as const;
 
 export function ProviderSetupModal({
 	mode,
@@ -59,6 +91,7 @@ export function ProviderSetupModal({
 	const [baseUrl, setBaseUrl] = useState("");
 	const [providerId, setProviderId] = useState("");
 	const [displayName, setDisplayName] = useState("");
+	const builtinModels = useBuiltinModels(mode === "builtin" ? selectedId : null);
 	const allApis = customApiOptions(providers.flatMap((provider) => provider.apis));
 	const [api, setApi] = useState(allApis.includes("openai-completions") ? "openai-completions" : (allApis[0] ?? "openai-completions"));
 	const [models, setModels] = useState<ModelDraft[]>([]);
@@ -255,7 +288,7 @@ export function ProviderSetupModal({
 											<label className={styles.label}>{t.apiAddress}</label>
 											<input className={styles.input} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selected?.baseUrl || t.providerDefault} />
 										</div>
-											<ModelCatalog models={models} setModels={setModels} updateModel={updateModel} inheritedCount={selected?.modelCount ?? 0} discover={discoverAvailableModels} discoverDisabled={!baseUrl.trim()} />
+											<ModelCatalog models={models} setModels={setModels} updateModel={updateModel} inheritedCount={selected?.modelCount ?? 0} builtinModels={builtinModels} discover={discoverAvailableModels} discoverDisabled={!baseUrl.trim()} />
 									</div>
 								) : null}
 							</div>
@@ -317,14 +350,16 @@ export function ProviderSetupModal({
 
 /**
  * 行式模型目录（对齐 dsh ModelListEditor）：
- * 每行 = ID + 名称，折叠展开两个容量字段（K/M 写法）；
+ * 每行 = ID + 名称，折叠展开容量字段（K/M 写法）与能力（思考 / 档位 / 看图）；
  * 「从提供商获取」产出候选勾选对话框，采纳不覆盖已配置行。
+ * 内置提供商传 builtinModels：同 ID 的条目会替换内置定义，所以标「已内置」、默认不勾选，采纳或填入时预填内置能力。
  */
 export function ModelCatalog({
 	models,
 	setModels,
 	updateModel,
 	inheritedCount,
+	builtinModels,
 	discover,
 	discoverDisabled,
 }: {
@@ -332,6 +367,7 @@ export function ModelCatalog({
 	setModels: React.Dispatch<React.SetStateAction<ModelDraft[]>>;
 	updateModel: (index: number, patch: Partial<ModelDraft>) => void;
 	inheritedCount?: number;
+	builtinModels?: readonly BuiltinModelDefinition[];
 	/** 用表单当前值探测远端目录（allowPrivate：用户勾选了允许访问本机/私网地址）；抛错时错误显示在目录内 */
 	discover?: (allowPrivate: boolean) => Promise<ModelDraft[]>;
 	discoverDisabled?: boolean;
@@ -347,6 +383,7 @@ export function ModelCatalog({
 	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
 	// 容量逐字段文本缓冲，避免输入中被 K/M 格式化打断
 	const [capacityText, setCapacityText] = useState<Record<string, string>>({});
+	const builtinById = useMemo(() => new Map((builtinModels ?? []).map((model) => [String(model.id), model])), [builtinModels]);
 
 	const toggleExpanded = (index: number) =>
 		setExpanded((current) => {
@@ -361,6 +398,41 @@ export function ModelCatalog({
 	const editCapacity = (index: number, field: "contextWindow" | "maxTokens", text: string) => {
 		setCapacityText((current) => ({ ...current, [`${index}:${field}`]: text }));
 		updateModel(index, { [field]: parseCapacity(text) } as Partial<ModelDraft>);
+	};
+
+	const dropCapacityText = (index: number) =>
+		setCapacityText((current) => {
+			const next = { ...current };
+			delete next[`${index}:contextWindow`];
+			delete next[`${index}:maxTokens`];
+			return next;
+		});
+
+	/** 新填的行（还没有来源、能力也没动过）ID 与内置模型同名：直接用内置定义起这一行 */
+	const prefillFromBuiltin = (index: number, model: ModelDraft) => {
+		const definition = builtinById.get(model.id.trim());
+		const untouched = model.reasoning === undefined && model.vision === undefined && model.thinkingLevelMap === undefined
+			&& model.contextWindow === undefined && model.maxTokens === undefined;
+		if (!definition || model.source || !untouched) return;
+		dropCapacityText(index);
+		updateModel(index, draftFromBuiltin(definition, model.name));
+	};
+
+	/** 已有的行（比如以前存过的替换条目）补回内置能力：思考、档位、看图、缺的容量与兼容项 */
+	const applyBuiltin = (index: number, model: ModelDraft, definition: BuiltinModelDefinition) => {
+		const builtin = modelDraftFromConfig(definition);
+		const extras: Record<string, unknown> = {};
+		for (const field of BUILTIN_EXTRA_FIELDS) if (definition[field] !== undefined && model.source?.[field] === undefined) extras[field] = definition[field];
+		dropCapacityText(index);
+		updateModel(index, {
+			name: model.name || builtin.name,
+			reasoning: builtin.reasoning,
+			thinkingLevelMap: builtin.thinkingLevelMap,
+			vision: builtin.vision,
+			contextWindow: model.contextWindow ?? builtin.contextWindow,
+			maxTokens: model.maxTokens ?? builtin.maxTokens,
+			source: Object.keys(extras).length ? { ...extras, ...model.source } : model.source,
+		});
 	};
 
 	const removeModel = (index: number) => {
@@ -391,10 +463,10 @@ export function ModelCatalog({
 				setDiscoverError(t.discoverEmpty);
 				return;
 			}
-			// 已配置的行默认不勾选：采纳永远不覆盖用户改过的内容
+			// 已配置的行默认不勾选：采纳永远不覆盖用户改过的内容；已内置的模型本来就能用，采纳反而会替换内置定义
 			const known = new Set(models.map((model) => model.id.trim()).filter(Boolean));
 			setCandidates(found);
-			setPicked(new Set(found.filter((model) => !known.has(model.id.trim())).map((model) => model.id)));
+			setPicked(new Set(found.filter((model) => !known.has(model.id.trim()) && !builtinById.has(model.id.trim())).map((model) => model.id)));
 		} catch (reason) {
 			setDiscoverError(reason instanceof Error ? reason.message : t.toastError);
 		} finally {
@@ -414,7 +486,8 @@ export function ModelCatalog({
 			for (const candidate of candidates) {
 				const id = candidate.id.trim();
 				if (!id || !picked.has(id) || byId.has(id)) continue;
-				byId.set(id, { id, name: candidate.name ?? "" });
+				const definition = builtinById.get(id);
+				byId.set(id, definition ? draftFromBuiltin(definition, candidate.name) : { id, name: candidate.name ?? "" });
 			}
 			return [...byId.values()];
 		});
@@ -432,6 +505,7 @@ export function ModelCatalog({
 		});
 
 	const firstInvalid = validateModelDrafts(models);
+	const replacesBuiltin = models.some((model) => builtinById.has(model.id.trim()));
 
 	return (
 		<div className={styles.catalog}>
@@ -471,6 +545,8 @@ export function ModelCatalog({
 										type="button"
 										className={styles.rowToggle}
 										title={t.capacityFields}
+										aria-label={t.capacityFields}
+										aria-expanded={open}
 										onClick={() => toggleExpanded(index)}
 									>
 										<IconChevronDown14 size={13} style={{ transform: open ? "rotate(0deg)" : "rotate(-90deg)", transition: "transform 120ms ease" }} />
@@ -480,6 +556,7 @@ export function ModelCatalog({
 										style={{ borderColor: !model.id.trim() && firstInvalid?.index === index ? "var(--dsw-danger)" : undefined }}
 										value={model.id}
 										onChange={(event) => updateModel(index, { id: event.target.value })}
+										onBlur={() => prefillFromBuiltin(index, model)}
 										placeholder={t.modelId}
 									/>
 									<input className={styles.input} value={model.name} onChange={(event) => updateModel(index, { name: event.target.value })} placeholder={t.displayNameOptional} />
@@ -512,6 +589,13 @@ export function ModelCatalog({
 										<span className={styles.capacityHint}>{t.capacityHint}</span>
 									</div>
 								) : null}
+								{open ? (
+									<ModelCapabilities
+										model={model}
+										onChange={(patch) => updateModel(index, patch)}
+										onUseBuiltin={builtinById.has(model.id.trim()) ? () => applyBuiltin(index, model, builtinById.get(model.id.trim())!) : undefined}
+									/>
+								) : null}
 								{badCapacity ? <div className={styles.rowError}>{t.capacityInvalid.replace("{n}", String(index + 1))}</div> : null}
 							</div>
 						);
@@ -520,6 +604,7 @@ export function ModelCatalog({
 			) : (
 				<div className={styles.modelEmpty}>{inheritedCount ? t.modelCatalogEmptyBuiltin : t.modelCatalogEmptyCustom}</div>
 			)}
+			{replacesBuiltin ? <div className={styles.catalogHint}>{t.replacesBuiltinHint}</div> : null}
 			<button className={styles.addModel} onClick={() => setModels((current) => [...current, { id: "", name: "" }])}>
 				<IconPlusOutline16 size={14} />
 				{t.addModel}
@@ -537,6 +622,7 @@ export function ModelCatalog({
 									<input type="checkbox" checked={picked.has(model.id)} onChange={() => togglePick(model.id)} />
 									<span className={styles.candidateId}>{model.id}</span>
 									{model.name ? <span className={styles.candidateName}>{model.name}</span> : null}
+									{builtinById.has(model.id.trim()) ? <span className={styles.builtinTag}>{t.builtinModelTag}</span> : null}
 								</label>
 							))}
 							{visibleCandidates.length === 0 ? <div className={styles.modelEmpty}>—</div> : null}
@@ -565,6 +651,71 @@ export function ModelCatalog({
 						</div>
 					</div>
 				</div>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * 展开行里的能力区，与 pi 模型定义一一对应：支持思考 = reasoning，可用档位与发送值 = thinkingLevelMap，
+ * 支持图片输入 = input 含 image。底部预览输入卡思考菜单里会出现的档位。
+ */
+function ModelCapabilities({ model, onChange, onUseBuiltin }: { model: ModelDraft; onChange: (patch: Partial<ModelDraft>) => void; onUseBuiltin?: () => void }) {
+	const { t } = useI18n();
+	const rows = thinkingRowsFromMap(model.thinkingLevelMap);
+	const commit = (next: ThinkingLevelRow[]) => onChange({ thinkingLevelMap: thinkingMapFromRows(next, { draft: true }) });
+	const toggle = (level: ThinkingLevelName) => {
+		const next = rows.map((row) => (row.level === level ? { ...row, enabled: !row.enabled } : row));
+		// 至少留一档，否则思考菜单为空
+		if (next.some((row) => row.enabled)) commit(next);
+	};
+	const edit = (level: ThinkingLevelName, value: string) => commit(rows.map((row) => (row.level === level ? { ...row, value } : row)));
+	const customized = rows.filter((row) => row.enabled && row.value.trim() && row.value.trim() !== row.level).length;
+	return (
+		<div className={styles.capabilities}>
+			<div className={styles.capabilityRow}>
+				<label className={styles.capabilityCheck} title={t.supportsThinkingHint}>
+					<input type="checkbox" checked={model.reasoning === true} onChange={(event) => onChange({ reasoning: event.target.checked })} />
+					{t.supportsThinking}
+				</label>
+				<label className={styles.capabilityCheck}>
+					<input type="checkbox" checked={model.vision === true} onChange={(event) => onChange({ vision: event.target.checked })} />
+					{t.supportsImages}
+				</label>
+				{onUseBuiltin ? (
+					<button type="button" className={styles.linkButton} onClick={onUseBuiltin}>{t.useBuiltinCapabilities}</button>
+				) : null}
+			</div>
+			{model.reasoning ? (
+				<>
+					<div className={styles.levelRow} role="group" aria-label={t.thinkingLevelsAvailable}>
+						<span className={styles.levelLabel}>{t.thinkingLevelsAvailable}</span>
+						{rows.map((row) => (
+							<button key={row.level} type="button" className={styles.levelChip} aria-pressed={row.enabled} onClick={() => toggle(row.level)}>
+								{row.level}
+							</button>
+						))}
+					</div>
+					<details className={styles.levelValues}>
+						<summary>{customized ? t.thinkingValuesCustomized.replace("{n}", String(customized)) : t.thinkingValues}</summary>
+						<div className={styles.levelValueGrid}>
+							{rows.filter((row) => row.enabled).map((row) => (
+								<label key={row.level} className={styles.capacityField}>
+									<span>{row.level}</span>
+									<input
+										className={styles.input}
+										value={row.value}
+										onChange={(event) => edit(row.level, event.target.value)}
+										placeholder={row.level === "off" ? t.thinkingOffNotSent : row.level}
+										aria-label={t.thinkingValueFor.replace("{level}", row.level)}
+									/>
+								</label>
+							))}
+						</div>
+						<div className={styles.capacityHint}>{t.thinkingValueHint}</div>
+					</details>
+					<div className={styles.capacityHint}>{t.thinkingMenuPreview.replace("{levels}", supportedThinkingLevels(true, model.thinkingLevelMap).join(" · "))}</div>
+				</>
 			) : null}
 		</div>
 	);

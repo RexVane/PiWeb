@@ -1704,6 +1704,18 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	pointer-events: none;
 }
 
+/* 「默认」小标：模型菜单里的 pi 默认模型 / 新会话会用的思考档位 */
+.pw-default-tag {
+	flex: none;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--dsw-accent-soft);
+	color: var(--dsw-accent);
+	font-size: 10.5px;
+	font-weight: 400;
+	line-height: 17px;
+}
+
 /* 项目栏 */
 .pw-project {
 	background: var(--dsw-sidebar-fill);

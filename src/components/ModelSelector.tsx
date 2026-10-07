@@ -2,10 +2,34 @@
 
 /**
  * 模型选择菜单：打开即显示 Provider 分组模型列表；思考级别保留为独立子页。
+ * 传入 pi 的默认值时标出默认模型与新会话会用的档位，并提供「设为默认」（对应 pi 终端里 /model、/thinking 的 Ctrl+S）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconCheckOutline14, IconChevronDown14, IconChevronLeft14, IconChevronRight14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
+import { defaultThinkingFor, type ModelDefaults } from "@/lib/thinking";
+
+type Dict = ReturnType<typeof useI18n>["t"];
+
+const LEVEL_DESC_KEYS = {
+	off: "thinkingDescOff",
+	minimal: "thinkingDescMinimal",
+	low: "thinkingDescLow",
+	medium: "thinkingDescMedium",
+	high: "thinkingDescHigh",
+	xhigh: "thinkingDescXhigh",
+	max: "thinkingDescMax",
+} as const satisfies Record<string, keyof Dict>;
+
+/** 档位说明（与 pi 终端 /thinking 的描述一致）；未知档位返回空串 */
+export function thinkingLevelDesc(t: Dict, level: string): string {
+	const key = LEVEL_DESC_KEYS[level as keyof typeof LEVEL_DESC_KEYS];
+	return key ? t[key] : "";
+}
+
+function DefaultTag({ label }: { label: string }) {
+	return <span className="pw-default-tag">{label}</span>;
+}
 
 export interface ModelChoice {
 	provider: string;
@@ -27,6 +51,8 @@ export function ModelSelector({
 	authByProvider,
 	onSelectModel,
 	onSelectLevel,
+	defaults,
+	onSaveDefault,
 	open: openProp,
 	onOpenChange,
 }: {
@@ -38,6 +64,10 @@ export function ModelSelector({
 	authByProvider: Record<string, boolean>;
 	onSelectModel: (provider: string, id: string) => void;
 	onSelectLevel: (level: string) => void;
+	/** pi 的默认模型 / 默认强度（settings.json）：列表标「默认」，思考子页标出新会话会用的档位 */
+	defaults?: ModelDefaults | null;
+	/** 设为新会话默认；level 为空表示模型只有 off，不改默认强度 */
+	onSaveDefault?: (provider: string, id: string, level: string | undefined) => Promise<boolean>;
 	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
 }) {
@@ -48,6 +78,7 @@ export function ModelSelector({
 		onOpenChange?.(v);
 	};
 	const [pane, setPane] = useState<"model" | "effort">("model");
+	const [savingDefault, setSavingDefault] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
@@ -106,6 +137,11 @@ export function ModelSelector({
 
 	const hasModel = Boolean(model?.id);
 	const modelName = hasModel ? (model?.name || model?.id || "") : "";
+	const thinks = thinkingLevels.length > 1;
+	const isDefaultModel = (provider: string, id: string) => defaults?.provider === provider && defaults?.modelId === id;
+	// 当前模型在新会话里会用的档位（按模型设置 → 默认强度 → medium，再钳到模型支持的档位）
+	const defaultLevel = defaults && model?.id && thinks ? defaultThinkingFor(defaults, model.provider, model.id, thinkingLevels) : undefined;
+	const alreadyDefault = Boolean(model?.id) && isDefaultModel(model!.provider, model!.id) && (!thinks || !thinkingLevel || defaultLevel === thinkingLevel);
 	const effortLabel = hasModel && thinkingLevel && thinkingLevel !== "off" ? thinkingLevel : undefined;
 	const triggerTitle = hasModel
 		? `${providerNames[model?.provider ?? ""] ?? model?.provider}/${modelName}${effortLabel ? ` · ${effortLabel}` : ""}`
@@ -185,7 +221,15 @@ export function ModelSelector({
 											setOpen(false);
 										}}
 									>
-										<span style={{ fontSize: 14, color: "var(--dsw-label-primary)" }}>{lv}</span>
+										<span className="flex min-w-0 flex-col">
+											<span className="flex items-center gap-1.5" style={{ fontSize: 14, color: "var(--dsw-label-primary)" }}>
+												{lv}
+												{lv === defaultLevel && <DefaultTag label={t.defaultTag} />}
+											</span>
+											{thinkingLevelDesc(t, lv) && (
+												<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{thinkingLevelDesc(t, lv)}</span>
+											)}
+										</span>
 										{selected && (
 											<span style={{ display: "inline-flex", color: "var(--dsw-label-primary)" }}>
 												<IconCheckOutline14 size={14} />
@@ -236,8 +280,11 @@ export function ModelSelector({
 														setOpen(false);
 													}}
 												>
-													<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
-														{m.name}
+													<span className="flex min-w-0 flex-1 items-center gap-1.5">
+														<span className="min-w-0 truncate" style={{ fontSize: 14, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
+															{m.name}
+														</span>
+														{isDefaultModel(m.provider, m.id) && <DefaultTag label={t.defaultTag} />}
 													</span>
 													{selected && (
 														<span style={{ display: "inline-flex", color: "var(--dsw-label-primary)", flex: "none" }}>
@@ -279,6 +326,35 @@ export function ModelSelector({
 									<span className="truncate" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.thinkingUnsupported}</span>
 								</div>
 							))}
+							{hasModel && onSaveDefault && (
+								<div className="flex w-full items-center justify-between gap-3 px-3 pb-2 pt-1.5">
+									<span className="truncate" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
+										{t.newSessionDefault}
+									</span>
+									{alreadyDefault ? (
+										<span className="flex flex-none items-center gap-1" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
+											<IconCheckOutline14 size={13} /> {t.isDefaultNow}
+										</span>
+									) : (
+										<button
+											type="button"
+											className="pw-chip flex-none"
+											disabled={savingDefault}
+											onClick={async () => {
+												if (!model) return;
+												setSavingDefault(true);
+												try {
+													await onSaveDefault(model.provider, model.id, thinks ? thinkingLevel : undefined);
+												} finally {
+													setSavingDefault(false);
+												}
+											}}
+										>
+											{t.saveAsDefault}
+										</button>
+									)}
+								</div>
+							)}
 						</div>
 					)}
 				</div>

@@ -1,3 +1,5 @@
+import { canonicalThinkingMap, normalizeThinkingLevelMap, THINKING_LEVELS, type ThinkingLevelMap } from "./thinking";
+
 /** Browser-safe form helpers. Keep the source on each row, not indexed by model ID,
  * so renaming/removing a row never revives an old model or drops unexposed options. */
 export interface ModelDraft {
@@ -5,6 +7,12 @@ export interface ModelDraft {
 	name: string;
 	contextWindow?: number;
 	maxTokens?: number;
+	/** pi 的 reasoning：支持思考（不写即 false，思考菜单只有 off） */
+	reasoning?: boolean;
+	/** pi 档位 → 发给提供商的值；null = 不支持该档；xhigh / max 必须写出才支持 */
+	thinkingLevelMap?: ThinkingLevelMap;
+	/** input 含 image：能看图 */
+	vision?: boolean;
 	source?: Readonly<Record<string, unknown>>;
 }
 
@@ -17,8 +25,18 @@ export function modelDraftFromConfig(value: unknown): ModelDraft {
 		name: typeof source.name === "string" ? source.name : "",
 		contextWindow: typeof source.contextWindow === "number" ? source.contextWindow : undefined,
 		maxTokens: typeof source.maxTokens === "number" ? source.maxTokens : undefined,
+		reasoning: source.reasoning === true,
+		thinkingLevelMap: normalizeThinkingLevelMap(source.thinkingLevelMap),
+		vision: Array.isArray(source.input) && source.input.includes("image"),
 		source,
 	};
+}
+
+/** 档位映射按规范形式逐档比较（键的顺序、首尾空格不算改动） */
+function sameThinkingMap(left: ThinkingLevelMap | undefined, right: ThinkingLevelMap | undefined): boolean {
+	const a = canonicalThinkingMap(left);
+	const b = canonicalThinkingMap(right);
+	return THINKING_LEVELS.every((level) => a[level] === b[level]);
 }
 
 /** K/M use decimal units. Empty means the SDK default; NaN means invalid input. */
@@ -65,6 +83,20 @@ export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: s
 			else delete result[field];
 		} else if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) result[field] = value;
 		else delete result[field];
+	}
+	// 能力字段同样只在改动时写：pi 的默认值是 reasoning false、input ["text"]，关掉时直接删键
+	if (!original || (model.reasoning ?? false) !== original.reasoning) {
+		if (model.reasoning) result.reasoning = true;
+		else delete result.reasoning;
+	}
+	if (!original ? model.thinkingLevelMap !== undefined : !sameThinkingMap(model.thinkingLevelMap, original.thinkingLevelMap)) {
+		const map = canonicalThinkingMap(model.thinkingLevelMap);
+		if (Object.keys(map).length) result.thinkingLevelMap = map;
+		else delete result.thinkingLevelMap;
+	}
+	if (!original || (model.vision ?? false) !== original.vision) {
+		if (model.vision) result.input = ["text", "image"];
+		else delete result.input;
 	}
 	return result;
 }

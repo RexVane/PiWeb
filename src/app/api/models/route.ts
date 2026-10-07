@@ -6,6 +6,7 @@ import {
 	CustomProvidersConflictError,
 	CustomProvidersValidationError,
 	discoverModels,
+	getBuiltinModelDefinitions,
 	listModels,
 	loginState,
 	providerUsage,
@@ -15,6 +16,7 @@ import {
 	startLogin,
 	writeCustomProviders,
 } from "@/lib/models-service";
+import { getModelDefaults } from "@/lib/pi-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +39,8 @@ export async function GET(req: Request) {
 	const full = custom || params.get("full") === "1";
 	try {
 		const customProviders = custom ? await readCustomProviders() : null;
-		const data = await listModels();
+		// pi 的默认模型 / 默认思考强度随目录一起给：新会话页据此显示，并只在用户改过时才覆盖
+		const [data, defaults] = await Promise.all([listModels(), getModelDefaults()]);
 		// 页面挂载只需要选模型用的字段（1300+ 个模型带 api/baseUrl/cost/input 有 400KB）；设置页用 custom=1 拿完整版
 		const models = full
 			? data.models
@@ -45,7 +48,7 @@ export async function GET(req: Request) {
 		const providers = full
 			? data.providers
 			: data.providers.map((p) => ({ id: p.id, name: p.name, authReady: p.authReady, builtIn: p.builtIn, modelCount: p.modelCount }));
-		return jsonMaybeGzip(req, { success: true, data: { providers, models, customProviders } });
+		return jsonMaybeGzip(req, { success: true, data: { providers, models, customProviders, defaults } });
 	} catch (err: any) {
 		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
 	}
@@ -59,6 +62,7 @@ export async function POST(req: Request) {
 				| "removeKey"
 				| "saveCustomProviders"
 				| "discoverModels"
+				| "builtinModels"
 				| "providerUsage"
 				| "loginStart"
 				| "loginState"
@@ -96,6 +100,10 @@ export async function POST(req: Request) {
 			if (!body.baseUrl) return NextResponse.json({ success: false, error: "missing baseUrl" }, { status: 400 });
 			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId, allowPrivate: body.allowPrivate === true });
 			return NextResponse.json({ success: true, data: { models } });
+		}
+		if (body.action === "builtinModels") {
+			if (!body.providerId || typeof body.providerId !== "string") return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });
+			return NextResponse.json({ success: true, data: { models: await getBuiltinModelDefinitions(body.providerId) } });
 		}
 		if (body.action === "providerUsage") {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });

@@ -22,6 +22,64 @@ describe("Pi settings patches", () => {
 		expect(() => validatePiSettingsPatch({ compaction: { enabled: "true" } })).toThrow();
 		expect(() => validatePiSettingsPatch({ unexpected: true })).toThrow();
 	});
+
+	it("validates thinking levels, per-model keys, budgets and the default model", () => {
+		expect(validatePiSettingsPatch({
+			thinking: { defaultLevel: "high", modelLevels: { "openrouter/anthropic/claude": "max", "p/m": null }, budgets: { low: 2048, high: null } },
+			defaultModel: { provider: " p ", modelId: " m " },
+		})).toEqual({
+			thinking: { defaultLevel: "high", modelLevels: { "openrouter/anthropic/claude": "max", "p/m": null }, budgets: { low: 2048, high: null } },
+			defaultModel: { provider: "p", modelId: "m" },
+		});
+		expect(validatePiSettingsPatch({ thinking: { defaultLevel: null }, defaultModel: null })).toEqual({ thinking: { defaultLevel: null }, defaultModel: null });
+		for (const bad of [
+			{ thinking: { defaultLevel: "turbo" } },
+			{ thinking: { modelLevels: { "no-slash": "high" } } },
+			{ thinking: { modelLevels: { "/m": "high" } } },
+			{ thinking: { modelLevels: { "p/m": "turbo" } } },
+			{ thinking: { budgets: { xhigh: 100 } } },
+			{ thinking: { budgets: { low: 0 } } },
+			{ thinking: { budgets: { low: 1.5 } } },
+			{ thinking: { extra: 1 } },
+			{ defaultModel: { provider: "p" } },
+			{ defaultModel: { provider: "a/b", modelId: "m" } },
+			{ defaultModel: { provider: "p", modelId: "m", extra: 1 } },
+		]) expect(() => validatePiSettingsPatch(bad), JSON.stringify(bad)).toThrow();
+	});
+});
+
+it("writes thinking settings with pi's own keys and removes emptied sections", async () => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-settings-thinking-"));
+	const file = path.join(agentDir, "settings.json");
+	try {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		await fs.writeFile(file, JSON.stringify({ theme: "dark", modelThinkingLevels: { "a/x": "low" }, defaultThinkingLevel: "bogus" }));
+		expect((await getPiSettings()).thinking).toEqual({ defaultLevel: null, modelLevels: { "a/x": "low" }, budgets: {} });
+
+		await patchPiSettings({
+			thinking: { defaultLevel: "high", modelLevels: { "p/m": "max" }, budgets: { medium: 9000 } },
+			defaultModel: { provider: "p", modelId: "m" },
+		});
+		expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
+			theme: "dark",
+			defaultThinkingLevel: "high",
+			modelThinkingLevels: { "a/x": "low", "p/m": "max" },
+			thinkingBudgets: { medium: 9000 },
+			defaultProvider: "p",
+			defaultModel: "m",
+		});
+		const read = await getPiSettings();
+		expect(read.thinking).toEqual({ defaultLevel: "high", modelLevels: { "a/x": "low", "p/m": "max" }, budgets: { medium: 9000 } });
+		expect(read.defaultModel).toEqual({ provider: "p", modelId: "m" });
+
+		await patchPiSettings({ thinking: { defaultLevel: null, modelLevels: { "a/x": null, "p/m": null }, budgets: { medium: null } }, defaultModel: null });
+		expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({ theme: "dark" });
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		await fs.rm(agentDir, { recursive: true, force: true });
+	}
 });
 
 it("serializes settings writes for the same path", async () => {

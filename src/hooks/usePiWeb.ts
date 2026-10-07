@@ -14,6 +14,7 @@ import type {
 	WebSnapshot,
 	ToolPreset,
 } from "@/lib/types";
+import type { ModelDefaults } from "@/lib/thinking";
 
 export interface ToolCardState {
 	name: string;
@@ -330,7 +331,7 @@ export function usePiWeb() {
 	const [currentId, setCurrentId] = useState<string | null>(null);
 	const [currentPath, setCurrentPath] = useState<string | null>(null);
 	const [state, setState] = useState<PiWebState>(emptyState);
-	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
+	const [models, setModels] = useState<{ providers: any[]; models: any[]; defaults: ModelDefaults | null } | null>(null);
 	const [addedWorkspaces, setAddedWorkspaces] = useState<string[]>([]);
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
@@ -610,7 +611,7 @@ export function usePiWeb() {
 		try {
 			const r = await fetch("/api/models");
 			const j = await r.json();
-			if (j.success) setModels({ providers: j.data.providers, models: j.data.models });
+			if (j.success) setModels({ providers: j.data.providers, models: j.data.models, defaults: j.data.defaults ?? null });
 		} catch {
 			/* ignore */
 		}

@@ -252,3 +252,22 @@ describe("configuration revision and route contract", () => {
 		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
 	});
 });
+
+describe("built-in model definitions for replacement entries", () => {
+	it("returns the unmodified catalog definitions without provider-level fields, ignoring models.json", async () => {
+		const builtin = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+		const reasoner = builtin.getProviders().flatMap((p) => builtin.getModels(p.id)).find((model) => model.reasoning && model.thinkingLevelMap);
+		expect(reasoner).toBeTruthy();
+		// models.json 里同 ID 的退化条目不影响返回的内置定义
+		await fs.writeFile(file, JSON.stringify({ providers: { [reasoner!.provider]: { models: [{ id: reasoner!.id }] } } }));
+		const response = await POST(new Request("http://localhost/api/models", { method: "POST", body: JSON.stringify({ action: "builtinModels", providerId: reasoner!.provider }) }));
+		const body = await response.json();
+		expect(body.success).toBe(true);
+		const definition = body.data.models.find((model: { id: string }) => model.id === reasoner!.id);
+		expect(definition).toMatchObject({ id: reasoner!.id, reasoning: true, thinkingLevelMap: reasoner!.thinkingLevelMap, contextWindow: reasoner!.contextWindow });
+		for (const field of ["baseUrl", "api", "provider", "headers"]) expect(definition).not.toHaveProperty(field);
+		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
+		const missing = await POST(new Request("http://localhost/api/models", { method: "POST", body: JSON.stringify({ action: "builtinModels" }) }));
+		expect(missing.status).toBe(400);
+	});
+});

@@ -26,7 +26,7 @@ function setup({ builtin = false, conflict = false } = {}) {
 			revision = "rev-2";
 			return response({});
 		}
-		if (url === "/api/pi-settings") return response({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 20 }, retry: { enabled: true, maxRetries: 3, baseDelayMs: 50 } });
+		if (url === "/api/pi-settings") return response({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 20 }, retry: { enabled: true, maxRetries: 3, baseDelayMs: 50 }, thinking: { defaultLevel: null, modelLevels: {}, budgets: {} }, defaultModel: null });
 		if (url === "/api/security") return response({ defaultProjectTrust: "ask" });
 		if (url === "/api/version") return response({ piWeb: "0.test", piEngine: "0.test" });
 		if (url === "/api/web-auth") return response({ enabled: false });

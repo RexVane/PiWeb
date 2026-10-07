@@ -19,6 +19,7 @@ import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { describeElements, MAX_MESSAGE_IMAGES, type DraftElement } from "@/lib/element-draft";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
+import type { ModelDefaults } from "@/lib/thinking";
 import type { ImageAttachment } from "@/lib/types";
 
 export interface SlashCommand {
@@ -71,6 +72,8 @@ export function ChatInput({
 	onAbort,
 	onSelectModel,
 	onSelectLevel,
+	modelDefaults,
+	onSaveDefaultModel,
 	onClearQueue,
 	draft,
 	initialDraft,
@@ -111,6 +114,10 @@ export function ChatInput({
 	onAbort: () => Promise<QueueResult | void> | void;
 	onSelectModel: (provider: string, id: string) => void;
 	onSelectLevel: (level: string) => void;
+	/** pi 的默认模型 / 默认强度：模型菜单据此标「默认」 */
+	modelDefaults?: ModelDefaults | null;
+	/** 模型菜单里的「设为默认」 */
+	onSaveDefaultModel?: (provider: string, id: string, level: string | undefined) => Promise<boolean>;
 	/** 清空队列并返回被清掉的文本（取回编辑 / 丢弃都走它） */
 	onClearQueue?: () => Promise<QueueResult | void> | void;
 	/** Parent-owned, session-scoped draft. Async work always updates this same target. */
@@ -702,6 +709,8 @@ export function ChatInput({
 						authByProvider={authByProvider}
 						onSelectModel={onSelectModel}
 						onSelectLevel={onSelectLevel}
+						defaults={modelDefaults}
+						onSaveDefault={onSaveDefaultModel}
 						open={modelOpen}
 						onOpenChange={setModelOpen}
 					/>

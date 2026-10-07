@@ -34,6 +34,23 @@ describe("model draft round trips", () => {
 		expect(serializeProviderDraft({}, { baseUrl: "", models: [], apiKey: "" })).not.toHaveProperty("apiKey");
 		expect(serializeProviderDraft({}, { baseUrl: "", models: [], apiKey: " test-only " }).apiKey).toBe("test-only");
 	});
+	it("writes capability edits only when they change and keeps hand-written maps untouched otherwise", () => {
+		const odd = { id: "x", reasoning: true, thinkingLevelMap: { low: " light ", turbo: "x" }, input: ["image", "text"] };
+		// 未改动：原样保留（包括 pi 不认识的键与首尾空格）
+		expect(serializeModelDraft(modelDraftFromConfig(odd))).toEqual(odd);
+		// 只改名字：能力字段不受影响
+		expect(serializeModelDraft({ ...modelDraftFromConfig(odd), name: "X" })).toEqual({ ...odd, name: "X" });
+		// 改了档位：按规范形式整张重写
+		expect(serializeModelDraft({ ...modelDraftFromConfig(odd), thinkingLevelMap: { low: " light ", max: "" } })).toEqual({ ...odd, thinkingLevelMap: { low: "light", max: "max" } });
+		// 关掉思考与看图：删键回到 pi 默认
+		const off = serializeModelDraft({ ...modelDraftFromConfig(odd), reasoning: false, vision: false });
+		expect(off).not.toHaveProperty("reasoning");
+		expect(off).not.toHaveProperty("input");
+		expect(off.thinkingLevelMap).toEqual(odd.thinkingLevelMap);
+		// 新行只写填了的能力
+		expect(serializeModelDraft({ id: "new", name: "", reasoning: true, vision: true, thinkingLevelMap: { xhigh: "" } })).toEqual({ id: "new", reasoning: true, input: ["text", "image"], thinkingLevelMap: { xhigh: "xhigh" } });
+		expect(serializeModelDraft({ id: "plain", name: "" })).toEqual({ id: "plain" });
+	});
 	it("rejects duplicate IDs, zero, negative, infinite and fractional capacities", () => {
 		expect(validateModelDrafts([{ id: "a", name: "" }, { id: " a ", name: "" }])).toEqual({ index: 1, reason: "id" });
 		for (const value of [0, -1, Infinity, NaN, 1.5]) expect(validateModelDrafts([{ id: "a", name: "", contextWindow: value }])).toEqual({ index: 0, reason: "capacity" });

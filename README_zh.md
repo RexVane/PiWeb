@@ -30,7 +30,7 @@
 - **pi 的眼睛（无头浏览器工具）**：本机装有 Chrome / Edge / Chromium 时，pi 多出 `browser_open`、`browser_screenshot`、`browser_console`、`browser_click`、`browser_type` 五个工具：在无头浏览器里打开你的 dev server，看截图（模型不能看图时改看页面文本大纲），读控制台报错与失败请求，发现问题自己接着改。截图会显示在对话里；点截图上的「选元素」可以自己指给 pi 看：PiWeb 重新截一张当前页面，你点哪个元素，它就作为芯片进入输入框，带 DOM 路径、源码位置（来自构建期源码属性、React ≤18 / Vue / Svelte 的开发期信息，或文本搜索），模型能看图时还附上元素裁剪图。
 - **多功能设置**：
   - **通用**：工具权限预设（只读 / 工作区写入 / 完全访问）、中英双语切换、外观偏好、Enter 键行为、自动重试及自动压缩。
-  - **模型**：支持 30+ 官方内置 Provider、添加自定义提供方（写入 `models.json`）及 OAuth 登录（Claude / Codex / Copilot 等）。
+  - **模型**：支持 30+ 官方内置 Provider、添加自定义提供方（写入 `models.json`）及 OAuth 登录（Claude / Codex / Copilot 等）。自定义模型可以声明支持思考、开放哪些档位、每档发给接口的值（pi 的 `reasoning` / `thinkingLevelMap`）以及能否看图。默认模型、默认思考强度、按模型的默认强度和思考预算直接是 pi 自己 `settings.json` 里的键，与终端 pi 共用；新会话按它们开始，模型菜单标出默认项，也能把当前选择设为默认。
   - **插件与技能**：通过 Pi 原生包管理器安装、卸载、更新扩展，并支持即时开关 Skill。
 - **安全防护**：可通过 `PI_WEB_PASSWORD` 开启 HTTP Basic Auth；写接口严格执行同源与路径边界校验。
 
