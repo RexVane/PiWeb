@@ -2,6 +2,21 @@
 
 > 更早的条目：[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 14:45 +08:00 | Claude Code（云端） | 模型配置对齐 pi 的思考强度（`772d8e7`）
+- 起因：用户反馈「模型配置里没有思考强度」。查下来四处断开：① 自定义模型表单没有 `reasoning` / `thinkingLevelMap` / `input`，自定义模型的思考菜单永远只有 off；② 内置提供商下写同 ID 的模型条目会**整条替换**内置定义，能力随之丢失；③ 新会话页默认取「第一个有凭据的模型」并显式 `setModel`，不看 pi 的 `defaultProvider/defaultModel`（有 AWS 环境凭证时会选到 Bedrock）；④ PiWeb 不暴露 `defaultThinkingLevel` / `modelThinkingLevels` / `thinkingBudgets`
+- 改了什么：
+  - **纯函数** `src/lib/thinking.ts`（前后端共用、不依赖 SDK）：档位、`supportedThinkingLevels` / `clampThinkingLevel`（与 pi-ai 逐项对照测试）、新会话默认强度推导（按模型 → 全局默认 → medium，再钳到模型档位）、档位表 ↔ `thinkingLevelMap` 互转、pi-ai 默认思考预算
+  - **pi 设置**（`pi-settings.ts`）：读写 pi 自己的键 `defaultProvider/defaultModel`、`defaultThinkingLevel`、`modelThinkingLevels`、`thinkingBudgets`（null 删除、空对象整个删）；严格校验（模型键 `provider/id`、≤200 条、预算正整数 ≤2M）；读回宽松（手改的非法值当未设置）；`/api/models` 随目录附带 `defaults`
+  - **自定义模型行**：「容量与能力」里加「支持思考 / 支持图片输入」、可用档位（xhigh / max 需显式打开）、每档发送值（如 OpenAI 兼容接口的 `reasoning_effort`）和思考菜单预览；只在改动时写，关掉即删键回到 pi 默认
+  - **内置提供商**：`builtinModels` 接口给出未经 models.json 改动的内置定义；目录里标「已内置」且不默认勾选，填入内置 ID 自动预填能力，旧的替换条目可点「用内置能力」补回
+  - **设置 → 模型**：新增「默认模型与思考强度」（默认模型只列认证就绪的提供商，默认不可用时标出；默认强度；按模型强度可增删改；思考预算折叠区，占位显示 pi 内置值）
+  - **模型菜单**：默认模型与新会话会用的档位标「默认」，每档附 pi 终端同款说明；底部「设为默认」（同终端 `/model`、`/thinking` 的 Ctrl+S；该模型有单独强度时一起改）
+  - **新会话页**：显示 pi 的默认模型与强度；用户没改时什么都不下发、交给 pi 自己应用（项目级设置也随之生效），改过才显式 `setModel` + `setThinkingLevel`
+- 验证：`tsc --noEmit` 通过；全量 vitest **67 文件 455 通过 + 1 跳过**（新增 thinking / 能力表单 / 默认值 / 新会话页 4 个测试文件）；`npm run build` 通过；**真实实例冒烟 13 项全过**（生产构建 + 假 OpenAI 兼容模型，**保留 AWS 环境凭证**复现原问题）：新会话页显示 Mock Vision · medium 且请求 `reasoning_effort=medium` → 设置页把默认强度改 high（settings.json 写入 `defaultThinkingLevel`）→ 在 UI 里给自定义 mock-text 开「支持思考」、high 档发 `deep-think`（models.json 写入 `reasoning` + `thinkingLevelMap`，apiKey 保留）→ 新会话显示 high，选 Mock Text 后请求里 `reasoning_effort=deep-think` → 会话中「设为默认」Mock Text · low 写入 pi 的三个键 → 再开新会话直接是 Mock Text · low，pi 自己应用
+- 未验证：项目级 `.pi/settings.json` 覆盖全局默认时，新会话页显示的仍是全局默认（发送时 pi 用项目级，结果正确、显示可能不一致）；按 token 预算思考的真实接口（Anthropic / Google / Bedrock）上的预算生效
+- 影响文件：新增 `src/lib/thinking.ts`；修改 `src/lib/{pi-settings,models-service,model-draft}.ts`、`src/app/api/models/route.ts`、`src/components/{AppShell,ChatInput,ModelSelector,ProviderSetupModal,SettingsPanel}.tsx`、`ProviderSetupModal.module.css`、`globals.css`、`src/hooks/usePiWeb.ts`、`src/i18n.tsx`、README；新增 4 个测试文件
+- 下一步：已发消息的撤回与编辑重发；审查遗留问题（技能删除可删到集合根、作用域判断缺 realpath、install-build 暂存目录等）
+
 ## 2026-10-07 14:10 +08:00 | Claude Code（云端） | B3 完成：截图上点选元素 → 元素芯片（`ba13e01`）；CI 锁文件修复（`627df1e`）
 - 改了什么：
   - **CI 修复**（`627df1e`，已推送）：新 main 的 `npm ci` 报 EUSAGE——lock 里缺 `@tailwindcss/oxide-wasm32-wasi` 内置的 `@emnapi/core` / `@emnapi/runtime` 两条 inBundle 条目，只补这两条，其余 lock 不动
