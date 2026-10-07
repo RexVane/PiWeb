@@ -1020,6 +1020,70 @@ export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 	return n;
 }
 
+/**
+ * models.json 落盘后让已打开的会话用上新的模型定义。pi 的 session.reload() 不碰模型：会话手里的 ModelRuntime
+ * 和当前模型对象还是保存前的，思考档位、看图、容量、baseUrl 都照旧（比如补回内置能力后菜单仍显示「不支持思考」）。
+ * 活跃会话：原地 refresh 它的 runtime（只读本地文件，不联网），当前模型换成新定义，可用档位变了就按 pi 切模型的规则重定档位；
+ * 冷会话：快照本来就按新目录算，页面开着的话把新档位推过去。
+ */
+export async function refreshSessionModels(): Promise<void> {
+	const refreshed = new Map<unknown, Promise<boolean>>();
+	for (const m of sessions.values()) {
+		if (m.disposed) continue;
+		const session = m.session;
+		if (!session) {
+			if (m.subscribers.size === 0) continue;
+			const cold = await coldModelState(m);
+			if (cold.model && cold.thinkingLevels) {
+				publish(m, { type: "model", provider: cold.model.provider, model: cold.model.id, thinkingLevel: cold.thinkingLevel, thinkingLevels: cold.thinkingLevels, ts: Date.now() });
+			}
+			continue;
+		}
+		const runtime = session.modelRuntime;
+		let ready = refreshed.get(runtime);
+		if (!ready) {
+			ready = runtime.refresh({ allowNetwork: false }).then(() => true, () => false);
+			refreshed.set(runtime, ready);
+		}
+		const current = session.model;
+		if (!(await ready) || !current) continue;
+		const next = runtime.getModel(current.provider, current.id);
+		if (!next || next === current) continue;
+		const levels = session.getAvailableThinkingLevels().join();
+		// 与 pi 内部的 _refreshCurrentModelFromRegistry 相同：同一个模型换成新定义，不记 model_change
+		session.agent.state.model = next;
+		if (session.getAvailableThinkingLevels().join() !== levels) {
+			// 能力变了（比如原来只剩 off）：照 pi 切模型的规则定档位（单模型设置 > 全局默认），再套用户在本会话选过的
+			await session.setModel(next, { persist: false }).catch(() => session.setThinkingLevel(session.thinkingLevel));
+			reapplyDesiredLevel(m, session);
+		}
+		publishModelState(m, session);
+	}
+}
+
+/** 冷会话（还没有 SDK 实例）的模型与档位：从 JSONL 还原，按当前模型目录给档位并钳制 */
+async function coldModelState(m: Managed): Promise<{ model?: WebSnapshot["model"]; thinkingLevel?: string; thinkingLevels?: string[] }> {
+	const state: { model?: WebSnapshot["model"]; thinkingLevel?: string; thinkingLevels?: string[] } = {};
+	try {
+		const anySm = m.sm as unknown as { buildSessionContext?: () => { model?: { provider: string; modelId: string } | null; thinkingLevel?: string } };
+		const ctx = anySm.buildSessionContext?.();
+		if (ctx?.model) state.model = { provider: ctx.model.provider, id: ctx.model.modelId, name: ctx.model.modelId };
+		state.thinkingLevel = ctx?.thinkingLevel;
+		// 冷会话也按真实模型给档位，而不是固定七档
+		if (ctx?.model) {
+			const rt = await getModelRuntime();
+			const mm = rt.getModel(ctx.model.provider, ctx.model.modelId);
+			if (mm) {
+				state.thinkingLevels = getSupportedThinkingLevels(mm as any);
+				if (state.thinkingLevel) state.thinkingLevel = clampThinkingLevel(mm as any, state.thinkingLevel as any);
+			}
+		}
+	} catch {
+		/* ignore */
+	}
+	return state;
+}
+
 // ---------- 快照 ----------
 
 export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
@@ -1077,23 +1141,10 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		} catch {
 			messages = [];
 		}
-		try {
-			const anySm = m.sm as unknown as { buildSessionContext?: () => { model?: { provider: string; modelId: string } | null; thinkingLevel?: string } };
-			const ctx = anySm.buildSessionContext?.();
-			if (ctx?.model) model = { provider: ctx.model.provider, id: ctx.model.modelId, name: ctx.model.modelId };
-			thinkingLevel = ctx?.thinkingLevel;
-			// 冷会话也按真实模型给档位，而不是固定七档
-			if (ctx?.model) {
-				const rt = await getModelRuntime();
-				const mm = rt.getModel(ctx.model.provider, ctx.model.modelId);
-				if (mm) {
-					thinkingLevels = getSupportedThinkingLevels(mm as any);
-					if (thinkingLevel) thinkingLevel = clampThinkingLevel(mm as any, thinkingLevel as any);
-				}
-			}
-		} catch {
-			/* ignore */
-		}
+		const cold = await coldModelState(m);
+		model = cold.model;
+		thinkingLevel = cold.thinkingLevel;
+		if (cold.thinkingLevels) thinkingLevels = cold.thinkingLevels;
 	}
 
 	const stats: WebStats | null = session ? sessionStats(m) : coldSessionStats(m);

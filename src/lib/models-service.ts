@@ -12,7 +12,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { isPublicAddress } from "./net-address";
 import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
-import { reloadSessionsForCwd } from "./agent-manager";
+import { refreshSessionModels, reloadSessionsForCwd } from "./agent-manager";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -893,4 +893,6 @@ export async function writeCustomProviders(content: string, revision?: string): 
 	// 已打开的会话持有保存前的旧 runtime：不清掉的话，在里面选新 provider 的模型
 	// 会报 "No API key for X"（新 runtime 有配置，旧 runtime 查不到）。让活跃会话就地重建。
 	await reloadSessionsForCwd();
+	// reload 不碰模型：再让各会话的 runtime 重读 models.json，当前模型换成新定义（思考档位、看图、容量随之更新）
+	await refreshSessionModels();
 }
