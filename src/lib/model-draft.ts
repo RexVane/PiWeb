@@ -133,3 +133,31 @@ export function serializeProviderDraft(
 	}
 	return result;
 }
+
+/**
+ * 提供方块对 pi 有没有内容，与 pi applyModelsJson 同口径：非空 models、baseUrl、headers、compat、
+ * 非空 modelOverrides、apiKey、oauth、authHeader 一样都没有，pi 就判整份 models.json 无效（只剩 api / name / 空 models 也算空）。
+ */
+export function providerOverrideHasContent(config: Readonly<Record<string, unknown>>): boolean {
+	const overrides = config.modelOverrides;
+	return (Array.isArray(config.models) && config.models.length > 0)
+		|| Boolean(config.baseUrl || config.headers || config.compat || config.apiKey || config.oauth)
+		|| (typeof overrides === "object" && overrides !== null && Object.keys(overrides).length > 0)
+		|| config.authHeader !== undefined;
+}
+
+/**
+ * 写回内置提供方的覆盖层：删空了（比如 pi 升级后已经内置、以前手动加的同 ID 模型）就整块移除，回到 pi 内置定义——
+ * 空块会让 pi 拒绝整份配置、保存失败。hiddenKey：块里有不下发前端的 apiKey，要留着让服务端原样补回。
+ */
+export function withBuiltinOverride(
+	providers: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
+	id: string,
+	override: Readonly<Record<string, unknown>>,
+	hiddenKey = false,
+): Record<string, Readonly<Record<string, unknown>>> {
+	const next = { ...providers };
+	if (hiddenKey || providerOverrideHasContent(override)) next[id] = override;
+	else delete next[id];
+	return next;
+}

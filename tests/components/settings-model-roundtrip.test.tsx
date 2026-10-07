@@ -11,12 +11,12 @@ const originalModel = { id: "test-model", name: "Test model", reasoning: true, i
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false } = {}) {
-	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
+function setup({ builtin = false, conflict = false, config = providerConfig() as Record<string, unknown>, secret = true } = {}) {
+	let saved: { schemaVersion: string; providers: Record<string, any> } = { schemaVersion: "future-1", providers: { gateway: config } };
 	let revision = "rev-1";
 	const writes: Array<{ action: string; content: string; revision: string }> = [];
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-		if (url === "/api/models?custom=1") return response({ providers: [{ id: "gateway", name: "Gateway", builtIn: builtin, authReady: true, authConfigured: true, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }], customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: ["gateway"] } });
+		if (url === "/api/models?custom=1") return response({ providers: [{ id: "gateway", name: "Gateway", builtIn: builtin, authReady: true, authConfigured: true, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }], customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: secret ? ["gateway"] : [] } });
 		if (url === "/api/models") {
 			const body = JSON.parse(String(init?.body));
 			if (body.action !== "saveCustomProviders") throw new Error("unexpected action");
@@ -86,5 +86,26 @@ describe("SettingsPanel model round trip and revision", () => {
 		expect(saved().providers.gateway.api).toBe("openai-responses");
 		expect(saved().providers.gateway.oauth).toEqual({ flow: "device" });
 		expect(saved().providers.gateway.headers).toEqual({ "x-test": "opaque" });
+	});
+
+	it("removes a built-in provider block once its last override row is deleted, so pi falls back to the built-in model", async () => {
+		// pi 升级后已内置的模型：以前手动加的同 ID 条目删掉后，只剩 api + 空 models 的块 pi 会拒绝，必须整块移除
+		const { writes, saved } = setup({ builtin: true, secret: false, config: { api: "openai-responses", models: [{ id: "grok-4.7" }] } });
+		await edit();
+		fireEvent.click(screen.getByRole("button", { name: "自定义设置" }));
+		fireEvent.click(screen.getByTitle("删除"));
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(saved()).toEqual({ schemaVersion: "future-1", providers: {} });
+	});
+
+	it("keeps an emptied built-in block whose models.json key is hidden from the browser", async () => {
+		const { writes, saved } = setup({ builtin: true, secret: true, config: { api: "openai-responses", models: [{ id: "grok-4.7" }] } });
+		await edit();
+		fireEvent.click(screen.getByRole("button", { name: "自定义设置" }));
+		fireEvent.click(screen.getByTitle("删除"));
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(saved().providers.gateway).toEqual({ api: "openai-responses", models: [] });
 	});
 });

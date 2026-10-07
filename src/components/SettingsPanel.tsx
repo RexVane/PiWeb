@@ -33,7 +33,7 @@ import {
 } from "@/components/ProviderSetupModal";
 import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
-import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, withBuiltinOverride, type ModelDraft } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import type { ProviderUsage, ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
@@ -1052,11 +1052,11 @@ function ModelsSection() {
 		if (invalid) return;
 		setEditBusy(true);
 		try {
-			const next = { ...custom.providers };
-			next[provider.id] = serializeProviderDraft(next[provider.id] ?? {}, {
+			const override = serializeProviderDraft(custom.providers[provider.id] ?? {}, {
 				baseUrl: bBaseUrl,
 				models: bModels,
 			}, provider.apis[0] ?? "openai-completions");
+			const next = withBuiltinOverride(custom.providers, provider.id, override, secretProviderIds.has(provider.id));
 			const j = await saveCustom(next);
 			if (j.success && keyDraft.trim()) {
 				void call({ action: "setKey", providerId: provider.id, apiKey: keyDraft.trim() });
@@ -1088,7 +1088,8 @@ function ModelsSection() {
 	};
 
 	const saveBuiltinSetup = async ({ providerId, apiKey, config }: BuiltinProviderSetup) => {
-		const next = { ...custom.providers, [providerId]: { ...custom.providers[providerId], ...config } };
+		// 只填密钥时 config 为空：不写空块（pi 会拒绝），密钥照常进 auth.json
+		const next = withBuiltinOverride(custom.providers, providerId, { ...custom.providers[providerId], ...config }, secretProviderIds.has(providerId));
 		const result = await saveCustom(next);
 		if (result.success && apiKey) {
 			// 多步认证（Vertex/Bedrock/Cloudflare 等）的后续提示经登录弹窗应答；

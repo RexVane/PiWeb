@@ -18,6 +18,7 @@ import {
 	preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
 } from "../src/lib/models-service";
 import { GET, POST } from "../src/app/api/models/route";
+import { providerOverrideHasContent } from "../src/lib/model-draft";
 
 let agentDir: string;
 let file: string;
@@ -269,5 +270,24 @@ describe("built-in model definitions for replacement entries", () => {
 		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
 		const missing = await POST(new Request("http://localhost/api/models", { method: "POST", body: JSON.stringify({ action: "builtinModels" }) }));
 		expect(missing.status).toBe(400);
+	});
+});
+
+describe("provider override blocks", () => {
+	it("judges a block empty exactly when the SDK rejects it, so settings never save an override pi refuses", async () => {
+		const builtin = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+		const model = builtin.getProviders().flatMap((p) => builtin.getModels(p.id))[0];
+		const shapes: Array<Record<string, unknown>> = [
+			{}, { api: model.api }, { api: model.api, models: [] }, { name: "Renamed" }, { modelOverrides: {} },
+			{ api: model.api, models: [{ id: "extra-model" }] }, { baseUrl: "https://example.test/v1" }, { headers: { "x-test": "1" } },
+			{ apiKey: "test-only" }, { modelOverrides: { [model.id]: { name: "Renamed" } } }, { authHeader: false },
+		];
+		for (const shape of shapes) {
+			const accepted = await writeCustomProviders(JSON.stringify({ providers: { [model.provider]: shape } })).then(() => true, (error) => {
+				expect(error).toBeInstanceOf(CustomProvidersValidationError);
+				return false;
+			});
+			expect({ shape, hasContent: providerOverrideHasContent(shape) }).toEqual({ shape, hasContent: accepted });
+		}
 	});
 });

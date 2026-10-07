@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelDraftFromConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts } from "../src/lib/model-draft";
+import { modelDraftFromConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, withBuiltinOverride } from "../src/lib/model-draft";
 
 const model = {
 	id: "reasoner", name: "Reasoner", contextWindow: 128000, maxTokens: 16000,
@@ -55,5 +55,20 @@ describe("model draft round trips", () => {
 		expect(validateModelDrafts([{ id: "a", name: "" }, { id: " a ", name: "" }])).toEqual({ index: 1, reason: "id" });
 		for (const value of [0, -1, Infinity, NaN, 1.5]) expect(validateModelDrafts([{ id: "a", name: "", contextWindow: value }])).toEqual({ index: 0, reason: "capacity" });
 		expect(parseCapacity("0.00001")).toBeNaN();
+	});
+});
+
+describe("built-in provider override write-back", () => {
+	it("drops a block emptied of overrides instead of saving one pi rejects, and keeps blocks with content or a hidden key", () => {
+		const providers = { xai: { api: "openai-responses", models: [{ id: "grok-4.7" }] }, other: { baseUrl: "https://example.invalid" } };
+		const before = structuredClone(providers);
+		const emptied = serializeProviderDraft(providers.xai, { baseUrl: "", models: [] }, "openai-responses");
+		expect(emptied).toEqual({ api: "openai-responses", models: [] });
+		expect(withBuiltinOverride(providers, "xai", emptied)).toEqual({ other: providers.other });
+		// 只填密钥的「添加提供方」：没有旧块也不写空块
+		expect(withBuiltinOverride(providers, "deepseek", {})).toEqual(providers);
+		expect(withBuiltinOverride(providers, "xai", emptied, true)).toEqual({ ...providers, xai: emptied });
+		expect(withBuiltinOverride(providers, "xai", { ...emptied, headers: { "x-test": "1" } }).xai).toEqual({ ...emptied, headers: { "x-test": "1" } });
+		expect(providers).toEqual(before);
 	});
 });
