@@ -2,6 +2,16 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-07 17:02 +08:00 | claude-opus-5-5 | 设置 → 模型：提供方行布局修复（`9ed1519`）+ 去掉「默认模型与思考强度」面板（`918624c`）
+- 起因：用户截图反馈 xAI 那一行按钮被挤成竖排、名称消失；又问「为什么多了这个面板」「那么复杂」「思考强度找 pi 内置的不就行了」，选择「整块去掉」
+- 改了什么：
+  - **提供方行**（`SettingsPanel.tsx`）：原单行 flex 里按钮可压缩，中文逐字折行成竖排、名称区 `min-w-0` 被压到 0。xAI 同时有 OAuth 凭据、可 OAuth 登录、且 `~/.pi/agent/models.json` 有用户今天 12:03 加的 `xai`（grok-4.7）覆盖 → 多出「删除」时触发。改为整行 `flex-wrap`：名称保留 8rem，状态点 / 凭据标签 / 按钮合成 `flex-none whitespace-nowrap` 一组，放不下整组换到第二行靠右
+  - **去掉面板**：删 `ModelDefaultsBlock`（约 210 行，云端 `772d8e7` 加的：默认模型、默认强度、按模型强度、思考预算）及专用的 `catalog` 状态与导入，删 17 个专用文案键（中英各 17）；README 中英文「模型」一条同步
+  - **保留**（`772d8e7` 里的真修复）：新会话跟随 pi 的 `defaultProvider/defaultModel/defaultThinkingLevel`（不再误选第一个有凭据的模型）；自定义模型按内置 ID 预填能力；模型菜单「设为默认」；`/api/pi-settings` 读写不动
+- 验证：`tsc --noEmit` 通过；全量 vitest **76 文件 488 通过 + 1 跳过**（删掉 1 个专测面板的用例）；在用户运行中的服务（30141，dev 热加载）上用无头 Chrome 核对 1280 / 1000 两种宽度：面板文字已不存在，xAI 行四个按钮高 24–28px（单行），名称区宽 464px，按钮组换到第二行，截图目视确认
+- 影响文件：`src/components/SettingsPanel.tsx`、`src/i18n.tsx`、`README.md`、`README_zh.md`、`tests/components/model-defaults.test.tsx`
+- 下一步：等用户继续试用反馈
+
 ## 2026-10-07 15:58 +08:00 | claude-opus-5-5 | 云端分支快进合入 main 并推送；本机补验 Windows + Edge
 - 改了什么：
   - 用户选择「直接快进 main 并推送」：`main` 从 `9ee0a84` 快进到云端分支 `claude/funny-lamport-q9lcem` 的 `04be3f5`（14 个提交：B3 点选元素、思考强度对齐 pi、消息编辑重发 / 撤回、技能删除、npm 安装首次构建与检查更新、密码防爆破、CI actions v5、lock 补回 `@emnapi`），无冲突；远端分支保留未删
