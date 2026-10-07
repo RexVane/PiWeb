@@ -179,7 +179,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	if (!options.isDev) {
 		const prepared = ensureInstallBuild(root, { log, warn: dependencies.warn ?? console.warn });
 		if (prepared === "failed" && isProductionOnlyInstall(root)) {
-			throw new Error("无法准备生产构建，且该安装没有开发依赖。请用 `npm rebuild -g piweb` 重试，或改用仓库中的 npm run dev。");
+			throw new Error("无法准备生产构建，且该安装没有开发依赖。再次运行 piweb 会重试构建（或用 `npm rebuild -g @rexvane/piweb`），也可改用仓库中的 npm run dev。");
 		}
 	}
 	const plan = createLaunchPlan(root, options, env);

@@ -9,6 +9,7 @@
  * Repository checkouts always have dev dependencies and keep `npm run dev`.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
@@ -60,6 +61,27 @@ export function resolveNextBin(root) {
 }
 
 /**
+ * Where the staging build goes: next to the installation, but above every
+ * `node_modules` segment. A scoped global install (…/lib/node_modules/@rexvane/piweb)
+ * still has `node_modules` two levels up, and Next would exclude a staging
+ * directory there exactly like the package itself.
+ */
+export function stagingParent(root) {
+	let dir = path.dirname(root);
+	while (dir.split(/[\\/]/).includes("node_modules") && path.dirname(dir) !== dir) dir = path.dirname(dir);
+	return dir;
+}
+
+/** The staging directory, falling back to the system temp dir when the place next to the installation is unusable. */
+export function createStagingDir(root) {
+	try {
+		return fs.mkdtempSync(path.join(stagingParent(root), ".piweb-build-"));
+	} catch {
+		return fs.mkdtempSync(path.join(os.tmpdir(), "piweb-build-"));
+	}
+}
+
+/**
  * Next's webpack/SWC rules exclude everything under `node_modules`, and an
  * installed package lives exactly there, so its TypeScript sources would be
  * neither compiled nor mapped through the `@/*` path alias. Build in a staging
@@ -67,13 +89,7 @@ export function resolveNextBin(root) {
  * and copy the finished output back into the package.
  */
 function buildInStaging(root, nextBin, env, log, warn) {
-	const parent = path.dirname(path.dirname(root));
-	let staging;
-	try {
-		staging = fs.mkdtempSync(path.join(parent, ".piweb-build-"));
-	} catch {
-		staging = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-build-"));
-	}
+	const staging = createStagingDir(root);
 	try {
 		for (const entry of ["src", "public", "assets", "scripts", "bin"]) {
 			const from = path.join(root, entry);
@@ -126,7 +142,7 @@ export function ensureInstallBuild(root, { log = console.log, warn = console.war
 	}, log, warn);
 
 	if (!built) {
-		warn("[piweb] Production build failed. Retry with: npm rebuild -g piweb");
+		warn("[piweb] Production build failed. Run piweb again to retry, or: npm rebuild -g @rexvane/piweb");
 		return "failed";
 	}
 	log(`[piweb] Build ready in ${((Date.now() - started) / 1000).toFixed(0)}s.`);
