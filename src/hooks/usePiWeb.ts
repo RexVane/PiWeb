@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	GrowthRound,
 	SessionSummary,
+	ToolImage,
 	TrajEntry,
 	WebEvent,
 	WebMessage,
@@ -24,6 +25,8 @@ export interface ToolCardState {
 	encodingLoss?: boolean;
 	/** edit/write 的 unified patch，用于渲染红绿 diff */
 	patch?: string;
+	/** 工具结果里的图片（浏览器工具的截图） */
+	images?: ToolImage[];
 	/** 服务端事件时间戳：运行中显示已用时长，完成后显示耗时 */
 	startedAt?: number;
 	endedAt?: number;
@@ -141,6 +144,7 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				isError: evt.isError ?? prev?.isError,
 				encodingLoss: evt.encodingLoss ?? prev?.encodingLoss,
 				patch: evt.patch ?? prev?.patch,
+				images: evt.images ?? prev?.images,
 				startedAt: prev?.startedAt ?? evt.ts,
 				endedAt: evt.state === "done" ? evt.ts : prev?.endedAt,
 			};
@@ -282,6 +286,7 @@ function toolsFromMessages(messages: WebMessage[], streaming = false): Record<st
 					isError: content.isError,
 					encodingLoss: content.encodingLoss,
 					patch: content.patch,
+					images: content.images,
 				};
 			}
 		}

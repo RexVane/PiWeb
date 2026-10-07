@@ -25,6 +25,8 @@ import {
 	openSessionManager,
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
+import { browserAvailable, closeBrowserTab } from "./browser/manager";
+import { createBrowserTools } from "./browser/tools";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import { sanitizeToolOutput } from "./text-sanitize";
@@ -38,6 +40,7 @@ import type {
 	ContextResource,
 	GrowthRound,
 	TrajEntry,
+	ToolImage,
 	ToolPreset,
 	WebEvent,
 	WebMessage,
@@ -138,6 +141,7 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 			isError: m.isError === true,
 			encodingLoss: result.encodingLoss || undefined,
 			patch: patchOf(m.details),
+			images: imagesOf(m.content),
 		}];
 	}
 	return out;
@@ -173,6 +177,16 @@ function linkInflightFinal(m: Managed, session: AgentSession): boolean {
 	if (!final || final.role !== "assistant") return false;
 	m.messageIds.set(final, m.inflightId);
 	return true;
+}
+
+/** 工具结果里的图片（浏览器工具的截图）：最多 4 张，交给对话流原样显示 */
+function imagesOf(content: unknown): ToolImage[] | undefined {
+	if (!Array.isArray(content)) return undefined;
+	const images = content
+		.filter((c): c is ToolImage & { type: "image" } => c?.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string")
+		.slice(0, 4)
+		.map(({ data, mimeType }) => ({ data, mimeType }));
+	return images.length ? images : undefined;
 }
 
 /** edit/write 工具在 details.patch 里带 unified patch；限长避免撑爆 SSE 帧 */
@@ -460,6 +474,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				isError: evt.isError,
 				encodingLoss: result.encodingLoss || undefined,
 				patch: patchOf((evt as any).result?.details),
+				images: imagesOf((evt as any).result?.content),
 				ts: now,
 			});
 			publishUsage(m);
@@ -747,6 +762,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				modelRuntime: await getModelRuntime(),
 				resourceLoader: loader,
 				settingsManager: getSettingsManager(m.cwd),
+				// pi 的眼睛：本机有 Chrome / Edge / Chromium 时给 pi 一组浏览器工具（每个会话一个无头标签页）
+				customTools: browserAvailable() ? createBrowserTools(m.sessionPath) : [],
 			});
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");
@@ -856,6 +873,7 @@ export function disposeSession(m: Managed): void {
 	m.ui = null;
 	m.growth?.dispose();
 	m.growth = null;
+	void closeBrowserTab(m.sessionPath);
 	try {
 		m.session?.dispose();
 	} catch {

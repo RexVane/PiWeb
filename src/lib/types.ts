@@ -75,7 +75,13 @@ export type WebContent =
 	| { type: "image"; data: string; mimeType: string }
 	| { type: "thinking"; thinking: string }
 	| { type: "toolCall"; id: string; name: string; arguments: unknown }
-	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string };
+	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string; images?: ToolImage[] };
+
+/** 工具结果里交给模型的图片（如浏览器工具的截图），对话流里原样显示 */
+export interface ToolImage {
+	data: string;
+	mimeType: string;
+}
 
 export type WebEvent =
 	| { type: "delta"; kind: "text" | "thinking"; contentIndex: number; delta: string; messageId?: string; ts: number }
@@ -92,6 +98,8 @@ export type WebEvent =
 			encodingLoss?: boolean;
 			/** edit/write 工具附带的 unified patch（pi 的 details.patch），前端渲染红绿 diff */
 			patch?: string;
+			/** 工具结果里的图片（浏览器工具的截图） */
+			images?: ToolImage[];
 			ts: number;
 	  }
 	| { type: "status"; isStreaming: boolean; state: string; ts: number }

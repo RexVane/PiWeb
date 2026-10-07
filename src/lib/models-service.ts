@@ -7,9 +7,10 @@ import { createHash, randomUUID } from "node:crypto";
 import dns from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { BlockList, isIP } from "node:net";
+import { isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { isPublicAddress } from "./net-address";
 import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
 import {
@@ -267,26 +268,8 @@ export function isTrustedCredentialEndpoint(target: URL, configuredUrls: Array<s
 
 const MAX_MODEL_CATALOG_BYTES = 4 * 1024 * 1024;
 
-const blockedIpv4 = new BlockList();
-for (const [address, prefix] of [
-	["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
-	["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24],
-	["192.88.99.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15],
-	["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 4], ["240.0.0.0", 4],
-] as const) blockedIpv4.addSubnet(address, prefix, "ipv4");
-const globalIpv6 = new BlockList();
-globalIpv6.addSubnet("2000::", 3, "ipv6");
-const blockedIpv6 = new BlockList();
-for (const [address, prefix] of [
-	["2001::", 23], ["2001:db8::", 32], ["2002::", 16],
-] as const) blockedIpv6.addSubnet(address, prefix, "ipv6");
-
-export function isPublicModelDiscoveryAddress(address: string): boolean {
-	const family = isIP(address);
-	if (family === 4) return !blockedIpv4.check(address, "ipv4");
-	if (family === 6) return globalIpv6.check(address, "ipv6") && !blockedIpv6.check(address, "ipv6");
-	return false;
-}
+/** 模型目录探测默认拒绝的地址：非公网（回环 / 私网 / 保留网段） */
+export const isPublicModelDiscoveryAddress = isPublicAddress;
 
 async function requestModelCatalog(endpoint: URL, headers: Record<string, string>, signal: AbortSignal, allowPrivate = false): Promise<Response> {
 	// 显式勾选（本次允许访问本机/私网）或全局环境变量，二选一放行

@@ -6,6 +6,7 @@
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
 import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -421,8 +422,18 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	}
 }
 
+/** 浏览器工具（pi 的眼睛）的动词 */
+const BROWSER_VERBS: Record<string, keyof Dict> = {
+	browser_open: "stepBrowserOpen",
+	browser_screenshot: "stepBrowserLook",
+	browser_console: "stepBrowserConsole",
+	browser_click: "stepBrowserClick",
+	browser_type: "stepBrowserType",
+};
+
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
+	if (BROWSER_VERBS[n]) return t[BROWSER_VERBS[n]];
 	if (kind === "cmd") return t.stepRan;
 	if (kind === "read") return t.stepRead;
 	if (kind === "search") return t.stepSearched;
@@ -448,6 +459,7 @@ const ToolStep = memo(function ToolStep({
 	onOpenFile?: (path: string) => void;
 }) {
 	const [open, setOpen] = useState(false);
+	const [zoom, setZoom] = useState<number | null>(null);
 	const { t } = useI18n();
 	const tt = t as unknown as Dict;
 	const kind = toolKind(name);
@@ -571,6 +583,17 @@ const ToolStep = memo(function ToolStep({
 					</span>
 				</div>
 			)}
+			{/* 工具结果里的图片：pi 看到的页面截图 */}
+			{state?.images && state.images.length > 0 && (
+				<div className="pw-shots" data-testid="tool-shots">
+					{state.images.map((image, index) => (
+						<button key={index} type="button" className="pw-shot" title={t.viewScreenshot} onClick={() => setZoom(index)}>
+							<img src={`data:${image.mimeType};base64,${image.data}`} alt={t.viewScreenshot} />
+						</button>
+					))}
+				</div>
+			)}
+			{zoom !== null && state?.images?.[zoom] && <ImageZoom src={`data:${state.images[zoom].mimeType};base64,${state.images[zoom].data}`} label={t.close} onClose={() => setZoom(null)} />}
 			{diffLines && diffLines.length > 0 && (
 				<div className="pw-diff">
 					<DiffView lines={diffLines} language={languageForPath(argPath)} />
@@ -897,6 +920,23 @@ export interface RoundBadge {
 	files: number;
 	add: number;
 	del: number;
+}
+
+/** 截图放大：挂到 body 上，Esc / 点遮罩关闭 */
+function ImageZoom({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
+	useEffect(() => {
+		const onKey = (e: globalThis.KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [onClose]);
+	return createPortal(
+		<div className="pw-zoom modal-mask fixed inset-0 z-[120] flex items-center justify-center p-6" role="dialog" aria-label={label} onClick={onClose}>
+			<img src={src} alt="" className="max-h-full max-w-full rounded-xl object-contain" style={{ boxShadow: "var(--dsw-elevation-prominent)" }} />
+		</div>,
+		document.body,
+	);
 }
 
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */

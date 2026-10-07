@@ -359,9 +359,9 @@ export function openSessionManager(sessionPath: string): SessionManager {
 	return SessionManager.open(sessionPath);
 }
 
-/** 工具预设 → pi 工具白名单 */
+/** 工具预设 → pi 工具白名单。浏览器工具（pi 的眼睛）只在 standard 起：只读预设不该有网络访问 */
 export const TOOL_PRESETS: Record<"readonly" | "standard" | "full", string[]> = {
 	readonly: ["read", "grep", "find", "ls"],
-	standard: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+	standard: ["read", "grep", "find", "ls", "bash", "edit", "write", "browser_open", "browser_screenshot", "browser_console", "browser_click", "browser_type"],
 	full: [], // 空 = 不限制（全部可用工具）
 };

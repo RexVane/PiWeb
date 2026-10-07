@@ -1106,6 +1106,35 @@ button.pw-line:hover {
 	overflow: hidden;
 }
 
+/* 工具结果里的截图（pi 的眼睛）：缩略图一行，点击放大 */
+.pw-shots {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 4px 0 2px;
+}
+.pw-shot {
+	display: block;
+	max-width: min(100%, 420px);
+	border-radius: 8px;
+	overflow: hidden;
+	border: 0.5px solid var(--dsw-border-l2);
+	cursor: zoom-in;
+	transition: border-color var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-shot:hover {
+	border-color: var(--dsw-border-l3);
+}
+.pw-shot img {
+	display: block;
+	max-height: 240px;
+	width: auto;
+	max-width: 100%;
+}
+.pw-zoom {
+	cursor: zoom-out;
+}
+
 /* ⎿ 结果预览 */
 .pw-result {
 	display: flex;
