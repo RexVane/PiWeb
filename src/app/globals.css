@@ -1684,7 +1684,11 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 		opacity: 0;
 	}
 }
-.stream-cursor {
+/* 边生成边渲染的 Markdown：光标挂在最后一个块的末尾（段落 / 标题 / 代码块里，列表挂最后一项，引用挂最后一段） */
+.md-streaming > :is(p, h1, h2, h3, h4, h5, h6, pre):last-child::after,
+.md-streaming > :is(ul, ol):last-child > li:last-child::after,
+.md-streaming > blockquote:last-child > :last-child::after {
+	content: "";
 	display: inline-block;
 	width: 2px;
 	height: 1em;

@@ -5,7 +5,7 @@
  * 每个回合 = 用户消息 → 过程（叙述句是阶段标题，其下是带图标的步骤列表）→ 最终回答。
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
-import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -31,6 +31,7 @@ import {
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
 import { ElementPicker, isBrowserTool, useElementPick } from "@/components/ElementPicker";
 import { languageForPath } from "@/lib/highlight";
+import { splitMarkdownBlocks } from "@/lib/markdown-blocks";
 import { OutlineRail } from "@/components/OutlineRail";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
@@ -101,28 +102,42 @@ function formatMessageClock(time: number, t: Dict): string {
 	return `${md} ${clock}`;
 }
 
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]["rehypePlugins"]> = [[rehypeHighlight, { detect: false, ignoreMissing: true }]];
+const MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]["components"] = {
+	a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+};
+
+/** Markdown 本体，不带外层 .md：流式时按块各自记忆化，块内容不变就不重新解析 */
+const MarkdownBody = memo(function MarkdownBody({ text }: { text: string }) {
+	return (
+		<ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={MARKDOWN_COMPONENTS}>
+			{text}
+		</ReactMarkdown>
+	);
+});
+
 const Markdown = memo(function Markdown({ text }: { text: string }) {
 	return (
 		<div className="md">
-			<ReactMarkdown
-				remarkPlugins={[remarkGfm]}
-				rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-				components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
-			>
-				{text}
-			</ReactMarkdown>
+			<MarkdownBody text={text} />
 		</div>
 	);
 });
 
-/** 流式中的最后一段正文：纯文本逐字追加 + 闪烁光标，结束后再切 Markdown（避免每个 delta 重解析整段） */
+/**
+ * 流式中的最后一段正文：边生成边按 Markdown 渲染，光标跟在末尾。按代码块外的空行切块，写完的块各自记忆化，
+ * 只有还在增长的尾块随增量重新解析；渲染跟不上增量时 useDeferredValue 跳过中间态，输入不卡。
+ * 所有块放在同一个 .md 里，间距与结束后的整段渲染一致。
+ */
 function StreamingText({ text }: { text: string }) {
+	const deferred = useDeferredValue(text);
+	const blocks = useMemo(() => splitMarkdownBlocks(deferred), [deferred]);
 	return (
-		<div className="md">
-			<p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>
-				{text}
-				<span className="stream-cursor" aria-hidden />
-			</p>
+		<div className="md md-streaming" data-testid="streaming-markdown">
+			{blocks.map((block, index) => (
+				<MarkdownBody key={index} text={block} />
+			))}
 		</div>
 	);
 }
