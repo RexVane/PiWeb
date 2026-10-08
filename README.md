@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/showcase.png" alt="PiWeb UI Showcase" width="840" />
+  <img src="assets/main.png" alt="PiWeb main screen: session sidebar, streaming chat, and tool cards" width="840" />
 </p>
 
 ---
@@ -18,17 +18,68 @@
 
 ## Key Features
 
-- **Real-Time Streaming**: Full SSE snapshots with ordered deltas, automatic replay via `Last-Event-ID`, real-time thinking process and inline tool execution cards.
-- **Composer & Input**: Image attachments (paste, pick, drag-and-drop), 2-level model selector, model cycling forward/backward, queue management (steering / follow-up), and `/` slash commands.
-- **Decoupled Workspaces & Sessions**: Group sessions by workspace folders, native system folder picker on Windows, rename/delete workspaces with centered confirmation modals, preserve sessions under "Ungrouped", and maintain empty workspaces independently.
-- **Session Exploration**: Session tree branch visualization & navigation, editing or withdrawing a sent message (the conversation returns to just before it; the old branch stays in the session file), user message draft recovery, export session logs to JSONL / HTML, and trajectory views.
-- **Project Growth, One Git Commit per Round**: Every round pi finishes is committed to a private ref in the workspace's own `.git` (your branches, HEAD and staging area stay untouched). The project panel shows what each round changed versus the previous one — files, +/− lines and the full diff — with your own edits between rounds recorded separately, and every prompt in the chat links to its round.
-- **pi's Eyes (Headless Browser Tools)**: With Chrome, Edge or Chromium installed, pi gets `browser_open`, `browser_screenshot`, `browser_console`, `browser_click` and `browser_type`. It opens your dev server in a headless browser, looks at the screenshot (a text outline for models without vision), reads console errors and failed requests, and fixes what it sees. Screenshots show up inline in the chat. Click **Pick element** on a screenshot to point at things yourself: PiWeb re-captures the page, you click an element, and it lands in the composer as a chip with its DOM path, source location (from build-time source attributes, React ≤18 / Vue / Svelte dev metadata, or a text search) and, for vision models, a cropped image.
-- **Comprehensive Settings**:
-  - **General**: Tool presets (Read Only / Workspace Write / Full Access), language (zh/en), appearance, enter key behaviors, and auto-compact.
-  - **Models**: Manage 30+ built-in providers, custom providers in `models.json`, and OAuth logins (Claude, Codex, Copilot, etc.). Custom models can declare thinking support, which levels they offer and the value each level sends (pi's `reasoning` / `thinkingLevelMap`), plus image input. Thinking levels come straight from pi's built-in model metadata; new sessions start from the default model and level in pi's own `settings.json` (shared with pi in the terminal), and the model menu marks the defaults and can save the current pick as the new default.
-  - **Plugins & Skills**: View and manage extensions and skills directly via Pi's built-in package manager.
-- **Security & Sandboxing**: Optional password via `PI_WEB_PASSWORD` (browser login page, HTTP Basic for API clients) with a brake on repeated wrong passwords, origin validation on write actions, and strict path boundary checks.
+### Streaming chat
+
+Markdown is laid out while the answer is still being written: headings, lists, tables and code blocks take shape before the reply finishes. Thinking and tool calls sit in the thread as cards. A dropped connection resumes from `Last-Event-ID`, and open tabs line up about every 3 seconds. The composer takes images (pick, paste, or drop), a two-level model picker, compaction, stop, queue clear, and `/` commands (built-ins, Pi templates, and skills).
+
+<p align="center"><img src="assets/main.png" alt="Main screen: streaming chat and tool cards" width="840" /></p>
+
+### Conversation outline
+
+The rail on the right of the thread is an outline. Your own messages are bold; the rest are headings from the reply. Collapsed, it is a column of ticks, shorter for deeper headings. Hover to open the list. Scrolling highlights the current item, and a click jumps there.
+
+<p align="center"><img src="assets/outline.png" alt="Conversation outline: your messages are bold" width="840" /></p>
+
+### Trajectory and files
+
+A file-changing tool card inlines the diff, green for additions and red for deletions, with a +N −M count. From the card you can open that step in the trajectory, or open the file in your editor. The trajectory puts the step on three lanes — input, model, and tools — laid out by sequence, time, or duration. The detail pane has Summary, Preview, Raw, and Source. A sent message can be edited and resent in place, or withdrawn so the thread returns to just before it. The old branch stays in the session file.
+
+<p align="center"><img src="assets/trace-1.png" alt="Inline diff on a tool card" width="840" /></p>
+<p align="center"><img src="assets/trace-2.png" alt="Open in editor, and view in the trajectory" /> <img src="assets/trace-3.png" alt="Open in editor" /> <img src="assets/trace-4.png" alt="View in the trajectory" /></p>
+
+### Workspaces and sessions
+
+Sessions are grouped by project folder. A system folder picker adds a workspace, and an empty workspace can stay on its own. Archived sessions sit under Archived in the sidebar, and can be opened again or unarchived. A session exports as JSONL or HTML, and the session tree jumps to another branch. Removing a workspace leaves the folder and the session files in place; the sessions move under Ungrouped.
+
+<p align="center"><img src="assets/archive.png" alt="Archived sessions collected in the sidebar" width="400" /></p>
+
+### Project growth, one git commit per round
+
+Each round pi finishes is committed in the workspace's own `.git`, on `refs/piweb/rounds/<key>`. Your branches, HEAD, and the index are left alone. The project column lists the files that round changed against the previous one, with line counts, and opening a file shows that round's diff. Edits you make between rounds are recorded on their own. Each prompt in the chat links to its round.
+
+<p align="center"><img src="assets/growth-1.png" alt="Project column: files changed in this round" width="840" /></p>
+<p align="center"><img src="assets/growth-2.png" alt="Open a file to see that round's diff" width="840" /></p>
+
+### File viewer
+
+Project files open in the page: several tabs, and `+` to find a file. The same file can be shown as a change (the whole-file diff, with previous and next change), as content (line numbers and highlighting; a deleted file shows what it was), or rendered (Markdown). A selection can be quoted into the composer, or opened in a local editor.
+
+<p align="center"><img src="assets/viewer-1.png" alt="File viewer: rendered Markdown" width="840" /></p>
+<p align="center"><img src="assets/viewer-2.png" alt="File viewer: source with line numbers" width="840" /></p>
+
+### Context meter
+
+The ring beside the composer splits the context window into segments: system prompt, tools, memory (`AGENTS.md`), skills, the kinds of messages, compacted content, the auto-compact reserve, and free space. The numbers are character estimates.
+
+### Models and providers
+
+Thirty-plus built-in providers, with an API key or OAuth (Claude, Codex, Copilot, and others). A custom provider is written to `models.json`. A custom model can declare thinking support, which levels it offers, the value each level sends, and whether it accepts images. Thinking levels are pi's own. A new session starts from the default model and level in pi's `settings.json`, the same file the terminal uses.
+
+<p align="center"><img src="assets/providers-1.png" alt="Provider settings: keys, OAuth, and usage" width="840" /></p>
+<p align="center"><img src="assets/providers-2.png" alt="Add a provider from the built-in list" width="840" /></p>
+<p align="center"><img src="assets/providers-3.png" alt="Custom provider: endpoint, protocol, and models" width="840" /></p>
+
+### Plugins and skills
+
+Extensions are installed, updated, and removed with Pi's package manager. A skill can be enabled, disabled, or deleted; a single-file skill removes only that file.
+
+### pi's eyes
+
+With Chrome, Edge, or Chromium installed, pi gains `browser_open`, `browser_screenshot`, `browser_console`, `browser_click`, and `browser_type`. It opens your dev server in a headless browser, looks at the screenshot (a text outline when the model cannot see images), reads console errors and failed requests, and keeps editing. Screenshots show up in the chat. Pick element on a screenshot, then click a piece of the page: it lands in the composer as a chip with its DOM path and source location, plus a crop when the model can see images.
+
+### Security
+
+`PI_WEB_PASSWORD` turns on the login page. API clients can still send HTTP Basic with the user `pi`. Repeated wrong passwords are throttled. Writes must come from the same origin, and paths cannot leave the workspace or the session directory. The tool presets (read-only, workspace write, full access) only limit which tools the agent is offered. They are not an operating-system sandbox.
 
 ## Quick Start
 
