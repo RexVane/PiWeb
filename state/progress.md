@@ -2,6 +2,31 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-08 22:17 +08:00 | grok-4.7 | README 换上 0.3.16 的界面配图
+- 起因：当前 `main` 的 README 只有一张 `assets/showcase.png`。带多张界面图的是另一条历史，提交 `7d90207`（npm 上的 0.3.16）。用户要的是那套图，正文按现在这个代码改
+- 改了什么：
+  - 从 `7d90207` 取出仍对得上当前界面的图：主界面、大纲、轨迹与 diff、归档、项目栏、文件查看器、提供方设置，放进 `assets/`，中英文 README 按节配上
+  - 正文改成现在的行为：生长记录是每轮一个 git commit（`refs/piweb/rounds/<key>`），不是旧版「每次文件操作拍一张、独立于 git」；补上边生成边排版、编辑重发、pi 的眼睛。不再把已经不在这棵树上的功能写成现有能力：导入会话、提示词来源面板、智能体群、测试检查器、Agent / Plan / Goal、托管 niubash、归档 30 天自动删除
+  - `package.json` 的 `files` 从单个 `assets/showcase.png` 改为 `assets/*.png`，发布包里的 README 才能引用这些图
+  - 换下来的 `showcase.png`，以及这版用不上的 `import.png`、`prompts-1.png`、`prompts-2.png`，移进 `backups/`（该目录被 git 忽略）
+- 影响文件：`README.md`、`README_zh.md`、`package.json`、`assets/*.png`；`assets/showcase.png` 移出仓库
+- 下一步：这些 README 改动还没提交。生长图和提供方图是 0.3.16 当时的界面，图上仍写着「本步」和「导入会话」，和现在的「本轮」、设置里没有导入项不一致
+
+## 2026-10-07 20:02 +08:00 | command-code | M0b：ACP 探路脚本 + 假 ACP Agent 夹具（计划第一步）
+- 起因：按 `docs/plan-2026-10-07-multi-agent.md` 的 M0 从 M0b 开始——M3 各家走 ACP 还是官方 SDK 由本机探测结果决定
+- 做了什么：
+  - 新增 `scripts/acp-probe.mjs`：把用户给的命令当 ACP Agent 启动，只发 initialize，打印协议代数（请求 vs 返回）、agentInfo、authMethods、能力（loadSession / 图片 / 音频 / 嵌入上下文 / mcpCapabilities / 未识别能力键）与原始 JSON；`--try-session` 才建会话（带一个 stdio MCP 回声服务器验证 mcpServers）；另有 `--protocol`、`--env KEY=VALUE`、`--cwd`、`--timeout`、`--json`；Windows 上 `.cmd` / `.bat` 经 cmd.exe 启动，其余直接 spawn；退出用 `terminateProcessTree` 杀进程树
+  - 新增 `tests/fixtures/fake-acp-agent.mjs`（M0c 的种子：initialize + session/new + MCP 客户端）与 `tests/acp-probe.test.ts`（7 条用例：3 条端到端 + 4 条 Windows 命令解析）
+  - `scripts/process-runner.mjs` 的 `terminateProcessTree` 改为导出（探针复用，行为不变）
+- 本机实探结果（M0b 真实数据）：
+  - `grok agent stdio`：v1，Grok 1.0.46；authMethods `cached_token` / `grok.com`；loadSession 支持；`sessionCapabilities: list/resume/close`；MCP http + sse 都支持；图片输入不支持、embeddedContext 支持；模型 grok-4.6 / grok-4.5（500k 上下文、思考强度 xhigh~low）
+  - `opencode acp`：v1，OpenCode 1.18.35，authMethods `opencode-login`，loadSession 支持、图片支持、embeddedContext 支持（Kimi / DeepSeek 走这条）
+  - `dsh --profile acp`：v1，`deepseek-harness-acp` 0.0.1，无 authMethods、未报 loadSession；启动慢（>25 秒，需 `--timeout 60`）
+  - 未探：claude / codex 要经 npx 适配器（需下载）；Antigravity 本机未安装
+- 验证：`npm run typecheck` 通过；全量 `npx vitest run` 503 通过 + 1 跳过（80 文件，此前 496 + 1）；`npm run build` 通过（`.next/BUILD_ID` 19:56 写入）。注意：本机 shell 若带 `NODE_ENV=production`，vitest 会加载生产版 React 导致 25 个 UI/hook 文件误报（`React.act is not a function`），清掉即恢复
+- 影响文件：`scripts/acp-probe.mjs`、`tests/fixtures/fake-acp-agent.mjs`、`tests/acp-probe.test.ts`、`scripts/process-runner.mjs`
+- 下一步：claude / codex 的 npx 适配器探测（需下载；用户已要求暂缓）、Antigravity 装好后填 `agy_acp_server.exe` 路径；已有三家结果可直接定 M3 的接入顺序
+
 ## 2026-10-07 19:12 +08:00 | Claude Code（云端） | 计划：六个订阅合规接入 + 每次做完自动总结 + 开发者模式验收（只写计划，未实施）
 - 起因：用户要参考 pingdotgg/t3code 重新定义 Agent，三个目标——六个订阅（Claude、Gemini 经 Antigravity、Grok、Cursor、Kimi / DeepSeek 经 OpenCode）合规接入、每次做完就总结项目、验收已做的开发者模式；用户要求「先做计划」「在 GitHub 做完计划即可」「先别执行，拉到本地后叫别的模型来做」
 - 做了什么：只读调研 t3code（适配器 + 能力标记、通用 ACP 适配器、每会话 stdio MCP 小桥、检测不建会话）与 PiWeb 的接入点，经一轮设计复核后写成 `docs/plan-2026-10-07-multi-agent.md`。要点：
