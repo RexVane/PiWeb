@@ -2,6 +2,14 @@
 
 > 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-08 22:41 +08:00 | grok-4.7 | 提交带配图的中英文 README 并推送（`d35b6ba`）
+- 起因：GitHub 介绍页仍是旧 README。配图和正文只在本地工作区，没有提交
+- 改了什么：
+  - 提交 `d35b6ba`：`README.md` 与 `README_zh.md` 换上同一套界面图（主界面、大纲、轨迹、归档、项目栏、文件查看器、提供方），删掉 `assets/showcase.png`，`package.json` 的 `files` 改为 `assets/*.png`
+  - 未纳入这次提交：ACP 探测（`scripts/acp-probe.mjs`、夹具与测试）、`scripts/process-runner.mjs`、`tsconfig.json`、`.commandcode/`
+- 影响文件：`README.md`、`README_zh.md`、`package.json`、`assets/*.png`
+- 下一步：推送到 `origin/main`。生长图上仍是「本步」，提供方图的设置侧栏仍有「导入会话」
+
 ## 2026-10-08 22:17 +08:00 | grok-4.7 | README 换上 0.3.16 的界面配图
 - 起因：当前 `main` 的 README 只有一张 `assets/showcase.png`。带多张界面图的是另一条历史，提交 `7d90207`（npm 上的 0.3.16）。用户要的是那套图，正文按现在这个代码改
 - 改了什么：
