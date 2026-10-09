@@ -1,8 +1,6 @@
 node_modules/
 .next/
 .next-releases/
-.next-dev/
-.next-dev-clean/
 .next-dev-webpack/
 out/
 *.tsbuildinfo

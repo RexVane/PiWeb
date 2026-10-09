@@ -40,7 +40,6 @@
 		"postinstall": "node scripts/postinstall.mjs",
 		"prepublishOnly": "npm run check",
 		"start": "node bin/piweb.js",
-		"web": "node bin/pi.js web",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"check": "npm run typecheck && npm run test && npm run build",
