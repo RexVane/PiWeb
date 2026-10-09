@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 
 /** Kill only the command tree that this helper started, never the serving app. */
-async function terminateProcessTree(child) {
+export async function terminateProcessTree(child) {
 	if (!child.pid) { child.kill(); return; }
 	if (process.platform !== "win32") {
 		try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
