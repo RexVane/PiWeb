@@ -4,9 +4,9 @@
  * 登录密码有防爆破限速（GET 里的 Basic 已在 proxy 里限速）。
  */
 import { NextResponse } from "next/server";
-import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/auth";
-import { createPasswordThrottle, passwordThrottledResponse } from "@/lib/password-throttle";
-import { SESSION_COOKIE, clearedCookieOptions, createSessionToken, readCookieHeader, safeNextPath, sessionCookieOptions, validPassword, validSessionToken } from "@/lib/web-auth";
+import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/security/auth";
+import { createPasswordThrottle, passwordThrottledResponse } from "@/lib/security/password-throttle";
+import { SESSION_COOKIE, clearedCookieOptions, createSessionToken, readCookieHeader, safeNextPath, sessionCookieOptions, validPassword, validSessionToken } from "@/lib/security/web-auth";
 
 export const dynamic = "force-dynamic";
 

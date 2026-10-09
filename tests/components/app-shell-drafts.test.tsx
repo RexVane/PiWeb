@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn() }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
-vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
+vi.mock("@/lib/ui/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {} }) }));
 vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));

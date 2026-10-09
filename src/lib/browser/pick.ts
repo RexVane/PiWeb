@@ -3,8 +3,8 @@
  * capture：给当前页面重新截一张图（对话里那张可能已经过时），用户在这张图上点；
  * pick：取该点的元素 → 交给 locateSource 找源码 → 附一张元素裁剪图（模型能看图时随消息发出）。
  */
-import { locateSource, type SourceHit } from "../dev-inspect-service";
-import { BoundaryError } from "../path-security";
+import { locateSource, type SourceHit } from "./dev-inspect-service";
+import { BoundaryError } from "../security/path-security";
 import { elementLabel, locateAttrsFromHints, type PickedElementInfo } from "./inspect";
 import { DEVICES, peekBrowserTab, type BrowserTab, type Device } from "./manager";
 

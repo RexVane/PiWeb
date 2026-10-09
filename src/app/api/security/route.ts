@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import type { ProjectTrust } from "@/lib/security-service";
-import { getSecurity, setProjectTrust } from "@/lib/security-service";
+import type { ProjectTrust } from "@/lib/security/security-service";
+import { getSecurity, setProjectTrust } from "@/lib/security/security-service";
 import { reloadLoader, setProjectTrust as setProjectTrustDecision } from "@/lib/pi";
-import { reloadSessionsForCwd } from "@/lib/agent-manager";
-import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
+import { reloadSessionsForCwd } from "@/lib/agent/agent-manager";
+import { BoundaryError, resolveWorkspacePath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

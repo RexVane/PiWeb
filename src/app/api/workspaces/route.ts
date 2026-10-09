@@ -9,9 +9,9 @@ import {
 	registerCwds,
 	removeWorkspace,
 	setAlias,
-} from "@/lib/workspace-store";
+} from "@/lib/workspace/workspace-store";
 import { encodeSessionId } from "@/lib/pi";
-import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
+import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

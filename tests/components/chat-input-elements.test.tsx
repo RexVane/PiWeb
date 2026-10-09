@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { ChatInput, type ChatDraft } from "@/components/ChatInput";
-import type { DraftElement } from "@/lib/element-draft";
+import type { DraftElement } from "@/lib/browser/element-draft";
 
 afterEach(() => { cleanup(); localStorage.clear(); });
 

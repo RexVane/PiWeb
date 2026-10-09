@@ -1,4 +1,4 @@
-import { providerIconSlug, providerInitials } from "@/lib/provider-display";
+import { providerIconSlug, providerInitials } from "@/lib/models/provider-display";
 
 export function ProviderBrand({ id, name, size = 36 }: { id: string; name: string; size?: number }) {
 	const slug = providerIconSlug(id);

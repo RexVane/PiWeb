@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChatWindow } from "@/components/ChatWindow";
 import { foldPiWebEvent, type PiWebState } from "@/hooks/usePiWeb";
-import { toWebMessage } from "@/lib/agent-manager";
+import { toWebMessage } from "@/lib/agent/agent-manager";
 import type { WebMessage } from "@/lib/types";
 
 afterEach(() => { cleanup(); });

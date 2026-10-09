@@ -6,7 +6,7 @@
  * 每行按文件语言做语法高亮（highlight.js），多文件 diff 跟着 +++ 头切换语言。
  */
 import { useMemo } from "react";
-import { highlightLine, languageForPath } from "@/lib/highlight";
+import { highlightLine, languageForPath } from "@/lib/ui/highlight";
 
 export interface DiffLine {
 	kind: "add" | "del" | "ctx" | "hunk" | "file";

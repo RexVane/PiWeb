@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRuntimeVersions } from "@/lib/version";
+import { getRuntimeVersions } from "@/lib/system/version";
 
 export const dynamic = "force-dynamic";
 

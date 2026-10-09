@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { BoundaryError } from "@/lib/path-security";
-import { gitDiff, gitInfo, gitShow } from "@/lib/git-service";
+import { BoundaryError } from "@/lib/security/path-security";
+import { gitDiff, gitInfo, gitShow } from "@/lib/workspace/git-service";
 
 export const dynamic = "force-dynamic";
 

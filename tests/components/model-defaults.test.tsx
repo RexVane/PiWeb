@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
-import type { ModelDefaults } from "@/lib/thinking";
+import type { ModelDefaults } from "@/lib/models/thinking";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 

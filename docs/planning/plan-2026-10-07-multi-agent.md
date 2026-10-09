@@ -83,7 +83,7 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 
 **`src/lib/external-agent-manager.ts`**：自己的 `globalThis` 表，每项含 `SessionManager`、连接状态（cold / starting / ready / running / crashed）、事件中枢（环形缓冲 + seq，语义照抄 `agent-manager.ts` 的 `publishImmediate` / `subscribe`，含重放规则）、`GrowthTracker`、权限桥、进行中的助手段落。导出与 `agent-manager.ts` 同名的函数：`getManaged`、`buildSnapshot`、`subscribe`、`unsubscribe`、`execute`、`createNewSession(cwd, provider)`、`disposeSessionPath`、`activeStatus`、`exportSession`、`growthRecord`。`agent-manager.ts` 本身只加一个保护（拒绝 web-sessions 下的路径）和总结钩子。
 
-**`src/lib/session-router.ts`**：按路径所在根选 manager。调 `getManaged` 的路由（`agent/[id]`、`agent/[id]/events`、`agent/[id]/tree`、`browser`、`growth`、`sessions/[id]/export`）和 `sessions/[id]`（`disposeSessionPath`）改为经路由器；`agent/new` 接受 `{cwd, provider?}`。`src/lib/path-security.ts` 的 `resolveSessionPath` 改为允许根列表（`sessions`、`web-sessions`）并加 `sessionKind(path)`；`session-reader.ts` 两个根一起扫，`SessionSummary` 加 `provider?`。
+**`src/lib/session-router.ts`**：按路径所在根选 manager。调 `getManaged` 的路由（`agent/[id]`、`agent/[id]/events`、`agent/[id]/tree`、`browser`、`growth`、`sessions/[id]/export`）和 `sessions/[id]`（`disposeSessionPath`）改为经路由器；`agent/new` 接受 `{cwd, provider?}`。`src/lib/security/path-security.ts` 的 `resolveSessionPath` 改为允许根列表（`sessions`、`web-sessions`）并加 `sessionKind(path)`；`session-reader.ts` 两个根一起扫，`SessionSummary` 加 `provider?`。
 
 **记录条目**
 - 用户消息：`appendMessage({role: "user", …})`。
@@ -98,9 +98,9 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 - `session/load` 期间 Agent 重放的历史要压住：等 load 回应 + 一段静默再放行（同 t3code）。
 - 快照加可选 `agent: {provider, label, state, caps, config[], permissionMode}`；pi 专有字段给空。前端看到 `snapshot.agent` 就隐藏 pi 专有控件：思考强度（除非 Agent 有 `thought_level` 选项）、压缩、编辑重发 / 撤回、分叉、树。
 
-**新命令**（`src/lib/command-validation.ts`）：`setAgentConfig {configId, value}`、`restartAgent`。外部会话的 `setToolPreset` 兼作权限模式；`followUp` 是 PiWeb 侧队列，下一轮发出（复用 `queue` 事件）；插话 = 取消后重发（以后做）。
+**新命令**（`src/lib/agent/command-validation.ts`）：`setAgentConfig {configId, value}`、`restartAgent`。外部会话的 `setToolPreset` 兼作权限模式；`followUp` 是 PiWeb 侧队列，下一轮发出（复用 `queue` 事件）；插话 = 取消后重发（以后做）。
 
-**审批不能用 `ExtensionUiBridge.ask`**：没人在看时它立刻返回默认值（`src/lib/extension-ui.ts:49`），无人值守的 Agent 会被悄悄拒绝一切。新建 `PermissionBridge`：等最多 10 分钟，超时答 `reject_once`。
+**审批不能用 `ExtensionUiBridge.ask`**：没人在看时它立刻返回默认值（`src/lib/agent/extension-ui.ts:49`），无人值守的 Agent 会被悄悄拒绝一切。新建 `PermissionBridge`：等最多 10 分钟，超时答 `reject_once`。
 
 **进程生命周期**
 - 惰性启动：spawn → `initialize` → 只有 Agent 说需要时才 `authenticate` → `session/load`，不行 `session/resume`，再不行 `session/new`；不能恢复时新开原生会话并在前面附上预算内的历史交接。
@@ -134,7 +134,7 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 - **M0c 假 ACP Agent** `tests/fixtures/fake-acp-agent.mjs`：用同一个 SDK 的 `AgentSideConnection`，环境变量选场景（文字流、工具 + diff、审批、慢取消、半路崩溃、load 重放、MCP 调用）；用 `process.execPath` 启动，Windows CI 也能跑。后面所有测试和端到端都用它。
 
 ## M1：本轮卡片（总结第一层，先给 pi 会话）
-- **钩子**：`src/lib/growth-tracker.ts` 加选项 `onRunEnd({prompts, title, status, runEntries, round | null})`；即使生长历史停用（没有 git / 项目过大）也照样跟踪一轮的边界并回调（`round` 为 null）。`agent-manager.ts` 的 `growthOf` 传入；M3 的外部 manager 同样传入。
+- **钩子**：`src/lib/growth/growth-tracker.ts` 加选项 `onRunEnd({prompts, title, status, runEntries, round | null})`；即使生长历史停用（没有 git / 项目过大）也照样跟踪一轮的边界并回调（`round` 为 null）。`agent-manager.ts` 的 `growthOf` 传入；M3 的外部 manager 同样传入。
 - **卡片内容**（不调模型）：提问、文件 +/−（来自 `round.changes`）、工具调用次数、最后回复摘录、状态（完成 / 已中止 / 出错）。
 - **存储**：每工作区一份 `~/.pi/agent/web-summaries/<workspaceKey(cwd)>/runs.jsonl`，一条一轮（以 commit 为键，没有 commit 时以会话 + 提问 id 为键）。
 - **事件与接口**：新增 `WebEvent` `summary {key, status: pending|done|error, card?, ai?}`；快照带本会话各轮卡片；`GET /api/summaries?cwd&session`（写路由前读 `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`）。
@@ -149,7 +149,7 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 
 ## M3：外部会话内核（实验开关；先 Claude、Grok、OpenCode → Kimi / DeepSeek）
 - 上面「架构」里的适配器、manager、路由器、记录条目、事件映射、权限桥、进程生命周期。
-- 新会话页加「用哪个 Agent」；侧栏和会话头显示 Agent 标记（`src/lib/provider-display.ts` 及图标）。
+- 新会话页加「用哪个 Agent」；侧栏和会话头显示 Agent 标记（`src/lib/models/provider-display.ts` 及图标）。
 - 审批先用现有 `extension_ui` 的 select（允许一次 / 总是允许 / 拒绝），但背后是 `PermissionBridge` 的语义。
 - 生长历史与 M1 卡片在这里自动生效（外部 manager 同样建 `GrowthTracker`，`entries()` 取自 `SessionManager`）。
 - OpenCode：模型取 OpenCode 报告的 provider/model；若 ACP 不能切模型，换 `@opencode-ai/sdk` 适配器（产出同样的归一化更新）。
@@ -167,7 +167,7 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 - **输出**：本轮 AI 总结 `{done[], changedFiles[{path, why}], verified[], notVerified[], next[]}` 并入 `runs.jsonl` 对应条目；滚动项目总览 `overview.md`（项目目的、关键结构、当前状态、最近 10 次变化、未决问题）+ `overview-history/`。
 - **引擎**（设置里三选一）：
   - **同一个 Agent**：开一个用完即弃的 ACP 进程，只读模式、不给 MCP、审批一律拒绝、90 秒超时；
-  - **pi 模型**：pi-ai 的 `completeSimple`；若该模型用的是订阅 OAuth 登录（`src/lib/models-service.ts` 的 `storedAuthType === "oauth"`），默认不拿它写总结、只出卡片，设置里可另指定模型；
+  - **pi 模型**：pi-ai 的 `completeSimple`；若该模型用的是订阅 OAuth 登录（`src/lib/models/models-service.ts` 的 `storedAuthType === "oauth"`），默认不拿它写总结、只出卡片，设置里可另指定模型；
   - **关**。
 - `POST /api/summaries {action: "regenerate" | "export"}`；可选（每工作区默认关）同步写一份到仓库文件（如 `docs/PROJECT_SUMMARY.md`），并加入生长历史的 exclude，免得下一轮被记成「你的修改」。
 - pi 引擎部分不依赖 M3，可以提前做。
@@ -190,7 +190,7 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 
 ## 验证
 - 每个里程碑：`npm run typecheck` + 全量 `npx vitest run` + `npm run build`；CI（Linux + Windows）全绿。
-- **单测**：`acp-map`（ACP 更新 → 归一化更新 → 记录条目与 `WebEvent`）；权限表；`spawn.ts` 解析与 shim 解析；`resolveSessionPath` 多根与越界拒绝；`session-reader` 的 provider 字段；MCP JSON-RPC 处理与令牌鉴权（无令牌 / 已吊销 / 别的会话）；总结输入预算、队列顺序、跳过规则（pi-ai 的 faux provider）；`tests/use-piweb-events.test.ts` 加 reducer 夹具。
+- **单测**：`acp-map`（ACP 更新 → 归一化更新 → 记录条目与 `WebEvent`）；权限表；`spawn.ts` 解析与 shim 解析；`resolveSessionPath` 多根与越界拒绝；`session-reader` 的 provider 字段；MCP JSON-RPC 处理与令牌鉴权（无令牌 / 已吊销 / 别的会话）；总结输入预算、队列顺序、跳过规则（pi-ai 的 faux provider）；`tests/hooks/use-piweb-events.test.ts` 加 reducer 夹具。
 - **集成**（用假 Agent）：prompt → 事件顺序；取消；崩溃 / 重启并压住重放；回收；冷快照与热快照一致；临时 git 仓库里的生长 commit（复用 `growth-tracker.test.ts` 的写法）；`mcp-bridge.mjs` 对桩 HTTP 服务器。
 - **端到端（云端，不需要订阅）**：生产构建 + 假 ACP Agent 注册成「自定义 ACP 命令」+ 假模型：新建外部会话 → 流式输出 → 审批 → 生长轮 → 本轮卡片 / AI 总结 → 项目总览更新 → 外部 Agent 经 MCP 截图并显示。
 - **真订阅（只能在用户本机 Windows）**：每家一张清单——检测显示「可用」、发一条消息、审批、取消、重启 PiWeb 后恢复、用浏览器工具、生成总结。可选 `PI_WEB_ACP_LOG=1` 记录去掉密钥的通信日志，之后可转成重放夹具。

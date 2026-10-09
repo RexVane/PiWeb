@@ -8,8 +8,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconEditOutline16, IconFileOutline16, IconTriangleRightFill14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
-import { fileIconSrc, folderIconSrc } from "@/lib/file-icons";
-import { flattenTree, treeNodeKey, type FlatRow, type TreeNode } from "@/lib/growth-tree";
+import { fileIconSrc, folderIconSrc } from "@/lib/ui/file-icons";
+import { flattenTree, treeNodeKey, type FlatRow, type TreeNode } from "@/lib/growth/growth-tree";
 
 const ROW_H = 22;
 const OVERSCAN = 12;

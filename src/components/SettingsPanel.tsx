@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/enter-behavior";
+import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/ui/enter-behavior";
 import {
 	IconAgentPresetOutline16,
 	IconChevronDown14,
@@ -30,10 +30,10 @@ import {
 	type CustomProviderSetup,
 } from "@/components/ProviderSetupModal";
 import { useI18n } from "@/i18n";
-import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
-import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, withBuiltinOverride, type ModelDraft } from "@/lib/model-draft";
-import { customApiOptions } from "@/lib/provider-display";
-import type { ProviderUsage, ProviderView } from "@/lib/models-service";
+import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/ui/theme";
+import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, withBuiltinOverride, type ModelDraft } from "@/lib/models/model-draft";
+import { customApiOptions } from "@/lib/models/provider-display";
+import type { ProviderUsage, ProviderView } from "@/lib/models/models-service";
 import type { ToolPreset } from "@/lib/types";
 
 type Section = "general" | "models" | "tools" | "skills" | "plugins";

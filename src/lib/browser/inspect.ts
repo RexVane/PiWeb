@@ -4,7 +4,7 @@
  * React ≤18 的 fiber._debugSource、Vue 组件实例的 __file、Svelte 的 __svelte_meta.loc。
  * 页面里读出的一切都按不可信数据处理：服务端截断长度，路径交给 locateSource 做工作区边界校验。
  */
-import { COMPONENT_FILE_KEY } from "../source-hint-keys";
+import { COMPONENT_FILE_KEY } from "./source-hint-keys";
 
 export interface ElementSourceHint {
 	framework: "react" | "vue" | "svelte";

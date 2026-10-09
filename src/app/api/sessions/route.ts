@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
-import { listSessions } from "@/lib/session-reader";
-import { activeStatus } from "@/lib/agent-manager";
-import { getWorkspaceRegistry, registerCwds } from "@/lib/workspace-store";
+import { listSessions } from "@/lib/agent/session-reader";
+import { activeStatus } from "@/lib/agent/agent-manager";
+import { getWorkspaceRegistry, registerCwds } from "@/lib/workspace/workspace-store";
 
 export const dynamic = "force-dynamic";
 

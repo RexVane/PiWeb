@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DiffView, diffStats, parseUnifiedDiff } from "@/components/DiffView";
-import { languageForPath } from "@/lib/highlight";
+import { languageForPath } from "@/lib/ui/highlight";
 import { IconChevronLeft14, IconCloseOutline14, IconFileOutline16, IconGitOutline16, IconRefreshOutline14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 

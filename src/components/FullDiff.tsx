@@ -8,7 +8,7 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import type { DiffLine } from "@/components/DiffView";
 import { useI18n } from "@/i18n";
-import { highlightLine } from "@/lib/highlight";
+import { highlightLine } from "@/lib/ui/highlight";
 
 const ROW_H = 20;
 const OVERSCAN = 20;

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { ModelCatalog, type BuiltinModelDefinition } from "@/components/ProviderSetupModal";
-import { modelDraftFromConfig, serializeModelDraft, type ModelDraft } from "@/lib/model-draft";
+import { modelDraftFromConfig, serializeModelDraft, type ModelDraft } from "@/lib/models/model-draft";
 
 afterEach(cleanup);
 

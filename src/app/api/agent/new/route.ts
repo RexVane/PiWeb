@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createNewSession } from "@/lib/agent-manager";
-import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
+import { createNewSession } from "@/lib/agent/agent-manager";
+import { BoundaryError, resolveWorkspacePath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

@@ -16,10 +16,10 @@ import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronDown14, IconChevronUp14, IconCloseOutline14, IconEditOutline16, IconFileOutline16, IconPlusOutline16, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
-import { fileIconSrc } from "@/lib/file-icons";
-import { fuzzyScore, type TreeNode } from "@/lib/growth-tree";
+import { fileIconSrc } from "@/lib/ui/file-icons";
+import { fuzzyScore, type TreeNode } from "@/lib/growth/growth-tree";
 import type { ViewerState } from "@/hooks/useFileViewer";
-import { highlightCode, languageForPath } from "@/lib/highlight";
+import { highlightCode, languageForPath } from "@/lib/ui/highlight";
 
 type Mode = "diff" | "content" | "render";
 

@@ -5,7 +5,7 @@
  */
 import dns from "node:dns/promises";
 import { isIP } from "node:net";
-import { isPublicAddress } from "../net-address";
+import { isPublicAddress } from "../security/net-address";
 
 export class BrowserUrlError extends Error {
 	constructor(message: string) {

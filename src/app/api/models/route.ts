@@ -15,8 +15,8 @@ import {
 	setApiKey,
 	startLogin,
 	writeCustomProviders,
-} from "@/lib/models-service";
-import { getModelDefaults } from "@/lib/pi-settings";
+} from "@/lib/models/models-service";
+import { getModelDefaults } from "@/lib/pi-config/pi-settings";
 
 export const dynamic = "force-dynamic";
 

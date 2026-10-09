@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ProviderSetupModal, formatCapacity, parseCapacity, validateModelDrafts } from "@/components/ProviderSetupModal";
-import type { ProviderView } from "@/lib/models-service";
+import type { ProviderView } from "@/lib/models/models-service";
 
 afterEach(cleanup);
 

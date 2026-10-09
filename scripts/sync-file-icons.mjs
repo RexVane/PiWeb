@@ -1,6 +1,6 @@
 /**
  * 从 material-icon-theme（MIT）抽一份常用文件/文件夹图标子集到 public/file-icons/，
- * 并生成 src/lib/file-icons.json（扩展名 / 文件名 / 文件夹名 → 图标 id 的精简映射）。
+ * 并生成 src/lib/ui/file-icons.json（扩展名 / 文件名 / 文件夹名 → 图标 id 的精简映射）。
  * 项目树与文件查看器按映射取 /file-icons/<id>.svg，未命中回落到通用 file / folder。
  * 用法：npm run sync:file-icons
  */
@@ -114,5 +114,5 @@ await copyFile(path.join(pkg, "LICENSE"), path.join(target, "LICENSE"));
 
 const sortKeys = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
 const json = { defaults, ext: sortKeys(ext), name: sortKeys(name), folder: sortKeys(folder) };
-await writeFile(path.join(root, "src", "lib", "file-icons.json"), `${JSON.stringify(json, null, "\t")}\n`, "utf8");
+await writeFile(path.join(root, "src", "lib", "ui", "file-icons.json"), `${JSON.stringify(json, null, "\t")}\n`, "utf8");
 console.log(`Synced ${copied} file icons (${Object.keys(ext).length} extensions, ${Object.keys(name).length} file names, ${Object.keys(folder).length} folders).`);

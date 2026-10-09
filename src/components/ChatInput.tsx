@@ -17,9 +17,9 @@ import {
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
-import { describeElements, MAX_MESSAGE_IMAGES, type DraftElement } from "@/lib/element-draft";
-import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
-import type { ModelDefaults } from "@/lib/thinking";
+import { describeElements, MAX_MESSAGE_IMAGES, type DraftElement } from "@/lib/browser/element-draft";
+import { otherBehavior, useEnterBehavior } from "@/lib/ui/enter-behavior";
+import type { ModelDefaults } from "@/lib/models/thinking";
 import type { ImageAttachment } from "@/lib/types";
 
 export interface SlashCommand {

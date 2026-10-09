@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { IconBrowseOutline14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { CaptureResult, PickResult } from "@/lib/browser/pick";
-import type { DraftElement } from "@/lib/element-draft";
+import type { DraftElement } from "@/lib/browser/element-draft";
 
 export interface ElementPickApi {
 	/** 当前会话 id（/api/browser 的 session） */

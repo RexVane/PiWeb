@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { checkForUpdate, runUpdate, UpdateBusyError, type UpdateTarget } from "@/lib/update-service";
-import { activeStatus } from "@/lib/agent-manager";
+import { checkForUpdate, runUpdate, UpdateBusyError, type UpdateTarget } from "@/lib/system/update-service";
+import { activeStatus } from "@/lib/agent/agent-manager";
 
 export const dynamic = "force-dynamic";
 

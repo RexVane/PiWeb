@@ -11,13 +11,13 @@ import {
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
-import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
-import { formatCapacity, modelDraftFromConfig, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
-import type { ProviderView } from "@/lib/models-service";
-import { supportedThinkingLevels, thinkingMapFromRows, thinkingRowsFromMap, type ThinkingLevelName, type ThinkingLevelRow } from "@/lib/thinking";
+import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/models/provider-display";
+import { formatCapacity, modelDraftFromConfig, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/models/model-draft";
+import type { ProviderView } from "@/lib/models/models-service";
+import { supportedThinkingLevels, thinkingMapFromRows, thinkingRowsFromMap, type ThinkingLevelName, type ThinkingLevelRow } from "@/lib/models/thinking";
 import styles from "./ProviderSetupModal.module.css";
 
-export { formatCapacity, parseCapacity, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+export { formatCapacity, parseCapacity, validateModelDrafts, type ModelDraft } from "@/lib/models/model-draft";
 
 export interface BuiltinProviderSetup {
 	providerId: string;

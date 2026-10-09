@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { BoundaryError } from "@/lib/path-security";
-import { listWorkspaceDir, openInEditor, parseUploadLength, readWorkspaceFile, saveUploadStream } from "@/lib/files-service";
+import { BoundaryError } from "@/lib/security/path-security";
+import { listWorkspaceDir, openInEditor, parseUploadLength, readWorkspaceFile, saveUploadStream } from "@/lib/workspace/files-service";
 
 export const dynamic = "force-dynamic";
 

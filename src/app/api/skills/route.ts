@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { deleteSkill, listSkills, readSkillFile, setSkillDisabled } from "@/lib/skills-service";
-import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
+import { deleteSkill, listSkills, readSkillFile, setSkillDisabled } from "@/lib/pi-config/skills-service";
+import { BoundaryError, resolveWorkspacePath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

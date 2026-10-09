@@ -11,8 +11,8 @@ import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
-import type { GitInfo } from "@/lib/git-service";
-import type { TreeNode } from "@/lib/growth-tree";
+import type { GitInfo } from "@/lib/workspace/git-service";
+import type { TreeNode } from "@/lib/growth/growth-tree";
 import type { GrowthChange } from "@/lib/types";
 
 /** 「第 7 轮 · 把保存按钮改成红色」/「你的修改」 */

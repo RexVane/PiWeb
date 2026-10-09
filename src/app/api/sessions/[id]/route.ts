@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { deleteSession, readSession } from "@/lib/session-reader";
-import { disposeSessionPath } from "@/lib/agent-manager";
-import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
-import { forgetSession } from "@/lib/workspace-store";
+import { deleteSession, readSession } from "@/lib/agent/session-reader";
+import { disposeSessionPath } from "@/lib/agent/agent-manager";
+import { BoundaryError, resolveSessionPath } from "@/lib/security/path-security";
+import { forgetSession } from "@/lib/workspace/workspace-store";
 
 export const dynamic = "force-dynamic";
 

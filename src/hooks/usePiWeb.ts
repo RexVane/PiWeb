@@ -13,7 +13,7 @@ import type {
 	WebSnapshot,
 	ToolPreset,
 } from "@/lib/types";
-import type { ModelDefaults } from "@/lib/thinking";
+import type { ModelDefaults } from "@/lib/models/thinking";
 
 export interface ToolCardState {
 	name: string;

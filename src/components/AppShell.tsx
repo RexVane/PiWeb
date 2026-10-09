@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar, type EditMessageHandler, type RecallMessageHandler, type RoundBadge } from "@/components/ChatWindow";
-import { MAX_MESSAGE_IMAGES } from "@/lib/element-draft";
+import { MAX_MESSAGE_IMAGES } from "@/lib/browser/element-draft";
 import { ElementPickContext, type ElementPickApi } from "@/components/ElementPicker";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
@@ -33,10 +33,10 @@ import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
 import { useGrowth } from "@/hooks/useGrowth";
 import { useFileViewer } from "@/hooks/useFileViewer";
-import type { TreeNode } from "@/lib/growth-tree";
-import { syncPebrelTheme } from "@/lib/theme";
+import type { TreeNode } from "@/lib/growth/growth-tree";
+import { syncPebrelTheme } from "@/lib/ui/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
-import { defaultThinkingFor, isThinkingLevel, modelKey, THINKING_LEVELS, type ModelDefaults } from "@/lib/thinking";
+import { defaultThinkingFor, isThinkingLevel, modelKey, THINKING_LEVELS, type ModelDefaults } from "@/lib/models/thinking";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
 // dsh ui-layout columns.ts 几何常量

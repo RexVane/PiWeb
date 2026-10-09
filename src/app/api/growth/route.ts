@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { getManaged, growthRecord } from "@/lib/agent-manager";
-import { GrowthError, changesBetween, fileContent, filePatch, isAvailable, listTree, readRounds } from "@/lib/growth-service";
-import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
+import { getManaged, growthRecord } from "@/lib/agent/agent-manager";
+import { GrowthError, changesBetween, fileContent, filePatch, isAvailable, listTree, readRounds } from "@/lib/growth/growth-service";
+import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

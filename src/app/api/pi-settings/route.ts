@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPiSettings, patchPiSettings, PiSettingsValidationError } from "@/lib/pi-settings";
+import { getPiSettings, patchPiSettings, PiSettingsValidationError } from "@/lib/pi-config/pi-settings";
 
 export const dynamic = "force-dynamic";
 

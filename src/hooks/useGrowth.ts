@@ -6,7 +6,7 @@
  * 所选轮的文件与变更、当前磁盘全量目录懒加载、展开状态与新变更动画。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { allDirPaths, buildTree, dirsToReveal, graftLazy, type TreeNode } from "@/lib/growth-tree";
+import { allDirPaths, buildTree, dirsToReveal, graftLazy, type TreeNode } from "@/lib/growth/growth-tree";
 import type { GrowthChange, GrowthRound } from "@/lib/types";
 
 type GrowthScope = "round" | "session";

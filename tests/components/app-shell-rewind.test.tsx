@@ -7,7 +7,7 @@ const image = { type: "image" as const, data: "aGVsbG8=", mimeType: "image/png" 
 const mocks = vi.hoisted(() => ({ sendCommand: vi.fn() }));
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
-vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
+vi.mock("@/lib/ui/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {} }) }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: () => null }));

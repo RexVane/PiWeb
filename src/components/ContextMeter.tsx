@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
-import { classifyMessageChars } from "@/lib/process-format";
+import { classifyMessageChars } from "@/lib/agent/process-format";
 import type { ContextBreakdown } from "@/lib/types";
 
 function fmtTok(n: number): string {

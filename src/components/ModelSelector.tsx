@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconCheckOutline14, IconChevronDown14, IconChevronLeft14, IconChevronRight14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
-import { defaultThinkingFor, type ModelDefaults } from "@/lib/thinking";
+import { defaultThinkingFor, type ModelDefaults } from "@/lib/models/thinking";
 
 type Dict = ReturnType<typeof useI18n>["t"];
 

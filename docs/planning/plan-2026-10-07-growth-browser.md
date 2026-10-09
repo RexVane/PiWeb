@@ -21,14 +21,14 @@
 - 「在截图上点选元素」放到最后一批（B3）。
 
 ## M0：收尾 iframe 方案
-- 提交定位内核：`src/lib/dev-inspect-service.ts`、`tests/dev-inspect-service.test.ts`。
+- 提交定位内核：`src/lib/browser/dev-inspect-service.ts`、`tests/lib/browser/dev-inspect-service.test.ts`。
 - 移入 `backups/2026-10-07-iframe-dev-preview/`：`src/components/DevPreviewPanel.tsx`、`tests/components/dev-preview-panel.test.tsx`。
 - 还原未提交的改动：`src/components/AppShell.tsx`、`src/i18n.tsx`、`src/proxy.ts`、`tests/proxy-auth.test.ts`。proxy 放行在新方案里用不上。
 - progress 记一条「方向变更」并提交。
 
 ## A：生长树改为每轮一个 git commit
 
-### A1 写入（`src/lib/growth-service.ts`）
+### A1 写入（`src/lib/growth/growth-service.ts`）
 - **保留**：`ensureGitDir`（非 git 目录自动 init、子目录嵌套 init、拒绝裸仓库）；独立暂存区 `GIT_INDEX_FILE=<gitdir>/piweb/index`；`exclude` 文件；`refreshIndex`；`write-tree`；`BASE_CONFIG`（关闭 LFS 等）；`runGit`；`withLock`；`workspaceKey`。
 - **`snapshot()` 改为 `commitRound(cwd, meta)`**：
   - `meta = {kind: "round" | "user" | "baseline", session, title, promptIds?, status?: "done" | "aborted" | "error"}`；
@@ -46,7 +46,7 @@
 - **删除账本**：上一个 commit 直接用 `rev-parse --verify -q <ref>` 取得。
 - **只读路径不创建仓库**：先用 `resolveGitDirFast` 判断，没有 `.git` 或没有这个 ref 就返回空。
 
-### A2 触发（`src/lib/growth-tracker.ts`，从 328 行大幅精简）
+### A2 触发（`src/lib/growth/growth-tracker.ts`，从 328 行大幅精简）
 - **删除**：逐工具快照调度（`tool_execution_end`）、`fs.watch` 监听、`growth_pending` 事件和防抖。
 - **`prepare()`**（`agent-manager.ts:1246` 发 prompt 之前已经在调用）：
   - 工作区和上一个 commit 不同 → 先提交一个 `user` commit（显示为「你的修改」）；
@@ -73,7 +73,7 @@
   - 「本轮」= `parentTree → tree`；
   - 「本会话累计」= 会话第一轮的 `parentTree → 所选轮的 tree`；
   - 跟随最新、上一轮 / 下一轮；
-  - 建树复用 `src/lib/growth-tree.ts` 的 `buildTree`。
+  - 建树复用 `src/lib/growth/growth-tree.ts` 的 `buildTree`。
 - **`src/components/ProjectPanel.tsx`**：
   - 头部：提问首行、时间、文件数、+a −d，以及「在对话里看」；
   - 范围切换「本轮 | 本会话累计」，「只看改动」默认打开；

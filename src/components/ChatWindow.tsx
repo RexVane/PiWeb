@@ -30,8 +30,8 @@ import {
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
 import { ElementPicker, isBrowserTool, useElementPick } from "@/components/ElementPicker";
-import { languageForPath } from "@/lib/highlight";
-import { splitMarkdownBlocks } from "@/lib/markdown-blocks";
+import { languageForPath } from "@/lib/ui/highlight";
+import { splitMarkdownBlocks } from "@/lib/ui/markdown-blocks";
 import { OutlineRail } from "@/components/OutlineRail";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
@@ -52,7 +52,7 @@ import {
 	trimNoiseTail,
 	type ModelErrorKind,
 	type ToolKind,
-} from "@/lib/process-format";
+} from "@/lib/agent/process-format";
 
 type Dict = Record<string, string>;
 type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;

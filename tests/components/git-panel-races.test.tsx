@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { GitPanel } from "@/components/GitPanel";
 
-vi.mock("@/lib/highlight", () => ({ languageForPath: () => undefined, highlightLine: () => null }));
+vi.mock("@/lib/ui/highlight", () => ({ languageForPath: () => undefined, highlightLine: () => null }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 function deferred<T>() {
 	let resolve!: (value: T) => void;

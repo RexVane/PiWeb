@@ -1,5 +1,5 @@
-import { buildSnapshot, getManaged, subscribe, unsubscribe } from "@/lib/agent-manager";
-import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
+import { buildSnapshot, getManaged, subscribe, unsubscribe } from "@/lib/agent/agent-manager";
+import { BoundaryError, resolveSessionPath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

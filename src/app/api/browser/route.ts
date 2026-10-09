@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { getManaged } from "@/lib/agent-manager";
+import { getManaged } from "@/lib/agent/agent-manager";
 import { BrowserUnavailableError } from "@/lib/browser/manager";
 import { captureForPicking, NoBrowserPageError, NoElementError, pickElementAt } from "@/lib/browser/pick";
-import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
+import { BoundaryError, resolveSessionPath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

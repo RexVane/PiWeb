@@ -8,8 +8,8 @@ import {
 	toggleExtension,
 	togglePackage,
 	updatePackages,
-} from "@/lib/plugins-service";
-import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
+} from "@/lib/pi-config/plugins-service";
+import { BoundaryError, resolveWorkspacePath } from "@/lib/security/path-security";
 
 export const dynamic = "force-dynamic";
 

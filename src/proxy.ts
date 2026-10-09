@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/auth";
-import { createPasswordThrottle, passwordThrottledResponse } from "@/lib/password-throttle";
-import { SESSION_COOKIE, readCookieHeader, validSessionToken } from "@/lib/web-auth";
+import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/security/auth";
+import { createPasswordThrottle, passwordThrottledResponse } from "@/lib/security/password-throttle";
+import { SESSION_COOKIE, readCookieHeader, validSessionToken } from "@/lib/security/web-auth";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 /** 未认证也可达：登录页自身与认证接口 */

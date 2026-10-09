@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import type { ModelDefaults } from "@/lib/thinking";
+import type { ModelDefaults } from "@/lib/models/thinking";
 
 const levels = ["off", "minimal", "low", "medium", "high"];
 const mocks = vi.hoisted(() => ({
@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
-vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
+vi.mock("@/lib/ui/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {} }) }));
 vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));

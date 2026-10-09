@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
-import { buildTree } from "@/lib/growth-tree";
+import { buildTree } from "@/lib/growth/growth-tree";
 
 const growth: GrowthApi = {
 	available: true, loading: false, error: null, rounds: [], selected: null, following: true, scope: "round", range: null, changes: [],
