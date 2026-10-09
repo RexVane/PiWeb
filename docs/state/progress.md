@@ -2,6 +2,20 @@
 
 > 更早的条目：[docs/state/archive/2026-10.md](archive/2026-10.md)、[docs/state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-09 10:05 +08:00 | claude-haiku-5-5 | 清理未使用的代码、导出、文案、路由与配置
+- 起因：用户要求去掉项目里没用的东西。knip 与 `tsc --noUnusedLocals` 报出：未用导出 45 个、未用 import / 变量 8 处、未用文案键 35 个；另有无调用方的接口、旧 bin 入口和过期配置。删除的文件一律移进 `backups/`，没有真删
+- 改了什么：
+  - `d5710f5`：删掉未用的 import / 变量（`AppShell`、`SettingsPanel`、`usePiWeb`、`ChatWindow`、`agent-manager` 与 `pi.ts` 的 `loadProjectContextFiles`，以及 ACP 测试里上次漏掉的 `parseProbeArgs`）。`models-service` 的 `envKeyOf` 是空实现，删掉。`extension-ui` 的 `UiMethod` 只为导出而存在，删掉
+  - 同一提交：45 个未用导出里，43 个去掉 `export`（只在本文件内用，不改逻辑），`ProviderSetupModal` 删掉再导出的 `serializeModelDraft`，`UiMethod` 整段删掉
+  - `8327902`：`src/i18n.tsx` 删掉 35 个没有引用的文案键，中英文各一行，共 70 行。已确认没有动态拼接的 key
+  - `e22a7ff`：`GET /api/agent/[id]/tree` 前端与测试都不调用，是早期设计遗留，移到 `backups/src/app/api/agent/[id]/tree/`。`bin/pi.js` 与 `package.json` 的 `web` 脚本移到 `backups/bin/pi.js`（`npm start` 等价，且 `bin/` 只放 `package.json` 登记的入口）。`.gitignore`、`tsconfig.json` 删掉 `.next-dev/`、`.next-dev-clean/`（开发产物目录现在是 `.next-dev-webpack`）
+  - 工作区：空的 `state/` 移到 `backups/state/`；`.next/types` 与 `.next-dev-webpack/dev/types` 里引用已删路由的生成文件（`tree` 目录、两份 `validator.ts`）移到 `backups/`，下次 `build` / `dev` 会重新生成
+  - 更正上一条：`tests/` 根部是 57 个文件，不是 60 个
+- 保留（有意不动）：`.commandcode/`（AI 工具私有目录）；`docs/planning/plan-2026-10-07-growth-browser.md`（已实现的设计记录）；`.next-dev-webpack/`（用户之前选择保留）；knip 报的 `material-icon-theme`、`@lobehub/icons-static-svg`（被 `scripts/sync-*.mjs` 用路径字符串引用，误报）；两处图标别名（在用）
+- 影响文件：`src/components/*`、`src/hooks/*`、`src/lib/*`（含 `browser/`）、`src/i18n.tsx`、`scripts/install-build.mjs`、`tests/scripts/acp-probe.test.ts`、`package.json`、`.gitignore`、`tsconfig.json`；移出：`src/app/api/agent/[id]/tree/route.ts`、`bin/pi.js`
+- 验证：`npm run typecheck` 通过；`tsc --noUnusedLocals` 零报错；全量 vitest 80 文件 503 通过 + 1 跳过（与清理前一致）；`npm run build` 通过（重建了 `.next`）；knip 只剩上面的误报
+- 下一步：推送 `origin/main`。`tests/` 根部 57 个平铺文件、`src/lib/` 根部 44 个文件，按域拆子目录需要你点头
+
 ## 2026-10-09 09:16 +08:00 | claude-opus-5-5 | 整理目录与工作区：state / assets / 计划迁入 docs/，提交 ACP 探针，清本地残留
 - 起因：用户「整理一下呗」「保持 github 和本地项目的干净」。开工时工作区有 22:41 那条记着未提交的 ACP 探测、`process-runner.mjs`、`tsconfig.json`，`.commandcode/` 没被忽略；根部还有规则不允许的 `state/`、`assets/`。GitHub 上只剩 `main` 一个分支，本身已干净
 - 改了什么：
