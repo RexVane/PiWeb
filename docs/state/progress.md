@@ -2,6 +2,22 @@
 
 > 更早的条目：[docs/state/archive/2026-10.md](archive/2026-10.md)、[docs/state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-09 09:16 +08:00 | claude-opus-5-5 | 整理目录与工作区：state / assets / 计划迁入 docs/，提交 ACP 探针，清本地残留
+- 起因：用户「整理一下呗」「保持 github 和本地项目的干净」。开工时工作区有 22:41 那条记着未提交的 ACP 探测、`process-runner.mjs`、`tsconfig.json`，`.commandcode/` 没被忽略；根部还有规则不允许的 `state/`、`assets/`。GitHub 上只剩 `main` 一个分支，本身已干净
+- 改了什么：
+  - `63a1b32`：`.gitignore` 加 `.commandcode/`、`.claude/`、`.codex/`，与 `.zcode/` 归成「AI tool private dirs」一组
+  - `93b3e0e`：`git mv` 把 `state/` → `docs/state/`、`assets/` → `docs/assets/`、`docs/plan-*.md` → `docs/planning/`。README 中英文配图路径、`package.json` 的 `files`（改为 `docs/assets/*.png`，`npm pack --dry-run` 核对 14 张图都在包里）、计划文档里的 progress 路径同步改；`install-build.mjs` 暂存构建不再复制已不存在的 `assets/`（构建不引用这些图）
+  - `161ef75`：提交 command-code 10-07 20:02 做的 M0b ACP 探针。测试按「平铺目录超 15 个不再加」放进 `tests/scripts/acp-probe.test.ts`。提交前查出两处问题并修掉：`resolveLaunch` 的参数类型从默认值推出（Next 扩展过的 `ProcessEnv` 要求 `NODE_ENV`，`existsSync` 参数是 `PathLike`），`npm run typecheck` 实际报 5 个错；查 PATH 用的是宿主的 `path.delimiter` / `path.join`，测试在 Linux CI 上模拟 win32 会按 `:` 拆 PATH 而失败。补 JSDoc 参数类型，固定用 `path.win32`（真 Windows 上行为不变）
+  ```js
+  // scripts/acp-probe.mjs:122
+  const directories = String(env.PATH ?? env.Path ?? "").split(path.win32.delimiter).filter(Boolean);
+  ```
+  - `e15a218`：`tsconfig.json` 提交 Next 自动补的 `.next-dev-webpack/dev/dev/types/**/*.ts`（`next/dist/lib/typescript/type-paths.js:36`：NODE_ENV 不是 development 时跑 dev 会拼出 `dev/dev`，改回去还会再冒出来）；加 `tsBuildInfoFile: node_modules/.cache/tsconfig.tsbuildinfo`，`tsc --noEmit` 不再往根部写 tsbuildinfo（next build 自己传缓存路径，不受影响），根部旧文件移进 `backups/`
+  - 本地：stash「local README status edit (superseded by cloud 77e33cd)」导出为 `backups/stash-readme-status-edit-20261009-0916.patch` 后 drop；`git fetch --prune` 清掉 22 个 GitHub 上早已删除的远端跟踪引用（`origin/pr/*`、`origin/dependabot/*`、`origin/claude/funny-lamport-q9lcem`）
+- 验证：`npm run typecheck` 通过；全量 vitest **80 文件 503 通过 + 1 跳过**；`git status` 干净
+- 影响文件：`.gitignore`、`tsconfig.json`、`package.json`、`README.md`、`README_zh.md`、`scripts/install-build.mjs`、`scripts/acp-probe.mjs`、`scripts/process-runner.mjs`、`tests/scripts/acp-probe.test.ts`、`tests/fixtures/fake-acp-agent.mjs`、`docs/`（迁移）
+- 下一步：推送 `origin/main`。`tests/` 根部平铺 60 个文件，按域拆子目录要单独做，等用户点头
+
 ## 2026-10-08 22:41 +08:00 | grok-4.7 | 提交带配图的中英文 README 并推送（`d35b6ba`）
 - 起因：GitHub 介绍页仍是旧 README。配图和正文只在本地工作区，没有提交
 - 改了什么：
