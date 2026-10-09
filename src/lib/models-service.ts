@@ -104,11 +104,6 @@ export async function getBuiltinModelDefinitions(providerId: string): Promise<Ar
 	});
 }
 
-function envKeyOf(providerId: string): string | null {
-	void providerId;
-	return null;
-}
-
 export function listModels(): Promise<{
 	providers: ProviderView[];
 	models: ModelView[];

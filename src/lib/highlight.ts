@@ -18,9 +18,9 @@ const EXT_LANG: Record<string, string> = {
 };
 
 /** 超过这个大小不做整文件高亮（highlight.js 是同步的，会卡主线程） */
-export const HIGHLIGHT_MAX = 120 * 1024;
+const HIGHLIGHT_MAX = 120 * 1024;
 
-export function extOf(name: string): string {
+function extOf(name: string): string {
 	const base = name.replace(/\\/g, "/").split("/").pop() ?? name;
 	const lower = base.toLowerCase();
 	if (lower === "makefile") return "makefile";

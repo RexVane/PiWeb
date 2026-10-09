@@ -14,7 +14,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 
-export function hasProductionBuild(root) {
+function hasProductionBuild(root) {
 	return (
 		fs.existsSync(path.join(root, ".next", "BUILD_ID")) ||
 		fs.existsSync(path.join(root, ".next-releases", "active.json"))
@@ -39,7 +39,7 @@ export function isProductionOnlyInstall(root) {
 }
 
 /** npm hoists dependencies for global installs, so `next` may live one level up. */
-export function resolveNextBin(root) {
+function resolveNextBin(root) {
 	const candidates = [
 		path.join(root, "node_modules", "next", "package.json"),
 		path.join(path.dirname(root), "next", "package.json"),

@@ -18,7 +18,7 @@ export interface SessionSummary {
 
 // ---------- 轨迹账本 ----------
 
-export type TrajKind = "system" | "context" | "user" | "message" | "tool" | "compacted";
+type TrajKind = "system" | "context" | "user" | "message" | "tool" | "compacted";
 
 export interface TrajTokens {
 	input?: number;

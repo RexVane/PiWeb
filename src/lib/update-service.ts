@@ -50,8 +50,8 @@ function assertTarget(target: UpdateTarget): void {
 }
 
 /** The published package that npm installations update to. */
-export const PIWEB_PACKAGE = "@rexvane/piweb";
-export const PIWEB_NPM_UPDATE_COMMAND = `npm install -g ${PIWEB_PACKAGE}@latest`;
+const PIWEB_PACKAGE = "@rexvane/piweb";
+const PIWEB_NPM_UPDATE_COMMAND = `npm install -g ${PIWEB_PACKAGE}@latest`;
 
 /**
  * An npm installation (<prefix>/node_modules/@rexvane/piweb) has no Git checkout to pull and no dev
@@ -59,7 +59,7 @@ export const PIWEB_NPM_UPDATE_COMMAND = `npm install -g ${PIWEB_PACKAGE}@latest`
  * the whole package folder (the build being served included, and Windows locks loaded native modules),
  * so the user stops piweb, runs the npm command and starts it again; the pi engine is pinned per release.
  */
-export function isNpmInstallation(root: string): boolean {
+function isNpmInstallation(root: string): boolean {
 	return path.resolve(root).split(/[\\/]/).includes("node_modules");
 }
 

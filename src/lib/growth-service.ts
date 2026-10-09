@@ -22,7 +22,7 @@ import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
 import type { GrowthChange, GrowthRound, GrowthRoundKind, GrowthRoundStatus } from "./types";
 
 /** 单文件快照上限：超过的不进快照（树里也就看不到它） */
-export const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_FILE_BYTES = 1024 * 1024;
 /** 单次 patch 输出上限 */
 const MAX_PATCH_BYTES = 4 * 1024 * 1024;
 /** 单文件全文预览上限 */
@@ -38,7 +38,7 @@ const RECORD_SEP = "\x1e";
 const FIELD_SEP = "\x1f";
 
 /** 不进快照的目录 / 文件（写进 <gitdir>/piweb/exclude）；工作区自己的 .gitignore 等同样生效 */
-export const EXCLUDE_DIRS = GROWTH_EXCLUDE_DIRS;
+const EXCLUDE_DIRS = GROWTH_EXCLUDE_DIRS;
 const EXCLUDE_FILES = [".DS_Store", "Thumbs.db", "*.log", ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*"];
 const EXCLUDE_CONTENT = `# PiWeb growth snapshot exclusions (generated, do not edit)\n${[...EXCLUDE_DIRS.map((d) => `${d}/`), ...EXCLUDE_FILES].join("\n")}\n`;
 

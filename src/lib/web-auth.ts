@@ -33,7 +33,7 @@ function sign(password: string, payload: string): string {
 	return createHmac("sha256", `piweb-session:${password}`).update(payload).digest("base64url");
 }
 
-export function isSecureRequest(request: Request): boolean {
+function isSecureRequest(request: Request): boolean {
 	if (new URL(request.url).protocol === "https:") return true;
 	return (request.headers.get("x-forwarded-proto") ?? "").split(",")[0].trim() === "https";
 }

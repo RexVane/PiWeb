@@ -12,7 +12,7 @@ export const GROWTH_EXCLUDE_DIRS = [
 	".svelte-kit", ".nuxt", ".output", ".parcel-cache", ".angular", ".expo", ".dart_tool", ".terraform", ".serverless", ".aws-sam", "coverage", "htmlcov",
 ];
 
-export type NodeStatus = "A" | "M" | "D" | "R";
+type NodeStatus = "A" | "M" | "D" | "R";
 
 export interface TreeNode {
 	/** 相对工作区的路径（"/" 分隔），根为 "" */
@@ -46,7 +46,7 @@ export function treeNodeKey(node: Pick<TreeNode, "kind" | "path">): string {
 	return `${node.kind}:${node.path}`;
 }
 
-export function parentOf(path: string): string {
+function parentOf(path: string): string {
 	const i = path.lastIndexOf("/");
 	return i < 0 ? "" : path.slice(0, i);
 }
@@ -153,7 +153,7 @@ export function buildTree(
 	return root;
 }
 
-export function hasChanges(node: TreeNode): boolean {
+function hasChanges(node: TreeNode): boolean {
 	if (node.kind === "file") return Boolean(node.status || node.pending);
 	const c = node.counts;
 	return Boolean(node.pending || (c && (c.added || c.modified || c.deleted || c.renamed || c.pending)));

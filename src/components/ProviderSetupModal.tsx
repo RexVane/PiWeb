@@ -17,7 +17,7 @@ import type { ProviderView } from "@/lib/models-service";
 import { supportedThinkingLevels, thinkingMapFromRows, thinkingRowsFromMap, type ThinkingLevelName, type ThinkingLevelRow } from "@/lib/thinking";
 import styles from "./ProviderSetupModal.module.css";
 
-export { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+export { formatCapacity, parseCapacity, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 
 export interface BuiltinProviderSetup {
 	providerId: string;

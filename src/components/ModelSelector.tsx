@@ -22,7 +22,7 @@ const LEVEL_DESC_KEYS = {
 } as const satisfies Record<string, keyof Dict>;
 
 /** 档位说明（与 pi 终端 /thinking 的描述一致）；未知档位返回空串 */
-export function thinkingLevelDesc(t: Dict, level: string): string {
+function thinkingLevelDesc(t: Dict, level: string): string {
 	const key = LEVEL_DESC_KEYS[level as keyof typeof LEVEL_DESC_KEYS];
 	return key ? t[key] : "";
 }

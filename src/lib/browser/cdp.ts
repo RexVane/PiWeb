@@ -48,7 +48,7 @@ export function pipeTransport(toBrowser: Writable, fromBrowser: Readable): CdpTr
 	};
 }
 
-export class CdpError extends Error {
+class CdpError extends Error {
 	constructor(message: string, public readonly method: string) {
 		super(`${method}: ${message}`);
 		this.name = "CdpError";

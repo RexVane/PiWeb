@@ -16,10 +16,9 @@ import {
 	createAgentSession,
 	getAgentDir,
 	hasTrustRequiringProjectResources,
-	loadProjectContextFiles,
 } from "@earendil-works/pi-coding-agent";
 
-export { createAgentSession, getAgentDir, loadProjectContextFiles, SessionManager };
+export { createAgentSession, getAgentDir, SessionManager };
 
 // Child tools inherit these defaults; Node itself already decodes source and JSON as UTF-8.
 process.env.PYTHONUTF8 ??= "1";

@@ -18,7 +18,7 @@ const HIGHLIGHT_MAX_ROWS = 6000;
 type Row = { kind: "line"; line: DiffLine; index: number } | { kind: "fold"; from: number; count: number };
 
 /** 行号栏宽度用的最大行号；不能用 Math.max(...spread)，十几万行的 patch 会把实参展开撑爆调用栈 */
-export function maxLineNumber(lines: DiffLine[]): number {
+function maxLineNumber(lines: DiffLine[]): number {
 	let max = 1;
 	for (const l of lines) {
 		const n = l.new ?? l.old ?? 0;

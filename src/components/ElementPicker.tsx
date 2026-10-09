@@ -30,7 +30,7 @@ export function isBrowserTool(name: string): boolean {
 
 let keySequence = 0;
 
-export function toDraftElement(result: PickResult): DraftElement {
+function toDraftElement(result: PickResult): DraftElement {
 	keySequence += 1;
 	return {
 		key: `${Date.now().toString(36)}-${keySequence}`,

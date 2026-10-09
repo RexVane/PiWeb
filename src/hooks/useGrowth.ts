@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { allDirPaths, buildTree, dirsToReveal, graftLazy, type TreeNode } from "@/lib/growth-tree";
 import type { GrowthChange, GrowthRound } from "@/lib/types";
 
-export type GrowthScope = "round" | "session";
+type GrowthScope = "round" | "session";
 
 /** 时间轴上的一项：pi 的一轮（带轮号）或用户在两轮之间自己的修改（n = null） */
 export interface GrowthEntry extends GrowthRound {
@@ -17,7 +17,7 @@ export interface GrowthEntry extends GrowthRound {
 	n: number | null;
 }
 
-export interface TreeFile {
+interface TreeFile {
 	path: string;
 	size: number;
 }
@@ -57,7 +57,7 @@ export interface GrowthApi {
 	recordNow(): Promise<GrowthRound | null>;
 }
 
-export function sessionIdOf(sessionPath: string): string {
+function sessionIdOf(sessionPath: string): string {
 	const bytes = new TextEncoder().encode(sessionPath);
 	let bin = "";
 	for (const b of bytes) bin += String.fromCharCode(b);

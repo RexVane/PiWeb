@@ -8,7 +8,6 @@ import type {
 	GrowthRound,
 	SessionSummary,
 	ToolImage,
-	TrajEntry,
 	WebEvent,
 	WebMessage,
 	WebSnapshot,

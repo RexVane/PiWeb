@@ -11,7 +11,7 @@ import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-securi
 
 const exec = promisify(execFile);
 
-export interface GitFileEntry {
+interface GitFileEntry {
 	path: string;
 	/** 暂存区状态字母（" " 表示无） */
 	indexStatus: string;
@@ -20,7 +20,7 @@ export interface GitFileEntry {
 	kind: "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflict";
 }
 
-export interface GitCommit {
+interface GitCommit {
 	hash: string;
 	subject: string;
 	author: string;

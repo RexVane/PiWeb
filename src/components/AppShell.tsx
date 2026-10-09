@@ -77,7 +77,6 @@ export function AppShell() {
 		models,
 		addedWorkspaces,
 		removedWorkspaces,
-		workspaceAliases,
 		getWorkspaceName,
 		renameWorkspace,
 		patchSessionName,

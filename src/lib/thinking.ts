@@ -7,10 +7,10 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
 export type ThinkingLevelName = (typeof THINKING_LEVELS)[number];
 
 /** pi 没配置 defaultThinkingLevel 时用的默认值（DEFAULT_THINKING_LEVEL） */
-export const PI_DEFAULT_THINKING_LEVEL: ThinkingLevelName = "medium";
+const PI_DEFAULT_THINKING_LEVEL: ThinkingLevelName = "medium";
 
 /** 需要在 thinkingLevelMap 里显式写出才算支持的档位（其余档位不写即支持） */
-export const OPT_IN_THINKING_LEVELS: readonly ThinkingLevelName[] = ["xhigh", "max"];
+const OPT_IN_THINKING_LEVELS: readonly ThinkingLevelName[] = ["xhigh", "max"];
 
 export function isThinkingLevel(value: unknown): value is ThinkingLevelName {
 	return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);

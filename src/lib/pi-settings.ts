@@ -9,19 +9,19 @@ import { getAgentDir, reloadSettingsManagers } from "./pi";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 import { isThinkingLevel, MAX_THINKING_BUDGET, THINKING_BUDGET_LEVELS, type ModelDefaults, type ThinkingBudgetLevel, type ThinkingLevelName } from "./thinking";
 
-export interface CompactionSettings {
+interface CompactionSettings {
 	enabled: boolean;
 	reserveTokens: number;
 	keepRecentTokens: number;
 }
 
-export interface RetrySettings {
+interface RetrySettings {
 	enabled: boolean;
 	maxRetries: number;
 	baseDelayMs: number;
 }
 
-export interface ThinkingSettings {
+interface ThinkingSettings {
 	/** defaultThinkingLevel；null = 未设置（pi 用 medium） */
 	defaultLevel: ThinkingLevelName | null;
 	/** modelThinkingLevels：`provider/modelId` → 该模型的默认强度 */

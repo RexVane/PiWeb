@@ -59,7 +59,7 @@ export function createPasswordThrottle({ burst = 10, refillMs = 30_000, now = ()
 	};
 }
 
-export function retryAfterSeconds(retryAfterMs: number): number {
+function retryAfterSeconds(retryAfterMs: number): number {
 	return Math.max(1, Math.ceil(retryAfterMs / 1000));
 }
 

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseProbeArgs, resolveLaunch } from "../../scripts/acp-probe.mjs";
+import { resolveLaunch } from "../../scripts/acp-probe.mjs";
 
 const probeScript = fileURLToPath(new URL("../../scripts/acp-probe.mjs", import.meta.url));
 const fakeAgent = fileURLToPath(new URL("../fixtures/fake-acp-agent.mjs", import.meta.url));

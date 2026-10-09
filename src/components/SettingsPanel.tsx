@@ -12,7 +12,6 @@ import {
 	IconChevronDown14,
 	IconCheckOutline14,
 	IconCloseOutline14,
-	IconCopyOutline16,
 	IconDownloadOutline16,
 	IconModelOutline16,
 	IconPluginOutline16,
@@ -20,7 +19,6 @@ import {
 	IconRefreshOutline14,
 	IconSearchOutline16,
 	IconSettingsOutline16,
-	IconShieldOutline16,
 	IconSkillOutline16,
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";

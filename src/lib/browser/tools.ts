@@ -10,7 +10,7 @@ import { checkBrowserUrl } from "./url-policy";
 
 export const BROWSER_TOOL_NAMES = ["browser_open", "browser_screenshot", "browser_console", "browser_click", "browser_type"] as const;
 
-export interface BrowserToolDetails {
+interface BrowserToolDetails {
 	url: string;
 	title: string;
 	device: Device;

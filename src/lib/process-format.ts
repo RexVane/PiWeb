@@ -16,7 +16,7 @@ export function toolKind(name: string): ToolKind {
 }
 
 /** 统一为正斜杠；去掉包裹引号；MSYS 形式 /d/AIApp → D:/AIApp */
-export function canonPath(p: string): string {
+function canonPath(p: string): string {
 	let s = p.trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1").replace(/\\/g, "/");
 	const msys = s.match(/^\/([a-zA-Z])\/(.*)$/);
 	if (msys) s = `${msys[1].toUpperCase()}:/${msys[2]}`;
@@ -196,7 +196,7 @@ export function displayToolName(name: string): string {
 const LIST_VERBS = new Set(["ls", "dir", "tree", "find", "fd"]);
 
 /** 命令的动词（去掉环境变量前缀与路径） */
-export function commandVerb(command: string): string {
+function commandVerb(command: string): string {
 	const first = command.replace(/\r/g, "").split("\n").find((l) => l.trim().length > 0) ?? "";
 	const tokens = first.trim().replace(/^(?:\w+=\S*\s+)+/, "").split(/\s+/);
 	return basename(tokens[0] ?? "").replace(/\.exe$/i, "").toLowerCase();

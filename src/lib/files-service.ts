@@ -8,7 +8,7 @@ import path from "node:path";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
 import { getAgentDir } from "./pi";
 
-export interface FileEntry {
+interface FileEntry {
 	name: string;
 	kind: "dir" | "file";
 	size?: number;

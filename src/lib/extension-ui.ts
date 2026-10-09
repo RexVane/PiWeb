@@ -6,7 +6,6 @@
 import { randomUUID } from "node:crypto";
 import type { WebEvent } from "./types";
 
-type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
 type UiEvent = Extract<WebEvent, { type: "extension_ui" }>;
 
 interface PendingUi {
@@ -131,4 +130,3 @@ export function createExtensionUiBridge(opts: {
 	};
 }
 
-export type { UiMethod };

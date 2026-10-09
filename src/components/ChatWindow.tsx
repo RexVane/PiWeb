@@ -303,7 +303,6 @@ function MessageActions({
 // 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后每个阶段下的思考与命令折成一行
 // 「思考了 1m 12s，运行了 6 条命令」（Claude Code 的折叠摘要），编辑文件保留 diff；末尾 π 记号做工作指示。没有连线。
 
-const MONO = "var(--font-mono)";
 const RAIL = "⎿";
 /** 命令输出默认露出的行数 */
 const PREVIEW_LINES = 3;

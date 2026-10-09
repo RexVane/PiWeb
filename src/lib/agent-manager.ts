@@ -12,7 +12,6 @@ import {
 	resourceLoaderIsStale,
 	getSettingsManager,
 	getAgentDir,
-	loadProjectContextFiles,
 	peekResourceLoader,
 	refreshResourceLoaderIfStale,
 	resolveProjectTrust,

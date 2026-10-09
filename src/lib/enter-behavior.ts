@@ -8,7 +8,7 @@ export type EnterBehavior = "steer" | "queue";
 
 const KEY = "piweb.enterBehavior";
 /** 默认插话：与 pi 终端的 Enter 一致，也是 Claude Code 排队消息「尽快送达」的行为 */
-export const DEFAULT_ENTER_BEHAVIOR: EnterBehavior = "steer";
+const DEFAULT_ENTER_BEHAVIOR: EnterBehavior = "steer";
 const listeners = new Set<() => void>();
 
 export function getEnterBehavior(): EnterBehavior {

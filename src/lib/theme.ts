@@ -15,7 +15,7 @@ export type PebrelTheme =
 /** dsh 的 THEME_PREFERENCES：浅色/深色/跟随系统 */
 export type ThemeMode = 'light' | 'dark' | 'system';
 
-export const PEBREL_THEME_IDS: PebrelTheme[] = [
+const PEBREL_THEME_IDS: PebrelTheme[] = [
 	'dsh',
 	'silver-steel',
 	'limestone-coal',
@@ -24,19 +24,19 @@ export const PEBREL_THEME_IDS: PebrelTheme[] = [
 	'pebrel',
 ];
 
-export const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
+const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
 
-export const DEFAULT_PEBREL_THEME: PebrelTheme = 'dsh';
-export const DEFAULT_THEME_MODE: ThemeMode = 'system';
+const DEFAULT_PEBREL_THEME: PebrelTheme = 'dsh';
+const DEFAULT_THEME_MODE: ThemeMode = 'system';
 
 const THEME_KEY = 'piweb.pebrelTheme';
 const MODE_KEY = 'piweb.theme';
 
-export function isPebrelTheme(value: string | null): value is PebrelTheme {
+function isPebrelTheme(value: string | null): value is PebrelTheme {
 	return !!value && (PEBREL_THEME_IDS as string[]).includes(value);
 }
 
-export function isThemeMode(value: string | null): value is ThemeMode {
+function isThemeMode(value: string | null): value is ThemeMode {
 	return !!value && (THEME_MODES as string[]).includes(value);
 }
 
@@ -63,7 +63,7 @@ export function loadThemeMode(): ThemeMode {
 }
 
 /** 亮暗模式解析为实际值：system 跟随系统媒体查询（dsh getEffectiveTheme 语义） */
-export function getEffectiveMode(mode: ThemeMode): 'light' | 'dark' {
+function getEffectiveMode(mode: ThemeMode): 'light' | 'dark' {
 	if (mode === 'system') {
 		if (typeof window === 'undefined' || !window.matchMedia) return 'dark';
 		return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

@@ -43,7 +43,7 @@ export function providerInitials(name: string, providerId: string): string {
 
 export const CUSTOM_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
-export const FALLBACK_CUSTOM_APIS = [
+const FALLBACK_CUSTOM_APIS = [
 	"openai-completions",
 	"openai-responses",
 	"anthropic-messages",

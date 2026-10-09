@@ -6,7 +6,7 @@
  */
 import { useCallback, useState } from "react";
 
-export interface ViewerTab {
+interface ViewerTab {
 	path: string;
 	/** 重命名前的路径（取 diff 用） */
 	from?: string;
