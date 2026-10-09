@@ -17,6 +17,7 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.tsbuildinfo",
     "plugins": [
       {
         "name": "next"
@@ -37,7 +38,8 @@
     ".next-dev/types/**/*.ts",
     ".next-dev/dev/types/**/*.ts",
     ".next-dev-webpack/types/**/*.ts",
-    ".next-dev-webpack/dev/types/**/*.ts"
+    ".next-dev-webpack/dev/types/**/*.ts",
+    ".next-dev-webpack/dev/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
