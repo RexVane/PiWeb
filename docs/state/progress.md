@@ -2,6 +2,19 @@
 
 > 更早的条目：[docs/state/archive/2026-10.md](archive/2026-10.md)、[docs/state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-09 10:35 +08:00 | claude-haiku-5-5 | 按域拆分 src/lib 与 tests 子目录
+- 起因：上一条进度列出 `src/lib/` 根部 44 个文件、`tests/` 根部 57 个文件，都超过规则「平铺目录超过 15 个就按域建子目录」。用户确认继续
+- 改了什么：
+  - `src/lib/` 按域移入子目录（`git mv`，保留历史）：`agent/`（7，会话运行时）、`growth/`（4）、`browser/`（原有 7 个，新移入 `dev-inspect-service`、`element-draft`、`source-hint-keys`）、`models/`（4）、`security/`（7）、`workspace/`（3）、`pi-config/`（4）、`system/`（4）、`ui/`（6）。`pi.ts` 与 `types.ts` 留在根部，被广泛引用
+  - `tests/` 按 `src` 结构镜像：`tests/lib/<域>/`（44 个）、`tests/hooks/`（3）、`tests/scripts/`（新增 2）、`tests/app/api/`（3）。根部留 5 个：`setup-dom.ts`（vitest 配置引用）、`proxy-auth.test.ts`（对应 `src/proxy.ts`）、`source-encoding.test.ts`、`powershell-encoding.test.ts`、`diff-parser.test.ts`（不往已超 15 个的 `tests/components/` 里加）
+  - 一次性改写脚本（不进仓库）：移动 94 个文件，改写 128 个文件里的 import、`vi.mock`、动态 `import()`、`new URL(…, import.meta.url)` 路径与 `@/` 别名。过程中修了一处：`../next.config` 被误判成带扩展名，保留了 `.ts`
+  - 非 import 的路径手动修：`scripts/sync-file-icons.mjs` 的输出路径和注释（改为 `src/lib/ui/file-icons.json`）、`tests/lib/ui/file-icons.test.ts` 的 `public/` 相对路径、`src/lib/agent/process-format.ts` 的注释
+  - 两份计划文档（`docs/planning/`）里的路径同步到新位置；进度历史未改
+- 影响文件：`src/lib/**`（42 个移动）、`tests/**`（52 个移动）、约 128 个文件的 import、`scripts/sync-file-icons.mjs`、`docs/planning/plan-2026-10-07-multi-agent.md`、`docs/planning/plan-2026-10-07-growth-browser.md`
+- 验证：`npm run typecheck` 通过；`tsc --noUnusedLocals` 零报错；全量 vitest 80 文件 503 通过 + 1 跳过（与拆分前一致）；`npm run build` 通过
+- 未做：`src/components/`（23 个平铺文件）与 `tests/components/`（23 个）同样超过 15 个，按规则要先问你，文件位置未动
+- 下一步：推送 `origin/main`（代码提交与本条一并推送）。等你决定是否拆 `src/components/`
+
 ## 2026-10-09 10:05 +08:00 | claude-haiku-5-5 | 清理未使用的代码、导出、文案、路由与配置
 - 起因：用户要求去掉项目里没用的东西。knip 与 `tsc --noUnusedLocals` 报出：未用导出 45 个、未用 import / 变量 8 处、未用文案键 35 个；另有无调用方的接口、旧 bin 入口和过期配置。删除的文件一律移进 `backups/`，没有真删
 - 改了什么：
