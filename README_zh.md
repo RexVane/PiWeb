@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/main.png" alt="PiWeb 主界面：侧栏会话、流式对话与工具卡片" width="840" />
+  <img src="docs/assets/main.png" alt="PiWeb 主界面：侧栏会话、流式对话与工具卡片" width="840" />
 </p>
 
 ---
@@ -26,40 +26,40 @@
 
 边生成边排版 Markdown：标题、列表、表格和代码块在回答写完之前就成形。思考过程和工具调用以卡片插在对话里。断线后用 `Last-Event-ID` 补发；多个标签页大约每 3 秒对齐一次。输入卡支持图片（选择、粘贴、拖放）、两级模型选择、上下文压缩、停止生成、清空队列，以及 `/` 命令（内置命令、Pi 模板、技能）。
 
-<p align="center"><img src="assets/main.png" alt="主页面：流式对话与工具卡片" width="840" /></p>
+<p align="center"><img src="docs/assets/main.png" alt="主页面：流式对话与工具卡片" width="840" /></p>
 
 ### 对话导航
 
 对话区右侧是大纲。加粗的是你发过的消息，其余是回答里的标题。收起时是一列长短不一的横线，标题越深越短；悬停展开成列表。滚动时高亮当前所在的位置，点一下跳过去。
 
-<p align="center"><img src="assets/outline.png" alt="对话导航：加粗的是你发过的消息" width="840" /></p>
+<p align="center"><img src="docs/assets/outline.png" alt="对话导航：加粗的是你发过的消息" width="840" /></p>
 
 ### 对话里的轨迹与文件
 
 改文件的工具卡片内联整段 diff，新增为绿、删除为红，并标出 +N −M。卡片上可以「在轨迹中查看」或「在编辑器中打开」。轨迹面板把这一步放进输入、模型、工具三条车道，可按等距、时间或间隔排布，详情分摘要、预览、原始、来源。已发送的消息可以原位编辑后重发，或撤回到这条消息之前；原分支仍留在会话文件里。
 
-<p align="center"><img src="assets/trace-1.png" alt="工具卡片上的内联 diff" width="840" /></p>
-<p align="center"><img src="assets/trace-2.png" alt="在编辑器中打开，以及在轨迹中查看" /> <img src="assets/trace-3.png" alt="在编辑器中打开" /> <img src="assets/trace-4.png" alt="在轨迹中查看" /></p>
+<p align="center"><img src="docs/assets/trace-1.png" alt="工具卡片上的内联 diff" width="840" /></p>
+<p align="center"><img src="docs/assets/trace-2.png" alt="在编辑器中打开，以及在轨迹中查看" /> <img src="docs/assets/trace-3.png" alt="在编辑器中打开" /> <img src="docs/assets/trace-4.png" alt="在轨迹中查看" /></p>
 
 ### 工作区与会话
 
 会话按项目文件夹分组，可用系统文件夹选择器添加工作区，空工作区可以单独留着。归档的会话收在侧栏「已归档」里，可以再打开或取消归档。会话能导出为 JSONL / HTML，也能沿会话树跳到别的分支。删掉一个工作区时，文件夹和会话文件都还在，会话归到「未分组」。
 
-<p align="center"><img src="assets/archive.png" alt="已归档的会话收在侧栏一处" width="400" /></p>
+<p align="center"><img src="docs/assets/archive.png" alt="已归档的会话收在侧栏一处" width="400" /></p>
 
 ### 项目生长：每轮一个 git commit
 
 pi 每做完一轮，就把工作区提交一次到这个仓库自己的 `.git` 里，挂在 `refs/piweb/rounds/<key>`，不碰你的分支、HEAD 和暂存区。项目栏按轮列出这一轮相对上一轮改了哪些文件、各多少行，点开是这一轮的 diff。两轮之间你自己的修改单独记一笔。对话里每条提问都能跳到它那一轮。
 
-<p align="center"><img src="assets/growth-1.png" alt="项目栏：这一轮改过的文件" width="840" /></p>
-<p align="center"><img src="assets/growth-2.png" alt="点开文件看这一轮的 diff" width="840" /></p>
+<p align="center"><img src="docs/assets/growth-1.png" alt="项目栏：这一轮改过的文件" width="840" /></p>
+<p align="center"><img src="docs/assets/growth-2.png" alt="点开文件看这一轮的 diff" width="840" /></p>
 
 ### 文件查看器
 
 项目文件在页面里打开：多标签，`+` 用来找文件。同一个文件可以看变更（整文件 diff，跳到上一处或下一处）、内容（行号和语法高亮；被删的文件显示删除前）或渲染（Markdown）。选中的片段可以引用进输入框，也可以用本地编辑器打开。
 
-<p align="center"><img src="assets/viewer-1.png" alt="文件查看器：Markdown 渲染" width="840" /></p>
-<p align="center"><img src="assets/viewer-2.png" alt="文件查看器：带行号的源码" width="840" /></p>
+<p align="center"><img src="docs/assets/viewer-1.png" alt="文件查看器：Markdown 渲染" width="840" /></p>
+<p align="center"><img src="docs/assets/viewer-2.png" alt="文件查看器：带行号的源码" width="840" /></p>
 
 ### 上下文计量
 
@@ -69,9 +69,9 @@ pi 每做完一轮，就把工作区提交一次到这个仓库自己的 `.git` 
 
 内置 30 多家提供方，用 API Key 或 OAuth（Claude、Codex、Copilot 等）。自定义提供方写入 `models.json`。自定义模型可以声明能否思考、开放哪些档位、每一档发给接口的值，以及能否看图。思考强度用 pi 内置的档位；新会话从 pi 自己的 `settings.json` 里的默认模型和默认强度开始，和终端里的 pi 共用。
 
-<p align="center"><img src="assets/providers-1.png" alt="设置里的提供方：密钥、OAuth 和用量" width="840" /></p>
-<p align="center"><img src="assets/providers-2.png" alt="从内置名单里添加提供方" width="840" /></p>
-<p align="center"><img src="assets/providers-3.png" alt="自定义提供方：地址、协议和模型" width="840" /></p>
+<p align="center"><img src="docs/assets/providers-1.png" alt="设置里的提供方：密钥、OAuth 和用量" width="840" /></p>
+<p align="center"><img src="docs/assets/providers-2.png" alt="从内置名单里添加提供方" width="840" /></p>
+<p align="center"><img src="docs/assets/providers-3.png" alt="自定义提供方：地址、协议和模型" width="840" /></p>
 
 ### 插件与技能
 

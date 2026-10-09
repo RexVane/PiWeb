@@ -3,7 +3,7 @@
 > 状态：**只是计划，尚未实施**。每个里程碑单独可交付，等用户点头再动手。
 
 ## 给实施者（接手的模型先读这一节）
-- **一次只做一个里程碑**，按文末「推荐顺序」；做完跑「验证」里的检查、记 `state/progress.md`、提交，再等用户确认下一个。
+- **一次只做一个里程碑**，按文末「推荐顺序」；做完跑「验证」里的检查、记 `docs/state/progress.md`、提交，再等用户确认下一个。
 - **M0 的结论决定 M2 / M3 / M7 的分支**（Cursor 走 ACP 还是 SDK、OpenCode 走 ACP 还是 SDK、Claude 走哪种登录）：没有用户在本机跑过 `scripts/acp-probe.mjs` 的结果，不要开始 M3。
 - 写 Next.js 代码前按 `AGENTS.md` 读 `node_modules/next/dist/docs/` 里对应的指南（本仓库是 Next 16，与训练数据不同）。
 - 用户的机器是 **Windows**（PowerShell 窗口里跑 `piweb`）；云端 / Linux 没有任何订阅，真订阅只能由用户本机验证。
@@ -186,7 +186,7 @@ interface AgentHost { onUpdate(u: NormalizedUpdate): void; requestPermission(r: 
 - **自定义本地 ACP 命令**。
 - 可以和 M4 并行。
 
-**推荐顺序**：M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7；M1、M5 的 pi 部分随时可以提前。每个里程碑同步 README（中英文：接入说明、合规原则、登录命令、能力差异、总结说明）和 `state/progress.md`。
+**推荐顺序**：M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7；M1、M5 的 pi 部分随时可以提前。每个里程碑同步 README（中英文：接入说明、合规原则、登录命令、能力差异、总结说明）和 `docs/state/progress.md`。
 
 ## 验证
 - 每个里程碑：`npm run typecheck` + 全量 `npx vitest run` + `npm run build`；CI（Linux + Windows）全绿。

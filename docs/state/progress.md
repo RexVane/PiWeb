@@ -1,6 +1,6 @@
 # 进度
 
-> 更早的条目：[state/archive/2026-10.md](archive/2026-10.md)、[state/archive/2026-09.md](archive/2026-09.md)
+> 更早的条目：[docs/state/archive/2026-10.md](archive/2026-10.md)、[docs/state/archive/2026-09.md](archive/2026-09.md)
 
 ## 2026-10-08 22:41 +08:00 | grok-4.7 | 提交带配图的中英文 README 并推送（`d35b6ba`）
 - 起因：GitHub 介绍页仍是旧 README。配图和正文只在本地工作区，没有提交

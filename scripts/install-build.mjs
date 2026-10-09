@@ -91,7 +91,7 @@ export function createStagingDir(root) {
 function buildInStaging(root, nextBin, env, log, warn) {
 	const staging = createStagingDir(root);
 	try {
-		for (const entry of ["src", "public", "assets", "scripts", "bin"]) {
+		for (const entry of ["src", "public", "scripts", "bin"]) {
 			const from = path.join(root, entry);
 			if (fs.existsSync(from)) fs.cpSync(from, path.join(staging, entry), { recursive: true });
 		}
