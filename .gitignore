@@ -12,8 +12,13 @@ next-env.d.ts
 /pi/
 /dsh/
 
-# local dev & plans
+# AI tool private dirs
 .zcode/
+.commandcode/
+.claude/
+.codex/
+
+# local dev & plans
 backups/
 probe_tools.py
 probe_*.py
