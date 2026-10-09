@@ -2,6 +2,16 @@
 
 > 更早的条目：[docs/state/archive/2026-10.md](archive/2026-10.md)、[docs/state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-09 11:04 +08:00 | claude-haiku-5-5 | 旧文件与未用样式、文案整理（原文件保留在 backups/）
+- 起因：用户要求把旧的、没用的都放进 backups。先做可达性分析：从 `src/app` 与 `src/proxy.ts` 出发，除 `icon.svg` 外的源文件全部可达，没有死模块；再查 CSS 类名、i18n 键、`public/` 图标和文档引用
+- 改了什么：
+  - 旧计划 `docs/planning/plan-2026-10-07-growth-browser.md` 移入 `backups/docs/planning/`：已完成，没有任何文件引用它。进度历史里提到它的地方不改
+  - `src/app/globals.css` 删 4 段没人用的样式：`.pw-busy-hint`、`.hairline-r`、`.piweb-pulse` 及只被它用的 `@keyframes piweb-pulse-kf`（共 24 行）。全文件备份在 `backups/src/app/globals.css-20261009-1056`
+  - `src/i18n.tsx` 删 6 个没人用的字典键 `cmdMenu`、`imageAttachment`、`removeWorkspace`、`runningTool`、`trajTime`、`turns`（中英各一行，共 12 行）。全文件备份在 `backups/src/i18n.tsx-20261009-1056`
+- 检查过、保留的：`public/file-icons` 的 395 个图标全部被映射表引用；`public/provider-icons` 由 `ProviderBrand` 按 slug 使用；`scripts/` 全部被引用（`pick-folder.ps1` 由 workspace-store 调用）；`docs/state/archive/` 必须留在 git 里，移进 backups 会被忽略；`.next-dev-webpack/`（开发缓存，你之前选择保留）；`.commandcode/`（AI 工具私有目录，路径不能动）；`scripts/acp-probe.mjs` 与 `tests/fixtures/`（计划中的 M0 探测）
+- 验证：`npm run typecheck` 通过；`tsc --noUnusedLocals` 零报错；`npm run build` 通过；全量 vitest 第一次 2 项失败（没抓到名称，代码无相关改动），重跑 503 通过 + 1 跳过。两次之间代码没变，判断为偶发，可能与真实浏览器集成用例的时序有关
+- 下一步：推送 `origin/main`
+
 ## 2026-10-09 10:45 +08:00 | claude-haiku-5-5 | 按域拆分 src/components 与 tests/components 子目录
 - 起因：`src/components/` 与 `tests/components/` 各有 23 个平铺文件，超过「平铺目录超过 15 个就按域建子目录」的规则。用户确认按真实项目的做法拆
 - 改了什么：
