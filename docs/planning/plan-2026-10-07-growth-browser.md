@@ -23,7 +23,7 @@
 ## M0：收尾 iframe 方案
 - 提交定位内核：`src/lib/browser/dev-inspect-service.ts`、`tests/lib/browser/dev-inspect-service.test.ts`。
 - 移入 `backups/2026-10-07-iframe-dev-preview/`：`src/components/DevPreviewPanel.tsx`、`tests/components/dev-preview-panel.test.tsx`。
-- 还原未提交的改动：`src/components/AppShell.tsx`、`src/i18n.tsx`、`src/proxy.ts`、`tests/proxy-auth.test.ts`。proxy 放行在新方案里用不上。
+- 还原未提交的改动：`src/components/layout/AppShell.tsx`、`src/i18n.tsx`、`src/proxy.ts`、`tests/proxy-auth.test.ts`。proxy 放行在新方案里用不上。
 - progress 记一条「方向变更」并提交。
 
 ## A：生长树改为每轮一个 git commit
@@ -74,12 +74,12 @@
   - 「本会话累计」= 会话第一轮的 `parentTree → 所选轮的 tree`；
   - 跟随最新、上一轮 / 下一轮；
   - 建树复用 `src/lib/growth/growth-tree.ts` 的 `buildTree`。
-- **`src/components/ProjectPanel.tsx`**：
+- **`src/components/project/ProjectPanel.tsx`**：
   - 头部：提问首行、时间、文件数、+a −d，以及「在对话里看」；
   - 范围切换「本轮 | 本会话累计」，「只看改动」默认打开；
   - 时间轴柱高 = 改动行数（对数缩放），颜色按主要改动类型；「你的修改」显示为灰色细柱；运行中末尾显示「本轮进行中」占位。
-- **`src/components/GrowthTree.tsx`**：文件行显示 +a −d。
-- **`src/components/ChatWindow.tsx`**：用户消息下方加标签「本轮改了 N 个文件 +a −d」，按 `promptIds` 关联；点击时打开项目栏并选中这一轮（经 AppShell 回调）。
+- **`src/components/project/GrowthTree.tsx`**：文件行显示 +a −d。
+- **`src/components/chat/ChatWindow.tsx`**：用户消息下方加标签「本轮改了 N 个文件 +a −d」，按 `promptIds` 关联；点击时打开项目栏并选中这一轮（经 AppShell 回调）。
 - **删除**：`src/lib/growth-rounds.ts` 按时间对齐轮次的逻辑（轮次现在直接来自 commit）。`growth-turns.ts` / `userTurns` 如果没有别的用处也一并移除，先 grep 确认。
 
 ### A 的已知限制

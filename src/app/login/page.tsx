@@ -7,7 +7,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { I18nProvider, useI18n } from "@/i18n";
-import { PiMark } from "@/components/PiMark";
+import { PiMark } from "@/components/common/PiMark";
 import { safeNextPath } from "@/lib/security/web-auth-shared";
 
 export default function LoginPage() {

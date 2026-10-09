@@ -1,4 +1,4 @@
-import { AppShell } from "@/components/AppShell";
+import { AppShell } from "@/components/layout/AppShell";
 import { I18nProvider } from "@/i18n";
 
 export default function Home() {

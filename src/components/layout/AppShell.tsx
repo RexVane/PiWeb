@@ -1,0 +1,1324 @@
+"use client";
+
+/**
+ * AppShell：三栏网格（对齐 dsh ui-layout 几何）+ 拖拽调宽 + 侧栏窄条 +
+ * 头部（对话/轨迹标签 + Session log）+ Hero 新会话页 + 设置弹窗。
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PiMark } from "@/components/common/PiMark";
+import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/chat/ChatInput";
+import { ChatWindow, SessionStatsBar, type EditMessageHandler, type RecallMessageHandler, type RoundBadge } from "@/components/chat/ChatWindow";
+import { MAX_MESSAGE_IMAGES } from "@/lib/browser/element-draft";
+import { ElementPickContext, type ElementPickApi } from "@/components/chat/ElementPicker";
+import { ExtensionDialogHost, ExtensionNotices } from "@/components/chat/ExtensionUI";
+import dynamic from "next/dynamic";
+import { SessionSidebar } from "@/components/layout/SessionSidebar";
+
+// 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
+const SettingsPanel = dynamic(() => import("@/components/settings/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
+const TrajectoryView = dynamic(() => import("@/components/trajectory/TrajectoryView").then((m) => m.TrajectoryView), { ssr: false });
+const TrajInspector = dynamic(() => import("@/components/trajectory/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
+const ProjectPanel = dynamic(() => import("@/components/project/ProjectPanel").then((m) => m.ProjectPanel), { ssr: false });
+const FileViewer = dynamic(() => import("@/components/project/FileViewer").then((m) => m.FileViewer), { ssr: false });
+const GitPanel = dynamic(() => import("@/components/project/GitPanel").then((m) => m.GitPanel), { ssr: false });
+import {
+	IconCheckOutline14,
+	IconChevronDown14,
+	IconFolderClose16,
+	IconFolderOpenOutline16,
+	IconPanelLeftOutline16,
+	IconProjectAddOutline16,
+} from "@/components/common/icons";
+import { useI18n } from "@/i18n";
+import { usePiWeb } from "@/hooks/usePiWeb";
+import { useGrowth } from "@/hooks/useGrowth";
+import { useFileViewer } from "@/hooks/useFileViewer";
+import type { TreeNode } from "@/lib/growth/growth-tree";
+import { syncPebrelTheme } from "@/lib/ui/theme";
+import type { ModelChoice } from "@/components/models/ModelSelector";
+import { defaultThinkingFor, isThinkingLevel, modelKey, THINKING_LEVELS, type ModelDefaults } from "@/lib/models/thinking";
+import type { ImageAttachment, TrajEntry } from "@/lib/types";
+
+// dsh ui-layout columns.ts 几何常量
+const SIDEBAR_MIN = 264;
+const SIDEBAR_MAX = 420;
+const SIDEBAR_DEFAULT = 280;
+const SIDEBAR_COLLAPSED = 56;
+const DETAILS_MIN = 300;
+const DETAILS_MAX = 760;
+const DETAILS_DEFAULT = 360;
+const PROJECT_MIN = 280;
+const PROJECT_MAX = 640;
+const PROJECT_DEFAULT = 380;
+function persist(key: string, value: number) {
+	localStorage.setItem(key, String(value));
+}
+function restore(key: string, fallback: number): number {
+	const v = parseInt(localStorage.getItem(key) ?? "", 10);
+	return Number.isNaN(v) ? fallback : v;
+}
+
+/** rewind 命令清出来的排队消息（steering 在前） */
+function queuedTextsOf(data: { cleared?: { steering?: string[]; followUp?: string[] } } | undefined): string[] {
+	return [...(data?.cleared?.steering ?? []), ...(data?.cleared?.followUp ?? [])];
+}
+
+export function AppShell() {
+	const { t } = useI18n();
+	const {
+		sessions,
+		sessionListError,
+		retrySessionList,
+		archivedSessions,
+		archivedSessionPaths,
+		currentId,
+		currentPath,
+		state,
+		models,
+		addedWorkspaces,
+		removedWorkspaces,
+		getWorkspaceName,
+		renameWorkspace,
+		patchSessionName,
+		archiveSession,
+		unarchiveSession,
+		resync,
+		groupBy,
+		orderBy,
+		setGroupBy,
+		setOrderBy,
+		addWorkspaceByPicker,
+		addWorkspaceByPath,
+		removeWorkspace,
+		refreshModels,
+		sendCommand,
+		newSession,
+		openSession,
+		closeSession,
+		setToolPreset,
+		clearError,
+		clearCompaction,
+		setError,
+		answerExtensionDialog,
+		dismissExtensionNotice,
+	} = usePiWeb();
+
+	const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+	const [detailsWidth, setDetailsWidth] = useState(DETAILS_DEFAULT);
+	/** 项目栏（侧栏与对话之间的第四列：项目生长可视化） */
+	const [projectOpen, setProjectOpen] = useState(false);
+	const [projectWidth, setProjectWidth] = useState(PROJECT_DEFAULT);
+	// Drafts are parent-owned data, never a replayable last insertion/upload event.
+	// A hero draft keeps its identity when newSession switches the rendered composer.
+	const composerDrafts = useRef(new Map<string, ChatDraft>());
+	const sessionDraftKeys = useRef(new Map<string, string>());
+	const draftSequence = useRef(0);
+	const [heroDraftKey, setHeroDraftKey] = useState("__hero__:0");
+	const [draftVersion, setDraftVersion] = useState(0);
+	void draftVersion;
+	const draftKey = currentPath ? sessionDraftKeys.current.get(currentPath) ?? currentPath : heroDraftKey;
+	const [uploadCounts, setUploadCounts] = useState<Record<string, number>>({});
+	const [uploadFailures, setUploadFailures] = useState<Record<string, string>>({});
+	const [pendingSends, setPendingSends] = useState<Record<string, boolean>>({});
+	const updateDraft = useCallback((key: string, update: ChatDraftUpdate) => {
+		const previous = composerDrafts.current.get(key) ?? EMPTY_CHAT_DRAFT;
+		composerDrafts.current.set(key, typeof update === "function" ? update(previous) : update);
+		setDraftVersion((version) => version + 1);
+	}, []);
+	const trackUpload = useCallback((key: string, delta: 1 | -1) => {
+		if (delta === 1) setUploadFailures((current) => ({ ...current, [key]: "" }));
+		setUploadCounts((current) => ({ ...current, [key]: Math.max(0, (current[key] ?? 0) + delta) }));
+	}, []);
+	const failUpload = useCallback((key: string, message: string) => {
+		setUploadFailures((current) => ({ ...current, [key]: message }));
+	}, []);
+	const trackSend = useCallback((key: string, pending: boolean) => {
+		setPendingSends((current) => ({ ...current, [key]: pending }));
+	}, []);
+	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
+	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
+	// 在 pi 的截图上点选的元素进当前会话的草稿（元素芯片）；一条消息最多带 20 个
+	const elementPick = useMemo<ElementPickApi | null>(
+		() => currentId
+			? { sessionId: currentId, onPick: (element) => saveSessionDraft((draft) => (draft.elements?.length ?? 0) >= 20 ? draft : { ...draft, elements: [...(draft.elements ?? []), element] }) }
+			: null,
+		[currentId, saveSessionDraft],
+	);
+	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | null>(null);
+	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [tab, setTab] = useState<"chat" | "traj">("chat");
+	const [selected, setSelected] = useState<TrajEntry | null>(null);
+	const [gitDetailsOpen, setGitDetailsOpen] = useState(false);
+	const [heroCwd, setHeroCwd] = useState("");
+	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
+	const [heroThinking, setHeroThinking] = useState("");
+	const [isNarrow, setIsNarrow] = useState(false);
+	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+	useEffect(() => {
+		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
+		setDetailsWidth(restore("piweb.detailsW", DETAILS_DEFAULT));
+		setProjectWidth(restore("piweb.projectW", PROJECT_DEFAULT));
+		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
+		setProjectOpen(localStorage.getItem("piweb.projectOpen") === "1");
+	}, []);
+	const toggleProject = useCallback((next?: boolean) => {
+		setProjectOpen((cur) => {
+			const v = next ?? !cur;
+			localStorage.setItem("piweb.projectOpen", v ? "1" : "0");
+			return v;
+		});
+	}, []);
+	// Ctrl/⌘+Shift+E：切换项目栏（与 VS Code 资源管理器同键）
+	useEffect(() => {
+		const h = (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+				e.preventDefault();
+				toggleProject();
+			}
+		};
+		document.addEventListener("keydown", h);
+		return () => document.removeEventListener("keydown", h);
+	}, [toggleProject]);
+
+	useEffect(() => {
+		const query = window.matchMedia("(max-width: 840px)");
+		const sync = () => {
+			setIsNarrow(query.matches);
+			if (!query.matches) setMobileSidebarOpen(false);
+		};
+		sync();
+		query.addEventListener("change", sync);
+		return () => query.removeEventListener("change", sync);
+	}, []);
+
+	// 全局 Pebrel 主题初始化与系统亮暗/跨标签动态监听
+	useEffect(() => {
+		const sync = () => syncPebrelTheme();
+		sync();
+		const mq = window.matchMedia("(prefers-color-scheme: dark)");
+		mq.addEventListener("change", sync);
+		const onStorage = (e: StorageEvent) => {
+			// 配色或亮暗任一变化都重放（跨标签同步）
+			if (e.key === "piweb.pebrelTheme" || e.key === "piweb.theme") sync();
+		};
+		window.addEventListener("storage", onStorage);
+		return () => {
+			mq.removeEventListener("change", sync);
+			window.removeEventListener("storage", onStorage);
+		};
+	}, []);
+
+	// 切换会话时清掉轨迹页的选中态并收起详情栏
+	useEffect(() => {
+		setSelected(null);
+		setGitDetailsOpen(false);
+	}, [currentPath]);
+
+	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
+	// 未选择时输入框仍可用，发送会提示先选择工作区。
+	// 已删除工作区要过滤（与会话栏分组同口径）：否则它下面残留的会话 cwd
+	// 会把刚删掉的工作区重新喂回顶部下拉。
+	const knownCwds = useMemo(() => {
+		const removed = new Set(removedWorkspaces.map((w) => w.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()));
+		const keep = (cwd: string) => {
+			const norm = cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+			return Boolean(norm) && !removed.has(norm);
+		};
+		return Array.from(new Set([...addedWorkspaces, ...sessions.map((s) => s.cwd)].filter(keep)));
+	}, [addedWorkspaces, sessions, removedWorkspaces]);
+
+	// 模型目录派生值：数百个模型对象的映射只在目录变化时重算，
+	// 不能跟着每次 token 增量 / 3 秒轮询重跑（usePiWeb 的 setState 都会触发本组件渲染）
+	const { authByProvider, providerNames } = useMemo(() => {
+		const auth: Record<string, boolean> = {};
+		const names: Record<string, string> = {};
+		for (const p of models?.providers ?? []) {
+			auth[p.id] = p.authReady === true;
+			names[p.id] = p.name;
+		}
+		return { authByProvider: auth, providerNames: names };
+	}, [models]);
+	const modelChoices: ModelChoice[] = useMemo(
+		() =>
+			(models?.models ?? []).map((m: any) => ({
+				provider: m.provider,
+				id: m.id,
+				name: m.name,
+				reasoning: m.reasoning,
+				thinkingLevels: m.thinkingLevels,
+				contextWindow: m.contextWindow,
+				vision: m.vision === true || (Array.isArray(m.input) && m.input.includes("image")),
+			})),
+		[models],
+	);
+	const modelDefaults: ModelDefaults | null = models?.defaults ?? null;
+	// pi 自己配置的默认模型（settings.json 的 defaultProvider/defaultModel）可用时，新会话就是它：
+	// 显示它，并且发送时不再 setModel，交给 pi 按同样的规则选（项目级设置也随之生效）
+	const piDefaultModel = useMemo(
+		() => modelChoices.find((m) => m.provider === modelDefaults?.provider && m.id === modelDefaults?.modelId && authByProvider[m.provider]),
+		[modelChoices, modelDefaults, authByProvider],
+	);
+	const defaultModel = useMemo(() => piDefaultModel ?? modelChoices.find((m) => authByProvider[m.provider]), [piDefaultModel, modelChoices, authByProvider]);
+	const heroEffectiveModel = heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel;
+	const heroModelLevels = useMemo(
+		() => heroEffectiveModel?.thinkingLevels ?? [...THINKING_LEVELS],
+		[heroEffectiveModel],
+	);
+	// 用户没选档位时新会话会用的强度：按模型设置 → 默认强度 → medium，钳到模型支持的档位
+	const heroDefaultLevel = heroEffectiveModel ? defaultThinkingFor(modelDefaults, heroEffectiveModel.provider, heroEffectiveModel.id, heroModelLevels) : undefined;
+
+	/** 模型菜单「设为默认」：写 pi 的 defaultProvider/defaultModel 与 defaultThinkingLevel（同终端 /model、/thinking 的 Ctrl+S） */
+	const saveDefaultModel = useCallback(async (provider: string, id: string, level: string | undefined) => {
+		const thinking: Record<string, unknown> = {};
+		if (level && isThinkingLevel(level)) {
+			thinking.defaultLevel = level;
+			// 这个模型有单独的默认强度时它优先：一起改掉，否则新会话还是旧强度
+			const key = modelKey(provider, id);
+			if (modelDefaults?.modelThinkingLevels[key]) thinking.modelLevels = { [key]: level };
+		}
+		try {
+			const response = await fetch("/api/pi-settings", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ defaultModel: { provider, modelId: id }, ...(Object.keys(thinking).length ? { thinking } : {}) }),
+			});
+			const result = await response.json().catch(() => null);
+			if (!response.ok || !result?.success) throw new Error(result?.error || `HTTP ${response.status}`);
+			await refreshModels();
+			return true;
+		} catch (error) {
+			setError(t.saveDefaultFailed.replace("{error}", error instanceof Error ? error.message : String(error)));
+			return false;
+		}
+	}, [modelDefaults, refreshModels, setError, t]);
+
+
+	// ---------- 拖拽 ----------
+	const onDrag = useCallback(
+		(side: "sidebar" | "details" | "project") => (e: React.PointerEvent) => {
+			e.preventDefault();
+			setDragging(side);
+			const startX = e.clientX;
+			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : detailsWidth;
+			const move = (ev: PointerEvent) => {
+				if (side === "sidebar") {
+					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
+					setSidebarWidth(w);
+				} else if (side === "project") {
+					const w = Math.max(PROJECT_MIN, Math.min(PROJECT_MAX, startW + (ev.clientX - startX)));
+					setProjectWidth(w);
+				} else {
+					const w = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startW - (ev.clientX - startX)));
+					setDetailsWidth(w);
+				}
+			};
+			const up = () => {
+				setDragging(null);
+				window.removeEventListener("pointermove", move);
+				window.removeEventListener("pointerup", up);
+				window.removeEventListener("pointercancel", up);
+			};
+			window.addEventListener("pointermove", move);
+			window.addEventListener("pointerup", up);
+			// 触摸/笔输入被系统手势打断时只触发 pointercancel，不处理会永久泄漏监听器
+			window.addEventListener("pointercancel", up);
+		},
+		[sidebarWidth, detailsWidth, projectWidth],
+	);
+
+	useEffect(() => {
+		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
+		if (dragging === "details") persist("piweb.detailsW", detailsWidth);
+		if (dragging === "project") persist("piweb.projectW", projectWidth);
+	}, [dragging, sidebarWidth, detailsWidth, projectWidth]);
+
+	const toggleSidebar = () => {
+		const next = !sidebarCollapsed;
+		setSidebarCollapsed(next);
+		localStorage.setItem("piweb.sidebarCollapsed", next ? "1" : "0");
+	};
+
+	// ---------- 会话操作 ----------
+	const snapshot = state.snapshot;
+	const trajectoryRef = useRef(snapshot?.trajectory ?? []);
+	useEffect(() => {
+		trajectoryRef.current = snapshot?.trajectory ?? [];
+	}, [snapshot?.trajectory]);
+	const openToolTrajectory = useCallback((toolCallId: string) => {
+		const entry = trajectoryRef.current.find((item) => item.toolCallId === toolCallId);
+		if (!entry) return;
+		setGitDetailsOpen(false);
+		setSelected(entry);
+	}, []);
+
+	// 上下文分段的数据源：系统提示词按注入资源字符数（很便宜）；
+	// 消息字符统计交给 ContextMeter 弹窗打开时再算，避免每次 token 增量全量扫描
+	const contextSystemChars = useMemo(
+		() => (snapshot?.contextResources ?? []).reduce((sum, r) => sum + (r.content?.length ?? 0), 0),
+		[snapshot?.contextResources],
+	);
+	const isStreaming = snapshot?.isStreaming ?? false;
+
+	useEffect(() => {
+		if (!state.error) return;
+		const timer = setTimeout(clearError, 6000);
+		return () => clearTimeout(timer);
+	}, [state.error, clearError]);
+
+	const doRename = async (path: string, newName: string) => {
+		if (!newName.trim()) return;
+		const result = path === currentPath
+			? await sendCommand({ cmd: "rename", text: newName.trim() })
+			: await sendCommand({ cmd: "rename", text: newName.trim() }, encodeURIComponent(b64url(path)));
+		if (!result?.success) {
+			throw new Error(result?.error || "failed to rename session");
+		}
+		patchSessionName(path, newName.trim());
+		if (path !== currentPath) {
+			// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
+			resync();
+		}
+	};
+
+	const doForkSession = useCallback(
+		async (path: string, _cwd: string) => {
+			const targetId = path === currentPath && currentId ? currentId : encodeURIComponent(b64url(path));
+			const r = await sendCommand({ cmd: "fork" }, targetId);
+			if (r?.success && r.data?.sessionPath) {
+				openSession(r.data.sessionPath);
+				resync();
+			}
+		},
+		[currentPath, currentId, sendCommand, openSession, resync],
+	);
+
+	const doArchiveSession = useCallback(
+		async (path: string) => {
+			try {
+				// dsh 合同：归档不关会话——当前会话被归档后保持打开且在主列表可见
+				// （usePiWeb 的可见性规则对 currentPath 豁免），继续可聊。
+				await archiveSession(path);
+			} catch {
+				// usePiWeb exposes the request failure in the shared error banner.
+			}
+		},
+		[archiveSession],
+	);
+	const doUnarchiveSession = useCallback(
+		async (path: string) => {
+			try {
+				await unarchiveSession(path);
+				resync();
+			} catch {
+				// usePiWeb exposes the request failure in the shared error banner.
+			}
+		},
+		[unarchiveSession, resync],
+	);
+
+	const doRenameWorkspace = useCallback(
+		async (cwd: string, newName: string) => {
+			await renameWorkspace(cwd, newName);
+		},
+		[renameWorkspace],
+	);
+
+	const doDeleteWorkspace = useCallback(
+		async (cwd: string) => {
+			await removeWorkspace(cwd);
+			if (heroCwd === cwd) {
+				setHeroCwd("");
+			}
+			resync();
+		},
+		[removeWorkspace, heroCwd, resync],
+	);
+
+	// Hero 发送：先完整应用新会话预设，再发第一条消息。
+	const heroSend = async (text: string, images: ImageAttachment[]) => {
+		// 启动不预选工作区：未选择就发送时明确提示，而不是静默落到第一个工作区
+		const cwd = heroCwd.trim();
+		if (!cwd) {
+			setError(t.pickWorkspaceFirst);
+			return { success: false };
+		}
+		// 显示的是 pi 自己的默认模型且用户没改：什么都不下发，pi 新建会话时按同样的规则选模型和强度。
+		// 否则（用户选了模型，或 pi 没配默认 / 默认不可用而显示的是第一个可用模型）显式下发模型，
+		// 并把界面显示的强度一起下发——pi 切模型时可能沿用上一个模型的强度，与显示不一致。
+		const followPi = !heroModel && Boolean(piDefaultModel);
+		const effective = heroModel ?? (defaultModel ? { provider: defaultModel.provider, id: defaultModel.id } : null);
+		const p = await newSession(cwd, {
+			provider: followPi ? undefined : effective?.provider,
+			modelId: followPi ? undefined : effective?.id,
+			thinking: heroThinking || (followPi ? undefined : heroDefaultLevel),
+		});
+		if (!p) return { success: false };
+		// Bind before the new-session render. In-flight ChatInput callbacks still own
+		// this same key; a failed acceptance keeps the original text and attachments.
+		sessionDraftKeys.current.set(p, heroDraftKey);
+		setHeroDraftKey(`__hero__:${++draftSequence.current}`);
+		return sendCommand({ cmd: "prompt", text, images }, encodeURIComponent(b64url(p)));
+	};
+
+	const sendPrompt = (text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images });
+
+	// 稳定引用：ChatWindow 行级 memo 依赖它，内联箭头函数会让 memo 全部失效
+	const handleFork = useCallback(
+		(entryId: string) =>
+			sendCommand({ cmd: "fork", entryId }).then((result) => {
+				if (result.success && result.data?.sessionPath) {
+					openSession(result.data.sessionPath);
+					resync();
+				}
+				return result;
+			}),
+		[sendCommand, openSession, resync],
+	);
+
+	// 斜杠命令：Web 内置 + pi 的技能 / 提示模板 / 扩展命令（后三类原样交给 SDK 展开或执行）
+	const slashCommands = useMemo(() => {
+		const list: { name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }[] = [
+			{ name: "compact", desc: t.cmdCompact, kind: "builtin" },
+			{ name: "export", desc: t.cmdExport, kind: "builtin" },
+			{ name: "model", desc: t.cmdModel, kind: "builtin" },
+			{ name: "new", desc: t.cmdNew, kind: "builtin" },
+			{ name: "fork", desc: t.cmdFork, kind: "builtin" },
+			{ name: "reload", desc: t.cmdReload, kind: "builtin" },
+			...(snapshot?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const, argumentHint: p.argumentHint })),
+			...(snapshot?.extensionCommands ?? []).map((c) => ({ name: c.name, desc: c.description || c.source, kind: "extension" as const })),
+			...(snapshot?.skills ?? []).map((s) => ({ name: `skill:${s.name}`, desc: s.description, kind: "skill" as const })),
+		];
+		return list.sort((a, b) => a.name.localeCompare(b.name));
+	}, [snapshot, t]);
+
+	const runSlashCommand = useCallback(
+		(name: string, args: string) => {
+			if (name === "compact") void sendCommand({ cmd: "compact", instructions: args || undefined });
+			else if (name === "export" && currentId) window.open(`/api/sessions/${currentId}/export?format=jsonl`, "_blank");
+			else if (name === "new") {
+				setTab("chat");
+				closeSession();
+			} else if (name === "fork" && currentId) {
+				void sendCommand({ cmd: "fork" }).then((r) => {
+					if (r.success && r.data?.sessionPath) openSession(r.data.sessionPath);
+				});
+			} else if (name === "reload") void sendCommand({ cmd: "reload" });
+			else setError(t.cmdUnknown.replace("{name}", name));
+		},
+		[sendCommand, currentId, closeSession, openSession, setError, t],
+	);
+
+	const projectTrust = snapshot?.projectTrust;
+	const setProjectTrust = useCallback(
+		async (decision: boolean | null) => {
+			const cwd = snapshot?.cwd;
+			if (!cwd) return;
+			try {
+				const r = await fetch("/api/security", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectTrust: { cwd, decision } }) });
+				const j = await r.json();
+				if (!j.success) throw new Error(j.error || "failed");
+			} catch (e) {
+				setError(e instanceof Error ? e.message : "failed");
+			}
+		},
+		[snapshot?.cwd, setError],
+	);
+
+	// 当前会话名 / 工作区标题
+	const currentSession = sessions.find((s) => s.path === currentPath);
+	const firstUserMsgText = (
+		state.messages
+			.find((m) => m.role === "user")
+			?.content?.find((c: any) => c.type === "text" && c.text?.trim()) as any
+	)?.text?.trim();
+	const title =
+		snapshot?.name ||
+		currentSession?.name ||
+		currentSession?.firstMessage ||
+		firstUserMsgText ||
+		currentPath?.split(/[\\/]/).pop() ||
+		"pi";
+
+	// 项目栏/文件查看器的工作区：当前会话的工作区优先，快照未到时回落到会话列表里的 cwd
+	const panelCwd = snapshot?.cwd || currentSession?.cwd || heroCwd || knownCwds[0] || "";
+
+	// Git 面板自动刷新：pi 每完成一个会改动文件的工具，或一轮结束时，静默重拉
+	const mutatingDone = useMemo(
+		() => Object.values(state.tools).filter((tool) => tool.state === "done" && ["edit", "write", "bash", "powershell", "pwsh"].includes(tool.name.toLowerCase())).length,
+		[state.tools],
+	);
+	const [panelRefreshKey, setPanelRefreshKey] = useState(0);
+	const prevMutatingRef = useRef(mutatingDone);
+	const prevStreamingRef = useRef(isStreaming);
+	useEffect(() => {
+		if (prevMutatingRef.current !== mutatingDone) {
+			prevMutatingRef.current = mutatingDone;
+			setPanelRefreshKey((k) => k + 1);
+		}
+	}, [mutatingDone]);
+	useEffect(() => {
+		if (prevStreamingRef.current && !isStreaming) setPanelRefreshKey((k) => k + 1);
+		prevStreamingRef.current = isStreaming;
+	}, [isStreaming]);
+
+	const insertIntoComposer = useCallback((text: string) => {
+		const textarea = document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea');
+		const cursor = textarea?.selectionStart;
+		updateDraft(draftKey, (previous) => {
+			const position = Math.min(cursor ?? previous.text.length, previous.text.length);
+			const before = previous.text.slice(0, position);
+			const after = previous.text.slice(position);
+			return { ...previous, text: `${before}${before && !/\s$/.test(before) ? " " : ""}${text}${after}` };
+		});
+		requestAnimationFrame(() => textarea?.focus());
+	}, [draftKey, updateDraft]);
+	/** 撤回 / 编辑重发后放回这个会话输入框的内容：撤回的那条在前，清出来的排队消息随后，原有草稿在最后 */
+	const restoreToComposer = useCallback((key: string, texts: string[], images: ImageAttachment[] = []) => {
+		const pieces = texts.filter((text) => text.trim());
+		if (!pieces.length && !images.length) return;
+		updateDraft(key, (previous) => ({
+			...previous,
+			text: [...pieces, previous.text].filter((text) => text.trim()).join("\n\n"),
+			images: [...images, ...previous.images].slice(0, MAX_MESSAGE_IMAGES),
+		}));
+		requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus());
+	}, [updateDraft]);
+	const recallMessage = useCallback<RecallMessageHandler>(async (entryId, text, images) => {
+		const key = draftKey;
+		const result = await sendCommand({ cmd: "rewind", entryId });
+		const queued = queuedTextsOf(result?.data);
+		if (result?.success) restoreToComposer(key, [typeof result.data?.editorText === "string" && result.data.editorText ? result.data.editorText : text, ...queued], images);
+		else restoreToComposer(key, queued);
+		return result;
+	}, [draftKey, sendCommand, restoreToComposer]);
+	const editMessage = useCallback<EditMessageHandler>(async (entryId, text, images) => {
+		const key = draftKey;
+		const result = await sendCommand({ cmd: "rewind", entryId, text, images });
+		// 历史已回退但新内容没被接受（如凭证失效）：改过的内容放回输入框，不丢
+		const lost = !result?.success && result?.data?.rewound === true;
+		restoreToComposer(key, [...(lost ? [text] : []), ...queuedTextsOf(result?.data)], lost ? images : []);
+		return result;
+	}, [draftKey, sendCommand, restoreToComposer]);
+	const openInEditor = useCallback(
+		async (filePath: string) => {
+			try {
+				const r = await fetch("/api/files", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ action: "open", cwd: panelCwd, path: filePath }),
+				});
+				const j = await r.json();
+				if (!j.success) throw new Error(j.error || "failed to open file");
+			} catch (e) {
+				setError(e instanceof Error ? e.message : "failed to open file");
+			}
+		},
+		[panelCwd, setError],
+	);
+	// ---------- 项目生长 ----------
+	const viewer = useFileViewer();
+	const resetViewer = viewer.reset;
+	useEffect(() => {
+		resetViewer();
+	}, [panelCwd, resetViewer]);
+	const growth = useGrowth({
+		cwd: panelCwd,
+		sessionPath: currentPath,
+		liveRounds: state.growth.rounds,
+		runtimeError: state.growth.error,
+		active: projectOpen || viewer.state.open,
+		watchRounds: Boolean(currentPath),
+		connected: state.connected,
+	});
+	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy }), [viewer]);
+	// 对话里每条提问下方的「本轮改了 N 个文件」：一轮的首条提问 → 这一轮的 commit
+	const roundBadges = useMemo(() => {
+		const map = new Map<string, RoundBadge>();
+		for (const round of growth.rounds) {
+			if (round.kind !== "round" || !round.promptIds[0]) continue;
+			const st = round.stats;
+			map.set(round.promptIds[0], { commit: round.commit, files: st.added + st.modified + st.deleted + st.renamed, add: st.add, del: st.del });
+		}
+		return map;
+	}, [growth.rounds]);
+	const growthSelect = growth.select;
+	const showRound = useCallback((commit: string) => {
+		toggleProject(true);
+		growthSelect(commit);
+	}, [toggleProject, growthSelect]);
+	// 项目栏「在对话里看」：回到对话页签，把这一轮的提问滚到视野中间并闪一下
+	const jumpToChat = useCallback((messageId: string) => {
+		setTab("chat");
+		requestAnimationFrame(() => {
+			const node = document.querySelector<HTMLElement>(`[data-role="user"][data-message-id="${CSS.escape(messageId)}"]`);
+			if (!node) return;
+			node.scrollIntoView({ block: "center", behavior: "smooth" });
+			node.dataset.flash = "";
+			setTimeout(() => delete node.dataset.flash, 1600);
+		});
+	}, []);
+
+	useEffect(() => {
+		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
+	}, [currentId, title]);
+
+	// 三栏网格
+	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${projectOpen ? `${projectWidth}px` : "0px"} minmax(0,1fr) ${
+		selected || gitDetailsOpen ? `${detailsWidth}px` : "0px"
+	}`;
+	const projectColumn = projectOpen && (
+		<div
+			className="min-h-0 overflow-hidden"
+			style={isNarrow ? {
+				position: "fixed",
+				inset: "0 auto 0 0",
+				width: "min(88vw, 420px)",
+				zIndex: 88,
+				boxShadow: "var(--dsw-elevation-prominent)",
+			} : undefined}
+		>
+			<ProjectPanel
+				growth={growth}
+				workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}
+				cwd={panelCwd}
+				hasSession={Boolean(currentPath)}
+				running={isStreaming}
+				onJumpToChat={jumpToChat}
+				onOpenFile={openFileNode}
+				onReference={insertIntoComposer}
+				onOpenEditor={openInEditor}
+				gitRefreshKey={panelRefreshKey}
+				onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
+				onOpenGit={() => { setSelected(null); setGitDetailsOpen(true); }}
+				onClose={() => toggleProject(false)}
+				onError={setError}
+			/>
+		</div>
+	);
+
+	return (
+		<div
+			className="grid h-screen w-screen overflow-hidden"
+			style={{
+				gridTemplateColumns: gridCols,
+				transition: dragging ? "none" : "grid-template-columns var(--ds-duration-slow) var(--ds-ease-in-out)",
+				background: "var(--dsw-bg-base)",
+			}}
+		>
+			{/* 侧栏 */}
+			<div
+				className="min-h-0 overflow-hidden"
+				style={isNarrow ? {
+					position: "fixed",
+					inset: "0 auto 0 0",
+					width: "min(86vw, 340px)",
+					zIndex: 90,
+					background: "var(--dsw-sidebar-fill)",
+					transform: mobileSidebarOpen ? "translateX(0)" : "translateX(-105%)",
+					transition: "transform var(--ds-duration-normal) var(--ds-ease-in-out)",
+					boxShadow: mobileSidebarOpen ? "var(--dsw-elevation-prominent)" : "none",
+				} : { background: "var(--dsw-sidebar-fill)" }}
+			>
+				<SessionSidebar
+					sessions={sessions}
+					sessionListError={sessionListError}
+					onRetrySessionList={retrySessionList}
+					archivedSessions={archivedSessions}
+					archivedPaths={archivedSessionPaths}
+					addedWorkspaces={addedWorkspaces}
+					removedWorkspaces={removedWorkspaces}
+					currentPath={currentPath}
+					groupBy={groupBy}
+					orderBy={orderBy}
+					setGroupBy={setGroupBy}
+					setOrderBy={setOrderBy}
+					collapsed={isNarrow ? false : sidebarCollapsed}
+					onToggleCollapse={isNarrow ? () => setMobileSidebarOpen(false) : toggleSidebar}
+					onOpen={(path) => {
+						openSession(path);
+						setMobileSidebarOpen(false);
+					}}
+					onNew={() => {
+						// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
+						setTab("chat");
+						const cur = sessions.find((s) => s.path === currentPath)?.cwd;
+						setHeroCwd(cur || heroCwd || knownCwds[0] || "");
+						closeSession();
+					}}
+					onNewInWorkspace={(cwd) => {
+						// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
+						setTab("chat");
+						setHeroCwd(cwd);
+						closeSession();
+					}}
+					onRename={doRename}
+					onFork={doForkSession}
+					onArchive={doArchiveSession}
+					onUnarchive={doUnarchiveSession}
+					onExport={(path) => window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank")}
+					getWorkspaceName={getWorkspaceName}
+					onRenameWorkspace={doRenameWorkspace}
+					onDeleteWorkspace={doDeleteWorkspace}
+					onOpenSettings={() => {
+						setSettingsOpen(true);
+						setMobileSidebarOpen(false);
+					}}
+					onAddWorkspace={() => void addWorkspaceByPicker()}
+					draftCwd={!currentId ? heroCwd || null : null}
+				/>
+			</div>
+
+			{/* 四列网格中始终保留项目列，否则关闭项目栏时会话区会落进 0px 列。 */}
+			{!isNarrow && (projectColumn || <div aria-hidden="true" />)}
+
+			{/* 会话区 */}
+			<div className="pi-main flex min-h-0 min-w-0 flex-col">
+				{!currentId ? (
+					<div className="flex min-h-0 flex-1 flex-col">
+						<Hero
+								draft={composerDrafts.current.get(heroDraftKey) ?? EMPTY_CHAT_DRAFT}
+								onDraftChange={saveHeroDraft}
+								onUploadError={(message) => failUpload(heroDraftKey, message)}
+								onUploadProgress={(delta) => trackUpload(heroDraftKey, delta)}
+								uploadFailure={uploadFailures[heroDraftKey]}
+								pendingUploadCount={uploadCounts[heroDraftKey] ?? 0}
+								pendingSend={pendingSends[heroDraftKey] ?? false}
+								onSendPendingChange={(pending) => trackSend(heroDraftKey, pending)}
+							commands={slashCommands}
+							onCommand={runSlashCommand}
+							cwd={heroCwd}
+							setCwd={setHeroCwd}
+							knownCwds={knownCwds}
+							getWorkspaceName={getWorkspaceName}
+							onSend={heroSend}
+							models={modelChoices}
+							providerNames={providerNames}
+							authByProvider={authByProvider}
+							addWorkspaceByPicker={addWorkspaceByPicker}
+							addWorkspaceByPath={addWorkspaceByPath}
+							heroModel={heroModel}
+							onSelectHeroModel={(provider, id) => {
+								setHeroModel({ provider, id });
+								const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
+								if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
+							}}
+							defaultModel={defaultModel}
+							heroModelLevels={heroModelLevels}
+							heroThinking={heroThinking || heroDefaultLevel || ""}
+							onSelectHeroThinking={setHeroThinking}
+							modelDefaults={modelDefaults}
+							onSaveDefaultModel={saveDefaultModel}
+						/>
+						{/* 草稿阶段的错误行内显示（不再弹右下角） */}
+						{state.error && (
+							<div className="px-4 pb-3">
+								<button
+									className="mx-auto block w-full max-w-md rounded-xl px-3 py-2 text-left"
+									style={{ fontSize: 12.5, background: "var(--dsw-danger)", color: "white" }}
+									onClick={clearError}
+									role="alert"
+								>
+									{state.error}
+								</button>
+							</div>
+						)}
+					</div>
+				) : (
+					<>
+							{/* 头部：标题行 + 页签行（dsh 两行式） */}
+							<div className="hairline-b px-5 pb-0 pt-3">
+								<div className="flex items-center gap-3">
+									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
+										{title}
+									</span>
+									{/* 项目生长入口；轨迹详情由对话内工具行点击唤起 */}
+									<button
+										type="button"
+										className="icon-btn"
+										style={{ width: 30, height: 30, background: projectOpen ? "var(--dsw-active)" : undefined }}
+										title={`${t.projectPanel} (Ctrl/⌘+Shift+E)`}
+										aria-label={t.projectPanel}
+										data-testid="project-toggle"
+										onClick={() => toggleProject()}
+									>
+										<IconFolderOpenOutline16 size={15} />
+									</button>
+								</div>
+							{projectTrust?.required && !projectTrust.trusted && (
+								<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }} role="status">
+									<span style={{ color: "var(--dsw-warn)", fontWeight: 600 }}>⚠</span>
+									<span className="min-w-0 flex-1">{projectTrust.source === "default-never" || projectTrust.source === "remembered" ? t.projectTrustBannerNever : t.projectTrustBanner}</span>
+									<button className="btn-primary-white" style={{ height: 26, padding: "0 10px", fontSize: 12 }} onClick={() => void setProjectTrust(true)}>{t.projectTrustAllow}</button>
+									{projectTrust.source === "undecided" && (
+										<button className="btn-outline" style={{ height: 26, padding: "0 10px", fontSize: 12 }} onClick={() => void setProjectTrust(false)}>{t.projectTrustDeny}</button>
+									)}
+								</div>
+							)}
+							<div className="mt-1.5 flex items-center gap-5">
+								<button className="tab-underline" data-active={tab === "chat"} onClick={() => setTab("chat")}>
+									{t.tabChat}
+								</button>
+								<button
+									className="tab-underline"
+									data-active={tab === "traj"}
+									onClick={() => {
+										setTab("traj");
+										void sendCommand({ cmd: "prepare" });
+									}}
+								>
+									{t.tabTrajectory}
+								</button>
+							</div>
+						</div>
+
+						{/* 内容 */}
+						{tab === "chat" ? (
+							!snapshot ? (
+								// 切换会话时快照未到：居中加载指示，避免空白/占位符闪现
+								<div className="flex min-h-0 flex-1 items-center justify-center">
+									<span
+										className="piweb-spin"
+										style={{
+											width: 18,
+											height: 18,
+											borderRadius: "50%",
+											border: "2px solid var(--dsw-border-l3)",
+											borderTopColor: "var(--dsw-accent)",
+											display: "inline-block",
+										}}
+										aria-label="loading"
+									/>
+								</div>
+							) : (
+							<div className="flex min-h-0 flex-1 flex-col justify-end">
+								<ElementPickContext.Provider value={elementPick}>
+								<ChatWindow
+									key={currentId ?? "none"}
+									messages={state.messages}
+									tools={state.tools}
+									contextFiles={snapshot?.contextResources ?? snapshot?.contextFiles ?? []}
+									isStreaming={isStreaming}
+									error={state.error}
+									connected={state.connected}
+									onClearError={clearError}
+									retryNotice={state.retryNotice}
+									compaction={state.compaction}
+									onClearCompaction={clearCompaction}
+									workingMessage={state.workingMessage}
+									stats={snapshot?.stats ?? null}
+									trajectory={snapshot?.trajectory ?? []}
+									cwd={panelCwd}
+									onOpenTrajectory={openToolTrajectory}
+									onOpenFile={openInEditor}
+									onFork={handleFork}
+									roundBadges={roundBadges}
+									onShowRound={showRound}
+									onEditMessage={editMessage}
+									onRecallMessage={recallMessage}
+								/>
+								</ElementPickContext.Provider>
+								<div className="px-4 pb-3 pt-2">
+									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
+										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
+										<ChatInput
+											key={draftKey}
+												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
+												onDraftChange={saveSessionDraft}
+												onUploadError={(message) => failUpload(draftKey, message)}
+												onUploadProgress={(delta) => trackUpload(draftKey, delta)}
+												uploadFailure={uploadFailures[draftKey]}
+												pendingUploadCount={uploadCounts[draftKey] ?? 0}
+												pendingSend={pendingSends[draftKey] ?? false}
+												onSendPendingChange={(pending) => trackSend(draftKey, pending)}
+											isStreaming={isStreaming}
+											contextPercent={snapshot?.contextUsage?.percent ?? null}
+											contextTokens={snapshot?.contextUsage?.tokens ?? null}
+											contextWindow={snapshot?.contextUsage?.contextWindow ?? null}
+											contextSource={{ systemChars: contextSystemChars, messages: state.messages, breakdown: snapshot?.contextBreakdown }}
+											contextVisible={(snapshot?.messages?.length ?? 0) > 0}
+											model={snapshot?.model}
+											thinkingLevel={snapshot?.thinkingLevel}
+											thinkingLevels={snapshot?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
+											models={modelChoices}
+											providerNames={providerNames}
+											authByProvider={authByProvider}
+											queue={snapshot?.queue ?? { steering: [], followUp: [] }}
+											commands={slashCommands}
+											onCommand={runSlashCommand}
+											onSend={sendPrompt}
+											onSteer={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
+											onFollowUp={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
+											onAbort={() => sendCommand({ cmd: "abort" })}
+											onSelectModel={(provider, id) => void sendCommand({ cmd: "setModel", provider, modelId: id })}
+											onSelectLevel={(level) =>
+												void sendCommand({ cmd: "setThinkingLevel", level }).then((r) => {
+													// 后端按 pi 规则就近钳制；被调整时明确告知，不再“选了没反应”
+													if (r?.success && r.data?.clamped) setError(t.thinkingClamped.replace("{requested}", level).replace("{level}", String(r.data.thinkingLevel)));
+												})
+											}
+											onClearQueue={() => sendCommand({ cmd: "clearQueue" })}
+											modelDefaults={modelDefaults}
+											onSaveDefaultModel={saveDefaultModel}
+										/>
+										<SessionStatsBar stats={snapshot?.stats ?? null} />
+										{Object.keys(state.extensionStatuses).length > 0 && (
+											<div className="mx-auto mt-0.5 flex w-full flex-wrap justify-center gap-x-3 px-4" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }} title={t.extensionStatus}>
+												{Object.entries(state.extensionStatuses).map(([k, v]) => <span key={k}>{v}</span>)}
+											</div>
+										)}
+									</div>
+								</div>
+							</div>
+							)
+						) : (
+							<div className="min-h-0 flex-1">
+								<TrajectoryView
+									entries={snapshot?.trajectory ?? []}
+									selected={selected}
+									onSelect={(entry) => {
+									setSelected(entry);
+									setGitDetailsOpen(false);
+									}}
+								/>
+							</div>
+						)}
+					</>
+				)}
+			</div>
+
+			{/* 轨迹或 Git 详情栏 */}
+			{(selected || gitDetailsOpen) && (
+				<div
+					className="flex min-h-0 flex-col overflow-hidden"
+					style={isNarrow ? {
+						position: "fixed",
+						inset: "0 0 0 auto",
+						width: "min(92vw, 640px)",
+						zIndex: 90,
+						background: "var(--dsw-sidebar-fill)",
+						boxShadow: "var(--dsw-elevation-prominent)",
+					} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
+				>
+					<div className="min-h-0 flex-1">
+						{selected ? (
+							<TrajInspector entry={selected} onClose={() => setSelected(null)} />
+						) : (
+							<GitPanel cwd={panelCwd} refreshKey={panelRefreshKey} onClose={() => setGitDetailsOpen(false)} onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)} onOpenFile={openInEditor} />
+						)}
+					</div>
+				</div>
+			)}
+
+			{/* 拖拽手柄 */}
+			{!isNarrow && !sidebarCollapsed && (
+				<div
+					className="fixed top-0 h-full w-2 cursor-col-resize"
+					style={{ left: sidebarWidth - 4, zIndex: 40 }}
+					onPointerDown={onDrag("sidebar")}
+				/>
+			)}
+			{!isNarrow && (selected || gitDetailsOpen) && (
+				<div
+					className="fixed top-0 h-full w-2 cursor-col-resize"
+					style={{ left: `calc(100vw - ${detailsWidth}px - 4px)`, zIndex: 40 }}
+					onPointerDown={onDrag("details")}
+				/>
+			)}
+			{!isNarrow && projectOpen && (
+				<div
+					className="fixed top-0 h-full w-2 cursor-col-resize"
+					style={{ left: (sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth) + projectWidth - 4, zIndex: 40 }}
+					onPointerDown={onDrag("project")}
+				/>
+			)}
+			{isNarrow && projectOpen && (
+				<>
+					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleProject(false)} aria-label={t.close} />
+					{projectColumn}
+				</>
+			)}
+			{viewer.state.open && (
+				<FileViewer
+					state={viewer.state}
+					growth={growth}
+					cwd={panelCwd}
+					onClose={viewer.close}
+					onSelectTab={viewer.select}
+					onCloseTab={viewer.closeTab}
+					onOpen={viewer.open}
+					onReference={insertIntoComposer}
+					onOpenEditor={openInEditor}
+				/>
+			)}
+
+			<ExtensionDialogHost dialog={state.extensionDialogs[0] ?? null} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice} />
+			<SettingsPanel
+				open={settingsOpen}
+				onClose={() => {
+					setSettingsOpen(false);
+					// 模型配置可能在设置里被改动（API key / OAuth / 自定义 provider）：
+					// 关闭时刷新全局模型目录，否则输入卡/新会话页的模型菜单停留在旧目录。
+					void refreshModels();
+				}}
+				onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
+				cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
+				toolPreset={state.toolPreset}
+				onToolPresetChange={setToolPreset}
+				tools={snapshot?.tools ?? null}
+				onSetTools={(names) => {
+					void sendCommand({ cmd: "setActiveTools", names });
+				}}
+			/>
+			{isNarrow && (
+				<button
+					className="pi-mobile-menu icon-btn fixed left-3 top-3 z-[70]"
+					style={{ width: 34, height: 34, background: "var(--dsw-bg-elevated)", boxShadow: "var(--dsw-elevation-soft)" }}
+					onClick={() => setMobileSidebarOpen(true)}
+					aria-label={t.workspaces}
+				>
+					<IconPanelLeftOutline16 size={17} />
+				</button>
+			)}
+			{isNarrow && mobileSidebarOpen && (
+				<button
+					className="fixed inset-0 z-[80]"
+					style={{ background: "var(--dsw-mask)" }}
+					onClick={() => setMobileSidebarOpen(false)}
+					aria-label={t.close}
+				/>
+			)}
+		</div>
+	);
+}
+
+function b64url(path: string): string {
+	const bytes = new TextEncoder().encode(path);
+	let bin = "";
+	for (const b of bytes) bin += String.fromCharCode(b);
+	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function basename(p: string): string {
+	const norm = p.replace(/\\/g, "/");
+	return norm.split("/").filter(Boolean).pop() ?? norm;
+}
+
+function Hero({
+	draft,
+	onDraftChange,
+	onUploadError,
+	onUploadProgress,
+	uploadFailure,
+	pendingUploadCount,
+	pendingSend,
+	onSendPendingChange,
+	commands,
+	onCommand,
+	cwd,
+	setCwd,
+	knownCwds,
+	getWorkspaceName,
+	onSend,
+	models,
+	providerNames,
+	authByProvider,
+	addWorkspaceByPicker,
+	addWorkspaceByPath,
+	heroModel,
+	onSelectHeroModel,
+	defaultModel,
+	heroModelLevels,
+	heroThinking,
+	onSelectHeroThinking,
+	modelDefaults,
+	onSaveDefaultModel,
+}: {
+	draft: ChatDraft;
+	onDraftChange: (update: ChatDraftUpdate) => void;
+	onUploadError: (message: string) => void;
+	onUploadProgress: (delta: 1 | -1) => void;
+	uploadFailure?: string;
+	pendingUploadCount: number;
+	pendingSend: boolean;
+	onSendPendingChange: (pending: boolean) => void;
+	commands: Array<{ name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }>;
+	onCommand: (name: string, args: string) => void;
+	cwd: string;
+	setCwd: (v: string) => void;
+	knownCwds: string[];
+	getWorkspaceName?: (cwd: string) => string;
+	onSend: (text: string, images: ImageAttachment[]) => Promise<{ success: boolean }>;
+	models: ModelChoice[];
+	providerNames: Record<string, string>;
+	authByProvider: Record<string, boolean>;
+	addWorkspaceByPicker: () => Promise<string | null>;
+	addWorkspaceByPath: (dir: string) => Promise<string | null>;
+	heroModel: { provider: string; id: string } | null;
+	onSelectHeroModel: (provider: string, id: string) => void;
+	defaultModel?: ModelChoice;
+	heroModelLevels: string[];
+	heroThinking: string;
+	onSelectHeroThinking: (level: string) => void;
+	modelDefaults: ModelDefaults | null;
+	onSaveDefaultModel: (provider: string, id: string, level: string | undefined) => Promise<boolean>;
+}) {
+	const { t } = useI18n();
+	const [wsMenu, setWsMenu] = useState(false);
+	const [wsPathDraft, setWsPathDraft] = useState("");
+	const [wsPathError, setWsPathError] = useState<string | null>(null);
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!wsMenu) return;
+		const h = (e: MouseEvent) => {
+			if (!menuRef.current?.contains(e.target as Node)) {
+				setWsMenu(false);
+			}
+		};
+		document.addEventListener("mousedown", h);
+		return () => document.removeEventListener("mousedown", h);
+	}, [wsMenu]);
+
+	const pickWorkspace = async () => {
+		const p = await addWorkspaceByPicker();
+		if (p) {
+			setCwd(p);
+			setWsMenu(false);
+		}
+	};
+
+	// 手动输入路径添加（原生选择器不可用 / 无桌面环境兜底）
+	const addByPath = async () => {
+		const p = await addWorkspaceByPath(wsPathDraft);
+		if (p) {
+			setWsPathDraft("");
+			setWsPathError(null);
+			setCwd(p);
+			setWsMenu(false);
+		} else {
+			setWsPathError(t.workspacePathInvalid);
+		}
+	};
+
+	const currentLabel = cwd ? (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) : t.startWith;
+
+	return (
+		<div className="flex h-full min-h-0 flex-col items-center justify-center px-6">
+			{/* 品牌行：仅 π 标 */}
+			<div className="mb-5 flex items-center justify-center gap-3">
+				<PiMark size={40} />
+			</div>
+
+			{/* 工作区芯片行 + 输入卡 同宽容器（芯片行与卡片左对齐） */}
+			<div className="w-full flex flex-col items-stretch mx-auto" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
+				<div ref={menuRef} className="mb-3 flex items-center gap-3" style={{ paddingLeft: 7 }}>
+					<div className="relative">
+						<button className="hero-chip" data-open={wsMenu} onClick={() => setWsMenu((v) => !v)}>
+							<IconFolderClose16 className="hero-chip-icon" size={16} />
+							<span className="max-w-[220px] truncate" suppressHydrationWarning>{currentLabel}</span>
+							<span className="chevron">
+								<IconChevronDown14 size={14} />
+							</span>
+						</button>
+						{wsMenu && (
+							<div className="popover absolute bottom-9 left-0 z-50 w-56 py-1">
+								{knownCwds.map((c) => {
+									const itemLabel = getWorkspaceName ? getWorkspaceName(c) : basename(c);
+									return (
+										<button
+											key={c}
+											className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
+											style={{
+												fontSize: 13,
+												background: cwd === c ? "var(--dsw-accent-soft)" : "transparent",
+												color: cwd === c ? "var(--dsw-accent)" : "inherit",
+											}}
+											onMouseEnter={(e) => {
+												if (cwd !== c) e.currentTarget.style.background = "var(--dsw-hover)";
+											}}
+											onMouseLeave={(e) => {
+												if (cwd !== c) e.currentTarget.style.background = "transparent";
+											}}
+											onClick={() => {
+												setCwd(c);
+												setWsMenu(false);
+											}}
+										>
+											<IconFolderClose16 size={14} style={{ flex: "none", color: cwd === c ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)" }} />
+											<span className="min-w-0 flex-1 truncate">{itemLabel}</span>
+											{cwd === c && <IconCheckOutline14 size={13} style={{ flex: "none" }} />}
+										</button>
+									);
+								})}
+								<div className="my-1" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }} />
+								<button
+									className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
+									style={{ fontSize: 13 }}
+									onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
+									onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+									onClick={pickWorkspace}
+								>
+									<IconProjectAddOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+									{t.addWorkspace}
+								</button>
+								<div className="flex items-center gap-1.5 px-2 py-1.5" style={{ fontSize: 12.5 }}>
+									<input
+										className="min-w-0 flex-1 rounded-lg px-2 py-1"
+										style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-input-bg, transparent)", color: "inherit" }}
+										placeholder={t.workspacePathPlaceholder}
+										value={wsPathDraft}
+										onChange={(e) => { setWsPathDraft(e.target.value); setWsPathError(null); }}
+										onKeyDown={(e) => {
+											if (e.key === "Enter") { e.preventDefault(); void addByPath(); }
+										}}
+									/>
+									<button type="button" className="pw-chip" style={{ flex: "none" }} disabled={!wsPathDraft.trim()} onClick={() => void addByPath()}>
+										{t.workspacePathAdd}
+									</button>
+								</div>
+								{wsPathError && (
+									<div className="px-3.5 pb-1.5" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{wsPathError}</div>
+								)}
+							</div>
+						)}
+					</div>
+				</div>
+
+				{/* 输入卡 */}
+				<ChatInput
+						draft={draft}
+						onDraftChange={onDraftChange}
+						onUploadError={onUploadError}
+						onUploadProgress={onUploadProgress}
+						uploadFailure={uploadFailure}
+						pendingUploadCount={pendingUploadCount}
+						pendingSend={pendingSend}
+						onSendPendingChange={onSendPendingChange}
+					commands={commands}
+					onCommand={onCommand}
+					isStreaming={false}
+					contextPercent={null}
+					contextTokens={null}
+					contextWindow={null}
+					contextVisible={false}
+					model={heroModel ? models.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) ?? { provider: heroModel.provider, id: heroModel.id, name: heroModel.id, reasoning: false, contextWindow: 0 } : defaultModel}
+					thinkingLevel={heroThinking || undefined}
+					thinkingLevels={heroModelLevels}
+					models={models}
+					providerNames={providerNames}
+					authByProvider={authByProvider}
+					queue={{ steering: [], followUp: [] }}
+					onSend={onSend}
+					onSteer={() => ({ success: false })}
+					onAbort={() => {}}
+					onSelectModel={onSelectHeroModel}
+					onSelectLevel={onSelectHeroThinking}
+					modelDefaults={modelDefaults}
+					onSaveDefaultModel={onSaveDefaultModel}
+				/>
+			</div>
+		</div>
+	);
+}
