@@ -578,22 +578,11 @@ textarea::placeholder {
 .pw-queue-foot button:hover {
 	color: var(--dsw-label-secondary);
 }
-/* 运行中输入卡下方的按键提示 */
-.pw-busy-hint {
-	margin: 6px 14px 0;
-	font-size: 11.5px;
-	line-height: 16px;
-	color: var(--dsw-label-caption);
-}
-
 .hairline-t {
 	border-top: 0.5px solid var(--dsw-border-l2);
 }
 .hairline-b {
 	border-bottom: 0.5px solid var(--dsw-border-l2);
-}
-.hairline-r {
-	border-right: 0.5px solid var(--dsw-border-l2);
 }
 
 /* 侧栏收起导轨按钮（dsh rail：36×36 控件盒、12px 圆角） */
@@ -1659,19 +1648,6 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 }
 .piweb-spin {
 	animation: piweb-spin-kf 0.8s linear infinite;
-}
-/* 连接测试阶段节点的呼吸态（照 Nebula 连接卡片的流动感，PiWeb 化为脉冲） */
-@keyframes piweb-pulse-kf {
-	0%,
-	100% {
-		opacity: 1;
-	}
-	50% {
-		opacity: 0.3;
-	}
-}
-.piweb-pulse {
-	animation: piweb-pulse-kf 1.1s ease-in-out infinite;
 }
 /* 流式正文末尾的光标：像终端一样告诉用户“还在写” */
 @keyframes stream-cursor-kf {
