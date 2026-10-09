@@ -2,6 +2,17 @@
 
 > 更早的条目：[docs/state/archive/2026-10.md](archive/2026-10.md)、[docs/state/archive/2026-09.md](archive/2026-09.md)
 
+## 2026-10-09 10:45 +08:00 | claude-haiku-5-5 | 按域拆分 src/components 与 tests/components 子目录
+- 起因：`src/components/` 与 `tests/components/` 各有 23 个平铺文件，超过「平铺目录超过 15 个就按域建子目录」的规则。用户确认按真实项目的做法拆
+- 改了什么：
+  - `src/components/` 按功能域移入子目录（`git mv`）：`layout/`（AppShell、SessionSidebar）、`chat/`（ChatWindow、ChatInput、ContextMeter、OutlineRail、ElementPicker、ExtensionUI）、`project/`（ProjectPanel、GrowthTree、GitPanel、FileViewer）、`diff/`（DiffView、FullDiff）、`trajectory/`（TrajectoryView 与样式）、`models/`（ModelSelector、ProviderBrand）、`settings/`（SettingsPanel、ProviderSetupModal 与样式）、`common/`（icons、PiMark）
+  - `tests/components/` 镜像到同样的子目录；`diff-parser` 测试从 `tests/` 根部移入 `tests/components/diff/`；`login-page` 测的是 `src/app/login`，移到 `tests/app/`
+  - 同一脚本改写 40 个文件的引用；两份计划文档里的组件路径同步。没有需要手改的路径字符串
+  - 结果：`src` 与 `tests` 下所有平铺目录都不超过 10 个文件；`tests/` 根部只剩 4 个跨领域文件
+- 影响文件：`src/components/**`（23 个移动）、`tests/components/**`（23 个移动）、`tests/diff-parser.test.ts`、`tests/app/login-page.test.tsx`（移动）、约 40 个文件的 import、两份 `docs/planning/` 计划文档
+- 验证：`npm run typecheck` 通过；`tsc --noUnusedLocals` 零报错；全量 vitest 80 文件 503 通过 + 1 跳过（与拆分前一致）；`npm run build` 通过
+- 下一步：推送 `origin/main`（代码与本条一同推送）
+
 ## 2026-10-09 10:35 +08:00 | claude-haiku-5-5 | 按域拆分 src/lib 与 tests 子目录
 - 起因：上一条进度列出 `src/lib/` 根部 44 个文件、`tests/` 根部 57 个文件，都超过规则「平铺目录超过 15 个就按域建子目录」。用户确认继续
 - 改了什么：
