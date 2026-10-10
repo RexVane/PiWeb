@@ -239,13 +239,15 @@ textarea::placeholder {
 .piweb-conversation-width-handle::after {
 	content: "";
 	position: absolute;
-	top: 0;
-	bottom: 0;
+	/* 常显的中间一小段：整条全高竖线会读成边框/分隔线，短抓手才读成"可拖"。
+	   热区仍是 12px 全高（cursor: col-resize），手感不受影响。 */
+	top: 35%;
+	bottom: 35%;
 	left: 5px;
 	width: 2px;
 	border-radius: 2px;
 	background: var(--dsw-border-l3);
-	opacity: 0;
+	opacity: 0.3;
 	transition: opacity var(--ds-duration-fast);
 }
 .piweb-conversation-width-handle:hover::after,
