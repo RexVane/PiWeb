@@ -104,8 +104,48 @@ function formatMessageClock(time: number, t: Dict): string {
 
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS: NonNullable<Parameters<typeof ReactMarkdown>[0]["rehypePlugins"]> = [[rehypeHighlight, { detect: false, ignoreMissing: true }]];
+
+type MarkdownTextNode = { value?: unknown; children?: MarkdownTextNode[] };
+function markdownNodeText(node: MarkdownTextNode | undefined): string {
+	if (!node) return "";
+	if (typeof node.value === "string") return node.value;
+	return node.children?.map(markdownNodeText).join("") ?? "";
+}
+
+function CopyButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	const [copyFailed, setCopyFailed] = useState(false);
+	const { t } = useI18n();
+	return (
+		<>
+			<button
+				type="button"
+				className="icon-btn"
+				title={copyFailed ? t.copyFailed : t.copy}
+				aria-label={t.copy}
+				onClick={() => {
+					void copyText(text).then((ok) => {
+						setCopied(ok);
+						setCopyFailed(!ok);
+						setTimeout(() => { setCopied(false); setCopyFailed(false); }, 1200);
+					});
+				}}
+			>
+				{copied ? <IconCheckOutline14 size={14} /> : <IconCopyOutline16 size={14} />}
+			</button>
+			{copyFailed && <span role="alert" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{t.copyFailed}</span>}
+		</>
+	);
+}
+
 const MARKDOWN_COMPONENTS: Parameters<typeof ReactMarkdown>[0]["components"] = {
 	a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+	pre: ({ node, children, ...props }) => (
+		<div className="md-code-block">
+			<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
+			<pre {...props}>{children}</pre>
+		</div>
+	),
 };
 
 /** Markdown 本体，不带外层 .md：流式时按块各自记忆化，块内容不变就不重新解析 */
@@ -234,8 +274,6 @@ function MessageActions({
 	/** 用户消息时钟在图标左侧（dsh clock=start），助手在行尾（clock=end） */
 	clockStart?: boolean;
 }) {
-	const [copied, setCopied] = useState(false);
-	const [copyFailed, setCopyFailed] = useState(false);
 	const [forking, setForking] = useState(false);
 	const { t } = useI18n();
 	const clock = time === undefined ? null : (
@@ -246,21 +284,7 @@ function MessageActions({
 	return (
 		<div className="msg-actions">
 			{clockStart && clock}
-			<button
-				className="icon-btn"
-				title={copyFailed ? t.copyFailed : t.copy}
-				aria-label={t.copy}
-				onClick={() => {
-					void copyText(text).then((ok) => {
-						setCopied(ok);
-						setCopyFailed(!ok);
-						setTimeout(() => { setCopied(false); setCopyFailed(false); }, 1200);
-					});
-				}}
-			>
-				{copied ? <IconCheckOutline14 size={14} /> : <IconCopyOutline16 size={14} />}
-			</button>
-			{copyFailed && <span role="alert" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{t.copyFailed}</span>}
+			<CopyButton text={text} />
 			{onEdit && (
 				<button className="icon-btn" title={t.editMessageHint} aria-label={t.editMessage} onClick={onEdit}>
 					<IconEditOutline16 size={14} />

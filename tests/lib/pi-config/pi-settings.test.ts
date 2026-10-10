@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import lockfile from "proper-lockfile";
 import { describe, expect, it } from "vitest";
-import { getPiSettings, patchPiSettings, validatePiSettingsPatch } from "../../../src/lib/pi-config/pi-settings";
+import { getEnabledModelPatterns, getPiSettings, patchPiSettings, validatePiSettingsPatch } from "../../../src/lib/pi-config/pi-settings";
 import { withSettingsWriteLock } from "../../../src/lib/pi-config/settings-write-lock";
 
 describe("Pi settings patches", () => {
@@ -75,6 +75,22 @@ it("writes thinking settings with pi's own keys and removes emptied sections", a
 
 		await patchPiSettings({ thinking: { defaultLevel: null, modelLevels: { "a/x": null, "p/m": null }, budgets: { medium: null } }, defaultModel: null });
 		expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({ theme: "dark" });
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		await fs.rm(agentDir, { recursive: true, force: true });
+	}
+});
+
+it("reads Pi's enabledModels patterns for PiWeb's model picker", async () => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-settings-model-scope-"));
+	try {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ enabledModels: ["openai-codex/gpt-6-*", "gpt-6.1-sol"] }));
+		expect(await getEnabledModelPatterns()).toEqual(["openai-codex/gpt-6-*", "gpt-6.1-sol"]);
+		await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+		expect(await getEnabledModelPatterns()).toBeNull();
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;

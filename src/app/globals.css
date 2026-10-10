@@ -764,6 +764,18 @@ textarea::placeholder {
 	font-size: 13px;
 	line-height: 1.55;
 }
+.md-code-block {
+	position: relative;
+}
+.md-code-copy {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	z-index: 1;
+}
+.md-code-block pre {
+	padding-top: 40px;
+}
 .md table {
 	border-collapse: collapse;
 	margin: 0.7em 0;

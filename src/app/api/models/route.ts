@@ -8,6 +8,7 @@ import {
 	discoverModels,
 	getBuiltinModelDefinitions,
 	listModels,
+	listModelsForPiWeb,
 	loginState,
 	providerUsage,
 	readCustomProviders,
@@ -40,7 +41,7 @@ export async function GET(req: Request) {
 	try {
 		const customProviders = custom ? await readCustomProviders() : null;
 		// pi 的默认模型 / 默认思考强度随目录一起给：新会话页据此显示，并只在用户改过时才覆盖
-		const [data, defaults] = await Promise.all([listModels(), getModelDefaults()]);
+		const [data, defaults] = await Promise.all([custom ? listModels() : listModelsForPiWeb(), getModelDefaults()]);
 		// 页面挂载只需要选模型用的字段（1300+ 个模型带 api/baseUrl/cost/input 有 400KB）；设置页用 custom=1 拿完整版
 		const models = full
 			? data.models

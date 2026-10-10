@@ -133,6 +133,16 @@ export async function getModelDefaults(): Promise<ModelDefaults | null> {
 	}
 }
 
+/** enabledModels is Pi's model scope; an absent/invalid setting means no PiWeb-side filtering. */
+export async function getEnabledModelPatterns(): Promise<string[] | null> {
+	try {
+		const patterns = (await readSettingsFileStrict()).enabledModels;
+		return Array.isArray(patterns) && patterns.every((pattern) => typeof pattern === "string") ? patterns : null;
+	} catch {
+		return null;
+	}
+}
+
 export class PiSettingsValidationError extends Error {}
 
 /** `provider/modelId`：提供商段不能为空，模型 ID 可以再带 /（如 openrouter 的 anthropic/claude-…） */

@@ -18,6 +18,8 @@ import {
 	type AuthInteraction, type AuthPrompt, type AuthType,
 } from "@earendil-works/pi-ai";
 import { withExternalSettingsLock, withSettingsWriteLock } from "../pi-config/settings-write-lock";
+import { getEnabledModelPatterns } from "../pi-config/pi-settings";
+import { filterModelsByPiScope } from "./model-scope";
 
 export interface ModelView {
 	provider: string;
@@ -115,6 +117,20 @@ export function listModels(): Promise<{
 	});
 	listCache = { at: Date.now(), value };
 	return value;
+}
+
+/** Model selection in PiWeb follows Pi's enabledModels scope; the settings editor still uses the full catalog. */
+export async function listModelsForPiWeb(): Promise<{ providers: ProviderView[]; models: ModelView[] }> {
+	const data = await listModels();
+	const patterns = await getEnabledModelPatterns();
+	if (!patterns?.length) return data;
+	const models = await filterModelsByPiScope(data.models, patterns, await getModelRuntime());
+	const counts = new Map<string, number>();
+	for (const model of models) counts.set(model.provider, (counts.get(model.provider) ?? 0) + 1);
+	return {
+		models,
+		providers: data.providers.map((provider) => ({ ...provider, modelCount: counts.get(provider.id) ?? 0 })),
+	};
 }
 
 /** auth.json 各条目的凭证类型（与 storedCredentialFor 同样的两层数据结构）；读取失败不影响目录 */
