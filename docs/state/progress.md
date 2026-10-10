@@ -7,3 +7,5 @@
   - 接上 PR #18 在这一版对得上的功能：对话栏可拖宽并记在浏览器本地；Markdown 代码块可复制；普通模型列表按 pi 的 `enabledModels` 过滤，设置页（`custom=1` / `full=1`）仍是完整目录。
 - 影响文件：`src/lib/growth-service.ts`、`src/lib/growth-tracker.ts`、`src/hooks/useGrowth.ts`、`src/components/ProjectPanel.tsx`、`src/components/ChatWindow.tsx`、`src/lib/models/model-scope.ts`、`src/app/api/models/route.ts`、`src/app/api/growth/route.ts`
 - 下一步：在已登录的页面上拖一次对话栏、点一次代码块复制，并看一轮生长记录是否出现
+
+- 2026-10-11 01:47 | #001 | 构建 | 构建修复固化进 next.config.ts，堵住发布包泄漏 | deepseek-flash
