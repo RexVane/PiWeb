@@ -24,7 +24,7 @@
 
 ### 实时流式对话
 
-边生成边排版 Markdown：标题、列表、表格和代码块在回答写完之前就成形。思考过程和工具调用以卡片插在对话里。断线后用 `Last-Event-ID` 补发；多个标签页大约每 3 秒对齐一次。输入卡支持图片（选择、粘贴、拖放）、两级模型选择、上下文压缩、停止生成、清空队列，以及 `/` 命令（内置命令、Pi 模板、技能）。
+边生成边排版 Markdown：标题、列表、表格和代码块在回答写完之前就成形。思考过程和工具调用以卡片插在对话里。断线后用 `Last-Event-ID` 补发；多个标签页大约每 3 秒对齐一次。输入卡支持图片（选择、粘贴、拖放）、两级模型选择、上下文压缩、停止生成、清空队列，以及 `/` 命令（内置命令、Pi 模板、技能）。对话列可以拖拽调整宽度并在本浏览器记住设置，围栏代码块也有一键复制按钮，详见[对话布局与模型范围](docs/chat-layout-and-model-scope.md)。
 
 <p align="center"><img src="docs/assets/main.png" alt="主页面：流式对话与工具卡片" width="840" /></p>
 
@@ -67,7 +67,7 @@ pi 每做完一轮，就把工作区提交一次到这个仓库自己的 `.git` 
 
 ### 模型与供应商
 
-内置 30 多家提供方，用 API Key 或 OAuth（Claude、Codex、Copilot 等）。自定义提供方写入 `models.json`。自定义模型可以声明能否思考、开放哪些档位、每一档发给接口的值，以及能否看图。思考强度用 pi 内置的档位；新会话从 pi 自己的 `settings.json` 里的默认模型和默认强度开始，和终端里的 pi 共用。
+内置 30 多家提供方，用 API Key 或 OAuth（Claude、Codex、Copilot 等）。自定义提供方写入 `models.json`。自定义模型可以声明能否思考、开放哪些档位、每一档发给接口的值，以及能否看图。思考强度用 pi 内置的档位；新会话从 pi 自己的 `settings.json` 里的默认模型和默认强度开始，和终端里的 pi 共用。普通模型选择器也会遵循 Pi agent 级别的 `enabledModels` 范围；设置页仍保留完整模型目录。
 
 <p align="center"><img src="docs/assets/providers-1.png" alt="设置里的提供方：密钥、OAuth 和用量" width="840" /></p>
 <p align="center"><img src="docs/assets/providers-2.png" alt="从内置名单里添加提供方" width="840" /></p>

@@ -20,7 +20,7 @@
 
 ### Streaming chat
 
-Markdown is laid out while the answer is still being written: headings, lists, tables and code blocks take shape before the reply finishes. Thinking and tool calls sit in the thread as cards. A dropped connection resumes from `Last-Event-ID`, and open tabs line up about every 3 seconds. The composer takes images (pick, paste, or drop), a two-level model picker, compaction, stop, queue clear, and `/` commands (built-ins, Pi templates, and skills).
+Markdown is laid out while the answer is still being written: headings, lists, tables and code blocks take shape before the reply finishes. Thinking and tool calls sit in the thread as cards. A dropped connection resumes from `Last-Event-ID`, and open tabs line up about every 3 seconds. The composer takes images (pick, paste, or drop), a two-level model picker, compaction, stop, queue clear, and `/` commands (built-ins, Pi templates, and skills). The conversation column can be resized and remembers its width; fenced code blocks have a copy button. See [chat layout and model scope](docs/chat-layout-and-model-scope.md).
 
 <p align="center"><img src="docs/assets/main.png" alt="Main screen: streaming chat and tool cards" width="840" /></p>
 
@@ -63,7 +63,7 @@ The ring beside the composer splits the context window into segments: system pro
 
 ### Models and providers
 
-Thirty-plus built-in providers, with an API key or OAuth (Claude, Codex, Copilot, and others). A custom provider is written to `models.json`. A custom model can declare thinking support, which levels it offers, the value each level sends, and whether it accepts images. Thinking levels are pi's own. A new session starts from the default model and level in pi's `settings.json`, the same file the terminal uses.
+Thirty-plus built-in providers, with an API key or OAuth (Claude, Codex, Copilot, and others). A custom provider is written to `models.json`. A custom model can declare thinking support, which levels it offers, the value each level sends, and whether it accepts images. Thinking levels are pi's own. A new session starts from the default model and level in pi's `settings.json`, the same file the terminal uses. The normal model picker also follows Pi's agent-level `enabledModels` scope; the settings editor retains the full catalog.
 
 <p align="center"><img src="docs/assets/providers-1.png" alt="Provider settings: keys, OAuth, and usage" width="840" /></p>
 <p align="center"><img src="docs/assets/providers-2.png" alt="Add a provider from the built-in list" width="840" /></p>
