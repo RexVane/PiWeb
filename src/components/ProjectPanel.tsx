@@ -1,40 +1,54 @@
 "use client";
 
 /**
- * 项目栏（侧栏与对话之间的第四列）：项目生长可视化。
- * 头部：工作区名 + 本会话总计 + 立即快照 / 收起；工具行：范围（本步 / 本会话）、只看变更、筛选；
- * 中间：项目树（GrowthTree）；底部：按轮浏览历史，默认跟随最新一轮。
+ * 项目栏（侧栏与对话之间的第四列）：项目生长 = 每轮一个 git commit。
+ * 头部：工作区名 + 立即记录 / 收起；所选轮：提问首行、时间、文件数与行数、在对话里看；
+ * 工具行：范围（本轮 / 本会话累计）、只看改动、筛选；中间：项目树（GrowthTree）；
+ * 底部：时间轴每轮一根柱（高度 = 改动行数，灰色细柱 = 你在两轮之间自己的修改），默认跟随最新一轮。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
-import type { GrowthApi } from "@/hooks/useGrowth";
+import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { GitInfo } from "@/lib/git-service";
 import type { TreeNode } from "@/lib/growth-tree";
-import type { GrowthStep } from "@/lib/types";
+import type { GrowthChange } from "@/lib/types";
 
-
-export function stepTitle(step: GrowthStep, t: Record<string, string>): string {
-	if (step.kind === "baseline") return t.growthKindBaseline;
-	if (step.kind === "turn") return t.growthKindTurn;
-	if (step.kind === "external") return t.growthKindExternal;
-	if (step.kind === "manual") return step.label || t.growthKindManual;
-	return step.label || step.toolName || "";
+/** 「第 7 轮 · 把保存按钮改成红色」/「你的修改」 */
+export function roundTitle(round: GrowthEntry, t: Record<string, string>): string {
+	if (round.kind !== "round") return t.growthKindUser;
+	const label = t.growthRoundLabel.replace("{n}", String(round.n ?? ""));
+	return round.title ? `${label} · ${round.title}` : label;
 }
 
-function stepColor(step: GrowthStep): string {
-	if (step.kind === "baseline") return "var(--dsw-label-caption)";
-	if (step.kind === "external") return "var(--dsw-accent)";
-	const st = step.stats;
+/** 柱的颜色：你的修改为灰；pi 的一轮按主要改动类型（删除为主红、新增为主绿、否则黄） */
+function roundColor(round: GrowthEntry): string {
+	if (round.kind !== "round") return "var(--dsw-label-caption)";
+	const st = round.stats;
+	if (!st.added && !st.modified && !st.deleted && !st.renamed) return "var(--dsw-border-l3)";
 	if (st.deleted && st.deleted >= st.added && st.deleted >= st.modified) return "var(--dsw-danger)";
 	if (st.added >= st.modified) return "var(--dsw-success)";
 	return "var(--dsw-warn)";
 }
 
+function changedLines(round: GrowthEntry): number {
+	return round.stats.add + round.stats.del;
+}
+
 function fmtTime(ts: number): string {
 	const d = new Date(ts);
-	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function sumChanges(changes: GrowthChange[]): { files: number; add: number; del: number } {
+	let add = 0;
+	let del = 0;
+	for (const c of changes) {
+		add += c.add ?? 0;
+		del += c.del ?? 0;
+	}
+	return { files: changes.length, add, del };
 }
 
 export function ProjectPanel({
@@ -42,9 +56,11 @@ export function ProjectPanel({
 	workspaceName,
 	cwd,
 	hasSession,
+	running = false,
 	onOpenFile,
 	onReference,
 	onOpenEditor,
+	onJumpToChat,
 	gitRefreshKey = 0,
 	onAskCommit,
 	onOpenGit,
@@ -55,9 +71,13 @@ export function ProjectPanel({
 	workspaceName: string;
 	cwd: string;
 	hasSession: boolean;
+	/** 本会话正在运行：时间轴末尾显示「本轮进行中」 */
+	running?: boolean;
 	onOpenFile: (node: TreeNode) => void;
 	onReference?: (path: string) => void;
 	onOpenEditor?: (path: string) => void;
+	/** 跳到对话里这一轮的提问（用户消息 entryId） */
+	onJumpToChat?: (messageId: string) => void;
 	gitRefreshKey?: number;
 	onAskCommit?: () => void;
 	onOpenGit?: () => void;
@@ -67,14 +87,15 @@ export function ProjectPanel({
 	const { t } = useI18n();
 	const tt = t as unknown as Record<string, string>;
 	const [filter, setFilter] = useState("");
-	const [onlyChanges, setOnlyChanges] = useState(false);
-	const [snapshotting, setSnapshotting] = useState(false);
+	const [onlyChanges, setOnlyChanges] = useState(true);
+	const [recording, setRecording] = useState(false);
 	const [notice, setNotice] = useState("");
 	const [gitState, setGitState] = useState<{ cwd: string; info: GitInfo | null; error?: string } | null>(null);
 	const git = gitState?.cwd === cwd ? gitState.info : null;
 	const gitError = gitState?.cwd === cwd ? gitState.error ?? git?.statusError : undefined;
-	useEffect(() => setOnlyChanges(false), [cwd]);
-	const latestSeq = growth.steps[growth.steps.length - 1]?.seq ?? 0;
+	useEffect(() => setOnlyChanges(true), [cwd]);
+	const { rounds, selected } = growth;
+	const latestCommit = rounds[rounds.length - 1]?.commit ?? "";
 	useEffect(() => {
 		if (!cwd) return;
 		const controller = new AbortController();
@@ -93,28 +114,17 @@ export function ProjectPanel({
 			clearTimeout(timer);
 			controller.abort();
 		};
-	}, [cwd, gitRefreshKey, latestSeq]);
+	}, [cwd, gitRefreshKey, latestCommit]);
 
-	const totals = useMemo(() => {
-		const out = { added: 0, modified: 0, deleted: 0, renamed: 0 };
-		for (const c of growth.scope === "step" ? growth.changes : growth.sessionChanges) {
-			if (c.status === "A") out.added += 1;
-			else if (c.status === "M") out.modified += 1;
-			else if (c.status === "D") out.deleted += 1;
-			else out.renamed += 1;
-		}
-		return out;
-	}, [growth.scope, growth.changes, growth.sessionChanges]);
-
-	const { steps, selectedRound, rounds } = growth;
+	const totals = useMemo(() => sumChanges(growth.changes), [growth.changes]);
+	const piRounds = useMemo(() => rounds.filter((round) => round.kind === "round").length, [rounds]);
+	const maxLines = useMemo(() => Math.max(1, ...rounds.map(changedLines)), [rounds]);
 	const railRef = useRef<HTMLDivElement>(null);
-	const maxSteps = useMemo(() => Math.max(1, ...rounds.map((r) => r.steps.filter((step) => step.kind !== "turn").length)), [rounds]);
 	useEffect(() => {
-		if (!selectedRound) return;
-		railRef.current?.querySelector<HTMLElement>(`[data-round="${selectedRound.id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-	}, [selectedRound]);
-	const selectedIdx = selectedRound ? rounds.findIndex((round) => round.id === selectedRound.id) : -1;
-	const roundLabel = selectedRound ? !selectedRound.recorded ? t.growthUnrecorded : selectedRound.steps.every((step) => step.kind === "turn") ? t.growthNoChangesRound : stepTitle(selectedRound.steps.find((step) => step.kind !== "turn") ?? selectedRound.last!, tt) : "";
+		if (!selected) return;
+		railRef.current?.querySelector<HTMLElement>(`[data-commit="${selected.commit}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+	}, [selected]);
+	const selectedIdx = selected ? rounds.findIndex((round) => round.commit === selected.commit) : -1;
 	const conflicts = git?.files.filter((file) => file.kind === "conflict").length ?? 0;
 	const staged = git?.files.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length ?? 0;
 	const unstaged = git?.files.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length ?? 0;
@@ -126,24 +136,21 @@ export function ProjectPanel({
 		return () => clearTimeout(timer);
 	}, [notice]);
 
-	const toggleOnly = () => {
-		setOnlyChanges((value) => !value);
-	};
-
-	const snapshotNow = async () => {
-		if (snapshotting) return;
-		setSnapshotting(true);
+	const recordNow = async () => {
+		if (recording) return;
+		setRecording(true);
 		try {
-			const step = await growth.snapshotNow();
-			if (!step) setNotice(t.growthSnapshotNone);
+			const round = await growth.recordNow();
+			if (!round) setNotice(t.growthRecordNone);
 		} catch (e) {
 			onError(e instanceof Error ? e.message : "failed");
 		} finally {
-			setSnapshotting(false);
+			setRecording(false);
 		}
 	};
 
-	const emptyText = !cwd || !hasSession ? t.growthNoSession : growth.loading && !steps.length ? t.growthLoading : !growth.available ? t.growthUnavailable : steps.length ? undefined : t.growthNoSteps;
+	const emptyText = !cwd || !hasSession ? t.growthNoSession : growth.loading && !rounds.length ? t.growthLoading : !growth.available ? t.growthUnavailable : rounds.length ? undefined : t.growthNoRounds;
+	const statusText = selected?.status === "aborted" ? t.growthStatusAborted : selected?.status === "error" ? t.growthStatusError : "";
 
 	return (
 		<div className="pw-project flex h-full min-h-0 flex-col" data-testid="project-panel">
@@ -153,15 +160,15 @@ export function ProjectPanel({
 					{workspaceName || t.projectPanel}
 				</span>
 				{hasSession && (
-					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.growthSnapshotNow} onClick={() => void snapshotNow()} disabled={snapshotting}>
-						<IconRefreshOutline14 size={13} className={snapshotting ? "piweb-spin" : undefined} />
+					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.growthRecordNow} onClick={() => void recordNow()} disabled={recording}>
+						<IconRefreshOutline14 size={13} className={recording ? "piweb-spin" : undefined} />
 					</button>
 				)}
 				<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.close} onClick={onClose}>
 					<IconCloseOutline14 size={13} />
 				</button>
 			</div>
-			{/* 生长快照不可用（找不到 git 等）：明确提示 + 已退化为当前目录结构 */}
+			{/* 生长记录不可用（找不到 git 等）：明确提示 + 已退化为当前目录结构 */}
 			{cwd && hasSession && !growth.available && !growth.loading && (
 				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-warn)", background: "var(--dsw-hover)" }} role="status">
 					{t.growthUnavailableFallback}
@@ -190,30 +197,39 @@ export function ProjectPanel({
 					{onOpenGit && <button type="button" className="pw-chip" onClick={onOpenGit}>{t.gitDetails}</button>}
 				</div>
 			)}
-			{/* 总计 + 范围 */}
+			{/* 所选这一轮：提问首行 / 时间 · 文件数 · 行数 / 在对话里看 */}
+			{selected && (
+				<div className="px-3 pb-2" data-testid="growth-round-summary">
+					<div className="truncate" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--dsw-label-primary)" }} title={roundTitle(selected, tt)}>
+						{roundTitle(selected, tt)}
+					</div>
+					<div className="mt-0.5 flex items-center gap-2" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+						<span>{fmtTime(selected.ts)}</span>
+						<span>·</span>
+						<span>{t.growthRoundFiles.replace("{n}", String(totals.files))}</span>
+						<span style={{ color: "var(--dsw-success)" }}>+{totals.add}</span>
+						<span style={{ color: "var(--dsw-danger)" }}>−{totals.del}</span>
+						{statusText && <span style={{ color: "var(--dsw-warn)" }}>{statusText}</span>}
+						<span className="flex-1" />
+						{onJumpToChat && selected.promptIds[0] && (
+							<button type="button" className="pw-chip" onClick={() => onJumpToChat(selected.promptIds[0])}>
+								{t.growthJumpToChat}
+							</button>
+						)}
+					</div>
+				</div>
+			)}
+			{/* 范围 + 只看改动 */}
 			<div className="flex items-center gap-2 px-3 pb-2" style={{ fontSize: 11.5 }}>
 				<span className="pw-seg" role="radiogroup">
-					{(["step", "session"] as const).map((s) => (
+					{(["round", "session"] as const).map((s) => (
 						<button key={s} type="button" role="radio" aria-checked={growth.scope === s} data-active={growth.scope === s} onClick={() => growth.setScope(s)}>
-							{s === "step" ? t.growthScopeStep : t.growthScopeSession}
+							{s === "round" ? t.growthScopeRound : t.growthScopeSession}
 						</button>
 					))}
 				</span>
-				<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-caption)" }} title={`${t.growthStatA} ${totals.added} · ${t.growthStatM} ${totals.modified} · ${t.growthStatD} ${totals.deleted} · ${t.growthStatR} ${totals.renamed}`}>
-					{notice ? (
-						<span style={{ color: "var(--dsw-label-secondary)" }}>{notice}</span>
-					) : (
-						<>
-							<span style={{ color: "var(--dsw-success)" }}>+{totals.added}</span>
-							{" "}
-							<span style={{ color: "var(--dsw-warn)" }}>~{totals.modified}</span>
-							{" "}
-							<span style={{ color: "var(--dsw-danger)" }}>−{totals.deleted}</span>
-							{totals.renamed ? <span style={{ color: "var(--dsw-accent)" }}> ⇄{totals.renamed}</span> : null}
-						</>
-					)}
-				</span>
-				<button type="button" className="pw-chip" data-active={onlyChanges} aria-pressed={onlyChanges} onClick={toggleOnly}>
+				<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-secondary)" }}>{notice}</span>
+				<button type="button" className="pw-chip" data-active={onlyChanges} aria-pressed={onlyChanges} onClick={() => setOnlyChanges((value) => !value)}>
 					{t.growthOnlyChanges}
 				</button>
 			</div>
@@ -241,14 +257,14 @@ export function ProjectPanel({
 					{growth.error}
 				</div>
 			)}
-			{growth.selected?.truncated && growth.scope === "step" && (
+			{selected?.truncated && growth.scope === "round" && (
 				<div className="mx-3 mb-1 rounded-lg px-2 py-1" style={{ fontSize: 11, color: "var(--dsw-warn)", background: "var(--dsw-hover)" }}>
 					{t.growthTruncated}
 				</div>
 			)}
-			{selectedRound && !selectedRound.recorded && (
+			{selected && growth.scope === "round" && !growth.changes.length && !emptyText && (
 				<div className="mx-3 mb-1 rounded-lg px-2 py-1" style={{ fontSize: 11, color: "var(--dsw-label-caption)", background: "var(--dsw-hover)" }} role="status">
-					{t.growthUnrecorded}
+					{t.growthNoChangesRound}
 				</div>
 			)}
 			{/* 树 */}
@@ -257,7 +273,7 @@ export function ProjectPanel({
 				expanded={growth.expanded}
 				fresh={growth.fresh}
 				filter={filter}
-				onlyChanges={onlyChanges && steps.length > 1}
+				onlyChanges={onlyChanges && growth.changes.length > 0}
 				onToggleDir={growth.toggleDir}
 				onExpandLazy={growth.expandLazy}
 				onOpenFile={onOpenFile}
@@ -265,29 +281,30 @@ export function ProjectPanel({
 				onOpenEditor={onOpenEditor}
 				emptyText={emptyText}
 			/>
-			{/* 轮次导航 */}
+			{/* 时间轴 */}
 			{hasSession && (
 				<div className="pw-timeline hairline-t" data-testid="growth-timeline">
-					{/* 时间轴：每轮一根柱，高度 = 本轮快照步数，颜色 = 首步的主要动作；点柱选轮 */}
-					{rounds.length > 0 && (
+					{(rounds.length > 0 || running) && (
 						<div ref={railRef} className="pw-tl-rail">
 							{rounds.map((round) => {
-								const activity = round.steps.filter((step) => step.kind !== "turn").length;
-								const h = Math.max(4, Math.round((activity / maxSteps) * 24));
-								const head = round.steps.find((step) => step.kind !== "turn") ?? round.last;
+								// 对数缩放：几十行和几千行的轮都看得出来，又不会一根柱子压扁其余
+								const lines = changedLines(round);
+								const h = round.changes.length || lines ? Math.max(5, Math.round(4 + (Math.log1p(lines) / Math.log1p(maxLines)) * 20)) : 3;
 								return (
 									<button
-										key={round.id}
+										key={round.commit}
 										type="button"
 										className="pw-tl-bar"
-										data-round={round.id}
-										data-active={selectedRound?.id === round.id || undefined}
-										style={{ height: h, background: head && round.recorded ? stepColor(head) : "var(--dsw-label-caption)" }}
-										title={`${t.growthRoundLabel.replace("{n}", String(round.id))} · ${round.recorded ? activity ? stepTitle(head!, tt) : t.growthNoChangesRound : t.growthUnrecorded} · ${fmtTime(round.last?.ts ?? round.startedAt)} · ${t.growthStepsCount.replace("{n}", String(activity))}`}
-										onClick={() => growth.selectRound(round.id)}
+										data-commit={round.commit}
+										data-kind={round.kind}
+										data-active={selected?.commit === round.commit || undefined}
+										style={{ height: h, background: roundColor(round) }}
+										title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)} · ${t.growthRoundFiles.replace("{n}", String(round.changes.length))} +${round.stats.add} −${round.stats.del}`}
+										onClick={() => growth.select(round.commit)}
 									/>
 								);
 							})}
+							{running && <span className="pw-tl-bar" data-running="" title={t.growthRunning} aria-label={t.growthRunning} />}
 						</div>
 					)}
 					<div className="flex items-center gap-1 px-2 pb-2 pt-1" style={{ fontSize: 11.5 }}>
@@ -297,12 +314,12 @@ export function ProjectPanel({
 						<button className="icon-btn" style={{ width: 20, height: 20 }} title={t.growthNext} onClick={growth.next} disabled={selectedIdx < 0 || selectedIdx >= rounds.length - 1}>
 							<IconChevronRight14 size={12} />
 						</button>
-						<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-secondary)" }} title={selectedRound ? `${roundLabel} · ${fmtTime(selectedRound.last?.ts ?? selectedRound.startedAt)}` : undefined}>
-							{selectedRound ? (
-								<>
-									<span style={{ color: "var(--dsw-label-caption)" }}>{t.growthRoundPosition.replace("{current}", String(selectedIdx + 1)).replace("{total}", String(rounds.length))}</span> {roundLabel}
-								</>
-							) : t.growthRoundPosition.replace("{current}", "0").replace("{total}", "0")}
+						<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-secondary)" }}>
+							{selected?.n
+								? t.growthRoundPosition.replace("{current}", String(selected.n)).replace("{total}", String(piRounds))
+								: selected
+									? t.growthKindUser
+									: t.growthRoundPosition.replace("{current}", "0").replace("{total}", String(piRounds))}
 						</span>
 						<button type="button" className="pw-chip" data-active={growth.following} onClick={growth.follow} title={t.growthFollow}>
 							{growth.following ? t.growthFollowing : t.growthFollow}

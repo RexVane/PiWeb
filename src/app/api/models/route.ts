@@ -7,6 +7,7 @@ import {
 	CustomProvidersValidationError,
 	discoverModels,
 	listModels,
+	listModelsForPiWeb,
 	loginState,
 	providerUsage,
 	readCustomProviders,
@@ -37,7 +38,7 @@ export async function GET(req: Request) {
 	const full = custom || params.get("full") === "1";
 	try {
 		const customProviders = custom ? await readCustomProviders() : null;
-		const data = await listModels();
+		const data = await (full ? listModels() : listModelsForPiWeb());
 		// 页面挂载只需要选模型用的字段（1300+ 个模型带 api/baseUrl/cost/input 有 400KB）；设置页用 custom=1 拿完整版
 		const models = full
 			? data.models

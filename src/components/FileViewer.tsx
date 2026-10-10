@@ -167,11 +167,12 @@ export function FileViewer({
 			} catch (error) {
 				if ((error as { status?: number }).status === 404) {
 					// 跟随中的文件可能在本轮后续工具里被删掉；从最近一次涉及它的快照取回最后内容。
-					const prior = [...growth.steps].reverse().find((step) =>
-						step.seq <= (growth.selected?.seq ?? Infinity) && step.changes.some((item) => item.path === tab.path || item.from === tab.path),
+					const upto = growth.selected ? growth.rounds.findIndex((round) => round.commit === growth.selected!.commit) : growth.rounds.length - 1;
+					const prior = growth.rounds.slice(0, upto + 1).reverse().find((round) =>
+						round.changes.some((item) => item.path === tab.path || item.from === tab.path),
 					);
 					const priorTree = prior?.changes.some((item) => (item.status === "D" && item.path === tab.path) || (item.status === "R" && item.from === tab.path))
-						? prior.parent
+						? prior.parentTree
 						: prior?.tree;
 					if (priorTree && priorTree !== tree) {
 						try {
@@ -192,7 +193,7 @@ export function FileViewer({
 			try {
 				if (tab.lazy || !range) {
 					// 会话还没有任何快照时整棵树都是磁盘条目，「不在快照里」的提示会误导
-					await diskContent(tab.lazy && growth.steps.length > 0 ? "disk" : null);
+					await diskContent(tab.lazy && growth.rounds.length > 0 ? "disk" : null);
 					return;
 				}
 				if (mode === "diff") {
@@ -223,7 +224,7 @@ export function FileViewer({
 		return () => {
 			alive = false;
 		};
-	}, [activeTab, cwd, mode, range, change, growth.steps, growth.selected, growth.pending, t.viewerLoadFailed]);
+	}, [activeTab, cwd, mode, range, change, growth.rounds, growth.selected, t.viewerLoadFailed]);
 
 	// 键盘：Esc 关（先关快速打开）、Ctrl/⌘+W 关页签、Ctrl/⌘+P 快速打开、[ ] 上一处下一处
 	useEffect(() => {
@@ -289,9 +290,9 @@ export function FileViewer({
 		setReveal({ path: dir, key: Date.now() });
 		onSelectTab(null);
 	};
-	const roundNumber = growth.selectedRound?.id ?? 0;
-	const stepBadge = roundNumber
-		? `${t.growthRoundLabel.replace("{n}", String(roundNumber))}${change ? ` · +${change.add ?? 0} −${change.del ?? 0}` : ""}`
+	const roundName = growth.selected ? (growth.selected.n ? t.growthRoundLabel.replace("{n}", String(growth.selected.n)) : t.growthKindUser) : "";
+	const stepBadge = roundName
+		? `${roundName}${change ? ` · +${change.add ?? 0} −${change.del ?? 0}` : ""}`
 		: "";
 	const isDiffMode = mode === "diff" && Boolean(loaded?.diff);
 	const noticeText = loaded?.notice === "deleted" ? t.viewerDeleted : loaded?.notice === "historical" ? t.viewerHistorical : loaded?.notice === "missing" ? t.viewerMissing : loaded?.notice === "disk" ? t.viewerNotInSnapshot : loaded?.notice === "nochange" ? t.viewerNoChanges : "";
@@ -466,7 +467,7 @@ export function FileViewer({
 								<input value={treeFilter} onChange={(e) => setTreeFilter(e.target.value)} placeholder={t.growthFilter} className="min-w-0 flex-1 bg-transparent" style={{ fontSize: 12 }} />
 							</div>
 							<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-								{roundNumber ? t.growthRoundLabel.replace("{n}", String(roundNumber)) : ""}
+								{roundName}
 							</span>
 							<button type="button" className="pw-chip" onClick={growth.expandAll}>{t.growthExpandAll}</button>
 							<button type="button" className="pw-chip" onClick={growth.collapseAll}>{t.growthCollapseAll}</button>

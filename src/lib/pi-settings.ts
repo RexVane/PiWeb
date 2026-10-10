@@ -43,6 +43,13 @@ async function readSettingsFileStrict(): Promise<Record<string, unknown>> {
 	return parsed as Record<string, unknown>;
 }
 
+/** enabledModels 是 pi 的模型范围；没写或写错就不过滤 PiWeb 的选择器 */
+export async function getEnabledModelPatterns(): Promise<string[] | null> {
+	const patterns = (await readSettingsFileStrict()).enabledModels;
+	if (!Array.isArray(patterns) || patterns.some((pattern) => typeof pattern !== "string")) return null;
+	return patterns;
+}
+
 function section(raw: Record<string, unknown>, key: "compaction" | "retry"): Record<string, unknown> {
 	const value = raw[key];
 	return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

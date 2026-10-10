@@ -10,7 +10,9 @@ import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { filterModelsByPiScope } from "./models/model-scope";
 import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
+import { getEnabledModelPatterns } from "./pi-settings";
 import { reloadSessionsForCwd } from "./agent-manager";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
@@ -101,6 +103,20 @@ export function listModels(): Promise<{
 	});
 	listCache = { at: Date.now(), value };
 	return value;
+}
+
+/** 对话里的模型选择器遵循 pi 的 enabledModels；设置页仍用完整目录 */
+export async function listModelsForPiWeb(): Promise<{ providers: ProviderView[]; models: ModelView[] }> {
+	const data = await listModels();
+	const patterns = await getEnabledModelPatterns();
+	if (!patterns?.length) return data;
+	const models = await filterModelsByPiScope(data.models, patterns, await getModelRuntime());
+	const counts = new Map<string, number>();
+	for (const model of models) counts.set(model.provider, (counts.get(model.provider) ?? 0) + 1);
+	return {
+		models,
+		providers: data.providers.map((provider) => ({ ...provider, modelCount: counts.get(provider.id) ?? 0 })),
+	};
 }
 
 /** auth.json 各条目的凭证类型（与 storedCredentialFor 同样的两层数据结构）；读取失败不影响目录 */

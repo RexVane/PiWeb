@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import type {
-	GrowthStep,
+	GrowthRound,
 	SessionSummary,
 	TrajEntry,
 	WebEvent,
@@ -60,8 +60,8 @@ export interface PiWebState {
 	extensionStatuses: Record<string, string>;
 	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
 	workingMessage: string | null;
-	/** 项目生长：本次连接期间收到的步（完整账本由 useGrowth 拉取后合并），以及运行中工具正在生成的路径 */
-	growth: { steps: GrowthStep[]; pending: string[]; error: string | null };
+	/** 项目生长：本次连接期间收到的 commit（完整时间轴由 useGrowth 拉取后按 commit 去重合并） */
+	growth: { rounds: GrowthRound[]; error: string | null };
 }
 
 export interface SessionListItem extends SessionSummary {
@@ -233,15 +233,12 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 			}
 			return s;
 		case "growth": {
-			const steps = s.growth.steps.some((x) => x.seq === evt.step.seq) ? s.growth.steps.map((x) => (x.seq === evt.step.seq ? evt.step : x)) : [...s.growth.steps, evt.step];
-			s.growth = { steps, pending: [], error: null };
+			const rounds = s.growth.rounds.some((x) => x.commit === evt.round.commit) ? s.growth.rounds : [...s.growth.rounds, evt.round];
+			s.growth = { rounds, error: null };
 			return s;
 		}
-		case "growth_pending":
-			s.growth = { ...s.growth, pending: evt.paths };
-			return s;
 		case "growth_error":
-			s.growth = { ...s.growth, pending: [], error: evt.message };
+			s.growth = { ...s.growth, error: evt.message };
 			return s;
 		case "retry":
 			// 只保留最后一次尝试：重试过程在界面上是「重试 3/5」这一条，而不是五行报错
@@ -318,7 +315,7 @@ const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
 	extensionNotices: [],
 	extensionStatuses: {},
 	workingMessage: null,
-	growth: { steps: [], pending: [], error: null },
+	growth: { rounds: [], error: null },
 });
 
 function pathKey(value: string): string {

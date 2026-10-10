@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
-import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
+import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -574,29 +574,39 @@ export function AppShell() {
 	useEffect(() => {
 		resetViewer();
 	}, [panelCwd, resetViewer]);
-	const growthTurnStarts = useMemo(
-		() => {
-			const persisted = state.snapshot?.userTurns ?? [];
-			const ids = new Set(persisted.map((turn) => turn.id));
-			const lastTs = persisted[persisted.length - 1]?.ts ?? -Infinity;
-			const live = state.messages
-				.filter((message) => message.role === "user" && (!message.id || !ids.has(message.id)) && (message.timestamp ?? Date.now()) >= lastTs - 1000)
-				.map((message) => message.timestamp ?? Date.now());
-			return [...persisted.map((turn) => turn.ts), ...live];
-		},
-		[state.snapshot?.userTurns, state.messages],
-	);
 	const growth = useGrowth({
 		cwd: panelCwd,
 		sessionPath: currentPath,
-		liveSteps: state.growth.steps,
-		pending: state.growth.pending,
+		liveRounds: state.growth.rounds,
 		runtimeError: state.growth.error,
 		active: projectOpen || viewer.state.open,
+		watchRounds: Boolean(currentPath),
 		connected: state.connected,
-		turnStarts: growthTurnStarts,
 	});
 	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy }), [viewer]);
+	const roundBadges = useMemo(() => {
+		const map = new Map<string, RoundBadge>();
+		for (const round of growth.rounds) {
+			if (round.kind !== "round" || !round.promptIds[0]) continue;
+			const st = round.stats;
+			map.set(round.promptIds[0], { commit: round.commit, files: st.added + st.modified + st.deleted + st.renamed, add: st.add, del: st.del });
+		}
+		return map;
+	}, [growth.rounds]);
+	const growthSelect = growth.select;
+	const showRound = useCallback((commit: string) => {
+		toggleProject(true);
+		growthSelect(commit);
+	}, [toggleProject, growthSelect]);
+	const jumpToChat = useCallback((messageId: string) => {
+		requestAnimationFrame(() => {
+			const node = document.querySelector<HTMLElement>(`[data-role="user"][data-message-id="${CSS.escape(messageId)}"]`);
+			if (!node) return;
+			node.scrollIntoView({ block: "center", behavior: "smooth" });
+			node.dataset.flash = "";
+			setTimeout(() => delete node.dataset.flash, 1600);
+		});
+	}, []);
 
 	useEffect(() => {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
@@ -622,6 +632,8 @@ export function AppShell() {
 				workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}
 				cwd={panelCwd}
 				hasSession={Boolean(currentPath)}
+				running={isStreaming}
+				onJumpToChat={jumpToChat}
 				onOpenFile={openFileNode}
 				onReference={insertIntoComposer}
 				onOpenEditor={openInEditor}
@@ -845,6 +857,8 @@ export function AppShell() {
 									onOpenFile={openInEditor}
 									onFork={handleFork}
 									onEditMessage={doEditMessage}
+									roundBadges={roundBadges}
+									onShowRound={showRound}
 								/>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>

@@ -144,10 +144,8 @@ export type WebEvent =
 	| { type: "error"; message: string; ts: number }
 	/** 自动重试：流程内通知，界面聚合成一条「重试 n/max」，不作为错误条目累积 */
 	| { type: "retry"; attempt: number; maxAttempts: number; message: string; ts: number }
-	/** 项目生长：记录了一步（工具结束 / 回合结束 / 外部修改 / 会话基线） */
-	| { type: "growth"; step: GrowthStep; ts: number }
-	/** 项目生长：改盘类工具运行期间目录监听看到的新路径（累计；空数组 = 清空） */
-	| { type: "growth_pending"; paths: string[]; ts: number }
+	/** 项目生长：提交了一个 commit（pi 的一轮 / 用户两轮之间的修改 / 工作区基线） */
+	| { type: "growth"; round: GrowthRound; ts: number }
 	| { type: "growth_error"; message: string | null; ts: number };
 
 export interface WebStats {
@@ -165,9 +163,11 @@ export interface WebStats {
 	decodeTokens: number;
 }
 
-// ---------- 项目生长（影子仓库快照） ----------
+// ---------- 项目生长（每轮一个 git commit） ----------
 
-export type GrowthStepKind = "baseline" | "tool" | "turn" | "external" | "manual";
+/** round = pi 的一轮；user = 用户在两轮之间自己的修改；baseline = 工作区第一个 commit（起点，不算一轮） */
+export type GrowthRoundKind = "round" | "user" | "baseline";
+export type GrowthRoundStatus = "done" | "aborted" | "error";
 
 export interface GrowthChange {
 	status: "A" | "M" | "D" | "R";
@@ -180,26 +180,31 @@ export interface GrowthChange {
 	binary?: boolean;
 }
 
-export interface GrowthStep {
-	/** 工作区内单调递增 */
-	seq: number;
-	ts: number;
-	/** 触发这一步的会话（JSONL 绝对路径） */
-	session: string;
-	kind: GrowthStepKind;
-	/** 「bash · mkdir -p src」这样的一句标签 */
-	label: string;
-	/** 这一步之后的 tree 哈希 */
+/**
+ * refs/piweb/rounds/<key> 链上的一个 commit。元信息全部来自 commit 本身（标题 + Piweb-* trailers），
+ * 变更清单与行数来自 git log --raw --numstat（相对上一个 commit）。
+ */
+export interface GrowthRound {
+	commit: string;
+	/** 上一个 commit；链上第一个 commit 为 null */
+	parent: string | null;
 	tree: string;
-	/** 这一步之前的 tree 哈希（工作区首张快照为 empty tree） */
-	parent: string;
-	commit?: string;
-	toolCallId?: string;
-	toolName?: string;
-	/** 相对上一步的变更（超过上限时截断，truncated=true） */
+	/** 上一个 commit 的 tree（链上第一个 commit 为空树）：本轮改动 = git diff parentTree tree */
+	parentTree: string;
+	/** 提交时间（毫秒） */
+	ts: number;
+	kind: GrowthRoundKind;
+	/** round：本轮提问首行；其余类型为空 */
+	title: string;
+	/** 所属会话的 JSONL 文件名（不含目录） */
+	session: string;
+	/** 本轮的用户消息 entryId（对话里的提问与这一轮互相跳转用） */
+	promptIds: string[];
+	status: GrowthRoundStatus;
+	/** 相对上一个 commit 的变更（超过上限时截断，truncated=true） */
 	changes: GrowthChange[];
 	truncated?: boolean;
-	/** 工作区的第一张快照：全部文件都是新增，账本里不存清单 */
+	/** 链上第一个 commit：没有上一版可比，不列变更 */
 	initial?: boolean;
 	stats: { added: number; modified: number; deleted: number; renamed: number; add: number; del: number };
 }

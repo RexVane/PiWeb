@@ -40,7 +40,7 @@ import type {
 	AgentCommand,
 	ContextBreakdown,
 	ContextResource,
-	GrowthStep,
+	GrowthRound,
 	TrajEntry,
 	ToolPreset,
 	WebEvent,
@@ -587,13 +587,18 @@ function growthOf(m: Managed): GrowthTracker {
 		m.growth.dispose();
 		m.growth = null;
 	}
-	return (m.growth ??= createGrowthTracker({ cwd: m.cwd, sessionPath: m.sessionPath, publish: (evt) => publish(m, evt) }));
+	return (m.growth ??= createGrowthTracker({
+		cwd: m.cwd,
+		sessionPath: m.sessionPath,
+		publish: (evt) => publish(m, evt),
+		entries: () => m.sm.getEntries() as never,
+	}));
 }
 
-/** 手动快照（项目栏「立即快照」）：记下的步同时广播给本会话的订阅者 */
-export async function growthSnapshot(m: Managed, label = ""): Promise<GrowthStep | null> {
+/** 立即记录（项目栏按钮）：把当前改动提交为「你的修改」，同时广播给本会话的订阅者 */
+export async function growthRecord(m: Managed): Promise<GrowthRound | null> {
 	touch(m);
-	return growthOf(m).snapshotNow(label);
+	return growthOf(m).recordNow();
 }
 
 // ---------- 会话生命周期 ----------

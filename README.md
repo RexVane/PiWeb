@@ -24,7 +24,7 @@ PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it
 
 ### Real-Time Streaming Chat
 
-Markdown renders as it streams — headings, lists and code blocks take shape before the answer is finished, not after. Thinking and tool calls appear inline as cards. The layout stays restrained: sessions on the left, outline on the right, both collapsible, leaving the screen to the conversation.
+Markdown renders as it streams — headings, lists and code blocks take shape before the answer is finished, not after. Code blocks can be copied. The conversation column can be dragged wider, and the width is remembered in this browser. Thinking and tool calls appear inline as cards. The layout stays restrained: sessions on the left, outline on the right, both collapsible, leaving the screen to the conversation. The model picker follows `enabledModels` in pi settings; the settings page still shows the full catalog.
 
 <p align="center"><img src="assets/main.jpg" alt="Main page: streaming chat with tool cards" width="840" /></p>
 

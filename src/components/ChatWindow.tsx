@@ -76,13 +76,54 @@ function formatMessageClock(time: number, t: Dict): string {
 	return `${md} ${clock}`;
 }
 
+type MarkdownTextNode = { value?: unknown; children?: MarkdownTextNode[] };
+function markdownNodeText(node: MarkdownTextNode | undefined): string {
+	if (!node) return "";
+	if (typeof node.value === "string") return node.value;
+	return node.children?.map(markdownNodeText).join("") ?? "";
+}
+
+function CopyButton({ text }: { text: string }) {
+	const [copied, setCopied] = useState(false);
+	const [copyFailed, setCopyFailed] = useState(false);
+	const { t } = useI18n();
+	return (
+		<>
+			<button
+				type="button"
+				className="icon-btn"
+				title={copyFailed ? t.copyFailed : t.copy}
+				aria-label={t.copy}
+				onClick={() => {
+					void copyText(text).then((ok) => {
+						setCopied(ok);
+						setCopyFailed(!ok);
+						setTimeout(() => { setCopied(false); setCopyFailed(false); }, 1200);
+					});
+				}}
+			>
+				{copied ? <IconCheckOutline14 size={14} /> : <IconCopyOutline16 size={14} />}
+			</button>
+			{copyFailed && <span role="alert" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{t.copyFailed}</span>}
+		</>
+	);
+}
+
 const Markdown = memo(function Markdown({ text }: { text: string }) {
 	return (
 		<div className="md">
 			<ReactMarkdown
 				remarkPlugins={[remarkGfm]}
 				rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-				components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}
+				components={{
+					a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+					pre: ({ node, children, ...props }) => (
+						<div className="md-code-block">
+							<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
+							<pre {...props}>{children}</pre>
+						</div>
+					),
+				}}
 			>
 				{text}
 			</ReactMarkdown>
@@ -887,8 +928,16 @@ const FinalAnswer = memo(function FinalAnswer({
 	);
 });
 
+/** 对话里提问下方的「本轮改了 N 个文件」：来自项目生长这一轮的 commit */
+export interface RoundBadge {
+	commit: string;
+	files: number;
+	add: number;
+	del: number;
+}
+
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message, onEditMessage }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void }) {
+const UserMessage = memo(function UserMessage({ message, badge, onShowRound, onEditMessage }: { message: WebMessage; badge?: RoundBadge; onShowRound?: (commit: string) => void; onEditMessage?: (entryId: string, text: string) => void }) {
 	const { t } = useI18n();
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -900,7 +949,7 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	const canEdit = Boolean(onEditMessage && message.id && text);
 	if (editing) {
 		return (
-			<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
+			<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={message.id}>
 				<div className="msg-user-bubble w-full">
 					<textarea
 						className="w-full resize-none bg-transparent outline-none"
@@ -940,7 +989,7 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	}
 	return (
 		// 回合边界：用户消息前留 28px（比回合内 8px 大得多），长对话里一眼找到“这一轮从哪开始”
-		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user">
+		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={message.id}>
 			{images.length > 0 && (
 				<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
 					{images.map((image, index) => (
@@ -956,6 +1005,23 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 			)}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
 			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
+			{badge && (
+				<button
+					type="button"
+					className="pw-chip mt-1.5"
+					title={t.chatRoundShow}
+					onClick={() => onShowRound?.(badge.commit)}
+					data-testid="round-badge"
+				>
+					{badge.files ? t.chatRoundChanged.replace("{n}", String(badge.files)) : t.chatRoundNoChanges}
+					{badge.files > 0 && (
+						<>
+							<span style={{ color: "var(--dsw-success)" }}> +{badge.add}</span>
+							<span style={{ color: "var(--dsw-danger)" }}> −{badge.del}</span>
+						</>
+					)}
+				</button>
+			)}
 			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
 			{text && (
 				<MessageActions
@@ -1015,6 +1081,8 @@ function TurnBlockView({
 	workingMessage,
 	onFork,
 	onEditMessage,
+	roundBadge,
+	onShowRound,
 	onInspectTool,
 	onOpenFile,
 }: {
@@ -1034,6 +1102,8 @@ function TurnBlockView({
 	onFork?: (entryId: string) => void;
 	/** 编辑该回合的用户消息并重新发送（模型从这条消息重新回答） */
 	onEditMessage?: (entryId: string, text: string) => void;
+	roundBadge?: RoundBadge;
+	onShowRound?: (commit: string) => void;
 	onInspectTool?: (toolCallId: string) => void;
 	onOpenFile?: (path: string) => void;
 }) {
@@ -1085,7 +1155,7 @@ function TurnBlockView({
 
 	return (
 		<>
-			{user && <UserMessage message={user} onEditMessage={onEditMessage} />}
+			{user && <UserMessage message={user} badge={roundBadge} onShowRound={onShowRound} onEditMessage={onEditMessage} />}
 			{showProcess && (
 				<div className="pw-turn">
 					{contextFiles?.map((resource, i) => (
@@ -1200,6 +1270,11 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 		prev.contextFiles !== next.contextFiles ||
 		prev.onFork !== next.onFork ||
 		prev.onEditMessage !== next.onEditMessage ||
+		prev.onShowRound !== next.onShowRound ||
+		prev.roundBadge?.commit !== next.roundBadge?.commit ||
+		prev.roundBadge?.files !== next.roundBadge?.files ||
+		prev.roundBadge?.add !== next.roundBadge?.add ||
+		prev.roundBadge?.del !== next.roundBadge?.del ||
 		prev.onInspectTool !== next.onInspectTool ||
 		prev.onOpenFile !== next.onOpenFile
 	) return false;
@@ -1222,6 +1297,28 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 
 const TurnBlock = memo(TurnBlockView, turnBlockPropsEqual);
 
+const CHAT_WIDTH_KEY = "piweb.chatContentWidth";
+const CHAT_WIDTH_MIN = 480;
+const CHAT_WIDTH_MAX = 1200;
+
+function resolveChatWidth(width: number, viewportWidth: number): number {
+	const max = Math.max(320, Math.min(CHAT_WIDTH_MAX, viewportWidth - 64));
+	return Math.max(Math.min(CHAT_WIDTH_MIN, max), Math.min(width, max));
+}
+
+function setChatWidth(root: HTMLElement, width: number | null): void {
+	const scope = root.closest<HTMLElement>(".pi-main");
+	if (!scope) return;
+	if (width === null) {
+		scope.style.removeProperty("--dsh-chat-content-width");
+		scope.style.removeProperty("--dsh-composer-card-max-width");
+		return;
+	}
+	const resolved = resolveChatWidth(width, root.clientWidth);
+	scope.style.setProperty("--dsh-chat-content-width", `${resolved}px`);
+	scope.style.setProperty("--dsh-composer-card-max-width", `${resolved + 32}px`);
+}
+
 export function ChatWindow({
 	messages,
 	tools,
@@ -1240,6 +1337,8 @@ export function ChatWindow({
 	stats,
 	onOpenTrajectory,
 	onOpenFile,
+	roundBadges,
+	onShowRound,
 }: {
 	messages: WebMessage[];
 	tools: Record<string, ToolCardState>;
@@ -1266,10 +1365,31 @@ export function ChatWindow({
 	/** 在本机编辑器打开工具行涉及的文件 */
 	onEditMessage?: (entryId: string, text: string) => void;
 	onOpenFile?: (path: string) => void;
+	roundBadges?: ReadonlyMap<string, RoundBadge>;
+	onShowRound?: (commit: string) => void;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
+	const widthPreference = useRef<number | null>(null);
+	const widthDrag = useRef<{ side: "left" | "right"; origin: number; width: number; pointerId: number } | null>(null);
 	const stickToBottom = useRef(true);
 	const { t } = useI18n();
+	useEffect(() => {
+		const root = rootRef.current;
+		if (!root) return;
+		const saved = Number(localStorage.getItem(CHAT_WIDTH_KEY));
+		widthPreference.current = Number.isFinite(saved) && saved >= CHAT_WIDTH_MIN ? saved : null;
+		const syncWidth = () => setChatWidth(root, window.innerWidth <= 840 ? null : widthPreference.current);
+		const observer = new ResizeObserver(syncWidth);
+		observer.observe(root);
+		window.addEventListener("resize", syncWidth);
+		syncWidth();
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", syncWidth);
+			setChatWidth(root, null);
+		};
+	}, []);
 	// 脱离底部后累计的新内容条数（回到底部按钮上的角标）
 	const [unseen, setUnseen] = useState(0);
 	/** 是否已离开底部（state 版：ref 变化不会触发渲染，静态会话翻页时按钮出不来） */
@@ -1315,7 +1435,71 @@ export function ChatWindow({
 	};
 
 	return (
-		<div className="relative flex h-full min-h-0 flex-col">
+		<div ref={rootRef} className="relative flex h-full min-h-0 flex-col">
+			{(["left", "right"] as const).map((side) => (
+				<div
+					key={side}
+					className="piweb-conversation-width-handle"
+					data-side={side}
+					role="separator"
+					aria-orientation="vertical"
+					aria-label={t.chatWidthHandle}
+					tabIndex={0}
+					onPointerDown={(event) => {
+						if (event.button !== 0 || !rootRef.current) return;
+						event.preventDefault();
+						const width = widthPreference.current ?? Math.max(544, Math.min(rootRef.current.clientWidth * 0.64, 736));
+						widthDrag.current = { side, origin: event.clientX, width, pointerId: event.pointerId };
+						event.currentTarget.setPointerCapture(event.pointerId);
+						event.currentTarget.dataset.dragging = "true";
+					}}
+					onPointerMove={(event) => {
+						const drag = widthDrag.current;
+						if (!drag || drag.pointerId !== event.pointerId || !rootRef.current) return;
+						const delta = (event.clientX - drag.origin) * (side === "right" ? 2 : -2);
+						drag.width = resolveChatWidth((widthPreference.current ?? drag.width) + delta, rootRef.current.clientWidth);
+						drag.origin = event.clientX;
+						widthPreference.current = drag.width;
+						setChatWidth(rootRef.current, drag.width);
+					}}
+					onPointerUp={(event) => {
+						const drag = widthDrag.current;
+						if (!drag || drag.pointerId !== event.pointerId) return;
+						widthDrag.current = null;
+						event.currentTarget.removeAttribute("data-dragging");
+						if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+						if (rootRef.current) {
+							const width = resolveChatWidth(drag.width, rootRef.current.clientWidth);
+							widthPreference.current = width;
+							localStorage.setItem(CHAT_WIDTH_KEY, String(width));
+							setChatWidth(rootRef.current, width);
+						}
+					}}
+					onPointerCancel={(event) => {
+						event.currentTarget.removeAttribute("data-dragging");
+						widthDrag.current = null;
+						if (rootRef.current) setChatWidth(rootRef.current, widthPreference.current);
+					}}
+					onLostPointerCapture={(event) => {
+						event.currentTarget.removeAttribute("data-dragging");
+						if (widthDrag.current) {
+							widthDrag.current = null;
+							if (rootRef.current) setChatWidth(rootRef.current, widthPreference.current);
+						}
+					}}
+					onWheel={(event) => scrollRef.current?.scrollBy({ top: event.deltaY })}
+					onKeyDown={(event) => {
+						if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && rootRef.current) {
+							event.preventDefault();
+							const delta = event.key === "ArrowRight" ? 24 : -24;
+							const width = resolveChatWidth((widthPreference.current ?? rootRef.current.clientWidth * 0.64) + delta, rootRef.current.clientWidth);
+							widthPreference.current = width;
+							localStorage.setItem(CHAT_WIDTH_KEY, String(width));
+							setChatWidth(rootRef.current, width);
+						}
+					}}
+				/>
+			))}
 			<div
 				ref={scrollRef}
 				className="min-h-0 flex-1 overflow-y-auto"
@@ -1349,6 +1533,8 @@ export function ChatWindow({
 							workingMessage={workingMessage}
 							onFork={onFork}
 							onEditMessage={onEditMessage}
+							roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
+							onShowRound={onShowRound}
 							onInspectTool={onOpenTrajectory}
 							onOpenFile={onOpenFile}
 						/>
