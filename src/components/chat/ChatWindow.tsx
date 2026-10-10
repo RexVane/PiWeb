@@ -1418,6 +1418,28 @@ export function SessionStatsBar({
 	);
 }
 
+const CHAT_WIDTH_KEY = "piweb.chatContentWidth";
+const CHAT_WIDTH_MIN = 480;
+const CHAT_WIDTH_MAX = 1200;
+
+function resolveChatWidth(width: number, viewportWidth: number): number {
+	const max = Math.max(320, Math.min(CHAT_WIDTH_MAX, viewportWidth - 64));
+	return Math.max(Math.min(CHAT_WIDTH_MIN, max), Math.min(width, max));
+}
+
+function setChatWidth(root: HTMLElement, width: number | null): void {
+	const scope = root.closest<HTMLElement>(".pi-main");
+	if (!scope) return;
+	if (width === null) {
+		scope.style.removeProperty("--dsh-chat-content-width");
+		scope.style.removeProperty("--dsh-composer-card-max-width");
+		return;
+	}
+	const resolved = resolveChatWidth(width, root.clientWidth);
+	scope.style.setProperty("--dsh-chat-content-width", `${resolved}px`);
+	scope.style.setProperty("--dsh-composer-card-max-width", `${resolved + 32}px`);
+}
+
 export function ChatWindow({
 	messages,
 	tools,
@@ -1474,10 +1496,29 @@ export function ChatWindow({
 	onRecallMessage?: RecallMessageHandler;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const rootRef = useRef<HTMLDivElement>(null);
+	const widthPreference = useRef<number | null>(null);
+	const widthDrag = useRef<{ side: "left" | "right"; origin: number; width: number; pointerId: number } | null>(null);
 	const stickToBottom = useRef(true);
 	const { t } = useI18n();
 	// 脱离底部后累计的新内容条数（回到底部按钮上的角标）
 	const [unseen, setUnseen] = useState(0);
+	useEffect(() => {
+		const root = rootRef.current;
+		if (!root) return;
+		const saved = Number(localStorage.getItem(CHAT_WIDTH_KEY));
+		widthPreference.current = Number.isFinite(saved) && saved >= CHAT_WIDTH_MIN ? saved : null;
+		const syncWidth = () => setChatWidth(root, window.innerWidth <= 840 ? null : widthPreference.current);
+		const observer = new ResizeObserver(syncWidth);
+		observer.observe(root);
+		window.addEventListener("resize", syncWidth);
+		syncWidth();
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", syncWidth);
+			setChatWidth(root, null);
+		};
+	}, []);
 	/** 是否已离开底部（state 版：ref 变化不会触发渲染，静态会话翻页时按钮出不来） */
 	const [awayFromBottom, setAwayFromBottom] = useState(false);
 	const prevLenRef = useRef(messages.length);
@@ -1535,7 +1576,71 @@ export function ChatWindow({
 	};
 
 	return (
-		<div className="relative flex h-full min-h-0 flex-col">
+		<div ref={rootRef} className="relative flex h-full min-h-0 flex-col">
+			{(["left", "right"] as const).map((side) => (
+				<div
+					key={side}
+					className="piweb-conversation-width-handle"
+					data-side={side}
+					role="separator"
+					aria-orientation="vertical"
+					aria-label="拖动调整对话宽度"
+					tabIndex={0}
+					onPointerDown={(event) => {
+						if (event.button !== 0 || !rootRef.current) return;
+						event.preventDefault();
+						const width = widthPreference.current ?? Math.max(544, Math.min(rootRef.current.clientWidth * 0.64, 736));
+						widthDrag.current = { side, origin: event.clientX, width, pointerId: event.pointerId };
+						event.currentTarget.setPointerCapture(event.pointerId);
+						event.currentTarget.dataset.dragging = "true";
+					}}
+					onPointerMove={(event) => {
+						const drag = widthDrag.current;
+						if (!drag || drag.pointerId !== event.pointerId || !rootRef.current) return;
+						const delta = (event.clientX - drag.origin) * (side === "right" ? 2 : -2);
+						drag.width = resolveChatWidth((widthPreference.current ?? drag.width) + delta, rootRef.current.clientWidth);
+						drag.origin = event.clientX;
+						widthPreference.current = drag.width;
+						setChatWidth(rootRef.current, drag.width);
+					}}
+					onPointerUp={(event) => {
+						const drag = widthDrag.current;
+						if (!drag || drag.pointerId !== event.pointerId) return;
+						widthDrag.current = null;
+						event.currentTarget.removeAttribute("data-dragging");
+						if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+						if (rootRef.current) {
+							const width = resolveChatWidth(drag.width, rootRef.current.clientWidth);
+							widthPreference.current = width;
+							localStorage.setItem(CHAT_WIDTH_KEY, String(width));
+							setChatWidth(rootRef.current, width);
+						}
+					}}
+					onPointerCancel={(event) => {
+						event.currentTarget.removeAttribute("data-dragging");
+						widthDrag.current = null;
+						if (rootRef.current) setChatWidth(rootRef.current, widthPreference.current);
+					}}
+					onLostPointerCapture={(event) => {
+						event.currentTarget.removeAttribute("data-dragging");
+						if (widthDrag.current) {
+							widthDrag.current = null;
+							if (rootRef.current) setChatWidth(rootRef.current, widthPreference.current);
+						}
+					}}
+					onWheel={(event) => scrollRef.current?.scrollBy({ top: event.deltaY })}
+					onKeyDown={(event) => {
+						if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && rootRef.current) {
+							event.preventDefault();
+							const delta = event.key === "ArrowRight" ? 24 : -24;
+							const width = resolveChatWidth((widthPreference.current ?? rootRef.current.clientWidth * 0.64) + delta, rootRef.current.clientWidth);
+							widthPreference.current = width;
+							localStorage.setItem(CHAT_WIDTH_KEY, String(width));
+							setChatWidth(rootRef.current, width);
+						}
+					}}
+				/>
+			))}
 			<div
 				ref={scrollRef}
 				className="min-h-0 flex-1 overflow-y-auto"

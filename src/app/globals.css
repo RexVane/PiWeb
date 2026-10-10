@@ -221,10 +221,46 @@ textarea::placeholder {
 	}
 }
 
+.piweb-conversation-width-handle {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	z-index: 3;
+	width: 12px;
+	cursor: col-resize;
+	touch-action: none;
+}
+.piweb-conversation-width-handle[data-side="left"] {
+	left: calc(50% - var(--dsh-chat-content-width) / 2 - 20px);
+}
+.piweb-conversation-width-handle[data-side="right"] {
+	right: calc(50% - var(--dsh-chat-content-width) / 2 - 20px);
+}
+.piweb-conversation-width-handle::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 5px;
+	width: 2px;
+	border-radius: 2px;
+	background: var(--dsw-border-l3);
+	opacity: 0;
+	transition: opacity var(--ds-duration-fast);
+}
+.piweb-conversation-width-handle:hover::after,
+.piweb-conversation-width-handle[data-dragging]::after,
+.piweb-conversation-width-handle:focus-visible::after {
+	opacity: 1;
+}
+
 @media (max-width: 840px) {
 	:root {
 		--dsh-chat-content-width: 100%;
 		--dsh-composer-card-max-width: 100%;
+	}
+	.piweb-conversation-width-handle {
+		display: none;
 	}
 
 	.pi-main > .hairline-b {
