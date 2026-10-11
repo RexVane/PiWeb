@@ -303,8 +303,6 @@ const MONO = "var(--font-mono)";
 const RAIL = "⎿";
 /** 命令输出默认露出的行数 */
 const PREVIEW_LINES = 3;
-/** 写入 / 编辑默认露出的 diff 行数 */
-const DIFF_PREVIEW = 12;
 /** 进行中的状态词：Claude Code 同款用法，闪光渐变，按用户要求用英文（两种界面语言都一样） */
 const WORKING_VERBS = ["Thinking", "Pondering", "Cogitating", "Mulling", "Percolating", "Brewing", "Simmering", "Ruminating", "Synthesizing", "Noodling", "Marinating", "Crafting"];
 /** 有步骤在闪光时 π 行只报时长；这行和状态词一样固定英文，不随界面语言变 */
@@ -525,8 +523,9 @@ const ToolStep = memo(function ToolStep({
 	const showPreview = Boolean(preview.head) || preview.lines.length > 0;
 	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
 	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));
-	const diffLines = hasDiff && diff ? (open ? diff : diff.slice(0, DIFF_PREVIEW)) : null;
-	const diffHidden = diff && diffLines && !open ? diff.length - diffLines.length : 0;
+	// 折叠时只留标题行：diff 正文整块不渲染（原来固定露出前 12 行，手机上十几次编辑
+	// 会把整段对话淹没）。标题里已经有「+N −M 行」，点标题行展开看全文。
+	const diffLines = hasDiff && diff ? (open ? diff : null) : null;
 	const diffStat = hasDiff && diff
 		? isWriteTool && !state?.patch
 			? t.diffSummary.replace("{add}", String(diff.length)).replace("{del}", "0")
@@ -541,7 +540,16 @@ const ToolStep = memo(function ToolStep({
 	};
 	return (
 		<Step kind={kind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
-			<div className="pw-line">
+			<div
+				className="pw-line"
+				role={hasDiff ? "button" : undefined}
+				tabIndex={hasDiff ? 0 : undefined}
+				aria-expanded={hasDiff ? open : undefined}
+				style={hasDiff ? { cursor: "pointer" } : undefined}
+				title={hasDiff ? (open ? t.collapseOutput : t.expandDiff) : undefined}
+				onClick={hasDiff ? toggle : undefined}
+				onKeyDown={hasDiff ? onKey : undefined}
+			>
 				{running ? <span className="pw-shimmer">{t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
 				{summary.text ? (
 					<span className="pw-arg" title={argsTitle}>{summary.text}</span>
@@ -549,6 +557,15 @@ const ToolStep = memo(function ToolStep({
 					<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
 				)}
 				{diffStat && <span className="pw-meta">{diffStat}</span>}
+				{hasDiff && (
+					<span
+						className="pw-meta"
+						aria-hidden
+						style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)" }}
+					>
+						<IconChevronRight14 size={11} />
+					</span>
+				)}
 				{deletedTarget && (
 					<span className="pw-meta" style={{ color: "var(--dsw-danger)" }} title={deletedTarget}>
 						{t.deletedFile.replace("{path}", relativizeInText(deletedTarget, cwd || ""))}
@@ -611,16 +628,9 @@ const ToolStep = memo(function ToolStep({
 			{diffLines && diffLines.length > 0 && (
 				<div className="pw-diff">
 					<DiffView lines={diffLines} language={languageForPath(argPath)} />
-					{diffHidden > 0 && (
-						<button type="button" className="pw-more" onClick={() => setOpen(true)}>
-							… {t.moreLines.replace("{n}", String(diffHidden))}
-						</button>
-					)}
-					{open && diff && diff.length > DIFF_PREVIEW && (
-						<button type="button" className="pw-more" onClick={() => setOpen(false)}>
-							{t.collapseOutput}
-						</button>
-					)}
+					<button type="button" className="pw-more" onClick={() => setOpen(false)}>
+						{t.collapseOutput}
+					</button>
 				</div>
 			)}
 			{showFullOutput && (
