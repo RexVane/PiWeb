@@ -1,0 +1,70 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { allowTunnelHost, disallowTunnelHost, managedEnginePath, piwebPort, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, tunnelEngine } from "../src/lib/remote/supervisor";
+
+const saved = process.env.PI_WEB_TRUSTED_HOSTS;
+afterEach(() => {
+	if (saved === undefined) delete process.env.PI_WEB_TRUSTED_HOSTS;
+	else process.env.PI_WEB_TRUSTED_HOSTS = saved;
+	resetRemoteSupervisor();
+});
+
+describe("tunnel host allowlist", () => {
+	it("adds the tunnel hostname without dropping existing entries", () => {
+		process.env.PI_WEB_TRUSTED_HOSTS = "other.example.com";
+		allowTunnelHost("https://abc-123.trycloudflare.com");
+		expect(process.env.PI_WEB_TRUSTED_HOSTS).toBe("other.example.com,abc-123.trycloudflare.com");
+	});
+
+	it("is idempotent and normalizes case", () => {
+		process.env.PI_WEB_TRUSTED_HOSTS = "";
+		allowTunnelHost("https://ABC.trycloudflare.com");
+		allowTunnelHost("https://abc.trycloudflare.com");
+		expect(process.env.PI_WEB_TRUSTED_HOSTS).toBe("abc.trycloudflare.com");
+	});
+
+	it("removes only the tunnel hostname when the tunnel stops", () => {
+		process.env.PI_WEB_TRUSTED_HOSTS = "other.example.com,abc.trycloudflare.com";
+		disallowTunnelHost("https://abc.trycloudflare.com");
+		expect(process.env.PI_WEB_TRUSTED_HOSTS).toBe("other.example.com");
+	});
+
+	it("ignores malformed URLs instead of corrupting the allowlist", () => {
+		process.env.PI_WEB_TRUSTED_HOSTS = "keep.example.com";
+		allowTunnelHost("not a url");
+		disallowTunnelHost("not a url");
+		expect(process.env.PI_WEB_TRUSTED_HOSTS).toBe("keep.example.com");
+	});
+});
+
+describe("remote plugin config", () => {
+	it("defaults the LAN entry on and reads its port from env", () => {
+		expect(remoteLanEnabled({})).toBe(true);
+		expect(remoteLanEnabled({ PIWEB_REMOTE_LAN: "0" })).toBe(false);
+		expect(remoteLanEnabled({ PIWEB_REMOTE_LAN: "off" })).toBe(false);
+		expect(remoteLanPort({})).toBe(30142);
+		expect(remoteLanPort({ PIWEB_REMOTE_LAN_PORT: "40100" })).toBe(40100);
+		expect(remoteLanPort({ PIWEB_REMOTE_LAN_PORT: "abc" })).toBe(30142);
+	});
+
+	it("prefers PIWEB_PORT as the forward target", () => {
+		expect(piwebPort({ PIWEB_PORT: "30500", PORT: "1" })).toBe(30500);
+		expect(piwebPort({ PORT: "30600" })).toBe(30600);
+		expect(piwebPort({})).toBe(30141);
+		expect(piwebPort({ PORT: "nope" })).toBe(30141);
+	});
+
+	it("reports an idle status before anything starts", () => {
+		resetRemoteSupervisor();
+		const status = remoteStatus();
+		expect(status.plugin).toBe("builtin-remote");
+		expect(status.lan.running).toBe(false);
+		expect(status.lan.urls).toEqual([]);
+		expect(status.public.running).toBe(false);
+		expect(status.public.url).toBeNull();
+	});
+
+	it("finds the PiWeb-managed engine under the agent directory", () => {
+		expect(managedEnginePath()).toMatch(/web-bin[\\/]cloudflared(\.exe)?$/);
+		expect(tunnelEngine()).toBeTruthy();
+	});
+});

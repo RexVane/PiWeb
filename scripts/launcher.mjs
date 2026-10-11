@@ -81,6 +81,11 @@ function isTruthyFlag(value) {
 	return flag === "1" || flag === "true" || flag === "on" || flag === "yes";
 }
 
+function isOffFlag(value) {
+	const flag = (value ?? "").trim().toLowerCase();
+	return flag === "0" || flag === "false" || flag === "off" || flag === "no";
+}
+
 /** @param {string[]} [args] @param {Environment} [env] @returns {ParsedOptions} */
 export function parseLauncherArgs(args = [], env = process.env) {
 	let port = Number(env.PORT || 30141);
@@ -118,8 +123,10 @@ export function createLaunchPlan(root, options, env = process.env) {
 		throw new Error("拒绝非本机开发模式：PI_WEB_PASSWORD 不能保护 Next 开发工具端点。请绑定 127.0.0.1，或先运行 npm run build:release 后用生产模式启动。");
 	}
 	const publicUrl = options.publicUrl ?? null;
-	// 非本机监听能被局域网直连；配了对外地址说明前面有反代或隧道。两种都算暴露面，都必须有认证。
-	const exposed = !loopback || Boolean(publicUrl);
+	// 局域网入口（「远程连接」内置插件）默认开着，等于这台机器同网段可达；
+	// 非本机监听、配了对外地址同样算暴露面。三种情况都必须有认证。
+	const lanEntry = !isOffFlag(env.PIWEB_REMOTE_LAN);
+	const exposed = !loopback || Boolean(publicUrl) || lanEntry;
 	const installation = assertInstallation(root);
 	const build = options.isDev ? null : selectProductionBuild(installation, env.PIWEB_BUILD_DIR);
 	if (!build && !loopback) {
@@ -135,8 +142,8 @@ export function createLaunchPlan(root, options, env = process.env) {
 	// 每次启动换一个启动令牌；调用方已经给出就沿用（便于测试与外部编排）。
 	if (!childEnv.PI_WEB_LAUNCH_TOKEN) childEnv.PI_WEB_LAUNCH_TOKEN = randomBytes(32).toString("base64url");
 	// 暴露面 + 没设密码 → 自动打开启动令牌认证，而不是拒绝启动。
-	// 这样「对外可达却完全没有认证」这个组合不存在，用户也不必先想好密码。
-	if (exposed && !childEnv.PI_WEB_PASSWORD && !isTruthyFlag(childEnv.PI_WEB_AUTH)) childEnv.PI_WEB_AUTH = "1";
+	// 只在用户没表态时才替它打开：显式 PI_WEB_AUTH=0 会被尊重（此时局域网入口也会自行跳过）。
+	if (exposed && !childEnv.PI_WEB_PASSWORD && !String(childEnv.PI_WEB_AUTH ?? "").trim()) childEnv.PI_WEB_AUTH = "1";
 	// 反代会把外部主机名原样转给后端，不进白名单会被判 untrusted host。
 	if (publicUrl) childEnv.PI_WEB_TRUSTED_HOSTS = mergeHostnames(childEnv.PI_WEB_TRUSTED_HOSTS, new URL(publicUrl).hostname.toLowerCase());
 	if (command === "start") childEnv.PIWEB_BUILD_DIR = build.buildDir;
@@ -331,8 +338,10 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		port += 1;
 	}
 	const url = localUrl(options.hostname, port);
+	// 内置插件要转发回 PiWeb 自己的端口；端口可能被占而 +1，所以在这里给最终值。
+	plan.env.PIWEB_PORT = String(port);
 	log(`[piweb] 启动 ${url} (${plan.command} 模式)`);
-	const authOn = Boolean(plan.env.PI_WEB_PASSWORD) || plan.env.PI_WEB_AUTH === "1";
+	const authOn = Boolean(plan.env.PI_WEB_PASSWORD) || isTruthyFlag(plan.env.PI_WEB_AUTH);
 	if (plan.env.PI_WEB_PASSWORD) log(plan.command === "dev" ? "[piweb] 开发模式仅限本机；密码不保护 Next 开发工具端点。" : "[piweb] 已启用密码认证（浏览器登录页，API 兼容 Basic 用户名 pi）");
 	else if (authOn) log("[piweb] 已启用启动令牌认证");
 	if (!isLoopback(options.hostname)) {

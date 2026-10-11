@@ -1,0 +1,385 @@
+/**
+ * 「远程连接」内置插件的控制面。它管两个监听：
+ *
+ *   1. 局域网入口 —— 手机排版注入代理，绑 0.0.0.0。默认就该有，手机连同一个 WiFi 就能用。
+ *   2. 公网入口 —— cloudflared 快速隧道，指向局域网入口。由设置页的按钮开关。
+ *
+ * 引擎（隧道实现）刻意做成可替换的：`startPublic` 只依赖「起一个进程 + 从输出里抓到
+ * https 地址」这两件事，换 ngrok / frp 时改这一个函数即可。
+ *
+ * 状态挂 globalThis：Next 的热重载会重新求值模块，不能把监听弄丢或重复起。
+ */
+import { spawn, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import os from "node:os";
+import path from "node:path";
+import { agentDir } from "../web-secret";
+import { createMobileProxy, MOBILE_FIT_CSS, MOBILE_FIT_JS } from "./mobile-proxy";
+
+export const PLUGIN_ID = "builtin-remote";
+export const DEFAULT_LAN_PORT = 30142;
+/** cloudflared 快速隧道给的地址长这样 */
+const PUBLIC_URL_PATTERN = /https:\/\/[a-z0-9][a-z0-9-]*\.trycloudflare\.com/;
+const TUNNEL_TIMEOUT_MS = 45_000;
+/** 拿到地址后等它就绪的上限：快速隧道的域名要十几秒才在全球 DNS 生效 */
+const TUNNEL_READY_TIMEOUT_MS = 60_000;
+const TUNNEL_READY_POLL_MS = 2_500;
+
+/**
+ * 探一次隧道是否真的可用。
+ *
+ * 只看 DNS 不够：域名解析出来之后边缘还可能要几秒才把请求转到这条隧道上。
+ * 所以这里发一次 HEAD，把「能连上并拿到 HTTP 响应」当作就绪标准；
+ * 4xx 也算就绪（说明请求已经打到我们的上游了），只有连不上/DNS 失败才算没就绪。
+ */
+function probeTunnel(url: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		const target = new URL(url);
+		const request = https.request({ host: target.hostname, path: "/api/health", method: "HEAD", timeout: 8_000 }, (response) => {
+			response.resume();
+			resolve(true);
+		});
+		request.on("timeout", () => { request.destroy(); resolve(false); });
+		request.on("error", () => resolve(false));
+		request.end();
+	});
+}
+
+/** 等隧道真的能连上；等不到也返回（地址已经拿到，用户至少能看到它） */
+async function waitForTunnelReady(url: string, keepGoing: () => boolean): Promise<boolean> {
+	const deadline = Date.now() + TUNNEL_READY_TIMEOUT_MS;
+	for (;;) {
+		if (!keepGoing()) return false;
+		if (await probeTunnel(url)) return true;
+		if (Date.now() >= deadline) return false;
+		await new Promise((resolve) => setTimeout(resolve, TUNNEL_READY_POLL_MS));
+	}
+}
+
+export type TunnelEngine = "cloudflared";
+
+export interface LanState {
+	running: boolean;
+	port: number | null;
+	urls: string[];
+	error: string | null;
+}
+
+export interface PublicState {
+	running: boolean;
+	url: string | null;
+	/** 地址已可访问。快速隧道拿到地址后还要十几秒域名才在全球 DNS 生效 */
+	ready: boolean;
+	engine: TunnelEngine | null;
+	/** 引擎二进制是否可用；不可用时 UI 应给出安装提示而不是「启动失败」 */
+	engineAvailable: boolean;
+	error: string | null;
+}
+
+export interface RemoteStatus {
+	plugin: typeof PLUGIN_ID;
+	/** PiWeb 自己的端口（局域网入口的转发目标） */
+	targetPort: number;
+	lan: LanState;
+	public: PublicState;
+}
+
+interface SupervisorState {
+	lan: { server: http.Server; port: number } | null;
+	tunnel: { child: ChildProcess; url: string | null; ready: boolean } | null;
+	lanError: string | null;
+	publicError: string | null;
+	enginePath: string | null;
+	engineChecked: boolean;
+}
+
+const STATE_KEY = "piweb:remote-supervisor";
+
+/**
+ * 把隧道域名并进 Host 白名单。
+ *
+ * 必须是动态的：快速隧道的域名每次启动都变，没法在启动前写进环境变量。
+ * isSafeHost 每次请求现读 process.env，所以同进程内改了立刻生效，不用重启。
+ */
+export function allowTunnelHost(url: string): void {
+	let hostname: string;
+	try {
+		hostname = new URL(url).hostname.toLowerCase();
+	} catch {
+		return;
+	}
+	const current = (process.env.PI_WEB_TRUSTED_HOSTS ?? "")
+		.split(",")
+		.map((part) => part.trim().toLowerCase())
+		.filter(Boolean);
+	if (!current.includes(hostname)) current.push(hostname);
+	process.env.PI_WEB_TRUSTED_HOSTS = current.join(",");
+}
+
+/** 隧道停了就把域名从白名单摘掉：不要给一个已经没人管的域名留后门 */
+export function disallowTunnelHost(url: string | null): void {
+	if (!url) return;
+	let hostname: string;
+	try {
+		hostname = new URL(url).hostname.toLowerCase();
+	} catch {
+		return;
+	}
+	const remaining = (process.env.PI_WEB_TRUSTED_HOSTS ?? "")
+		.split(",")
+		.map((part) => part.trim().toLowerCase())
+		.filter((part) => part && part !== hostname);
+	process.env.PI_WEB_TRUSTED_HOSTS = remaining.join(",");
+}
+
+function state(): SupervisorState {
+	const store = globalThis as Record<PropertyKey, unknown>;
+	const key = Symbol.for(STATE_KEY);
+	const existing = store[key] as SupervisorState | undefined;
+	if (existing) return existing;
+	const created: SupervisorState = { lan: null, tunnel: null, lanError: null, publicError: null, enginePath: null, engineChecked: false };
+	store[key] = created;
+	return created;
+}
+
+/** PiWeb 自己的监听端口：启动器显式给的优先 */
+export function piwebPort(env: Record<string, string | undefined> = process.env): number {
+	for (const raw of [env.PIWEB_PORT, env.PORT]) {
+		const value = Number(raw);
+		if (Number.isInteger(value) && value >= 1 && value <= 65535) return value;
+	}
+	return 30141;
+}
+
+function isOff(value: string | undefined): boolean {
+	const flag = (value ?? "").trim().toLowerCase();
+	return flag === "0" || flag === "false" || flag === "off" || flag === "no";
+}
+
+/**
+ * 局域网入口是否随服务启动。默认开 —— 「不开启也默认局域网可用」就是这个开关。
+ * 设 PIWEB_REMOTE_LAN=0 关掉。
+ */
+export function remoteLanEnabled(env: Record<string, string | undefined> = process.env): boolean {
+	return !isOff(env.PIWEB_REMOTE_LAN);
+}
+
+export function remoteLanPort(env: Record<string, string | undefined> = process.env): number {
+	const value = Number(env.PIWEB_REMOTE_LAN_PORT);
+	return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : DEFAULT_LAN_PORT;
+}
+
+/** 所有非回环 IPv4 —— 手机该用哪个地址，UI 直接列出来 */
+export function lanAddresses(): string[] {
+	const out: string[] = [];
+	for (const entries of Object.values(os.networkInterfaces())) {
+		for (const entry of entries ?? []) {
+			if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) out.push(entry.address);
+		}
+	}
+	return out;
+}
+
+export function remoteStatus(): RemoteStatus {
+	const current = state();
+	const lanPort = current.lan?.port ?? null;
+	return {
+		plugin: PLUGIN_ID,
+		targetPort: piwebPort(),
+		lan: {
+			running: Boolean(current.lan),
+			port: lanPort,
+			urls: lanPort ? lanAddresses().map((address) => `http://${address}:${lanPort}`) : [],
+			error: current.lanError,
+		},
+		public: {
+			running: Boolean(current.tunnel),
+			url: current.tunnel?.url ?? null,
+			ready: Boolean(current.tunnel?.ready),
+			engine: current.tunnel ? "cloudflared" : null,
+			engineAvailable: current.engineChecked ? current.enginePath !== null : true,
+			error: current.publicError,
+		},
+	};
+}
+
+/** PiWeb 自己管的引擎位置（与 web-secret 同一批状态文件放在 agent 目录下） */
+export function managedEnginePath(): string {
+	return path.join(agentDir(), "web-bin", process.platform === "win32" ? "cloudflared.exe" : "cloudflared");
+}
+
+/**
+ * 引擎查找顺序：
+ *   1. PIWEB_CLOUDFLARED（显式指定绝对路径）
+ *   2. PiWeb 自己管的位置（「一键安装」就放这儿）
+ *   3. PATH 上的 cloudflared
+ * 都没找到时返回 PATH 上的名字，让 spawn 报 ENOENT —— startPublic 会翻译成安装提示。
+ */
+function resolveTunnelEngine(): string {
+	const explicit = process.env.PIWEB_CLOUDFLARED?.trim();
+	if (explicit) return explicit;
+	const managed = managedEnginePath();
+	try {
+		if (fs.existsSync(managed)) return managed;
+	} catch {
+		/* 读不了就当没有 */
+	}
+	return "cloudflared";
+}
+
+/** 探测隧道引擎是否可用（结果缓存） */
+export function tunnelEngine(): string | null {
+	const current = state();
+	if (current.engineChecked) return current.enginePath;
+	current.engineChecked = true;
+	current.enginePath = resolveTunnelEngine();
+	return current.enginePath;
+}
+
+export function markEngineMissing(): void {
+	const current = state();
+	current.engineChecked = true;
+	current.enginePath = null;
+}
+
+/** 起局域网入口；已经在跑就复用。targetPort 默认转发回 PiWeb 自己，测试可改成别的上游。 */
+export async function startLan(port = DEFAULT_LAN_PORT, host = "0.0.0.0", targetPort = piwebPort()): Promise<LanState> {
+	const current = state();
+	if (current.lan) return remoteStatus().lan;
+	current.lanError = null;
+	const server = createMobileProxy({
+		targetPort,
+		css: MOBILE_FIT_CSS,
+		js: MOBILE_FIT_JS,
+		log: (message) => console.warn(message),
+	});
+	try {
+		await new Promise<void>((resolve, reject) => {
+			server.once("error", reject);
+			server.listen(port, host, resolve);
+		});
+	} catch (error) {
+		current.lanError = error instanceof Error ? error.message : String(error);
+		server.close();
+		return remoteStatus().lan;
+	}
+	current.lan = { server, port };
+	return remoteStatus().lan;
+}
+
+export async function stopLan(): Promise<void> {
+	const current = state();
+	const lan = current.lan;
+	current.lan = null;
+	if (!lan) return;
+	lan.server.closeAllConnections?.();
+	await new Promise<void>((resolve) => lan.server.close(() => resolve()));
+}
+
+/** 起公网隧道；已在跑就复用 */
+export async function startPublic(): Promise<PublicState> {
+	const current = state();
+	if (current.tunnel) return remoteStatus().public;
+	current.publicError = null;
+
+	// 公网入口转发到局域网入口，所以局域网入口必须在跑
+	if (!current.lan) await startLan();
+	const lan = remoteStatus().lan;
+	if (!lan.running || lan.port === null) {
+		current.publicError = lan.error ?? "局域网入口没能启动，公网入口无从转发";
+		return remoteStatus().public;
+	}
+
+	const binary = tunnelEngine();
+	if (!binary) {
+		current.publicError = "找不到 cloudflared";
+		return remoteStatus().public;
+	}
+
+	const child = spawn(binary, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${lan.port}`], {
+		stdio: ["ignore", "pipe", "pipe"],
+		windowsHide: true,
+	});
+	current.tunnel = { child, url: null, ready: false };
+
+	await new Promise<void>((resolve) => {
+		let settled = false;
+		const finish = (error?: string) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			if (error) current.publicError = error;
+			resolve();
+		};
+		const timer = setTimeout(() => finish("启动隧道超时：cloudflared 没有在 45 秒内给出地址"), TUNNEL_TIMEOUT_MS);
+		const scan = (chunk: Buffer) => {
+			const match = PUBLIC_URL_PATTERN.exec(chunk.toString("utf8"));
+			if (match && current.tunnel) {
+				current.tunnel.url = match[0];
+				// 域名必须先放行再算启动成功，否则第一次访问必然被 Host 校验挡成 403
+				allowTunnelHost(match[0]);
+				finish();
+			}
+		};
+		child.stdout?.on("data", scan);
+		child.stderr?.on("data", scan);
+		child.once("error", (error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") {
+				markEngineMissing();
+				current.tunnel = null;
+				finish("找不到 cloudflared：请先安装它（https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/）");
+				return;
+			}
+			finish(error.message);
+		});
+		child.once("exit", (code) => {
+			const active = current.tunnel;
+			if (active?.child === child) {
+				disallowTunnelHost(active.url);
+				current.tunnel = null;
+				finish(`cloudflared 退出了（code ${code ?? "?"}）`);
+			} else {
+				finish();
+			}
+		});
+	});
+
+	// 地址拿到了，但快速隧道的域名还要十几秒才在全球 DNS 生效。
+	// 不等它就直接报「就绪」，用户一复制地址打开就是打不开 —— 那才是真的像坏了。
+	const tunnel = current.tunnel;
+	if (tunnel?.url) {
+		const ready = await waitForTunnelReady(tunnel.url, () => current.tunnel === tunnel);
+		if (current.tunnel === tunnel) tunnel.ready = ready;
+	}
+	return remoteStatus().public;
+}
+
+export async function stopPublic(): Promise<void> {
+	const current = state();
+	const tunnel = current.tunnel;
+	current.tunnel = null;
+	if (!tunnel) return;
+	// 先摘域名再杀进程：别给一个已经没人管的域名留后门
+	disallowTunnelHost(tunnel.url);
+	await new Promise<void>((resolve) => {
+		tunnel.child.once("exit", () => resolve());
+		tunnel.child.kill();
+		// 进程已经死了或杀不掉时不要卡住调用方
+		setTimeout(resolve, 3_000).unref();
+	});
+}
+
+export async function stopAll(): Promise<void> {
+	await stopPublic();
+	await stopLan();
+}
+
+/** 仅供测试 */
+export function resetRemoteSupervisor(): void {
+	const store = globalThis as Record<PropertyKey, unknown>;
+	store[Symbol.for(STATE_KEY)] = {
+		lan: null, tunnel: null, lanError: null, publicError: null, enginePath: null, engineChecked: false,
+	} satisfies SupervisorState;
+}

@@ -338,7 +338,17 @@ describe("launcher lifecycle without real child processes", () => {
 		expect(logs.some((line) => line.includes("就绪"))).toBe(true);
 	});
 
-	it("opens the plain URL when authentication is off", async () => {
+	it("turns authentication on by default because the LAN entry is on by default", async () => {
+		const root = await installation();
+		// 局域网入口默认开 → 同网段可达 → 认证必须默认开，否则等于白送
+		expect(createLaunchPlan(root, parseLauncherArgs([], {}), {}).env.PI_WEB_AUTH).toBe("1");
+		// 用户显式关掉就尊重它（此时局域网入口会自行跳过）
+		expect(createLaunchPlan(root, parseLauncherArgs([], {}), { PI_WEB_AUTH: "0" }).env.PI_WEB_AUTH).toBe("0");
+		// 设了密码就不需要令牌认证标记
+		expect(createLaunchPlan(root, parseLauncherArgs([], {}), { PI_WEB_PASSWORD: "p" }).env.PI_WEB_AUTH).toBeUndefined();
+	});
+
+	it("opens the plain URL when authentication is explicitly off", async () => {
 		const root = await installation();
 		await productionBuild(root);
 		const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
@@ -347,7 +357,7 @@ describe("launcher lifecycle without real child processes", () => {
 		await runLauncher({
 			root,
 			args: [],
-			env: {},
+			env: { PI_WEB_AUTH: "0", PIWEB_REMOTE_LAN: "0" },
 			dependencies: {
 				spawn: vi.fn(() => { setTimeout(() => child.emit("exit", 0), 40); return child; }),
 				probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true),
