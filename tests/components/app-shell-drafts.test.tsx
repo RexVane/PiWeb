@@ -9,7 +9,7 @@ const model = { id: "test-model", name: "Test", provider: "test", reasoning: fal
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
-vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {} }) }));
+vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {}, selectLatest: () => {} }) }));
 vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>

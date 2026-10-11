@@ -21,7 +21,6 @@ const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((
 /** 会话/工作区路径比较（Windows 大小写与分隔符差异不该影响判断） */
 const samePath = (a: string, b: string): boolean =>
 	a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) => m.ProjectPanel), { ssr: false });
 const DrawerPanel = dynamic(() => import("@/components/DrawerPanel").then((m) => m.DrawerPanel), { ssr: false });
 const GrowthConsentDialog = dynamic(() => import("@/components/ProjectPanel").then((m) => m.GrowthConsentDialog), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
@@ -50,9 +49,6 @@ const SIDEBAR_MIN = 264;
 const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 280;
 const SIDEBAR_COLLAPSED = 56;
-const PROJECT_MIN = 280;
-const PROJECT_MAX = 640;
-const PROJECT_DEFAULT = 380;
 // 最右一列(网格列,不是浮层):轨迹详情 ⇄ 抽屉共用同一列,所以宽度也只有一套。
 // 下界取原抽屉(顶部入口列表 + 内容),上界取原详情栏(diff 与轨迹详情需要更宽)。
 const RIGHT_MIN = 280;
@@ -127,9 +123,6 @@ export function AppShell() {
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 	/** 最右一列(轨迹详情 / 抽屉共用)的宽度 */
 	const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
-	/** 项目栏（侧栏与对话之间的第四列：项目生长可视化） */
-	const [projectOpen, setProjectOpen] = useState(false);
-	const [projectWidth, setProjectWidth] = useState(PROJECT_DEFAULT);
 	// Drafts are parent-owned data, never a replayable last insertion/upload event.
 	// A hero draft keeps its identity when newSession switches the rendered composer.
 	const composerDrafts = useRef(new Map<string, ChatDraft>());
@@ -159,13 +152,18 @@ export function AppShell() {
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
-	const [dragging, setDragging] = useState<"sidebar" | "right" | "project" | null>(null);
+	const [dragging, setDragging] = useState<"sidebar" | "right" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
-	const [drawerSection, setDrawerSection] = useState<DrawerSection>("import");
+	// 默认进「项目」:项目栏降级成抽屉入口后,它是最常用的那一个
+	const [drawerSection, setDrawerSection] = useState<DrawerSection>("project");
 	/** 右侧抽屉(最右一列):入口列表 + 内容 */
 	const [drawerOpen, setDrawerOpen] = useState(false);
+	/** 打开抽屉时「落到最新轮」只跳过这一次(点 badge 指定轮次时用) */
+	const skipLatestOnce = useRef(false);
+	/** useGrowth 的"落到最新轮":它在 AppShell 里、不随抽屉卸载,所以必须显式调用 */
+	const growthSelectLatest = useRef<() => void>(() => {});
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
@@ -174,19 +172,10 @@ export function AppShell() {
 	useEffect(() => {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
 		setRightWidth(restoreRightWidth());
-		setProjectWidth(restore("piweb.projectW", PROJECT_DEFAULT));
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
-		setProjectOpen(localStorage.getItem("piweb.projectOpen") === "1");
 		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
 	}, []);
-	const toggleProject = useCallback((next?: boolean) => {
-		setProjectOpen((cur) => {
-			const v = next ?? !cur;
-			localStorage.setItem("piweb.projectOpen", v ? "1" : "0");
-			return v;
-		});
-	}, []);
-	/** 右侧抽屉开关(与项目栏同口径:记忆在 localStorage) */
+	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
 		setDrawerOpen((cur) => {
 			const v = next ?? !cur;
@@ -194,17 +183,27 @@ export function AppShell() {
 			return v;
 		});
 	}, []);
-	// Ctrl/⌘+Shift+E：切换项目栏（与 VS Code 资源管理器同键）
+	/** 切到某个抽屉入口并打开抽屉(顶栏图标 / 点 badge 都用这条) */
+	const openDrawerSection = useCallback(
+		(section: DrawerSection) => {
+			setDrawerSection(section);
+			setSelected(null);
+			toggleDrawer(true);
+		},
+		[toggleDrawer],
+	);
+	// Ctrl/⌘+Shift+E：切换最右一列（抽屉 / 轨迹详情）
 	useEffect(() => {
 		const h = (e: KeyboardEvent) => {
 			if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e") {
 				e.preventDefault();
-				toggleProject();
+				if (selected) setSelected(null);
+				else toggleDrawer();
 			}
 		};
 		document.addEventListener("keydown", h);
 		return () => document.removeEventListener("keydown", h);
-	}, [toggleProject]);
+	}, [toggleDrawer, selected]);
 
 	useEffect(() => {
 		const query = window.matchMedia("(max-width: 840px)");
@@ -291,18 +290,15 @@ export function AppShell() {
 
 	// ---------- 拖拽 ----------
 	const onDrag = useCallback(
-		(side: "sidebar" | "right" | "project") => (e: React.PointerEvent) => {
+		(side: "sidebar" | "right") => (e: React.PointerEvent) => {
 			e.preventDefault();
 			setDragging(side);
 			const startX = e.clientX;
-			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : rightWidth;
+			const startW = side === "sidebar" ? sidebarWidth : rightWidth;
 			const move = (ev: PointerEvent) => {
 				if (side === "sidebar") {
 					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
 					setSidebarWidth(w);
-				} else if (side === "project") {
-					const w = Math.max(PROJECT_MIN, Math.min(PROJECT_MAX, startW + (ev.clientX - startX)));
-					setProjectWidth(w);
 				} else {
 					// 最右一列:左缘往左拖是变宽(与原来的详情栏、抽屉同向)
 					const w = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startW - (ev.clientX - startX)));
@@ -320,14 +316,13 @@ export function AppShell() {
 			// 触摸/笔输入被系统手势打断时只触发 pointercancel，不处理会永久泄漏监听器
 			window.addEventListener("pointercancel", up);
 		},
-		[sidebarWidth, rightWidth, projectWidth],
+		[sidebarWidth, rightWidth],
 	);
 
 	useEffect(() => {
 		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
 		if (dragging === "right") persist("piweb.drawerW", rightWidth);
-		if (dragging === "project") persist("piweb.projectW", projectWidth);
-	}, [dragging, sidebarWidth, rightWidth, projectWidth]);
+	}, [dragging, sidebarWidth, rightWidth]);
 
 	const toggleSidebar = () => {
 		const next = !sidebarCollapsed;
@@ -623,11 +618,27 @@ export function AppShell() {
 		sessionPath: currentPath,
 		liveRounds: state.growth.rounds,
 		runtimeError: state.growth.error,
-		active: projectOpen || viewer.state.open,
+		active: drawerOpen || viewer.state.open,
 		watchRounds: Boolean(currentPath),
 		connected: state.connected,
 	});
 	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy }), [viewer]);
+	// 打开面板时落在最新轮:useGrowth 活在 AppShell 里、不随抽屉卸载,state 不会自己回到最新,
+	// 所以每次从「关」变「开」(或换了工作区)都显式选一次最新轮。
+	// 新轮次出现时不再自动跳——用户打开面板后停在哪一轮就是哪一轮。
+	growthSelectLatest.current = growth.selectLatest;
+	useEffect(() => {
+		if (!drawerOpen) {
+			// 关掉时清掉标记:否则"抽屉已经开着时点 badge"留下的标记会吞掉下一次打开
+			skipLatestOnce.current = false;
+			return;
+		}
+		if (skipLatestOnce.current) {
+			skipLatestOnce.current = false;
+			return;
+		}
+		growthSelectLatest.current();
+	}, [drawerOpen, panelCwd]);
 	const roundBadges = useMemo(() => {
 		const map = new Map<string, RoundBadge>();
 		for (const round of growth.rounds) {
@@ -637,11 +648,16 @@ export function AppShell() {
 		}
 		return map;
 	}, [growth.rounds]);
+	// 点对话里的轮次 badge:打开抽屉、切到「项目」入口,并选中**那一轮**(不是最新轮)。
+	// skipLatestOnce 让下面「打开即落最新轮」的 effect 放这一拍过去,不要覆盖掉刚选中的那轮。
 	const growthSelect = growth.select;
 	const showRound = useCallback((commit: string) => {
-		toggleProject(true);
+		skipLatestOnce.current = true;
+		setDrawerSection("project");
+		setSelected(null);
+		toggleDrawer(true);
 		growthSelect(commit);
-	}, [toggleProject, growthSelect]);
+	}, [toggleDrawer, growthSelect]);
 	const jumpToChat = useCallback((messageId: string) => {
 		requestAnimationFrame(() => {
 			const node = document.querySelector<HTMLElement>(`[data-role="user"][data-message-id="${CSS.escape(messageId)}"]`);
@@ -656,42 +672,13 @@ export function AppShell() {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
 	}, [currentId, title]);
 
-	// 网格列(宽屏):侧栏 | 项目栏 | 对话区 | 最右一列(轨迹详情 ⇄ 抽屉)
+	// 网格列(宽屏):侧栏 | 对话区 | 最右一列(轨迹详情 ⇄ 抽屉)。项目栏已降级成
+	// 抽屉里的一个入口,不再单独占一列,所以是 3 列而不是 4 列。
 	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
 	// 最右一列只有一条宽度(rightWidth):详情栏与抽屉合并后不再各占一列。
 	const rightColumnVisible = Boolean(selected) || drawerOpen;
-	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${
-		projectOpen ? `${projectWidth}px` : "0px"
-	} minmax(0,1fr) ${rightColumnVisible ? `${rightWidth}px` : "0px"}`;
-	const projectColumn = projectOpen && (
-		<div
-			className="min-h-0 overflow-hidden"
-			style={isNarrow ? {
-				position: "fixed",
-				inset: "0 auto 0 0",
-				width: "min(88vw, 420px)",
-				zIndex: 88,
-				boxShadow: "var(--dsw-elevation-prominent)",
-			} : undefined}
-		>
-			<ProjectPanel
-				growth={growth}
-				workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}
-				cwd={panelCwd}
-				hasSession={Boolean(currentPath)}
-				running={isStreaming}
-				onJumpToChat={jumpToChat}
-				onOpenFile={openFileNode}
-				onReference={insertIntoComposer}
-				onOpenEditor={openInEditor}
-				gitRefreshKey={panelRefreshKey}
-				onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
-				onOpenGit={() => { setSelected(null); setDrawerSection("git"); toggleDrawer(true); }}
-				onClose={() => toggleProject(false)}
-				onError={setError}
-			/>
-		</div>
-	);
+	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px minmax(0,1fr) ${
+		rightColumnVisible ? `${rightWidth}px` : "0px"}`;
 
 	// 最右一列(宽屏是网格列,窄屏是贴左右的 fixed 覆盖层):轨迹详情 ⇄ 抽屉互斥。
 	// selected(点对话里的工具行)优先——它临时接管这一列;关掉后自动回落回抽屉,
@@ -719,6 +706,15 @@ export function AppShell() {
 					sessionId={currentId}
 					promptRefreshKey={currentId}
 					gitRefreshKey={panelRefreshKey}
+					growth={growth}
+					workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}
+					hasSession={Boolean(currentPath)}
+					running={isStreaming}
+					onOpenFileNode={openFileNode}
+					onReference={insertIntoComposer}
+					onOpenEditor={openInEditor}
+					onJumpToChat={jumpToChat}
+					onError={setError}
 					onOpenContent={(path, content) => viewer.openStatic(path, content)}
 					onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
 					onOpenFile={openInEditor}
@@ -797,8 +793,7 @@ export function AppShell() {
 				/>
 			</div>
 
-			{/* 四列网格中始终保留项目列，否则关闭项目栏时会话区会落进 0px 列。 */}
-			{!isNarrow && (projectColumn || <div aria-hidden="true" />)}
+			{/* 三列网格:侧栏 | 会话区 | 最右一列(项目栏已进抽屉,不再有独立的项目列) */}
 
 			{/* 会话区 */}
 			<div className="pi-main flex min-h-0 min-w-0 flex-col">
@@ -861,11 +856,16 @@ export function AppShell() {
 									<button
 										type="button"
 										className="icon-btn"
-										style={{ width: 30, height: 30, background: projectOpen ? "var(--dsw-active)" : undefined }}
+										style={{ width: 30, height: 30, background: drawerOpen && !selected && drawerSection === "project" ? "var(--dsw-active)" : undefined }}
 										title={`${t.projectPanel} (Ctrl/⌘+Shift+E)`}
 										aria-label={t.projectPanel}
 										data-testid="project-toggle"
-										onClick={() => toggleProject()}
+										onClick={() => {
+											// 项目栏已降级成抽屉的一个入口:这个图标现在切到该入口并打开抽屉
+											// (与 prompt-panel-toggle 同口径);已停在该入口时再点收起。
+											if (drawerOpen && !selected && drawerSection === "project") toggleDrawer(false);
+											else openDrawerSection("project");
+										}}
 									>
 										<IconFolderOpenOutline16 size={15} />
 									</button>
@@ -1024,7 +1024,7 @@ export function AppShell() {
 			</div>
 
 			{/* 宽屏:最右一列(轨迹详情优先,否则抽屉);关闭时补占位列。
-			    网格列数与顺序是固定的四列,少一个 item 会让后面的元素落错列。 */}
+			    网格列数与顺序是固定的三列,少一个 item 会让后面的元素落错列。 */}
 			{!isNarrow && (rightColumnVisible ? rightColumn : <div aria-hidden="true" />)}
 
 			{/* 拖拽手柄 */}
@@ -1041,19 +1041,6 @@ export function AppShell() {
 					style={{ left: `calc(100vw - ${rightWidth}px - 4px)`, zIndex: 40 }}
 					onPointerDown={onDrag("right")}
 				/>
-			)}
-			{!isNarrow && projectOpen && (
-				<div
-					className="fixed top-0 h-full w-2 cursor-col-resize"
-					style={{ left: (sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth) + projectWidth - 4, zIndex: 40 }}
-					onPointerDown={onDrag("project")}
-				/>
-			)}
-			{isNarrow && projectOpen && (
-				<>
-					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleProject(false)} aria-label={t.close} />
-					{projectColumn}
-				</>
 			)}
 			{/* 窄屏最右一列:贴右边滑出(轨迹详情与抽屉共用,遮罩关闭回到对话) */}
 			{isNarrow && rightColumnVisible && (

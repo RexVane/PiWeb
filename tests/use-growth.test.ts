@@ -64,7 +64,8 @@ describe("useGrowth timeline", () => {
 		expect(fetchMock.mock.calls.map(([url]) => String(url).split("?")[0])).toEqual(["/api/growth"]);
 		expect(result.current.rounds.map((r) => [r.kind, r.n])).toEqual([["round", 1], ["user", null]]);
 		expect(result.current.selected?.commit).toBe(h("c"));
-		expect(result.current.following).toBe(true);
+		// 选中是一个具体轮次(不再有 following 这层「跟随」含义)
+		expect(result.current.selected).not.toBeNull();
 	});
 
 	it("uses the commit's own changes for a round and diffs from the session start for the session total", async () => {
@@ -94,10 +95,10 @@ describe("useGrowth timeline", () => {
 
 		act(() => result.current.setScope("round"));
 		act(() => result.current.select(h("a")));
-		expect(result.current.following).toBe(false);
+		// 选中第 1 轮后就是第 1 轮,不再是「跟随」(selected 落到具体一轮)
+		expect(result.current.selected?.commit).toBe(h("a"));
 		expect(result.current.changes).toEqual(c1);
 		act(() => result.current.next());
-		expect(result.current.following).toBe(true);
 		expect(result.current.selected?.commit).toBe(h("b"));
 	});
 
@@ -109,6 +110,36 @@ describe("useGrowth timeline", () => {
 		await waitFor(() => expect(result.current.rounds).toHaveLength(1));
 		rerender({ ...initialProps, watchRounds: true, liveRounds: [fetched, round("b", "1", "2")] });
 		expect(result.current.rounds.map((r) => [r.commit[0], r.n])).toEqual([["a", 1], ["b", 2]]);
+	});
+});
+
+describe("useGrowth round selection", () => {
+	// 新语义:默认不跟随 / 重开落最新轮 / 新轮次出现时不跳
+	it("keeps the selected round when a new round arrives, and selectLatest() goes back to the newest", async () => {
+		const base = [round("a", "0", "1"), round("b", "1", "2")];
+		const fetchMock = vi.fn(async (url: string) => (url.startsWith("/api/growth") ? response({ available: true, rounds: base }) : response({ entries: [], nextOffset: null })));
+		vi.stubGlobal("fetch", fetchMock);
+		const { result, rerender } = renderHook((props) => useGrowth(props), { initialProps: { ...initialProps, watchRounds: true } });
+		await waitFor(() => expect(result.current.rounds).toHaveLength(2));
+		// 选中第 1 轮
+		act(() => result.current.select(h("a")));
+		expect(result.current.selected?.commit).toBe(h("a"));
+		// 新的一轮到了:选中不动(停在用户正在看的那轮,不跟着跳)
+		rerender({ ...initialProps, watchRounds: true, liveRounds: [...base, round("c", "2", "3")] });
+		expect(result.current.rounds).toHaveLength(3);
+		expect(result.current.selected?.commit).toBe(h("a"));
+		// 显式回到最新轮
+		act(() => result.current.selectLatest());
+		expect(result.current.selected?.commit).toBe(h("c"));
+	});
+
+	it("falls back to the newest round when the selected commit is gone, then pins that selection", async () => {
+		const fetchMock = vi.fn(async (url: string) => (url.startsWith("/api/growth") ? response({ available: true, rounds: [round("a", "0", "1")] }) : response({ entries: [], nextOffset: null })));
+		vi.stubGlobal("fetch", fetchMock);
+		const { result } = renderHook((props) => useGrowth(props), { initialProps: { ...initialProps, watchRounds: true } });
+		await waitFor(() => expect(result.current.rounds).toHaveLength(1));
+		// 还没选过:selected 走 ?? latest 兜底,且被固化成一个具体 commit
+		expect(result.current.selected?.commit).toBe(h("a"));
 	});
 });
 

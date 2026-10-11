@@ -11,12 +11,15 @@
  */
 import { PromptPanel } from "@/components/PromptPanel";
 import { GitPanel } from "@/components/GitPanel";
+import { ProjectPanel } from "@/components/ProjectPanel";
 import { SessionImportSection } from "@/components/SessionImportSection";
-import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16 } from "@/components/icons";
+import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
+import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
+import type { TreeNode } from "@/lib/growth-tree";
 
-/** 抽屉里的入口,顺序即顶部入口列表的显示顺序 */
-export type DrawerSection = "prompts" | "git" | "import";
+/** 抽屉里的入口,顺序即顶部入口列表的显示顺序:项目 → 提示词 → Git 详情 → 会话导入 */
+export type DrawerSection = "project" | "prompts" | "git" | "import";
 
 export function DrawerPanel({
 	cwd,
@@ -26,6 +29,15 @@ export function DrawerPanel({
 	sessionId,
 	promptRefreshKey,
 	gitRefreshKey,
+	growth,
+	workspaceName,
+	hasSession,
+	running,
+	onOpenFileNode,
+	onReference,
+	onOpenEditor,
+	onJumpToChat,
+	onError,
 	onOpenContent,
 	onAskCommit,
 	onOpenFile,
@@ -40,6 +52,21 @@ export function DrawerPanel({
 	promptRefreshKey?: string | number | null;
 	/** Git 面板重新拉取的键(回合结束 / pi 改了文件) */
 	gitRefreshKey?: number;
+	/** 项目入口用的生长视图状态(AppShell 里 useGrowth 不随抽屉卸载) */
+	growth: GrowthApi;
+	workspaceName: string;
+	hasSession: boolean;
+	/** 本会话正在运行:时间轴末尾显示「本轮进行中」 */
+	running?: boolean;
+	/** 项目树打开文件(打开居中查看器) */
+	onOpenFileNode: (node: TreeNode) => void;
+	/** 项目树的「引用到输入框」 */
+	onReference?: (path: string) => void;
+	/** 项目树的「在本机编辑器打开」(相对仓库根的路径) */
+	onOpenEditor?: (path: string) => void;
+	/** 跳到对话里这一轮的提问(用户消息 entryId) */
+	onJumpToChat?: (messageId: string) => void;
+	onError: (message: string) => void;
 	/** 提示词正文交给居中查看器 */
 	onOpenContent?: (path: string, content: string) => void;
 	/** 把「请提交当前变更」填进输入框 */
@@ -51,6 +78,7 @@ export function DrawerPanel({
 
 	const entries: { id: DrawerSection; label: string; icon: React.ReactNode }[] = [
 		// 入口只用现有的 i18n 键;「提示词」是入口短名,和面板标题「提示词来源」区分开
+		{ id: "project", label: t.projectPanel, icon: <IconFolderOpenOutline16 size={15} /> },
 		{ id: "prompts", label: t.drawerPrompts, icon: <IconAgentPresetOutline16 size={15} /> },
 		{ id: "git", label: t.gitDetails, icon: <IconGitOutline16 size={15} /> },
 		// 「导入会话」的设置栏已移除,文案复用在这里
@@ -73,18 +101,19 @@ export function DrawerPanel({
 				</div>
 			)}
 
-			{/* 入口列表:激活态用 --dsw-active,与设置左导航同一套写法 */}
-			<div className="flex flex-col gap-0.5 px-2 pb-1 pt-2" aria-label={t.drawerSections}>
+			{/* 入口列表：横向一排图标，不显示文字（名字放 title / aria-label）。
+			    激活态复用设置页那套下划线（.settings-tab-underline），不自创样式。 */}
+			<div className="hairline-b flex items-stretch gap-1 px-2" role="tablist" aria-label={t.drawerSections}>
 				{entries.map((entry) => (
 					<button
 						key={entry.id}
 						type="button"
-						className="flex h-8 items-center gap-2 rounded-lg px-2.5 text-left transition-colors"
-						style={{
-							fontSize: 13,
-							background: section === entry.id ? "var(--dsw-active)" : "transparent",
-							color: section === entry.id ? "var(--dsw-label-primary)" : "var(--dsw-label-secondary)",
-						}}
+						role="tab"
+						aria-selected={section === entry.id}
+						className="settings-tab-underline flex flex-1 items-center justify-center rounded-t-lg"
+						data-active={section === entry.id}
+						title={entry.label}
+						aria-label={entry.label}
 						onMouseEnter={(e) => {
 							if (section !== entry.id) e.currentTarget.style.background = "var(--dsw-hover)";
 						}}
@@ -94,18 +123,35 @@ export function DrawerPanel({
 						onClick={() => onSectionChange(entry.id)}
 						data-testid={`drawer-entry-${entry.id}`}
 					>
-						{section === entry.id ? <span style={{ display: "inline-flex", color: "var(--dsw-accent)" }}>{entry.icon}</span> : entry.icon}
-						<span className="min-w-0 flex-1 truncate">{entry.label}</span>
+						{entry.icon}
 					</button>
 				))}
 			</div>
 
-			{/* 所选入口的内容:提示词 / Git 自己管滚动与内边距,导入段落沿用抽屉的留白 */}
+			{/* 所选入口的内容:项目 / 提示词 / Git 三个面板自带标题行与滚动,导入段落沿用抽屉的留白 */}
 			<div className="flex min-h-0 flex-1 flex-col">
 				{section === "import" ? (
 					<div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
 						<SessionImportSection cwd={cwd} />
 					</div>
+				) : section === "project" ? (
+					<ProjectPanel
+						growth={growth}
+						workspaceName={workspaceName}
+						cwd={cwd}
+						hasSession={hasSession}
+						running={running}
+						onOpenFile={onOpenFileNode}
+						onReference={onReference}
+						onOpenEditor={onOpenEditor}
+						onJumpToChat={onJumpToChat}
+						gitRefreshKey={gitRefreshKey}
+						onAskCommit={onAskCommit}
+						// 「Git 详情」按钮切到抽屉的 git 入口(项目栏不再自己开一个面板)
+						onOpenGit={() => onSectionChange("git")}
+						onClose={onClose}
+						onError={onError}
+					/>
 				) : section === "prompts" ? (
 					// 三个面板的关闭按钮都收起整个抽屉(它们自己不再有"关闭"以外的语义)
 					<PromptPanel cwd={cwd} sessionId={sessionId} refreshKey={promptRefreshKey} onOpenContent={onOpenContent} onClose={onClose} />

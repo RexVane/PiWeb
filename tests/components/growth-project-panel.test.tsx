@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { buildTree } from "@/lib/growth-tree";
 
 const growth: GrowthApi = {
-	available: true, loading: false, error: null, rounds: [], selected: null, following: true, scope: "round", range: null, changes: [],
+	available: true, loading: false, error: null, rounds: [], selected: null, scope: "round", range: null, changes: [],
 	tree: buildTree([], []), filePaths: [], expanded: new Set(), fresh: new Set(),
-	follow() {}, select() {}, prev() {}, next() {}, setScope() {}, toggleDir() {}, revealPath() {}, expandAll() {}, collapseAll() {},
+	selectLatest() {}, select() {}, prev() {}, next() {}, setScope() {}, toggleDir() {}, revealPath() {}, expandAll() {}, collapseAll() {},
 	async expandLazy() {}, async refresh() {}, async recordNow() { return null; },
 };
 
@@ -30,7 +30,7 @@ describe("ProjectPanel rounds", () => {
 		const select = vi.fn();
 		render(
 			<ProjectPanel
-				growth={{ ...growth, rounds: [piRound, userEdit], selected: piRound, following: false, changes: piRound.changes, select }}
+				growth={{ ...growth, rounds: [piRound, userEdit], selected: piRound, changes: piRound.changes, select }}
 				workspaceName="workspace" cwd="/workspace" hasSession running onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} onJumpToChat={onJumpToChat}
 			/>,
 		);
@@ -47,6 +47,61 @@ describe("ProjectPanel rounds", () => {
 		fireEvent.click(bars[1]);
 		expect(select).toHaveBeenCalledWith(h("c"));
 		expect(screen.getByTestId("growth-timeline").textContent).toMatch(/第 1\/1 轮|Round 1\/1/);
+		// 底部不再有「跟随 / 跟随中」开关
+		expect(screen.queryByRole("button", { name: /跟随|Follow/ })).toBeNull();
+	});
+
+	it("opens the round picker from the counter and jumps to a clamped round number", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		const select = vi.fn();
+		const round2: GrowthEntry = { ...piRound, commit: h("d"), parent: h("c"), tree: h("4"), parentTree: h("3"), n: 2, title: "第二轮" };
+		render(
+			<ProjectPanel
+				growth={{ ...growth, rounds: [piRound, round2], selected: round2, changes: piRound.changes, select }}
+				workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()}
+			/>,
+		);
+		// 计数本身就是打开列表的按钮(不是跟随开关)
+		fireEvent.click(screen.getByTestId("growth-round-picker"));
+		const list = screen.getByTestId("growth-round-list");
+		// 每行 = 轮号 + 提问首行 + 时间
+		expect(list.textContent).toContain("把保存按钮改成红色");
+		expect(list.textContent).toContain("14:32");
+		fireEvent.click(within(list).getByText(/第二轮/));
+		expect(select).toHaveBeenCalledWith(h("d"));
+		expect(screen.queryByTestId("growth-round-list")).toBeNull();
+
+		// 「输入轮号」:越界夹到有效范围
+		select.mockClear();
+		fireEvent.click(screen.getByTestId("growth-round-picker"));
+		fireEvent.click(screen.getByTestId("growth-round-jump"));
+		const input = screen.getByTestId("growth-round-input") as HTMLInputElement;
+		fireEvent.change(input, { target: { value: "99" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(select).toHaveBeenCalledWith(h("d"));
+
+		// 非法输入不跳
+		select.mockClear();
+		fireEvent.click(screen.getByTestId("growth-round-picker"));
+		fireEvent.click(screen.getByTestId("growth-round-jump"));
+		const input2 = screen.getByTestId("growth-round-input") as HTMLInputElement;
+		fireEvent.change(input2, { target: { value: "abc" } });
+		fireEvent.keyDown(input2, { key: "Enter" });
+		expect(select).not.toHaveBeenCalled();
+	});
+
+	it("closes the round picker on Escape", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		render(
+			<ProjectPanel
+				growth={{ ...growth, rounds: [piRound], selected: piRound, changes: piRound.changes }}
+				workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByTestId("growth-round-picker"));
+		expect(screen.getByTestId("growth-round-list")).toBeTruthy();
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByTestId("growth-round-list")).toBeNull();
 	});
 
 	it("shows a notice when recording finds no new changes", async () => {

@@ -2,8 +2,12 @@
 
 /**
  * useGrowth：项目生长视图的状态（每轮一个 git commit）。
- * 时间轴（拉取 + 实时 commit 去重合并）、轮次导航 / 默认跟随、范围（本轮 / 本会话累计）、
+ * 时间轴（拉取 + 实时 commit 去重合并）、轮次导航:选中某个具体轮次,不再有「跟随」这层含义、范围（本轮 / 本会话累计）、
  * 所选轮的文件与变更、当前磁盘全量目录懒加载、展开状态与新变更动画。
+ *
+ * 选中语义:selectedCommit 永远是一个具体 commit(不再用 null 表示「跟随最新」)。
+ * 新轮次到来时不动选中——用户停在他正在看的那轮;要回到最新轮由调用方显式 selectLatest()
+ * (打开面板时就是这么做的)。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { allDirPaths, buildTree, dirsToReveal, graftLazy, type TreeNode } from "@/lib/growth-tree";
@@ -28,8 +32,8 @@ export interface GrowthApi {
 	error: string | null;
 	/** 本会话的时间轴（时间正序，不含工作区基线） */
 	rounds: GrowthEntry[];
+	/** 所选轮:永远是具体一轮;选中的 commit 不在当前列表里时回落最新一轮 */
 	selected: GrowthEntry | null;
-	following: boolean;
 	scope: GrowthScope;
 	/** 所选范围的 from/to tree（查看器取 diff 用） */
 	range: { from: string; to: string } | null;
@@ -41,8 +45,9 @@ export interface GrowthApi {
 	expanded: Set<string>;
 	/** 最新一轮刚改动的路径（入场动画） */
 	fresh: Set<string>;
-	follow(): void;
-	/** 选中某一轮（时间轴柱）；选到最后一轮等于回到跟随 */
+	/** 显式选中最新一轮(打开面板时落在最新轮);没有轮次时不动 */
+	selectLatest(): void;
+	/** 选中某一轮（时间轴柱）；选中最新一轮也只是普通选中,不再是「回到跟随」 */
 	select(commit: string): void;
 	prev(): void;
 	next(): void;
@@ -239,7 +244,7 @@ export function useGrowth({
 		[cwd],
 	);
 
-	// 切会话：回到跟随、清实时相关状态
+	// 切会话：清空选中(selected 会回落到新会话的最新一轮)、清实时相关状态
 	useEffect(() => {
 		setSelectedCommit(null);
 		setFresh(new Set());
@@ -342,12 +347,20 @@ export function useGrowth({
 		};
 	}, [active, cwd, diskPulse, beginRequest, isCurrent, requestScope, updateLazy]);
 
-	const following = selectedCommit === null;
+	// 选中永远是一个具体轮次;选中的 commit 不在当前列表里(被截断 / 换了会话)时回落最新一轮
 	const selected = useMemo(
-		() => (following ? latest : rounds.find((round) => round.commit === selectedCommit) ?? latest) ?? null,
-		[following, latest, rounds, selectedCommit],
+		() => (rounds.find((round) => round.commit === selectedCommit) ?? latest) ?? null,
+		[latest, rounds, selectedCommit],
 	);
 	const sessionStart = rounds[0]?.parentTree ?? null;
+
+	// 把「回落来的」选中固化成具体一轮:selectedCommit 为空(null,还没选过)或指向的 commit
+	// 已不在列表里时,selected 走的是 ?? latest 兜底。若不在下一拍把它写实,之后新的一轮到来
+	// 会让兜底跟着 latest 一起往前跳——用户正看着旧的一轮却被拽走。写实一次之后,新轮次就不再影响选中。
+	useEffect(() => {
+		if (!selected || selectedCommit === selected.commit) return;
+		setSelectedCommit(selected.commit);
+	}, [selected, selectedCommit]);
 
 	// 所选轮的文件清单；缓存身份包含工作区与会话，迟到结果不写缓存。
 	useEffect(() => {
@@ -440,11 +453,13 @@ export function useGrowth({
 		return [...paths];
 	}, [files, selected, lazyChildren, key]);
 
-	// 新的一轮到来（跟随中）：自动展开改动路径上的目录（用户手动收起过的除外）+ 入场动画
+	// 新的一轮到来（不再跟随）：用户正看着最新这轮时,自动展开改动路径上的目录（用户手动收起过的除外）+ 入场动画
 	useEffect(() => {
-		if (!latest || !following || latest.commit === lastRevealed.current) return;
+		if (!latest || latest.commit === lastRevealed.current) return;
 		const first = lastRevealed.current === "";
 		lastRevealed.current = latest.commit;
+		// 用户停在旧的一轮看历史时,新轮次不打扰他:不展开、不改选中
+		if (selected && selected.commit !== latest.commit) return;
 		// 打开面板时已有的历史不播动画，只对之后新提交的一轮
 		if (first && !liveRounds.some((round) => round.commit === latest.commit)) return;
 		const list = latest.changes;
@@ -461,14 +476,16 @@ export function useGrowth({
 		setFresh(new Set(list.map((c) => c.path)));
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 		freshTimer.current = setTimeout(() => setFresh(new Set()), FRESH_MS);
-	}, [latest, following, liveRounds, persistExpanded]);
+	}, [latest, selected, liveRounds, persistExpanded]);
+	/** 用户主动选中的那一轮(决定是否自动展开目录);打开面板落到最新轮不写它 */
+	const expandCommit = useRef<string | null>(null);
 	useEffect(() => () => {
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 	}, []);
 
-	// 手动选轮：展开这一轮改动的目录
+	// 手动选轮（用户主动点选）：展开这一轮改动的目录
 	useEffect(() => {
-		if (following || !selected) return;
+		if (!selected || expandCommit.current !== selected.commit) return;
 		const list = changes.slice(0, REVEAL_LIMIT);
 		if (!list.length) return;
 		const dirs = dirsToReveal(list);
@@ -478,25 +495,31 @@ export function useGrowth({
 			for (const d of dirs) next.add(d);
 			return next;
 		});
-	}, [following, selected, changes]);
+	}, [selected, changes]);
 
-	const follow = useCallback(() => {
-		setSelectedCommit(null);
+	/** 显式选到最新一轮:打开面板时用,不触发上面的目录自动展开 */
+	const selectLatest = useCallback(() => {
+		const last = rounds[rounds.length - 1];
+		if (last) setSelectedCommit(last.commit);
+	}, [rounds]);
+	const select = useCallback((commit: string) => {
+		expandCommit.current = commit;
+		setSelectedCommit(commit);
 	}, []);
-	const select = useCallback(
-		(commit: string) => setSelectedCommit(rounds.length && rounds[rounds.length - 1].commit === commit ? null : commit),
-		[rounds],
-	);
 	const prev = useCallback(() => {
 		if (!selected) return;
 		const idx = rounds.findIndex((round) => round.commit === selected.commit);
-		if (idx > 0) setSelectedCommit(rounds[idx - 1].commit);
+		if (idx > 0) {
+			expandCommit.current = rounds[idx - 1].commit;
+			setSelectedCommit(rounds[idx - 1].commit);
+		}
 	}, [selected, rounds]);
 	const next = useCallback(() => {
 		if (!selected) return;
 		const idx = rounds.findIndex((round) => round.commit === selected.commit);
 		if (idx < 0 || idx >= rounds.length - 1) return;
-		setSelectedCommit(idx + 1 === rounds.length - 1 ? null : rounds[idx + 1].commit);
+		expandCommit.current = rounds[idx + 1].commit;
+		setSelectedCommit(rounds[idx + 1].commit);
 	}, [selected, rounds]);
 
 	const toggleDir = useCallback(
@@ -592,7 +615,6 @@ export function useGrowth({
 		error: runtimeError ?? (fetched.key === key ? fetched.error : null) ?? (range && rangeChanges?.key === `${key}|${range.from}..${range.to}` ? rangeChanges.error : null) ?? null,
 		rounds,
 		selected,
-		following,
 		scope,
 		range,
 		changes,
@@ -600,7 +622,7 @@ export function useGrowth({
 		filePaths,
 		expanded,
 		fresh,
-		follow,
+		selectLatest,
 		select,
 		prev,
 		next,

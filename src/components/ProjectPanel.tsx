@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * 项目栏（侧栏与对话之间的第四列）：项目生长 = 每轮一个 git commit。
+ * 项目栏:右侧抽屉的「项目」入口(不再独占网格一列)。项目生长 = 每轮一个 git commit。
  * 头部：工作区名 + 立即记录 / 收起；所选轮：提问首行、时间、文件数与行数、在对话里看；
  * 工具行：范围（本轮 / 本会话累计）、只看改动、筛选；中间：项目树（GrowthTree）；
- * 底部：时间轴每轮一根柱（高度 = 改动行数，灰色细柱 = 你在两轮之间自己的修改），默认跟随最新一轮。
+ * 底部：时间轴每轮一根柱（高度 = 改动行数，灰色细柱 = 你在两轮之间自己的修改），默认不再跟随,底部计数可点开轮数列表跳到任意一轮。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GrowthTree } from "@/components/GrowthTree";
@@ -142,6 +142,13 @@ export function ProjectPanel({
 	const [onlyChanges, setOnlyChanges] = useState(true);
 	const [recording, setRecording] = useState(false);
 	const [notice, setNotice] = useState("");
+	/** 轮数列表(底部计数点开) */
+	const [roundPickerOpen, setRoundPickerOpen] = useState(false);
+	/** 列表顶部「输入轮号...」已就地把那一行变成输入框 */
+	const [jumpEditing, setJumpEditing] = useState(false);
+	const [jumpValue, setJumpValue] = useState("");
+	const roundPickerRef = useRef<HTMLDivElement>(null);
+	const roundListRef = useRef<HTMLDivElement>(null);
 	const [gitState, setGitState] = useState<{ cwd: string; info: GitInfo | null; error?: string } | null>(null);
 	const git = gitState?.cwd === cwd ? gitState.info : null;
 	const gitError = gitState?.cwd === cwd ? gitState.error ?? git?.statusError : undefined;
@@ -177,6 +184,43 @@ export function ProjectPanel({
 		railRef.current?.querySelector<HTMLElement>(`[data-commit="${selected.commit}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
 	}, [selected]);
 	const selectedIdx = selected ? rounds.findIndex((round) => round.commit === selected.commit) : -1;
+
+	// 轮数列表:打开时自动滚到当前轮;Esc / 点外部关闭
+	useEffect(() => {
+		if (!roundPickerOpen) {
+			setJumpEditing(false);
+			setJumpValue("");
+			return;
+		}
+		requestAnimationFrame(() => {
+			roundListRef.current?.querySelector('[data-selected]')?.scrollIntoView({ block: "center" });
+		});
+		const onPointerDown = (e: MouseEvent) => {
+			if (!roundPickerRef.current?.contains(e.target as Node)) setRoundPickerOpen(false);
+		};
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				e.stopPropagation();
+				setRoundPickerOpen(false);
+			}
+		};
+		document.addEventListener("mousedown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [roundPickerOpen]);
+	/** 跳到第 n 轮(轮号从 1 起,只数 pi 的轮次);越界夹到有效范围,非法输入不跳 */
+	const jumpToRound = (raw: string) => {
+		const parsed = Number.parseInt(raw.trim(), 10);
+		if (Number.isNaN(parsed) || piRounds === 0) return;
+		const n = Math.max(1, Math.min(piRounds, parsed));
+		const round = rounds.find((item) => item.n === n);
+		if (!round) return;
+		growth.select(round.commit);
+		setRoundPickerOpen(false);
+	};
 	const conflicts = git?.files.filter((file) => file.kind === "conflict").length ?? 0;
 	const staged = git?.files.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length ?? 0;
 	const unstaged = git?.files.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length ?? 0;
@@ -204,8 +248,10 @@ export function ProjectPanel({
 	const emptyText = !cwd || !hasSession ? t.growthNoSession : growth.loading && !rounds.length ? t.growthLoading : !growth.available ? t.growthUnavailable : rounds.length ? undefined : t.growthNoRounds;
 	const statusText = selected?.status === "aborted" ? t.growthStatusAborted : selected?.status === "error" ? t.growthStatusError : "";
 
+	// 项目面板现在是抽屉的一个入口(不再独占网格一列):.pw-project 自带的右描边在抽屉里
+	// 会变成贴在窗口最右边的一条多余发丝线,所以这里去掉;背景沿用侧栏填充色即可。
 	return (
-		<div className="pw-project flex h-full min-h-0 flex-col" data-testid="project-panel">
+		<div className="pw-project flex h-full min-h-0 flex-1 flex-col" style={{ borderRight: "none" }} data-testid="project-panel">
 			{/* 头部 */}
 			<div className="flex items-center gap-1.5 px-3 pt-3 pb-1.5">
 				<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, fontWeight: 600 }} title={cwd}>
@@ -366,16 +412,101 @@ export function ProjectPanel({
 						<button className="icon-btn" style={{ width: 20, height: 20 }} title={t.growthNext} onClick={growth.next} disabled={selectedIdx < 0 || selectedIdx >= rounds.length - 1}>
 							<IconChevronRight14 size={12} />
 						</button>
-						<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-secondary)" }}>
-							{selected?.n
-								? t.growthRoundPosition.replace("{current}", String(selected.n)).replace("{total}", String(piRounds))
-								: selected
-									? t.growthKindUser
-									: t.growthRoundPosition.replace("{current}", "0").replace("{total}", String(piRounds))}
-						</span>
-						<button type="button" className="pw-chip" data-active={growth.following} onClick={growth.follow} title={t.growthFollow}>
-							{growth.following ? t.growthFollowing : t.growthFollow}
-						</button>
+						{/* 计数可点开轮数列表:单击直接弹列表(不做双击变输入框,避免 250ms 单双击
+						    判定拖慢弹出);「输入轮号」是列表里一个固定入口,选中后当场变数字输入框 */}
+						<div className="relative min-w-0 flex-1">
+							<button
+								type="button"
+								className="w-full truncate rounded px-1 text-left"
+								style={{ color: "var(--dsw-label-secondary)", background: roundPickerOpen ? "var(--dsw-active)" : undefined }}
+								title={t.growthPickRound}
+								aria-haspopup="listbox"
+								aria-expanded={roundPickerOpen}
+								data-testid="growth-round-picker"
+								onClick={() => setRoundPickerOpen((v) => !v)}
+							>
+								{selected?.n
+									? t.growthRoundPosition.replace("{current}", String(selected.n)).replace("{total}", String(piRounds))
+									: selected
+										? t.growthKindUser
+										: t.growthRoundPosition.replace("{current}", "0").replace("{total}", String(piRounds))}
+							</button>
+							{roundPickerOpen && (
+								<div
+									ref={roundPickerRef}
+									className="popover absolute bottom-7 left-0 z-50 flex w-[268px] max-w-[calc(100vw-24px)] flex-col"
+									role="listbox"
+									aria-label={t.growthPickRound}
+									data-testid="growth-round-list"
+								>
+									{/* 「输入轮号」入口固定在最上面:选中后它自己变成数字输入框 */}
+									{jumpEditing ? (
+										<div className="px-1.5 pb-1">
+											<input
+												autoFocus
+												value={jumpValue}
+												inputMode="numeric"
+												placeholder={t.growthRoundJump}
+												title={t.growthRoundJumpHint}
+												data-testid="growth-round-input"
+												className="w-full rounded-md px-1.5 py-1"
+												style={{ fontSize: 12.5, background: "var(--dsw-hover)" }}
+												onChange={(e) => setJumpValue(e.target.value)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter") {
+														e.preventDefault();
+														jumpToRound(jumpValue);
+													}
+												}}
+											/>
+										</div>
+									) : (
+										<button
+											type="button"
+											className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors"
+											style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}
+											onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
+											onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+											data-testid="growth-round-jump"
+											onClick={() => {
+												setJumpValue("");
+												setJumpEditing(true);
+											}}
+										>
+											{t.growthRoundJump}
+										</button>
+									)}
+									{/* 轮次列表:当前轮高亮,打开时自动滚到它 */}
+									<div ref={roundListRef} className="min-h-0 max-h-[260px] overflow-y-auto border-t pt-1" style={{ borderColor: "var(--dsw-border-l1)" }}>
+										{rounds.map((round) => (
+											<button
+												key={round.commit}
+												type="button"
+												role="option"
+												aria-selected={selected?.commit === round.commit}
+												data-selected={selected?.commit === round.commit || undefined}
+												className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors"
+												style={{ background: selected?.commit === round.commit ? "var(--dsw-active)" : "transparent" }}
+												onMouseEnter={(e) => {
+													if (selected?.commit !== round.commit) e.currentTarget.style.background = "var(--dsw-hover)";
+												}}
+												onMouseLeave={(e) => {
+													if (selected?.commit !== round.commit) e.currentTarget.style.background = "transparent";
+												}}
+												title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)}`}
+												onClick={() => {
+													growth.select(round.commit);
+													setRoundPickerOpen(false);
+												}}
+											>
+												<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5 }}>{roundTitle(round, tt)}</span>
+												<span className="flex-none" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtTime(round.ts)}</span>
+											</button>
+										))}
+									</div>
+								</div>
+							)}
+						</div>
 					</div>
 				</div>
 			)}
