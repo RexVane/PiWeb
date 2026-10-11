@@ -607,6 +607,24 @@ function touch(m: Managed): void {
 	m.lastActive = Date.now();
 }
 
+const warmedResourceCwds = new Set<string>();
+
+/**
+ * 打开会话的首个快照要等资源发现（扩展 / 技能 / AGENTS.md / prompt 模板）跑完，本机实测约
+ * 140ms；侧栏一拿到会话列表就把最可能被点开的那个工作区先发现掉，用户点开时直接命中缓存。
+ * 每个 cwd 只做一次，最多两个（别把一堆工作区的扩展全加载起来），失败静默。
+ */
+export function warmSessionResources(cwds: string[]): void {
+	for (const cwd of cwds) {
+		if (!cwd || warmedResourceCwds.size >= 2) return;
+		const key = process.platform === "win32" ? cwd.toLowerCase() : cwd;
+		if (warmedResourceCwds.has(key)) continue;
+		warmedResourceCwds.add(key);
+		if (peekResourceLoader(cwd)) continue;
+		void resourceLoaderReady(cwd).catch(() => undefined);
+	}
+}
+
 export function getManaged(sessionPath: string): Managed {
 	let m = sessions.get(sessionPath);
 	if (!m) {

@@ -4,6 +4,7 @@
  */
 import path from "node:path";
 import fs from "node:fs";
+import { readJsonObjectSync } from "./agent-config";
 import {
 	type ModelRuntime as PiModelRuntime,
 	type SettingsManager,
@@ -62,12 +63,9 @@ export type ProjectTrustState = {
 };
 
 function readDefaultProjectTrust(): "ask" | "always" | "never" {
-	try {
-		const raw = JSON.parse(fs.readFileSync(path.join(getAgentDir(), "settings.json"), "utf8")) as { defaultProjectTrust?: string };
-		return raw.defaultProjectTrust === "always" || raw.defaultProjectTrust === "never" ? raw.defaultProjectTrust : "ask";
-	} catch {
-		return "ask";
-	}
+	// 同步读且被 getSettingsManager / 资源指纹反复调用：走统一缓存（文件没变就不重新读盘解析）
+	const raw = readJsonObjectSync(path.join(getAgentDir(), "settings.json")) as { defaultProjectTrust?: string };
+	return raw.defaultProjectTrust === "always" || raw.defaultProjectTrust === "never" ? raw.defaultProjectTrust : "ask";
 }
 
 /**

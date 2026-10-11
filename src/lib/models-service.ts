@@ -11,6 +11,7 @@ import { BlockList, isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { filterModelsByPiScope } from "./models/model-scope";
+import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
 import { reloadSessionsForCwd } from "./agent-manager";
@@ -67,8 +68,24 @@ let builtInProviderIdsPromise: Promise<Set<string>> | null = null;
 let listCache: { at: number; value: Promise<{ providers: ProviderView[]; models: ModelView[] }> } | null = null;
 const LIST_TTL_MS = 5_000;
 
+/**
+ * 认证探测结果单独缓存：目录只活 5 秒，但「这个 provider 能不能用」在一次会话里几乎不变。
+ * 设置面板每次打开都会重建目录，没有这层缓存就要为每个已配置 provider 重跑一次网络往返
+ * （单次超时 5 秒），面板首屏因此抖动。
+ */
+const authCheckCache = new Map<string, { at: number; ready: boolean; source?: string; error?: string }>();
+const AUTH_CHECK_TTL_MS = 60_000;
+
 export function invalidateModelList(): void {
 	listCache = null;
+	authCheckCache.clear();
+	// 凭证/自定义 provider 变了，auth.json 的读盘缓存也要作废（按文件名作废：这里不该去解析 agent 目录）
+	invalidateJsonFilesNamed("auth.json");
+}
+
+/** 目录版本戳：路由层用它决定能不能复用已经压好的响应体 */
+export function modelListStamp(): string {
+	return listCache ? String(listCache.at) : "none";
 }
 
 /** Read the unmodified SDK catalog through its public modelsPath:null option. */
@@ -123,7 +140,7 @@ export async function listModelsForPiWeb(): Promise<{ providers: ProviderView[];
 async function readStoredAuthTypes(): Promise<Map<string, "api_key" | "oauth">> {
 	const out = new Map<string, "api_key" | "oauth">();
 	try {
-		const parsed = JSON.parse(await fs.readFile(path.join(getAgentDir(), "auth.json"), "utf8")) as Record<string, any>;
+		const parsed = await readJsonObjectSafe(path.join(getAgentDir(), "auth.json")) as Record<string, any>;
 		const entries: Array<[string, any]> = [
 			...Object.entries(parsed ?? {}),
 			...Object.entries(parsed?.providers ?? {}),
@@ -165,12 +182,20 @@ async function listModelsUncached(): Promise<{
 			let resolvedAuthSource: string | undefined;
 			let authError: string | undefined;
 			if (auth?.configured === true || authFastPath) {
-				try {
-					const checked = await rt.checkAuth(pid, { signal: AbortSignal.timeout(5000) });
-					authReady = checked !== undefined;
-					resolvedAuthSource = checked?.source;
-				} catch (error) {
-					authError = error instanceof Error ? error.message : String(error);
+				const cached = authCheckCache.get(pid);
+				if (cached && Date.now() - cached.at < AUTH_CHECK_TTL_MS) {
+					authReady = cached.ready;
+					resolvedAuthSource = cached.source;
+					authError = cached.error;
+				} else {
+					try {
+						const checked = await rt.checkAuth(pid, { signal: AbortSignal.timeout(5000) });
+						authReady = checked !== undefined;
+						resolvedAuthSource = checked?.source;
+					} catch (error) {
+						authError = error instanceof Error ? error.message : String(error);
+					}
+					authCheckCache.set(pid, { at: Date.now(), ready: authReady, source: resolvedAuthSource, error: authError });
 				}
 			}
 			return { pid, p, auth, authFastPath, authReady, resolvedAuthSource, authError };

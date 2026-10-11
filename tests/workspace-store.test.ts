@@ -69,6 +69,37 @@ describe("PiWeb workspace registry", () => {
 		expect(await getAliases()).toEqual({});
 	});
 
+	it("serves repeated polls from the in-memory snapshot without rewriting or taking the lock", async () => {
+		const workspace = path.join(tempDir, "polled");
+		await addWorkspace(workspace);
+		const target = path.join(tempDir, "web-workspaces.json");
+		const before = await fs.stat(target);
+		for (let i = 0; i < 3; i += 1) {
+			expect(await registerCwds([workspace])).toContain(path.resolve(workspace));
+		}
+		const after = await fs.stat(target);
+		expect(after.mtimeMs).toBe(before.mtimeMs);
+		expect(after.ctimeMs).toBe(before.ctimeMs);
+		// 读路径不再创建锁目录：只读家目录 / 杀软 / 残留锁都不该让会话列表 500
+		expect((await fs.readdir(tempDir)).filter((name) => name.endsWith(".lock"))).toEqual([]);
+		expect(await listAdded()).toContain(path.resolve(workspace));
+
+		// 真有新 cwd 时仍然走原来的加锁写入
+		const fresh = path.join(tempDir, "fresh");
+		expect(await registerCwds([fresh])).toContain(path.resolve(fresh));
+		expect(await listAdded()).toEqual([path.resolve(workspace), path.resolve(fresh)]);
+	});
+
+	it("picks up an external rewrite instead of serving a stale snapshot", async () => {
+		await addWorkspace(path.join(tempDir, "one"));
+		expect(await listAdded()).toHaveLength(1);
+		// 模拟另一个进程（或终端 pi）改写注册表：内容变化必须立刻可见
+		await fs.writeFile(path.join(tempDir, "web-workspaces.json"), JSON.stringify({
+			workspaces: [path.resolve(tempDir, "two"), path.resolve(tempDir, "three")],
+		}));
+		expect(await listAdded()).toEqual([path.resolve(tempDir, "two"), path.resolve(tempDir, "three")]);
+	});
+
 	it("removes only the workspace registration and keeps its sessions archived", async () => {
 		const workspace = path.join(tempDir, "workspace");
 		const archived = path.join(tempDir, "session.jsonl");

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { listSessions } from "@/lib/session-reader";
-import { activeStatus } from "@/lib/agent-manager";
+import { activeStatus, warmSessionResources } from "@/lib/agent-manager";
 import { getWorkspaceRegistry, registerCwds } from "@/lib/workspace-store";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +10,8 @@ export async function GET(req: Request) {
 	try {
 		const q = new URL(req.url).searchParams.get("q") ?? undefined;
 		const sessions = await listSessions(q);
+		// 侧栏一拿到列表就预热最近那个工作区的资源发现（约 140ms），别等用户点开会话才做
+		warmSessionResources(sessions.slice(0, 1).map((session) => session.cwd));
 		await registerCwds(sessions.map((session) => session.cwd));
 		const workspaceRegistry = await getWorkspaceRegistry();
 		// 侧栏每 3 秒轮询：内容没变就 304，浏览器复用缓存体（no-cache = 每次都回源校验，不会用陈旧数据）

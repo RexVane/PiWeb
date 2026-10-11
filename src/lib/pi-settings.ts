@@ -5,6 +5,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { invalidateJsonFile, readJsonObject } from "./agent-config";
 import { getAgentDir, reloadSettingsManagers } from "./pi";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 
@@ -30,17 +31,13 @@ const DEFAULTS: PiSettings = {
 	retry: { enabled: true, maxRetries: 3, baseDelayMs: 2000 },
 };
 
+/** settings.json 走统一缓存：文件没变就不重复读盘解析（每次快照 / 模型目录都会读它） */
+function settingsFile(): string {
+	return path.join(getAgentDir(), "settings.json");
+}
+
 async function readSettingsFileStrict(): Promise<Record<string, unknown>> {
-	let text: string;
-	try {
-		text = await fs.readFile(path.join(getAgentDir(), "settings.json"), "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-		throw error;
-	}
-	const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("settings.json must contain a JSON object");
-	return parsed as Record<string, unknown>;
+	return readJsonObject(settingsFile());
 }
 
 /** enabledModels 是 pi 的模型范围；没写或写错就不过滤 PiWeb 的选择器 */
@@ -103,7 +100,7 @@ export function validatePiSettingsPatch(value: unknown): { compaction?: Partial<
 
 export async function patchPiSettings(value: unknown): Promise<void> {
 	const patch = validatePiSettingsPatch(value);
-	const file = path.join(getAgentDir(), "settings.json");
+	const file = settingsFile();
 	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
 		const raw = await readSettingsFileStrict();
 		if (patch.compaction) raw.compaction = { ...section(raw, "compaction"), ...patch.compaction };
@@ -116,6 +113,7 @@ export async function patchPiSettings(value: unknown): Promise<void> {
 		} finally {
 			await fs.rm(temporary, { force: true }).catch(() => undefined);
 		}
+		invalidateJsonFile(file);
 	}));
 	// 正在运行的会话每次压缩/重试都从 SettingsManager 读：让它们重新读盘，改动立即生效
 	await reloadSettingsManagers();

@@ -20,6 +20,7 @@ const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * @property {string} [root]
  * @property {{log?: (message: string) => void, probePort?: typeof probePort,
  * isPiWebRunning?: typeof isPiWebRunning, openBrowser?: (url: string) => Promise<void>,
+ * warmFirstPaint?: typeof warmFirstPaint,
  * spawn?: (command: string, args: string[], options: import('node:child_process').SpawnOptions) => LauncherChild}} [dependencies]
  */
 
@@ -142,6 +143,56 @@ export async function isPiWebRunning(base, { fetchImpl = fetch, timeoutMs = 1500
 	}
 }
 
+/** 预热要打的四个首屏路由（会话列表 / 工作区 / 模型目录 / pi 设置） */
+export const FIRST_PAINT_ROUTES = ["/api/sessions", "/api/workspaces", "/api/models", "/api/pi-settings"];
+
+/** @param {number} ms @param {AbortSignal} [signal] */
+function delay(ms, signal) {
+	return new Promise((resolve) => {
+		const timer = setTimeout(resolve, ms);
+		timer.unref?.();
+		signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+	});
+}
+
+/**
+ * 首屏预热：生产模式下，Next 服务器对**第一个动态 API 请求**要一次性付出 2.4~3.3 秒的
+ * 模块加载成本（本机实测：`/api/version` 首次 2559~3566ms、第二次 4~10ms；页面路由与
+ * `/api/health` 不吃这笔账）。浏览器首屏正好撞在这笔成本上，于是"页面出来了、列表还在转圈"。
+ *
+ * 这里在子进程刚起来时就后台打一次最便宜的路由吃掉它，再预热首屏真正要用的四个路由。
+ * 只等端口起来 + 身份确认，绝不阻塞启动；失败一律静默（预热属于优化，不是启动的前置条件）。
+ *
+ * @param {string} base
+ * @param {{fetchImpl?: typeof fetch, password?: string, timeoutMs?: number, waitMs?: number,
+ * pollMs?: number, check?: typeof isPiWebRunning, signal?: AbortSignal}} [options]
+ * @returns {Promise<boolean>} 是否完成了管线预热
+ */
+export async function warmFirstPaint(base, { fetchImpl = fetch, password, timeoutMs = 20_000, waitMs = 60_000, pollMs = 100, check = isPiWebRunning, signal } = {}) {
+	const timeoutFor = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs));
+	// 身份确认不带凭据（与 isPiWebRunning 的既有约定一致）：端口可能被别的进程抢走。
+	const deadline = Date.now() + waitMs;
+	for (;;) {
+		if (signal?.aborted) return false;
+		if (await check(base, { fetchImpl, timeoutMs: Math.min(1500, timeoutMs), signal })) break;
+		if (Date.now() >= deadline) return false;
+		await delay(pollMs, signal);
+	}
+	const headers = password ? { authorization: `Basic ${Buffer.from(`pi:${password}`).toString("base64")}` } : undefined;
+	const get = async (route) => {
+		try {
+			const response = await fetchImpl(new URL(route, base), { credentials: "omit", redirect: "error", headers, signal: timeoutFor() });
+			// 只需让服务端把这条路由跑完；响应体要么丢弃，要么读干净以释放连接。
+			await response.arrayBuffer().catch(() => undefined);
+		} catch {
+			/* 预热失败不影响启动 */
+		}
+	};
+	await get("/api/version");
+	for (const route of FIRST_PAINT_ROUTES) void get(route);
+	return true;
+}
+
 /** @param {number} port @param {string} hostname @returns {Promise<'busy' | 'free' | NodeJS.ErrnoException>} */
 export function probePort(port, hostname) {
 	return new Promise((resolve) => {
@@ -229,14 +280,25 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	});
 	const controller = new AbortController();
 	let timer;
+	// 首屏预热：开发模式每次请求都要现场编译，预热只会白占 CPU，因此只在生产模式下做。
+	let warmPromise = null;
+	if (plan.command !== "dev" && env.PIWEB_SKIP_WARMUP !== "1") {
+		const warm = dependencies.warmFirstPaint ?? warmFirstPaint;
+		warmPromise = Promise.resolve(warm(url, { password: env.PI_WEB_PASSWORD, signal: controller.signal })).then(() => true, () => false);
+	}
 	const ready = async (attempt = 0) => {
-		if (controller.signal.aborted || attempt > 120) return;
+		if (controller.signal.aborted || attempt > 240) return;
 		if (await checkHealth(url, { signal: controller.signal })) {
 			if (controller.signal.aborted) return;
+			if (warmPromise) {
+				log("[piweb] 预热首屏…");
+				await warmPromise;
+				if (controller.signal.aborted) return;
+			}
 			log(`[piweb] 就绪：${url}`);
 			if (!options.noOpen) await browse(url);
 		} else if (!controller.signal.aborted) {
-			timer = setTimeout(() => void ready(attempt + 1), 500);
+			timer = setTimeout(() => void ready(attempt + 1), 250);
 			timer.unref();
 		}
 	};

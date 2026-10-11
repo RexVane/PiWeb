@@ -66,14 +66,62 @@ async function write(data: WorkspaceFile, target: string): Promise<void> {
 	}
 }
 
+function emptyRegistry(): WorkspaceFile {
+	return { workspaces: [], aliases: {}, archivedSessions: [], removedWorkspaces: [] };
+}
+
+interface Snapshot {
+	path: string;
+	stamp: string;
+	data: WorkspaceFile;
+}
+
+let snapshot: Snapshot | null = null;
+
+/** 校验戳：mtime + ctime + 大小 + inode 任一变化就回源（写到一半、被别的进程改写、原子替换都能看出来） */
+function stampOf(stat: { mtimeMs: number; ctimeMs: number; size: number; ino: number }): string {
+	return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${stat.ino}`;
+}
+
+/**
+ * 读注册表：按校验戳复用的进程内快照。
+ *
+ * 读不需要排他锁——这里以前走 withSettingsWriteLock + withExternalSettingsLock，
+ * 于是侧栏每 3 秒的一次轮询都要在 ~/.pi/agent 里建出再删掉一个 `.lock` 目录；
+ * 只读家目录、杀软扫描、或另一个 pi 进程留着锁时，整个会话列表会直接 500 并每次重试 2 秒。
+ * 写路径仍然是「锁 + 原子替换」，所以并发读只会看到旧版或新版整体。
+ * 返回值只读：要改数据走 mutate()。
+ */
+async function readCached(target: string): Promise<WorkspaceFile> {
+	let stat;
+	try {
+		stat = await fs.stat(target);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		snapshot = null;
+		return emptyRegistry();
+	}
+	const stamp = stampOf(stat);
+	if (snapshot && snapshot.path === target && snapshot.stamp === stamp) return snapshot.data;
+	const data = await readFile(target);
+	snapshot = { path: target, stamp, data };
+	return data;
+}
+
 async function read(): Promise<WorkspaceFile> {
-	const target = file();
-	return withSettingsWriteLock(target, () => readFile(target));
+	return readCached(file());
 }
 
 async function mutate<T>(change: (data: WorkspaceFile, target: string) => Promise<T> | T): Promise<T> {
 	const target = file();
-	return withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => change(await readFile(target), target)));
+	return withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
+		try {
+			return await change(await readFile(target), target);
+		} finally {
+			// 写完（或失败）都让下一次读重新取戳，避免把内存快照留在旧内容上
+			snapshot = null;
+		}
+	}));
 }
 
 export async function listAdded(): Promise<string[]> {
@@ -167,22 +215,38 @@ export async function addWorkspace(dir: string): Promise<{ workspaces: string[];
 }
 
 export async function registerCwds(cwds: string[]): Promise<string[]> {
-	return mutate(async (data, target) => {
+	const target = file();
+	// 快路径：侧栏每 3 秒轮询一次，绝大多数时候没有任何新 cwd。
+	// 先在内存快照上判断，没有新增就不取锁、不写盘、不读文件。
+	const current = await readCached(target);
+	const removedKeys = new Set((current.removedWorkspaces ?? []).map(pathKey));
+	const knownKeys = new Set(current.workspaces.map(pathKey));
+	let missing = false;
+	for (const cwd of cwds) {
+		if (!cwd || typeof cwd !== "string") continue;
+		const key = pathKey(path.resolve(cwd));
+		if (removedKeys.has(key) || knownKeys.has(key)) continue;
+		knownKeys.add(key);
+		missing = true;
+	}
+	if (!missing) return current.workspaces;
+
+	return mutate(async (data, writeTarget) => {
 		let changed = false;
-		const removedKeys = new Set((data.removedWorkspaces ?? []).map(pathKey));
+		const removed = new Set((data.removedWorkspaces ?? []).map(pathKey));
 		const existingKeys = new Set(data.workspaces.map(pathKey));
 
 		for (const cwd of cwds) {
 			if (!cwd || typeof cwd !== "string") continue;
 			const norm = path.resolve(cwd);
 			const key = pathKey(norm);
-			if (!removedKeys.has(key) && !existingKeys.has(key)) {
+			if (!removed.has(key) && !existingKeys.has(key)) {
 				data.workspaces.push(norm);
 				existingKeys.add(key);
 				changed = true;
 			}
 		}
-		if (changed) await write(data, target);
+		if (changed) await write(data, writeTarget);
 		return data.workspaces;
 	});
 }

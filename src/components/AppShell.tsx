@@ -204,6 +204,13 @@ export function AppShell() {
 		};
 	}, []);
 
+	// Markdown 分块（react-markdown + highlight.js 常用语言集，实测 472KB）空闲预取：
+	// 首屏不为它付出下载成本，等真正打开会话时通常已经就绪，不会看到正文空窗。
+	useEffect(() => {
+		const timer = setTimeout(() => { void import("@/components/MarkdownBlock"); }, 1200);
+		return () => clearTimeout(timer);
+	}, []);
+
 	// 切换会话时清掉轨迹页的选中态并收起详情栏
 	useEffect(() => {
 		setSelected(null);

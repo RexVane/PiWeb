@@ -9,6 +9,7 @@ import {
 	listModels,
 	listModelsForPiWeb,
 	loginState,
+	modelListStamp,
 	providerUsage,
 	readCustomProviders,
 	removeApiKey,
@@ -19,17 +20,28 @@ import {
 
 export const dynamic = "force-dynamic";
 
-/** 1300+ 个模型的目录有 240KB～420KB；Next 的压缩层实测没有压这条响应，这里自己 gzip（浏览器透明解压） */
-function jsonMaybeGzip(req: Request, payload: unknown): Response {
+/**
+ * 完整目录 482KB、精简目录 271KB，未压缩发送太浪费；这里自己 gzip。
+ * gzip 是主线程同步操作，设置面板开关一次会连着请求好几次，所以按目录版本戳复用压好的字节：
+ * 目录没变（5 秒 TTL 内、且没人改配置）就不再重新压一遍。
+ */
+const gzipCache = new Map<string, { at: number; body: Uint8Array }>();
+const GZIP_CACHE_TTL_MS = 5_000;
+
+function jsonMaybeGzip(req: Request, payload: unknown, stamp: string): Response {
 	const body = JSON.stringify(payload);
 	const accept = req.headers.get("accept-encoding") ?? "";
-	if (!/\bgzip\b/.test(accept) || body.length < 2048) {
-		return new Response(body, { headers: { "Content-Type": "application/json; charset=utf-8" } });
+	const headers = { "Content-Type": "application/json; charset=utf-8", Vary: "Accept-Encoding", "Cache-Control": "no-store" };
+	if (!/\bgzip\b/.test(accept) || body.length < 2048) return new Response(body, { headers });
+	const key = `${stamp}:${body.length}`;
+	const cached = gzipCache.get(key);
+	if (cached && Date.now() - cached.at < GZIP_CACHE_TTL_MS) {
+		return new Response(cached.body.slice(), { headers: { ...headers, "Content-Encoding": "gzip" } });
 	}
-	const gz = gzipSync(Buffer.from(body, "utf8"));
-	return new Response(new Uint8Array(gz), {
-		headers: { "Content-Type": "application/json; charset=utf-8", "Content-Encoding": "gzip", Vary: "Accept-Encoding", "Cache-Control": "no-store" },
-	});
+	const gz = new Uint8Array(gzipSync(Buffer.from(body, "utf8")));
+	if (gzipCache.size > 8) gzipCache.clear();
+	gzipCache.set(key, { at: Date.now(), body: gz });
+	return new Response(gz.slice(), { headers: { ...headers, "Content-Encoding": "gzip" } });
 }
 
 export async function GET(req: Request) {
@@ -46,7 +58,7 @@ export async function GET(req: Request) {
 		const providers = full
 			? data.providers
 			: data.providers.map((p) => ({ id: p.id, name: p.name, authReady: p.authReady, builtIn: p.builtIn, modelCount: p.modelCount }));
-		return jsonMaybeGzip(req, { success: true, data: { providers, models, customProviders } });
+		return jsonMaybeGzip(req, { success: true, data: { providers, models, customProviders } }, `${modelListStamp()}:${full ? "full" : "piweb"}`);
 	} catch (err: any) {
 		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
 	}

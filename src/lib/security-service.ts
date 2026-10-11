@@ -4,8 +4,8 @@
  * - 项目信任（settings.json 的 defaultProjectTrust：ask/always/never）
  * pi 没有 OS 级沙箱与审批系统——不做假开关。
  */
-import fs from "node:fs/promises";
 import path from "node:path";
+import { invalidateJsonFile, readJsonObject } from "./agent-config";
 import { getAgentDir, getSettingsManager, reloadAllLoaders, reloadSettingsManagers, syncProjectTrust } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
 import { flushSettingsOrThrow, withSettingsWriteLock } from "./settings-write-lock";
@@ -13,16 +13,9 @@ import { flushSettingsOrThrow, withSettingsWriteLock } from "./settings-write-lo
 export type ProjectTrust = "ask" | "always" | "never";
 
 export async function getSecurity(): Promise<{ defaultProjectTrust: ProjectTrust }> {
-	let raw: string;
-	try {
-		raw = await fs.readFile(path.join(getAgentDir(), "settings.json"), "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { defaultProjectTrust: "ask" };
-		throw error;
-	}
-	const parsed: unknown = JSON.parse(raw.replace(/^\uFEFF/, ""));
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("settings.json must contain a JSON object");
-	const trust = (parsed as { defaultProjectTrust?: unknown }).defaultProjectTrust;
+	// 统一缓存：settings.json 在信任判定 / 会话创建 / 快照里被读很多次
+	const parsed = await readJsonObject(path.join(getAgentDir(), "settings.json"));
+	const trust = parsed.defaultProjectTrust;
 	return { defaultProjectTrust: trust === "always" || trust === "never" ? trust : "ask" };
 }
 
@@ -37,6 +30,8 @@ export async function setProjectTrust(value: ProjectTrust): Promise<void> {
 		// SDK 自己持有跨进程锁，只落修改字段；flush 不抛写错，必须显式 drainErrors。
 		manager.setDefaultProjectTrust(value);
 		await flushSettingsOrThrow(manager);
+		// 刚写过的文件必须重新读盘再验：(mtime, ctime, size, ino) 校验戳有可能与旧值相同
+		invalidateJsonFile(path.join(getAgentDir(), "settings.json"));
 		if ((await getSecurity()).defaultProjectTrust !== value) {
 			throw new Error("defaultProjectTrust was not persisted");
 		}

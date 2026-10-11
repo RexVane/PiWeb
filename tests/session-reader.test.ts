@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 /** 自建的缓存式会话列表必须与 SDK `SessionManager.listAll()` 逐字段一致（侧栏 / 搜索 / 排序都靠它） */
@@ -75,4 +75,49 @@ describe("session-reader listSessions parity", () => {
 		expect((await listSessions("renamed")).map((s) => path.basename(s.path))).toEqual(["a.jsonl"]);
 		expect((await listSessions("proj")).length).toBe(3);
 	}, 15_000);
+
+	it("reuses the persisted summary index after a restart, and still re-reads changed files", async () => {
+		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
+		await fs.mkdir(dir, { recursive: true });
+		const file = path.join(dir, "a.jsonl");
+		const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+		await fs.writeFile(file, [
+			line({ type: "session", version: 3, id: "s-a", timestamp: "2026-09-10T01:00:00.000Z", cwd: "D:\\Proj" }),
+			line({ type: "message", id: "u1", timestamp: "2026-09-10T01:00:01.000Z", message: { role: "user", content: "first", timestamp: 1789000000000 } }),
+		].join(""));
+
+		// 上一个用例留下了 1.2 秒的列表短缓存，这里要一个干净的模块
+		vi.resetModules();
+		const cold = await import("../src/lib/session-reader");
+		const initial = await cold.listSessions();
+		expect(initial[0]).toMatchObject({ messageCount: 1, firstMessage: "first" });
+
+		// 摘要索引由 debounce 落盘，等它出现
+		const indexFile = path.join(tempDir, "agent", "piweb-session-index.json");
+		for (let i = 0; i < 60; i += 1) {
+			if (await fs.stat(indexFile).catch(() => null)) break;
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+		expect(await fs.stat(indexFile).catch(() => null)).toBeTruthy();
+
+		// 把索引里这条会话的首条消息改成一个只有索引才可能给出的值：
+		// 重启后若真的走了索引就会读到它，若又去解析 JSONL 就会读到 "first"。
+		const index = JSON.parse(await fs.readFile(indexFile, "utf8"));
+		const entries = Object.entries(index.entries as Record<string, [number, number, { firstMessage: string } | null]>);
+		const entry = entries.find(([key]) => key === file || key.endsWith("a.jsonl"));
+		expect(entry).toBeTruthy();
+		(entry![1][2] as { firstMessage: string }).firstMessage = "from-index";
+		await fs.writeFile(indexFile, JSON.stringify(index));
+
+		vi.resetModules();
+		const restarted = await import("../src/lib/session-reader");
+		const afterRestart = await restarted.listSessions();
+		expect(afterRestart[0]).toMatchObject({ messageCount: 1, firstMessage: "from-index" });
+
+		// 文件变了（mtime / 大小任一变化）就必须重新解析，索引不能变成陈旧数据
+		await fs.appendFile(file, line({ type: "message", id: "u2", timestamp: "2026-09-10T01:00:02.000Z", message: { role: "user", content: "second", timestamp: 1789000002000 } }));
+		await new Promise((resolve) => setTimeout(resolve, 1300));
+		const changed = await restarted.listSessions();
+		expect(changed[0]).toMatchObject({ messageCount: 2, firstMessage: "first" });
+	}, 20_000);
 });

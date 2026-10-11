@@ -4,7 +4,7 @@ import path from "node:path";
 import http, { type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, runLauncher } from "../scripts/launcher.mjs";
+import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, runLauncher, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
 
@@ -145,6 +145,44 @@ describe("loopback-only development", () => {
 	});
 });
 
+describe("first-paint warm-up", () => {
+	/** 记录 (路径, 认证头) 后交给真实 fetch：既能断言顺序，也能断言凭据只发给确认过的服务。 */
+	function recordingFetch(log: Array<{ path: string; authorization?: string }>): typeof fetch {
+		return async (input, init) => {
+			const headers = new Headers(init?.headers);
+			log.push({ path: new URL(String(input)).pathname, authorization: headers.get("authorization") ?? undefined });
+			return fetch(input, init);
+		};
+	}
+
+	it("confirms the service without credentials, then warms the pipeline and the first-paint routes", async () => {
+		const server = await fakeHttp((_headers, response) => response.end(health));
+		const log: Array<{ path: string; authorization?: string }> = [];
+		expect(await warmFirstPaint(server.url, { fetchImpl: recordingFetch(log), password: "secret" })).toBe(true);
+		expect(log[0]).toEqual({ path: "/api/health", authorization: undefined });
+		expect(log[1].path).toBe("/api/version");
+		for (const route of FIRST_PAINT_ROUTES) expect(log.map((entry) => entry.path)).toContain(route);
+		// 密码模式下非公开路由要带 Basic，否则预热全是 401，等于没预热
+		const basic = `Basic ${Buffer.from("pi:secret").toString("base64")}`;
+		expect(log.slice(1).every((entry) => entry.authorization === basic)).toBe(true);
+	});
+
+	it("never sends credentials to a port occupant that does not prove it is PiWeb", async () => {
+		const seen: IncomingHttpHeaders[] = [];
+		const server = await fakeHttp((headers, response) => {
+			seen.push(headers);
+			response.end(JSON.stringify({ success: true, data: { ok: true, service: "other" } }));
+		});
+		expect(await warmFirstPaint(server.url, { password: "secret", waitMs: 60, pollMs: 10 })).toBe(false);
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.every((headers) => headers.authorization === undefined)).toBe(true);
+	});
+
+	it("gives up silently when nothing ever answers", async () => {
+		expect(await warmFirstPaint("http://127.0.0.1:1", { password: "secret", waitMs: 80, pollMs: 20 })).toBe(false);
+	});
+});
+
 describe("validated build output selection", () => {
 	it("selects only a ready manifest build and rejects incomplete, failed, replaced and overridden output", async () => {
 		const root = await installation();
@@ -219,5 +257,43 @@ describe("launcher lifecycle without real child processes", () => {
 		const server = await fakeHttp((_headers, response) => response.end(health));
 		expect(await probePort(server.port, "127.0.0.1")).toBe("busy");
 		expect(await isPiWebRunning(server.url)).toBe(true);
+	});
+
+	it("warms the first paint on the chosen port and still reports ready when the warm-up fails", async () => {
+		const root = await installation();
+		await productionBuild(root);
+		const child = Object.assign(new EventEmitter(), { kill: vi.fn((_signal?: NodeJS.Signals | number) => true) });
+		const start = vi.fn(() => { setTimeout(() => child.emit("exit", 0), 40); return child; });
+		const opened: string[] = [];
+		const logs: string[] = [];
+		let first = true;
+		const warm = vi.fn(async () => { if (first) { first = false; throw new Error("warm-up exploded"); } return true; });
+		const result = await runLauncher({
+			root,
+			args: [],
+			env: { PI_WEB_PASSWORD: "secret" },
+			dependencies: {
+				spawn: start, probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true),
+				openBrowser: async (url: string) => { opened.push(url); }, warmFirstPaint: warm, log: (message: string) => logs.push(message),
+			},
+		});
+		expect(result).toBe(0);
+		expect(warm).toHaveBeenCalledWith("http://127.0.0.1:30141", expect.objectContaining({ password: "secret" }));
+		expect(opened).toEqual(["http://127.0.0.1:30141"]);
+		expect(logs.some((line) => line.includes("预热首屏"))).toBe(true);
+		expect(logs.some((line) => line.includes("就绪"))).toBe(true);
+	});
+
+	it("never warms in development mode or when PIWEB_SKIP_WARMUP=1", async () => {
+		const devRoot = await installation();
+		const warm = vi.fn(async () => true);
+		const spawn = vi.fn(() => { const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) }); setImmediate(() => child.emit("exit", 0)); return child; });
+		const base = { spawn, probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true), warmFirstPaint: warm, log: vi.fn() };
+		await runLauncher({ root: devRoot, args: ["--dev", "--no-open"], env: {}, dependencies: { ...base } });
+		expect(warm).not.toHaveBeenCalled();
+		const prodRoot = await installation();
+		await productionBuild(prodRoot);
+		await runLauncher({ root: prodRoot, args: ["--no-open"], env: { PI_WEB_PASSWORD: "secret", PIWEB_SKIP_WARMUP: "1" }, dependencies: { ...base } });
+		expect(warm).not.toHaveBeenCalled();
 	});
 });

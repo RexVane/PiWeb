@@ -4,6 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { invalidateJsonFile, readJsonObject, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getPackageManager, getResourceLoader, getSettingsManager, reloadAllLoaders, resourceLoaderReady } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
 import { flushSettingsOrThrow, withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
@@ -48,24 +49,11 @@ async function applyResourceChange(cwd: string, scope: "user" | "project"): Prom
 }
 
 async function readSettingsFile(filePath: string): Promise<Record<string, unknown>> {
-	try {
-		return await readSettingsFileStrict(filePath);
-	} catch {
-		return {};
-	}
+	return readJsonObjectSafe(filePath);
 }
 
 async function readSettingsFileStrict(filePath: string): Promise<Record<string, unknown>> {
-	let text: string;
-	try {
-		text = await fs.readFile(filePath, "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-		throw error;
-	}
-	const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
-	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${filePath} must contain a JSON object`);
-	return parsed as Record<string, unknown>;
+	return readJsonObject(filePath);
 }
 
 async function prepareSettingsWrite(cwd: string, file: string): Promise<ReturnType<typeof getSettingsManager>> {
@@ -93,6 +81,7 @@ async function writeSettingsFile(filePath: string, data: Record<string, unknown>
 		await fs.rename(temporary, filePath);
 	} finally {
 		await fs.rm(temporary, { force: true }).catch(() => undefined);
+		invalidateJsonFile(filePath);
 	}
 }
 

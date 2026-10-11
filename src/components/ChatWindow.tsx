@@ -6,9 +6,7 @@
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
 import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
-import remarkGfm from "remark-gfm";
+import dynamic from "next/dynamic";
 import {
 	IconBranchOutline16,
 	IconBrowseOutline14,
@@ -76,78 +74,18 @@ function formatMessageClock(time: number, t: Dict): string {
 	return `${md} ${clock}`;
 }
 
-type MarkdownTextNode = { value?: unknown; children?: MarkdownTextNode[] };
-function markdownNodeText(node: MarkdownTextNode | undefined): string {
-	if (!node) return "";
-	if (typeof node.value === "string") return node.value;
-	return node.children?.map(markdownNodeText).join("") ?? "";
-}
-
-function CopyButton({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false);
-	const [copyFailed, setCopyFailed] = useState(false);
-	const { t } = useI18n();
-	return (
-		<>
-			<button
-				type="button"
-				className="icon-btn"
-				title={copyFailed ? t.copyFailed : t.copy}
-				aria-label={t.copy}
-				onClick={() => {
-					void copyText(text).then((ok) => {
-						setCopied(ok);
-						setCopyFailed(!ok);
-						setTimeout(() => { setCopied(false); setCopyFailed(false); }, 1200);
-					});
-				}}
-			>
-				{copied ? <IconCheckOutline14 size={14} /> : <IconCopyOutline16 size={14} />}
-			</button>
-			{copyFailed && <span role="alert" style={{ fontSize: 11, color: "var(--dsw-danger)" }}>{t.copyFailed}</span>}
-		</>
-	);
-}
-
-const Markdown = memo(function Markdown({ text }: { text: string }) {
-	return (
-		<div className="md">
-			<ReactMarkdown
-				remarkPlugins={[remarkGfm]}
-				rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-				components={{
-					a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
-					pre: ({ node, children, ...props }) => (
-						<div className="md-code-block">
-							<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
-							<pre {...props}>{children}</pre>
-						</div>
-					),
-				}}
-			>
-				{text}
-			</ReactMarkdown>
-		</div>
-	);
-});
-
-
 /**
- * 流式正文：边流边按 Markdown 渲染（标题/列表/代码块在生成过程中就成形）。
- *
- * 不是每个 delta 都重解析整段——那样会随回答变长线性变慢；这里按 ~100ms 节流，
- * 只在最新文本稳定下来时才交给 Markdown，回合结束时外层会切到精确的最终渲染。
+ * Markdown 正文按需加载：react-markdown + remark-gfm + rehype-highlight（含 highlight.js
+ * 常用语言集）实测占首屏 JS 的 472KB / 1272KB，而 Hero 页根本用不到。AppShell 会在空闲时
+ * 预取这个分块，正常打开会话时已经就绪；万一还没加载完，这几毫秒里正文先留空，不阻塞其它内容。
  */
-const STREAM_MARKDOWN_THROTTLE_MS = 100;
-
-const StreamingMarkdown = memo(function StreamingMarkdown({ text }: { text: string }) {
-	const [shown, setShown] = useState(text);
-	useEffect(() => {
-		if (text === shown) return;
-		const timer = setTimeout(() => setShown(text), STREAM_MARKDOWN_THROTTLE_MS);
-		return () => clearTimeout(timer);
-	}, [text, shown]);
-	return <Markdown text={shown} />;
+const Markdown = dynamic(() => import("@/components/MarkdownBlock").then((m) => m.MarkdownBlock), {
+	ssr: false,
+	loading: () => null,
+});
+const StreamingMarkdown = dynamic(() => import("@/components/MarkdownBlock").then((m) => m.StreamingMarkdownBlock), {
+	ssr: false,
+	loading: () => null,
 });
 
 /** dsh TurnTimePanel 的简化版：耗时胶囊常驻，点击弹层看本回合 token 用量 */
@@ -908,12 +846,18 @@ const FinalAnswer = memo(function FinalAnswer({
 	onFork,
 	showActions,
 	turnStartMs,
+	roundBadge,
+	onShowRound,
 }: {
 	message: WebMessage;
 	onFork?: (entryId: string) => void;
 	showActions: boolean;
 	turnStartMs?: number;
+	/** 这一轮改了哪些文件（项目生长那一轮的 commit） */
+	roundBadge?: RoundBadge;
+	onShowRound?: (commit: string) => void;
 }) {
+	const { t } = useI18n();
 	const textAll = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
@@ -934,6 +878,27 @@ const FinalAnswer = memo(function FinalAnswer({
 					time={message.timestamp}
 				/>
 			)}
+			{/* 本轮改了 N 个文件：跟在耗时 / 时间戳那一行后面。原先是挂在用户消息下面，
+			    放在这里才读得通——先看到答案，再看到这一轮动了什么。 */}
+			{showActions && roundBadge && (
+				<div className="msg-actions">
+					<button
+						type="button"
+						className="pw-chip"
+						title={t.chatRoundShow}
+						onClick={() => onShowRound?.(roundBadge.commit)}
+						data-testid="round-badge"
+					>
+						{roundBadge.files ? t.chatRoundChanged.replace("{n}", String(roundBadge.files)) : t.chatRoundNoChanges}
+						{roundBadge.files > 0 && (
+							<>
+								<span style={{ color: "var(--dsw-success)" }}> +{roundBadge.add}</span>
+								<span style={{ color: "var(--dsw-danger)" }}> −{roundBadge.del}</span>
+							</>
+						)}
+					</button>
+				</div>
+			)}
 		</div>
 	);
 });
@@ -947,7 +912,7 @@ export interface RoundBadge {
 }
 
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message, badge, onShowRound, onEditMessage }: { message: WebMessage; badge?: RoundBadge; onShowRound?: (commit: string) => void; onEditMessage?: (entryId: string, text: string) => void }) {
+const UserMessage = memo(function UserMessage({ message, onEditMessage }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void }) {
 	const { t } = useI18n();
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -1015,23 +980,6 @@ const UserMessage = memo(function UserMessage({ message, badge, onShowRound, onE
 			)}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
 			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
-			{badge && (
-				<button
-					type="button"
-					className="pw-chip mt-1.5"
-					title={t.chatRoundShow}
-					onClick={() => onShowRound?.(badge.commit)}
-					data-testid="round-badge"
-				>
-					{badge.files ? t.chatRoundChanged.replace("{n}", String(badge.files)) : t.chatRoundNoChanges}
-					{badge.files > 0 && (
-						<>
-							<span style={{ color: "var(--dsw-success)" }}> +{badge.add}</span>
-							<span style={{ color: "var(--dsw-danger)" }}> −{badge.del}</span>
-						</>
-					)}
-				</button>
-			)}
 			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
 			{text && (
 				<MessageActions
@@ -1165,7 +1113,7 @@ function TurnBlockView({
 
 	return (
 		<>
-			{user && <UserMessage message={user} badge={roundBadge} onShowRound={onShowRound} onEditMessage={onEditMessage} />}
+			{user && <UserMessage message={user} onEditMessage={onEditMessage} />}
 			{showProcess && (
 				<div className="pw-turn">
 					{contextFiles?.map((resource, i) => (
@@ -1194,7 +1142,7 @@ function TurnBlockView({
 					{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} hasLiveStep={hasLiveStep} />}
 				</div>
 			)}
-			{finalIdx >= 0 && <FinalAnswer message={messages[finalIdx]} onFork={onFork} showActions={!isStreaming || !isLast} turnStartMs={user?.timestamp} />}
+			{finalIdx >= 0 && <FinalAnswer message={messages[finalIdx]} onFork={onFork} showActions={!isStreaming || !isLast} turnStartMs={user?.timestamp} roundBadge={roundBadge} onShowRound={onShowRound} />}
 		</>
 	);
 }

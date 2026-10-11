@@ -15,7 +15,9 @@ next-env.d.ts
 # local dev & plans
 .zcode/
 .commandcode/
-backups/
+# 备份实体不进 git，只索引进（backups/ 同时被 tsconfig exclude）
+backups/*
+!backups/INDEX.md
 probe_tools.py
 probe_*.py
 .env

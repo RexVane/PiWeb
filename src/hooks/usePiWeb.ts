@@ -403,10 +403,15 @@ export function usePiWeb() {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to load workspaces";
 			setState((current) => ({ ...current, error: message }));
+			throw error;
 		}
 	}, []);
-	useEffect(() => {
-		refreshWorkspaces();
+	// 挂载时不再单独拉一次 /api/workspaces：首个 /api/sessions 响应里带着同一份 registry，
+	// 少一次请求也少一次服务端读盘；只有会话列表拉不到时才用它兜底（见轮询的 catch）。
+	const workspaceRegistryLoaded = useRef(false);
+	const refreshWorkspacesFallback = useCallback(async () => {
+		if (workspaceRegistryLoaded.current) return;
+		await refreshWorkspaces().catch(() => undefined);
 	}, [refreshWorkspaces]);
 
 	/** 会话改名成功后先把列表里的名字改掉，不等下一次轮询（轮询 3 秒 + 服务端 1.2 秒列表缓存） */
@@ -598,6 +603,7 @@ export function usePiWeb() {
 				const running: Record<string, { streaming: boolean; lastStep?: string }> = j.data.running ?? {};
 				const registry = j.data.workspaceRegistry;
 				if (registry) {
+					workspaceRegistryLoaded.current = true;
 					if (Array.isArray(registry.workspaces)) setAddedWorkspaces(registry.workspaces);
 					if (Array.isArray(registry.removedWorkspaces)) setRemovedWorkspaces(registry.removedWorkspaces);
 					if (registry.aliases && typeof registry.aliases === "object") setWorkspaceAliases(registry.aliases);
@@ -607,8 +613,11 @@ export function usePiWeb() {
 					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
 				);
 			} catch (error) {
-				if (alive && !(error instanceof DOMException && error.name === "AbortError"))
+				if (alive && !(error instanceof DOMException && error.name === "AbortError")) {
 					setSessionListError(error instanceof Error ? error.message : "session list request failed");
+					// 会话列表没拿到（也就没拿到 registry）：单独兜底拉一次工作区，侧栏不至于空着
+					void refreshWorkspacesFallback();
+				}
 			} finally {
 				controller = undefined;
 				schedule();
@@ -628,7 +637,7 @@ export function usePiWeb() {
 			controller?.abort();
 			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
-	}, [sessionListRetryNonce]);
+	}, [sessionListRetryNonce, refreshWorkspacesFallback]);
 
 	// 模型目录
 	const refreshModels = useCallback(async () => {

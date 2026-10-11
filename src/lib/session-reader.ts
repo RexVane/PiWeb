@@ -90,9 +90,90 @@ async function summarize(filePath: string, stat: { mtime: Date }): Promise<Sessi
 }
 
 /** 按文件缓存的摘要：mtime 与大小都没变就不重读（侧栏每 3 秒轮询一次，全盘重读几 MB JSONL 太浪费） */
-const summaryCache = new Map<string, { mtimeMs: number; size: number; summary: SessionSummary | null }>();
+const summaryCache = new Map<string, CachedSummary>();
 /** 并发列表请求共用一次扫描 */
 let scanning: Promise<SessionSummary[]> | null = null;
+
+interface CachedSummary {
+	mtimeMs: number;
+	size: number;
+	summary: SessionSummary | null;
+}
+
+/**
+ * 摘要缓存落盘：进程内的 summaryCache 一重启就没了，而冷启动要把 ~/.pi/agent/sessions 下
+ * 的 JSONL 全量解析一遍（本机 36 个会话 / 17.5MB ≈ 136ms，会话越多越贵）。落盘后重启只需
+ * 按 mtime + 大小校验，命中就沿用摘要——侧栏首次渲染从"全量解析"变成"读一个小 JSON"。
+ * 索引只是加速：读不到、版本不符、写不进去都退化成全量扫描，绝不影响正确性。
+ */
+const INDEX_VERSION = 1;
+const INDEX_FILENAME = "piweb-session-index.json";
+const INDEX_MAX_ENTRIES = 5000;
+const INDEX_SAVE_DELAY_MS = 1500;
+let indexLoadedFrom: string | null = null;
+let indexDirty = false;
+let indexTimer: ReturnType<typeof setTimeout> | null = null;
+
+function indexPath(): string {
+	return path.join(getAgentDir(), INDEX_FILENAME);
+}
+
+type IndexEntry = [mtimeMs: number, size: number, summary: SessionSummary | null];
+
+async function loadIndex(): Promise<void> {
+	const target = indexPath();
+	if (indexLoadedFrom === target) return;
+	indexLoadedFrom = target;
+	// 会话库换了目录（PI_CODING_AGENT_DIR）就不能再沿用上一个目录的摘要
+	summaryCache.clear();
+	try {
+		const raw = JSON.parse(await fs.readFile(target, "utf8")) as { version?: unknown; entries?: Record<string, unknown> };
+		if (raw?.version !== INDEX_VERSION || !raw.entries || typeof raw.entries !== "object" || Array.isArray(raw.entries)) return;
+		for (const [file, entry] of Object.entries(raw.entries)) {
+			if (!Array.isArray(entry) || entry.length !== 3) continue;
+			const [mtimeMs, size, summary] = entry as IndexEntry;
+			if (typeof mtimeMs !== "number" || typeof size !== "number") continue;
+			summaryCache.set(file, { mtimeMs, size, summary: summary && typeof summary === "object" ? summary : null });
+		}
+	} catch {
+		/* 首次运行没有索引，或索引损坏：全量扫描即可 */
+	}
+}
+
+function scheduleIndexSave(): void {
+	indexDirty = true;
+	if (indexTimer) return;
+	indexTimer = setTimeout(() => {
+		indexTimer = null;
+		void saveIndex();
+	}, INDEX_SAVE_DELAY_MS);
+	indexTimer.unref?.();
+}
+
+async function saveIndex(): Promise<void> {
+	if (!indexDirty) return;
+	indexDirty = false;
+	// 写回缓存所属的那个目录：索引路径不能在落盘时重新解析（会话库换目录时会把 A 的摘要写进 B）
+	const target = indexLoadedFrom;
+	if (!target) return;
+	const entries: Record<string, IndexEntry> = {};
+	// 只留最近改动的若干条，避免索引本身无限长
+	for (const [file, cached] of [...summaryCache.entries()].sort((a, b) => b[1].mtimeMs - a[1].mtimeMs).slice(0, INDEX_MAX_ENTRIES)) {
+		entries[file] = [cached.mtimeMs, cached.size, cached.summary];
+	}
+	try {
+		await fs.mkdir(path.dirname(target), { recursive: true });
+		const temporary = `${target}.${process.pid}.tmp`;
+		try {
+			await fs.writeFile(temporary, JSON.stringify({ version: INDEX_VERSION, entries }), "utf8");
+			await fs.rename(temporary, target);
+		} finally {
+			await fs.rm(temporary, { force: true }).catch(() => undefined);
+		}
+	} catch {
+		/* 索引写不进去只影响速度，下一次列表请求照常扫描 */
+	}
+}
 
 async function scanSessions(): Promise<SessionSummary[]> {
 	const root = path.join(getAgentDir(), "sessions");
@@ -113,6 +194,7 @@ async function scanSessions(): Promise<SessionSummary[]> {
 	const seen = new Set<string>();
 	const out: SessionSummary[] = [];
 	const BATCH = 16;
+	let changed = false;
 	for (let i = 0; i < files.length; i += BATCH) {
 		await Promise.all(files.slice(i, i + BATCH).map(async (file) => {
 			seen.add(file);
@@ -125,10 +207,17 @@ async function scanSessions(): Promise<SessionSummary[]> {
 			}
 			const summary = await summarize(file, stat);
 			summaryCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, summary });
+			changed = true;
 			if (summary) out.push(summary);
 		}));
 	}
-	for (const key of summaryCache.keys()) if (!seen.has(key)) summaryCache.delete(key);
+	for (const key of summaryCache.keys()) {
+		if (!seen.has(key)) {
+			summaryCache.delete(key);
+			changed = true;
+		}
+	}
+	if (changed) scheduleIndexSave();
 	return out;
 }
 
@@ -140,6 +229,7 @@ export async function listSessions(query?: string): Promise<SessionSummary[]> {
 	if (listCache && Date.now() - listCache.at < 1200) {
 		list = listCache.list;
 	} else {
+		await loadIndex();
 		scanning ??= scanSessions().finally(() => { scanning = null; });
 		list = await scanning;
 		listCache = { at: Date.now(), list };
