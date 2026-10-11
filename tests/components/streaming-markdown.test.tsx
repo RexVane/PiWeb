@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
-import { StreamingMarkdownBlock, splitStreamingMarkdown } from "@/components/MarkdownBlock";
+import { StreamingMarkdownBlock, createStreamingSplitter, splitStreamingMarkdown } from "@/components/MarkdownBlock";
 
 afterEach(cleanup);
 
@@ -44,6 +44,41 @@ describe("splitStreamingMarkdown", () => {
 		const { blocks, tail } = splitStreamingMarkdown("前言。\n\n- 甲\n- 乙\n");
 		expect(blocks).toEqual(["前言。\n\n"]);
 		expect(tail).toBe("- 甲\n- 乙\n");
+	});
+});
+
+describe("createStreamingSplitter 增量切分", () => {
+	const samples = [
+		"第一段。\n\n第二段\n\n第三段在写",
+		"说明：\n\n```python\ndef f():\n\n    return 1\n",
+		"```js\nlet a = 1;\n```\n\n后面",
+		"1. 甲\n\n2. 乙\n",
+		"1. 甲\n\n2. 乙",
+		"1. 甲\n\n2.",
+		"甲\n\n",
+		"甲\n\n乙",
+		"前言。\n\n- 甲\n- 乙\n\n正文",
+	];
+
+	it("逐字喂进去的结果与一次性切分一致（边界不因增量而漂移）", () => {
+		for (const text of samples) {
+			const splitter = createStreamingSplitter();
+			let incremental = splitter.update("");
+			for (let i = 1; i <= text.length; i += 1) incremental = splitter.update(text.slice(0, i));
+			expect(incremental).toEqual(splitStreamingMarkdown(text));
+		}
+	});
+
+	it("半行不判：下一行还没写完时不急着切（松散列表不会被切开）", () => {
+		const splitter = createStreamingSplitter();
+		splitter.update("1. 甲\n\n2.");
+		expect(splitter.update("1. 甲\n\n2. 乙\n").blocks).toEqual([]);
+	});
+
+	it("文本被整体替换（编辑重发）时重头扫，不沿用旧进度", () => {
+		const splitter = createStreamingSplitter();
+		splitter.update("第一段。\n\n第二段");
+		expect(splitter.update("重来\n\n另一段")).toEqual(splitStreamingMarkdown("重来\n\n另一段"));
 	});
 });
 
