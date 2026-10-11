@@ -810,6 +810,19 @@ textarea::placeholder {
 	margin: 1em 0;
 }
 
+/* ---------- 流式正文：稳定块 + 未闭合代码围栏的纯文本尾巴共用一个 .md 容器 ---------- */
+.pw-stream {
+	display: flow-root;
+}
+/* 围栏未闭合时的尾巴：跟着 .md pre 的底色，但用等宽字体显示原始代码 */
+.pw-stream-code {
+	font-family: var(--font-mono);
+	font-size: 13px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
 /* ---------- 代码高亮（highlight.js）：VS Code 式的分类着色，配色跟 Pi 自己的主题走 ---------- */
 :root {
 	--hl-comment: rgb(130, 136, 146);
