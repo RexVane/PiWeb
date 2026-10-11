@@ -449,6 +449,32 @@ function publishUsage(m: Managed): void {
 	if (evt) publish(m, evt);
 }
 
+/**
+ * models.json 保存后：把已打开会话持有的 Model 对象换成运行时注册表里的新实例。
+ * 运行中会话的上下文窗口（圆环、自动压缩阈值都读 model.contextWindow）绑定在
+ * 会话创建时的对象上，运行时 refresh 只换注册表不动会话——不换绑的话，设置里
+ * 改窗口大小对已打开的会话永远不生效。与 SDK 内部 _refreshCurrentModelFromRegistry
+ * 相同的手法；只在会话空闲时执行，换绑后立刻广播一次用量让前端即时刷新。
+ */
+export async function refreshSessionModels(): Promise<void> {
+	const live = [...sessions.values()].filter((m) => m.session && !isManagedBusy(m));
+	if (!live.length) return;
+	const rt = await getModelRuntime();
+	for (const m of live) {
+		const session = m.session!;
+		const current = session.model;
+		if (!current) continue;
+		const fresh = rt.getModel(current.provider, current.id);
+		if (!fresh || fresh === current) continue;
+		try {
+			session.agent.state.model = fresh;
+			publishUsage(m);
+		} catch {
+			/* 单个会话换绑失败不影响其他会话 */
+		}
+	}
+}
+
 function translate(m: Managed, evt: AgentSessionEvent): void {
 	m.ledger.onEvent(evt);
 	growthOf(m).onEvent(evt);
