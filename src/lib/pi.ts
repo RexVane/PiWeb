@@ -44,13 +44,17 @@ export function resetModelRuntime(): void {
 }
 
 const settingsCache = new Map<string, SettingsManager>();
+/** 缓存键 → 原始目录。键在 Windows 上是小写的，不能拿它当目录交给 SDK 或算资源指纹 */
+const settingsCwds = new Map<string, string>();
 
 // ---------- 项目信任（与 pi 终端同一份 ~/.pi/agent/trust.json） ----------
 
-let trustStore: ProjectTrustStore | null = null;
+let trustStore: { agentDir: string; store: ProjectTrustStore } | null = null;
+/** 跟着 agentDir 走：readTrustFile 每次按当前 agentDir 读，写也必须落在同一份 trust.json */
 function getTrustStore(): ProjectTrustStore {
-	if (!trustStore) trustStore = new ProjectTrustStore(getAgentDir());
-	return trustStore;
+	const agentDir = getAgentDir();
+	if (trustStore?.agentDir !== agentDir) trustStore = { agentDir, store: new ProjectTrustStore(agentDir) };
+	return trustStore.store;
 }
 
 export type ProjectTrustState = {
@@ -61,6 +65,77 @@ export type ProjectTrustState = {
 	/** 结论来源：无需信任 / trust.json 里记住的决定 / settings.json 的 defaultProjectTrust / 还没决定（按不信任处理） */
 	source: "not-required" | "remembered" | "default-always" | "default-never" | "undecided";
 };
+
+/**
+ * 交给 SDK 信任存储的目录写法：Windows 上取真实大小写。
+ *
+ * SDK 用 JS 版 realpathSync 规范化 trust.json 的键，它在 Windows 上**保留输入的大小写**
+ * （`d:\aiapp\piweb` 原样返回，只有 .native 才给 `D:\AIApp\PiWeb`），再按字符串精确匹配。
+ * 同一个目录写进去和查出来的大小写只要不一样，记住的决定就查不到。
+ */
+function trustPath(cwd: string): string {
+	const resolved = path.resolve(cwd);
+	try {
+		return process.platform === "win32" ? fs.realpathSync.native(resolved) : fs.realpathSync(resolved);
+	} catch {
+		return resolved;
+	}
+}
+
+/** trust.json 的解析结果按文件修订缓存：resolveProjectTrust 在指纹、资源清单、快照里被频繁调用 */
+interface TrustFile {
+	revision: string;
+	/** 原样的键 */
+	keys: string[];
+	/** 折叠后的键（Windows 小写）→ 决定 */
+	decisions: Map<string, boolean>;
+}
+let trustFileCache: TrustFile | null = null;
+const foldTrustKey = (value: string) => (process.platform === "win32" ? value.toLowerCase() : value);
+
+/** 读不懂（被写了一半、格式不对）返回 null，调用方退回 SDK 加锁读 */
+function readTrustFile(): TrustFile | null {
+	const file = path.join(getAgentDir(), "trust.json");
+	let revision: string;
+	try {
+		const stat = fs.statSync(file);
+		revision = `${file}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+	} catch {
+		return { revision: "missing", keys: [], decisions: new Map() }; // 还没有 trust.json：什么都没记住
+	}
+	if (trustFileCache?.revision === revision) return trustFileCache;
+	try {
+		const parsed = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "")) as unknown;
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+		const decisions = new Map<string, boolean>();
+		for (const [key, value] of Object.entries(parsed)) {
+			if (value === true || value === false) decisions.set(foldTrustKey(key), value);
+			else if (value !== null) return null; // SDK 认定为坏文件，交给它报错
+		}
+		trustFileCache = { revision, keys: Object.keys(parsed), decisions };
+		return trustFileCache;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 记住的信任决定：与 SDK 一样从该目录逐级往上找最近的一条，但 Windows 上不分大小写
+ * （pi 终端写进去的键是当时 shell 里 cwd 的写法，大小写不一定是真实的）。
+ * 不走 SDK 的 get()：它每次都同步加文件锁、失败还会自旋等待。读不懂时再退回 SDK。
+ */
+function rememberedProjectTrust(cwd: string): boolean | null {
+	const trust = readTrustFile();
+	if (!trust) return getTrustStore().get(trustPath(cwd));
+	let current = trustPath(cwd);
+	for (;;) {
+		const decision = trust.decisions.get(foldTrustKey(current));
+		if (decision !== undefined) return decision;
+		const parent = path.dirname(current);
+		if (parent === current) return null;
+		current = parent;
+	}
+}
 
 function readDefaultProjectTrust(): "ask" | "always" | "never" {
 	// 同步读且被 getSettingsManager / 资源指纹反复调用：走统一缓存（文件没变就不重新读盘解析）
@@ -82,7 +157,7 @@ export function resolveProjectTrust(cwd: string): ProjectTrustState {
 		required = false;
 	}
 	if (!required) return { required: false, trusted: true, source: "not-required" };
-	const remembered = getTrustStore().get(resolved);
+	const remembered = rememberedProjectTrust(resolved);
 	if (remembered !== null) return { required: true, trusted: remembered, source: "remembered" };
 	const fallback = readDefaultProjectTrust();
 	if (fallback === "always") return { required: true, trusted: true, source: "default-always" };
@@ -96,7 +171,13 @@ export function resolveProjectTrust(cwd: string): ProjectTrustState {
  */
 export function setProjectTrust(cwd: string, decision: boolean | null): ProjectTrustState {
 	const resolved = path.resolve(cwd);
-	getTrustStore().set(resolved, decision);
+	const target = trustPath(resolved);
+	// 同一目录大小写不同的旧键先删掉：查找不分大小写，留着它会顶替（或在「忘记」后复活）这次的决定
+	for (const key of readTrustFile()?.keys ?? []) {
+		if (key !== target && foldTrustKey(key) === foldTrustKey(target)) getTrustStore().set(key, null);
+	}
+	getTrustStore().set(target, decision);
+	trustFileCache = null; // 同一毫秒内连写两次时修订号可能不变，别读到旧缓存
 	const state = resolveProjectTrust(resolved);
 	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
 	const sm = settingsCache.get(key);
@@ -107,9 +188,11 @@ export function setProjectTrust(cwd: string, decision: boolean | null): ProjectT
 /** 按当前 trust.json / defaultProjectTrust 重新计算每个已缓存目录的信任态并就地写入其 SettingsManager */
 export function syncProjectTrust(): void {
 	trustStore = null;
+	trustFileCache = null;
 	for (const [key, sm] of settingsCache) {
 		try {
-			sm.setProjectTrusted(resolveProjectTrust(key).trusted);
+			// 缓存键在 Windows 上是小写的，拿原始目录去算（见 settingsCwds）
+			sm.setProjectTrusted(resolveProjectTrust(settingsCwds.get(key) ?? key).trusted);
 		} catch {
 			/* ignore */
 		}
@@ -124,11 +207,14 @@ export function getSettingsManager(cwd: string): SettingsManager {
 	if (!sm) {
 		sm = SettingsManagerClass.create(resolved, getAgentDir(), { projectTrusted: resolveProjectTrust(resolved).trusted });
 		settingsCache.set(key, sm);
+		settingsCwds.set(key, resolved);
 	}
 	return sm;
 }
 
 interface LoaderEntry {
+	/** 原始目录（缓存键在 Windows 上是小写的） */
+	cwd: string;
 	loader: DefaultResourceLoader;
 	ready: Promise<void>;
 	/** 发现缓存的版本；每个热会话分别追踪自己已应用的版本。 */
@@ -182,7 +268,7 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 	let entry = loaderCache.get(key);
 	if (!entry) {
 		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd) });
-		entry = { loader, ready: Promise.resolve(), version: 0, fingerprint: "" };
+		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "" };
 		loaderCache.set(key, entry);
 		queueLoaderReload(cwd, entry);
 	}
@@ -313,7 +399,8 @@ export async function reloadAllLoaders(): Promise<string[]> {
 	const reloaded: string[] = [];
 	for (const [key, entry] of loaderCache) {
 		try {
-			await queueLoaderReload(key, entry);
+			// 用原始目录：小写键会让资源指纹对不上（每次都多重载一轮），信任查找也会出错
+			await queueLoaderReload(entry.cwd, entry);
 			reloaded.push(key);
 		} catch {
 			/* 单个失败不影响其他 */

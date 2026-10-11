@@ -126,6 +126,28 @@ describe("real SDK session resource isolation", () => {
 		expect(b.session.getActiveToolNames()).not.toContain("probe_tool");
 	});
 
+	it.runIf(process.platform === "win32")("finds a remembered trust decision whatever case pi wrote the key in", async () => {
+		// pi 终端按 shell 里 cwd 的写法记键（大小写不一定真实），SDK 查找又区分大小写：记住的「不信任」会被无视
+		const trustFile = path.join(process.env.PI_CODING_AGENT_DIR!, "trust.json");
+		const real = await fs.realpath(cwd);
+		const lower = real.toLowerCase();
+		expect(lower).not.toBe(real);
+		await fs.writeFile(trustFile, JSON.stringify({ [lower]: false }));
+		try {
+			expect(pi.resolveProjectTrust(cwd)).toEqual({ required: true, trusted: false, source: "remembered" });
+			expect(pi.resolveProjectTrust(cwd.toUpperCase())).toMatchObject({ trusted: false, source: "remembered" });
+			// 改决定时把大小写不同的旧键清掉，否则「忘记」后旧键又冒出来
+			pi.setProjectTrust(cwd, true);
+			const keys = Object.keys(JSON.parse(await fs.readFile(trustFile, "utf8")));
+			expect(keys.filter((key) => key.toLowerCase() === lower)).toEqual([real]);
+			pi.setProjectTrust(cwd, null);
+			expect(pi.resolveProjectTrust(cwd).source).toBe("default-always");
+		} finally {
+			await fs.rm(trustFile, { force: true });
+			pi.syncProjectTrust();
+		}
+	});
+
 	it("keeps custom choices on snapshot-triggered reload for both same-cwd sessions", async () => {
 		const a = await create();
 		const b = await create();
