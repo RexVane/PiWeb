@@ -2121,6 +2121,12 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	box-shadow: 0 0 0 1px var(--dsw-label-tertiary);
 }
 
+/* 回合懒渲染的纯文本占位：尽量贴近正式渲染的排版，升级前的过渡形态 */
+.pw-turn-lite > div {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 /* 窄屏：查看器全屏 */
 @media (max-width: 840px) {
 	.pw-viewer {

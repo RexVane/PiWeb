@@ -5,7 +5,7 @@
  * 每个回合 = 用户消息 → 过程（叙述句是阶段标题，其下是带图标的步骤列表）→ 最终回答。
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
-import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import {
 	IconBranchOutline16,
@@ -1147,6 +1147,55 @@ function TurnBlockView({
 	);
 }
 
+/** 远离视口的回合占位：纯文本近似（无 Markdown/高亮），保留 data-role 锚点供大纲与跳转定位 */
+function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
+	const { t } = useI18n();
+	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
+	const plain = (m: WebMessage) =>
+		m.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text" && typeof c.text === "string")
+			.map((c) => c.text)
+			.join("\n");
+	return (
+		<>
+			{user && (
+				<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={user.id}>
+					<div className="msg-user-bubble pw-turn-lite">
+						<div>{plain(user)}</div>
+					</div>
+				</div>
+			)}
+			{turn.assistantIndexes.map((k) => {
+				const m = messages[k];
+				if (!m) return null;
+				const think = m.content.some((c) => c.type === "thinking");
+				const tools = m.content.filter((c) => c.type === "toolCall").length;
+				const text = plain(m);
+				return (
+					<div key={k} className="group w-full" style={{ marginTop: 14 }} data-role="assistant">
+						{(think || tools > 0) && (
+							<div className="pw-line" style={{ color: "var(--dsw-label-tertiary)" }}>
+								{think && <span>{t.thinkLabel}</span>}
+								{think && tools > 0 && <span> · </span>}
+								{tools > 0 && (
+									<span>
+										{t.toolCalls} × {tools}
+									</span>
+								)}
+							</div>
+						)}
+						{text && (
+							<div className="pw-turn-lite">
+								<div>{text}</div>
+							</div>
+						)}
+					</div>
+				);
+			})}
+		</>
+	);
+}
+
 function fmtTok(n: number): string {
 	const scaled = (value: number) => value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
 	return n >= 1_000_000 ? `${scaled(n / 1_000_000)}M` : n >= 1000 ? `${scaled(n / 1000)}K` : String(n);
@@ -1258,6 +1307,9 @@ const TurnBlock = memo(TurnBlockView, turnBlockPropsEqual);
 const CHAT_WIDTH_KEY = "piweb.chatContentWidth";
 const CHAT_WIDTH_MIN = 480;
 const CHAT_WIDTH_MAX = 1200;
+/** 回合懒渲染：首屏完整渲染最近 N 回合；距视口 M px 内升级完整渲染 */
+const TURN_TAIL_FULL = 8;
+const TURN_NEAR_MARGIN = 1800;
 
 function resolveChatWidth(width: number, viewportWidth: number): number {
 	const max = Math.max(320, Math.min(CHAT_WIDTH_MAX, viewportWidth - 64));
@@ -1370,6 +1422,92 @@ export function ChatWindow({
 	const turns = useMemo(() => buildTurns(messages), [messages]);
 	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
 
+	// ---------- 回合懒渲染 ----------
+	// 打开长会话时快照一次性带来上百回合，每回合的 react-markdown + 代码高亮同步执行，
+	// 首挂可达数秒（154 回合实测 6.5s）。远离视口的回合先渲染纯文本占位（TurnLite），
+	// 滚动进入视口附近再升级完整渲染。升级判定按槽元素实measure位置计算（scroll 驱动），
+	// 不用 IntersectionObserver：占位槽无 CV 时几何虽真实，但 IO 的隐式 root/rootMargin
+	// 在托管 webview 等环境里行为不稳，scroll 驱动的位置判定是确定性的。
+	const threadRef = useRef<HTMLDivElement | null>(null);
+	const [nearTurns, setNearTurns] = useState<Set<number>>(() => new Set());
+	const nearTurnsRef = useRef(nearTurns);
+	nearTurnsRef.current = nearTurns;
+	const slotElsRef = useRef(new Map<number, HTMLElement>());
+	const upgradeRef = useRef<Array<{ index: number; top: number }> | null>(null);
+	const upgradeCheckRef = useRef(0);
+	// 首次快照：最近若干回合直接完整渲染，其余等滚动进入再升级
+	useEffect(() => {
+		if (!turns.length || nearTurnsRef.current.size) return;
+		setNearTurns(new Set(turns.map((_, i) => i).filter((i) => i >= turns.length - TURN_TAIL_FULL)));
+	}, [turns.length]);
+	const scheduleUpgradeCheck = useCallback(() => {
+		if (upgradeCheckRef.current) return;
+		upgradeCheckRef.current = requestAnimationFrame(() => {
+			upgradeCheckRef.current = 0;
+			const scroller = threadRef.current?.closest<HTMLElement>(".overflow-y-auto");
+			if (!scroller) return;
+			const top = -TURN_NEAR_MARGIN;
+			const bottom = window.innerHeight + TURN_NEAR_MARGIN;
+			const fresh: Array<{ index: number; top: number }> = [];
+			for (const [index, el] of slotElsRef.current) {
+				if (nearTurnsRef.current.has(index)) continue;
+				const rect = el.getBoundingClientRect();
+				if (rect.top > bottom || rect.bottom < top) continue;
+				fresh.push({ index, top: el.offsetTop });
+			}
+			if (!fresh.length) return;
+			upgradeRef.current = fresh;
+			setNearTurns((prev) => {
+				const next = new Set(prev);
+				for (const { index } of fresh) next.add(index);
+				return next;
+			});
+		});
+	}, []);
+	useLayoutEffect(() => {
+		// 升级提交后（绘制前）：贴底状态下直接重新贴底（升级常发生在视口下方，会把
+		// 底部推远）；否则对升级前整体在视口上方的回合按各自高度差补偿 scrollTop
+		const upgraded = upgradeRef.current;
+		upgradeRef.current = null;
+		const scroller = threadRef.current?.closest<HTMLElement>(".overflow-y-auto");
+		if (!scroller) return;
+		if (stickToBottom.current) {
+			scroller.scrollTop = scroller.scrollHeight;
+			return;
+		}
+		if (!upgraded) return;
+		for (const { index, top } of upgraded) {
+			const el = slotElsRef.current.get(index);
+			if (!el || top >= scroller.scrollTop) continue;
+			const delta = el.offsetTop - top;
+			if (delta > 0) scroller.scrollTop += delta;
+		}
+	}, [nearTurns]);
+	// 快照到达 / 跳转（scrollIntoView、回到底部）后的初次判定；滚动中的判定挂在 onScroll 上
+	useEffect(() => {
+		scheduleUpgradeCheck();
+	}, [scheduleUpgradeCheck, messages.length]);
+	const registerSlot = useCallback((index: number, el: HTMLElement | null) => {
+		if (!el) {
+			slotElsRef.current.delete(index);
+			return;
+		}
+		slotElsRef.current.set(index, el);
+	}, []);
+	const slotCbRef = useRef(new Map<number, (el: HTMLElement | null) => void>());
+	const slotRef = useCallback((index: number) => {
+		let cb = slotCbRef.current.get(index);
+		if (!cb) {
+			cb = (el) => registerSlot(index, el);
+			slotCbRef.current.set(index, cb);
+		}
+		return cb;
+	}, [registerSlot]);
+	const isNear = useCallback(
+		(index: number) => nearTurns.has(index) || index === turns.length - 1 || (nearTurns.size === 0 && index >= turns.length - TURN_TAIL_FULL),
+		[nearTurns, turns.length],
+	);
+
 	useEffect(() => {
 		const grew = messages.length > prevLenRef.current;
 		prevLenRef.current = messages.length;
@@ -1470,32 +1608,38 @@ export function ChatWindow({
 					stickToBottom.current = atBottom;
 					setAwayFromBottom(!atBottom);
 					if (atBottom) setUnseen(0);
+					scheduleUpgradeCheck();
 				}}
 			>
-				<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
+				<div className="pw-chat-thread mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }} ref={threadRef}>
 					{turns.map((turn, ti) => (
-						<TurnBlock
-							key={turn.key}
-							turn={turn}
-							messages={messages}
-							tools={tools}
-							cwd={cwd}
-							isStreaming={isStreaming}
-							isLast={ti === turns.length - 1}
-							lastAssistantIndex={lastAssistantIndex}
-							contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
-							retryNotice={retryNotice}
-							streamStartedAt={streamStartedAt}
-							runningTool={runningTool}
-							outputTokens={stats?.tokens.output}
-							workingMessage={workingMessage}
-							onFork={onFork}
-							onEditMessage={onEditMessage}
-							roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
-							onShowRound={onShowRound}
-							onInspectTool={onOpenTrajectory}
-							onOpenFile={onOpenFile}
-						/>
+						<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className={isNear(ti) ? "pw-turn-full" : undefined}>
+							{isNear(ti) ? (
+								<TurnBlock
+									turn={turn}
+									messages={messages}
+									tools={tools}
+									cwd={cwd}
+									isStreaming={isStreaming}
+									isLast={ti === turns.length - 1}
+									lastAssistantIndex={lastAssistantIndex}
+									contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
+									retryNotice={retryNotice}
+									streamStartedAt={streamStartedAt}
+									runningTool={runningTool}
+									outputTokens={stats?.tokens.output}
+									workingMessage={workingMessage}
+									onFork={onFork}
+									onEditMessage={onEditMessage}
+									roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
+									onShowRound={onShowRound}
+									onInspectTool={onOpenTrajectory}
+									onOpenFile={onOpenFile}
+								/>
+							) : (
+								<TurnLite turn={turn} messages={messages} />
+							)}
+						</div>
 					))}
 					{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
 					{isStreaming && streamStartedAt && turns.length === 0 && (
@@ -1535,7 +1679,7 @@ export function ChatWindow({
 				</div>
 			</div>
 			{/* 右侧大纲导航：从助手回答的标题和用户消息生成，随滚动高亮，悬停展开 */}
-			<OutlineRail scrollRef={scrollRef} revision={`${messages.length}:${isStreaming ? 1 : 0}`} />
+			<OutlineRail scrollRef={scrollRef} revision={`${messages.length}:${nearTurns.size}:${isStreaming ? 1 : 0}`} />
 			{/* 脱离底部时的“回到底部”浮钮：与输入框卡片同轴，挂在右上角顶部，图标带新内容角标 */}
 			{(unseen > 0 || awayFromBottom) && (
 				<div
