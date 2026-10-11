@@ -4,6 +4,8 @@
  * 两者独立持久化：配色 piweb.pebrelTheme，亮暗 piweb.theme。
  */
 
+import { applyAllFonts } from './font';
+
 export type PebrelTheme =
 	| 'silver-steel'
 	| 'limestone-coal'
@@ -123,6 +125,7 @@ export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 	}
 	applyLightDark(effectiveMode);
 	applyFontSize();
+	applyAllFonts();
 	try {
 		localStorage.setItem(THEME_KEY, theme);
 		localStorage.setItem(MODE_KEY, effectiveMode);
