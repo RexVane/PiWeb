@@ -150,7 +150,6 @@ export function AppShell() {
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
-	const [dragging, setDragging] = useState<"sidebar" | "right" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
@@ -288,24 +287,32 @@ export function AppShell() {
 
 
 	// ---------- 拖拽 ----------
+	// pointermove 事件率（125~1000Hz）远高于帧率：事件里只记最新位置，rAF 里每帧
+	// 最多提交一次 state，渲染+重排从事件率降到帧率；持久化推迟到松手一次完成。
 	const onDrag = useCallback(
 		(side: "sidebar" | "right") => (e: React.PointerEvent) => {
 			e.preventDefault();
-			setDragging(side);
 			const startX = e.clientX;
 			const startW = side === "sidebar" ? sidebarWidth : rightWidth;
+			const [min, max] = side === "sidebar" ? [SIDEBAR_MIN, SIDEBAR_MAX] : [RIGHT_MIN, RIGHT_MAX];
+			// 最右一列:左缘往左拖是变宽(与原来的详情栏、抽屉同向)
+			const sign = side === "right" ? -1 : 1;
+			const commit = side === "sidebar" ? setSidebarWidth : setRightWidth;
+			let frame = 0;
+			let latest = startW;
 			const move = (ev: PointerEvent) => {
-				if (side === "sidebar") {
-					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
-					setSidebarWidth(w);
-				} else {
-					// 最右一列:左缘往左拖是变宽(与原来的详情栏、抽屉同向)
-					const w = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startW - (ev.clientX - startX)));
-					setRightWidth(w);
+				latest = Math.max(min, Math.min(max, startW + sign * (ev.clientX - startX)));
+				if (!frame) {
+					frame = requestAnimationFrame(() => {
+						frame = 0;
+						commit(latest);
+					});
 				}
 			};
 			const up = () => {
-				setDragging(null);
+				if (frame) cancelAnimationFrame(frame);
+				commit(latest);
+				persist(side === "sidebar" ? "piweb.sidebarW" : "piweb.drawerW", latest);
 				window.removeEventListener("pointermove", move);
 				window.removeEventListener("pointerup", up);
 				window.removeEventListener("pointercancel", up);
@@ -317,11 +324,6 @@ export function AppShell() {
 		},
 		[sidebarWidth, rightWidth],
 	);
-
-	useEffect(() => {
-		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
-		if (dragging === "right") persist("piweb.drawerW", rightWidth);
-	}, [dragging, sidebarWidth, rightWidth]);
 
 	const toggleSidebar = () => {
 		const next = !sidebarCollapsed;
