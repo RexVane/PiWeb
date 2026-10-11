@@ -36,7 +36,10 @@ export function OutlineRail({ scrollRef, revision }: { scrollRef: React.RefObjec
 		for (const node of roots) {
 			if (node.dataset.role === "user") {
 				userIndex += 1;
-				const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+				// 只取气泡里的正文：用户行里还有时间戳和操作按钮，整行 textContent 会混进「10月7日 16:49」；
+				// 正文还没加载出来时宁可先不出这一项，等下面的 MutationObserver 再收一次
+				const bubble = node.querySelector<HTMLElement>(".msg-user-bubble") ?? node;
+				const text = (bubble.textContent ?? "").replace(/\s+/g, " ").trim();
 				if (text) out.push({ key: `u${userIndex}`, level: 0, text: text.slice(0, 80), el: node });
 				continue;
 			}
@@ -57,6 +60,24 @@ export function OutlineRail({ scrollRef, revision }: { scrollRef: React.RefObjec
 		const timer = setTimeout(collect, revision.endsWith(":1") ? 400 : 0);
 		return () => clearTimeout(timer);
 	}, [collect, revision]);
+
+	// 正文是按需加载的 Markdown（见 ChatWindow 的 dynamic import）：刷新后直接恢复会话时，快照到了
+	// 正文可能还没出来，这时收到的用户项只剩时间戳、标题一个都没有；懒渲染的回合滚到附近才升级。
+	// 这些都不改 revision，所以盯 DOM 结构变化再收一次。只看 childList，流式逐字改文本不触发；防抖合并成一次。
+	useEffect(() => {
+		const root = scrollRef.current;
+		if (!root) return;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const observer = new MutationObserver(() => {
+			clearTimeout(timer);
+			timer = setTimeout(collect, 300);
+		});
+		observer.observe(root, { childList: true, subtree: true });
+		return () => {
+			observer.disconnect();
+			clearTimeout(timer);
+		};
+	}, [collect, scrollRef]);
 
 	// 随滚动高亮：最后一个顶部已越过视口上沿 + 80px 的锚点
 	useEffect(() => {
