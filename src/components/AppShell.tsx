@@ -290,26 +290,35 @@ export function AppShell() {
 
 
 	// ---------- 拖拽 ----------
+	// pointermove 事件率（125~1000Hz）远高于帧率：事件里只记最新位置，rAF 里每帧
+	// 最多提交一次 state，渲染+重排从事件率降到帧率；持久化推迟到松手一次完成。
 	const onDrag = useCallback(
 		(side: "sidebar" | "right" | "project") => (e: React.PointerEvent) => {
 			e.preventDefault();
 			setDragging(side);
 			const startX = e.clientX;
 			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : rightWidth;
+			const min = side === "sidebar" ? SIDEBAR_MIN : side === "project" ? PROJECT_MIN : RIGHT_MIN;
+			const max = side === "sidebar" ? SIDEBAR_MAX : side === "project" ? PROJECT_MAX : RIGHT_MAX;
+			const sign = side === "right" ? -1 : 1;
+			let frame = 0;
+			let latest = startW;
 			const move = (ev: PointerEvent) => {
-				if (side === "sidebar") {
-					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
-					setSidebarWidth(w);
-				} else if (side === "project") {
-					const w = Math.max(PROJECT_MIN, Math.min(PROJECT_MAX, startW + (ev.clientX - startX)));
-					setProjectWidth(w);
-				} else {
-					// 最右一列:左缘往左拖是变宽(与原来的详情栏、抽屉同向)
-					const w = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startW - (ev.clientX - startX)));
-					setRightWidth(w);
+				latest = Math.max(min, Math.min(max, startW + sign * (ev.clientX - startX)));
+				if (!frame) {
+					frame = requestAnimationFrame(() => {
+						frame = 0;
+						if (side === "sidebar") setSidebarWidth(latest);
+						else if (side === "project") setProjectWidth(latest);
+						else setRightWidth(latest);
+					});
 				}
 			};
 			const up = () => {
+				if (frame) cancelAnimationFrame(frame);
+				if (side === "sidebar") { setSidebarWidth(latest); persist("piweb.sidebarW", latest); }
+				else if (side === "project") { setProjectWidth(latest); persist("piweb.projectW", latest); }
+				else { setRightWidth(latest); persist("piweb.drawerW", latest); }
 				setDragging(null);
 				window.removeEventListener("pointermove", move);
 				window.removeEventListener("pointerup", up);
@@ -322,12 +331,6 @@ export function AppShell() {
 		},
 		[sidebarWidth, rightWidth, projectWidth],
 	);
-
-	useEffect(() => {
-		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
-		if (dragging === "right") persist("piweb.drawerW", rightWidth);
-		if (dragging === "project") persist("piweb.projectW", projectWidth);
-	}, [dragging, sidebarWidth, rightWidth, projectWidth]);
 
 	const toggleSidebar = () => {
 		const next = !sidebarCollapsed;
