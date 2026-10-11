@@ -1,11 +1,57 @@
+import net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, managedEnginePath, piwebPort, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, tunnelEngine } from "../src/lib/remote/supervisor";
+import { POST } from "../src/app/api/remote/route";
+import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
-afterEach(() => {
+const savedAuth = process.env.PI_WEB_AUTH;
+afterEach(async () => {
 	if (saved === undefined) delete process.env.PI_WEB_TRUSTED_HOSTS;
 	else process.env.PI_WEB_TRUSTED_HOSTS = saved;
+	if (savedAuth === undefined) delete process.env.PI_WEB_AUTH;
+	else process.env.PI_WEB_AUTH = savedAuth;
+	await stopAll();
 	resetRemoteSupervisor();
+});
+
+/** 拿一个当下空闲的端口 */
+async function freePort(): Promise<number> {
+	const server = net.createServer();
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const { port } = server.address() as net.AddressInfo;
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+	return port;
+}
+
+describe("remote entry guard", () => {
+	it("blocks both entries without authentication and in development mode", () => {
+		expect(remoteBlocked({})).toBe("auth");
+		expect(remoteBlocked({ PI_WEB_AUTH: "0" })).toBe("auth");
+		expect(remoteBlocked({ PI_WEB_AUTH: "1", NODE_ENV: "development" })).toBe("dev");
+		expect(remoteBlocked({ PI_WEB_AUTH: "1", NODE_ENV: "production" })).toBeNull();
+	});
+
+	it("/api/remote refuses to start anything while authentication is off", async () => {
+		delete process.env.PI_WEB_AUTH;
+		for (const action of ["start", "start-lan"]) {
+			const response = await POST(new Request("http://127.0.0.1/api/remote", { method: "POST", body: JSON.stringify({ action }) }));
+			expect(response.status, action).toBe(409);
+		}
+		expect(remoteStatus().lan.running).toBe(false);
+		expect(remoteStatus().public.running).toBe(false);
+		expect(remoteStatus().blocked).toBe("auth");
+	});
+});
+
+describe("LAN entry lifecycle", () => {
+	it("concurrent starts share one listener instead of racing into EADDRINUSE", async () => {
+		const port = await freePort();
+		const [first, second] = await Promise.all([startLan(port, "127.0.0.1", 1), startLan(port, "127.0.0.1", 1)]);
+		expect(first.running).toBe(true);
+		expect(second.running).toBe(true);
+		expect(first.error).toBeNull();
+		expect(second.error).toBeNull();
+	});
 });
 
 describe("tunnel host allowlist", () => {

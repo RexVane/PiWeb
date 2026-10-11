@@ -32,6 +32,8 @@ interface PublicState {
 interface RemoteStatus {
 	plugin: string;
 	targetPort: number;
+	/** 非空时服务端拒绝开任何入口（没开认证 / 开发模式） */
+	blocked: "auth" | "dev" | null;
 	lan: LanState;
 	public: PublicState;
 }
@@ -115,6 +117,7 @@ export function RemoteSection() {
 
 	const lan = status?.lan;
 	const pub = status?.public;
+	const blocked = status?.blocked ?? null;
 	const lanTone: "on" | "off" = lan?.running ? "on" : "off";
 	const pubTone: "on" | "pending" | "off" = pub?.running ? (pub.ready ? "on" : "pending") : "off";
 
@@ -169,7 +172,7 @@ export function RemoteSection() {
 								{t.remoteStop}
 							</button>
 						) : (
-							<button className="btn-primary-white" style={{ height: 30, fontSize: 13 }} disabled={busy} onClick={() => void act("start")}>
+							<button className="btn-primary-white" style={{ height: 30, fontSize: 13 }} disabled={busy || blocked !== null} onClick={() => void act("start")}>
 								{busy ? t.remoteWorking : t.remoteStart}
 							</button>
 						)}
@@ -177,6 +180,11 @@ export function RemoteSection() {
 				</div>
 			</Row>
 
+			{blocked ? (
+				<div style={{ fontSize: 12, color: "var(--dsw-label-secondary)", lineHeight: 1.6 }}>
+					{blocked === "auth" ? t.remoteBlockedAuth : t.remoteBlockedDev}
+				</div>
+			) : null}
 			{pub && !pub.engineAvailable ? (
 				<div style={{ fontSize: 12, color: "var(--dsw-danger)", lineHeight: 1.6 }}>{t.remoteEngineMissing}</div>
 			) : null}

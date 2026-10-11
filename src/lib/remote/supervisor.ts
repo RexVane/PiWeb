@@ -15,6 +15,7 @@ import http from "node:http";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
+import { authEnabled } from "../web-auth";
 import { agentDir } from "../web-secret";
 import { createMobileProxy, MOBILE_FIT_CSS, MOBILE_FIT_JS } from "./mobile-proxy";
 
@@ -111,10 +112,15 @@ export interface PublicState {
 	error: string | null;
 }
 
+/** 不允许开入口的原因：没开认证 / 开发模式（Next 开发工具端点不能暴露出去） */
+export type RemoteBlocked = "auth" | "dev";
+
 export interface RemoteStatus {
 	plugin: typeof PLUGIN_ID;
 	/** PiWeb 自己的端口（局域网入口的转发目标） */
 	targetPort: number;
+	/** 非空时两个入口都不许开，UI 应置灰按钮并说明原因 */
+	blocked: RemoteBlocked | null;
 	lan: LanState;
 	public: PublicState;
 }
@@ -122,10 +128,24 @@ export interface RemoteStatus {
 interface SupervisorState {
 	lan: { server: http.Server; port: number } | null;
 	tunnel: { child: ChildProcess; url: string | null; ready: boolean } | null;
+	/** 正在启动中的那一次：并发调用复用它，不能起两个监听 / 两个 cloudflared */
+	lanStarting?: Promise<LanState> | null;
+	publicStarting?: Promise<PublicState> | null;
 	lanError: string | null;
 	publicError: string | null;
 	enginePath: string | null;
 	engineChecked: boolean;
+}
+
+/**
+ * 入口能不能开。两个入口都会把 PiWeb 交给本机以外的设备，所以：
+ *  - 没开认证绝不能开（直接 `next start`、或显式 PI_WEB_AUTH=0 时，开出去就是一个免密 shell）；
+ *  - 开发模式不能开（认证保护不了 Next 开发工具端点，启动器也拒绝非本机开发模式）。
+ */
+export function remoteBlocked(env: Record<string, string | undefined> = process.env): RemoteBlocked | null {
+	if (!authEnabled(env)) return "auth";
+	if (env.NODE_ENV === "development") return "dev";
+	return null;
 }
 
 const STATE_KEY = "piweb:remote-supervisor";
@@ -221,6 +241,7 @@ export function remoteStatus(): RemoteStatus {
 	return {
 		plugin: PLUGIN_ID,
 		targetPort: piwebPort(),
+		blocked: remoteBlocked(),
 		lan: {
 			running: Boolean(current.lan),
 			port: lanPort,
@@ -277,10 +298,20 @@ export function markEngineMissing(): void {
 	current.enginePath = null;
 }
 
-/** 起局域网入口；已经在跑就复用。targetPort 默认转发回 PiWeb 自己，测试可改成别的上游。 */
-export async function startLan(port = DEFAULT_LAN_PORT, host = "0.0.0.0", targetPort = piwebPort()): Promise<LanState> {
+/** 起局域网入口；已经在跑（或正在起）就复用。targetPort 默认转发回 PiWeb 自己，测试可改成别的上游。 */
+export function startLan(port = remoteLanPort(), host = "0.0.0.0", targetPort = piwebPort()): Promise<LanState> {
 	const current = state();
-	if (current.lan) return remoteStatus().lan;
+	if (current.lan) return Promise.resolve(remoteStatus().lan);
+	if (current.lanStarting) return current.lanStarting;
+	const starting = listenLan(port, host, targetPort).finally(() => {
+		if (current.lanStarting === starting) current.lanStarting = null;
+	});
+	current.lanStarting = starting;
+	return starting;
+}
+
+async function listenLan(port: number, host: string, targetPort: number): Promise<LanState> {
+	const current = state();
 	current.lanError = null;
 	const server = createMobileProxy({
 		targetPort,
@@ -311,10 +342,35 @@ export async function stopLan(): Promise<void> {
 	await new Promise<void>((resolve) => lan.server.close(() => resolve()));
 }
 
-/** 起公网隧道；已在跑就复用 */
-export async function startPublic(): Promise<PublicState> {
+/**
+ * 起公网隧道；已在跑（或正在起）就复用。
+ * 「正在起」必须算进来：起局域网入口、等 cloudflared 吐地址都要 await，连点两下若各自 spawn，
+ * 先起的那个会变成没人管的孤儿进程，它的域名还留在 Host 白名单里。
+ */
+export function startPublic(): Promise<PublicState> {
 	const current = state();
-	if (current.tunnel) return remoteStatus().public;
+	if (current.tunnel) return Promise.resolve(remoteStatus().public);
+	if (current.publicStarting) return current.publicStarting;
+	const starting = spawnTunnel().finally(() => {
+		if (current.publicStarting === starting) current.publicStarting = null;
+	});
+	current.publicStarting = starting;
+	return starting;
+}
+
+/** 把一条隧道彻底收掉：摘白名单、清状态、杀进程（只动传进来的这一条） */
+function dropTunnel(child: ChildProcess): void {
+	const current = state();
+	const active = current.tunnel;
+	if (active?.child === child) {
+		disallowTunnelHost(active.url);
+		current.tunnel = null;
+	}
+	if (child.exitCode === null && !child.killed) child.kill();
+}
+
+async function spawnTunnel(): Promise<PublicState> {
+	const current = state();
 	current.publicError = null;
 
 	// 公网入口转发到局域网入口，所以局域网入口必须在跑
@@ -346,7 +402,11 @@ export async function startPublic(): Promise<PublicState> {
 			if (error) current.publicError = error;
 			resolve();
 		};
-		const timer = setTimeout(() => finish("启动隧道超时：cloudflared 没有在 45 秒内给出地址"), TUNNEL_TIMEOUT_MS);
+		const timer = setTimeout(() => {
+			// 不收掉的话进程还活着、状态一直是「运行中」却永远没有地址
+			dropTunnel(child);
+			finish("启动隧道超时：cloudflared 没有在 45 秒内给出地址");
+		}, TUNNEL_TIMEOUT_MS);
 		const catcher = createUrlCatcher();
 		const scan = (chunk: Buffer) => {
 			const url = catcher.feed(chunk.toString("utf8"));
@@ -362,9 +422,10 @@ export async function startPublic(): Promise<PublicState> {
 		child.stdout?.on("data", scan);
 		child.stderr?.on("data", scan);
 		child.once("error", (error: NodeJS.ErrnoException) => {
+			// spawn 失败时不一定还有 exit 事件：这里不清状态，界面会永远显示「运行中」
+			dropTunnel(child);
 			if (error.code === "ENOENT") {
 				markEngineMissing();
-				current.tunnel = null;
 				finish("找不到 cloudflared：请先安装它（https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/）");
 				return;
 			}

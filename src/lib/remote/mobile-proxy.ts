@@ -13,6 +13,7 @@
  * 文件追踪都不需要额外配置，发布包里也不会漏掉这两个文件。
  */
 import http from "node:http";
+import { pipeline } from "node:stream";
 import zlib from "node:zlib";
 import { isLoopbackHostname } from "../auth";
 import assets from "./assets.json";
@@ -92,10 +93,17 @@ export function createMobileProxy({ targetPort, targetHost = "127.0.0.1", css = 
 			const type = String(up.headers["content-type"] ?? "");
 			if (!styled || !type.includes("text/html")) {
 				res.writeHead(up.statusCode ?? 502, up.headers);
-				up.pipe(res);
+				// pipeline 而不是 pipe：任一端提前断开都把另一端一起拆掉。
+				// 手机切后台 / 断网时，到 PiWeb 的 SSE 连接必须跟着断，否则订阅者只增不减。
+				pipeline(up, res, () => undefined);
 				return;
 			}
 			const chunks: Buffer[] = [];
+			up.on("error", (error) => {
+				// 上游中途断开：已经没有完整的 HTML 可插，直接断掉，别让客户端一直挂着
+				log(`[远程连接] 上游中途断开：${error.message}`);
+				res.destroy();
+			});
 			up.on("data", (chunk: Buffer) => chunks.push(chunk));
 			up.on("end", () => {
 				const raw = Buffer.concat(chunks);
@@ -123,10 +131,18 @@ export function createMobileProxy({ targetPort, targetHost = "127.0.0.1", css = 
 				res.end(out);
 			});
 		});
+		let clientGone = false;
 		upstream.on("error", (error) => {
+			if (clientGone) return; // 是我们自己因为客户端走了才拆的，不是 PiWeb 连不上
 			log(`[远程连接] 代理连不上 PiWeb：${error.message}`);
 			if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
 			res.end(`[远程连接] 连不上 PiWeb（${error.message}）`);
+		});
+		// 客户端在上游回应前就走了（或缓冲 HTML 时走了）：上游请求也撤掉，别继续占着 PiWeb
+		res.on("close", () => {
+			if (res.writableFinished) return;
+			clientGone = true;
+			upstream.destroy();
 		});
 		req.pipe(upstream);
 	});

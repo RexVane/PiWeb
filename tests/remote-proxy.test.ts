@@ -131,8 +131,7 @@ describe("mobile injection proxy", () => {
 	it("passes JSON through untouched", async () => {
 		const up = await upstream();
 		const port = await proxyFor(up.port);
-		const res = await call(port, "/json", { host: "pi.example.com" });
-		expect(res.body).toBe('{"success":true}');
+		const res = await call(port, "/json", { host: "pi.example.com" });		expect(res.body).toBe('{"success":true}');
 		expect(res.headers["content-type"]).toContain("application/json");
 	});
 
@@ -143,6 +142,30 @@ describe("mobile injection proxy", () => {
 		expect(res.body).toBe("data: one\n\ndata: two\n\n");
 		// 没有被换成定长：SSE 必须保持流式
 		expect(res.headers["content-length"]).toBeUndefined();
+	});
+
+	it("closes the upstream SSE connection when the client goes away", async () => {
+		let upstreamClosed!: () => void;
+		const closed = new Promise<void>((resolve) => { upstreamClosed = resolve; });
+		const server = http.createServer((_req, res) => {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.write("data: one\n\n");
+			// 永不结束的 SSE：只有代理把连接拆掉，这里才会收到 close
+			res.on("close", () => upstreamClosed());
+		});
+		const port = await proxyFor(await listen(server));
+		await new Promise<void>((resolve, reject) => {
+			const req = http.request({ host: "127.0.0.1", port, path: "/sse", headers: { host: "pi.example.com" } }, (res) => {
+				res.once("data", () => {
+					req.destroy();
+					resolve();
+				});
+			});
+			req.on("error", () => undefined);
+			req.on("timeout", () => reject(new Error("no data")));
+			req.end();
+		});
+		await closed;
 	});
 
 	it("reports 502 when PiWeb is not reachable", async () => {

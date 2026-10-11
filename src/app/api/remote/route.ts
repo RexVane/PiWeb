@@ -5,10 +5,11 @@
  * POST   { action: "start" | "stop" | "start-lan" | "stop-lan" }
  * DELETE 全停
  *
- * 认证不在这里重复做：proxy.ts 已经统一把关，公网一开就必须登录才能拿到这个接口。
+ * 「谁能调这个接口」由 proxy.ts 把关；但「现在能不能开入口」必须在这里再看一次：
+ * 认证没开时 proxy 一律放行，这时开出去的局域网 / 公网入口就是一个免密 shell。
  */
 import { NextResponse } from "next/server";
-import { remoteStatus, startLan, startPublic, stopAll, stopPublic } from "@/lib/remote/supervisor";
+import { remoteBlocked, remoteStatus, startLan, startPublic, stopAll, stopPublic } from "@/lib/remote/supervisor";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,11 @@ export async function POST(request: Request) {
 	const action = typeof body === "object" && body !== null && !Array.isArray(body)
 		? (body as { action?: unknown }).action
 		: undefined;
+	if (action === "start" || action === "start-lan") {
+		const blocked = remoteBlocked();
+		if (blocked === "auth") return bad("remote access requires authentication (PI_WEB_AUTH=1)", 409);
+		if (blocked === "dev") return bad("remote access is disabled in development mode", 409);
+	}
 	switch (action) {
 		case "start":
 			await startLan();

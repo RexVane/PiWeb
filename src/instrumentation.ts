@@ -10,17 +10,21 @@ export async function register() {
 	// 构建期也会实例化服务，别在构建机上开监听
 	if (process.env.NEXT_PHASE === "phase-production-build") return;
 
-	const { remoteLanEnabled, remoteLanPort, startLan } = await import("./lib/remote/supervisor");
+	const { remoteBlocked, remoteLanEnabled, startLan } = await import("./lib/remote/supervisor");
 	if (!remoteLanEnabled()) return;
 
-	const { authEnabled } = await import("./lib/web-auth");
-	if (!authEnabled()) {
-		// 局域网入口会把 PiWeb 暴露给同网段的所有设备，没认证就绝不能开。
+	// 局域网入口会把 PiWeb 暴露给同网段的所有设备：没认证、或是开发模式，都绝不能开。
+	const blocked = remoteBlocked();
+	if (blocked === "auth") {
 		console.warn("[远程连接] 已跳过局域网入口：认证没开。请设 PI_WEB_AUTH=1。");
 		return;
 	}
+	if (blocked === "dev") {
+		console.warn("[远程连接] 已跳过局域网入口：开发模式只服务本机（认证保护不了 Next 开发工具端点）。");
+		return;
+	}
 
-	const state = await startLan(remoteLanPort());
+	const state = await startLan();
 	if (state.running) {
 		console.log(`[远程连接] 局域网入口已就绪：${state.urls.join("  ")}`);
 	} else {
