@@ -26,11 +26,9 @@ const GrowthConsentDialog = dynamic(() => import("@/components/ProjectPanel").th
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 // Git 面板不再由 AppShell 直接渲染:它现在是抽屉里的一个入口(DrawerPanel 内部按需加载)
 import {
-	IconAgentPresetOutline16,
 	IconCheckOutline14,
 	IconChevronDown14,
 	IconFolderClose16,
-	IconFolderOpenOutline16,
 	IconPanelLeftOutline16,
 	IconProjectAddOutline16,
 	IconEllipsisOutline16,
@@ -192,18 +190,19 @@ export function AppShell() {
 		},
 		[toggleDrawer],
 	);
-	// Ctrl/⌘+Shift+E：切换最右一列（抽屉 / 轨迹详情）
+	// Ctrl/⌘+Shift+E：打开抽屉并切到「项目」入口；已经停在该入口时再按收起。
+	// 轨迹详情占着这一列时，这个快捷键把抽屉叫回来（而不是切到轨迹详情）。
 	useEffect(() => {
 		const h = (e: KeyboardEvent) => {
 			if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e") {
 				e.preventDefault();
-				if (selected) setSelected(null);
-				else toggleDrawer();
+				if (drawerOpen && !selected && drawerSection === "project") toggleDrawer(false);
+				else openDrawerSection("project");
 			}
 		};
 		document.addEventListener("keydown", h);
 		return () => document.removeEventListener("keydown", h);
-	}, [toggleDrawer, selected]);
+	}, [drawerOpen, drawerSection, toggleDrawer, openDrawerSection]);
 
 	useEffect(() => {
 		const query = window.matchMedia("(max-width: 840px)");
@@ -852,46 +851,10 @@ export function AppShell() {
 									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
 										{title}
 									</span>
-									{/* 项目生长入口；轨迹详情由对话内工具行点击唤起 */}
-									<button
-										type="button"
-										className="icon-btn"
-										style={{ width: 30, height: 30, background: drawerOpen && !selected && drawerSection === "project" ? "var(--dsw-active)" : undefined }}
-										title={`${t.projectPanel} (Ctrl/⌘+Shift+E)`}
-										aria-label={t.projectPanel}
-										data-testid="project-toggle"
-										onClick={() => {
-											// 项目栏已降级成抽屉的一个入口:这个图标现在切到该入口并打开抽屉
-											// (与 prompt-panel-toggle 同口径);已停在该入口时再点收起。
-											if (drawerOpen && !selected && drawerSection === "project") toggleDrawer(false);
-											else openDrawerSection("project");
-										}}
-									>
-										<IconFolderOpenOutline16 size={15} />
-									</button>
-									{/* 提示词来源：系统提示词 / 记忆 / 技能 / 模板 / 工具提示词集中列出，点开即看 */}
-									<button
-										type="button"
-										className="icon-btn"
-										style={{ width: 30, height: 30, background: drawerOpen && !selected && drawerSection === "prompts" ? "var(--dsw-active)" : undefined }}
-										title={t.promptPanel}
-										aria-label={t.promptPanel}
-										data-testid="prompt-panel-toggle"
-										onClick={() => {
-											// 本步保留这个图标(第 4 步才与抽屉开关合并),但它打开的是抽屉的「提示词」入口:
-											// 已停在提示词入口时再点收起;否则切到该入口并打开抽屉。轨迹详情占着这一列时让位。
-											if (drawerOpen && !selected && drawerSection === "prompts") {
-												toggleDrawer(false);
-											} else {
-												setDrawerSection("prompts");
-												toggleDrawer(true);
-											}
-											setSelected(null);
-										}}
-									>
-										<IconAgentPresetOutline16 size={15} />
-									</button>
-									{/* 右侧抽屉:会话导入等入口;项目/提示词/Git 详情后续再搬进来 */}
+									{/* 项目与提示词原来是两个平级图标,现已合并进右侧抽屉:
+									    抽屉顶部那条横向图标栏就是它们的新位置,顶栏只留一个抽屉开关。
+									    Ctrl/⌘+Shift+E 仍然直达项目入口(见快捷键绑定)。 */}
+									{/* 右侧抽屉:项目 / 提示词 / Git 详情 / 会话导入 四个入口都在里面 */}
 									<button
 										type="button"
 										className="icon-btn"

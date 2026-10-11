@@ -50,7 +50,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("AppShell session-owned composer drafts", () => {
 	it("consumes file references as chips in the target draft without remount/session replay", async () => {
 		render(<AppShell />);
-		fireEvent.click(screen.getByTestId("project-toggle"));
+		// 项目栏已降级成抽屉的入口：这里只要把抽屉打开即可 ——
+		// 本文件的 next/dynamic 桩在收到 onReference 时就会渲染 Reference file 按钮，
+		// 而 AppShell 正是把 onReference 传给了 DrawerPanel。
+		fireEvent.click(screen.getByTestId("drawer-toggle"));
 		fireEvent.change(textarea(), { target: { value: "draft A" } });
 		textarea().setSelectionRange(7, 7);
 		go("Reference file");

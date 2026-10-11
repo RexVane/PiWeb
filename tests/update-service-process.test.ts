@@ -43,7 +43,9 @@ describe("update command runner without real subprocesses", () => {
 			const { runLauncher } = await import("../scripts/launcher.mjs");
 			const result = await runLauncher({
 				root, args: [], env: {},
-				dependencies: { probePort: async () => "busy", isPiWebRunning: async () => true, log: vi.fn() },
+				// readLaunchToken 必须注入：真实实现会去读本机 agent 目录里那个实例留下的令牌文件，
+				// 于是"本机此刻有没有在跑带认证的 PiWeb"会决定这个用例开的是裸地址还是登录链接 —— 用例就不再 hermetic。
+				dependencies: { probePort: async () => "busy", isPiWebRunning: async () => true, log: vi.fn(), readLaunchToken: () => null },
 			});
 			const url = "http://127.0.0.1:30141";
 			const command = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "open" : "xdg-open";
