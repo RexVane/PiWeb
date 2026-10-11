@@ -47,12 +47,6 @@ Sessions grouped by project folder, with a native folder picker (Windows / macOS
 
 <p align="center"><img src="assets/archive.jpg" alt="Archived: archived conversations in one place" width="400" /></p>
 
-### Import Local Sessions
-
-Bring conversation history from Codex, Claude Code, Grok, ZCode, dsh and opencode on this machine into pi sessions without loss: text, thinking, tool calls and their results, timestamps and usage are all kept, and the source data is **read-only** — nothing in the other tools is modified. Each source lists only its 15 most recent **main** conversations; work the main agent handed to a subagent is ignored, because the conversation you want is your own. If the original project directory still exists locally the session lands in that workspace, otherwise it falls back to one you pick — and anything already imported is marked and never imported twice.
-
-<p align="center"><img src="assets/import.jpg" alt="Settings → Import sessions: pick a source, tick, import" width="840" /></p>
-
 ### Project Growth Tree
 
 Every file operation pi makes is snapshotted, grouped one round per message you send. Each round shows what changed **relative to the previous one** — files added, modified and deleted, with line-level diffs one click away — so you can review the work round by round, or drill into single steps inside a round. A round with no file changes says so instead of being skipped, and the record is independent of git: it works on a project with no version history at all.
@@ -143,6 +137,25 @@ piweb -H 0.0.0.0         # LAN access (requires PI_WEB_PASSWORD)
 | `--no-open` | Do not auto-open the browser |
 
 Set `PI_WEB_PASSWORD` to enable the login page and HTTP Basic Auth (user `pi`). Remote access over plain HTTP is not recommended; use HTTPS or a trusted VPN.
+
+### Use it on your phone (Tailscale)
+
+`tailscale serve` reverse-proxies from loopback and terminates TLS, so PiWeb can keep binding `127.0.0.1` only: the tailnet identity is the gate — no password, no token.
+
+```bash
+piweb                                              # keep the default loopback bind
+tailscale serve --bg --https=8443 http://127.0.0.1:30141
+```
+
+`tailscale serve` passes the external hostname through unchanged, so allowlist it — otherwise it is rejected as 403 `untrusted host`:
+
+```bash
+PI_WEB_TRUSTED_HOSTS=<machine>.<tailnet>.ts.net piweb
+```
+
+With both devices on the same tailnet, open `https://<machine>.<tailnet>.ts.net:8443/`. **Anyone who can reach this tailnet can use PiWeb**, so keep the ACL to devices you trust.
+
+> Without Tailscale you can also use `-H 0.0.0.0` over the LAN, but that path requires `PI_WEB_PASSWORD` (the launcher enforces it).
 
 ## License
 

@@ -47,12 +47,6 @@ PiWeb 和 pi 是两个独立的程序，PiWeb 也不是 pi 的另一个版本：
 
 <p align="center"><img src="assets/archive.jpg" alt="已归档：归档的会话收在一处" width="400" /></p>
 
-### 导入本地会话
-
-把本机 Codex / Claude Code / Grok / ZCode / dsh / opencode 的对话无损导成 pi 会话：文本、思考、工具调用与结果、时间戳、用量全部保留，源数据**只读**，不改动源工具的任何文件。每个来源只列最近 15 条**主会话**——主代理派给子代理的活自动忽略，你要的是自己那条对话。源项目目录还在本机就导回原工作区，否则落到你选的兜底工作区；已导过的会被标记，不会重复导入。
-
-<p align="center"><img src="assets/import.jpg" alt="设置 → 导入会话：选来源、勾选、导入" width="840" /></p>
-
 ### 项目生长树
 
 pi 的每次文件操作都拍一张快照，按「你发一条消息 = 一轮」分组：每轮列出**相对上一轮**的新增 / 修改 / 删除，任意文件点开就是行级 diff，可以逐轮 review，也能在轮内按「步」细分到单次操作。没有文件改动的轮会注明，不会悄悄跳过；整棵记录独立于 git，项目本身没有版本历史也照样能用。
@@ -142,6 +136,25 @@ piweb -H 0.0.0.0         # 局域网访问（必须设置 PI_WEB_PASSWORD）
 | `--no-open` | 不自动打开浏览器 |
 
 设置 `PI_WEB_PASSWORD` 开启登录页与 HTTP Basic Auth（用户名 `pi`）。远程访问不建议裸 HTTP，请使用 HTTPS 或可信 VPN。
+
+### 手机上用（Tailscale）
+
+`tailscale serve` 从回环反代并终结 TLS，所以 PiWeb 可以继续只绑 `127.0.0.1`：门禁交给 tailnet 身份，既不用设密码，也没有 token。
+
+```bash
+piweb                                              # 保持默认回环绑定
+tailscale serve --bg --https=8443 http://127.0.0.1:30141
+```
+
+`tailscale serve` 会把外部主机名原样转给后端，所以要把它加进白名单，否则会被挡成 403 `untrusted host`：
+
+```bash
+PI_WEB_TRUSTED_HOSTS=<机器名>.<tailnet>.ts.net piweb
+```
+
+手机与电脑登录同一个 tailnet，浏览器打开 `https://<机器名>.<tailnet>.ts.net:8443/` 即可。**能进这个 tailnet 就等于能用 PiWeb**，请把 ACL 限定到你信任的设备。
+
+> 不用 Tailscale 也可以 `-H 0.0.0.0` 走局域网，但那条路必须设 `PI_WEB_PASSWORD`（启动器强制）。
 
 ## 开源协议
 

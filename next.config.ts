@@ -9,8 +9,9 @@ import { resolveBuildOutput } from "./scripts/build-output.mjs";
  * 让构建期的文件追踪看不到用户主目录。
  *
  * next-trace-entrypoints-plugin 会调 @vercel/nft 静态分析服务端代码，把
- * `fs.readdir()` 的实参求值成绝对路径：session-import 的 `path.join(os.homedir(), ".grok", "sessions")`
- * 一类写法于是变成真实路径，整个 ~/.grok、~/.claude、~/.agents、~/.pi 目录被当成构建资产递归遍历。后果：
+ * `fs.readdir()` 的实参求值成绝对路径：prompt-sources / skills-service 里的
+ * `path.join(os.homedir(), ".agents")`、以及 `getAgentDir()` 的 `~/.pi/agent` 一类写法
+ * 于是变成真实路径，整个 ~/.agents、~/.pi 目录被当成构建资产递归遍历。后果：
  *   1. 目录里任何一个文件读不了（权限/ACL 损坏、被独占）都会让构建以 EPERM 直接失败；
  *   2. 这些绝对路径被写进 .next/**\/*.nft.json，而 .next 随 npm 包一起发布，
  *      等于把构建者的用户名与目录布局发给了所有用户。

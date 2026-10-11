@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/auth";
+import { isSafeHost, isSafeOrigin, trustedHostnames, validBasicAuthorization } from "@/lib/auth";
 import { SESSION_COOKIE, readCookieHeader, validSessionToken } from "@/lib/web-auth";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -11,7 +11,8 @@ const ASSET_PATHS = new Set(["/icon.svg", "/favicon.ico"]);
 
 export function proxy(request: NextRequest) {
 	const password = process.env.PI_WEB_PASSWORD;
-	if (!isSafeHost(request, Boolean(password))) {
+	const trusted = trustedHostnames(process.env.PI_WEB_TRUSTED_HOSTS);
+	if (!isSafeHost(request, Boolean(password), trusted)) {
 		return NextResponse.json({ success: false, error: "untrusted host" }, { status: 403 });
 	}
 	if (!READ_METHODS.has(request.method) && !isSafeOrigin(request)) {

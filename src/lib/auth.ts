@@ -34,12 +34,25 @@ export function isSafeOrigin(request: Request): boolean {
 	}
 }
 
-export function isSafeHost(request: Request, passwordConfigured: boolean): boolean {
+/**
+ * PI_WEB_TRUSTED_HOSTS：逗号分隔的主机名白名单。
+ * 给只从回环反代的入口用（tailscale serve / 其它反代）：这类入口会把外部主机名原样转给后端，
+ * 而它本身已经做了身份认证，所以这里放行即可，不需要再设 PI_WEB_PASSWORD。
+ */
+export function trustedHostnames(raw: string | undefined): string[] {
+	return (raw ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+}
+
+export function isSafeHost(request: Request, passwordConfigured: boolean, trustedHosts: readonly string[] = []): boolean {
 	if (passwordConfigured) return true;
 	try {
 		const host = request.headers.get("host") || new URL(request.url).host;
 		const parsed = new URL(`http://${host}`);
-		return !parsed.username && !parsed.password && parsed.host.toLowerCase() === host.toLowerCase() && isLoopbackHostname(parsed.hostname);
+		if (parsed.username || parsed.password || parsed.host.toLowerCase() !== host.toLowerCase()) return false;
+		if (isLoopbackHostname(parsed.hostname)) return true;
+		// 精确匹配白名单。DNS rebinding 靠的是攻击者域名解析到回环后仍带自己的 Host，
+		// 而它不可能等于白名单里的主机名，所以这项放行不削弱那层防护。
+		return trustedHosts.includes(parsed.hostname.toLowerCase());
 	} catch {
 		return false;
 	}
