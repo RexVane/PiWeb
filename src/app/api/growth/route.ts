@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getManaged, growthRecord } from "@/lib/agent-manager";
+import { getManaged, growthConsent, growthRecord } from "@/lib/agent-manager";
 import { GrowthError, changesBetween, fileContent, filePatch, isAvailable, listTree, readRounds } from "@/lib/growth-service";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 function status(err: unknown): number {
 	if (err instanceof BoundaryError) return 400;
-	if (err instanceof GrowthError) return err.code === "not-found" ? 404 : err.code === "unavailable" ? 503 : err.code === "too-large" ? 413 : 500;
+	if (err instanceof GrowthError) return err.code === "not-found" ? 404 : err.code === "unavailable" ? 503 : err.code === "too-large" ? 413 : err.code === "needs-consent" ? 409 : 500;
 	return 500;
 }
 
@@ -36,13 +36,18 @@ export async function GET(req: Request) {
 	}
 }
 
-/** POST { action: "record", session: <会话 id> }：立即记录，把当前改动提交为「你的修改」（并广播给会话订阅者） */
+/**
+ * POST { action: "record", session: <会话 id> }：立即记录，把当前改动提交为「你的修改」（并广播给会话订阅者）
+ * POST { action: "consent", session, allow: boolean }：回答「要不要在工作区建 git 仓库」；同意时立即拍基线
+ */
 export async function POST(req: Request) {
 	try {
-		const body = (await req.json()) as { action?: string; session?: unknown };
-		if (body.action !== "record") return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
+		const body = (await req.json()) as { action?: string; session?: unknown; allow?: unknown };
+		if (body.action !== "record" && body.action !== "consent") return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
+		if (body.action === "consent" && typeof body.allow !== "boolean") return NextResponse.json({ success: false, error: "allow must be a boolean" }, { status: 400 });
 		const sessionPath = await resolveSessionPath(String(body.session ?? ""), { allowPending: true });
-		const round = await growthRecord(getManaged(sessionPath));
+		const m = getManaged(sessionPath);
+		const round = body.action === "consent" ? await growthConsent(m, body.allow as boolean) : await growthRecord(m);
 		return NextResponse.json({ success: true, data: { round } });
 	} catch (err: any) {
 		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: err instanceof SyntaxError ? 400 : status(err) });

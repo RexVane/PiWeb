@@ -34,7 +34,7 @@ describe("growth-tracker (real git)", () => {
 		const entries: Array<{ type: string; id: string; message: { role: string; content?: unknown; stopReason?: string } }> = [
 			{ type: "message", id: "old", message: { role: "user", content: "上一次会话的提问" } },
 		];
-		const tracker = createGrowthTracker({ cwd, sessionPath: path.join(tempDir, "s.jsonl"), publish: (e) => events.push(e), entries: () => entries });
+		const tracker = createGrowthTracker({ cwd, sessionPath: path.join(tempDir, "s.jsonl"), publish: (e) => events.push(e), entries: () => entries, consent: async () => true });
 		try {
 			// 工作区第一次：基线
 			await tracker.prepare();
@@ -90,7 +90,7 @@ describe("growth-tracker (real git)", () => {
 		if (!(await isAvailable())) return;
 		const cwd = path.join(tempDir, "not-created-yet");
 		const events: WebEvent[] = [];
-		const tracker = createGrowthTracker({ cwd, sessionPath: path.join(tempDir, "recover.jsonl"), publish: (event) => events.push(event), entries: () => [] });
+		const tracker = createGrowthTracker({ cwd, sessionPath: path.join(tempDir, "recover.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => true });
 		try {
 			await tracker.prepare();
 			expect(events.some((event) => event.type === "growth_error" && event.message)).toBe(true);

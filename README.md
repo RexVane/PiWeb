@@ -49,7 +49,7 @@ Sessions grouped by project folder, with a native folder picker (Windows / macOS
 
 ### Project Growth Tree
 
-Every file operation pi makes is snapshotted, grouped one round per message you send. Each round shows what changed **relative to the previous one** — files added, modified and deleted, with line-level diffs one click away — so you can review the work round by round, or drill into single steps inside a round. A round with no file changes says so instead of being skipped, and the record is independent of git: it works on a project with no version history at all.
+Every file operation pi makes is snapshotted, grouped one round per message you send. Each round shows what changed **relative to the previous one** — files added, modified and deleted, with line-level diffs one click away — so you can review the work round by round, or drill into single steps inside a round. A round with no file changes says so instead of being skipped. Each round is stored as a commit in the workspace's own git repository on a private ref (`refs/piweb/rounds/…`), never touching your branches or index; if the folder is not a git repository yet (or is only a subfolder of another one), PiWeb asks before creating one there, remembers the answer per workspace, and records nothing if you decline.
 
 <p align="center"><img src="assets/growth-1.jpg" alt="Project growth tree (1 of 2)" width="840" /></p>
 <p align="center"><img src="assets/growth-2.jpg" alt="Project growth tree (2 of 2)" width="840" /></p>

@@ -75,3 +75,25 @@ describe("ProjectPanel Git unknown state", () => {
 		expect(screen.queryByRole("button", { name: /让 pi 提交|Ask pi to commit/ })).toBeNull();
 	});
 });
+
+describe("GrowthConsentDialog", () => {
+	it("explains a nested repository, remembers only explicit answers, and Esc just closes", async () => {
+		const { GrowthConsentDialog } = await import("@/components/ProjectPanel");
+		const onAnswer = vi.fn();
+		const request = { cwd: "/outer/sub", reason: "nested" as const, parent: "/outer" };
+		const { rerender } = render(<GrowthConsentDialog request={request} onAnswer={onAnswer} />);
+		const dialog = screen.getByTestId("growth-consent-dialog");
+		expect(dialog.textContent).toContain("/outer/sub");
+		expect(dialog.textContent).toContain("/outer");
+		fireEvent.keyDown(dialog, { key: "Escape" });
+		expect(screen.queryByTestId("growth-consent-dialog")).toBeNull();
+		expect(onAnswer).not.toHaveBeenCalled();
+		// 换了工作区的请求要重新弹出
+		rerender(<GrowthConsentDialog request={{ cwd: "/plain", reason: "not-git" }} onAnswer={onAnswer} />);
+		const buttons = screen.getByTestId("growth-consent-dialog").querySelectorAll("button");
+		fireEvent.click(buttons[buttons.length - 1]);
+		expect(onAnswer).toHaveBeenCalledWith(true);
+		fireEvent.click(buttons[0]);
+		expect(onAnswer).toHaveBeenLastCalledWith(false);
+	});
+});

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import type {
+	GrowthConsentRequest,
 	GrowthRound,
 	SessionSummary,
 	TrajEntry,
@@ -61,7 +62,7 @@ export interface PiWebState {
 	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
 	workingMessage: string | null;
 	/** 项目生长：本次连接期间收到的 commit（完整时间轴由 useGrowth 拉取后按 commit 去重合并） */
-	growth: { rounds: GrowthRound[]; error: string | null };
+	growth: { rounds: GrowthRound[]; error: string | null; consent: GrowthConsentRequest | null };
 }
 
 export interface SessionListItem extends SessionSummary {
@@ -236,11 +237,14 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 			return s;
 		case "growth": {
 			const rounds = s.growth.rounds.some((x) => x.commit === evt.round.commit) ? s.growth.rounds : [...s.growth.rounds, evt.round];
-			s.growth = { rounds, error: null };
+			s.growth = { ...s.growth, rounds, error: null };
 			return s;
 		}
 		case "growth_error":
 			s.growth = { ...s.growth, error: evt.message };
+			return s;
+		case "growth_consent":
+			s.growth = { ...s.growth, consent: evt.request };
 			return s;
 		case "retry":
 			// 只保留最后一次尝试：重试过程在界面上是「重试 3/5」这一条，而不是五行报错
@@ -317,7 +321,7 @@ const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
 	extensionNotices: [],
 	extensionStatuses: {},
 	workingMessage: null,
-	growth: { rounds: [], error: null },
+	growth: { rounds: [], error: null, consent: null },
 });
 
 function pathKey(value: string): string {
@@ -727,7 +731,7 @@ export function usePiWeb() {
 						extensionStatuses: snap.extensionStatuses ?? {},
 						workingMessage: null,
 						// 重连的快照不带生长账本；连接期间已收到的步保留，useGrowth 会按 seq 与拉取结果去重
-						growth: { ...prev.growth, error: snap.growthError ?? null },
+						growth: { ...prev.growth, error: snap.growthError ?? null, consent: snap.growthConsent ?? null },
 					}));
 				} else {
 					batcher.push(parsed as WebEvent);
@@ -892,6 +896,28 @@ export function usePiWeb() {
 		},
 		[currentId, resync, sendCommand],
 	);
+	/** 回答「要不要在工作区建 git 仓库给生长记录用」：决定按工作区记住；失败就重连拿回服务端的待答状态 */
+	const answerGrowthConsent = useCallback(
+		async (allow: boolean) => {
+			const target = currentId;
+			if (!target) return;
+			setState((s) => ({ ...s, growth: { ...s.growth, consent: null } }));
+			try {
+				const r = await fetch("/api/growth", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ action: "consent", session: target, allow }),
+				});
+				const result = await r.json();
+				if (!r.ok || !result.success) throw new Error(result.error || `request failed (${r.status})`);
+			} catch (error) {
+				if (activeSessionRef.current !== target) return;
+				setState((s) => ({ ...s, error: error instanceof Error ? error.message : String(error) }));
+				resync();
+			}
+		},
+		[currentId, resync],
+	);
 	const dismissExtensionNotice = useCallback((id: string) => setState((s) => ({ ...s, extensionNotices: s.extensionNotices.filter((n) => n.id !== id) })), []);
 	const clearError = useCallback(() => setState((s) => ({ ...s, error: null })), []);
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
@@ -968,6 +994,7 @@ export function usePiWeb() {
 		clearCompaction,
 		setError,
 		answerExtensionDialog,
+		answerGrowthConsent,
 		dismissExtensionNotice,
 	};
 }

@@ -35,6 +35,7 @@ import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
 import { estimateTokensOf } from "./process-format";
 import { getPiSettings } from "./pi-settings";
+import { getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
@@ -612,6 +613,7 @@ function growthOf(m: Managed): GrowthTracker {
 		sessionPath: m.sessionPath,
 		publish: (evt) => publish(m, evt),
 		entries: () => m.sm.getEntries() as never,
+		consent: () => getGrowthInitConsent(m.cwd).catch(() => null),
 	}));
 }
 
@@ -619,6 +621,20 @@ function growthOf(m: Managed): GrowthTracker {
 export async function growthRecord(m: Managed): Promise<GrowthRound | null> {
 	touch(m);
 	return growthOf(m).recordNow();
+}
+
+/**
+ * 用户回答了「要不要在这个工作区建 git 仓库」：决定按工作区记住，同一工作区的其他会话一并收起弹窗；
+ * 同意时由发起的会话立即拍基线（返回这一笔）。
+ */
+export async function growthConsent(m: Managed, allow: boolean): Promise<GrowthRound | null> {
+	touch(m);
+	await setGrowthInitConsent(m.cwd, allow);
+	const same = (p: string) => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
+	for (const other of sessions.values()) {
+		if (other !== m && other.growth?.getConsentRequest() && same(other.cwd) === same(m.cwd)) void other.growth.consentAnswered(allow).catch(() => undefined);
+	}
+	return growthOf(m).consentAnswered(allow);
 }
 
 // ---------- 会话生命周期 ----------
@@ -1295,6 +1311,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		messages,
 		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]),
 		growthError: m.growth?.getError?.() ?? null,
+		growthConsent: m.growth?.getConsentRequest?.() ?? null,
 		model,
 		thinkingLevel,
 		thinkingLevels,

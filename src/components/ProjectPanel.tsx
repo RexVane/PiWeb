@@ -13,7 +13,59 @@ import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { GitInfo } from "@/lib/git-service";
 import type { TreeNode } from "@/lib/growth-tree";
-import type { GrowthChange } from "@/lib/types";
+import type { GrowthChange, GrowthConsentRequest } from "@/lib/types";
+
+/**
+ * 「要不要在这个工作区建 git 仓库」：工作区还不是仓库根目录时，生长记录第一次提交前问一次。
+ * 关掉（Esc / 点遮罩外）不算回答，下次打开会话还会再问；只有两个按钮会被记住。
+ */
+export function GrowthConsentDialog({ request, onAnswer }: { request: GrowthConsentRequest; onAnswer: (allow: boolean) => void }) {
+	const { t } = useI18n();
+	const [dismissed, setDismissed] = useState(false);
+	const ref = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		setDismissed(false);
+		ref.current?.focus();
+	}, [request.cwd, request.reason]);
+	if (dismissed) return null;
+	const body = request.reason === "nested" ? t.growthConsentNested.replace("{parent}", request.parent ?? "") : t.growthConsentNotGit;
+	return (
+		<div
+			ref={ref}
+			tabIndex={-1}
+			className="fixed inset-0 z-[120] flex items-center justify-center"
+			style={{ background: "var(--dsw-mask)" }}
+			role="dialog"
+			aria-modal="true"
+			aria-label={t.growthConsentTitle}
+			data-testid="growth-consent-dialog"
+			onKeyDown={(event) => {
+				event.stopPropagation();
+				if (event.key === "Escape") setDismissed(true);
+			}}
+		>
+			<div className="popover flex w-[min(92vw,480px)] flex-col gap-3 p-5" style={{ background: "var(--dsw-glass-modal)" }}>
+				<div className="flex items-start gap-2.5">
+					<span className="flex flex-none items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "var(--dsw-hover)" }}>
+						<IconGitOutline16 size={16} style={{ color: "var(--dsw-label-secondary)" }} />
+					</span>
+					<div className="min-w-0 flex-1">
+						<div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.4 }}>{t.growthConsentTitle}</div>
+						<div className="mt-0.5 truncate" style={{ fontSize: 11, color: "var(--dsw-label-caption)", fontFamily: "var(--font-mono)" }} title={request.cwd}>{request.cwd}</div>
+					</div>
+				</div>
+				<div className="rounded-xl px-3 py-2.5" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)", lineHeight: 1.55, background: "var(--dsw-hover)" }}>
+					{body}
+					<div className="mt-1.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.growthConsentNote}</div>
+				</div>
+				<div className="flex justify-end gap-2">
+					<button className="btn-outline" style={{ height: 32 }} onClick={() => onAnswer(false)}>{t.growthConsentDecline}</button>
+					<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(true)}>{t.growthConsentAllow}</button>
+				</div>
+			</div>
+		</div>
+	);
+}
 
 /** 「第 7 轮 · 把保存按钮改成红色」/「你的修改」 */
 export function roundTitle(round: GrowthEntry, t: Record<string, string>): string {

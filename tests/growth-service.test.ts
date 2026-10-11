@@ -20,6 +20,9 @@ import {
 	workspaceKey,
 } from "../src/lib/growth-service";
 
+/** 测试里的临时目录都不是仓库：一律当作用户已同意建仓库（不同意的情况单独测） */
+const INIT = { allowInit: true };
+
 const git = (cwd: string, args: string[], input?: string) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, input });
 
 describe("growth-service parsers", () => {
@@ -104,16 +107,16 @@ describe("growth-service rounds (real git)", () => {
 		await fs.mkdir(path.join(work, "node_modules", "x"), { recursive: true });
 		await fs.writeFile(path.join(work, "node_modules", "x", "index.js"), "ignored");
 
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		expect(base).toMatchObject({ kind: "baseline", initial: true, changes: [], parent: null });
 		expect((await listTree(work, base!.tree)).map((f) => f.path)).toEqual(["README.md"]);
 		// 没改动：不记「你的修改」
-		expect(await recordWorkspaceChanges(work, session)).toBeNull();
+		expect(await recordWorkspaceChanges(work, session, INIT)).toBeNull();
 
 		await fs.mkdir(path.join(work, "src"), { recursive: true });
 		await fs.writeFile(path.join(work, "src", "app.ts"), "export const a = 1;\n");
 		await fs.writeFile(path.join(work, "README.md"), "# hi\nline2 changed\nline3\n");
-		const r1 = await commitRound(work, { kind: "round", session, title: "把 README\t改一下", promptIds: ["e1", "bad id!"] });
+		const r1 = await commitRound(work, { kind: "round", session, title: "把 README\t改一下", promptIds: ["e1", "bad id!"] }, INIT);
 		expect(r1).toMatchObject({ kind: "round", title: "把 README 改一下", promptIds: ["e1"], status: "done", parent: base!.commit, parentTree: base!.tree });
 		expect(r1?.changes).toEqual([
 			{ status: "M", path: "README.md", add: 2, del: 1 },
@@ -122,12 +125,12 @@ describe("growth-service rounds (real git)", () => {
 		expect(r1?.stats).toMatchObject({ added: 1, modified: 1, deleted: 0, add: 3, del: 1 });
 
 		// 没有改动的一轮也提交（空 commit），轮号与对话一一对应
-		const r2 = await commitRound(work, { kind: "round", session, title: "只是问个问题", status: "aborted" });
+		const r2 = await commitRound(work, { kind: "round", session, title: "只是问个问题", status: "aborted" }, INIT);
 		expect(r2).toMatchObject({ kind: "round", status: "aborted", tree: r1!.tree, parent: r1!.commit, changes: [] });
 
 		await fs.rm(path.join(work, "README.md"));
 		await fs.rename(path.join(work, "src", "app.ts"), path.join(work, "src", "main.ts"));
-		const user = await recordWorkspaceChanges(work, session);
+		const user = await recordWorkspaceChanges(work, session, INIT);
 		expect(user?.kind).toBe("user");
 		expect(user?.changes).toEqual([
 			{ status: "D", path: "README.md", add: 0, del: 3 },
@@ -161,12 +164,12 @@ describe("growth-service rounds (real git)", () => {
 		const session = path.join(tempDir, "fresh.jsonl");
 		await fs.writeFile(path.join(work, "a.txt"), "a\nb\n");
 		await fs.writeFile(path.join(work, "old.txt"), "keep me\n");
-		await recordWorkspaceChanges(work, session);
+		await recordWorkspaceChanges(work, session, INIT);
 		await fs.writeFile(path.join(work, "a.txt"), "a\nB\nc\n");
 		await fs.rename(path.join(work, "old.txt"), path.join(work, "new.txt"));
 		await fs.writeFile(path.join(work, "img.bin"), Buffer.from([0, 1, 2, 3]));
-		await commitRound(work, { kind: "round", session, title: "第一轮", promptIds: ["p1", "p2"] });
-		await commitRound(work, { kind: "round", session, title: "第二轮（空）" });
+		await commitRound(work, { kind: "round", session, title: "第一轮", promptIds: ["p1", "p2"] }, INIT);
+		await commitRound(work, { kind: "round", session, title: "第二轮（空）" }, INIT);
 		const live = await readRounds(work, session);
 
 		const globals = globalThis as { __piWebGrowthRounds?: unknown };
@@ -196,7 +199,7 @@ describe("growth-service rounds (real git)", () => {
 		if (!available) return;
 		const session = path.join(tempDir, "race.jsonl");
 		await fs.writeFile(path.join(work, "a.txt"), "a\n");
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		const ref = `refs/piweb/rounds/${workspaceKey(work)}`;
 		// 模拟另一个 PiWeb 进程：直接在链头后面挂一个 commit
 		const env = { ...process.env, GIT_AUTHOR_NAME: "x", GIT_AUTHOR_EMAIL: "x@x", GIT_COMMITTER_NAME: "x", GIT_COMMITTER_EMAIL: "x@x" };
@@ -204,7 +207,7 @@ describe("growth-service rounds (real git)", () => {
 		git(work, ["update-ref", ref, other, base!.commit]);
 
 		await fs.writeFile(path.join(work, "a.txt"), "a\nb\n");
-		const mine = await commitRound(work, { kind: "round", session, title: "mine" });
+		const mine = await commitRound(work, { kind: "round", session, title: "mine" }, INIT);
 		expect(mine?.parent).toBe(other);
 		expect(git(work, ["rev-parse", ref]).trim()).toBe(mine!.commit);
 		expect((await readRounds(work)).map((r) => r.commit)).toEqual([base!.commit, other, mine!.commit]);
@@ -228,21 +231,25 @@ describe("growth-service rounds (real git)", () => {
 		for (let offset = 0; offset < files.length; offset += 100) {
 			await Promise.all(files.slice(offset, offset + 100).map((name) => fs.writeFile(path.join(work, name), name)));
 		}
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		expect(base?.initial).toBe(true);
 		expect(await listTree(work, base!.tree)).toHaveLength(files.length);
 		await fs.writeFile(path.join(work, files[0]), "changed");
-		const changed = await commitRound(work, { kind: "round", session, title: "edit" });
+		const changed = await commitRound(work, { kind: "round", session, title: "edit" }, INIT);
 		expect(changed?.changes).toEqual([{ status: "M", path: files[0], add: 1, del: 1 }]);
 	}, 20_000);
 
-	it("auto-initializes a non-git workspace and keeps HEAD unborn", async () => {
+	it("initializes a non-git workspace only with consent and keeps HEAD unborn", async () => {
 		if (!available) return;
 		const session = path.join(tempDir, "init.jsonl");
 		await fs.writeFile(path.join(work, "a.txt"), "a\n");
 		expect(await fs.stat(path.join(work, ".git")).catch(() => null)).toBeNull();
+		// 没同意：不建仓库，抛 needs-consent 并说明原因
+		await expect(recordWorkspaceChanges(work, session)).rejects.toMatchObject({ code: "needs-consent", target: { reason: "not-git" } });
+		await expect(commitRound(work, { kind: "round", session })).rejects.toMatchObject({ code: "needs-consent" });
+		expect(await fs.stat(path.join(work, ".git")).catch(() => null)).toBeNull();
 
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		expect(base?.initial).toBe(true);
 		// 自动 init 的仓库：HEAD 指向未诞生分支，commit 链只挂在专用引用上
 		const head = await fs.readFile(path.join(work, ".git", "HEAD"), "utf8");
@@ -265,8 +272,13 @@ describe("growth-service rounds (real git)", () => {
 		const parentIndexBefore = await fs.readFile(path.join(parent, ".git", "index")).catch(() => null);
 		await fs.writeFile(path.join(sub, "inner.txt"), "inner\n");
 		await fs.writeFile(path.join(parent, "outer.txt"), "outer\n");
+		// 子目录同样要先同意，并告诉界面外层仓库在哪
+		const refused = await recordWorkspaceChanges(sub, session).catch((error: unknown) => error);
+		expect(refused).toMatchObject({ code: "needs-consent", target: { reason: "nested" } });
+		expect(path.relative(await fs.realpath(parent), (refused as { target: { parent: string } }).target.parent)).toBe("");
+		expect(await fs.stat(path.join(sub, ".git")).catch(() => null)).toBeNull();
 
-		const base = await recordWorkspaceChanges(sub, session);
+		const base = await recordWorkspaceChanges(sub, session, INIT);
 		expect(base?.initial).toBe(true);
 		// 记录范围恰好是工作区：父仓库的 outer.txt 不出现
 		expect((await listTree(sub, base!.tree)).map((f) => f.path)).toEqual(["inner.txt"]);
@@ -289,11 +301,11 @@ describe("growth-service rounds (real git)", () => {
 		const configBefore = await fs.readFile(path.join(gitDir, "config"));
 		const entriesBefore = (await fs.readdir(gitDir, { recursive: true })).sort();
 
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		await fs.rm(target);
 		await fs.mkdir(target);
 		await fs.writeFile(path.join(target, "child.txt"), "different child contents\n");
-		const directory = await commitRound(work, { kind: "round", session, title: "file to directory" });
+		const directory = await commitRound(work, { kind: "round", session, title: "file to directory" }, INIT);
 		expect(directory?.parentTree).toBe(base!.tree);
 		expect(directory?.changes).toEqual([
 			{ status: "D", path: "p", add: 0, del: 1 },
@@ -303,7 +315,7 @@ describe("growth-service rounds (real git)", () => {
 
 		await fs.rm(target, { recursive: true });
 		await fs.writeFile(target, "replacement file\n");
-		const file = await commitRound(work, { kind: "round", session, title: "directory to file" });
+		const file = await commitRound(work, { kind: "round", session, title: "directory to file" }, INIT);
 		expect(file?.parentTree).toBe(directory!.tree);
 		expect(file?.changes).toEqual([
 			{ status: "A", path: "p", add: 1, del: 0 },
@@ -312,7 +324,7 @@ describe("growth-service rounds (real git)", () => {
 		expect((await listTree(work, file!.tree)).map((entry) => entry.path)).toEqual(["p"]);
 		expect((await fileContent(work, base!.tree, "p")).content).toBe("original file\n");
 		expect((await changesBetween(work, base!.tree, file!.tree))).toEqual([{ status: "M", path: "p", add: 1, del: 1 }]);
-		expect(await recordWorkspaceChanges(work, session)).toBeNull();
+		expect(await recordWorkspaceChanges(work, session, INIT)).toBeNull();
 		// 用户仓库自身的 index / HEAD / config 一个字节都不能动
 		expect((await fs.readFile(path.join(gitDir, "index"))).equals(indexBefore)).toBe(true);
 		expect((await fs.readFile(path.join(gitDir, "HEAD"))).equals(headBefore)).toBe(true);
@@ -329,19 +341,19 @@ describe("growth-service rounds (real git)", () => {
 		const session = path.join(tempDir, "type-batches.jsonl");
 		const names = Array.from({ length: 300 }, (_, index) => `p-${String(index).padStart(4, "0")}`);
 		for (const name of names) await fs.writeFile(path.join(work, name), `original ${name}\n`);
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		for (const name of names) {
 			await fs.rm(path.join(work, name));
 			await fs.mkdir(path.join(work, name));
 			await fs.writeFile(path.join(work, name, "child.txt"), `child ${name}\n`);
 		}
-		const directories = await commitRound(work, { kind: "round", session, title: "replace with directories" });
+		const directories = await commitRound(work, { kind: "round", session, title: "replace with directories" }, INIT);
 		expect((await listTree(work, directories!.tree)).map((file) => file.path)).toEqual(names.map((name) => `${name}/child.txt`));
 		for (const name of names) {
 			await fs.rm(path.join(work, name), { recursive: true });
 			await fs.writeFile(path.join(work, name), `replacement ${name}\n`);
 		}
-		const files = await commitRound(work, { kind: "round", session, title: "replace with files" });
+		const files = await commitRound(work, { kind: "round", session, title: "replace with files" }, INIT);
 		expect((await listTree(work, files!.tree)).map((file) => file.path)).toEqual(names);
 		expect((await listTree(work, base!.tree)).map((file) => file.path)).toEqual(names);
 		expect((await fileContent(work, base!.tree, names[0])).content).toBe(`original ${names[0]}\n`);
@@ -354,7 +366,7 @@ describe("growth-service rounds (real git)", () => {
 		const target = path.join(work, "p.txt");
 		await fs.writeFile(outside, "must not snapshot linked contents\n");
 		await fs.writeFile(target, "original\n");
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		await fs.rm(target);
 		try {
 			await fs.symlink(outside, target, "file");
@@ -365,11 +377,11 @@ describe("growth-service rounds (real git)", () => {
 			}
 			throw error;
 		}
-		const changed = await commitRound(work, { kind: "round", session, title: "file to symlink" });
+		const changed = await commitRound(work, { kind: "round", session, title: "file to symlink" }, INIT);
 		expect(changed?.changes).toEqual([{ status: "D", path: "p.txt", add: 0, del: 1 }]);
 		expect(await listTree(work, changed!.tree)).toEqual([]);
 		expect((await fileContent(work, base!.tree, "p.txt")).content).toBe("original\n");
-		expect(await recordWorkspaceChanges(work, session)).toBeNull();
+		expect(await recordWorkspaceChanges(work, session, INIT)).toBeNull();
 	}, 20_000);
 
 	it("removes a file replaced by a linked directory without snapshotting its target", async () => {
@@ -380,10 +392,10 @@ describe("growth-service rounds (real git)", () => {
 		await fs.mkdir(outside);
 		await fs.writeFile(path.join(outside, "secret.txt"), "outside workspace\n");
 		await fs.writeFile(target, "original\n");
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		await fs.rm(target);
 		await fs.symlink(outside, target, process.platform === "win32" ? "junction" : "dir");
-		const changed = await commitRound(work, { kind: "round", session, title: "file to linked directory" });
+		const changed = await commitRound(work, { kind: "round", session, title: "file to linked directory" }, INIT);
 		expect(changed?.changes).toEqual([{ status: "D", path: "p", add: 0, del: 1 }]);
 		expect(await listTree(work, changed!.tree)).toEqual([]);
 		expect((await fileContent(work, base!.tree, "p")).content).toBe("original\n");
@@ -394,11 +406,11 @@ describe("growth-service rounds (real git)", () => {
 		const session = path.join(tempDir, "type-change.jsonl");
 		const target = path.join(work, "tracked.txt");
 		await fs.writeFile(target, "original\n");
-		const base = await recordWorkspaceChanges(work, session);
+		const base = await recordWorkspaceChanges(work, session, INIT);
 		expect((await listTree(work, base!.tree)).map((file) => file.path)).toEqual(["tracked.txt"]);
 		await fs.rm(target);
 		await fs.mkdir(target);
-		const changed = await commitRound(work, { kind: "round", session, title: "replace file" });
+		const changed = await commitRound(work, { kind: "round", session, title: "replace file" }, INIT);
 		expect(changed?.changes).toEqual([{ status: "D", path: "tracked.txt", add: 0, del: 1 }]);
 		expect(await listTree(work, changed!.tree)).toEqual([]);
 	}, 20_000);

@@ -22,6 +22,7 @@ const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((
 const samePath = (a: string, b: string): boolean =>
 	a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) => m.ProjectPanel), { ssr: false });
+const GrowthConsentDialog = dynamic(() => import("@/components/ProjectPanel").then((m) => m.GrowthConsentDialog), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
 import {
@@ -101,6 +102,7 @@ export function AppShell() {
 		clearCompaction,
 		setError,
 		answerExtensionDialog,
+		answerGrowthConsent,
 		dismissExtensionNotice,
 	} = usePiWeb();
 
@@ -1005,6 +1007,10 @@ export function AppShell() {
 			)}
 
 			<ExtensionDialogHost dialog={state.extensionDialogs[0] ?? null} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			{/* 扩展对话框优先：它在阻塞 pi，建仓库的询问可以等 */}
+			{state.growth.consent && !state.extensionDialogs.length && (
+				<GrowthConsentDialog request={state.growth.consent} onAnswer={(allow) => void answerGrowthConsent(allow)} />
+			)}
 			{/* 只有远程设备（手机走 tailnet）会走到这里：本机仍然用系统原生对话框 */}
 			<DirectoryPicker open={dirPickerOpen} onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />
 			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice} />

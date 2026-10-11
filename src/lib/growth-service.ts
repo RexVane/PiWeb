@@ -1,8 +1,9 @@
 /**
  * growth-service：项目生长 = 每轮一个 git commit（工作区自带 git，无影子仓库、无旁路账本）。
  *
- * commit 直接落在工作区自己的 git 仓库里：非 git 目录在首次提交前自动 `git init`；
- * 工作区若只是别的仓库的子目录，则在自身根目录嵌套 init，保证记录范围恰好等于工作区。
+ * commit 直接落在工作区自己的 git 仓库里：工作区已是仓库根目录就直接用；
+ * 非 git 目录、或只是别的仓库的子目录，要用户同意后（allowInit）才在工作区根 `git init`
+ * （子目录则嵌套 init），保证记录范围恰好等于工作区；没同意就抛 needs-consent。
  * 每轮结束 = 往 PiWeb 独立暂存区 <gitdir>/piweb/index（GIT_INDEX_FILE 传入）add 全部改动，
  * write-tree + commit-tree，挂到专用引用 refs/piweb/rounds/<key>：不碰 HEAD、不碰用户暂存区、不占分支。
  * 排除规则 <gitdir>/piweb/exclude 只叠加、绝不改写用户的 info/exclude。
@@ -42,10 +43,17 @@ export const EXCLUDE_DIRS = GROWTH_EXCLUDE_DIRS;
 const EXCLUDE_FILES = [".DS_Store", "Thumbs.db", "*.log", ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*"];
 const EXCLUDE_CONTENT = `# PiWeb growth snapshot exclusions (generated, do not edit)\n${[...EXCLUDE_DIRS.map((d) => `${d}/`), ...EXCLUDE_FILES].join("\n")}\n`;
 
+/** 工作区还不是仓库根目录：not-git = 不在任何仓库里；nested = 是 parent 仓库的子目录 */
+export interface GrowthInitTarget {
+	reason: "not-git" | "nested";
+	parent?: string;
+}
+
 export class GrowthError extends Error {
 	constructor(
 		message: string,
-		public code: "unavailable" | "too-large" | "not-found" | "failed" = "failed",
+		public code: "unavailable" | "too-large" | "not-found" | "failed" | "needs-consent" = "failed",
+		public target?: GrowthInitTarget,
 	) {
 		super(message);
 		this.name = "GrowthError";
@@ -207,10 +215,14 @@ async function gitOk(): Promise<boolean> {
 	if (registry.gitFailedAt && Date.now() - registry.gitFailedAt < GIT_FAIL_RETRY_MS) return false;
 	const check = runGit(["--version"]).then((r) => r.code === 0, () => false);
 	registry.gitOk = check;
+	// 成功结果一直留着（项目栏每次打开都会问一次，不必每次起一个 git 进程）；失败只短缓存
 	void check.then((ok) => {
+		if (ok) {
+			registry.gitFailedAt = undefined;
+			return;
+		}
 		registry.gitOk = undefined;
-		if (ok) registry.gitFailedAt = undefined;
-		else registry.gitFailedAt = Date.now();
+		registry.gitFailedAt = Date.now();
 	});
 	return check;
 }
@@ -285,26 +297,28 @@ async function refExistsFast(gitDir: string, ref: string): Promise<boolean> {
 
 /**
  * 解析工作区可用的 git-dir：工作区已是某仓库的工作树根就直接复用；
- * 否则（非 git 目录、或只是别的仓库的子目录）在工作区根 `git init`。
+ * 否则（非 git 目录、或只是别的仓库的子目录）只有 allowInit（用户同意过）才在工作区根 `git init`，
+ * 不然抛 needs-consent 并带上原因，由界面去问。
  * init 失败（目录不可写等）按终态处理，本会话停用生长跟踪。
  */
-async function ensureGitDir(cwd: string): Promise<string> {
-	const usable = async (): Promise<string | null> => {
+async function ensureGitDir(cwd: string, allowInit: boolean): Promise<string> {
+	const probe = async (): Promise<{ gitDir: string } | GrowthInitTarget> => {
 		const r = await runGit(["rev-parse", "--absolute-git-dir", "--show-toplevel", "--is-bare-repository"], { cwd });
-		if (r.code !== 0) return null;
+		if (r.code !== 0) return { reason: "not-git" };
 		const [gitDir = "", top = "", bare = ""] = r.stdout.toString("utf8").split("\n").map((s) => s.trim());
-		if (!gitDir || bare === "true" || !top) return null;
+		if (!gitDir || bare === "true" || !top) return { reason: "not-git" };
 		// 快照范围必须恰好等于工作区：落在别的仓库的子目录里时，宁可嵌套 init 自己的仓库
-		if (comparablePath(realpathSafe(top)) !== comparablePath(realpathSafe(cwd))) return null;
-		return gitDir;
+		if (comparablePath(realpathSafe(top)) !== comparablePath(realpathSafe(cwd))) return { reason: "nested", parent: path.resolve(top) };
+		return { gitDir };
 	};
-	const existing = await usable();
-	if (existing) return existing;
+	const existing = await probe();
+	if ("gitDir" in existing) return existing.gitDir;
+	if (!allowInit) throw new GrowthError("growth tracking needs consent to create a git repository here", "needs-consent", existing);
 	const r = await runGit(["init", "-q"], { cwd });
 	if (r.code !== 0) throw new GrowthError(`git init failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`, "unavailable");
-	const created = await usable();
-	if (!created) throw new GrowthError("workspace cannot be used as a git repository", "unavailable");
-	return created;
+	const created = await probe();
+	if (!("gitDir" in created)) throw new GrowthError("workspace cannot be used as a git repository", "unavailable");
+	return created.gitDir;
 }
 
 /** 链头的 commit 与 tree；引用不存在返回 null（for-each-ref 对不存在的引用输出空、退出码 0） */
@@ -314,10 +328,10 @@ async function readHead(ws: WorkspaceState): Promise<{ commit: string; tree: str
 	return HASH_RE.test(commit) && HASH_RE.test(tree) ? { commit, tree } : null;
 }
 
-async function createWorkspace(cwd: string): Promise<WorkspaceState> {
+async function createWorkspace(cwd: string, allowInit: boolean): Promise<WorkspaceState> {
 	if (!(await gitOk())) throw new GrowthError("git is not installed", "unavailable");
 	const key = workspaceKey(cwd);
-	const gitDir = await ensureGitDir(cwd);
+	const gitDir = await ensureGitDir(cwd, allowInit);
 	const piwebDir = path.join(gitDir, "piweb");
 	await fs.mkdir(piwebDir, { recursive: true });
 	const ws: WorkspaceState = {
@@ -340,7 +354,8 @@ async function createWorkspace(cwd: string): Promise<WorkspaceState> {
 	return ws;
 }
 
-async function getWorkspace(cwdValue: string): Promise<WorkspaceState> {
+/** allowInit：工作区还不是仓库根目录时是否允许 `git init`（只有提交路径、且用户同意过才传 true；读取一律不建仓库） */
+async function getWorkspace(cwdValue: string, allowInit = false): Promise<WorkspaceState> {
 	const cwd = await fs.realpath(path.resolve(cwdValue)).catch(() => path.resolve(cwdValue));
 	const key = workspaceKey(cwd);
 	let pending = registry.workspaces.get(key);
@@ -355,7 +370,7 @@ async function getWorkspace(cwdValue: string): Promise<WorkspaceState> {
 		}
 	}
 	if (!pending) {
-		pending = createWorkspace(cwd);
+		pending = createWorkspace(cwd, allowInit);
 		registry.workspaces.set(key, pending);
 		pending.catch(() => registry.workspaces.delete(key));
 	}
@@ -663,14 +678,39 @@ export interface RoundMeta {
 	status?: GrowthRoundStatus;
 }
 
+export interface CommitOptions {
+	/** 工作区还不是仓库根目录时允许 `git init`（用户同意过） */
+	allowInit?: boolean;
+	/** 拍完快照、提交之前再问一次：返回 true 就放弃这次提交（返回 null） */
+	abortIf?: () => boolean;
+}
+
+/** 每个工作区每提交这么多次跑一次 `git gc --auto`（与 git commit 自己的做法一样，没到阈值时什么也不做） */
+const GC_EVERY_COMMITS = 50;
+const commitsSinceGc = new Map<string, number>();
+
+/** 不等、不设超时（大仓库打包可能要很久，中途杀掉白干）；也不占工作区锁，并发由 git 自己的锁处理 */
+async function gcInBackground(ws: WorkspaceState): Promise<void> {
+	const gitBin = await resolveGitBin();
+	const child = spawn(gitBin, ["--git-dir", ws.gitDir, "gc", "--auto", "--quiet"], {
+		cwd: ws.cwd,
+		env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+		stdio: "ignore",
+		windowsHide: true,
+	});
+	child.on("error", () => undefined);
+	child.unref();
+}
+
 /**
  * 提交一个 commit 到 refs/piweb/rounds/<key>（做法等同 git add -A + git commit，但只用 PiWeb 独立暂存区）。
  * pi 的一轮无论有没有改动都提交（空 commit 也算一轮，轮号与对话一一对应）；
  * 用户修改 / 基线只在工作区相对上一个 commit 有变化时提交，否则返回 null。
  */
-export async function commitRound(cwdValue: string, meta: RoundMeta): Promise<GrowthRound | null> {
-	const ws = await getWorkspace(cwdValue);
+export async function commitRound(cwdValue: string, meta: RoundMeta, options: CommitOptions = {}): Promise<GrowthRound | null> {
+	const ws = await getWorkspace(cwdValue, options.allowInit === true);
 	return withLock(ws, async () => {
+		if (options.abortIf?.()) return null;
 		if (ws.excludeRules !== EXCLUDE_CONTENT) {
 			await fs.writeFile(ws.excludeFile, EXCLUDE_CONTENT, "utf8");
 			ws.excludeRules = EXCLUDE_CONTENT;
@@ -678,6 +718,8 @@ export async function commitRound(cwdValue: string, meta: RoundMeta): Promise<Gr
 		await refreshIndex(ws);
 		const tree = (await shadow(ws, ["write-tree"])).stdout.toString("utf8").trim();
 		assertHash(tree, "tree");
+		// 快照拍到一半时 pi 已经开始改文件：分不清谁改的，宁可不记（改动并入 pi 这一轮）
+		if (options.abortIf?.()) return null;
 		const env = {
 			GIT_AUTHOR_NAME: "PiWeb", GIT_AUTHOR_EMAIL: "piweb@localhost",
 			GIT_COMMITTER_NAME: "PiWeb", GIT_COMMITTER_EMAIL: "piweb@localhost",
@@ -721,15 +763,20 @@ export async function commitRound(cwdValue: string, meta: RoundMeta): Promise<Gr
 			}
 			ws.lastCommit = commit;
 			ws.lastTree = tree;
-			// 不在用户仓库里主动 gc：对象由专用引用保活，仓库维护交还用户
+			// commit-tree 是底层命令，不会像 git commit 那样顺手 gc --auto：快照对象一直是松散文件、只增不减。
+			// 隔一段补一次，没到阈值 git 什么都不做。不带 PiWeb 暂存区：用户自己 index 里的对象照常算可达；
+			// PiWeb 暂存区此刻刚整体提交，里面的对象都已挂在专用引用上
+			const count = (commitsSinceGc.get(ws.key) ?? 0) + 1;
+			commitsSinceGc.set(ws.key, count % GC_EVERY_COMMITS);
+			if (count >= GC_EVERY_COMMITS) void gcInBackground(ws);
 			return round;
 		}
 	});
 }
 
 /** 发 prompt 前调用：把两轮之间用户自己的修改单独记一笔（工作区还没有任何提交时记成基线），没改动不提交 */
-export function recordWorkspaceChanges(cwdValue: string, session: string): Promise<GrowthRound | null> {
-	return commitRound(cwdValue, { kind: "user", session });
+export function recordWorkspaceChanges(cwdValue: string, session: string, options: CommitOptions = {}): Promise<GrowthRound | null> {
+	return commitRound(cwdValue, { kind: "user", session }, options);
 }
 
 // ---------- 读取 ----------

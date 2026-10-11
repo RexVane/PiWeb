@@ -17,6 +17,8 @@ interface WorkspaceFile {
 	aliases?: Record<string, string>;
 	archivedSessions?: string[];
 	removedWorkspaces?: string[];
+	/** 项目生长能否在该目录 `git init`（目录还不是仓库根目录时问过用户）：pathKey → 决定 */
+	growthInit?: Record<string, boolean>;
 }
 
 export interface WorkspaceRegistrySnapshot {
@@ -38,11 +40,16 @@ async function readFile(target = file()): Promise<WorkspaceFile> {
 			Object.entries(typeof parsed.aliases === "object" && parsed.aliases !== null ? parsed.aliases : {})
 				.filter((entry): entry is [string, string] => typeof entry[1] === "string"),
 		);
+		const growthInit = Object.fromEntries(
+			Object.entries(typeof parsed.growthInit === "object" && parsed.growthInit !== null ? parsed.growthInit : {})
+				.filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
+		);
 		return {
 			workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter((w) => typeof w === "string") : [],
 			aliases,
 			archivedSessions: Array.isArray(parsed.archivedSessions) ? parsed.archivedSessions.filter((s) => typeof s === "string") : [],
 			removedWorkspaces: Array.isArray(parsed.removedWorkspaces) ? parsed.removedWorkspaces.filter((s) => typeof s === "string") : [],
+			...(Object.keys(growthInit).length ? { growthInit } : {}),
 		};
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -151,6 +158,19 @@ export async function setAlias(dir: string, name: string): Promise<Record<string
 		}
 		await write(data, target);
 		return data.aliases;
+	});
+}
+
+/** 项目生长能否在该目录建仓库：true 同意 / false 拒绝 / null 还没问过 */
+export async function getGrowthInitConsent(dir: string): Promise<boolean | null> {
+	return (await read()).growthInit?.[pathKey(dir)] ?? null;
+}
+
+export async function setGrowthInitConsent(dir: string, allow: boolean): Promise<void> {
+	const key = pathKey(dir);
+	await mutate(async (data, target) => {
+		data.growthInit = { ...data.growthInit, [key]: allow };
+		await write(data, target);
 	});
 }
 
