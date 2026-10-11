@@ -1,7 +1,7 @@
 /**
  * 「远程连接」内置插件的控制接口。
  *
- * GET    当前状态（局域网入口 + 公网入口）
+ * GET    当前状态（局域网入口 + 公网入口 + 拼登录链接用的启动令牌）
  * POST   { action: "start" | "stop" | "start-lan" | "stop-lan" }
  * DELETE 全停
  *
@@ -10,13 +10,23 @@
  */
 import { NextResponse } from "next/server";
 import { remoteBlocked, remoteStatus, startLan, startPublic, stopAll, stopPublic } from "@/lib/remote/supervisor";
+import { authEnabled } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
+/**
+ * 本次启动的令牌：设置页拿它拼带令牌的入口链接，手机打开就直接登录，不用再去终端里抄。
+ * 能调到这个接口的已经是登录过的设备（proxy.ts 把关），它们本来就有完整权限，拿到令牌不多出任何能力；
+ * 认证没开时没有令牌这回事。
+ */
+function loginToken(): string | null {
+	return authEnabled() ? process.env.PI_WEB_LAUNCH_TOKEN || null : null;
+}
+
 function respond() {
-	return NextResponse.json({ success: true, data: remoteStatus() }, { headers: NO_STORE });
+	return NextResponse.json({ success: true, data: { ...remoteStatus(), loginToken: loginToken() } }, { headers: NO_STORE });
 }
 
 function bad(error: string, status = 400) {

@@ -9,9 +9,13 @@
  *
  * 公开地址由 Cloudflare 随机分配且每次启动都变；拿到地址后还要十几秒才在全球 DNS 生效，
  * 所以状态里区分「已生成」和「已生效」，没生效时按钮区域给出说明而不是假装好了。
+ *
+ * 入口链接带启动令牌：手机打开就直接登录，不用再去终端里抄令牌。屏幕上只显示裸地址，
+ * 令牌只在链接和复制出来的文本里——截图、共享屏幕时不会露出来。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
+import { copyText } from "@/lib/clipboard";
 
 interface LanState {
 	running: boolean;
@@ -36,6 +40,14 @@ interface RemoteStatus {
 	blocked: "auth" | "dev" | null;
 	lan: LanState;
 	public: PublicState;
+	/** 本次启动的令牌；认证没开时为 null */
+	loginToken: string | null;
+}
+
+/** 带令牌的登录链接。令牌只在根路径的 GET 上被换成 Cookie（见 proxy.ts），所以拼成 <地址>/?token=… */
+export function loginLink(url: string, token: string | null | undefined): string {
+	if (!token) return url;
+	return `${url.replace(/\/+$/, "")}/?token=${encodeURIComponent(token)}`;
 }
 
 /** 状态点：绿=在跑，蓝=过渡中，灰=没开 */
@@ -52,6 +64,33 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
 				{hint ? <div style={{ fontSize: 12, color: "var(--dsw-label-caption)", lineHeight: 1.55, marginTop: 2 }}>{hint}</div> : null}
 			</div>
 			<div className="flex-none">{children}</div>
+		</div>
+	);
+}
+
+/** 一个入口地址：显示裸地址，链接和复制的都是带令牌的版本 */
+function EntryLink({ url, token }: { url: string; token: string | null | undefined }) {
+	const { t } = useI18n();
+	const [copied, setCopied] = useState<"" | "ok" | "fail">("");
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(""), 2_000);
+		return () => clearTimeout(timer);
+	}, [copied]);
+	const href = loginLink(url, token);
+	return (
+		<div className="flex items-center gap-2">
+			<a href={href} target="_blank" rel="noreferrer" className="font-mono hover:underline" style={{ fontSize: 12 }}>
+				{url}
+			</a>
+			<button
+				type="button"
+				className="btn-outline"
+				style={{ height: 24, fontSize: 12, paddingInline: 8 }}
+				onClick={() => void copyText(href).then((ok) => setCopied(ok ? "ok" : "fail"))}
+			>
+				{copied === "ok" ? t.remoteLinkCopied : copied === "fail" ? t.copyFailed : t.copy}
+			</button>
 		</div>
 	);
 }
@@ -168,9 +207,7 @@ export function RemoteSection() {
 						</span>
 					</div>
 					{(lan?.urls ?? []).map((url) => (
-						<a key={url} href={url} target="_blank" rel="noreferrer" className="font-mono hover:underline" style={{ fontSize: 12 }}>
-							{url}
-						</a>
+						<EntryLink key={url} url={url} token={status?.loginToken} />
 					))}
 					{lan?.error ? <div style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{lan.error}</div> : null}
 				</div>
@@ -185,11 +222,7 @@ export function RemoteSection() {
 							{pub?.running ? (pub.ready ? t.remoteRunning : t.remotePending) : t.remoteStopped}
 						</span>
 					</div>
-					{pub?.url ? (
-						<a href={pub.url} target="_blank" rel="noreferrer" className="font-mono hover:underline" style={{ fontSize: 12 }}>
-							{pub.url}
-						</a>
-					) : null}
+					{pub?.url ? <EntryLink url={pub.url} token={status?.loginToken} /> : null}
 					<div className="flex items-center gap-2">
 						{pub?.running ? (
 							<button className="btn-outline" style={{ height: 30, fontSize: 13 }} disabled={busy} onClick={() => void act("stop")}>

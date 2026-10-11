@@ -1,16 +1,19 @@
 import net from "node:net";
 import type os from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { POST } from "../src/app/api/remote/route";
+import { GET, POST } from "../src/app/api/remote/route";
 import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
 const savedAuth = process.env.PI_WEB_AUTH;
+const savedToken = process.env.PI_WEB_LAUNCH_TOKEN;
 afterEach(async () => {
 	if (saved === undefined) delete process.env.PI_WEB_TRUSTED_HOSTS;
 	else process.env.PI_WEB_TRUSTED_HOSTS = saved;
 	if (savedAuth === undefined) delete process.env.PI_WEB_AUTH;
 	else process.env.PI_WEB_AUTH = savedAuth;
+	if (savedToken === undefined) delete process.env.PI_WEB_LAUNCH_TOKEN;
+	else process.env.PI_WEB_LAUNCH_TOKEN = savedToken;
 	await stopAll();
 	resetRemoteSupervisor();
 });
@@ -41,6 +44,14 @@ describe("remote entry guard", () => {
 		expect(remoteStatus().lan.running).toBe(false);
 		expect(remoteStatus().public.running).toBe(false);
 		expect(remoteStatus().blocked).toBe("auth");
+	});
+
+	it("/api/remote hands the launch token to the settings page only while authentication is on", async () => {
+		process.env.PI_WEB_LAUNCH_TOKEN = "launch-tok";
+		process.env.PI_WEB_AUTH = "1";
+		expect((await (await GET()).json()).data.loginToken).toBe("launch-tok");
+		delete process.env.PI_WEB_AUTH;
+		expect((await (await GET()).json()).data.loginToken).toBeNull();
 	});
 });
 
