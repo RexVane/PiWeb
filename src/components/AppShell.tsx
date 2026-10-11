@@ -22,6 +22,7 @@ const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((
 const samePath = (a: string, b: string): boolean =>
 	a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) => m.ProjectPanel), { ssr: false });
+const DrawerPanel = dynamic(() => import("@/components/DrawerPanel").then((m) => m.DrawerPanel), { ssr: false });
 const GrowthConsentDialog = dynamic(() => import("@/components/ProjectPanel").then((m) => m.GrowthConsentDialog), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
@@ -33,6 +34,7 @@ import {
 	IconFolderOpenOutline16,
 	IconPanelLeftOutline16,
 	IconProjectAddOutline16,
+	IconEllipsisOutline16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
@@ -54,6 +56,10 @@ const DETAILS_DEFAULT = 360;
 const PROJECT_MIN = 280;
 const PROJECT_MAX = 640;
 const PROJECT_DEFAULT = 380;
+// 右侧抽屉:最右一列(网格列,不是浮层)
+const DRAWER_MIN = 280;
+const DRAWER_MAX = 640;
+const DRAWER_DEFAULT = 320;
 function persist(key: string, value: number) {
 	localStorage.setItem(key, String(value));
 }
@@ -141,12 +147,15 @@ export function AppShell() {
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
-	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | null>(null);
+	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | "drawer" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	const [gitDetailsOpen, setGitDetailsOpen] = useState(false);
 	/** 提示词来源面板（右侧详情列） */
 	const [promptsOpen, setPromptsOpen] = useState(false);
+	/** 右侧抽屉(最右一列):入口列表 + 内容 */
+	const [drawerOpen, setDrawerOpen] = useState(false);
+	const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT);
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
@@ -156,13 +165,23 @@ export function AppShell() {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
 		setDetailsWidth(restore("piweb.detailsW", DETAILS_DEFAULT));
 		setProjectWidth(restore("piweb.projectW", PROJECT_DEFAULT));
+		setDrawerWidth(restore("piweb.drawerW", DRAWER_DEFAULT));
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setProjectOpen(localStorage.getItem("piweb.projectOpen") === "1");
+		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
 	}, []);
 	const toggleProject = useCallback((next?: boolean) => {
 		setProjectOpen((cur) => {
 			const v = next ?? !cur;
 			localStorage.setItem("piweb.projectOpen", v ? "1" : "0");
+			return v;
+		});
+	}, []);
+	/** 右侧抽屉开关(与项目栏同口径:记忆在 localStorage) */
+	const toggleDrawer = useCallback((next?: boolean) => {
+		setDrawerOpen((cur) => {
+			const v = next ?? !cur;
+			localStorage.setItem("piweb.drawerOpen", v ? "1" : "0");
 			return v;
 		});
 	}, []);
@@ -265,11 +284,11 @@ export function AppShell() {
 
 	// ---------- 拖拽 ----------
 	const onDrag = useCallback(
-		(side: "sidebar" | "details" | "project") => (e: React.PointerEvent) => {
+		(side: "sidebar" | "details" | "project" | "drawer") => (e: React.PointerEvent) => {
 			e.preventDefault();
 			setDragging(side);
 			const startX = e.clientX;
-			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : detailsWidth;
+			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : side === "drawer" ? drawerWidth : detailsWidth;
 			const move = (ev: PointerEvent) => {
 				if (side === "sidebar") {
 					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
@@ -277,6 +296,10 @@ export function AppShell() {
 				} else if (side === "project") {
 					const w = Math.max(PROJECT_MIN, Math.min(PROJECT_MAX, startW + (ev.clientX - startX)));
 					setProjectWidth(w);
+				} else if (side === "drawer") {
+					// 抽屉在最右:左缘往左拖是变宽(与详情栏同向)
+					const w = Math.max(DRAWER_MIN, Math.min(DRAWER_MAX, startW - (ev.clientX - startX)));
+					setDrawerWidth(w);
 				} else {
 					const w = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startW - (ev.clientX - startX)));
 					setDetailsWidth(w);
@@ -293,14 +316,15 @@ export function AppShell() {
 			// 触摸/笔输入被系统手势打断时只触发 pointercancel，不处理会永久泄漏监听器
 			window.addEventListener("pointercancel", up);
 		},
-		[sidebarWidth, detailsWidth, projectWidth],
+		[sidebarWidth, detailsWidth, projectWidth, drawerWidth],
 	);
 
 	useEffect(() => {
 		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
 		if (dragging === "details") persist("piweb.detailsW", detailsWidth);
 		if (dragging === "project") persist("piweb.projectW", projectWidth);
-	}, [dragging, sidebarWidth, detailsWidth, projectWidth]);
+		if (dragging === "drawer") persist("piweb.drawerW", drawerWidth);
+	}, [dragging, sidebarWidth, detailsWidth, projectWidth, drawerWidth]);
 
 	const toggleSidebar = () => {
 		const next = !sidebarCollapsed;
@@ -629,10 +653,11 @@ export function AppShell() {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
 	}, [currentId, title]);
 
-	// 三栏网格
+	// 网格列(宽屏):侧栏 | 项目栏 | 对话区 | 详情栏 | 右侧抽屉
+	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
 	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${projectOpen ? `${projectWidth}px` : "0px"} minmax(0,1fr) ${
 		selected || gitDetailsOpen || promptsOpen ? `${detailsWidth}px` : "0px"
-	}`;
+	} ${drawerOpen ? `${drawerWidth}px` : "0px"}`;
 	const projectColumn = projectOpen && (
 		<div
 			className="min-h-0 overflow-hidden"
@@ -660,6 +685,23 @@ export function AppShell() {
 				onClose={() => toggleProject(false)}
 				onError={setError}
 			/>
+		</div>
+	);
+
+	// 右侧抽屉列(最右一列):宽屏是网格列,窄屏是贴右边的 fixed 覆盖层
+	const drawerColumn = (
+		<div
+			className="flex min-h-0 flex-col overflow-hidden"
+			style={isNarrow ? {
+				position: "fixed",
+				inset: "0 0 0 auto",
+				width: "min(88vw, 420px)",
+				zIndex: 88,
+				background: "var(--dsw-sidebar-fill)",
+				boxShadow: "var(--dsw-elevation-prominent)",
+			} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
+		>
+			<DrawerPanel cwd={panelCwd} onClose={() => toggleDrawer(false)} />
 		</div>
 	);
 
@@ -821,6 +863,18 @@ export function AppShell() {
 									>
 										<IconAgentPresetOutline16 size={15} />
 									</button>
+									{/* 右侧抽屉:会话导入等入口;项目/提示词/Git 详情后续再搬进来 */}
+									<button
+										type="button"
+										className="icon-btn"
+										style={{ width: 30, height: 30, background: drawerOpen ? "var(--dsw-active)" : undefined }}
+										title={t.drawerPanel}
+										aria-label={t.drawerPanel}
+										data-testid="drawer-toggle"
+										onClick={() => toggleDrawer()}
+									>
+										<IconEllipsisOutline16 size={15} />
+									</button>
 								</div>
 							{projectTrust?.required && !projectTrust.trusted && (
 								<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }} role="status">
@@ -964,6 +1018,13 @@ export function AppShell() {
 				</div>
 			)}
 
+			{/* 宽屏:详情栏关闭时补一个占位列。网格列数与顺序是固定的五列,
+			    少一个 item 会让最右的抽屉落进 0px 的详情列。 */}
+			{!isNarrow && !(selected || gitDetailsOpen || promptsOpen) && <div aria-hidden="true" />}
+
+			{/* 右侧抽屉:宽屏是最右一列;窄屏贴右边滑出(固定定位,不占网格列) */}
+			{!isNarrow && (drawerOpen ? drawerColumn : <div aria-hidden="true" />)}
+
 			{/* 拖拽手柄 */}
 			{!isNarrow && !sidebarCollapsed && (
 				<div
@@ -975,7 +1036,7 @@ export function AppShell() {
 			{!isNarrow && (selected || gitDetailsOpen || promptsOpen) && (
 				<div
 					className="fixed top-0 h-full w-2 cursor-col-resize"
-					style={{ left: `calc(100vw - ${detailsWidth}px - 4px)`, zIndex: 40 }}
+					style={{ left: `calc(100vw - ${drawerOpen ? drawerWidth : 0}px - ${detailsWidth}px - 4px)`, zIndex: 40 }}
 					onPointerDown={onDrag("details")}
 				/>
 			)}
@@ -986,10 +1047,25 @@ export function AppShell() {
 					onPointerDown={onDrag("project")}
 				/>
 			)}
+			{/* 抽屉左缘拖拽(抽屉在最右,手柄=左缘) */}
+			{!isNarrow && drawerOpen && (
+				<div
+					className="fixed top-0 h-full w-2 cursor-col-resize"
+					style={{ left: `calc(100vw - ${drawerWidth}px - 4px)`, zIndex: 40 }}
+					onPointerDown={onDrag("drawer")}
+				/>
+			)}
 			{isNarrow && projectOpen && (
 				<>
 					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleProject(false)} aria-label={t.close} />
 					{projectColumn}
+				</>
+			)}
+			{/* 窄屏抽屉:从右边滑出(参考项目栏窄屏的固定覆盖写法,方向相反) */}
+			{isNarrow && drawerOpen && (
+				<>
+					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleDrawer(false)} aria-label={t.close} />
+					{drawerColumn}
 				</>
 			)}
 			{viewer.state.open && (
