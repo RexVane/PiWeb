@@ -91,6 +91,17 @@ function assistantBlocks(content: unknown): ImportedBlock[] {
 	}));
 }
 
+/**
+ * Claude 的 stop_reason → pi 的 stopReason（与 pi-ai 的 anthropic 映射一致）。
+ * 拆开的记录每行都带整条回复的 stop_reason（思考那行也写着 tool_use），所以以合并后的内容为准：
+ * 有工具调用就是 toolUse。原样写进去的 tool_use / end_turn pi 不认，界面会把中途的说明当成最终回答。
+ */
+function stopReasonOf(content: ImportedBlock[], raw: unknown): { stopReason: string; errorMessage?: string } {
+	if (raw === "refusal" || raw === "sensitive") return { stopReason: "error", errorMessage: `Claude stopped with: ${raw}` };
+	if (content.some((block) => block.type === "toolCall")) return { stopReason: "toolUse" };
+	return { stopReason: raw === "max_tokens" ? "length" : "stop" };
+}
+
 /** user 行可能同时含文本与工具结果：文本进用户消息，工具结果单列 */
 function splitUserContent(content: unknown): { text: ImportedBlock[]; results: Array<{ toolCallId: string; content: ImportedBlock[]; isError: boolean }> } {
 	const text: Array<ImportedBlock | null> = [];
@@ -163,6 +174,14 @@ export const claudeSource: ImportSourceModule = {
 		let projectPath = summary.projectPath;
 		let model = summary.model;
 		let provider: string | undefined;
+		/**
+		 * Claude Code 把一次回复按内容块拆成多行（思考、正文、每个工具调用各一行），共用 message.id，
+		 * 每行还带着整条回复的 usage。必须合并回一条：拆开后并行调用变成 assistant[A] → assistant[B]，
+		 * pi-ai 会给 A 补一条 "No result provided"，后面真正的 A 结果就成了孤儿，接着聊直接 400；usage 也会重复计 N 次。
+		 * 流式时工具边跑边出结果，同一 id 的行之间会夹着 tool_result，所以按 id 跨位置合并。
+		 */
+		const assistantById = new Map<string, Extract<ImportedMessage, { role: "assistant" }>>();
+		const rawStopById = new Map<string, unknown>();
 
 		for (const record of eachJsonLine(text)) {
 			if (record.isSidechain === true) {
@@ -178,28 +197,31 @@ export const claudeSource: ImportSourceModule = {
 
 			if (record.type === "assistant") {
 				const content = assistantBlocks(message.content);
-				if (!content.length) continue;
+				const id = typeof message.id === "string" && message.id ? message.id : undefined;
+				const existing = id ? assistantById.get(id) : undefined;
+				if (!content.length && !existing) continue;
 				const usage = message.usage as Record<string, unknown> | undefined;
-				entries.push({
-					type: "message",
-					message: {
-						role: "assistant",
-						content,
-						timestamp,
-						...(typeof message.model === "string" ? { model: message.model } : {}),
-						...(typeof message.stop_reason === "string" && message.stop_reason ? { stopReason: message.stop_reason } : {}),
-						...(usage
-							? {
-									usage: {
-										input: Number(usage.input_tokens) || 0,
-										output: Number(usage.output_tokens) || 0,
-										cacheRead: Number(usage.cache_read_input_tokens) || 0,
-										cacheWrite: Number(usage.cache_creation_input_tokens) || 0,
-									},
-								}
-							: {}),
-					},
-				});
+				const target = existing ?? { role: "assistant" as const, content: [], timestamp };
+				target.content.push(...content);
+				if (typeof message.model === "string") target.model = message.model;
+				// 同一回复的每行 usage 相同（后面的行只会更完整）：取最后一行，只记一次
+				if (usage) {
+					target.usage = {
+						input: Number(usage.input_tokens) || 0,
+						output: Number(usage.output_tokens) || 0,
+						cacheRead: Number(usage.cache_read_input_tokens) || 0,
+						cacheWrite: Number(usage.cache_creation_input_tokens) || 0,
+					};
+				}
+				if (id && message.stop_reason != null) rawStopById.set(id, message.stop_reason);
+				const { stopReason, errorMessage } = stopReasonOf(target.content, id ? rawStopById.get(id) : message.stop_reason);
+				target.stopReason = stopReason;
+				if (errorMessage) target.errorMessage = errorMessage;
+				else delete target.errorMessage;
+				if (!existing) {
+					entries.push({ type: "message", message: target });
+					if (id) assistantById.set(id, target);
+				}
 				continue;
 			}
 
@@ -209,6 +231,8 @@ export const claudeSource: ImportSourceModule = {
 				const keepText = textBlocks.filter((block) => block.type !== "text");
 				if (plain && !isSynthetic(plain.trim()) && !/^Caveat:/i.test(plain.trim())) {
 					entries.push({ type: "message", message: { role: "user", content: [...keepText, { type: "text", text: plain }], timestamp } as ImportedMessage });
+					// 真人发了新消息，之前的回复已经结束：不要再把后面的行合并到它前面去
+					assistantById.clear();
 				} else if (plain) {
 					synthetic += 1;
 				}

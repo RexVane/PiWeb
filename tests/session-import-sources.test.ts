@@ -117,6 +117,63 @@ describe("Claude Code", () => {
 		// 时间戳逐条保留，不是导入时刻
 		expect(assistant.timestamp).toBe(TS + 1000);
 	});
+
+	it("按 message.id 把拆开的记录合回一条回复：并行调用不再拆散，用量只记一次，stop_reason 转成 pi 的写法", async () => {
+		// 真实形状：一次回复按块拆成多行、共用 id 与 usage；流式时工具边跑边出结果，同一 id 的行之间夹着 tool_result
+		const usage = { input_tokens: 4853, output_tokens: 483, cache_read_input_tokens: 0, cache_creation_input_tokens: 33978 };
+		const reply = (content: unknown[], at: number, id = "msg_1", stop = "tool_use", replyUsage: unknown = usage) =>
+			JSON.stringify({ type: "assistant", timestamp: new Date(TS + at).toISOString(), message: { id, role: "assistant", model: "claude-opus-4-1", stop_reason: stop, usage: replyUsage, content } });
+		const result = (id: string, at: number) =>
+			JSON.stringify({ type: "user", timestamp: new Date(TS + at).toISOString(), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: `${id} ok` }] } });
+		const file = path.join(roots.claude, "-D-AIApp-PiWeb", "1b6c1c5e-9f0e-4e7e-9d55-5f6a2b0c7a11.jsonl");
+		await write(file, [
+			JSON.stringify({ type: "user", cwd: "D:\\AIApp\\PiWeb", timestamp: new Date(TS).toISOString(), message: { role: "user", content: "改一下这三个文件" } }),
+			reply([{ type: "thinking", thinking: "三个文件可以并行读" }], 1000),
+			reply([{ type: "text", text: "我先把三个文件读出来" }], 1001),
+			reply([{ type: "tool_use", id: "toolu_a", name: "Read", input: { file_path: "a.ts" } }], 1002),
+			reply([{ type: "tool_use", id: "toolu_b", name: "Read", input: { file_path: "b.ts" } }], 1003),
+			result("toolu_a", 1004),
+			reply([{ type: "tool_use", id: "toolu_c", name: "Read", input: { file_path: "c.ts" } }], 1005),
+			result("toolu_b", 1006),
+			result("toolu_c", 1007),
+			reply([{ type: "text", text: "都改好了" }], 2000, "msg_2", "end_turn", { input_tokens: 10, output_tokens: 5 }),
+		].join("\n"));
+		const [summary] = await claudeSource.scan();
+		const messages = messagesOf((await claudeSource.read(summary))!.entries);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult", "toolResult", "toolResult", "assistant"]);
+		const first = messages[1] as Extract<ImportedMessage, { role: "assistant" }>;
+		expect(first.content.map((block) => (block.type === "toolCall" ? block.id : block.type))).toEqual(["thinking", "text", "toolu_a", "toolu_b", "toolu_c"]);
+		expect(first.stopReason).toBe("toolUse");
+		expect(first.timestamp).toBe(TS + 1000);
+		expect(first.usage).toEqual({ input: 4853, output: 483, cacheRead: 0, cacheWrite: 33978 });
+		// 收尾的说明是最终回答：pi 只认 stop，原样的 end_turn 会让界面把它当成中途输出
+		expect((messages[5] as Extract<ImportedMessage, { role: "assistant" }>).stopReason).toBe("stop");
+		// pi-ai 的规则：带调用的 assistant 之后、下一条 assistant/user 之前，每个调用都要有结果，否则补 "No result provided"，
+		// 真结果随后变成孤儿，Anthropic 直接 400
+		let pending = new Set<string>();
+		for (const message of messages) {
+			if (message.role === "toolResult") {
+				pending.delete(message.toolCallId);
+				continue;
+			}
+			expect([...pending]).toEqual([]);
+			pending = new Set(message.role === "assistant" ? message.content.flatMap((block) => (block.type === "toolCall" ? [block.id] : [])) : []);
+		}
+		expect([...pending]).toEqual([]);
+	});
+
+	it("refusal 记成 error 并带上原因，max_tokens 记成 length", async () => {
+		const file = path.join(roots.claude, "-D-AIApp-PiWeb", "8a4f0c2e-1d3b-4c5a-9e7f-0b1c2d3e4f5a.jsonl");
+		await write(file, [
+			JSON.stringify({ type: "user", cwd: "D:\\AIApp\\PiWeb", timestamp: new Date(TS).toISOString(), message: { role: "user", content: "第一问" } }),
+			JSON.stringify({ type: "assistant", timestamp: new Date(TS + 1000).toISOString(), message: { id: "msg_r", role: "assistant", stop_reason: "refusal", content: [{ type: "text", text: "不能做" }] } }),
+			JSON.stringify({ type: "user", timestamp: new Date(TS + 2000).toISOString(), message: { role: "user", content: "第二问" } }),
+			JSON.stringify({ type: "assistant", timestamp: new Date(TS + 3000).toISOString(), message: { id: "msg_l", role: "assistant", stop_reason: "max_tokens", content: [{ type: "text", text: "写到一半" }] } }),
+		].join("\n"));
+		const [summary] = await claudeSource.scan();
+		const assistants = messagesOf((await claudeSource.read(summary))!.entries).filter((message): message is Extract<ImportedMessage, { role: "assistant" }> => message.role === "assistant");
+		expect(assistants.map((message) => [message.stopReason, message.errorMessage])).toEqual([["error", "Claude stopped with: refusal"], ["length", undefined]]);
+	});
 });
 
 describe("Codex CLI", () => {
