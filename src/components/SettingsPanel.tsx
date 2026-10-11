@@ -732,23 +732,17 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 	const { t, lang } = useI18n();
 	const [stored, setStored] = useState<string | null>(null);
 	const [custom, setCustom] = useState("");
+	// 「自定义」是下拉自己的选中状态，不能从输入框内容推断：删空输入框不该把下拉弹回预设、
+	// 连输入框一起收掉；选回预设也不该因为输入框里还留着字而停在「自定义」
+	const [customMode, setCustomMode] = useState(false);
 
 	useEffect(() => {
 		const saved = loadFontChoice(scope);
+		const savedCustom = saved?.startsWith(CUSTOM_PREFIX) ? saved.slice(CUSTOM_PREFIX.length) : null;
 		setStored(saved);
-		setCustom(saved?.startsWith(CUSTOM_PREFIX) ? saved.slice(CUSTOM_PREFIX.length) : "");
+		setCustomMode(savedCustom !== null);
+		setCustom(savedCustom ?? "");
 	}, [scope]);
-
-	const pick = (v: string) => {
-		if (v === CUSTOM_PREFIX) {
-			setStored(CUSTOM_PREFIX);
-			setCustom("");
-			applyFontChoice(scope, custom.trim() ? CUSTOM_PREFIX + custom.trim() : null);
-			return;
-		}
-		setStored(v);
-		applyFontChoice(scope, v);
-	};
 
 	const applyCustom = (v: string) => {
 		setCustom(v);
@@ -757,8 +751,19 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 		applyFontChoice(scope, next);
 	};
 
-	const isCustom = (stored?.startsWith(CUSTOM_PREFIX) ?? false) || custom.length > 0;
-	const selectValue = isCustom ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[scope][0].id;
+	const pick = (v: string) => {
+		if (v === CUSTOM_PREFIX) {
+			setCustomMode(true);
+			// 输入框里留着上次的字体栈就接着用；空的先回落默认，等你输入
+			applyCustom(custom);
+			return;
+		}
+		setCustomMode(false);
+		setStored(v);
+		applyFontChoice(scope, v);
+	};
+
+	const selectValue = customMode ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[scope][0].id;
 
 	return (
 		<div className="flex flex-col items-end gap-2">
@@ -774,7 +779,7 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 				]}
 				onChange={pick}
 			/>
-			{isCustom && (
+			{customMode && (
 				<input
 					value={custom}
 					onChange={(e) => applyCustom(e.target.value)}

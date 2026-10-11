@@ -53,3 +53,4 @@
 - 2026-10-12 01:05 | #043 | 导入 | 导入的 Claude Code 会话接着聊不再报 400：按 message.id 把拆开的记录合回一条回复，用量只记一次，stop_reason 转成 pi 的写法 | claude-opus-5-5
 - 2026-10-12 01:33 | #044 | 启动 | 用最新源码起 dev 服务，所有页面 500（node:child_process 编不过）：instrumentation 的 Node 代码挪进 instrumentation-node.ts，只在 nodejs 分支里引，edge 那份编译不再碰它 | claude-opus-5-5
 - 2026-10-12 01:45 | #045 | 设置 | 合并 PR #19（cnluzx）：设置里能选界面字体和代码字体，预设 + 自定义字体栈 | claude-opus-5-5
+- 2026-10-12 01:48 | #046 | 设置 | 修复 #045：字体自定义输入框删空不再消失；输入框里留着字时选回预设，下拉也能正常切回 | claude-opus-5-5
