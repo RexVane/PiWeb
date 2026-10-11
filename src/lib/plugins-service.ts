@@ -35,6 +35,12 @@ function extensionPattern(extPath: string, baseDir: string): string {
 	return rel && !rel.startsWith("..") ? rel : extPath.replace(/\\/g, "/");
 }
 
+/** SDK 内置扩展的路径前缀（builtin:mcp / builtin:codemode / builtin:tool-search） */
+const BUILTIN_PREFIX = "builtin:";
+
+/** settings.extensions 里针对这个内置扩展的 +/-/! 覆盖项 */
+const isBuiltinOverride = (pattern: string, extPath: string) => /^[+!-]/.test(pattern) && pattern.slice(1) === extPath;
+
 function isForceExcluded(extPath: string, patterns: string[], baseDir: string): boolean {
 	const rel = path.relative(baseDir, extPath).replace(/\\/g, "/");
 	const abs = extPath.replace(/\\/g, "/");
@@ -175,7 +181,7 @@ export async function listLoadedExtensions(cwd: string): Promise<ExtensionView[]
 	for (const e of result?.extensions ?? []) {
 		const p = String(e.path ?? "");
 		if (!p) continue;
-		const name = String(e.name ?? path.basename(p).replace(/\.(ts|js)$/, ""));
+		const name = p.startsWith(BUILTIN_PREFIX) ? p.slice(BUILTIN_PREFIX.length) : String(e.name ?? path.basename(p).replace(/\.(ts|js)$/, ""));
 		seenPaths.add(p);
 		out.push({ name, path: p, disabled: false });
 	}
@@ -190,6 +196,13 @@ export async function listLoadedExtensions(cwd: string): Promise<ExtensionView[]
 		...projectPatterns.filter((p) => p.startsWith("-")).map((p) => ({ pattern: p.slice(1), base: projectBase })),
 	];
 	for (const { pattern, base } of excluded) {
+		// 被停用的内置扩展：路径就是 `builtin:<name>`，不能按目录解析
+		if (pattern.startsWith(BUILTIN_PREFIX)) {
+			if (seenPaths.has(pattern)) continue;
+			seenPaths.add(pattern);
+			out.push({ name: pattern.slice(BUILTIN_PREFIX.length), path: pattern, disabled: true });
+			continue;
+		}
 		const abs = path.isAbsolute(pattern) ? pattern : path.resolve(base, pattern);
 		if (seenPaths.has(abs)) continue;
 		seenPaths.add(abs);
@@ -232,11 +245,32 @@ async function movePackage(settingsPath: string, source: string, disable: boolea
 	await writeSettingsFile(settingsPath, settings);
 }
 
+/**
+ * 内置扩展的开关，与 `pi config` 一致：默认写全局 settings 的 `-builtin:<name>`。
+ * 项目 settings 已经有这一项的 +/-/! 覆盖时改项目那条（项目覆盖优先于全局），并写成显式的 +/-，才盖得过全局。
+ */
+async function toggleBuiltinExtension(extPath: string, disable: boolean, cwd: string): Promise<void> {
+	const isProject = (getSettingsManager(cwd).getProjectSettings().extensions ?? []).some((p) => isBuiltinOverride(p, extPath));
+	const settingsPath = isProject ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
+	await withSettingsWriteLock(settingsPath, async () => {
+		const sm = await prepareSettingsWrite(cwd, settingsPath);
+		const current = (isProject ? sm.getProjectSettings().extensions : sm.getGlobalSettings().extensions) ?? [];
+		const rest = current.filter((p) => !isBuiltinOverride(p, extPath));
+		const next = isProject ? [...rest, `${disable ? "-" : "+"}${extPath}`] : disable ? [...rest, `-${extPath}`] : rest;
+		if (isProject) sm.setProjectExtensionPaths(next);
+		else sm.setExtensionPaths(next);
+		await flushSettingsOrThrow(sm);
+		await verifySettingsField(settingsPath, "extensions", next);
+	});
+	await applyResourceChange(cwd, isProject ? "project" : "user");
+}
+
 export async function toggleExtension(
 	extPath: string,
 	disable: boolean,
 	cwd: string
 ): Promise<void> {
+	if (extPath.startsWith(BUILTIN_PREFIX)) return toggleBuiltinExtension(extPath, disable, cwd);
 	// 只有 Windows 的路径不分大小写：Linux/mac 上 /Work 与 /work 是两个目录
 	const fold = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
 	const isProject = fold(extPath).startsWith(`${fold(path.resolve(cwd))}/`);

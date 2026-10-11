@@ -26,6 +26,7 @@ beforeAll(async () => {
 		pi.registerTool({ name: "probe_tool", label: "Probe", description: "Offline probe", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }] }) });
 		pi.registerCommand("probe", { handler: async (args) => { pi.setSessionName(args); } });
 		pi.registerCommand("ask", { handler: async (_args, ctx) => { const accepted = await ctx.ui.confirm("Confirm probe", "Continue?"); pi.setSessionName(accepted ? "confirmed" : "cancelled"); } });
+		pi.on("session_shutdown", (event) => { (globalThis.__piwebProbeShutdowns ??= []).push(event.reason); });
 	}`);
 	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 	vi.stubEnv("PI_OFFLINE", "1");
@@ -86,6 +87,47 @@ describe("real SDK session resource isolation", () => {
 		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
 		await manager.reloadSessionsForCwd(cwd);
 		expect(session.getActiveToolNames()).not.toContain("probe_tool");
+	});
+
+	it("loads the SDK built-in extensions but leaves their opt-in tools to the SDK", async () => {
+		const { m, session } = await create();
+		expect(session.getAllTools().map((tool) => tool.name)).toEqual(expect.arrayContaining(["codemode", "tool_search"]));
+		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "full" })).toMatchObject({ ok: true });
+		// codemode / tool_search 是 defaultActive: false：没配 MCP、defaultTools 也没写，档位放行也不该打开
+		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["read", "bash", "probe_tool"]));
+		expect(session.getActiveToolNames()).not.toContain("codemode");
+		expect(session.getActiveToolNames()).not.toContain("tool_search");
+		// 扩展要求打开（MCP 发现只能经 codemode 调用的工具时就这么做）：readonly 挡住，换到放行它的档位再恢复
+		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
+		session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
+		expect(session.getActiveToolNames()).not.toContain("codemode");
+		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
+		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["bash", "codemode"]));
+		expect(session.getActiveToolNames()).not.toContain("probe_tool");
+		expect(await manager.execute(m, { cmd: "reload" })).toMatchObject({ ok: true });
+		expect(session.getActiveToolNames()).toContain("codemode");
+		// 扩展把它关掉，之后换档也不再自己冒出来
+		session.setActiveToolsByName(session.getActiveToolNames().filter((name) => name !== "codemode"));
+		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "full" })).toMatchObject({ ok: true });
+		expect(session.getActiveToolNames()).not.toContain("codemode");
+	});
+
+	it("lists the built-in extensions in the plugin list", async () => {
+		const plugins = await import("../src/lib/plugins-service");
+		const builtins = (await plugins.listLoadedExtensions(cwd)).filter((extension) => extension.path.startsWith("builtin:"));
+		expect(builtins).toEqual(expect.arrayContaining([
+			{ name: "mcp", path: "builtin:mcp", disabled: false },
+			{ name: "codemode", path: "builtin:codemode", disabled: false },
+			{ name: "tool-search", path: "builtin:tool-search", disabled: false },
+		]));
+	});
+
+	it("sends session_shutdown before disposing, so extensions such as MCP can close their servers", async () => {
+		const shutdowns = () => ((globalThis as { __piwebProbeShutdowns?: string[] }).__piwebProbeShutdowns ?? []).filter((reason) => reason === "quit").length;
+		const before = shutdowns();
+		const { m } = await create();
+		manager.disposeSession(m);
+		await vi.waitFor(() => expect(shutdowns()).toBe(before + 1));
 	});
 
 	it("restores only pending UI requests in snapshots and accepts a response independently", async () => {

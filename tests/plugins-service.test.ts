@@ -136,6 +136,26 @@ describe("SDK package and extension persistence", () => {
 		expect(mocks.reloadAllLoaders).toHaveBeenCalledOnce();
 	});
 
+	it("disables and re-enables a built-in extension with -builtin:<name> in the global settings", async () => {
+		await toggleExtension("builtin:mcp", true, cwd);
+		expect(JSON.parse(await fs.readFile(file, "utf8")).extensions).toEqual(["existing.ts", "-builtin:mcp"]);
+		expect(JSON.parse(await fs.readFile(projectFile, "utf8")).extensions).toBeUndefined();
+		await toggleExtension("builtin:mcp", false, cwd);
+		expect(JSON.parse(await fs.readFile(file, "utf8")).extensions).toEqual(["existing.ts"]);
+		expect(mocks.reloadSessionsForCwd).toHaveBeenLastCalledWith(undefined);
+	});
+
+	it("rewrites the project override of a built-in extension, which wins over the global setting", async () => {
+		await fs.writeFile(file, JSON.stringify({ extensions: ["-builtin:mcp"] }));
+		await fs.writeFile(projectFile, JSON.stringify({ extensions: ["local.ts", "-builtin:mcp"] }));
+		await manager.reload();
+		await toggleExtension("builtin:mcp", false, cwd);
+		// 只删掉项目里的 `-` 会让全局的 `-builtin:mcp` 重新生效，所以写成显式的 `+`
+		expect(JSON.parse(await fs.readFile(projectFile, "utf8")).extensions).toEqual(["local.ts", "+builtin:mcp"]);
+		expect(JSON.parse(await fs.readFile(file, "utf8")).extensions).toEqual(["-builtin:mcp"]);
+		expect(mocks.reloadSessionsForCwd).toHaveBeenLastCalledWith(cwd);
+	});
+
 	it.each([false, true])("surfaces swallowed extension SDK errors for project=%s", async (project) => {
 		mode = "deny";
 		const target = project ? path.join(cwd, ".pi", "extensions", "sample.ts") : path.join(agentDir, "extensions", "sample.ts");

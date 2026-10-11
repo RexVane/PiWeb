@@ -1930,7 +1930,9 @@ function PluginsSection({ cwd }: { cwd: string }) {
 			return next;
 		});
 
-	const classify = (path: string): "global" | "project" | "package" => {
+	const classify = (path: string): "global" | "project" | "package" | "builtin" => {
+		// SDK 内置扩展（MCP / codemode / tool_search）没有文件路径，只有 builtin:<name>
+		if (path.startsWith("builtin:")) return "builtin";
 		const norm = path.replace(/\\/g, "/");
 		if (norm.includes("/.pi/agent/npm/") || norm.includes("/.pi/agent/git/")) return "package";
 		if (norm.includes("/.pi/agent/")) return "global";
@@ -1938,8 +1940,8 @@ function PluginsSection({ cwd }: { cwd: string }) {
 		return "project";
 	};
 
-	const scopeLabel = (s: "global" | "project" | "package") =>
-		s === "global" ? t.scopeGlobal : s === "project" ? t.scopeProject : t.scopePackage;
+	const scopeLabel = (s: "global" | "project" | "package" | "builtin") =>
+		s === "global" ? t.scopeGlobal : s === "project" ? t.scopeProject : s === "builtin" ? t.promptToolBuiltin : t.scopePackage;
 
 	// 独立扩展 = 排除随包安装的（包已在 packages 里展示）
 	const standalone = extensions.filter((e: any) => classify(e.path) !== "package");

@@ -21,6 +21,7 @@ import {
 	resourceLoaderReady,
 	withResourceLock,
 	TOOL_PRESETS,
+	presetAllowsTool,
 	SessionManager,
 	createAgentSession,
 	getModelRuntime,
@@ -53,6 +54,7 @@ import type {
 const IDLE_MS = 10 * 60 * 1000;
 const MAX_ACTIVE = 6;
 const BUFFER_CAP = 400;
+const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 interface Managed {
 	sessionPath: string;
@@ -74,6 +76,11 @@ interface Managed {
 	toolPreset: ToolPreset;
 	/** 显式逐项选择优先于 preset；保留失效名称以便资源重新启用后恢复用户选择。 */
 	customActiveTools?: string[];
+	/**
+	 * SDK / 扩展要求打开的工具（defaultTools 里的 +codemode、MCP 打开的 codemode、tool_search 载入的工具…）。
+	 * 档位过滤会把它们从激活集里拿掉，记在这里，换到放行它们的档位时才能恢复。
+	 */
+	requestedTools: Set<string>;
 	resourceVersion: number;
 	resourceReloadPending: boolean;
 	resourceReloading: boolean;
@@ -695,6 +702,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		ledger: new TrajLedger(initialTrajectory),
 		lastActive: Date.now(),
 		toolPreset: "readonly",
+		requestedTools: new Set(),
 		resourceVersion: 0,
 		resourceReloadPending: false,
 		resourceReloading: false,
@@ -864,6 +872,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");
 			m.session = session;
+			// SDK 按 defaultTools 设置算出的初始激活集（含 "+codemode" 这类显式开启）
+			m.requestedTools = new Set(session.getActiveToolNames());
 			installSessionPolicy(m, session);
 			applyToolPolicy(m, session);
 			session.subscribe((evt) => { if (!m.disposed) translate(m, evt); });
@@ -888,8 +898,10 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 		} catch (error) {
 			m.ui?.dispose();
 			m.ui = null;
-			created?.dispose();
-			loader.getExtensions().runtime.invalidate();
+			// session_start 可能已经跑过（MCP 在连服务器）：先发 session_shutdown 收尾，再废掉扩展 runtime
+			const runtime = loader.getExtensions().runtime;
+			if (created) void shutdownSession(created).finally(() => runtime.invalidate());
+			else runtime.invalidate();
 			m.session = null;
 			throw error;
 		}
@@ -905,12 +917,74 @@ function isManagedBusy(m: Managed): boolean {
 }
 
 function allowedToolNames(m: Managed, session: AgentSession): string[] {
-	const allowed = m.customActiveTools ?? (m.toolPreset === "full" ? undefined : TOOL_PRESETS[m.toolPreset]);
-	return listAllToolNames(session).filter((name) => !allowed || allowed.includes(name));
+	const custom = m.customActiveTools;
+	return listAllToolNames(session).filter((name) => (custom ? custom.includes(name) : presetAllowsTool(m.toolPreset, name)));
 }
 
+/** SDK 注册即激活的规则：direct / model-only 曝光、且没有写 defaultActive: false */
+function activatedOnRegistration(session: AgentSession): Set<string> {
+	return new Set(session.getAllTools()
+		.filter((tool) => (tool.exposure === "direct" || tool.exposure === "model-only") && session.getToolDefinition(tool.name)?.defaultActive !== false)
+		.map((tool) => tool.name));
+}
+
+/**
+ * 档位只是上限，开哪些仍按 SDK 的规则：注册即激活的，加上 SDK / 扩展明确要求打开的（requestedTools）。
+ * codemode、tool_search 是 defaultActive: false，延迟加载的 MCP 工具不直接声明——把放行的全打开，
+ * 每次请求要多带几千 token，延迟加载也白做。逐项选择（customActiveTools）是用户点名要的，照单全开。
+ */
+function policyToolNames(m: Managed, session: AgentSession): string[] {
+	const allowed = allowedToolNames(m, session);
+	if (m.customActiveTools) return allowed;
+	const auto = activatedOnRegistration(session);
+	return allowed.filter((name) => auto.has(name) || m.requestedTools.has(name));
+}
+
+/** installSessionPolicy 包装前的原始 setActiveToolsByName：PiWeb 自己落策略时不能被记成"扩展要求" */
+const rawSetActiveTools = new WeakMap<AgentSession, (names: string[]) => void>();
+
 function applyToolPolicy(m: Managed, session: AgentSession): void {
-	session.setActiveToolsByName(allowedToolNames(m, session));
+	const names = policyToolNames(m, session);
+	(rawSetActiveTools.get(session) ?? session.setActiveToolsByName.bind(session))(names);
+}
+
+/**
+ * SDK 的 session.dispose() 不发 session_shutdown（只有 AgentSessionRuntime 发）：不补发，扩展收不到收尾信号，
+ * 内置 MCP 拉起的 stdio 服务器进程会一直挂着。先同步停掉 agent，收尾最多等 5 秒，再 dispose。
+ */
+const shuttingDown = new WeakMap<AgentSession, Promise<void>>();
+
+function shutdownSession(session: AgentSession): Promise<void> {
+	// 创建中途被回收时，disposeSession 与 ensureSession 的 catch 会各收尾一次
+	const existing = shuttingDown.get(session);
+	if (existing) return existing;
+	try {
+		session.agent.abort();
+	} catch {
+		/* ignore */
+	}
+	let shutdown: Promise<unknown> = Promise.resolve();
+	try {
+		const runner = session.extensionRunner;
+		if (runner.hasHandlers("session_shutdown")) shutdown = runner.emit({ type: "session_shutdown", reason: "quit" });
+	} catch {
+		/* 扩展 runtime 已失效：没有可收尾的了 */
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<void>((resolve) => {
+		timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
+		timer.unref?.();
+	});
+	const done = Promise.race([shutdown.then(() => undefined, () => undefined), timeout]).finally(() => {
+		clearTimeout(timer);
+		try {
+			session.dispose();
+		} catch {
+			/* ignore */
+		}
+	});
+	shuttingDown.set(session, done);
+	return done;
 }
 
 function publishTools(m: Managed, session: AgentSession): void {
@@ -920,9 +994,14 @@ function publishTools(m: Managed, session: AgentSession): void {
 /** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界收敛到服务端选择。 */
 function installSessionPolicy(m: Managed, session: AgentSession): void {
 	const setActive = session.setActiveToolsByName.bind(session);
+	rawSetActiveTools.set(session, setActive);
 	session.setActiveToolsByName = (names) => {
+		const wanted = [...new Set(names)];
+		// 扩展传的是完整列表（多半是 getActiveTools() 加减几项）：原本激活、这次没列的算关掉，其余都算要求打开
+		for (const name of listActiveTools(session)) if (!wanted.includes(name)) m.requestedTools.delete(name);
+		for (const name of wanted) m.requestedTools.add(name);
 		const allowed = allowedToolNames(m, session);
-		setActive([...new Set(names)].filter((name) => allowed.includes(name)));
+		setActive(wanted.filter((name) => allowed.includes(name)));
 	};
 	const reload = session.reload.bind(session);
 	session.reload = async (options) => {
@@ -933,6 +1012,8 @@ function installSessionPolicy(m: Managed, session: AgentSession): void {
 			await withResourceLock(async () => {
 				if (m.disposed || m.runActive || !session.isIdle) throw new Error("session is busy");
 				await reload({ beforeSessionStart: async () => {
+					// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
+					for (const name of listActiveTools(session)) m.requestedTools.add(name);
 					applyToolPolicy(m, session);
 					await options?.beforeSessionStart?.();
 					applyToolPolicy(m, session);
@@ -969,22 +1050,12 @@ export function disposeSession(m: Managed): void {
 	m.ui = null;
 	m.growth?.dispose();
 	m.growth = null;
-	try {
-		m.session?.dispose();
-	} catch {
-		/* ignore */
-	}
+	if (m.session) void shutdownSession(m.session);
 	// 正在创建中的会话：创建完成后立即销毁，否则它会挂在已被移出池的
 	// Managed 上，订阅与句柄永久泄漏（同一 JSONL 还会出现双活跃会话）。
 	if (m.creating) {
 		void m.creating
-			.then((session) => {
-				try {
-					session?.dispose();
-				} catch {
-					/* ignore */
-				}
-			})
+			.then((session) => (session ? shutdownSession(session) : undefined))
 			.catch(() => undefined);
 	}
 	for (const send of m.subscribers) {

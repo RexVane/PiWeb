@@ -15,6 +15,9 @@ import {
 	SessionManager,
 	SettingsManager as SettingsManagerClass,
 	createAgentSession,
+	createCodemodeExtension,
+	createMcpExtension,
+	createToolSearchExtension,
 	getAgentDir,
 	hasTrustRequiringProjectResources,
 	loadProjectContextFiles,
@@ -246,6 +249,18 @@ export function withResourceLock<T>(fn: () => Promise<T>): Promise<T> {
 	return run;
 }
 
+/**
+ * SDK 的内置扩展（MCP、codemode、tool_search）：pi 命令行自己会带上，SDK 使用方要自己传，
+ * 不传 PiWeb 里就没有 mcp.json 配的服务器、也没有 codemode。名字与 CLI 一致（路径 `builtin:<name>`），
+ * settings 里的 `-builtin:mcp` 才能停用它们。llama.cpp 那个内置扩展 SDK 没有公开导出，补不了。
+ * 工厂每次加载都新建自己的状态；MCP 要等 session_start 才连服务器，只做清单的发现缓存不会拉起进程。
+ */
+const BUILTIN_EXTENSIONS = [
+	{ name: "codemode", factory: createCodemodeExtension(), replaceable: true, builtin: true as const },
+	{ name: "tool-search", factory: createToolSearchExtension(), replaceable: true, builtin: true as const },
+	{ name: "mcp", factory: createMcpExtension(), replaceable: true, builtin: true as const },
+];
+
 function loaderKey(cwd: string): string {
 	const resolved = path.resolve(cwd);
 	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -255,7 +270,7 @@ function loaderKey(cwd: string): string {
 export async function createSessionResourceLoader(cwd: string): Promise<DefaultResourceLoader> {
 	const settingsManager = getSettingsManager(cwd);
 	settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
-	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager });
+	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: BUILTIN_EXTENSIONS });
 	const reload = loader.reload.bind(loader);
 	loader.reload = async (options) => {
 		settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
@@ -278,7 +293,7 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 	const key = loaderKey(cwd);
 	let entry = loaderCache.get(key);
 	if (!entry) {
-		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd) });
+		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd), extensionFactories: BUILTIN_EXTENSIONS });
 		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "" };
 		loaderCache.set(key, entry);
 		queueLoaderReload(cwd, entry);
@@ -458,6 +473,22 @@ export function openSessionManager(sessionPath: string): SessionManager {
 /** 工具预设 → pi 工具白名单 */
 export const TOOL_PRESETS: Record<"readonly" | "standard" | "full", string[]> = {
 	readonly: ["read", "grep", "find", "ls"],
-	standard: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+	standard: ["read", "grep", "find", "ls", "bash", "edit", "write", "codemode", "tool_search"],
 	full: [], // 空 = 不限制（全部可用工具）
 };
+
+const MCP_RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
+
+/** 与 SDK isMcpToolName 一致：MCP 服务器工具 `mcp__<server>__<tool>` 与三个资源工具 */
+export function isMcpToolName(name: string): boolean {
+	return name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name);
+}
+
+/**
+ * 档位是否放行某个工具（只是上限，开不开由 SDK / 扩展决定）。
+ * standard 另外放行 MCP 工具：服务器是用户自己在 mcp.json 里配的；readonly 不放，MCP 工具能写盘、调外部服务。
+ */
+export function presetAllowsTool(preset: keyof typeof TOOL_PRESETS, name: string): boolean {
+	if (preset === "full") return true;
+	return TOOL_PRESETS[preset].includes(name) || (preset === "standard" && isMcpToolName(name));
+}
