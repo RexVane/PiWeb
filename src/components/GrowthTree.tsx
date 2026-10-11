@@ -6,7 +6,7 @@
  * 生成中呼吸态、新步入场动画、窗口化渲染、键盘导航（↑↓ 移动，←→ 收展，Enter 打开）。
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconEditOutline16, IconFileOutline16, IconTriangleRightFill14 } from "@/components/icons";
+import { IconAtOutline16, IconFileOutline16, IconTriangleRightFill14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { fileIconSrc, folderIconSrc } from "@/lib/file-icons";
 import { flattenTree, treeNodeKey, type FlatRow, type TreeNode } from "@/lib/growth-tree";
@@ -264,7 +264,7 @@ const TreeRow = memo(function TreeRow({
 				{node.status === "R" && node.from && <span className="pw-tree-from">← {node.from.split("/").pop()}</span>}
 			</span>
 			{node.pending && <span className="pw-tree-pulse" aria-label={pendingLabel} />}
-			{!isDir && (onReference || onOpenEditor) && !node.lazy && (
+			{!node.lazy && (onReference || (!isDir && onOpenEditor)) && (
 				<span className="pw-tree-actions">
 					{onReference && (
 						<button
@@ -274,13 +274,14 @@ const TreeRow = memo(function TreeRow({
 							title={referenceLabel}
 							onClick={(e) => {
 								e.stopPropagation();
-								onReference(node.path);
+								// 目录带尾斜杠:发送时是 @dir/,和文件引用区分得开
+								onReference(isDir ? `${node.path.replace(/[\\/]+$/, "")}/` : node.path);
 							}}
 						>
-							<IconEditOutline16 size={11} />
+							<IconAtOutline16 size={11} />
 						</button>
 					)}
-					{onOpenEditor && (
+					{!isDir && onOpenEditor && (
 						<button
 							type="button"
 							className="icon-btn"

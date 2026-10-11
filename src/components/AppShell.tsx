@@ -552,16 +552,20 @@ export function AppShell() {
 		prevStreamingRef.current = isStreaming;
 	}, [isStreaming]);
 
+	/**
+	 * 「引用到输入框」:引用存成草稿里的独立数组,输入框渲染成 @ 前缀的 chip
+	 * (不再直接把路径混进正文——正文和引用在视觉上要能分开,发送时才拼成 @路径)。
+	 */
 	const insertIntoComposer = useCallback((text: string) => {
-		const textarea = document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea');
-		const cursor = textarea?.selectionStart;
+		// 存的是"裸路径"(不带 @):发送时统一拼 @路径,避免调用方已经带了 @ 就变成 @@
+		const path = text.trim().replace(/^@+/, "");
+		if (!path) return;
 		updateDraft(draftKey, (previous) => {
-			const position = Math.min(cursor ?? previous.text.length, previous.text.length);
-			const before = previous.text.slice(0, position);
-			const after = previous.text.slice(position);
-			return { ...previous, text: `${before}${before && !/\s$/.test(before) ? " " : ""}${text}${after}` };
+			const references = previous.references ?? [];
+			if (references.includes(path)) return previous;
+			return { ...previous, references: [...references, path] };
 		});
-		requestAnimationFrame(() => textarea?.focus());
+		requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus());
 	}, [draftKey, updateDraft]);
 	const openInEditor = useCallback(
 		async (filePath: string) => {

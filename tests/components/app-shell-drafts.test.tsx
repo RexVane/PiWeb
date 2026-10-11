@@ -48,29 +48,37 @@ beforeEach(() => { localStorage.clear(); mocks.sendCommand.mockReset().mockResol
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
-	it("consumes file references directly into the target draft without remount/session replay", async () => {
+	it("consumes file references as chips in the target draft without remount/session replay", async () => {
 		render(<AppShell />);
 		fireEvent.click(screen.getByTestId("project-toggle"));
 		fireEvent.change(textarea(), { target: { value: "draft A" } });
 		textarea().setSelectionRange(7, 7);
 		go("Reference file");
-		expect(textarea().value).toBe("draft A @ref.txt");
+		// 引用不再混进正文:正文保持原样,引用进独立轨(发送时才拼成 @路径)
+		expect(textarea().value).toBe("draft A");
+		expect(screen.getByTestId("composer-references").textContent).toContain("ref.txt");
 		remount();
-		expect(textarea().value).toBe("draft A @ref.txt");
+		expect(textarea().value).toBe("draft A");
+		expect(screen.getByTestId("composer-references").textContent).toContain("ref.txt");
 		go("Open B");
 		expect(textarea().value).toBe("");
+		expect(screen.queryByTestId("composer-references")).toBeNull();
 		go("Open A");
 		fireEvent.keyDown(textarea(), { key: "Enter" });
 		await waitFor(() => expect(textarea().value).toBe(""));
+		await waitFor(() => expect(mocks.sendCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: "prompt", text: "draft A\n\n@ref.txt" })));
+		// 发送成功后引用轨清空,不能复活
+		await waitFor(() => expect(screen.queryByTestId("composer-references")).toBeNull());
 		remount();
-		expect(textarea().value).toBe("");
+		expect(screen.queryByTestId("composer-references")).toBeNull();
 		go("New hero");
 		go("Reference file");
-		expect(textarea().value).toBe("@ref.txt");
-		fireEvent.keyDown(textarea(), { key: "Enter" });
-		await waitFor(() => expect(textarea().value).toBe(""));
-		remount();
 		expect(textarea().value).toBe("");
+		expect(screen.getByTestId("composer-references").textContent).toContain("ref.txt");
+		fireEvent.keyDown(textarea(), { key: "Enter" });
+		await waitFor(() => expect(screen.queryByTestId("composer-references")).toBeNull());
+		remount();
+		expect(screen.queryByTestId("composer-references")).toBeNull();
 	});
 	it("targets a late upload to A, preserving B and never reviving a removed or sent file on remount", async () => {
 		const upload = deferred<ReturnType<typeof response>>();

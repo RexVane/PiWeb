@@ -13,7 +13,7 @@ import remarkGfm from "remark-gfm";
 import { parseUnifiedDiff, type DiffLine } from "@/components/DiffView";
 import { FullDiff, type FullDiffHandle } from "@/components/FullDiff";
 import { GrowthTree } from "@/components/GrowthTree";
-import { IconChevronDown14, IconChevronUp14, IconCloseOutline14, IconEditOutline16, IconFileOutline16, IconPlusOutline16, IconSearchOutline16 } from "@/components/icons";
+import { IconAtOutline16, IconChevronDown14, IconChevronUp14, IconCloseOutline14, IconEditOutline16, IconFileOutline16, IconPlusOutline16, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import { fileIconSrc } from "@/lib/file-icons";
@@ -422,7 +422,7 @@ export function FileViewer({
 							)}
 							{onReference && (
 								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.fileReference} onClick={() => onReference(activeTab.path)}>
-									<IconEditOutline16 size={13} />
+									<IconAtOutline16 size={13} />
 								</button>
 							)}
 							{onOpenEditor && (

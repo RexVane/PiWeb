@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import {
+	IconAtOutline16,
 	IconFileOutline16,
 	IconSendArrowUp14,
 	IconStopFill16,
@@ -32,11 +33,13 @@ export interface ChatDraft {
 	text: string;
 	images: ImageAttachment[];
 	uploads: Array<{ name: string; path: string; size: number }>;
+	/** 从文件树/文件面板「引用到输入框」加进来的路径引用:独立于正文,输入框里渲染成 chip */
+	references?: string[];
 	adopted?: SlashCommand | null;
 }
 
 export type ChatDraftUpdate = ChatDraft | ((previous: ChatDraft) => ChatDraft);
-export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [] };
+export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [], references: [] };
 
 type SendResult = { success: boolean; error?: string };
 const MAX_UPLOAD_FILES = 16;
@@ -131,6 +134,7 @@ export function ChatInput({
 		onDraftChange?.(update);
 	};
 	const { text, images, uploads } = currentDraft;
+	const references = currentDraft.references ?? [];
 	const adopted = currentDraft.adopted ?? null;
 	const setText = (value: string | ((previous: string) => string)) => changeDraft((previous) => ({ ...previous, text: typeof value === "function" ? value(previous.text) : value }));
 	const setAdopted = (value: SlashCommand | null) => changeDraft((previous) => ({ ...previous, adopted: value }));
@@ -222,6 +226,7 @@ export function ChatInput({
 		setSending(true);
 		onSendPendingChange?.(true);
 		const raw = (forcedText ?? draftRef.current.text).trim();
+		const refs = [...(draftRef.current.references ?? [])];
 		const trimmed = adopted ? `/${adopted.name}${raw ? ` ${raw}` : ""}` : raw;
 		void (async () => {
 			try {
@@ -229,8 +234,8 @@ export function ChatInput({
 				const submitted = draftRef.current;
 				const attachments = [...submitted.images];
 				const files = [...submitted.uploads];
-				if (!trimmed && attachments.length === 0 && files.length === 0) return;
-				if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0) {
+				if (!trimmed && attachments.length === 0 && files.length === 0 && refs.length === 0) return;
+				if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0 && refs.length === 0) {
 					const [head, ...rest] = trimmed.slice(1).split(/\s+/);
 					const builtin = (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
 					if (builtin) {
@@ -241,8 +246,13 @@ export function ChatInput({
 						return;
 					}
 				}
-				const compose = (base: string) =>
-					files.length ? `${base}${base ? "\n\n" : ""}${files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n")}` : base;
+				// 引用 chip 在发送时拼成 @路径 行(和 pi 的 @ 语法一致),显示与正文分开互不干扰
+				const compose = (base: string) => {
+					const parts = [base];
+					if (refs.length) parts.push(refs.map((path) => `@${path}`).join("\n"));
+					if (files.length) parts.push(files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n"));
+					return parts.filter(Boolean).join("\n\n");
+				};
 				let result: SendResult;
 				if (isStreaming) {
 					const mode = override ?? (enterBehavior === "steer" ? "steer" : "followUp");
@@ -262,6 +272,7 @@ export function ChatInput({
 					adopted: previous.adopted === submitted.adopted ? null : previous.adopted,
 					images: previous.images.filter((image) => !attachments.includes(image)),
 					uploads: previous.uploads.filter((file) => !files.some((sent) => sent.path === file.path)),
+					references: (previous.references ?? []).filter((path) => !refs.includes(path)),
 				}));
 			} catch (error) {
 				if (forcedText) setText(forcedText);
@@ -403,7 +414,7 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0;
+	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
@@ -491,6 +502,40 @@ export function ChatInput({
 			)}
 
 			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
+			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
+			{references.length > 0 && (
+				<div className="mb-2 flex flex-wrap gap-1.5 px-1" data-testid="composer-references">
+					{references.map((path) => (
+						<span
+							key={path}
+							className="flex items-center gap-1 rounded-md px-2 py-1"
+							style={{
+								maxWidth: 240,
+								fontSize: 12,
+								fontFamily: "var(--font-mono)",
+								color: "var(--dsw-label-secondary)",
+								background: "var(--dsw-selector)",
+								border: "0.5px solid var(--dsw-border-l3)",
+							}}
+							title={path}
+						>
+							<IconAtOutline16 size={11} style={{ flex: "none", color: "var(--dsw-accent)" }} />
+							<span className="truncate">{referenceLabelOf(path)}</span>
+							<button
+								type="button"
+								className="flex h-4 w-4 flex-none items-center justify-center rounded-full text-[10px]"
+								style={{ color: "var(--dsw-label-caption)" }}
+								disabled={sendBusy}
+								onClick={() => changeDraft((previous) => ({ ...previous, references: (previous.references ?? []).filter((p) => p !== path) }))}
+								aria-label={`${t.delete} ${path}`}
+							>
+								✕
+							</button>
+						</span>
+					))}
+				</div>
+			)}
+
 			{uploads.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-2 px-1">
 					{uploads.map((f, i) => (
@@ -730,4 +775,14 @@ function fmtUploadSize(bytes: number): string {
 	if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 	if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
 	return `${bytes}B`;
+}
+
+/**
+ * 引用 chip 上的显示文本:只要最后一段(文件名/目录名),太挤就靠 CSS 截断。
+ * 目录引用带尾斜杠,和文件区分开(与项目结构图里的展示一致)。
+ */
+function referenceLabelOf(path: string): string {
+	const trimmed = path.replace(/[\\/]+$/, "");
+	const base = trimmed.split(/[\\/]/).filter(Boolean).pop() ?? path;
+	return /[\\/]$/.test(path) ? `${base}/` : base;
 }

@@ -1231,10 +1231,12 @@ function ModelsSection() {
 					return (
 						<div key={p.id}>
 							{/* 卡片：身份/操作行在上，额度显示放在同一个框内的第二段（分隔线区分） */}
-							<div className="flex flex-col rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-								<div className="flex items-center gap-3">
+							<div className="flex min-w-0 flex-col overflow-hidden rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+								{/* 空间不够时整行换行,而不是把按钮压窄——中文按钮被压窄会一个字一行 */}
+								<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
 									<ProviderBrand id={p.id} name={providerName(p.id)} size={34} />
-									<div className="min-w-0 flex-1">
+									{/* 名称列给最小宽度:窄屏时宁可换行,也不要把名字压成几个像素 */}
+									<div className="min-w-[132px] flex-1">
 										<div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{providerName(p.id)}</div>
 										<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 											{p.id}{p.baseUrl ? ` · ${p.baseUrl}` : ""}
@@ -1242,28 +1244,30 @@ function ModelsSection() {
 									</div>
 									{isCustom && (
 										<span
-											className="rounded-md px-1.5 py-0.5"
+											className="flex-none rounded-md px-1.5 py-0.5"
 											style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
 										>
 											{t.customBadge}
 										</span>
 									)}
 									<span
-										className="inline-block h-2 w-2 rounded-full"
+										className="inline-block h-2 w-2 flex-none rounded-full"
 										style={{ background: p.authReady ? "var(--dsw-success)" : "var(--dsw-danger)" }}
 										title={p.authError || (p.authReady ? t.providerReady : t.authUnavailable)}
 									/>
 									<span
-										className="rounded-md px-1.5 py-0.5"
+										className="flex-none rounded-md px-1.5 py-0.5"
 										style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
 									>
 										{t.credentialSource.replace("{source}", credentialSource(p))}
 									</span>
-									<button className="btn-outline" style={{ height: 28, padding: "0 12px", fontSize: 12 }} onClick={() => startEdit(p.id)}>
+									{/* 操作组整体不压缩:按钮加 whitespace-nowrap,中文标签永不竖排 */}
+									<button className="btn-outline flex-none whitespace-nowrap" style={{ height: 28, padding: "0 12px", fontSize: 12 }} onClick={() => startEdit(p.id)}>
 										{t.edit}
 									</button>
 									{p.storedAuthType === "oauth" && (
 										<button
+											className="flex-none whitespace-nowrap"
 											style={{ height: 28, padding: "0 12px", fontSize: 12, color: "var(--dsw-danger)" }}
 											onClick={async () => {
 												if (!window.confirm(t.confirmRemoveOAuth.replace("{name}", providerName(p.id)))) return;
@@ -1275,7 +1279,7 @@ function ModelsSection() {
 									)}
 									{p.authTypes?.includes("oauth") && (
 										<button
-											className="btn-outline"
+											className="btn-outline flex-none whitespace-nowrap"
 											style={{ height: 28, padding: "0 12px", fontSize: 12 }}
 											onClick={() => {
 												setOauthDone(null);
@@ -1287,7 +1291,7 @@ function ModelsSection() {
 										</button>
 									)}
 									{customIds.has(p.id) && (
-										<button style={{ fontSize: 12.5, color: "var(--dsw-danger)" }} onClick={() => deleteCustom(p.id)}>
+										<button className="flex-none whitespace-nowrap" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }} onClick={() => deleteCustom(p.id)}>
 											{t.delete}
 										</button>
 									)}
@@ -2191,7 +2195,7 @@ function PluginsSection({ cwd }: { cwd: string }) {
 											border: "0.5px solid var(--dsw-border-l2)",
 										}}
 									>
-										<div className="flex h-11 items-center justify-between px-3.5 gap-2">
+										<div className="flex min-w-0 items-center justify-between gap-2 px-3.5" style={{ height: 44 }}>
 											<span
 												className="min-w-0 flex-1 truncate font-medium text-[var(--dsw-label-primary)] cursor-pointer select-none"
 												style={{ fontSize: 13.5 }}
