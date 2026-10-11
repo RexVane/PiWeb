@@ -2125,9 +2125,19 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
    都要重新折行，长对话一帧就算不完；跳过屏幕外的块后每帧只折行可见的几块。
    contain-intrinsic-size 的 auto 前缀让浏览器记住真实尺寸，块渲染过一次后
    滚动条长度自动归准，未渲染块用 1100px 估算（实测均值）。 */
-.pw-chat-thread > * {
+/* 完整渲染的回合槽：屏幕外跳过布局（拖宽分隔条时整列文本要重折行）。
+   只挂完整槽——占位槽保持真实几何，IntersectionObserver 的升级判定不漂移；
+   完整槽渲染过一次后 contain-intrinsic-size 的 auto 记住真实尺寸，同样零漂移。
+   1100px 仅是首次渲染前的兜底估算。 */
+.pw-chat-thread > .pw-turn-full {
 	content-visibility: auto;
 	contain-intrinsic-size: auto 1100px;
+}
+
+/* 回合懒渲染的纯文本占位：尽量贴近正式渲染的排版，升级前的过渡形态 */
+.pw-turn-lite > div {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 /* 窄屏：查看器全屏 */
