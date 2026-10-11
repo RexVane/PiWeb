@@ -44,7 +44,8 @@ export function isSafeHost(request: Request, trustedHosts: readonly string[] = [
 		if (parsed.username || parsed.password || parsed.host.toLowerCase() !== host.toLowerCase()) return false;
 		const hostname = parsed.hostname.toLowerCase();
 		if (isLoopbackHostname(hostname)) return true;
-		if (isIP(hostname) !== 0) return true;
+		// URL 给 IPv6 字面量带着方括号（[fe80::1]），isIP 只认去掉括号的写法
+		if (isIP(hostname.replace(/^\[(.*)\]$/, "$1")) !== 0) return true;
 		return trustedHosts.includes(hostname);
 	} catch {
 		return false;

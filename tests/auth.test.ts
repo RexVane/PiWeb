@@ -41,4 +41,14 @@ describe("origin validation", () => {
 		expect(isSafeHost(new Request("http://evil.localhost:30141/api/test"))).toBe(true);
 		expect(isSafeHost(new Request("http://127.0.0.1:30141/api/test", { headers: { host: "user:pw@127.0.0.1:30141" } }))).toBe(false);
 	});
+
+	it("trusts IPv6 literals the same way as IPv4 ones", () => {
+		// 回归：URL 把 IPv6 主机名写成 [fe80::1]，isIP 认不出带括号的写法，局域网 IPv6 直连被当成 rebinding 拒掉
+		expect(isSafeHost(new Request("http://[::1]:30141/api/test", { headers: { host: "[::1]:30141" } }))).toBe(true);
+		expect(isSafeHost(new Request("http://[fe80::1]:30141/api/test", { headers: { host: "[fe80::1]:30141" } }))).toBe(true);
+		expect(isSafeHost(new Request("http://[2001:db8::5]:30141/api/test", { headers: { host: "[2001:db8::5]:30141" } }))).toBe(true);
+		// 括号不全、或者把域名塞进括号里，都不算 IP
+		expect(isSafeHost(new Request("http://localhost:30141/api/test", { headers: { host: "[fe80::1:30141" } }))).toBe(false);
+		expect(isSafeHost(new Request("http://localhost:30141/api/test", { headers: { host: "[attacker.test]:30141" } }))).toBe(false);
+	});
 });
