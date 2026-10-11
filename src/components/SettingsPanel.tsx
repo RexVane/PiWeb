@@ -32,6 +32,7 @@ import {
 	type CustomProviderSetup,
 } from "@/components/ProviderSetupModal";
 import { SessionImportSection } from "@/components/SessionImportSection";
+import { RemoteSection } from "@/components/RemoteSection";
 import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
@@ -40,7 +41,7 @@ import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDe
 import type { ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
 
-type Section = "general" | "models" | "tools" | "skills" | "plugins" | "import";
+type Section = "general" | "models" | "tools" | "skills" | "plugins" | "import" | "remote";
 
 export function SettingsPanel({
 	open,
@@ -85,6 +86,7 @@ export function SettingsPanel({
 		{ id: "plugins", label: t.setPlugins, icon: <IconPluginOutline16 size={15} /> },
 		{ id: "skills", label: t.setSkills, icon: <IconSkillOutline16 size={15} /> },
 		{ id: "import", label: t.importSessions, icon: <IconDownloadOutline16 size={15} /> },
+		{ id: "remote", label: t.setRemote, icon: <IconShieldOutline16 size={15} /> },
 	];
 
 	return (
@@ -152,6 +154,7 @@ export function SettingsPanel({
 						{section === "tools" && <ToolsSection toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} />}
 						{section === "plugins" && <PluginsSection cwd={cwd} />}
 						{section === "import" && <SessionImportSection cwd={cwd} />}
+						{section === "remote" && <RemoteSection />}
 					</div>
 				</div>
 			</div>
