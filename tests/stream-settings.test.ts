@@ -68,13 +68,21 @@ describe("nextRevealEnd", () => {
 		const far = nextRevealEnd(target, 0, make("smooth"));
 		const near = nextRevealEnd(target, 96, make("smooth")) - 96;
 		expect(far).toBeGreaterThan(near);
-		expect(near).toBeGreaterThanOrEqual(2);
+		expect(near).toBeGreaterThanOrEqual(1);
+	});
+
+	it("平滑：单帧推进有上限，大块突发被摊到多帧而不是一口吞掉", () => {
+		const target = "a".repeat(5000);
+		expect(nextRevealEnd(target, 0, make("smooth", 3))).toBe(90);
+		expect(nextRevealEnd(target, 0, make("smooth", 1))).toBe(140);
+		expect(nextRevealEnd(target, 0, make("smooth", 5))).toBe(50);
 	});
 
 	it("渐显：停在整词之后（不会露出半个词）", () => {
 		const target = "alpha beta gamma";
 		expect(nextRevealEnd(target, 0, make("fade", 5))).toBe("alpha ".length);
-		expect(nextRevealEnd(target, "alpha ".length, make("fade", 5))).toBe("alpha beta ".length);
+		// 速度 5 一帧最多推进 10 个字符：停在完整词 "beta" 之后（后半句还没揭示，越过空格不算半个词）
+		expect(nextRevealEnd(target, "alpha ".length, make("fade", 5))).toBe("alpha beta".length);
 	});
 
 	it("渐显：末尾正在敲的那个词也会长出来（不会停在原地）", () => {

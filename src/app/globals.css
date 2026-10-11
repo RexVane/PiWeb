@@ -822,7 +822,8 @@ textarea::placeholder {
 .pw-stream > .pw-stream-tail:last-child > :last-child {
 	margin-bottom: 0;
 }
-/* 围栏未闭合时的尾巴：跟着 .md pre 的底色，但用等宽字体显示原始代码 */
+/* 围栏未闭合时的尾巴：与最终渲染同样的 md-code-block 结构（复制按钮都在），
+   只差语法着色——闭合升级为零布局跳变，不会闪一下。 */
 .pw-stream-code {
 	font-family: var(--font-mono);
 	font-size: 13px;
@@ -831,9 +832,11 @@ textarea::placeholder {
 	word-break: break-word;
 }
 
-/* 渐显样式：新出现的块柔和淡入。
-   元素被复用、只是文字在变长时不会重放动画（React 不会重挂 DOM），所以不会每帧闪。 */
-.pw-stream[data-stream-style="fade"] > * {
+/* 渐显样式：只让尾巴里新出现的元素柔和淡入。
+   动画若挂在容器全部直接子级上，块升级（段落从尾巴进入稳定块）会重建 DOM，
+   已经显示过的内容就把入场动画重播一遍——那正是输出时「闪烁几下」的来源；
+   收窄到 .pw-stream-tail 内部后，升级进来的块不再带动画，视觉无缝。 */
+.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
 	animation: pw-stream-enter 240ms ease-out both;
 }
 @keyframes pw-stream-enter {
@@ -866,7 +869,7 @@ textarea::placeholder {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.pw-stream[data-stream-style="fade"] > * {
+	.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
 		animation: none;
 	}
 	.pw-stream-caret .pw-stream-tail > :last-child::after {
