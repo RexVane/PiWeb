@@ -4,7 +4,7 @@ import path from "node:path";
 import http, { type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, runLauncher, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
+import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
 
@@ -104,15 +104,39 @@ describe("loopback-only development", () => {
 		expect(() => createLaunchPlan(root, options, {})).toThrow(/开发模式/);
 	});
 
-	it("rejects public production without a password and does not silently fall back without a build", async () => {
+	it("enables token auth for a public bind instead of refusing to start", async () => {
 		const root = await installation();
 		const options = parseLauncherArgs(["-H", "0.0.0.0"], {});
-		expect(() => createLaunchPlan(root, options, {})).toThrow(/无密码/);
-		expect(() => createLaunchPlan(root, options, { PI_WEB_PASSWORD: "password" })).toThrow(/build:release/);
+		// 仍然拒绝在没有生产构建时对外回退到 dev
+		expect(() => createLaunchPlan(root, options, {})).toThrow(/build:release/);
 		await productionBuild(root);
-		const plan = createLaunchPlan(root, options, { PI_WEB_PASSWORD: "password" });
+		const plan = createLaunchPlan(root, options, {});
 		expect(plan.command).toBe("start");
+		expect(plan.env.PI_WEB_AUTH).toBe("1");
+		expect(plan.env.PI_WEB_LAUNCH_TOKEN).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(plan.env.PIWEB_BUILD_DIR).toBe(".next");
+		// 设了密码就不必再开令牌认证
+		const withPassword = createLaunchPlan(root, options, { PI_WEB_PASSWORD: "password" });
+		expect(withPassword.env.PI_WEB_AUTH).toBeUndefined();
+	});
+
+	it("derives the Host allowlist and the login link from --public-url", async () => {
+		const root = await installation();
+		await productionBuild(root);
+		const options = parseLauncherArgs(["--public-url", "https://pi.example.com/ui/"], {});
+		// 配了对外地址就等于暴露，即使绑的是回环也要开认证
+		const plan = createLaunchPlan(root, options, { PI_WEB_TRUSTED_HOSTS: "other.example.com" });
+		expect(plan.env.PI_WEB_AUTH).toBe("1");
+		expect(plan.env.PI_WEB_TRUSTED_HOSTS).toBe("other.example.com,pi.example.com");
+		expect(tokenLoginUrl(options.publicUrl, "tok")).toBe("https://pi.example.com/ui/?token=tok");
+	});
+
+	it("rejects malformed public URLs", () => {
+		for (const value of ["ftp://x.test", "https://user:pw@x.test", "not a url"]) {
+			expect(() => parseLauncherArgs(["--public-url", value], {}), value).toThrow();
+		}
+		expect(parseLauncherArgs([], {}).publicUrl).toBeNull();
+		expect(parseLauncherArgs(["--public-url", "https://a.test/"], {}).publicUrl).toBe("https://a.test");
 	});
 
 	it("allows local fallback only without a failed release and creates isolated dev asset IDs", async () => {
@@ -180,6 +204,33 @@ describe("first-paint warm-up", () => {
 
 	it("gives up silently when nothing ever answers", async () => {
 		expect(await warmFirstPaint("http://127.0.0.1:1", { password: "secret", waitMs: 80, pollMs: 20 })).toBe(false);
+	});
+
+	it("exchanges the launch token for a cookie instead of sending Basic", async () => {
+		const log: Array<{ path: string; cookie?: string; authorization?: string }> = [];
+		const server = await fakeHttp((headers, response) => {
+			if (headers.cookie === "piweb_session_x=signed") {
+				response.end(health);
+				return;
+			}
+			response.writeHead(303, { "set-cookie": "piweb_session_x=signed; Path=/; HttpOnly", location: "/" });
+			response.end();
+		});
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const headers = new Headers(init?.headers);
+			log.push({
+				path: new URL(String(input)).pathname,
+				cookie: headers.get("cookie") ?? undefined,
+				authorization: headers.get("authorization") ?? undefined,
+			});
+			return fetch(input, init);
+		};
+		expect(await warmFirstPaint(server.url, { fetchImpl, token: "launch-token", check: async () => true })).toBe(true);
+		// 第一步是令牌换 Cookie，此时还没有凭据可带
+		expect(log[0]).toMatchObject({ path: "/", cookie: undefined, authorization: undefined });
+		expect(log.map((entry) => entry.path)).toContain("/api/version");
+		// 之后每条路由都带换来的 Cookie，且绝不带 Basic
+		expect(log.slice(1).every((entry) => entry.cookie === "piweb_session_x=signed" && entry.authorization === undefined)).toBe(true);
 	});
 });
 
@@ -278,10 +329,33 @@ describe("launcher lifecycle without real child processes", () => {
 			},
 		});
 		expect(result).toBe(0);
-		expect(warm).toHaveBeenCalledWith("http://127.0.0.1:30141", expect.objectContaining({ password: "secret" }));
-		expect(opened).toEqual(["http://127.0.0.1:30141"]);
+		expect(warm).toHaveBeenCalledWith("http://127.0.0.1:30141", expect.objectContaining({ password: "secret", token: expect.any(String) }));
+		// 开了认证就直接开登录链接：用户不知道密码，开裸地址只会撞上登录页
+		expect(opened).toHaveLength(1);
+		expect(opened[0]).toMatch(/^http:\/\/127\.0\.0\.1:30141\/\?token=[A-Za-z0-9_-]+$/);
+		expect(logs.some((line) => line.includes("登录链接"))).toBe(true);
 		expect(logs.some((line) => line.includes("预热首屏"))).toBe(true);
 		expect(logs.some((line) => line.includes("就绪"))).toBe(true);
+	});
+
+	it("opens the plain URL when authentication is off", async () => {
+		const root = await installation();
+		await productionBuild(root);
+		const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+		const opened: string[] = [];
+		const logs: string[] = [];
+		await runLauncher({
+			root,
+			args: [],
+			env: {},
+			dependencies: {
+				spawn: vi.fn(() => { setTimeout(() => child.emit("exit", 0), 40); return child; }),
+				probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true),
+				openBrowser: async (url: string) => { opened.push(url); }, warmFirstPaint: vi.fn(async () => true), log: (message: string) => logs.push(message),
+			},
+		});
+		expect(opened).toEqual(["http://127.0.0.1:30141"]);
+		expect(logs.some((line) => line.includes("登录链接"))).toBe(false);
 	});
 
 	it("never warms in development mode or when PIWEB_SKIP_WARMUP=1", async () => {

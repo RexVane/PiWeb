@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 const BASIC_PREFIX = "Basic ";
 
 /** 恒定时间字符串比较（长度不同也走完全程，不早退） */
@@ -22,7 +24,12 @@ export function validBasicAuthorization(header: string | null, password: string)
 	}
 }
 
+/**
+ * 同源校验。跨站一律拒绝（Sec-Fetch-Site 由浏览器给出，脚本改不了），
+ * 没有 Origin 的请求（curl、服务端调用）放行。
+ */
 export function isSafeOrigin(request: Request): boolean {
+	if (request.headers.get("sec-fetch-site") === "cross-site") return false;
 	const origin = request.headers.get("origin");
 	if (!origin) return true;
 	try {
@@ -34,25 +41,35 @@ export function isSafeOrigin(request: Request): boolean {
 	}
 }
 
-/**
- * PI_WEB_TRUSTED_HOSTS：逗号分隔的主机名白名单。
- * 给只从回环反代的入口用（tailscale serve / 其它反代）：这类入口会把外部主机名原样转给后端，
- * 而它本身已经做了身份认证，所以这里放行即可，不需要再设 PI_WEB_PASSWORD。
- */
 export function trustedHostnames(raw: string | undefined): string[] {
 	return (raw ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
 }
 
-export function isSafeHost(request: Request, passwordConfigured: boolean, trustedHosts: readonly string[] = []): boolean {
-	if (passwordConfigured) return true;
+/**
+ * 白名单环境变量。PI_WEB_TRUSTED_HOSTS 是本项目的名字，PI_WEB_ALLOWED_HOSTS 是上游
+ * agegr/pi-web 的名字，两个都收，免得用户按上游文档配置却不生效。
+ */
+export function configuredTrustedHosts(env: Record<string, string | undefined> = process.env): string[] {
+	return [...trustedHostnames(env.PI_WEB_TRUSTED_HOSTS), ...trustedHostnames(env.PI_WEB_ALLOWED_HOSTS)];
+}
+
+/**
+ * Host 校验：无论有没有设密码都要做。
+ *
+ * 只信任本机名（含 *.localhost）、IP 字面量、以及操作者显式列出的主机名。
+ * IP 字面量保留局域网直连能力，且不可能被 DNS rebinding 利用 —— 浏览器会把字面
+ * 地址原样写进 Host，攻击者域名对不上。反代转发的域名必须进白名单：
+ * DNS rebinding 靠的是攻击者域名解析到回环后仍带自己的 Host，它不可能等于白名单里的名字。
+ */
+export function isSafeHost(request: Request, trustedHosts: readonly string[] = []): boolean {
 	try {
 		const host = request.headers.get("host") || new URL(request.url).host;
 		const parsed = new URL(`http://${host}`);
 		if (parsed.username || parsed.password || parsed.host.toLowerCase() !== host.toLowerCase()) return false;
-		if (isLoopbackHostname(parsed.hostname)) return true;
-		// 精确匹配白名单。DNS rebinding 靠的是攻击者域名解析到回环后仍带自己的 Host，
-		// 而它不可能等于白名单里的主机名，所以这项放行不削弱那层防护。
-		return trustedHosts.includes(parsed.hostname.toLowerCase());
+		const hostname = parsed.hostname.toLowerCase();
+		if (isLoopbackHostname(hostname)) return true;
+		if (isIP(hostname) !== 0) return true;
+		return trustedHosts.includes(hostname);
 	} catch {
 		return false;
 	}
@@ -60,5 +77,6 @@ export function isSafeHost(request: Request, passwordConfigured: boolean, truste
 
 export function isLoopbackHostname(hostname: string): boolean {
 	const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
-	return host === "localhost" || host === "::1" || host === "0:0:0:0:0:0:0:1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+	if (host === "localhost" || host.endsWith(".localhost")) return true;
+	return host === "::1" || host === "0:0:0:0:0:0:0:1" || /^127(?:\.\d{1,3}){3}$/.test(host);
 }

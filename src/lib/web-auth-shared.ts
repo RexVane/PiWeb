@@ -3,7 +3,11 @@
  * 登录页与 proxy / API 路由都用这些常量与纯函数。
  */
 
-export const SESSION_COOKIE = "piweb_session";
+/**
+ * Cookie 名前缀。完整名字是 前缀 + base64url(sha256(权威))，
+ * 所以换域名或换端口后旧 Cookie 自然不再匹配，不需要额外清理。
+ */
+export const COOKIE_PREFIX = "piweb_session_";
 export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 
 /** 登录后跳转目标白名单：仅同源相对路径，防开放重定向 */
