@@ -2121,6 +2121,15 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	box-shadow: 0 0 0 1px var(--dsw-label-tertiary);
 }
 
+/* 会话消息块：屏幕外跳过布局。内容列宽度一变（拖宽分隔条、收起侧栏）整列文本
+   都要重新折行，长对话一帧就算不完；跳过屏幕外的块后每帧只折行可见的几块。
+   contain-intrinsic-size 的 auto 前缀让浏览器记住真实尺寸，块渲染过一次后
+   滚动条长度自动归准，未渲染块用 1100px 估算（实测均值）。 */
+.pw-chat-thread > * {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 1100px;
+}
+
 /* 窄屏：查看器全屏 */
 @media (max-width: 840px) {
 	.pw-viewer {

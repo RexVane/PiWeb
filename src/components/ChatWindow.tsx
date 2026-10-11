@@ -1472,7 +1472,7 @@ export function ChatWindow({
 					if (atBottom) setUnseen(0);
 				}}
 			>
-				<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
+				<div className="pw-chat-thread mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
 					{turns.map((turn, ti) => (
 						<TurnBlock
 							key={turn.key}
