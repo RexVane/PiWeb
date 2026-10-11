@@ -21,7 +21,7 @@ const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * @property {string} [root]
  * @property {{log?: (message: string) => void, probePort?: typeof probePort,
  * isPiWebRunning?: typeof isPiWebRunning, openBrowser?: (url: string) => Promise<void>,
- * warmFirstPaint?: typeof warmFirstPaint,
+ * warmFirstPaint?: typeof warmFirstPaint, readLaunchToken?: typeof readLaunchToken,
  * spawn?: (command: string, args: string[], options: import('node:child_process').SpawnOptions) => LauncherChild}} [dependencies]
  */
 
@@ -68,6 +68,29 @@ export function normalizePublicUrl(value) {
 /** 把令牌拼成可直接打开的登录链接 */
 export function tokenLoginUrl(base, token) {
 	return `${String(base).replace(/\/+$/, "")}/?token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * 读某个端口上正在运行的实例留下的启动令牌（服务端 publishLaunchToken 写的，
+ * 位置是 `<agentDir>/web-launch/<端口>.token`，agentDir 规则与 src/lib/web-secret.ts 一致）。
+ * 没有、读不了、内容不像令牌都返回 null —— 调用方退回打开裸地址。
+ * @param {number} port
+ * @param {Environment} [env]
+ * @returns {string | null}
+ */
+export function readLaunchToken(port, env = process.env) {
+	const raw = env.PI_CODING_AGENT_DIR;
+	const home = os.homedir();
+	const dir = !raw ? path.join(home, ".pi", "agent")
+		: raw === "~" ? home
+		: raw.startsWith("~/") || raw.startsWith("~\\") ? path.join(home, raw.slice(2))
+		: raw;
+	try {
+		const token = fs.readFileSync(path.join(dir, "web-launch", `${port}.token`), "utf8").trim();
+		return /^[A-Za-z0-9_-]{16,}$/.test(token) ? token : null;
+	} catch {
+		return null;
+	}
 }
 
 function mergeHostnames(current, hostname) {
@@ -128,16 +151,17 @@ export function createLaunchPlan(root, options, env = process.env) {
 		throw new Error("拒绝非本机开发模式：启动令牌认证保护不了 Next 开发工具端点。请绑定 127.0.0.1，或先运行 npm run build:release 后用生产模式启动。");
 	}
 	const publicUrl = options.publicUrl ?? null;
-	// 局域网入口（「远程连接」内置插件）默认开着，等于这台机器同网段可达；
-	// 非本机监听、配了对外地址同样算暴露面。三种情况都必须有认证。
-	const lanEntry = !isOffFlag(env.PIWEB_REMOTE_LAN);
-	const exposed = !loopback || Boolean(publicUrl) || lanEntry;
 	const installation = assertInstallation(root);
 	const build = options.isDev ? null : selectProductionBuild(installation, env.PIWEB_BUILD_DIR);
 	if (!build && !loopback) {
 		throw new Error("找不到可用生产构建，拒绝对外自动回退到开发模式。请先运行 npm run build:release，再以相同启动参数重试。");
 	}
 	const command = options.isDev || !build ? "dev" : "start";
+	// 局域网入口（「远程连接」内置插件）默认开着，等于这台机器同网段可达；
+	// 非本机监听、配了对外地址同样算暴露面。三种情况都必须有认证。
+	// 开发模式下局域网入口根本不会起（instrumentation 会跳过），不算暴露面。
+	const lanEntry = command !== "dev" && !isOffFlag(env.PIWEB_REMOTE_LAN);
+	const exposed = !loopback || Boolean(publicUrl) || lanEntry;
 	const childEnv = {
 		...env,
 		PI_WEB_ROOT: installation,
@@ -313,7 +337,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 			// 常见根因：包目录属主不是当前用户（sudo 安装残留），构建产物写不进去
 			let owner = "";
 			try {
-				const stat = await fs.stat(root);
+				const stat = fs.statSync(root);
 				if (typeof stat.uid === "number" && stat.uid !== process.getuid?.()) {
 					owner = `\n此安装目录属主不是当前用户（uid ${stat.uid}）——之前可能用 sudo 安装过。修复：sudo chown -R $(whoami) "${root}"，然后重试 piweb。`;
 				}
@@ -334,7 +358,12 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		const url = localUrl(options.hostname, port);
 		if (await checkHealth(url)) {
 			log(`[piweb] 检测到已有 PiWeb：${url}（未发送凭据）`);
-			if (!options.noOpen) await browse(url);
+			if (!options.noOpen) {
+				// 那个实例开了认证的话，裸地址只会落到登录页，而这里手里没有它的令牌；
+				// 它启动时留下过令牌就直接开登录链接（浏览器里已有 Cookie 时令牌也无害）
+				const token = (dependencies.readLaunchToken ?? readLaunchToken)(port, env);
+				await browse(token ? tokenLoginUrl(url, token) : url);
+			}
 			return 0;
 		}
 		if (attempts >= 50 || port >= 65535) throw new Error(`连续 ${attempts + 1} 个端口都被占用，请用 -p 指定端口`);

@@ -4,7 +4,7 @@ import path from "node:path";
 import http, { type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
+import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
 
@@ -338,10 +338,48 @@ describe("launcher lifecycle without real child processes", () => {
 
 	it("turns authentication on by default because the LAN entry is on by default", async () => {
 		const root = await installation();
+		await productionBuild(root);
 		// 局域网入口默认开 → 同网段可达 → 认证必须默认开，否则等于白送
 		expect(createLaunchPlan(root, parseLauncherArgs([], {}), {}).env.PI_WEB_AUTH).toBe("1");
 		// 用户显式关掉就尊重它（此时局域网入口会自行跳过）
 		expect(createLaunchPlan(root, parseLauncherArgs([], {}), { PI_WEB_AUTH: "0" }).env.PI_WEB_AUTH).toBe("0");
+	});
+
+	it("does not count the LAN entry in local development mode (it never starts there)", async () => {
+		const root = await installation();
+		const plan = createLaunchPlan(root, parseLauncherArgs(["--dev"], {}), {});
+		expect(plan.command).toBe("dev");
+		expect(plan.env.PI_WEB_AUTH).toBeUndefined();
+		// 配了对外地址仍算暴露面
+		expect(createLaunchPlan(root, parseLauncherArgs(["--dev", "--public-url", "https://a.test"], {}), {}).env.PI_WEB_AUTH).toBe("1");
+	});
+
+	it("opens the login link of an already running instance when it left its token behind", async () => {
+		const root = await installation();
+		const opened: string[] = [];
+		const readLaunchToken = vi.fn(() => "tok_abcdefghijklmnop");
+		await runLauncher({
+			root,
+			args: [],
+			env: {},
+			dependencies: {
+				spawn: vi.fn(), probePort: vi.fn<typeof probePort>(async () => "busy"), isPiWebRunning: vi.fn(async () => true),
+				openBrowser: async (url: string) => { opened.push(url); }, readLaunchToken, log: vi.fn(),
+			},
+		});
+		expect(readLaunchToken).toHaveBeenCalledWith(30141, {});
+		expect(opened).toEqual(["http://127.0.0.1:30141/?token=tok_abcdefghijklmnop"]);
+	});
+
+	it("reads the running instance's token from <agentDir>/web-launch/<port>.token", async () => {
+		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-agent-"));
+		cleanups.push(() => fs.rm(dir, { recursive: true, force: true }));
+		await fs.mkdir(path.join(dir, "web-launch"));
+		await fs.writeFile(path.join(dir, "web-launch", "30141.token"), "tok_abcdefghijklmnop\n");
+		await fs.writeFile(path.join(dir, "web-launch", "30142.token"), "not a token!\n");
+		expect(readLaunchToken(30141, { PI_CODING_AGENT_DIR: dir })).toBe("tok_abcdefghijklmnop");
+		expect(readLaunchToken(30142, { PI_CODING_AGENT_DIR: dir })).toBeNull();
+		expect(readLaunchToken(30143, { PI_CODING_AGENT_DIR: dir })).toBeNull();
 	});
 
 	it("opens the plain URL when authentication is explicitly off", async () => {

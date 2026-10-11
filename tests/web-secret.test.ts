@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { launchTokenFile, publishLaunchToken } from "../src/lib/web-launch-token";
 import { SECRET_BYTES, decodeSecret, encodeSecret, loadWebSecret, resetWebSecretCache, secretFilePath } from "../src/lib/web-secret";
 
 const ENV_NAMES = ["PI_WEB_SECRET_FILE", "PI_WEB_SECRET", "PI_CODING_AGENT_DIR"] as const;
@@ -64,6 +65,19 @@ describe("web secret", () => {
 		delete process.env.PI_WEB_SECRET_FILE;
 		process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
 		expect(secretFilePath()).toBe(path.join(dir, "agent", "web-secret"));
+	});
+
+	it("leaves the launch token where the launcher looks for it", async () => {
+		process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
+		const token = "tok_abcdefghijklmnopqrstuvwxyz";
+		publishLaunchToken({ PI_WEB_LAUNCH_TOKEN: token, PIWEB_PORT: "30177" });
+		expect(fs.readFileSync(launchTokenFile(30177), "utf8").trim()).toBe(token);
+		// 服务端写、启动器读，两边的路径规则必须一致
+		const { readLaunchToken } = await import("../scripts/launcher.mjs");
+		expect(readLaunchToken(30177, { PI_CODING_AGENT_DIR: path.join(dir, "agent") })).toBe(token);
+		// 没有端口或令牌就什么都不写
+		publishLaunchToken({ PI_WEB_LAUNCH_TOKEN: token });
+		expect(fs.readdirSync(path.join(dir, "agent", "web-launch"))).toEqual(["30177.token"]);
 	});
 
 	it("decodes base64url strictly", () => {

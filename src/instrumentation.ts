@@ -10,6 +10,10 @@ export async function register() {
 	// 构建期也会实例化服务，别在构建机上开监听
 	if (process.env.NEXT_PHASE === "phase-production-build") return;
 
+	// 再次运行启动器时要能找回本实例的登录链接（见 publishLaunchToken）
+	const { authEnabled } = await import("./lib/web-auth");
+	if (authEnabled()) (await import("./lib/web-launch-token")).publishLaunchToken();
+
 	const { remoteBlocked, remoteLanEnabled, startLan } = await import("./lib/remote/supervisor");
 	if (!remoteLanEnabled()) return;
 
