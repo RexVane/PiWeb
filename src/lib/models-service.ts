@@ -14,7 +14,7 @@ import { filterModelsByPiScope } from "./models/model-scope";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getModelRuntime, refreshModelRuntime } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
-import { reloadSessionsForCwd } from "./agent-manager";
+import { reloadSessionsForCwd, refreshSessionModels } from "./agent-manager";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -1337,6 +1337,7 @@ export async function writeCustomProviders(content: string, revision?: string): 
 		}
 	}));
 	await refreshModelRuntime();
+	refreshSessionModels();
 	invalidateModelList();
 	// 会话与共享 runtime 是同一个实例，刷新后目录已是新的；再让活跃会话重载一次，
 	// 把当前模型对象换成新配置（改了 baseUrl / contextWindow 等字段时生效）
