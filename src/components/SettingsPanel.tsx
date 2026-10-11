@@ -31,6 +31,7 @@ import {
 	type BuiltinProviderSetup,
 	type CustomProviderSetup,
 } from "@/components/ProviderSetupModal";
+import { SessionImportSection } from "@/components/SessionImportSection";
 import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
@@ -39,7 +40,7 @@ import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDe
 import type { ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
 
-type Section = "general" | "models" | "tools" | "skills" | "plugins";
+type Section = "general" | "models" | "tools" | "skills" | "plugins" | "import";
 
 export function SettingsPanel({
 	open,
@@ -83,6 +84,7 @@ export function SettingsPanel({
 		{ id: "tools", label: t.toolsSection, icon: <IconAgentPresetOutline16 size={15} /> },
 		{ id: "plugins", label: t.setPlugins, icon: <IconPluginOutline16 size={15} /> },
 		{ id: "skills", label: t.setSkills, icon: <IconSkillOutline16 size={15} /> },
+		{ id: "import", label: t.importSessions, icon: <IconDownloadOutline16 size={15} /> },
 	];
 
 	return (
@@ -149,6 +151,7 @@ export function SettingsPanel({
 						{section === "skills" && <SkillsSection cwd={cwd} onOpenFileContent={onOpenFileContent} />}
 						{section === "tools" && <ToolsSection toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} />}
 						{section === "plugins" && <PluginsSection cwd={cwd} />}
+						{section === "import" && <SessionImportSection cwd={cwd} />}
 					</div>
 				</div>
 			</div>
@@ -171,8 +174,6 @@ function GeneralSection({
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
-	const [trust, setTrust] = useState<"ask" | "always" | "never">("ask");
-	const [trustLoaded, setTrustLoaded] = useState(false);
 	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
 	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
@@ -184,7 +185,6 @@ function GeneralSection({
 	const loadRemoteSettings = async () => {
 		setSettingsLoading(true);
 		setSettingsError(null);
-		setTrustLoaded(false);
 		const request = async (url: string) => {
 			const response = await fetch(url);
 			const json = await response.json();
@@ -197,10 +197,6 @@ function GeneralSection({
 			request("/api/version"),
 			request("/api/web-auth"),
 		]);
-		if (sec.status === "fulfilled") {
-			setTrust(sec.value.defaultProjectTrust);
-			setTrustLoaded(true);
-		}
 		if (ps.status === "fulfilled") {
 			setPiSettings(ps.value);
 			setNumberDrafts({
@@ -309,26 +305,6 @@ function GeneralSection({
 			style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }}
 		/>
 	);
-
-	const pickTrust = async (v: "ask" | "always" | "never") => {
-		if (!trustLoaded || settingsSaving) return;
-		setSettingsSaving(true);
-		setSettingsError(null);
-		try {
-			const response = await fetch("/api/security", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ defaultProjectTrust: v }),
-			});
-			const result = await response.json();
-			if (!response.ok || !result.success) throw new Error(result.error || "save failed");
-			setTrust(v);
-		} catch {
-			setSettingsError("save");
-		} finally {
-			setSettingsSaving(false);
-		}
-	};
 
 	const themes: { id: PebrelTheme; label: string; light: string; dark: string; accent: string }[] = [
 		{ id: "dsh", label: t.themeDsh, light: "#F9FAFB", dark: "#151517", accent: "#4176E6" },
@@ -449,18 +425,6 @@ function GeneralSection({
 					{numberInput("retry", "maxRetries", t.maxRetries)}
 					{numberInput("retry", "baseDelayMs", t.baseDelayMs)}
 				</div>
-			</Row>
-			<Row title={t.securityTrust} desc={t.securityTrustDesc}>
-				<SelectOption
-				value={trust}
-				disabled={!trustLoaded || settingsLoading || settingsSaving}
-				options={[
-					{ value: "ask", label: t.trustAsk },
-					{ value: "always", label: t.trustAlways },
-					{ value: "never", label: t.trustNever },
-				]}
-				onChange={(v) => pickTrust(v as "ask" | "always" | "never")}
-			/>
 			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
 				<div className="flex items-center gap-2.5">
