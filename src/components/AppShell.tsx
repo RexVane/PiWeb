@@ -732,7 +732,9 @@ export function AppShell() {
 			className="grid h-screen w-screen overflow-hidden"
 			style={{
 				gridTemplateColumns: gridCols,
-				transition: dragging ? "none" : "grid-template-columns var(--ds-duration-slow) var(--ds-ease-in-out)",
+				// 收起/展开不做过渡：grid-template-columns 是布局属性，动画它会让浏览器逐帧
+				// 重排整棵布局树，而聊天列 minmax(0,1fr) 的宽度逐帧变化，正文/代码块每帧
+				// 重新折行，长对话必然掉帧。瞬时切换只付一次重排；拖动改宽原本也是 none。
 				background: "var(--dsw-bg-base)",
 			}}
 		>
