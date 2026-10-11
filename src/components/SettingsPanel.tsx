@@ -34,6 +34,7 @@ import {
 import { RemoteSection } from "@/components/RemoteSection";
 import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
+import { applyFontChoice, CUSTOM_PREFIX, FONT_PRESETS, loadFontChoice } from "@/lib/font";
 import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
@@ -398,6 +399,12 @@ function GeneralSection({
 			<Row title={t.fontChatSize} desc={t.fontChatSizeDesc}>
 				<FontSizeStepper value={chatFontSize} onChange={pickChatFont} max={20} />
 			</Row>
+			<Row title={t.fontUiFamily} desc={t.fontUiFamilyDesc}>
+				<FontFamilyPicker scope="ui" />
+			</Row>
+			<Row title={t.fontMonoFamily} desc={t.fontMonoFamilyDesc}>
+				<FontFamilyPicker scope="mono" />
+			</Row>
 			<Row title={t.enterBehavior} desc={t.enterBehaviorDesc}>
 				<SelectOption
 				value={enterBehavior}
@@ -716,6 +723,74 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 			>
 				＋
 			</button>
+		</div>
+	);
+}
+
+/** 字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。 */
+function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
+	const { t, lang } = useI18n();
+	const [stored, setStored] = useState<string | null>(null);
+	const [custom, setCustom] = useState("");
+
+	useEffect(() => {
+		const saved = loadFontChoice(scope);
+		setStored(saved);
+		setCustom(saved?.startsWith(CUSTOM_PREFIX) ? saved.slice(CUSTOM_PREFIX.length) : "");
+	}, [scope]);
+
+	const pick = (v: string) => {
+		if (v === CUSTOM_PREFIX) {
+			setStored(CUSTOM_PREFIX);
+			setCustom("");
+			applyFontChoice(scope, custom.trim() ? CUSTOM_PREFIX + custom.trim() : null);
+			return;
+		}
+		setStored(v);
+		applyFontChoice(scope, v);
+	};
+
+	const applyCustom = (v: string) => {
+		setCustom(v);
+		const next = v.trim() ? CUSTOM_PREFIX + v.trim() : null;
+		setStored(next);
+		applyFontChoice(scope, next);
+	};
+
+	const isCustom = (stored?.startsWith(CUSTOM_PREFIX) ?? false) || custom.length > 0;
+	const selectValue = isCustom ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[scope][0].id;
+
+	return (
+		<div className="flex flex-col items-end gap-2">
+			<SelectOption
+				value={selectValue}
+				width={220}
+				options={[
+					...FONT_PRESETS[scope].map((p) => ({
+						value: p.id,
+						label: lang === "zh" ? p.label.zh : p.label.en,
+					})),
+					{ value: CUSTOM_PREFIX, label: t.fontCustom },
+				]}
+				onChange={pick}
+			/>
+			{isCustom && (
+				<input
+					value={custom}
+					onChange={(e) => applyCustom(e.target.value)}
+					placeholder={t.fontCustomPlaceholder}
+					style={{
+						height: 30,
+						width: 260,
+						padding: "0 10px",
+						fontSize: 13,
+						background: "var(--dsw-input-major)",
+						border: "0.5px solid var(--dsw-border-l3)",
+						borderRadius: 8,
+						color: "var(--dsw-label-primary)",
+					}}
+				/>
+			)}
 		</div>
 	);
 }
