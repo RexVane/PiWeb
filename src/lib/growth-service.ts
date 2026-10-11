@@ -20,6 +20,7 @@ import { existsSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
+import { utf8Prefix } from "./text-sanitize";
 import type { GrowthChange, GrowthRound, GrowthRoundKind, GrowthRoundStatus } from "./types";
 
 /** 单文件快照上限：超过的不进快照（树里也就看不到它） */
@@ -882,7 +883,7 @@ export async function filePatch(cwdValue: string, from: unknown, to: unknown, re
 	const r = await shadow(ws, ["diff", "-M", "--no-color", "--no-ext-diff", "-U1000000", assertHash(from, "from"), assertHash(to, "to"), "--", ...paths]);
 	if (/^Binary files .* differ$/m.test(r.stdout.toString("utf8", 0, Math.min(r.stdout.length, 64 * 1024)))) return { patch: "", binary: true, truncated: false };
 	if (r.stdout.length <= MAX_PATCH_BYTES) return { patch: r.stdout.toString("utf8"), binary: false, truncated: false };
-	return { patch: r.stdout.subarray(0, MAX_PATCH_BYTES).toString("utf8"), binary: false, truncated: true };
+	return { patch: utf8Prefix(r.stdout, MAX_PATCH_BYTES).toString("utf8"), binary: false, truncated: true };
 }
 
 export interface GrowthContent {
@@ -902,5 +903,5 @@ export async function fileContent(cwdValue: string, tree: unknown, relPath: unkn
 	const head = buf.subarray(0, Math.min(buf.length, 8000));
 	if (head.includes(0)) return { content: "", binary: true, truncated: false, size: buf.length };
 	if (buf.length <= MAX_CONTENT_BYTES) return { content: buf.toString("utf8"), binary: false, truncated: false, size: buf.length };
-	return { content: buf.subarray(0, MAX_CONTENT_BYTES).toString("utf8"), binary: false, truncated: true, size: buf.length };
+	return { content: utf8Prefix(buf, MAX_CONTENT_BYTES).toString("utf8"), binary: false, truncated: true, size: buf.length };
 }

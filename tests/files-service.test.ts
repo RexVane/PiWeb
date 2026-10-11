@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { isSafeWindowsEditorArgument, listWorkspaceDir, readWorkspaceFile } from "../src/lib/files-service";
+import { utf8Prefix } from "../src/lib/text-sanitize";
 
 it("rejects cmd.exe metacharacters in editor arguments", () => {
 	expect(isSafeWindowsEditorArgument("C:\\workspace\\file.txt")).toBe(true);
@@ -45,6 +46,24 @@ it("limits large file previews to 256 KiB", async () => {
 	} finally {
 		await fs.rm(cwd, { recursive: true, force: true });
 	}
+});
+
+it("cuts a truncated preview on a character boundary, not in the middle of a UTF-8 sequence", async () => {
+	// 回归：按字节截断把最后一个汉字切成半个，预览末尾出现 U+FFFD
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-utf8-"));
+	try {
+		// "ab" 之后每个汉字 3 字节，256 KiB 的边界正好落在一个汉字中间
+		await fs.writeFile(path.join(cwd, "zh.txt"), `ab${"中".repeat(100_000)}`);
+		const preview = await readWorkspaceFile(cwd, "zh.txt");
+		expect(preview.truncated).toBe(true);
+		expect(preview.content).not.toContain("�");
+		expect(preview.content).toBe(`ab${"中".repeat(87_380)}`);
+	} finally {
+		await fs.rm(cwd, { recursive: true, force: true });
+	}
+	// 4 字节字符同理
+	expect(utf8Prefix(Buffer.from("x😀"), 3).toString("utf8")).toBe("x");
+	expect(utf8Prefix(Buffer.from("x😀"), 5).toString("utf8")).toBe("x😀");
 });
 
 it("sorts directory junctions with directories before paged files", async () => {

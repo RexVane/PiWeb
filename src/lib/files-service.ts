@@ -7,6 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
 import { getAgentDir } from "./pi";
+import { utf8Prefix } from "./text-sanitize";
 
 export interface FileEntry {
 	name: string;
@@ -122,7 +123,7 @@ export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Pr
 	} finally {
 		await handle.close();
 	}
-	const preview = buffer.subarray(0, Math.min(bytesRead, MAX_READ_BYTES));
+	const preview = utf8Prefix(buffer.subarray(0, bytesRead), MAX_READ_BYTES);
 	// 只检查预览范围，绝不为识别二进制而加载整个大文件
 	if (preview.includes(0)) {
 		return { path: toRel(root, real), binary: true, truncated: false, content: "" };
