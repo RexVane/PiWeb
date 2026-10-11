@@ -412,6 +412,7 @@ const zh = {
 	// 右侧抽屉(入口列表 + 内容)
 	drawerPanel: "右侧抽屉",
 	drawerSections: "抽屉入口",
+	drawerPrompts: "提示词",
 	setPlugins: "插件",
 	setRemote: "远程连接",
 	remoteBuiltin: "内置插件",
@@ -1045,6 +1046,7 @@ const en: Dict = {
 	importReportSummary: "Imported {imported} · skipped {skipped} · failed {failed}",
 	drawerPanel: "Drawer",
 	drawerSections: "Drawer sections",
+	drawerPrompts: "Prompts",
 	setPlugins: "Plugins",
 	setRemote: "Remote access",
 	remoteBuiltin: "Built-in plugin",

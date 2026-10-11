@@ -11,7 +11,7 @@ import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatW
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
-import { PromptPanel } from "@/components/PromptPanel";
+import type { DrawerSection } from "@/components/DrawerPanel";
 import { DirectoryPicker } from "@/components/DirectoryPicker";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
@@ -25,7 +25,7 @@ const ProjectPanel = dynamic(() => import("@/components/ProjectPanel").then((m) 
 const DrawerPanel = dynamic(() => import("@/components/DrawerPanel").then((m) => m.DrawerPanel), { ssr: false });
 const GrowthConsentDialog = dynamic(() => import("@/components/ProjectPanel").then((m) => m.GrowthConsentDialog), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
-const GitPanel = dynamic(() => import("@/components/GitPanel").then((m) => m.GitPanel), { ssr: false });
+// Git 面板不再由 AppShell 直接渲染:它现在是抽屉里的一个入口(DrawerPanel 内部按需加载)
 import {
 	IconAgentPresetOutline16,
 	IconCheckOutline14,
@@ -50,22 +50,33 @@ const SIDEBAR_MIN = 264;
 const SIDEBAR_MAX = 420;
 const SIDEBAR_DEFAULT = 280;
 const SIDEBAR_COLLAPSED = 56;
-const DETAILS_MIN = 300;
-const DETAILS_MAX = 760;
-const DETAILS_DEFAULT = 360;
 const PROJECT_MIN = 280;
 const PROJECT_MAX = 640;
 const PROJECT_DEFAULT = 380;
-// 右侧抽屉:最右一列(网格列,不是浮层)
-const DRAWER_MIN = 280;
-const DRAWER_MAX = 640;
-const DRAWER_DEFAULT = 320;
+// 最右一列(网格列,不是浮层):轨迹详情 ⇄ 抽屉共用同一列,所以宽度也只有一套。
+// 下界取原抽屉(顶部入口列表 + 内容),上界取原详情栏(diff 与轨迹详情需要更宽)。
+const RIGHT_MIN = 280;
+const RIGHT_MAX = 760;
+const RIGHT_DEFAULT = 360;
 function persist(key: string, value: number) {
 	localStorage.setItem(key, String(value));
 }
 function restore(key: string, fallback: number): number {
 	const v = parseInt(localStorage.getItem(key) ?? "", 10);
 	return Number.isNaN(v) ? fallback : v;
+}
+/**
+ * 最右一列的宽度:合并前有两个键(piweb.drawerW 抽屉 / piweb.detailsW 详情栏),
+ * 现在同一列只写 piweb.drawerW(抽屉是这一列的常驻内容,详情栏已不再单独存在)。
+ * 读取时先抽屉键、再回落到旧的详情栏键,最后夹到统一后的上下界——
+ * 老用户拖过的那一列宽度不会被重置成默认值,两个键都写过时以较新的抽屉键为准。
+ */
+function restoreRightWidth(): number {
+	for (const key of ["piweb.drawerW", "piweb.detailsW"]) {
+		const v = parseInt(localStorage.getItem(key) ?? "", 10);
+		if (!Number.isNaN(v)) return Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, v));
+	}
+	return RIGHT_DEFAULT;
 }
 
 export function AppShell() {
@@ -114,7 +125,8 @@ export function AppShell() {
 
 	const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
 	const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-	const [detailsWidth, setDetailsWidth] = useState(DETAILS_DEFAULT);
+	/** 最右一列(轨迹详情 / 抽屉共用)的宽度 */
+	const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
 	/** 项目栏（侧栏与对话之间的第四列：项目生长可视化） */
 	const [projectOpen, setProjectOpen] = useState(false);
 	const [projectWidth, setProjectWidth] = useState(PROJECT_DEFAULT);
@@ -147,15 +159,13 @@ export function AppShell() {
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
-	const [dragging, setDragging] = useState<"sidebar" | "details" | "project" | "drawer" | null>(null);
+	const [dragging, setDragging] = useState<"sidebar" | "right" | "project" | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
-	const [gitDetailsOpen, setGitDetailsOpen] = useState(false);
-	/** 提示词来源面板（右侧详情列） */
-	const [promptsOpen, setPromptsOpen] = useState(false);
+	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
+	const [drawerSection, setDrawerSection] = useState<DrawerSection>("import");
 	/** 右侧抽屉(最右一列):入口列表 + 内容 */
 	const [drawerOpen, setDrawerOpen] = useState(false);
-	const [drawerWidth, setDrawerWidth] = useState(DRAWER_DEFAULT);
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
@@ -163,9 +173,8 @@ export function AppShell() {
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 	useEffect(() => {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
-		setDetailsWidth(restore("piweb.detailsW", DETAILS_DEFAULT));
+		setRightWidth(restoreRightWidth());
 		setProjectWidth(restore("piweb.projectW", PROJECT_DEFAULT));
-		setDrawerWidth(restore("piweb.drawerW", DRAWER_DEFAULT));
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setProjectOpen(localStorage.getItem("piweb.projectOpen") === "1");
 		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
@@ -232,11 +241,9 @@ export function AppShell() {
 		return () => clearTimeout(timer);
 	}, []);
 
-	// 切换会话时清掉轨迹页的选中态并收起详情栏
+	// 切换会话时清掉轨迹详情的选中态(最右一列回落到抽屉;抽屉入口保持不变)
 	useEffect(() => {
 		setSelected(null);
-		setGitDetailsOpen(false);
-		setPromptsOpen(false);
 	}, [currentPath]);
 
 	// 已知工作区列表（给 Hero 建议）；启动不预选任何工作区，
@@ -284,11 +291,11 @@ export function AppShell() {
 
 	// ---------- 拖拽 ----------
 	const onDrag = useCallback(
-		(side: "sidebar" | "details" | "project" | "drawer") => (e: React.PointerEvent) => {
+		(side: "sidebar" | "right" | "project") => (e: React.PointerEvent) => {
 			e.preventDefault();
 			setDragging(side);
 			const startX = e.clientX;
-			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : side === "drawer" ? drawerWidth : detailsWidth;
+			const startW = side === "sidebar" ? sidebarWidth : side === "project" ? projectWidth : rightWidth;
 			const move = (ev: PointerEvent) => {
 				if (side === "sidebar") {
 					const w = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, startW + (ev.clientX - startX)));
@@ -296,13 +303,10 @@ export function AppShell() {
 				} else if (side === "project") {
 					const w = Math.max(PROJECT_MIN, Math.min(PROJECT_MAX, startW + (ev.clientX - startX)));
 					setProjectWidth(w);
-				} else if (side === "drawer") {
-					// 抽屉在最右:左缘往左拖是变宽(与详情栏同向)
-					const w = Math.max(DRAWER_MIN, Math.min(DRAWER_MAX, startW - (ev.clientX - startX)));
-					setDrawerWidth(w);
 				} else {
-					const w = Math.max(DETAILS_MIN, Math.min(DETAILS_MAX, startW - (ev.clientX - startX)));
-					setDetailsWidth(w);
+					// 最右一列:左缘往左拖是变宽(与原来的详情栏、抽屉同向)
+					const w = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, startW - (ev.clientX - startX)));
+					setRightWidth(w);
 				}
 			};
 			const up = () => {
@@ -316,15 +320,14 @@ export function AppShell() {
 			// 触摸/笔输入被系统手势打断时只触发 pointercancel，不处理会永久泄漏监听器
 			window.addEventListener("pointercancel", up);
 		},
-		[sidebarWidth, detailsWidth, projectWidth, drawerWidth],
+		[sidebarWidth, rightWidth, projectWidth],
 	);
 
 	useEffect(() => {
 		if (dragging === "sidebar") persist("piweb.sidebarW", sidebarWidth);
-		if (dragging === "details") persist("piweb.detailsW", detailsWidth);
+		if (dragging === "right") persist("piweb.drawerW", rightWidth);
 		if (dragging === "project") persist("piweb.projectW", projectWidth);
-		if (dragging === "drawer") persist("piweb.drawerW", drawerWidth);
-	}, [dragging, sidebarWidth, detailsWidth, projectWidth, drawerWidth]);
+	}, [dragging, sidebarWidth, rightWidth, projectWidth]);
 
 	const toggleSidebar = () => {
 		const next = !sidebarCollapsed;
@@ -341,7 +344,7 @@ export function AppShell() {
 	const openToolTrajectory = useCallback((toolCallId: string) => {
 		const entry = trajectoryRef.current.find((item) => item.toolCallId === toolCallId);
 		if (!entry) return;
-		setGitDetailsOpen(false);
+		// 最右一列与抽屉互斥:选中轨迹详情即接管这一列,关掉后回落回抽屉的当前入口
 		setSelected(entry);
 	}, []);
 
@@ -653,11 +656,13 @@ export function AppShell() {
 		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
 	}, [currentId, title]);
 
-	// 网格列(宽屏):侧栏 | 项目栏 | 对话区 | 详情栏 | 右侧抽屉
+	// 网格列(宽屏):侧栏 | 项目栏 | 对话区 | 最右一列(轨迹详情 ⇄ 抽屉)
 	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
-	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${projectOpen ? `${projectWidth}px` : "0px"} minmax(0,1fr) ${
-		selected || gitDetailsOpen || promptsOpen ? `${detailsWidth}px` : "0px"
-	} ${drawerOpen ? `${drawerWidth}px` : "0px"}`;
+	// 最右一列只有一条宽度(rightWidth):详情栏与抽屉合并后不再各占一列。
+	const rightColumnVisible = Boolean(selected) || drawerOpen;
+	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px ${
+		projectOpen ? `${projectWidth}px` : "0px"
+	} minmax(0,1fr) ${rightColumnVisible ? `${rightWidth}px` : "0px"}`;
 	const projectColumn = projectOpen && (
 		<div
 			className="min-h-0 overflow-hidden"
@@ -681,27 +686,44 @@ export function AppShell() {
 				onOpenEditor={openInEditor}
 				gitRefreshKey={panelRefreshKey}
 				onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
-				onOpenGit={() => { setSelected(null); setGitDetailsOpen(true); }}
+				onOpenGit={() => { setSelected(null); setDrawerSection("git"); toggleDrawer(true); }}
 				onClose={() => toggleProject(false)}
 				onError={setError}
 			/>
 		</div>
 	);
 
-	// 右侧抽屉列(最右一列):宽屏是网格列,窄屏是贴右边的 fixed 覆盖层
-	const drawerColumn = (
+	// 最右一列(宽屏是网格列,窄屏是贴左右的 fixed 覆盖层):轨迹详情 ⇄ 抽屉互斥。
+	// selected(点对话里的工具行)优先——它临时接管这一列;关掉后自动回落回抽屉,
+	// 并回到抽屉原本选中的入口(入口状态在 drawerSection,不随锁定/解锁重置)。
+	const rightColumn = (
 		<div
 			className="flex min-h-0 flex-col overflow-hidden"
 			style={isNarrow ? {
 				position: "fixed",
 				inset: "0 0 0 auto",
-				width: "min(88vw, 420px)",
-				zIndex: 88,
+				width: "min(92vw, 640px)",
+				zIndex: 90,
 				background: "var(--dsw-sidebar-fill)",
 				boxShadow: "var(--dsw-elevation-prominent)",
 			} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
 		>
-			<DrawerPanel cwd={panelCwd} onClose={() => toggleDrawer(false)} />
+			{selected ? (
+				<TrajInspector entry={selected} onClose={() => setSelected(null)} />
+			) : (
+				<DrawerPanel
+					cwd={panelCwd}
+					section={drawerSection}
+					onSectionChange={setDrawerSection}
+					onClose={() => toggleDrawer(false)}
+					sessionId={currentId}
+					promptRefreshKey={currentId}
+					gitRefreshKey={panelRefreshKey}
+					onOpenContent={(path, content) => viewer.openStatic(path, content)}
+					onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
+					onOpenFile={openInEditor}
+				/>
+			)}
 		</div>
 	);
 
@@ -851,14 +873,20 @@ export function AppShell() {
 									<button
 										type="button"
 										className="icon-btn"
-										style={{ width: 30, height: 30, background: promptsOpen ? "var(--dsw-active)" : undefined }}
+										style={{ width: 30, height: 30, background: drawerOpen && !selected && drawerSection === "prompts" ? "var(--dsw-active)" : undefined }}
 										title={t.promptPanel}
 										aria-label={t.promptPanel}
 										data-testid="prompt-panel-toggle"
 										onClick={() => {
-											setPromptsOpen((open) => !open);
+											// 本步保留这个图标(第 4 步才与抽屉开关合并),但它打开的是抽屉的「提示词」入口:
+											// 已停在提示词入口时再点收起;否则切到该入口并打开抽屉。轨迹详情占着这一列时让位。
+											if (drawerOpen && !selected && drawerSection === "prompts") {
+												toggleDrawer(false);
+											} else {
+												setDrawerSection("prompts");
+												toggleDrawer(true);
+											}
 											setSelected(null);
-											setGitDetailsOpen(false);
 										}}
 									>
 										<IconAgentPresetOutline16 size={15} />
@@ -867,11 +895,19 @@ export function AppShell() {
 									<button
 										type="button"
 										className="icon-btn"
-										style={{ width: 30, height: 30, background: drawerOpen ? "var(--dsw-active)" : undefined }}
+										style={{ width: 30, height: 30, background: drawerOpen && !selected ? "var(--dsw-active)" : undefined }}
 										title={t.drawerPanel}
 										aria-label={t.drawerPanel}
 										data-testid="drawer-toggle"
-										onClick={() => toggleDrawer()}
+										onClick={() => {
+											// 轨迹详情占着这一列时,这个按钮是把抽屉叫回来(否则点了像没反应)
+											if (selected) {
+												setSelected(null);
+												toggleDrawer(true);
+												return;
+											}
+											toggleDrawer();
+										}}
 									>
 										<IconEllipsisOutline16 size={15} />
 									</button>
@@ -987,43 +1023,9 @@ export function AppShell() {
 				)}
 			</div>
 
-			{/* 提示词来源 / 轨迹 / Git 详情栏 */}
-			{(selected || gitDetailsOpen || promptsOpen) && (
-				<div
-					className="flex min-h-0 flex-col overflow-hidden"
-					style={isNarrow ? {
-						position: "fixed",
-						inset: "0 0 0 auto",
-						width: "min(92vw, 640px)",
-						zIndex: 90,
-						background: "var(--dsw-sidebar-fill)",
-						boxShadow: "var(--dsw-elevation-prominent)",
-					} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
-				>
-					<div className="min-h-0 flex-1">
-						{promptsOpen ? (
-							<PromptPanel
-								cwd={panelCwd}
-								sessionId={currentId}
-								refreshKey={currentId}
-								onOpenContent={(path, content) => viewer.openStatic(path, content)}
-								onClose={() => setPromptsOpen(false)}
-							/>
-						) : selected ? (
-							<TrajInspector entry={selected} onClose={() => setSelected(null)} />
-						) : (
-							<GitPanel cwd={panelCwd} refreshKey={panelRefreshKey} onClose={() => setGitDetailsOpen(false)} onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)} onOpenFile={openInEditor} />
-						)}
-					</div>
-				</div>
-			)}
-
-			{/* 宽屏:详情栏关闭时补一个占位列。网格列数与顺序是固定的五列,
-			    少一个 item 会让最右的抽屉落进 0px 的详情列。 */}
-			{!isNarrow && !(selected || gitDetailsOpen || promptsOpen) && <div aria-hidden="true" />}
-
-			{/* 右侧抽屉:宽屏是最右一列;窄屏贴右边滑出(固定定位,不占网格列) */}
-			{!isNarrow && (drawerOpen ? drawerColumn : <div aria-hidden="true" />)}
+			{/* 宽屏:最右一列(轨迹详情优先,否则抽屉);关闭时补占位列。
+			    网格列数与顺序是固定的四列,少一个 item 会让后面的元素落错列。 */}
+			{!isNarrow && (rightColumnVisible ? rightColumn : <div aria-hidden="true" />)}
 
 			{/* 拖拽手柄 */}
 			{!isNarrow && !sidebarCollapsed && (
@@ -1033,11 +1035,11 @@ export function AppShell() {
 					onPointerDown={onDrag("sidebar")}
 				/>
 			)}
-			{!isNarrow && (selected || gitDetailsOpen || promptsOpen) && (
+			{!isNarrow && rightColumnVisible && (
 				<div
 					className="fixed top-0 h-full w-2 cursor-col-resize"
-					style={{ left: `calc(100vw - ${drawerOpen ? drawerWidth : 0}px - ${detailsWidth}px - 4px)`, zIndex: 40 }}
-					onPointerDown={onDrag("details")}
+					style={{ left: `calc(100vw - ${rightWidth}px - 4px)`, zIndex: 40 }}
+					onPointerDown={onDrag("right")}
 				/>
 			)}
 			{!isNarrow && projectOpen && (
@@ -1047,25 +1049,17 @@ export function AppShell() {
 					onPointerDown={onDrag("project")}
 				/>
 			)}
-			{/* 抽屉左缘拖拽(抽屉在最右,手柄=左缘) */}
-			{!isNarrow && drawerOpen && (
-				<div
-					className="fixed top-0 h-full w-2 cursor-col-resize"
-					style={{ left: `calc(100vw - ${drawerWidth}px - 4px)`, zIndex: 40 }}
-					onPointerDown={onDrag("drawer")}
-				/>
-			)}
 			{isNarrow && projectOpen && (
 				<>
 					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleProject(false)} aria-label={t.close} />
 					{projectColumn}
 				</>
 			)}
-			{/* 窄屏抽屉:从右边滑出(参考项目栏窄屏的固定覆盖写法,方向相反) */}
-			{isNarrow && drawerOpen && (
+			{/* 窄屏最右一列:贴右边滑出(轨迹详情与抽屉共用,遮罩关闭回到对话) */}
+			{isNarrow && rightColumnVisible && (
 				<>
-					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => toggleDrawer(false)} aria-label={t.close} />
-					{drawerColumn}
+					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => (selected ? setSelected(null) : toggleDrawer(false))} aria-label={t.close} />
+					{rightColumn}
 				</>
 			)}
 			{viewer.state.open && (
