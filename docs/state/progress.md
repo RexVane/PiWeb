@@ -51,3 +51,4 @@
 - 2026-10-12 01:02 | #041 | 布局 | 抽屉开关图标由「…」(易读成"更多操作")换成右侧面板图标:新增 IconPanelRightOutline16(左面板图标水平镜像),并清掉不再用的 IconEllipsisOutline16 | deepseek-flash
 - 2026-10-12 01:05 | #042 | 插件 | 加载 SDK 内置扩展：mcp.json 配的 MCP 服务器、codemode、tool_search 在 PiWeb 里能用了；档位只当上限不再把可选工具全打开；关会话先发 session_shutdown，MCP 子进程跟着退出；插件页能停用/启用内置扩展 | claude-opus-5-5
 - 2026-10-12 01:05 | #043 | 导入 | 导入的 Claude Code 会话接着聊不再报 400：按 message.id 把拆开的记录合回一条回复，用量只记一次，stop_reason 转成 pi 的写法 | claude-opus-5-5
+- 2026-10-12 01:33 | #044 | 启动 | 用最新源码起 dev 服务，所有页面 500（node:child_process 编不过）：instrumentation 的 Node 代码挪进 instrumentation-node.ts，只在 nodejs 分支里引，edge 那份编译不再碰它 | claude-opus-5-5
