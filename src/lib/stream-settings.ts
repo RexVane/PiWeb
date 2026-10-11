@@ -35,10 +35,12 @@ const KEY = {
 
 /** 每帧间隔（约 60fps 起步）：档位越高越密 */
 const STEP_MS = [24, 20, 16, 12, 8];
-/** 平滑 / 渐显：每帧推进「积压 / 该值」，稳定态延迟约 2~8 帧 */
-const SMOOTH_DIVISOR = [8, 6, 4, 3, 2];
+/** 平滑 / 渐显：每帧推进「积压 / 该值」，值越大追赶越缓、手感越匀（突发不再狂奔） */
+const SMOOTH_DIVISOR = [14, 10, 7, 5, 3];
 /** 平滑 / 渐显：每帧至少推进的字符数，保证收尾时也能走完 */
-const SMOOTH_MIN_CHARS = [1, 1, 2, 3, 4];
+const SMOOTH_MIN_CHARS = [1, 1, 1, 2, 3];
+/** 平滑 / 渐显：每帧至多推进的字符数——大块突发被摊到更多帧里缓缓出现，不会一口吞掉 */
+const SMOOTH_MAX_CHARS = [140, 110, 90, 70, 50];
 /** 打字机：每帧固定敲出的字符数 */
 const TYPEWRITER_CHARS = [1, 2, 3, 5, 8];
 /** 打字机也要有底线：积压超过约 1.5 秒的量就跟着加速，不出现「回答完了字还在爬」 */
@@ -165,7 +167,7 @@ function snapToWordEnd(target: string, from: number, end: number): number {
 /**
  * 这一帧显示到哪个下标（返回值 = 目标文本前缀长度）。
  * - instant：不排队，直接追平；
- * - smooth：自适应 —— 积压越多推得越快，稳定态只落后几帧；
+ * - smooth：自适应 —— 积压越多推得越快，但每帧有上限：大块突发被摊到多帧缓缓出现；
  * - typewriter：固定节奏逐字，但积压过大时跟着加速（上限约 1.5 秒的落后量）；
  * - fade：在 smooth 的基础上按整词推进。
  */
@@ -179,7 +181,10 @@ export function nextRevealEnd(target: string, shownLength: number, settings: Str
 	if (settings.style === "typewriter") {
 		end = shownLength + Math.max(TYPEWRITER_CHARS[level], Math.ceil(backlog / TYPEWRITER_CATCHUP_DIVISOR));
 	} else {
-		end = shownLength + Math.max(SMOOTH_MIN_CHARS[level], Math.ceil(backlog / SMOOTH_DIVISOR[level]));
+		end = shownLength + Math.min(
+			SMOOTH_MAX_CHARS[level],
+			Math.max(SMOOTH_MIN_CHARS[level], Math.ceil(backlog / SMOOTH_DIVISOR[level])),
+		);
 	}
 	if (end > total) end = total;
 	if (settings.style === "fade") end = snapToWordEnd(target, shownLength, end);

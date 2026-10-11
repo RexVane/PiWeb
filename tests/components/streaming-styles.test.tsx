@@ -56,10 +56,10 @@ describe("StreamingMarkdownBlock 显示样式", () => {
 		expect(container.querySelector(".pw-stream-caret .pw-stream-tail")).not.toBeNull();
 	});
 
-	it("光标关着时不多包一层（DOM 与旧版一致）", () => {
+	it("光标关着时容器上没有光标类（尾巴包装层常驻：稳定 tail 身份、防止块升级时重挂闪动）", () => {
 		setStreamSettings({ style: "smooth", caret: false });
 		const { container } = render(<StreamingMarkdownBlock text="甲段" />);
-		expect(container.querySelector(".pw-stream-tail")).toBeNull();
+		expect(container.querySelector(".pw-stream-tail")).not.toBeNull();
 		expect(container.querySelector(".pw-stream-caret")).toBeNull();
 	});
 

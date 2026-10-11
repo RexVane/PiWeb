@@ -18,7 +18,7 @@
  * - 代码围栏内的 tail 用纯文本渲染，等闭合后再交给 highlight.js 高亮一次，
  *   避免流式代码块每帧重新高亮。
  */
-import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -248,8 +248,13 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 	const targetRef = useRef(text);
 	const settingsRef = useRef(settings);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const containerRef = useRef<HTMLDivElement | null>(null);
+	/** 提交前采样的「用户是否贴着底部」；升级/推进导致内容变高时据此跟随贴底 */
+	const wasAtBottomRef = useRef(false);
 
 	const commit = (shown: string) => {
+		const scroller = containerRef.current?.closest<HTMLElement>(".overflow-y-auto");
+		wasAtBottomRef.current = !!scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
 		const next: StreamView = { shown, ...splitterRef.current!.update(shown) };
 		viewRef.current = next;
 		setView(next);
@@ -306,24 +311,33 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 
 	useEffect(() => () => stopTimer(), []);
 
+	// 逐帧推进会让内容在贴底状态下往下长：提交后（绘制前）跟着贴底，界面不再跳动。
+	// 用户往上滚了就不跟（wasAtBottom 在提交前采样，滚开之后自然是 false）。
+	useLayoutEffect(() => {
+		if (view.shown === targetRef.current || !wasAtBottomRef.current) return;
+		const scroller = containerRef.current?.closest<HTMLElement>(".overflow-y-auto");
+		if (scroller) scroller.scrollTop = scroller.scrollHeight;
+	}, [view]);
+
 	const { shown, blocks, tail, tailInFence } = view;
+	// 尾巴常驻同一个 key 的容器：块升级时尾巴原地更新而不是整棵重挂——
+	// 重挂会让渐显动画在「已经显示过的内容」上重播一遍，正是输出时闪烁几下的来源。
+	// 围栏未闭合时用与最终渲染相同的 md-code-block 结构（含复制按钮），闭合升级只有
+	// 语法着色的差别，没有布局跳变。
 	const tailNode = tailInFence
-		// 围栏还没闭合：纯文本顶着，等闭合后作为稳定块交给 highlight.js 高亮一次
-		? <pre className="pw-stream-code">{tail}</pre>
+		? <div className="md-code-block"><div className="md-code-copy"><CopyButton text={tail} /></div><pre className="pw-stream-code">{tail}</pre></div>
 		: <MarkdownContent text={tail} />;
 
 	return (
 		<div
+			ref={containerRef}
 			className={settings.caret ? "md pw-stream pw-stream-caret" : "md pw-stream"}
 			data-stream-style={settings.style}
 			data-stream-pending={shown === text ? undefined : ""}
 		>
 			{blocks.map((block, i) => <MarkdownContent key={i} text={block} />)}
 			{tail
-				? settings.caret
-					// 光标由 CSS 挂在尾巴最后一个元素的行内末尾（不会另起一行）
-					? <div className="pw-stream-tail">{tailNode}</div>
-					: tailNode
+				? <div className="pw-stream-tail" key="tail">{tailNode}</div>
 				: null}
 		</div>
 	);
