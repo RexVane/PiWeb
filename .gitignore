@@ -12,16 +12,22 @@ next-env.d.ts
 /pi/
 /dsh/
 
-# local dev & plans
+# local dev & plans；AI 工具的私有目录（会话、设置、worktree）一律不进 git
 .zcode/
 .commandcode/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.windsurf/
 # 备份实体不进 git，只索引进（backups/ 同时被 tsconfig exclude）
 backups/*
 !backups/INDEX.md
 probe_tools.py
 probe_*.py
-.env
-.env*.local
+# 所有环境变量文件（.env.production、.env.staging 等都可能带密钥），只放行示例文件
+.env*
+!.env.example
 *.log
 .DS_Store
 Thumbs.db
