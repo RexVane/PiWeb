@@ -4,7 +4,7 @@ vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
 	createGrowthTracker: () => ({ version: 1, prepare: async () => {}, onEvent: () => {}, dispose: () => {} }),
 }));
-import { execute } from "../src/lib/agent-manager";
+import { execute, parseLastEventId, sseEventId } from "../src/lib/agent-manager";
 
 type Managed = Parameters<typeof execute>[0];
 function deferred<T = void>() {
@@ -81,28 +81,58 @@ describe("prompt acceptance boundary", () => {
 
 	it("editAndResend stops the running turn first, then navigates and re-prompts", async () => {
 		const order: string[] = [];
-		const { m, session } = fixture(async () => { order.push("prompt"); }, {
+		const { m, session } = fixture(async (_text, opts) => { order.push("prompt"); opts.preflightResult(true); }, {
 			abort: vi.fn(async () => { order.push("abort"); session.isStreaming = false; session.isIdle = true; }),
 			navigateTree: vi.fn(async (entryId: string) => { order.push(`navigate:${entryId}`); return { cancelled: false }; }),
 		});
 		session.isStreaming = true;
 		session.isIdle = false;
 		const result = await execute(m, { cmd: "editAndResend", entryId: "entry-1", text: "改过的内容" });
-		expect(result).toEqual({ ok: true });
+		expect(result).toEqual({ ok: true, data: { accepted: true } });
 		// 必须"先停下、再回到该消息、再重新提问"，否则服务端会拒绝并发操作
 		expect(order).toEqual(["abort", "navigate:entry-1", "prompt"]);
-		expect(session.prompt).toHaveBeenCalledWith("改过的内容");
+		expect(session.prompt).toHaveBeenCalledWith("改过的内容", expect.objectContaining({ source: "rpc" }));
 		expect(m.promptSubmitting).toBe(false);
 	});
 
 	it("editAndResend skips the abort when nothing is running", async () => {
 		const abort = vi.fn(async () => {});
 		const navigateTree = vi.fn(async () => ({ cancelled: false }));
-		const { m, session } = fixture(async () => {}, { abort, navigateTree });
-		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-2", text: "新内容" })).toEqual({ ok: true });
+		const { m, session } = fixture(async (_text, opts) => { opts.preflightResult(true); }, { abort, navigateTree });
+		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-2", text: "新内容" })).toEqual({ ok: true, data: { accepted: true } });
 		expect(abort).not.toHaveBeenCalled();
 		expect(navigateTree).toHaveBeenCalledWith("entry-2");
-		expect(session.prompt).toHaveBeenCalledWith("新内容");
+		expect(session.prompt).toHaveBeenCalledWith("新内容", expect.objectContaining({ source: "rpc" }));
+	});
+
+	it("editAndResend returns once the new prompt is accepted, so steering works during the re-answer", async () => {
+		// 回归：旧实现 await 整轮 prompt，这期间 promptSubmitting 一直为真，插话/排队全被拒
+		const running = deferred();
+		const navigateTree = vi.fn(async () => ({ cancelled: false }));
+		const steer = vi.fn(async () => {});
+		const { m, session } = fixture(async (_text, opts) => {
+			opts.preflightResult(true);
+			session.isStreaming = true;
+			session.isIdle = false;
+			await running.promise;
+		}, { navigateTree, steer });
+		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-4", text: "改口" })).toEqual({ ok: true, data: { accepted: true } });
+		expect(m.promptSubmitting).toBe(false);
+		expect(await execute(m, { cmd: "steer", text: "再补一句" })).toEqual({ ok: true });
+		expect(steer).toHaveBeenCalledWith("再补一句", undefined);
+		running.resolve();
+	});
+
+	it("setToolPreset on a cold session only records the choice instead of starting the agent", async () => {
+		const { m } = fixture(async () => {});
+		(m as any).session = null;
+		(m as any).toolPreset = "readonly";
+		expect(await execute(m, { cmd: "setToolPreset", preset: "full" })).toEqual({ ok: true });
+		expect((m as any).toolPreset).toBe("full");
+		expect((m as any).session).toBeNull();
+		expect((m as any).creating).toBeNull();
+		const published = m.buffer.map((frame) => JSON.parse(frame.json));
+		expect(published).toContainEqual(expect.objectContaining({ type: "tools", toolPreset: "full" }));
 	});
 
 	it("editAndResend rejects a missing entry or empty text without touching the session", async () => {
@@ -114,6 +144,18 @@ describe("prompt acceptance boundary", () => {
 		expect(abort).not.toHaveBeenCalled();
 		expect(navigateTree).not.toHaveBeenCalled();
 		expect(session.prompt).not.toHaveBeenCalled();
+	});
+
+	it("only resumes SSE from an event id issued by the same managed session", () => {
+		const { m } = fixture(async () => {});
+		(m as any).epoch = "abc123";
+		expect(sseEventId(m, 42)).toBe("abc123.42");
+		expect(parseLastEventId(m, "abc123.42")).toBe(42);
+		// 服务重启 / 会话被回收重开后 epoch 变了：旧 id 不能续到新一轮的同号事件上
+		expect(parseLastEventId(m, "zzz999.42")).toBeUndefined();
+		// 旧格式（纯数字）同样当没有，回退快照
+		expect(parseLastEventId(m, "42")).toBeUndefined();
+		expect(parseLastEventId(m, null)).toBeUndefined();
 	});
 
 	it("blocks tool changes and reload while accepting or awaiting settled", async () => {

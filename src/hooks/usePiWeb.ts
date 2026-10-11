@@ -76,8 +76,10 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 		case "delta": {
 			// 新服务端按稳定流 ID 定位；旧协议仍按最近 pending 消息兼容。
 			const msgs = [...s.messages];
-			let i = evt.messageId ? msgs.findIndex((message) => message.streamId === evt.messageId || message.id === evt.messageId) : msgs.length - 1;
-			if (!evt.messageId) while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
+			// 从尾部找：增量几乎总是落在最后一条消息上，长会话里从头扫每个 token 都是一次全表遍历
+			let i = msgs.length - 1;
+			if (evt.messageId) while (i >= 0 && msgs[i].streamId !== evt.messageId && msgs[i].id !== evt.messageId) i -= 1;
+			else while (i >= 0 && msgs[i].role !== "assistant" && msgs[i].role !== "user") i -= 1;
 			if (evt.messageId && i >= 0 && msgs[i].stopReason && msgs[i].stopReason !== "pending") return s;
 			if (i < 0 || msgs[i].role !== "assistant" || (msgs[i].stopReason ?? "pending") !== "pending") {
 				msgs.push({ role: "assistant", content: [], streamId: evt.messageId, stopReason: "pending", timestamp: evt.ts });
@@ -672,14 +674,17 @@ export function usePiWeb() {
 			const es = new EventSource(`/api/agent/${currentId}/events`);
 			esRef.current = es;
 			es.onopen = () => {
+				retryDelayMs = 2000;
 				setState((s) => ({ ...s, connected: true }));
 			};
 			es.onerror = () => {
 				setState((s) => ({ ...s, connected: false }));
-				// 浏览器对非 200 响应会永久放弃 EventSource 自动重连
-				// （网络断连才会重试），这里手动兜底：关掉后延迟重建，
-				// 重建时会拿到全新快照，不依赖 Last-Event-ID 回放。
 				if (esRef.current !== es) return;
+				// 网络断开时浏览器自己会重连，并带上 Last-Event-ID 让服务端从环形缓冲续放
+				// （只补漏掉的几条事件）。这时手动重建就等于丢掉续传、每次都拉一份全量快照。
+				if (es.readyState !== EventSource.CLOSED) return;
+				// 浏览器对非 200 响应会永久放弃自动重连：这里手动兜底，关掉后延迟重建，
+				// 重建时会拿到全新快照。
 				es.close();
 				esRef.current = null;
 				const delay = retryDelayMs;
@@ -719,7 +724,7 @@ export function usePiWeb() {
 						// 服务器当前 pending 集合是权威来源，刷新可恢复、已答请求不能复活。
 						extensionDialogs: extensionDialogsFromSnapshot(snap, prev.extensionDialogs),
 						extensionNotices: prev.extensionNotices,
-						extensionStatuses: {},
+						extensionStatuses: snap.extensionStatuses ?? {},
 						workingMessage: null,
 						// 重连的快照不带生长账本；连接期间已收到的步保留，useGrowth 会按 seq 与拉取结果去重
 						growth: { ...prev.growth, error: snap.growthError ?? null },

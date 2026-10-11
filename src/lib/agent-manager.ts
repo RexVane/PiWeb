@@ -62,6 +62,12 @@ interface Managed {
 	subscribers: Set<(seq: number, json: string) => void>;
 	buffer: { seq: number; json: string }[];
 	seq: number;
+	/**
+	 * 这一份 Managed 的身份，拼进 SSE 事件 id（`<epoch>.<seq>`）。
+	 * seq 每次重新注册（服务重启、空闲回收后再打开）都从 0 数起，光凭 seq 续传
+	 * 会把旧连接的 Last-Event-ID 对到新一轮的事件上。
+	 */
+	epoch: string;
 	ledger: TrajLedger;
 	lastActive: number;
 	toolPreset: ToolPreset;
@@ -147,12 +153,25 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 	return out;
 }
 
+/** 消息对象 → 持久化条目 ID 的索引；条目数一变就重建（会话只追加，改写分支时条目数也会变） */
+const entryIdIndexes = new WeakMap<SessionManager, { count: number; ids: WeakMap<object, string> }>();
+
 function entryIdForMessage(sm: SessionManager, message: any): string | undefined {
 	// SDK 持久化保存同一对象引用。role+timestamp 并不唯一（同毫秒的 queued user/assistant）。
-	for (const entry of [...sm.getEntries()].reverse() as any[]) {
-		if (entry?.type === "message" && entry.message === message) return entry.id;
+	// 不能每条消息都扫一遍：getEntries() 本身就复制整个会话，快照逐条投影时会退化成 O(n²)。
+	if (!message || typeof message !== "object") return undefined;
+	const counter = (sm as unknown as { getEntryCount?: () => number }).getEntryCount;
+	const entries = counter ? null : (sm.getEntries() as any[]);
+	const count = counter ? counter.call(sm) : entries!.length;
+	let index = entryIdIndexes.get(sm);
+	if (!index || index.count !== count) {
+		index = { count, ids: new WeakMap() };
+		for (const entry of entries ?? (sm.getEntries() as any[])) {
+			if (entry?.type === "message" && entry.message && typeof entry.message === "object") index.ids.set(entry.message, entry.id);
+		}
+		entryIdIndexes.set(sm, index);
 	}
-	return undefined;
+	return index.ids.get(message);
 }
 
 function messageStreamId(m: Managed, message: unknown): string | undefined {
@@ -209,7 +228,8 @@ export function captureWriteBase(cwd: string, sessionPath: string, toolCallId: s
 		if (!stat.isFile() || stat.size > WRITE_BASE_MAX_BYTES) return;
 		const previous = readFileSync(abs, "utf8");
 		if (previous.includes("\u0000")) return; // 二进制不做行级 diff
-		if (writeBases.size > 256) writeBases.clear();
+		// 只淘汰最早的一条：整表清空会把其它会话里正在执行的 write 的旧内容一起丢掉
+		if (writeBases.size >= 256) writeBases.delete(writeBases.keys().next().value!);
 		writeBases.set(`${sessionPath}\u0000${toolCallId}`, previous);
 	} catch {
 		/* 新文件或读不到：没有旧内容，走全绿兜底 */
@@ -487,11 +507,11 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		case "tool_execution_update": {
 			const partial = sanitizeToolOutput(coercePartial((evt as any).partialResult) ?? "");
+			// 不带 args：start 已经发过，前端沿用上一次的值；write 的 args 含整份文件内容，每次进度都重发很浪费
 			publish(m, {
 				type: "tool",
 				id: evt.toolCallId,
 				name: evt.toolName,
-				args: (evt as any).args,
 				state: "running",
 				partialResult: partial.text || undefined,
 				encodingLoss: partial.encodingLoss || undefined,
@@ -652,6 +672,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		subscribers: new Set(),
 		buffer: [],
 		seq: 0,
+		epoch: randomUUID().replace(/-/g, "").slice(0, 12),
 		inflight: null,
 		ui: null,
 		growth: null,
@@ -771,7 +792,8 @@ function m_smEntries(session: AgentSession): unknown[] {
 	return s.sm?.getEntries?.() ?? s.sessionManager?.getEntries?.() ?? [];
 }
 
-function environmentTrajectory(m: Managed, session: AgentSession | null): TrajEntry[] {
+/** resources 已经算过（快照）就传进来，免得资源发现结果再读一遍 */
+function environmentTrajectory(m: Managed, session: AgentSession | null, known?: ContextResource[]): TrajEntry[] {
 	const ts = m.ledger.entries[0]?.ts ?? Date.now();
 	const entries: TrajEntry[] = [];
 	if (session?.systemPrompt) {
@@ -785,7 +807,7 @@ function environmentTrajectory(m: Managed, session: AgentSession | null): TrajEn
 	}
 
 	try {
-		const resources = loadContextResources(m.cwd, m.session?.resourceLoader);
+		const resources = known ?? loadContextResources(m.cwd, m.session?.resourceLoader);
 		resources.forEach((resource, index) => entries.push({
 			seq: -2 - index,
 			kind: "context",
@@ -989,7 +1011,13 @@ export function reap(): void {
 	}
 }
 
-setInterval(reap, 60_000).unref?.();
+// 定时器挂 globalThis：开发热重载会重新求值本模块，不清掉旧的就会一份份叠加
+{
+	const store = globalThis as typeof globalThis & { __piWebReaper?: ReturnType<typeof setInterval> };
+	if (store.__piWebReaper) clearInterval(store.__piWebReaper);
+	store.__piWebReaper = setInterval(reap, 60_000);
+	store.__piWebReaper.unref?.();
+}
 
 /** 归档会话的保留期清理：只删「已归档且长期无活动」的会话；正在使用的会话一律跳过 */
 function isSessionInUse(sessionPath: string): boolean {
@@ -1227,10 +1255,12 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		name = "";
 	}
 
-	// 上下文注入资源（AGENTS.md 与扩展附加 prompt）
+	// 上下文注入资源（AGENTS.md 与扩展附加 prompt）；读失败时轨迹那边仍按原样自己再试一次
 	let contextResources: ContextResource[] = [];
+	let contextResourcesLoaded = false;
 	try {
 		contextResources = loadContextResources(m.cwd, m.session?.resourceLoader);
+		contextResourcesLoaded = true;
 	} catch {
 		contextResources = [];
 	}
@@ -1246,7 +1276,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	const resources = collectResources(m);
 
 	const baseTrajectory = m.ledger.entries.length ? m.ledger.entries : coldTrajectory(m);
-	const trajectory = [...environmentTrajectory(m, session), ...baseTrajectory];
+	const trajectory = [...environmentTrajectory(m, session, contextResourcesLoaded ? contextResources : undefined), ...baseTrajectory];
 
 	return {
 		seq: snapSeq ?? m.seq,
@@ -1266,6 +1296,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		toolPreset: m.toolPreset,
 		customActiveTools: m.customActiveTools ?? null,
 		extensionUiRequests: m.ui?.getPendingRequests() ?? [],
+		// 扩展 setStatus 的当前值：重连拿快照时页脚状态不能丢
+		extensionStatuses: Object.fromEntries(m.ui?.statuses ?? []),
 		tools,
 		stats,
 		contextUsage,
@@ -1284,6 +1316,19 @@ function coldTrajectory(m: Managed): TrajEntry[] {
 }
 
 // ---------- SSE 订阅 ----------
+
+/** SSE 事件 id：`<epoch>.<seq>` */
+export function sseEventId(m: Managed, seq: number): string {
+	return `${m.epoch}.${seq}`;
+}
+
+/** 解析浏览器带回的 Last-Event-ID；不是这一份 Managed 发的（epoch 对不上）一律当没有，走快照 */
+export function parseLastEventId(m: Managed, raw: string | null): number | undefined {
+	const match = /^([A-Za-z0-9]+)\.(\d+)$/.exec(raw?.trim() ?? "");
+	if (!match || match[1] !== m.epoch) return undefined;
+	const seq = Number(match[2]);
+	return Number.isSafeInteger(seq) ? seq : undefined;
+}
 
 export function subscribe(
 	m: Managed,
@@ -1316,6 +1361,47 @@ export interface CommandResult {
 	data?: Record<string, unknown>;
 }
 
+/**
+ * 发 prompt 前给生长记录拍基线。基线不能无限阻塞提问（git 不可用时每次探测至多 30s 超时）：
+ * 5s 内没完成就放行，快照后台补拍（工具结束后照常记步，外部修改兜底）。
+ */
+async function prepareGrowthBriefly(m: Managed): Promise<void> {
+	await Promise.race([
+		growthOf(m).prepare().catch(() => undefined),
+		new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+	]);
+}
+
+/** 交给 SDK，并在「受理」那一刻返回，而不是等整轮跑完；受理之后的错误经 SSE 可见 */
+function submitPrompt(
+	m: Managed,
+	session: AgentSession,
+	text: string,
+	options: Pick<NonNullable<Parameters<AgentSession["prompt"]>[1]>, "images" | "streamingBehavior"> = {},
+): Promise<CommandResult> {
+	return new Promise<CommandResult>((resolve) => {
+		let accepted = false;
+		const run = session.prompt(text, {
+			...options,
+			source: "rpc",
+			preflightResult: (success) => {
+				if (success) {
+					accepted = true;
+					resolve({ ok: true, data: { accepted: true } });
+				}
+			},
+		});
+		// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
+		void run.then(() => {
+			if (!accepted) resolve({ ok: false, error: "prompt completed without acceptance" });
+		}, (error) => {
+			const message = String(error?.message ?? error);
+			if (accepted) publish(m, { type: "error", message, ts: Date.now() });
+			else resolve({ ok: false, error: message });
+		});
+	});
+}
+
 export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
 	touch(m);
 	try {
@@ -1334,37 +1420,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if (m.disposed) throw new Error("session is disposed");
 					// 只有用户显式选择 steer/followUp 才排队；旧的普通提交不能悄悄成为 steering。
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
-					if (!session.isStreaming) {
-						// 基线快照不能无限阻塞首条 prompt（git 不可用时每次探测至多 30s 超时）：
-						// 5s 内没完成就放行 prompt，快照后台补拍（工具结束后照常记步，外部修改兜底）。
-						await Promise.race([
-							growthOf(m).prepare().catch(() => undefined),
-							new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-						]);
-					}
+					if (!session.isStreaming) await prepareGrowthBriefly(m);
 					if (m.disposed) throw new Error("session is disposed");
-					return await new Promise<CommandResult>((resolve) => {
-						let accepted = false;
-						const run = session.prompt(text, {
-							images: cmd.images,
-							streamingBehavior: cmd.behavior,
-							source: "rpc",
-							preflightResult: (success) => {
-								if (success) {
-									accepted = true;
-									resolve({ ok: true, data: { accepted: true } });
-								}
-							},
-						});
-						// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
-						void run.then(() => {
-							if (!accepted) resolve({ ok: false, error: "prompt completed without acceptance" });
-						}, (error) => {
-							const message = String(error?.message ?? error);
-							if (accepted) publish(m, { type: "error", message, ts: Date.now() });
-							else resolve({ ok: false, error: message });
-						});
-					});
+					return await submitPrompt(m, session, text, { images: cmd.images, streamingBehavior: cmd.behavior });
 				} finally {
 					m.promptSubmitting = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
@@ -1423,6 +1481,15 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const preset = cmd.preset as ToolPreset;
 				if (!Object.hasOwn(TOOL_PRESETS, preset)) return { ok: false, error: "invalid tool preset" };
 				if (isManagedBusy(m)) return { ok: false, error: "cannot change tools while the agent is running" };
+				if (!m.session && !m.creating) {
+					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
+					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复本地档位，
+					// 若这里 ensureSession，光是浏览历史会话就会跑一遍扩展的 session_start。
+					m.toolPreset = preset;
+					m.customActiveTools = undefined;
+					publish(m, { type: "tools", active: [], all: [], toolPreset: preset, customActiveTools: null, ts: Date.now() });
+					return { ok: true };
+				}
 				const session = await ensureSession(m);
 				if (isManagedBusy(m)) return { ok: false, error: "cannot change tools while the agent is running" };
 				m.toolPreset = preset;
@@ -1485,11 +1552,15 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if (m.disposed) throw new Error("session is disposed");
 					const moved = await session.navigateTree(entryId);
 					if (moved?.cancelled) return { ok: false, error: "edit cancelled" };
-					await growthOf(m).prepare().catch(() => undefined);
-					await session.prompt(text);
-					return { ok: true };
+					await prepareGrowthBriefly(m);
+					if (m.disposed) throw new Error("session is disposed");
+					// 与普通 prompt 一样在受理时就返回：等整轮跑完的话，这期间 promptSubmitting 一直为真，
+					// 插话 / 排队 / 新消息全被拒，HTTP 请求也一直挂着
+					return await submitPrompt(m, session, text);
 				} finally {
 					m.promptSubmitting = false;
+					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
+					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
 				}
 			}
 			case "rename": {

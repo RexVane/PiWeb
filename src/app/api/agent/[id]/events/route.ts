@@ -1,4 +1,4 @@
-import { buildSnapshot, getManaged, subscribe, unsubscribe } from "@/lib/agent-manager";
+import { buildSnapshot, getManaged, parseLastEventId, sseEventId, subscribe, unsubscribe } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
 
 export const dynamic = "force-dynamic";
@@ -14,10 +14,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	} catch (error) {
 		return new Response(error instanceof BoundaryError ? error.message : "invalid session", { status: 400 });
 	}
-	const m = getManaged(sessionPath);
-	const rawLastEventId = req.headers.get("last-event-id");
-	const parsedLastEventId = rawLastEventId === null ? undefined : Number.parseInt(rawLastEventId, 10);
-	const lastEventId = Number.isSafeInteger(parsedLastEventId) && (parsedLastEventId ?? -1) >= 0 ? parsedLastEventId : undefined;
+	let m: ReturnType<typeof getManaged>;
+	try {
+		m = getManaged(sessionPath);
+	} catch (error) {
+		// 待落盘的会话在服务重启后就不存在了：给明确的 404，而不是未捕获异常的 500
+		return new Response(error instanceof BoundaryError ? error.message : "session unavailable", { status: error instanceof BoundaryError ? 404 : 500 });
+	}
+	// id 带着这份会话的 epoch：服务重启或会话被回收重开后，旧的 Last-Event-ID 不会被误续到新一轮事件上
+	const lastEventId = parseLastEventId(m, req.headers.get("last-event-id"));
 
 	const encoder = new TextEncoder();
 	let closed = false;
@@ -41,7 +46,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 				}
 			};
 			subscriber = (seq: number, json: string) => {
-				write(`id: ${seq}\ndata: ${json}\n\n`);
+				write(`id: ${sseEventId(m, seq)}\ndata: ${json}\n\n`);
 				if (json.includes('"state":"disposed"')) close();
 			};
 			const send = subscriber;

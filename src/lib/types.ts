@@ -84,7 +84,8 @@ export type WebEvent =
 			type: "tool";
 			id: string;
 			name: string;
-			args: unknown;
+			/** 进度更新（running 且带 partialResult）不重发 args，接收方沿用 start 时的值 */
+			args?: unknown;
 			state: "running" | "done";
 			partialResult?: string;
 			result?: string;
@@ -274,6 +275,8 @@ export interface WebSnapshot {
 	customActiveTools?: string[] | null;
 	/** 当前待应答的扩展请求；快照是权威集合，不重放已答请求。 */
 	extensionUiRequests?: Extract<WebEvent, { type: "extension_ui" }>[];
+	/** 扩展通过 setStatus 设的页脚状态（key → 文本）；缺省按空处理（兼容旧服务端） */
+	extensionStatuses?: Record<string, string>;
 	tools: { active: string[]; all: { name: string; description?: string }[] };
 	stats: WebStats | null;
 	contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | null;
