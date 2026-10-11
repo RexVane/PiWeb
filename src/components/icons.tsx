@@ -51,6 +51,11 @@ export const IconPanelLeftOutline16 = ({ size = 16, ...rest }: P) => (
 	</svg>
 );
 
+/** ic_ds_panel_right_outline_16 — 面板在右（左面板图标水平镜像）；右侧抽屉开关用 */
+export const IconPanelRightOutline16 = ({ size = 16, style, ...rest }: P) => (
+	<IconPanelLeftOutline16 size={size} style={{ transform: "scaleX(-1)", ...style }} {...rest} />
+);
+
 /** ic_ds_plus_outline_16 */
 export const IconPlusOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>

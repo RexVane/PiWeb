@@ -30,8 +30,8 @@ import {
 	IconChevronDown14,
 	IconFolderClose16,
 	IconPanelLeftOutline16,
+	IconPanelRightOutline16,
 	IconProjectAddOutline16,
-	IconEllipsisOutline16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
@@ -872,7 +872,7 @@ export function AppShell() {
 											toggleDrawer();
 										}}
 									>
-										<IconEllipsisOutline16 size={15} />
+										<IconPanelRightOutline16 size={15} />
 									</button>
 								</div>
 							{projectTrust?.required && !projectTrust.trusted && (
