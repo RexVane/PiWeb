@@ -134,27 +134,51 @@ piweb -H 0.0.0.0         # 局域网访问（必须设置 PI_WEB_PASSWORD）
 | `-H, --hostname <host>` | 绑定地址（默认 127.0.0.1，env `PI_WEB_HOSTNAME`） |
 | `--dev` | 开发模式 |
 | `--no-open` | 不自动打开浏览器 |
+| `--public-url <url>` | 对外地址，用来拼登录链接并自动加进 Host 白名单（env `PI_WEB_PUBLIC_URL`） |
 
-设置 `PI_WEB_PASSWORD` 开启登录页与 HTTP Basic Auth（用户名 `pi`）。远程访问不建议裸 HTTP，请使用 HTTPS 或可信 VPN。
+设置 `PI_WEB_PASSWORD` 可以启用登录页与 HTTP Basic Auth（用户名 `pi`）。不过默认路径不需要密码：
+启动时打印的登录链接里带的**启动令牌**就能换一张签名 Cookie。远程访问不要用裸 HTTP。
 
-### 手机上用（Tailscale）
+### 手机上用：内置的「远程连接」插件
 
-`tailscale serve` 从回环反代并终结 TLS，所以 PiWeb 可以继续只绑 `127.0.0.1`：门禁交给 tailnet 身份，既不用设密码，也没有 token。
+PiWeb 自带一个内置插件负责这件事，在**设置 → 远程连接**里开关，客户端不用装任何东西。
 
-```bash
-piweb                                              # 保持默认回环绑定
-tailscale serve --bg --https=8443 http://127.0.0.1:30141
-```
+它有两层入口：
 
-`tailscale serve` 会把外部主机名原样转给后端，所以要把它加进白名单，否则会被挡成 403 `untrusted host`：
+**局域网入口（默认开启）** —— 一个只做手机适配的反向代理，绑 `0.0.0.0:30142`。
+同一个 WiFi 下的设备直接打开面板里列出的地址即可，拿到的是适配过手机的页面；
+本机直连 `127.0.0.1:30141` 仍是原样的桌面页面（回环 Host 不注入）。
 
-```bash
-PI_WEB_TRUSTED_HOSTS=<机器名>.<tailnet>.ts.net piweb
-```
+**公网入口（默认关闭）** —— 打开后 PiWeb 会拉起一条 Cloudflare 快速隧道（`cloudflared`），
+Cloudflare 分配一个 `https://<随机名>.trycloudflare.com` 地址，任何浏览器直接打开即可，
+**不需要在每台设备上装客户端**。代价两条：
 
-手机与电脑登录同一个 tailnet，浏览器打开 `https://<机器名>.<tailnet>.ts.net:8443/` 即可。**能进这个 tailnet 就等于能用 PiWeb**，请把 ACL 限定到你信任的设备。
+- 地址每次启动都会变，而且拿到之后还要十几秒才在全球 DNS 生效（面板会显示「生效中」）；
+- TLS 在 Cloudflare 终结，那一跳能看到明文。要端到端加密就用可信 VPN。
 
-> 不用 Tailscale 也可以 `-H 0.0.0.0` 走局域网，但那条路必须设 `PI_WEB_PASSWORD`（启动器强制）。
+`cloudflared` 的查找顺序：`PIWEB_CLOUDFLARED` 指定的路径 →
+`<agent 目录>/web-bin/cloudflared{,.exe}`（PiWeb 自管的位置）→ `PATH`。找不到时面板直接提示。
+
+> 公网入口一开，认证就是强制的。隧道域名由插件在启动成功时加进 Host 白名单，隧道一停立刻摘掉；
+> 起始令牌不接受出现在 API 路径上，也不接受走 `Authorization` 头。
+
+### 自己接反代或隧道
+
+不想用内置插件，也可以自己准备入口（Caddy、nginx、Cloudflare 命名隧道、VPN 都行）。此时注意：
+
+- 反代要转给 **`127.0.0.1:30142`**（局域网入口）才能拿到手机适配；只想要桌面版就转 `127.0.0.1:30141`。
+- 必须设 `PI_WEB_AUTH=1`。绑回环时 PiWeb 判断不出「是否暴露」，需要你显式打开认证；
+  设了 `PI_WEB_PASSWORD` 也等价于打开。
+- 反代会把外部主机名原样转给后端，要加进白名单，否则被挡成 403 `untrusted host`：
+
+  ```bash
+  PI_WEB_TRUSTED_HOSTS=<你的域名> piweb
+  ```
+
+- 用 `--public-url https://你的地址/` 告诉 PiWeb 对外地址：它的主机名会自动进白名单，
+  启动日志里打印的登录链接也会用这个地址而不是回环地址。
+
+> 关掉局域网入口用 `PIWEB_REMOTE_LAN=0`；整个认证关掉用 `PI_WEB_AUTH=0`（后者只在纯本机使用时才安全）。
 
 ## 开源协议
 

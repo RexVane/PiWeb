@@ -135,27 +135,56 @@ piweb -H 0.0.0.0         # LAN access (requires PI_WEB_PASSWORD)
 | `-H, --hostname <host>` | Bind address (default 127.0.0.1, env `PI_WEB_HOSTNAME`) |
 | `--dev` | Development mode |
 | `--no-open` | Do not auto-open the browser |
+| `--public-url <url>` | Public address, used for the login link and added to the Host allowlist automatically (env `PI_WEB_PUBLIC_URL`) |
 
-Set `PI_WEB_PASSWORD` to enable the login page and HTTP Basic Auth (user `pi`). Remote access over plain HTTP is not recommended; use HTTPS or a trusted VPN.
+Set `PI_WEB_PASSWORD` to enable the login page and HTTP Basic Auth (user `pi`). The default path does not need it:
+the **launch token** in the printed login link is exchanged for a signed cookie. Do not expose PiWeb over plain HTTP.
 
-### Use it on your phone (Tailscale)
+### Use it on your phone: the built-in "Remote access" plugin
 
-`tailscale serve` reverse-proxies from loopback and terminates TLS, so PiWeb can keep binding `127.0.0.1` only: the tailnet identity is the gate — no password, no token.
+PiWeb ships a built-in plugin for this. Toggle it in **Settings → Remote access**; nothing is installed on the client.
 
-```bash
-piweb                                              # keep the default loopback bind
-tailscale serve --bg --https=8443 http://127.0.0.1:30141
-```
+It has two entry points:
 
-`tailscale serve` passes the external hostname through unchanged, so allowlist it — otherwise it is rejected as 403 `untrusted host`:
+**Local network (on by default)** — a reverse proxy that only adds the mobile layout, bound to `0.0.0.0:30142`.
+Any device on the same Wi-Fi can open one of the addresses listed in the panel and gets the phone layout;
+connecting to `127.0.0.1:30141` on this machine still serves the untouched desktop page.
 
-```bash
-PI_WEB_TRUSTED_HOSTS=<machine>.<tailnet>.ts.net piweb
-```
+**Public access (off by default)** — turning it on starts a Cloudflare quick tunnel (`cloudflared`).
+Cloudflare assigns an `https://<random>.trycloudflare.com` address that any browser can open with
+**nothing to install on any device**. Two costs:
 
-With both devices on the same tailnet, open `https://<machine>.<tailnet>.ts.net:8443/`. **Anyone who can reach this tailnet can use PiWeb**, so keep the ACL to devices you trust.
+- the address changes on every start, and takes about fifteen seconds to resolve worldwide
+  (the panel shows "taking effect" meanwhile);
+- TLS terminates at Cloudflare, so that hop sees plaintext. Use a trusted VPN if you need end-to-end encryption.
 
-> Without Tailscale you can also use `-H 0.0.0.0` over the LAN, but that path requires `PI_WEB_PASSWORD` (the launcher enforces it).
+`cloudflared` is looked up as: `PIWEB_CLOUDFLARED` → `<agent dir>/web-bin/cloudflared{,.exe}` (managed by PiWeb) → `PATH`.
+The panel says so explicitly when it cannot find it.
+
+> Turning public access on makes authentication mandatory. The plugin adds the tunnel hostname to the Host
+> allowlist once the tunnel is live and removes it when the tunnel stops. The launch token is never accepted
+> on API paths or through the `Authorization` header.
+
+### Bring your own reverse proxy or tunnel
+
+You can front PiWeb yourself instead (Caddy, nginx, a named Cloudflare tunnel, a VPN). In that case:
+
+- Point the proxy at **`127.0.0.1:30142`** (the local-network entry) to get the mobile layout, or at
+  `127.0.0.1:30141` if you only want the desktop page.
+- Set `PI_WEB_AUTH=1`. A loopback bind cannot tell PiWeb that it is exposed, so authentication must be explicit;
+  setting `PI_WEB_PASSWORD` also turns it on.
+- A reverse proxy passes the external hostname through unchanged, so allowlist it or requests are rejected
+  with 403 `untrusted host`:
+
+  ```bash
+  PI_WEB_TRUSTED_HOSTS=<your-domain> piweb
+  ```
+
+- Use `--public-url https://your-address/` to tell PiWeb its public address: the hostname joins the allowlist
+  automatically, and the login link printed at startup uses it instead of the loopback address.
+
+> Disable the local-network entry with `PIWEB_REMOTE_LAN=0`; disable authentication entirely with `PI_WEB_AUTH=0`
+> (only safe when PiWeb is used strictly on this machine).
 
 ## License
 
