@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchTokenFile, publishLaunchToken } from "../src/lib/web-launch-token";
-import { SECRET_BYTES, decodeSecret, encodeSecret, loadWebSecret, resetWebSecretCache, secretFilePath } from "../src/lib/web-secret";
+import { REVOCATIONS_FILENAME, SECRET_BYTES, decodeSecret, encodeSecret, loadSessionRevocations, loadWebSecret, resetWebSecretCache, revokeAllSessions, revokeSessionCookie, secretFilePath } from "../src/lib/web-secret";
 
 const ENV_NAMES = ["PI_WEB_SECRET_FILE", "PI_WEB_SECRET", "PI_CODING_AGENT_DIR"] as const;
 const saved = new Map<string, string | undefined>(ENV_NAMES.map((name) => [name, process.env[name]]));
@@ -85,5 +85,43 @@ describe("web secret", () => {
 		expect(decodeSecret("")).toBeUndefined();
 		expect(decodeSecret(encodeSecret(Buffer.alloc(31, 1)))).toBeUndefined();
 		expect(decodeSecret(encodeSecret(Buffer.alloc(32, 1)))).toBeDefined();
+	});
+});
+
+describe("session revocations", () => {
+	beforeEach(() => {
+		process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
+	});
+
+	it("starts empty and remembers a revoked cookie until it would have expired", () => {
+		expect(loadSessionRevocations()).toMatchObject({ notBefore: 0 });
+		expect(loadSessionRevocations().revoked.size).toBe(0);
+		revokeSessionCookie("old", 1_500, 1_000);
+		revokeSessionCookie("kept", 9_000, 1_000);
+		expect([...loadSessionRevocations().revoked.keys()].sort()).toEqual(["kept", "old"]);
+		// 过期的记录在下一次写入时被清掉
+		revokeSessionCookie("new", 9_000, 2_000);
+		expect([...loadSessionRevocations().revoked.keys()].sort()).toEqual(["kept", "new"]);
+		// 落盘了：清缓存再读还在
+		resetWebSecretCache();
+		expect(loadSessionRevocations().revoked.get("kept")).toBe(9_000);
+	});
+
+	it("moves the not-before line forward only, and clears single revocations with it", () => {
+		revokeSessionCookie("a", 9_000, 1_000);
+		revokeAllSessions(5_000);
+		expect(loadSessionRevocations().notBefore).toBe(5_000);
+		expect(loadSessionRevocations().revoked.size).toBe(0);
+		revokeAllSessions(4_000);
+		expect(loadSessionRevocations().notBefore).toBe(5_000);
+	});
+
+	it("treats a corrupt file as no revocations rather than locking everyone out", () => {
+		fs.mkdirSync(path.join(dir, "agent"), { recursive: true });
+		fs.writeFileSync(path.join(dir, "agent", REVOCATIONS_FILENAME), "{oops");
+		expect(loadSessionRevocations()).toMatchObject({ notBefore: 0 });
+		// 再写一次就修好了
+		revokeAllSessions(7_000);
+		expect(loadSessionRevocations().notBefore).toBe(7_000);
 	});
 });

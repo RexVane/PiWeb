@@ -5,7 +5,8 @@
  * 设计要点（借鉴 deepseek-harness 的 browser-auth）：
  *   1. 签名密钥是独立随机值（web-secret.ts），与启动令牌无关 —— Cookie 泄露也无法离线爆破凭据；
  *   2. Cookie 载荷带上权威（host:port），Cookie 名也由权威派生 —— 令牌不能跨域名/端口复用；
- *   3. 载荷自带 issuedAt / expiresAt，服务端只验签名与时间窗，不存会话表。
+ *   3. 载荷自带 issuedAt / expiresAt，服务端只验签名与时间窗，不存会话表；
+ *      登出要撤回的那一张、以及「让所有设备重新登录」的时间线，由调用方传入吊销清单（web-secret.ts）。
  *
  * 纯常量与浏览器安全函数在 web-auth-shared（登录页引用，不能带上 node:crypto）。
  */
@@ -109,14 +110,34 @@ export function createSessionCookie(authority: string, secret: Buffer, now = Dat
 	};
 }
 
-/** 校验请求自带的会话 Cookie：签名、权威、时间窗三者都要对 */
-export function validSessionCookie(request: Request, secret: Buffer, now = Date.now()): boolean {
+/** 吊销清单（由 web-secret 从磁盘读出）：notBefore 之前签发的全部作废；revoked 里是单张 Cookie 的指纹 */
+export interface SessionRevocationList {
+	notBefore: number;
+	revoked: ReadonlyMap<string, number>;
+}
+
+/** 单张 Cookie 的指纹：吊销清单里只存它，不存 Cookie 本身 */
+export function sessionCookieId(raw: string): string {
+	return createHash("sha256").update(raw).digest("base64url");
+}
+
+/** 请求自带的、签名与权威都对的会话 Cookie（不看时间窗与吊销）；登出时用它算出要撤的那一张 */
+export function sessionCookieFromRequest(request: Request, secret: Buffer): { id: string; payload: SessionCookiePayload } | undefined {
 	const authority = requestAuthority(request);
-	if (!authority) return false;
+	if (!authority) return undefined;
 	const raw = readCookieHeader(request.headers.get("cookie"), cookieNameForAuthority(authority));
-	if (!raw) return false;
+	if (!raw) return undefined;
 	const payload = decodeSessionCookie(raw, secret);
-	if (!payload || payload.authority !== authority) return false;
+	if (!payload || payload.authority !== authority) return undefined;
+	return { id: sessionCookieId(raw), payload };
+}
+
+/** 校验请求自带的会话 Cookie：签名、权威、时间窗都要对，且没被吊销 */
+export function validSessionCookie(request: Request, secret: Buffer, now = Date.now(), revocations?: SessionRevocationList): boolean {
+	const cookie = sessionCookieFromRequest(request, secret);
+	if (!cookie) return false;
+	const { payload } = cookie;
+	if (revocations && (payload.issuedAt < revocations.notBefore || revocations.revoked.has(cookie.id))) return false;
 	return payload.issuedAt <= now
 		&& payload.expiresAt > now
 		&& payload.expiresAt > payload.issuedAt

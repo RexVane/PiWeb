@@ -115,6 +115,30 @@ export function RemoteSection() {
 		}
 	};
 
+	// 「让所有设备重新登录」点两下才生效（第一下只把按钮换成确认文案，4 秒后复原）
+	const [confirmSignOut, setConfirmSignOut] = useState(false);
+	useEffect(() => {
+		if (!confirmSignOut) return;
+		const timer = setTimeout(() => setConfirmSignOut(false), 4_000);
+		return () => clearTimeout(timer);
+	}, [confirmSignOut]);
+	const signOutAll = async () => {
+		if (!confirmSignOut) {
+			setConfirmSignOut(true);
+			return;
+		}
+		setConfirmSignOut(false);
+		setError("");
+		try {
+			const response = await fetch("/api/web-auth?scope=all", { method: "DELETE" });
+			const result = await response.json().catch(() => null);
+			if (!response.ok || !result?.success) throw new Error(result?.error ?? t.remoteFailed);
+			window.location.href = "/login";
+		} catch (e) {
+			if (alive.current) setError(e instanceof Error ? e.message : t.remoteFailed);
+		}
+	};
+
 	const lan = status?.lan;
 	const pub = status?.public;
 	const blocked = status?.blocked ?? null;
@@ -179,6 +203,19 @@ export function RemoteSection() {
 					</div>
 				</div>
 			</Row>
+
+			{/* 没开认证就没有登录这回事 */}
+			{status && blocked !== "auth" ? (
+				<Row title={t.remoteSessionsTitle} hint={t.remoteSessionsHint}>
+					<button
+						className="btn-outline"
+						style={{ height: 30, fontSize: 13, color: confirmSignOut ? "var(--dsw-danger)" : undefined }}
+						onClick={() => void signOutAll()}
+					>
+						{confirmSignOut ? t.remoteSignOutAllConfirm : t.remoteSignOutAll}
+					</button>
+				</Row>
+			) : null}
 
 			{blocked ? (
 				<div style={{ fontSize: 12, color: "var(--dsw-label-secondary)", lineHeight: 1.6 }}>

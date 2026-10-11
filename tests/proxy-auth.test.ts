@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
 import { proxy } from "../src/proxy";
@@ -10,10 +13,14 @@ import { cookieNameForAuthority } from "../src/lib/web-auth";
 const HOST = "localhost:30141";
 const SECRET = Buffer.alloc(32, 7).toString("base64url");
 const LAUNCH_TOKEN = "launch-token-for-tests";
-const ENV_NAMES = ["PI_WEB_AUTH", "PI_WEB_SECRET", "PI_WEB_LAUNCH_TOKEN", "PI_WEB_TRUSTED_HOSTS", "PI_WEB_ALLOWED_HOSTS"] as const;
+// PI_CODING_AGENT_DIR：登出会写吊销清单，绝不能落进真实的 ~/.pi/agent
+const ENV_NAMES = ["PI_WEB_AUTH", "PI_WEB_SECRET", "PI_WEB_LAUNCH_TOKEN", "PI_WEB_TRUSTED_HOSTS", "PI_WEB_ALLOWED_HOSTS", "PI_CODING_AGENT_DIR"] as const;
 const saved = new Map<string, string | undefined>(ENV_NAMES.map((name) => [name, process.env[name]]));
+let agentDir = "";
 
 beforeEach(() => {
+	agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-proxy-auth-"));
+	process.env.PI_CODING_AGENT_DIR = agentDir;
 	process.env.PI_WEB_AUTH = "1";
 	process.env.PI_WEB_SECRET = SECRET;
 	process.env.PI_WEB_LAUNCH_TOKEN = LAUNCH_TOKEN;
@@ -29,6 +36,7 @@ afterEach(() => {
 		else process.env[name] = value;
 	}
 	resetAuthThrottle();
+	fs.rmSync(agentDir, { recursive: true, force: true });
 });
 
 function pageRequest(path: string, headers: Record<string, string> = {}) {
@@ -258,6 +266,39 @@ describe("web-auth route", () => {
 		const setCookie = response.headers.get("set-cookie") ?? "";
 		expect(setCookie).toMatch(/^piweb_session_[A-Za-z0-9_-]+=;/);
 		expect(setCookie.toLowerCase()).toContain("max-age=0");
+	});
+
+	it("revokes the logged-out cookie on the server, so a copied cookie stops working", async () => {
+		// 回归：登出只清浏览器里的 Cookie，被拷走的那份照样能用 30 天
+		const cookie = sessionCookie();
+		// 同一毫秒签的两张 Cookie 一模一样，隔开一点才是两台设备
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		const other = sessionCookie();
+		expect(other).not.toBe(cookie);
+		expect(proxy(pageRequest("/", { cookie })).status).toBe(200);
+		const response = await DELETE(apiRequest("/api/web-auth", { method: "DELETE", headers: { cookie } }));
+		expect(response.status).toBe(200);
+		expect(proxy(pageRequest("/", { cookie })).status).toBe(307);
+		expect(await (await GET(apiRequest("/api/web-auth", { headers: { cookie } }))).json()).toMatchObject({ data: { authenticated: false } });
+		// 别的设备不受影响
+		expect(proxy(pageRequest("/", { cookie: other })).status).toBe(200);
+	});
+
+	it("signs out every device on request from a live session, and only from one", async () => {
+		const mine = sessionCookie();
+		const phone = sessionCookie();
+		const anonymous = await DELETE(apiRequest("/api/web-auth?scope=all", { method: "DELETE" }));
+		expect(anonymous.status).toBe(401);
+		expect(proxy(pageRequest("/", { cookie: phone })).status).toBe(200);
+
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		const response = await DELETE(apiRequest("/api/web-auth?scope=all", { method: "DELETE", headers: { cookie: mine } }));
+		expect(response.status).toBe(200);
+		expect(proxy(pageRequest("/", { cookie: mine })).status).toBe(307);
+		expect(proxy(pageRequest("/", { cookie: phone })).status).toBe(307);
+		// 启动令牌仍然能换一张新的
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(proxy(pageRequest("/", { cookie: sessionCookie() })).status).toBe(200);
 	});
 });
 

@@ -102,4 +102,81 @@ export function loadWebSecret(): Buffer {
 /** 仅供测试：清掉进程内缓存 */
 export function resetWebSecretCache(): void {
 	cache.clear();
+	revocationCache = null;
+}
+
+// ---------- 会话吊销 ----------
+//
+// Cookie 是无状态的，单靠清浏览器里的 Cookie 撤不回已经被拷走的那一份。
+// 这里记两样东西（<agentDir>/web-revocations.json）：
+//   notBefore —— 这之前签发的 Cookie 全部作废（「让所有设备重新登录」）；
+//   revoked   —— 单张 Cookie 的指纹 → 它本来的过期时间（「退出登录」只撤这一张，过期后自动清理）。
+// proxy 每个请求都要查，所以按文件的 mtime/size 缓存解析结果，只多一次 stat。
+
+export const REVOCATIONS_FILENAME = "web-revocations.json";
+
+export interface SessionRevocations {
+	notBefore: number;
+	revoked: ReadonlyMap<string, number>;
+}
+
+const NO_REVOCATIONS: SessionRevocations = { notBefore: 0, revoked: new Map() };
+let revocationCache: { file: string; stamp: string; value: SessionRevocations } | null = null;
+
+function revocationsPath(): string {
+	return path.join(agentDir(), REVOCATIONS_FILENAME);
+}
+
+/** 读不懂的文件按「没有吊销」处理：它只会由下面的原子写产生，坏掉时不能把所有人锁在门外（启动令牌也换不进来） */
+export function loadSessionRevocations(): SessionRevocations {
+	const file = revocationsPath();
+	let stamp: string;
+	try {
+		const stat = fs.statSync(file);
+		stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+	} catch {
+		return NO_REVOCATIONS;
+	}
+	if (revocationCache?.file === file && revocationCache.stamp === stamp) return revocationCache.value;
+	let value = NO_REVOCATIONS;
+	try {
+		const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { notBefore?: unknown; revoked?: unknown };
+		const revoked = new Map<string, number>();
+		if (parsed.revoked && typeof parsed.revoked === "object") {
+			for (const [id, expiresAt] of Object.entries(parsed.revoked)) {
+				if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) revoked.set(id, expiresAt);
+			}
+		}
+		value = { notBefore: typeof parsed.notBefore === "number" && Number.isFinite(parsed.notBefore) ? parsed.notBefore : 0, revoked };
+	} catch {
+		/* 见函数说明 */
+	}
+	revocationCache = { file, stamp, value };
+	return value;
+}
+
+function writeSessionRevocations(value: SessionRevocations): void {
+	const file = revocationsPath();
+	fs.mkdirSync(path.dirname(file), { recursive: true });
+	const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+	try {
+		fs.writeFileSync(temporary, `${JSON.stringify({ notBefore: value.notBefore, revoked: Object.fromEntries(value.revoked) }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+		fs.renameSync(temporary, file);
+	} finally {
+		fs.rmSync(temporary, { force: true });
+		revocationCache = null;
+	}
+}
+
+/** 撤销一张 Cookie（id 见 web-auth 的 sessionCookieId），记到它本来过期为止；顺手清掉已经过期的记录 */
+export function revokeSessionCookie(id: string, expiresAt: number, now = Date.now()): void {
+	const current = loadSessionRevocations();
+	const revoked = new Map([...current.revoked].filter(([, until]) => until > now));
+	revoked.set(id, expiresAt);
+	writeSessionRevocations({ notBefore: current.notBefore, revoked });
+}
+
+/** 让此刻之前签发的所有 Cookie 失效（所有设备都要重新用启动令牌登录）；单张记录随之没用了，一并清空 */
+export function revokeAllSessions(now = Date.now()): void {
+	writeSessionRevocations({ notBefore: Math.max(now, loadSessionRevocations().notBefore), revoked: new Map() });
 }

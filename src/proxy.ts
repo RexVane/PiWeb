@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { configuredTrustedHosts, isSafeHost, isSafeOrigin } from "@/lib/auth";
 import { authEnabled, createSessionCookie, requestAuthority, sessionCookieOptions, validSessionCookie } from "@/lib/web-auth";
 import { TOKEN_QUERY, validLaunchToken } from "@/lib/web-launch-token";
-import { loadWebSecret } from "@/lib/web-secret";
+import { loadSessionRevocations, loadWebSecret } from "@/lib/web-secret";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 /** 未认证也可达：登录页自身与认证接口 */
@@ -32,6 +32,7 @@ export function proxy(request: NextRequest) {
 	if (ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix)) || ASSET_PATHS.has(pathname)) return NextResponse.next();
 
 	const secret = loadWebSecret();
+	const revocations = loadSessionRevocations();
 
 	// 启动令牌换 Cookie：只认根路径、只认一个 token 参数、只认 GET。
 	// 令牌不接受出现在 API 路径上，也不接受走 Authorization 头。
@@ -46,11 +47,11 @@ export function proxy(request: NextRequest) {
 				return response;
 			}
 			// 令牌无效但 Cookie 还有效：把地址栏里的令牌清掉，别让它留在浏览器历史里
-			if (validSessionCookie(request, secret)) return redirectToCleanRoot(request);
+			if (validSessionCookie(request, secret, Date.now(), revocations)) return redirectToCleanRoot(request);
 		}
 	}
 
-	const authenticated = validSessionCookie(request, secret);
+	const authenticated = validSessionCookie(request, secret, Date.now(), revocations);
 	if (authenticated) return NextResponse.next();
 	if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
