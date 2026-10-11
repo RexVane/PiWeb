@@ -337,6 +337,9 @@ export function usePiWeb() {
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
 	const [addedWorkspaces, setAddedWorkspaces] = useState<string[]>([]);
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
+	/** 应用内目录浏览器（远程设备专用）：是否打开，以及等待用户选择的那次调用 */
+	const [dirPickerOpen, setDirPickerOpen] = useState(false);
+	const dirPickResolve = useRef<((path: string | null) => void) | null>(null);
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
@@ -489,6 +492,14 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			// 远程设备（手机走 tailnet）：原生对话框会弹在主机屏幕上，等于没反应。
+			// 服务端据此回 remote:true，这里改用应用内目录浏览器，等选完再返回路径。
+			if (j.data?.remote) {
+				setDirPickerOpen(true);
+				return await new Promise<string | null>((resolve) => {
+					dirPickResolve.current = resolve;
+				});
+			}
 			if (j.success && j.data?.path) {
 				setAddedWorkspaces(j.data.workspaces ?? []);
 				await refreshWorkspaces();
@@ -501,6 +512,37 @@ export function usePiWeb() {
 			return null;
 		}
 	}, [refreshWorkspaces]);
+
+	/** 应用内目录浏览器：用户选定了某个文件夹 */
+	const confirmDirPicker = useCallback(async (path: string) => {
+		setDirPickerOpen(false);
+		const settle = dirPickResolve.current;
+		dirPickResolve.current = null;
+		try {
+			const r = await fetch("/api/workspaces", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "add", path }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			setAddedWorkspaces(j.data?.workspaces ?? []);
+			await refreshWorkspaces();
+			settle?.(path);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to add workspace";
+			setState((current) => ({ ...current, error: message }));
+			settle?.(null);
+		}
+	}, [refreshWorkspaces]);
+
+	/** 应用内目录浏览器：取消 */
+	const cancelDirPicker = useCallback(() => {
+		setDirPickerOpen(false);
+		const settle = dirPickResolve.current;
+		dirPickResolve.current = null;
+		settle?.(null);
+	}, []);
 
 
 	const removeWorkspace = useCallback(
@@ -898,6 +940,9 @@ export function usePiWeb() {
 		setGroupBy,
 		setOrderBy,
 		addWorkspaceByPicker,
+		dirPickerOpen,
+		confirmDirPicker,
+		cancelDirPicker,
 		removeWorkspace,
 		refreshModels,
 		sendCommand,

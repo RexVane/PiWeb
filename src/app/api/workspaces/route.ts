@@ -13,8 +13,20 @@ import {
 import { encodeSessionId } from "@/lib/pi";
 import { disposeSessionPath } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
+import { isLoopbackHostname } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * 请求是否来自本机回环。
+ * 原生文件夹对话框只会在运行 PiWeb 的那台机器上弹出，所以对手机/平板这类远程设备
+ * 它等于没有反应——那种情况要让客户端改用应用内目录浏览器（/api/fs）。
+ */
+function isLoopbackRequest(req: Request): boolean {
+	const host = req.headers.get("host") ?? new URL(req.url).host;
+	const hostname = host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
+	return isLoopbackHostname(hostname);
+}
 
 export async function GET() {
 	try {
@@ -33,6 +45,10 @@ export async function POST(req: Request) {
 			cwds?: string[];
 		};
 		if (body.action === "pick") {
+			if (!isLoopbackRequest(req)) {
+				// 远程设备：不弹主机上的对话框，让前端改用应用内目录浏览器。
+				return NextResponse.json({ success: true, data: { path: null, canceled: false, remote: true } });
+			}
 			const r = await pickFolderNative();
 			const registry = r.path ? await addWorkspace(await resolveWorkspacePath(r.path)) : null;
 			return NextResponse.json({ success: true, data: { ...r, ...(registry ?? {}) } });

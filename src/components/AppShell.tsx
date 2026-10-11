@@ -12,6 +12,7 @@ import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI"
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { PromptPanel } from "@/components/PromptPanel";
+import { DirectoryPicker } from "@/components/DirectoryPicker";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
@@ -86,6 +87,9 @@ export function AppShell() {
 		setGroupBy,
 		setOrderBy,
 		addWorkspaceByPicker,
+		dirPickerOpen,
+		confirmDirPicker,
+		cancelDirPicker,
 		removeWorkspace,
 		refreshModels,
 		sendCommand,
@@ -990,6 +994,8 @@ export function AppShell() {
 			)}
 
 			<ExtensionDialogHost dialog={state.extensionDialogs[0] ?? null} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			{/* 只有远程设备（手机走 tailnet）会走到这里：本机仍然用系统原生对话框 */}
+			<DirectoryPicker open={dirPickerOpen} onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />
 			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice} />
 			<SettingsPanel
 				open={settingsOpen}
