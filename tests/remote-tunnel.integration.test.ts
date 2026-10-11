@@ -65,11 +65,11 @@ describe("real cloudflared tunnel", () => {
 		// 第一步：本地就验证「代理 + 注入」是通的（不带 Host 或回环 Host 都不该注入）
 		const loopback = await get(`http://127.0.0.1:${LAN_PORT}/`);
 		expect(loopback.body).toContain("UPSTREAM-OK");
-		expect(loopback.body, "回环 Host 不该被注入").not.toContain("piweb-remote-mobile-fit");
+		expect(loopback.body, "回环 Host 不该被注入").not.toContain("piweb-mobile-fit");
 
 		const foreign = await get(`http://127.0.0.1:${LAN_PORT}/`, "pi.example.com");
 		expect(foreign.body).toContain("UPSTREAM-OK");
-		expect(foreign.body, "非回环 Host 必须注入").toContain('id="piweb-remote-mobile-fit"');
+		expect(foreign.body, "非回环 Host 必须注入").toContain('id="piweb-mobile-fit"');
 
 		// 第二步：起真隧道，域名必须已并进 Host 白名单
 		const pub = await startPublic();
@@ -88,6 +88,6 @@ describe("real cloudflared tunnel", () => {
 		}
 		expect(html, "公网地址没拉到页面").not.toBe("");
 		expect(html).toContain("UPSTREAM-OK");
-		expect(html, "公网路径也必须注入").toContain('id="piweb-remote-mobile-fit"');
+		expect(html, "公网路径也必须注入").toContain('id="piweb-mobile-fit"');
 	}, 300_000);
 });

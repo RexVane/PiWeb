@@ -21,3 +21,4 @@
 - 2026-10-11 19:49 | #011 | 远程 | 设置里新增「远程连接」栏：内置插件卡片、局域网入口地址列表、公网入口开关与状态（含地址生效中） | deepseek-flash
 - 2026-10-11 19:53 | #012 | 文档 | README 中英双版改掉 Tailscale 那节，换成内置「远程连接」插件用法与自带反代的接法；补 --public-url | deepseek-flash
 - 2026-10-11 19:58 | #013 | 远程 | 退休 piweb-remote 整个仓库（功能已被内置「远程连接」完全覆盖），实体移入 backups 并在 INDEX 登记 | deepseek-flash
+- 2026-10-11 20:09 | #014 | 远程 | 注入元素 id 与 502 文案去掉已退休的项目名：piweb-remote-mobile-fit → piweb-mobile-fit，错误前缀改 [远程连接] | deepseek-flash

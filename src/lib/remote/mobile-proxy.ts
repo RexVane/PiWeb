@@ -17,7 +17,7 @@ import zlib from "node:zlib";
 import { isLoopbackHostname } from "../auth";
 import assets from "./assets.json";
 
-export const INJECT_ID = "piweb-remote-mobile-fit";
+export const INJECT_ID = "piweb-mobile-fit";
 export const MOBILE_FIT_CSS: string = assets.css;
 export const MOBILE_FIT_JS: string = assets.js;
 
@@ -126,7 +126,7 @@ export function createMobileProxy({ targetPort, targetHost = "127.0.0.1", css = 
 		upstream.on("error", (error) => {
 			log(`[远程连接] 代理连不上 PiWeb：${error.message}`);
 			if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
-			res.end(`piweb-remote: 连不上 PiWeb（${error.message}）`);
+			res.end(`[远程连接] 连不上 PiWeb（${error.message}）`);
 		});
 		req.pipe(upstream);
 	});

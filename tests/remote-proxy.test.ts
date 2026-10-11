@@ -45,16 +45,16 @@ describe("injectAssets", () => {
 
 	it("inserts before </head>", () => {
 		const out = injectAssets(page, { css: "a{}", js: "b()" });
-		expect(out.indexOf('id="piweb-remote-mobile-fit"')).toBeGreaterThan(out.indexOf("<title>"));
-		expect(out.indexOf('id="piweb-remote-mobile-fit"')).toBeLessThan(out.indexOf("</head>"));
-		expect(out.indexOf('id="piweb-remote-mobile-fit-js"')).toBeGreaterThan(out.indexOf("</style>"));
+		expect(out.indexOf('id="piweb-mobile-fit"')).toBeGreaterThan(out.indexOf("<title>"));
+		expect(out.indexOf('id="piweb-mobile-fit"')).toBeLessThan(out.indexOf("</head>"));
+		expect(out.indexOf('id="piweb-mobile-fit-js"')).toBeGreaterThan(out.indexOf("</style>"));
 		expect(out).toContain("</body>");
 	});
 
 	it("falls back to just after <body ...> and then to prepending", () => {
-		expect(injectAssets("<body class=\"x\">hi", { css: "a{}" })).toContain('id="piweb-remote-mobile-fit"');
+		expect(injectAssets("<body class=\"x\">hi", { css: "a{}" })).toContain('id="piweb-mobile-fit"');
 		const afterBody = injectAssets("<body class=\"x\">hi", { css: "a{}" });
-		expect(afterBody.indexOf('id="piweb-remote-mobile-fit"')).toBeGreaterThan(afterBody.indexOf("<body"));
+		expect(afterBody.indexOf('id="piweb-mobile-fit"')).toBeGreaterThan(afterBody.indexOf("<body"));
 		expect(injectAssets("plain", { css: "a{}" })).toMatch(/^<style/);
 	});
 
@@ -104,7 +104,7 @@ describe("mobile injection proxy", () => {
 		const port = await proxyFor(up.port);
 		const res = await call(port, "/", { host: "pi.example.com", accept: "text/html" });
 		expect(res.status).toBe(200);
-		expect(res.body).toContain('id="piweb-remote-mobile-fit"');
+		expect(res.body).toContain('id="piweb-mobile-fit"');
 		expect(res.body).toContain("CSS{}");
 		expect(res.body).toContain("JS()");
 		expect(res.headers["content-length"]).toBe(String(Buffer.byteLength(res.body)));
