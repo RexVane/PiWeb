@@ -19,7 +19,8 @@ async function listen(server: http.Server): Promise<number> {
 
 function call(port: number, path: string, headers: Record<string, string> = {}) {
 	return new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
-		const req = http.request({ host: "127.0.0.1", port, path, headers }, (res) => {
+		// agent: false：测试客户端自己不经过 globalAgent，下面有用例会把它换成走代理的
+		const req = http.request({ host: "127.0.0.1", port, path, headers, agent: false }, (res) => {
 			const chunks: Buffer[] = [];
 			res.on("data", (chunk: Buffer) => chunks.push(chunk));
 			res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString("utf8") }));
@@ -166,6 +167,22 @@ describe("mobile injection proxy", () => {
 			req.end();
 		});
 		await closed;
+	});
+
+	it("reaches PiWeb directly even when the default agent goes through a proxy", async () => {
+		// NODE_USE_ENV_PROXY=1 时 Node 的 globalAgent 带着 HTTP_PROXY 配置，这里换成指向死端口的代理来模拟。
+		// 改前转发走 globalAgent：真实环境里代理按原 Host 连回入口、自己转给自己到端口耗尽，这里则直接 502
+		const original = http.globalAgent;
+		http.globalAgent = new http.Agent({ proxyEnv: { HTTP_PROXY: "http://127.0.0.1:1" } } as http.AgentOptions);
+		cleanups.push(async () => {
+			http.globalAgent.destroy();
+			http.globalAgent = original;
+		});
+		const up = await upstream();
+		const port = await proxyFor(up.port);
+		const res = await call(port, "/json", { host: "192.168.5.44:30142" });
+		expect(res.status).toBe(200);
+		expect(res.body).toBe('{"success":true}');
 	});
 
 	it("reports 502 when PiWeb is not reachable", async () => {

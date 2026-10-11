@@ -1,7 +1,8 @@
 import net from "node:net";
+import type os from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { POST } from "../src/app/api/remote/route";
-import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
+import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
 const savedAuth = process.env.PI_WEB_AUTH;
@@ -121,6 +122,20 @@ describe("remote plugin config", () => {
 		expect(piwebPort({ PORT: "30600" })).toBe(30600);
 		expect(piwebPort({})).toBe(30141);
 		expect(piwebPort({ PORT: "nope" })).toBe(30141);
+	});
+
+	it("lists real adapters first and drops proxy TUN addresses the phone can never reach", () => {
+		const v4 = (address: string, internal = false) => ({ address, netmask: "255.255.255.0", family: "IPv4", mac: "00:00:00:00:00:00", internal, cidr: null }) as os.NetworkInterfaceInfo;
+		// 照抄一台装了 Mihomo、VMware、WSL 的 Windows：只有 WLAN 那个是同一 WiFi 下手机能用的
+		const addresses = lanAddresses({
+			"vEthernet (WSL (Hyper-V firewall))": [v4("172.31.208.1")],
+			"VMware Network Adapter VMnet8": [v4("192.168.110.1")],
+			"以太网": [v4("169.254.80.44")],
+			Mihomo: [v4("198.18.0.1")],
+			WLAN: [v4("192.168.5.44")],
+			"Loopback Pseudo-Interface 1": [v4("127.0.0.1", true)],
+		});
+		expect(addresses).toEqual(["192.168.5.44", "172.31.208.1", "192.168.110.1"]);
 	});
 
 	it("reports an idle status before anything starts", () => {

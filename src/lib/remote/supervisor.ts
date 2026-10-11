@@ -66,14 +66,15 @@ export function createUrlCatcher(pattern: RegExp = PUBLIC_URL_PATTERN) {
  *
  * 只看 DNS 不够：域名解析出来之后边缘还可能要几秒才把请求转到这条隧道上。
  * 所以这里发一次 HEAD，把「能连上并拿到 HTTP 响应」当作就绪标准；
- * 4xx 也算就绪（说明请求已经打到我们的上游了），只有连不上/DNS 失败才算没就绪。
+ * 4xx 也算就绪（说明请求已经打到我们的上游了）。5xx 不算：边缘还没接上这条隧道时 Cloudflare 自己回
+ * 530（错误 1033），上游连不上时回 502——它们也是 HTTP 响应，当成就绪就会让界面显示「就绪」而手机打开是错误页。
  */
 function probeTunnel(url: string): Promise<boolean> {
 	return new Promise((resolve) => {
 		const target = new URL(url);
 		const request = https.request({ host: target.hostname, path: "/api/health", method: "HEAD", timeout: 8_000 }, (response) => {
 			response.resume();
-			resolve(true);
+			resolve((response.statusCode ?? 0) < 500);
 		});
 		request.on("timeout", () => { request.destroy(); resolve(false); });
 		request.on("error", () => resolve(false));
@@ -224,15 +225,24 @@ export function remoteLanPort(env: Record<string, string | undefined> = process.
 	return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : DEFAULT_LAN_PORT;
 }
 
-/** 所有非回环 IPv4 —— 手机该用哪个地址，UI 直接列出来 */
-export function lanAddresses(): string[] {
-	const out: string[] = [];
-	for (const entries of Object.values(os.networkInterfaces())) {
+/** 虚拟机、WSL、容器的虚拟网卡：地址也是私网段，但同一 WiFi 的手机连不到，排到最后 */
+const VIRTUAL_ADAPTER = /vmware|virtualbox|vboxnet|vethernet|hyper-v|wsl|docker|^br-|^veth/i;
+
+/**
+ * 所有非回环 IPv4 —— 手机该用哪个地址，UI 直接列出来，真实网卡排在前面。
+ * 198.18.0.0/15 是测试保留段，Clash / Mihomo 等代理的 TUN 网卡用它，手机永远连不上，直接不列。
+ */
+export function lanAddresses(interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()): string[] {
+	const real: string[] = [];
+	const virtual: string[] = [];
+	for (const [name, entries] of Object.entries(interfaces)) {
 		for (const entry of entries ?? []) {
-			if (entry.family === "IPv4" && !entry.internal && !entry.address.startsWith("169.254.")) out.push(entry.address);
+			if (entry.family !== "IPv4" || entry.internal || entry.address.startsWith("169.254.")) continue;
+			if (/^198\.1[89]\./.test(entry.address)) continue;
+			(VIRTUAL_ADAPTER.test(name) ? virtual : real).push(entry.address);
 		}
 	}
-	return out;
+	return [...real, ...virtual];
 }
 
 export function remoteStatus(): RemoteStatus {
