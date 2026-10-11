@@ -814,6 +814,14 @@ textarea::placeholder {
 .pw-stream {
 	display: flow-root;
 }
+/* 打字光标模式下尾巴外面包了一层：包层不能改变原有排版，
+   .md > *:first-child/:last-child 的边距归零要透传到最后那个内容元素上 */
+.pw-stream > .pw-stream-tail:first-child > :first-child {
+	margin-top: 0;
+}
+.pw-stream > .pw-stream-tail:last-child > :last-child {
+	margin-bottom: 0;
+}
 /* 围栏未闭合时的尾巴：跟着 .md pre 的底色，但用等宽字体显示原始代码 */
 .pw-stream-code {
 	font-family: var(--font-mono);
@@ -821,6 +829,49 @@ textarea::placeholder {
 	line-height: 1.55;
 	white-space: pre-wrap;
 	word-break: break-word;
+}
+
+/* 渐显样式：新出现的块柔和淡入。
+   元素被复用、只是文字在变长时不会重放动画（React 不会重挂 DOM），所以不会每帧闪。 */
+.pw-stream[data-stream-style="fade"] > * {
+	animation: pw-stream-enter 240ms ease-out both;
+}
+@keyframes pw-stream-enter {
+	from {
+		opacity: 0;
+		transform: translateY(2px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* 打字光标：挂在尾巴最后一个元素的行内末尾（不会另起一行） */
+.pw-stream-caret .pw-stream-tail > :last-child::after {
+	content: "";
+	display: inline-block;
+	width: 2px;
+	height: 1.05em;
+	margin-left: 2px;
+	vertical-align: -0.18em;
+	border-radius: 1px;
+	background: var(--dsw-accent);
+	animation: pw-stream-caret 1.1s steps(2, start) infinite;
+}
+@keyframes pw-stream-caret {
+	50% {
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pw-stream[data-stream-style="fade"] > * {
+		animation: none;
+	}
+	.pw-stream-caret .pw-stream-tail > :last-child::after {
+		animation: none;
+	}
 }
 
 /* ---------- 代码高亮（highlight.js）：VS Code 式的分类着色，配色跟 Pi 自己的主题走 ---------- */
