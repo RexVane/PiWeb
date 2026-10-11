@@ -28,6 +28,7 @@ it("preserves unrelated settings and never overwrites a malformed file when togg
 	try {
 		process.env.PI_CODING_AGENT_DIR = agentDir;
 		await fs.writeFile(file, JSON.stringify({ theme: "dark", packages: ["example-package"], retry: { maxRetries: 5 } }));
+		mocks.getSettingsManager.mockReturnValue(SettingsManager.create(agentDir, agentDir));
 		await togglePackage("example-package", true, "user", agentDir);
 		expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
 			theme: "dark",
@@ -105,6 +106,26 @@ describe("SDK package and extension persistence", () => {
 		expect(mocks.reloadAllLoaders).not.toHaveBeenCalled();
 		expect(mocks.reloadSessionsForCwd).not.toHaveBeenCalled();
 	}
+
+	it("lets a pending SettingsManager write land before moving a package, so it cannot resurrect the old list", async () => {
+		// SDK 的写入是排队异步落盘的：直接改文件前不 flush，排在后面的旧 packages 会把停用的包写回去
+		manager.setPackages(["example-package", "other-package"]);
+		await togglePackage("example-package", true, "user", cwd);
+		await manager.flush();
+		const saved = JSON.parse(await fs.readFile(file, "utf8"));
+		expect(saved.packages).toEqual(["other-package"]);
+		expect(saved.disabledPackages).toEqual(["example-package"]);
+	});
+
+	it("treats project extension paths case-sensitively except on Windows", async () => {
+		const upper = path.join(path.dirname(cwd), path.basename(cwd).toUpperCase(), ".pi", "extensions", "x.ts");
+		await toggleExtension(upper, true, cwd);
+		const projectPatterns = JSON.parse(await fs.readFile(projectFile, "utf8")).extensions ?? [];
+		const globalPatterns = JSON.parse(await fs.readFile(file, "utf8")).extensions ?? [];
+		// Windows 上 PROJECT 就是 project 目录；其他系统上它是另一个目录，排除规则只能写进全局
+		if (process.platform === "win32") expect(projectPatterns.some((p: string) => p.startsWith("-"))).toBe(true);
+		else expect(globalPatterns.some((p: string) => p.startsWith("-"))).toBe(true);
+	});
 
 	it("refreshes stale global arrays before updating and flushes the extension exclusion", async () => {
 		await fs.writeFile(file, JSON.stringify({ extensions: ["external.ts"], theme: "light", unknown: { retained: true } }));

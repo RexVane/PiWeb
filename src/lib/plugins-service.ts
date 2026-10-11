@@ -204,24 +204,31 @@ export async function togglePackage(
 	cwd: string
 ): Promise<void> {
 	const settingsPath = scope === "project" ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	await withSettingsWriteLock(settingsPath, () => withExternalSettingsLock(settingsPath, async () => {
-		const settings = await readSettingsFileStrict(settingsPath);
-		const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
-		const packages: unknown[] = Array.isArray(settings.packages) ? settings.packages : [];
-		// 停用的包原样存到 disabledPackages（PiWeb 私有键，pi 不读）
-		const disabledPackages: unknown[] = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
-		if (disable) {
-			const moved = packages.filter((p) => sourceOf(p) === source);
-			settings.packages = packages.filter((p) => sourceOf(p) !== source);
-			settings.disabledPackages = [...disabledPackages.filter((p) => sourceOf(p) !== source), ...(moved.length ? moved : [source])];
-		} else {
-			const restored = disabledPackages.filter((p) => sourceOf(p) === source);
-			settings.disabledPackages = disabledPackages.filter((p) => sourceOf(p) !== source);
-			settings.packages = packages.some((p) => sourceOf(p) === source) ? packages : [...packages, ...(restored.length ? restored : [source])];
-		}
-		await writeSettingsFile(settingsPath, settings);
-	}));
+	await withSettingsWriteLock(settingsPath, async () => {
+		// 直接改文件之前先让 SettingsManager 把还没落盘的改动写完：不然它稍后落盘时
+		// 会拿内存里的旧 packages 盖掉这次的修改（写完后 applyResourceChange 会让所有实例重新读盘）
+		await prepareSettingsWrite(cwd, settingsPath);
+		await withExternalSettingsLock(settingsPath, () => movePackage(settingsPath, source, disable));
+	});
 	await applyResourceChange(cwd, scope);
+}
+
+async function movePackage(settingsPath: string, source: string, disable: boolean): Promise<void> {
+	const settings = await readSettingsFileStrict(settingsPath);
+	const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
+	const packages: unknown[] = Array.isArray(settings.packages) ? settings.packages : [];
+	// 停用的包原样存到 disabledPackages（PiWeb 私有键，pi 不读）
+	const disabledPackages: unknown[] = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
+	if (disable) {
+		const moved = packages.filter((p) => sourceOf(p) === source);
+		settings.packages = packages.filter((p) => sourceOf(p) !== source);
+		settings.disabledPackages = [...disabledPackages.filter((p) => sourceOf(p) !== source), ...(moved.length ? moved : [source])];
+	} else {
+		const restored = disabledPackages.filter((p) => sourceOf(p) === source);
+		settings.disabledPackages = disabledPackages.filter((p) => sourceOf(p) !== source);
+		settings.packages = packages.some((p) => sourceOf(p) === source) ? packages : [...packages, ...(restored.length ? restored : [source])];
+	}
+	await writeSettingsFile(settingsPath, settings);
 }
 
 export async function toggleExtension(
@@ -229,8 +236,9 @@ export async function toggleExtension(
 	disable: boolean,
 	cwd: string
 ): Promise<void> {
-	const norm = extPath.replace(/\\/g, "/").toLowerCase();
-	const isProject = norm.startsWith(`${path.resolve(cwd).replace(/\\/g, "/").toLowerCase()}/`);
+	// 只有 Windows 的路径不分大小写：Linux/mac 上 /Work 与 /work 是两个目录
+	const fold = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
+	const isProject = fold(extPath).startsWith(`${fold(path.resolve(cwd))}/`);
 	const baseDir = isProject ? path.join(cwd, ".pi") : getAgentDir();
 	const settingsPath = isProject ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	await withSettingsWriteLock(settingsPath, async () => {
