@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { configuredTrustedHosts, isSafeHost, isSafeOrigin, validBasicAuthorization } from "@/lib/auth";
+import { configuredTrustedHosts, isSafeHost, isSafeOrigin } from "@/lib/auth";
 import { authEnabled, createSessionCookie, requestAuthority, sessionCookieOptions, validSessionCookie } from "@/lib/web-auth";
 import { TOKEN_QUERY, validLaunchToken } from "@/lib/web-launch-token";
 import { loadWebSecret } from "@/lib/web-secret";
@@ -13,9 +13,9 @@ const ASSET_PATHS = new Set(["/icon.svg", "/favicon.ico"]);
 
 /**
  * 认证网关。三件事，顺序不能换：
- *   1. Host 校验 —— 无论有没有设密码都要做（DNS rebinding 防护靠它）；
+ *   1. Host 校验 —— 无论有没有开认证都要做（DNS rebinding 防护靠它）；
  *   2. 同源校验 —— 非只读方法必须同源；
- *   3. 凭据校验 —— 启动令牌换 Cookie / Basic / 已有 Cookie。
+ *   3. 凭据校验 —— 启动令牌换 Cookie / 已有 Cookie。
  */
 export function proxy(request: NextRequest) {
 	if (!isSafeHost(request, configuredTrustedHosts())) {
@@ -50,19 +50,16 @@ export function proxy(request: NextRequest) {
 		}
 	}
 
-	const password = process.env.PI_WEB_PASSWORD;
-	const authenticated = (password ? validBasicAuthorization(request.headers.get("authorization"), password) : false)
-		|| validSessionCookie(request, secret);
+	const authenticated = validSessionCookie(request, secret);
 	if (authenticated) return NextResponse.next();
 	if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
-	// 页面请求 → 登录页（带返回地址）；API → 401，保留脚本客户端的 Basic 挑战。
+	// 页面请求 → 登录页（带返回地址）；API → 401（没有 Basic，不发挑战头）。
 	if (pathname.startsWith("/api/")) {
 		return new NextResponse(JSON.stringify({ success: false, error: "authentication required" }), {
 			status: 401,
 			headers: {
 				"Content-Type": "application/json; charset=utf-8",
-				"WWW-Authenticate": 'Basic realm="PiWeb", charset="UTF-8"',
 				"Cache-Control": "no-store",
 			},
 		});

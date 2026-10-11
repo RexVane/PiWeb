@@ -1,16 +1,15 @@
 /**
- * 会话认证（服务端）：登录用密码或启动令牌换一个无状态令牌（HMAC 派生），存 httpOnly Cookie。
- * Basic 认证保留为 API / 脚本兜底（bin/piweb.js 探活与 curl 依赖它）。
+ * 会话认证（服务端）：启动令牌换一个无状态令牌（HMAC 派生），存 httpOnly Cookie。
+ * 这是唯一的认证路径 —— 密码登录已移除，Basic 也不再被接受。
  *
  * 设计要点（借鉴 deepseek-harness 的 browser-auth）：
- *   1. 签名密钥是独立随机值（web-secret.ts），不是密码 —— Cookie 泄露也无法离线爆破凭据；
+ *   1. 签名密钥是独立随机值（web-secret.ts），与启动令牌无关 —— Cookie 泄露也无法离线爆破凭据；
  *   2. Cookie 载荷带上权威（host:port），Cookie 名也由权威派生 —— 令牌不能跨域名/端口复用；
  *   3. 载荷自带 issuedAt / expiresAt，服务端只验签名与时间窗，不存会话表。
  *
  * 纯常量与浏览器安全函数在 web-auth-shared（登录页引用，不能带上 node:crypto）。
  */
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { equalText } from "./auth";
 import { COOKIE_PREFIX, SESSION_MAX_AGE_SECONDS, readCookieHeader, safeNextPath } from "./web-auth-shared";
 
 export { COOKIE_PREFIX, SESSION_MAX_AGE_SECONDS, readCookieHeader, safeNextPath };
@@ -37,17 +36,11 @@ function decodeBase64Url(value: string): Buffer | undefined {
 	return encodeBase64Url(decoded) === value ? decoded : undefined;
 }
 
-/** 校验登录密码（恒定时间比较） */
-export function validPassword(candidate: string, password: string): boolean {
-	return equalText(candidate, password);
-}
-
 /**
- * 认证是否启用：设了 PI_WEB_PASSWORD，或显式 PI_WEB_AUTH=1。
+ * 认证是否启用：只看 PI_WEB_AUTH（1 / true / on / yes）。不再有第二个开关。
  * 反代后面 PiWeb 仍绑回环，绑定位址判断不出「是否暴露」，所以这种情况必须显式打开。
  */
 export function authEnabled(env: Record<string, string | undefined> = process.env): boolean {
-	if (env.PI_WEB_PASSWORD) return true;
 	const flag = (env.PI_WEB_AUTH ?? "").trim().toLowerCase();
 	return flag === "1" || flag === "true" || flag === "on" || flag === "yes";
 }

@@ -118,9 +118,14 @@ export function parseLauncherArgs(args = [], env = process.env) {
  * @returns {{root: string, command: 'dev' | 'start', env: Environment}}
  */
 export function createLaunchPlan(root, options, env = process.env) {
+	// 拒绝启动而不是静默忽略：设了 PI_WEB_PASSWORD 的部署本来是有认证的，
+	// 悄悄放过就会让它在没有任何登录要求的情况下继续对外服务。
+	if (env.PI_WEB_PASSWORD) {
+		throw new Error("PI_WEB_PASSWORD 已被移除：密码登录不再存在，认证现在只用启动令牌（PI_WEB_AUTH=1，启动器默认已开）。请删掉这个环境变量再重试。");
+	}
 	const loopback = isLoopback(options.hostname);
 	if (!loopback && options.isDev) {
-		throw new Error("拒绝非本机开发模式：PI_WEB_PASSWORD 不能保护 Next 开发工具端点。请绑定 127.0.0.1，或先运行 npm run build:release 后用生产模式启动。");
+		throw new Error("拒绝非本机开发模式：启动令牌认证保护不了 Next 开发工具端点。请绑定 127.0.0.1，或先运行 npm run build:release 后用生产模式启动。");
 	}
 	const publicUrl = options.publicUrl ?? null;
 	// 局域网入口（「远程连接」内置插件）默认开着，等于这台机器同网段可达；
@@ -141,9 +146,9 @@ export function createLaunchPlan(root, options, env = process.env) {
 	};
 	// 每次启动换一个启动令牌；调用方已经给出就沿用（便于测试与外部编排）。
 	if (!childEnv.PI_WEB_LAUNCH_TOKEN) childEnv.PI_WEB_LAUNCH_TOKEN = randomBytes(32).toString("base64url");
-	// 暴露面 + 没设密码 → 自动打开启动令牌认证，而不是拒绝启动。
+	// 有暴露面 + 用户没表态 → 自动打开启动令牌认证，而不是拒绝启动。
 	// 只在用户没表态时才替它打开：显式 PI_WEB_AUTH=0 会被尊重（此时局域网入口也会自行跳过）。
-	if (exposed && !childEnv.PI_WEB_PASSWORD && !String(childEnv.PI_WEB_AUTH ?? "").trim()) childEnv.PI_WEB_AUTH = "1";
+	if (exposed && !String(childEnv.PI_WEB_AUTH ?? "").trim()) childEnv.PI_WEB_AUTH = "1";
 	// 反代会把外部主机名原样转给后端，不进白名单会被判 untrusted host。
 	if (publicUrl) childEnv.PI_WEB_TRUSTED_HOSTS = mergeHostnames(childEnv.PI_WEB_TRUSTED_HOSTS, new URL(publicUrl).hostname.toLowerCase());
 	if (command === "start") childEnv.PIWEB_BUILD_DIR = build.buildDir;
@@ -223,11 +228,11 @@ function delay(ms, signal) {
  * 只等端口起来 + 身份确认，绝不阻塞启动；失败一律静默（预热属于优化，不是启动的前置条件）。
  *
  * @param {string} base
- * @param {{fetchImpl?: typeof fetch, password?: string, token?: string, timeoutMs?: number, waitMs?: number,
+ * @param {{fetchImpl?: typeof fetch, token?: string, timeoutMs?: number, waitMs?: number,
  * pollMs?: number, check?: typeof isPiWebRunning, signal?: AbortSignal}} [options]
  * @returns {Promise<boolean>} 是否完成了管线预热
  */
-export async function warmFirstPaint(base, { fetchImpl = fetch, password, token, timeoutMs = 20_000, waitMs = 60_000, pollMs = 100, check = isPiWebRunning, signal } = {}) {
+export async function warmFirstPaint(base, { fetchImpl = fetch, token, timeoutMs = 20_000, waitMs = 60_000, pollMs = 100, check = isPiWebRunning, signal } = {}) {
 	const timeoutFor = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs));
 	// 身份确认不带凭据（与 isPiWebRunning 的既有约定一致）：端口可能被别的进程抢走。
 	const deadline = Date.now() + waitMs;
@@ -250,7 +255,6 @@ export async function warmFirstPaint(base, { fetchImpl = fetch, password, token,
 		}
 	}
 	const headers = {};
-	if (password) headers.authorization = `Basic ${Buffer.from(`pi:${password}`).toString("base64")}`;
 	if (cookie) headers.cookie = cookie;
 	const headerInit = Object.keys(headers).length > 0 ? headers : undefined;
 	const get = async (route) => {
@@ -341,9 +345,8 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	// 内置插件要转发回 PiWeb 自己的端口；端口可能被占而 +1，所以在这里给最终值。
 	plan.env.PIWEB_PORT = String(port);
 	log(`[piweb] 启动 ${url} (${plan.command} 模式)`);
-	const authOn = Boolean(plan.env.PI_WEB_PASSWORD) || isTruthyFlag(plan.env.PI_WEB_AUTH);
-	if (plan.env.PI_WEB_PASSWORD) log(plan.command === "dev" ? "[piweb] 开发模式仅限本机；密码不保护 Next 开发工具端点。" : "[piweb] 已启用密码认证（浏览器登录页，API 兼容 Basic 用户名 pi）");
-	else if (authOn) log("[piweb] 已启用启动令牌认证");
+	const authOn = isTruthyFlag(plan.env.PI_WEB_AUTH);
+	if (authOn) log("[piweb] 已启用启动令牌认证");
 	if (!isLoopback(options.hostname)) {
 		for (const addresses of Object.values(os.networkInterfaces())) {
 			for (const address of addresses ?? []) {
@@ -370,7 +373,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	let warmPromise = null;
 	if (plan.command !== "dev" && env.PIWEB_SKIP_WARMUP !== "1") {
 		const warm = dependencies.warmFirstPaint ?? warmFirstPaint;
-		warmPromise = Promise.resolve(warm(url, { password: plan.env.PI_WEB_PASSWORD, token: authOn ? plan.env.PI_WEB_LAUNCH_TOKEN : undefined, signal: controller.signal })).then(() => true, () => false);
+		warmPromise = Promise.resolve(warm(url, { token: authOn ? plan.env.PI_WEB_LAUNCH_TOKEN : undefined, signal: controller.signal })).then(() => true, () => false);
 	}
 	const ready = async (attempt = 0) => {
 		if (controller.signal.aborted || attempt > 240) return;
@@ -382,7 +385,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 				if (controller.signal.aborted) return;
 			}
 			log(`[piweb] 就绪：${url}`);
-			// 开了认证就直接开登录链接：否则用户打开的是登录页，而他并不知道密码。
+			// 开了认证就直接开登录链接：否则用户打开的是登录页，而他手里还没有会话 Cookie。
 			if (!options.noOpen) await browse(authOn ? loginUrl : url);
 		} else if (!controller.signal.aborted) {
 			timer = setTimeout(() => void ready(attempt + 1), 250);

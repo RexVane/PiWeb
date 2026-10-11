@@ -45,7 +45,6 @@ async function manifest(root: string) {
 function mockCommands(root: string, fail = "") {
 	return vi.fn(async (command: string, args: string[], options: CommandOptions) => {
 		expect(options.cwd).toBe(root);
-		expect(options.env?.PI_WEB_PASSWORD).toBeUndefined();
 		if (command === "git" && args[0] === "rev-parse") return root;
 		if (command === "git" && args[0] === "status") return "";
 		const key = command === process.execPath ? "verify" : `${command} ${args.join(" ")}`;
@@ -75,7 +74,7 @@ describe("checked staged releases", () => {
 		const root = await installation();
 		const initialConfig = await fs.readFile(path.join(root, "tsconfig.json"), "utf8");
 		const run = mockCommands(root);
-		const result = await prepareRelease({ root, run, env: { PI_WEB_PASSWORD: "do-not-pass" } });
+		const result = await prepareRelease({ root, run });
 		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? args[1] : `${command} ${args.join(" ")}`)).toEqual(["--verify-config", "npm run check"]);
 		expect(result).toMatchObject({ needsRestart: true, buildId: "new-build", version: "1.0.0" });
 		expect(result.buildDir).toMatch(/^\.next-releases\/[A-Za-z0-9_-]+$/);
@@ -147,7 +146,7 @@ describe("update service transactions", () => {
 	it("runs fixed PiWeb pull/install/check commands and returns ready only after promotion", async () => {
 		const root = await installation();
 		const run = mockCommands(root);
-		const service = createUpdateService({ root, run, env: { PI_WEB_PASSWORD: "secret" } });
+		const service = createUpdateService({ root, run });
 		const idle = vi.fn(async () => {});
 		const result = await service.runUpdate("piweb", { assertIdle: idle });
 		expect(result).toMatchObject({ version: "2.0.0", needsRestart: true, buildId: "new-build" });

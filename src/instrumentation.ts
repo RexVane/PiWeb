@@ -16,7 +16,7 @@ export async function register() {
 	const { authEnabled } = await import("./lib/web-auth");
 	if (!authEnabled()) {
 		// 局域网入口会把 PiWeb 暴露给同网段的所有设备，没认证就绝不能开。
-		console.warn("[远程连接] 已跳过局域网入口：认证没开。请设 PI_WEB_PASSWORD 或 PI_WEB_AUTH=1。");
+		console.warn("[远程连接] 已跳过局域网入口：认证没开。请设 PI_WEB_AUTH=1。");
 		return;
 	}
 

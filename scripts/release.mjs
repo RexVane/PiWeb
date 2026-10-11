@@ -141,8 +141,6 @@ export async function prepareRelease({ root = ROOT, env = process.env, run = run
 			...env, PI_WEB_ROOT: installation, PIWEB_BUILD_DIR: buildDir,
 			PYTHONUTF8: env.PYTHONUTF8 ?? "1", PYTHONIOENCODING: env.PYTHONIOENCODING ?? "utf-8",
 		};
-		// Do not pass the live web password to Git/npm/package build scripts.
-		delete childEnv.PI_WEB_PASSWORD;
 		delete childEnv.PI_WEB_DEV;
 		delete childEnv.NODE_ENV;
 		const context = { root: installation, buildDir, env: childEnv, run, signal };

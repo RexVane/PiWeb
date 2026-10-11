@@ -91,7 +91,6 @@ async function readPackageVersion(filePath: string): Promise<string> {
 export function createUpdateService({ root = APP_ROOT, run = runCommand, versions = getRuntimeVersions, env = process.env, platform = process.platform }: UpdateServiceOptions = {}) {
 	let updateRunning = false;
 	const commandEnv = { ...env };
-	delete commandEnv.PI_WEB_PASSWORD;
 
 	async function checkedRoot(): Promise<string> {
 		return assertInstallation(root);

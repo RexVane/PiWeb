@@ -86,7 +86,7 @@ Install, update, and uninstall pi packages directly from the UI. Enable/disable 
 
 ### Security
 
-Optional login via `PI_WEB_PASSWORD` (required for non-loopback binds), origin validation on write actions, strict path boundary checks, and tool presets (Read Only / Workspace Write / Full Access).
+Launch-token login for anything reachable beyond this machine, origin validation on write actions, strict path boundary checks, and tool presets (Read Only / Workspace Write / Full Access).
 
 ## Usage
 
@@ -126,7 +126,7 @@ This removes PiWeb only — your pi data lives in `~/.pi/agent/` and is left unt
 ```bash
 piweb                    # http://127.0.0.1:30141 (auto-increments if busy)
 piweb -p 30143 --no-open # custom port, don't open the browser
-piweb -H 0.0.0.0         # LAN access (requires PI_WEB_PASSWORD)
+piweb -H 0.0.0.0         # LAN access (launch-token login is enabled automatically)
 ```
 
 | Option | Description |
@@ -137,8 +137,13 @@ piweb -H 0.0.0.0         # LAN access (requires PI_WEB_PASSWORD)
 | `--no-open` | Do not auto-open the browser |
 | `--public-url <url>` | Public address, used for the login link and added to the Host allowlist automatically (env `PI_WEB_PUBLIC_URL`) |
 
-Set `PI_WEB_PASSWORD` to enable the login page and HTTP Basic Auth (user `pi`). The default path does not need it:
-the **launch token** in the printed login link is exchanged for a signed cookie. Do not expose PiWeb over plain HTTP.
+Authentication is opened by `PI_WEB_AUTH=1` (the launcher sets it by default whenever PiWeb may be reachable from
+outside this machine). Login is **launch-token only**: open the printed `…/?token=…` link, which exchanges the token
+for a signed cookie. `PI_WEB_PASSWORD` has been removed — setting it makes the launcher refuse to start. Do not
+expose PiWeb over plain HTTP.
+
+Scripts authenticate the same way: `GET /?token=…` once to receive the session cookie, then send that cookie with
+every API request. There is no Basic Auth fallback.
 
 ### Use it on your phone: the built-in "Remote access" plugin
 
@@ -171,8 +176,7 @@ You can front PiWeb yourself instead (Caddy, nginx, a named Cloudflare tunnel, a
 
 - Point the proxy at **`127.0.0.1:30142`** (the local-network entry) to get the mobile layout, or at
   `127.0.0.1:30141` if you only want the desktop page.
-- Set `PI_WEB_AUTH=1`. A loopback bind cannot tell PiWeb that it is exposed, so authentication must be explicit;
-  setting `PI_WEB_PASSWORD` also turns it on.
+- Set `PI_WEB_AUTH=1`. A loopback bind cannot tell PiWeb that it is exposed, so authentication must be explicit.
 - A reverse proxy passes the external hostname through unchanged, so allowlist it or requests are rejected
   with 403 `untrusted host`:
 

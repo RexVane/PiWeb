@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SESSION_MAX_AGE_SECONDS, authEnabled, cookieNameForAuthority, createSessionCookie, decodeSessionCookie, readCookieHeader, requestAuthority, safeNextPath, validPassword, validSessionCookie } from "../src/lib/web-auth";
+import { SESSION_MAX_AGE_SECONDS, authEnabled, cookieNameForAuthority, createSessionCookie, decodeSessionCookie, readCookieHeader, requestAuthority, safeNextPath, validSessionCookie } from "../src/lib/web-auth";
 
 const AUTHORITY = "127.0.0.1:30141";
 const SECRET = Buffer.alloc(32, 7);
@@ -88,23 +88,19 @@ describe("request authority", () => {
 });
 
 describe("authEnabled", () => {
-	it("turns on with a password or an explicit PI_WEB_AUTH", () => {
+	it("turns on only with an explicit PI_WEB_AUTH", () => {
 		expect(authEnabled({})).toBe(false);
-		expect(authEnabled({ PI_WEB_PASSWORD: "x" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "1" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "TRUE" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "on" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "0" })).toBe(false);
 		expect(authEnabled({ PI_WEB_AUTH: "" })).toBe(false);
 	});
-});
 
-describe("password check", () => {
-	it("accepts only the exact password", () => {
-		expect(validPassword("correct", "correct")).toBe(true);
-		expect(validPassword("wrong", "correct")).toBe(false);
-		expect(validPassword("", "correct")).toBe(false);
-		expect(validPassword("correct", "")).toBe(false);
+	it("no longer turns on with PI_WEB_PASSWORD", () => {
+		// 密码登录已移除：这个变量不再是认证开关（启动器会直接拒绝启动）
+		expect(authEnabled({ PI_WEB_PASSWORD: "x" })).toBe(false);
+		expect(authEnabled({ PI_WEB_PASSWORD: "x", PI_WEB_AUTH: "0" })).toBe(false);
 	});
 });
 

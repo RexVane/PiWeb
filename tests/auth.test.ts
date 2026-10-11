@@ -1,17 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { isLoopbackHostname, isSafeHost, isSafeOrigin, validBasicAuthorization } from "../src/lib/auth";
+import { isLoopbackHostname, isSafeHost, isSafeOrigin } from "../src/lib/auth";
 
-describe("Basic authentication", () => {
-	it("accepts only the pi user with the configured password", () => {
-		const good = `Basic ${Buffer.from("pi:correct").toString("base64")}`;
-		const wrongUser = `Basic ${Buffer.from("admin:correct").toString("base64")}`;
-		const wrongPassword = `Basic ${Buffer.from("pi:wrong").toString("base64")}`;
-		expect(validBasicAuthorization(good, "correct")).toBe(true);
-		expect(validBasicAuthorization(wrongUser, "correct")).toBe(false);
-		expect(validBasicAuthorization(wrongPassword, "correct")).toBe(false);
-		expect(validBasicAuthorization(null, "correct")).toBe(false);
-	});
-
+describe("loopback hostnames", () => {
 	it("recognizes loopback bind targets", () => {
 		expect(isLoopbackHostname("127.0.0.1")).toBe(true);
 		expect(isLoopbackHostname("::1")).toBe(true);
@@ -40,7 +30,7 @@ describe("origin validation", () => {
 		expect(isSafeOrigin(request)).toBe(false);
 	});
 
-	it("rejects DNS-rebinding hostnames whether or not a password is configured", () => {
+	it("rejects DNS-rebinding hostnames", () => {
 		const rebound = new Request("http://attacker.test:30141/api/test", { headers: { host: "attacker.test:30141" } });
 		expect(isSafeHost(rebound)).toBe(false);
 		// 反代转发的域名进白名单才放行
