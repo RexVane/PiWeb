@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { allowTunnelHost, disallowTunnelHost, managedEnginePath, piwebPort, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, tunnelEngine } from "../src/lib/remote/supervisor";
+import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, managedEnginePath, piwebPort, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, tunnelEngine } from "../src/lib/remote/supervisor";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
 afterEach(() => {
@@ -33,6 +33,30 @@ describe("tunnel host allowlist", () => {
 		allowTunnelHost("not a url");
 		disallowTunnelHost("not a url");
 		expect(process.env.PI_WEB_TRUSTED_HOSTS).toBe("keep.example.com");
+	});
+});
+
+describe("public URL capture", () => {
+	it("takes the first cloudflared address and refuses to change it afterwards", () => {
+		const catcher = createUrlCatcher();
+		expect(catcher.feed("starting tunnel, please wait\n")).toBeNull();
+		expect(catcher.feed("INF |  https://first-name-abc.trycloudflare.com  |\n")).toBe("https://first-name-abc.trycloudflare.com");
+		// 之后再来一个地址不能顶掉已经生效的那个
+		expect(catcher.feed("INF |  https://second-name-xyz.trycloudflare.com  |\n")).toBeNull();
+		expect(catcher.url).toBe("https://first-name-abc.trycloudflare.com");
+	});
+
+	it("finds the address when it is split across chunks", () => {
+		const catcher = createUrlCatcher();
+		expect(catcher.feed("INF |  https://split-na")).toBeNull();
+		expect(catcher.feed("me-abc.trycloudflare.com  |\n")).toBe("https://split-name-abc.trycloudflare.com");
+	});
+
+	it("ignores unrelated hostnames", () => {
+		const catcher = createUrlCatcher();
+		expect(catcher.feed("https://api.cloudflare.com ok\n")).toBeNull();
+		expect(catcher.feed("https://example.com\n")).toBeNull();
+		expect(catcher.url).toBeNull();
 	});
 });
 

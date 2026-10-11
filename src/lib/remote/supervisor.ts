@@ -28,6 +28,39 @@ const TUNNEL_READY_TIMEOUT_MS = 60_000;
 const TUNNEL_READY_POLL_MS = 2_500;
 
 /**
+ * 从 cloudflared 的输出里抓公网地址，**只认第一个**。
+ *
+ * 为什么必须只认第一个：隧道域名是绑在隧道上的，一次运行期内不该变。
+ * cloudflared 在重连等情况下的输出里可能再出现一个地址，若跟着换，
+ * 用户手里那条链接会当场失效，旧域名还会留在 Host 白名单里没人摘。
+ */
+export function createUrlCatcher(pattern: RegExp = PUBLIC_URL_PATTERN) {
+	let captured: string | null = null;
+	let buffer = "";
+	return {
+		/** 返回新捕获到的地址；已经捕获过、或这次还没匹配到，都返回 null */
+		feed(chunk: string): string | null {
+			if (captured) return null;
+			// 累积再匹配：子进程的 chunk 边界不保证落在行边界上，
+			// 逐块匹配会把一个被切断的地址整条漏掉。
+			buffer += chunk;
+			const match = pattern.exec(buffer);
+			if (!match) {
+				// 只留尾巴，够覆盖一个被切断的地址即可，避免缓冲无限增长
+				if (buffer.length > 4096) buffer = buffer.slice(-4096);
+				return null;
+			}
+			captured = match[0];
+			buffer = "";
+			return captured;
+		},
+		get url(): string | null {
+			return captured;
+		},
+	};
+}
+
+/**
  * 探一次隧道是否真的可用。
  *
  * 只看 DNS 不够：域名解析出来之后边缘还可能要几秒才把请求转到这条隧道上。
@@ -314,14 +347,17 @@ export async function startPublic(): Promise<PublicState> {
 			resolve();
 		};
 		const timer = setTimeout(() => finish("启动隧道超时：cloudflared 没有在 45 秒内给出地址"), TUNNEL_TIMEOUT_MS);
+		const catcher = createUrlCatcher();
 		const scan = (chunk: Buffer) => {
-			const match = PUBLIC_URL_PATTERN.exec(chunk.toString("utf8"));
-			if (match && current.tunnel) {
-				current.tunnel.url = match[0];
-				// 域名必须先放行再算启动成功，否则第一次访问必然被 Host 校验挡成 403
-				allowTunnelHost(match[0]);
-				finish();
-			}
+			const url = catcher.feed(chunk.toString("utf8"));
+			if (!url || !current.tunnel) return;
+			current.tunnel.url = url;
+			// 域名必须先放行再算启动成功，否则第一次访问必然被 Host 校验挡成 403
+			allowTunnelHost(url);
+			// 抓到就够了，摘掉监听：既避免后续输出改动已生效的地址，也不白占着流
+			child.stdout?.off("data", scan);
+			child.stderr?.off("data", scan);
+			finish();
 		};
 		child.stdout?.on("data", scan);
 		child.stderr?.on("data", scan);
