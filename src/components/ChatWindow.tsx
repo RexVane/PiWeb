@@ -1147,10 +1147,45 @@ function TurnBlockView({
 	);
 }
 
-/** 远离视口的回合占位：纯文本近似（无 Markdown/高亮），保留 data-role 锚点供大纲与跳转定位 */
+/**
+ * 最终回答的占位排版：只认 ATX 标题（# ~ ####，围栏代码块里的不算），其余原样成段。
+ * 标题输出成 .md 里的 h1-h4，大纲（OutlineRail）照常收得到；没升级的回合也不缺目录项。
+ */
+function liteAnswerBlocks(text: string): ReactNode[] {
+	const out: ReactNode[] = [];
+	let para: string[] = [];
+	let fence: string | null = null;
+	const flush = () => {
+		if (para.join("").trim()) out.push(<div key={out.length}>{para.join("\n")}</div>);
+		para = [];
+	};
+	for (const line of text.split("\n")) {
+		const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+		if (marker && (!fence || marker.startsWith(fence))) fence = fence ? null : marker.slice(0, 3);
+		const heading = fence || marker ? null : /^ {0,3}(#{1,4})\s+(.+?)\s*#*\s*$/.exec(line);
+		if (!heading) {
+			para.push(line);
+			continue;
+		}
+		flush();
+		const Tag = `h${heading[1].length}` as "h1" | "h2" | "h3" | "h4";
+		out.push(<Tag key={out.length}>{heading[2]}</Tag>);
+	}
+	flush();
+	return out;
+}
+
+/**
+ * 远离视口的回合占位：纯文本近似（无 Markdown/高亮）。
+ * DOM 骨架和完整渲染对齐：用户消息带 data-role="user" / data-message-id（跳转定位），
+ * 只有最终回答带 data-role="assistant"（大纲只从这里取标题），过程只出一行摘要。
+ */
 function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 	const { t } = useI18n();
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
+	const lastIdx = turn.assistantIndexes[turn.assistantIndexes.length - 1];
+	// 占位回合不会是正在流式的那一轮（最后一轮永远完整渲染），所以不用管 isStreaming
+	const finalIdx = lastIdx !== undefined && isFinalAnswer(messages[lastIdx]) ? lastIdx : -1;
 	const plain = (m: WebMessage) =>
 		m.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text" && typeof c.text === "string")
@@ -1171,8 +1206,15 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 				const think = m.content.some((c) => c.type === "thinking");
 				const tools = m.content.filter((c) => c.type === "toolCall").length;
 				const text = plain(m);
+				if (k === finalIdx) {
+					return (
+						<div key={k} className="group w-full" style={{ marginTop: 14 }} data-role="assistant">
+							<div className="md pw-turn-lite">{liteAnswerBlocks(text)}</div>
+						</div>
+					);
+				}
 				return (
-					<div key={k} className="group w-full" style={{ marginTop: 14 }} data-role="assistant">
+					<div key={k} className="group w-full" style={{ marginTop: 14 }}>
 						{(think || tools > 0) && (
 							<div className="pw-line" style={{ color: "var(--dsw-label-tertiary)" }}>
 								{think && <span>{t.thinkLabel}</span>}
@@ -1428,60 +1470,60 @@ export function ChatWindow({
 	// 滚动进入视口附近再升级完整渲染。升级判定按槽元素实measure位置计算（scroll 驱动），
 	// 不用 IntersectionObserver：占位槽无 CV 时几何虽真实，但 IO 的隐式 root/rootMargin
 	// 在托管 webview 等环境里行为不稳，scroll 驱动的位置判定是确定性的。
-	const threadRef = useRef<HTMLDivElement | null>(null);
 	const [nearTurns, setNearTurns] = useState<Set<number>>(() => new Set());
 	const nearTurnsRef = useRef(nearTurns);
 	nearTurnsRef.current = nearTurns;
+	// 尾部起点：第一次拿到回合时定下，之后追加的回合一律完整渲染（不用等视口判定）。
+	// 在渲染里惰性赋值：同一批回合算出来的值相同，重复渲染也幂等。
+	const tailStartRef = useRef<number | null>(null);
+	if (tailStartRef.current === null && turns.length) tailStartRef.current = Math.max(0, turns.length - TURN_TAIL_FULL);
 	const slotElsRef = useRef(new Map<number, HTMLElement>());
-	const upgradeRef = useRef<Array<{ index: number; top: number }> | null>(null);
+	const anchorRef = useRef<{ index: number; top: number } | null>(null);
 	const upgradeCheckRef = useRef(0);
-	// 首次快照：最近若干回合直接完整渲染，其余等滚动进入再升级
-	useEffect(() => {
-		if (!turns.length || nearTurnsRef.current.size) return;
-		setNearTurns(new Set(turns.map((_, i) => i).filter((i) => i >= turns.length - TURN_TAIL_FULL)));
-	}, [turns.length]);
 	const scheduleUpgradeCheck = useCallback(() => {
 		if (upgradeCheckRef.current) return;
 		upgradeCheckRef.current = requestAnimationFrame(() => {
 			upgradeCheckRef.current = 0;
-			const scroller = threadRef.current?.closest<HTMLElement>(".overflow-y-auto");
+			const scroller = scrollRef.current;
 			if (!scroller) return;
 			const top = -TURN_NEAR_MARGIN;
 			const bottom = window.innerHeight + TURN_NEAR_MARGIN;
-			const fresh: Array<{ index: number; top: number }> = [];
-			for (const [index, el] of slotElsRef.current) {
-				if (nearTurnsRef.current.has(index)) continue;
-				const rect = el.getBoundingClientRect();
-				if (rect.top > bottom || rect.bottom < top) continue;
-				fresh.push({ index, top: el.offsetTop });
+			const viewTop = scroller.getBoundingClientRect().top;
+			const fresh: number[] = [];
+			let anchor: { index: number; top: number } | null = null;
+			for (const index of [...slotElsRef.current.keys()].sort((a, b) => a - b)) {
+				const rect = slotElsRef.current.get(index)!.getBoundingClientRect();
+				// 视口里第一个槽当锚点：升级只换槽里的内容，槽元素本身不变，位置可以前后对比
+				if (!anchor && rect.bottom > viewTop) anchor = { index, top: rect.top };
+				if (nearTurnsRef.current.has(index) || rect.top > bottom || rect.bottom < top) continue;
+				fresh.push(index);
 			}
 			if (!fresh.length) return;
-			upgradeRef.current = fresh;
+			anchorRef.current = anchor;
 			setNearTurns((prev) => {
 				const next = new Set(prev);
-				for (const { index } of fresh) next.add(index);
+				for (const index of fresh) next.add(index);
 				return next;
 			});
 		});
 	}, []);
 	useLayoutEffect(() => {
-		// 升级提交后（绘制前）：贴底状态下直接重新贴底（升级常发生在视口下方，会把
-		// 底部推远）；否则对升级前整体在视口上方的回合按各自高度差补偿 scrollTop
-		const upgraded = upgradeRef.current;
-		upgradeRef.current = null;
-		const scroller = threadRef.current?.closest<HTMLElement>(".overflow-y-auto");
+		// 升级提交后（绘制前）。贴底状态下直接重新贴底：升级常发生在视口下方，会把底部推远。
+		// 否则视口上方的回合变高会把正在看的内容往下顶。Chrome / Edge / Firefox 的滚动锚定
+		// 会自己补偿，而且不打断平滑滚动（大纲跳转、搜索定位）；这里再写 scrollTop 反而会
+		// 打断它们。只有不支持锚定的浏览器（Safari）才按锚点槽的位移手动补偿。
+		const anchor = anchorRef.current;
+		anchorRef.current = null;
+		const scroller = scrollRef.current;
 		if (!scroller) return;
 		if (stickToBottom.current) {
 			scroller.scrollTop = scroller.scrollHeight;
 			return;
 		}
-		if (!upgraded) return;
-		for (const { index, top } of upgraded) {
-			const el = slotElsRef.current.get(index);
-			if (!el || top >= scroller.scrollTop) continue;
-			const delta = el.offsetTop - top;
-			if (delta > 0) scroller.scrollTop += delta;
-		}
+		if (!anchor || (typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto"))) return;
+		const el = slotElsRef.current.get(anchor.index);
+		const delta = el ? el.getBoundingClientRect().top - anchor.top : 0;
+		if (Math.abs(delta) >= 1) scroller.scrollTop += delta;
 	}, [nearTurns]);
 	// 快照到达 / 跳转（scrollIntoView、回到底部）后的初次判定；滚动中的判定挂在 onScroll 上
 	useEffect(() => {
@@ -1503,10 +1545,7 @@ export function ChatWindow({
 		}
 		return cb;
 	}, [registerSlot]);
-	const isNear = useCallback(
-		(index: number) => nearTurns.has(index) || index === turns.length - 1 || (nearTurns.size === 0 && index >= turns.length - TURN_TAIL_FULL),
-		[nearTurns, turns.length],
-	);
+	const isNear = useCallback((index: number) => index >= (tailStartRef.current ?? 0) || nearTurns.has(index), [nearTurns]);
 
 	useEffect(() => {
 		const grew = messages.length > prevLenRef.current;
@@ -1611,9 +1650,10 @@ export function ChatWindow({
 					scheduleUpgradeCheck();
 				}}
 			>
-				<div className="pw-chat-thread mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }} ref={threadRef}>
+				<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
 					{turns.map((turn, ti) => (
-						<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className={isNear(ti) ? "pw-turn-full" : undefined}>
+						// 回合间 28px 的分隔挂在槽上：用户消息现在总是槽里的第一个子元素，它自己的 mt-7 会被 first:mt-0 吃掉
+						<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className="mt-7 first:mt-0">
 							{isNear(ti) ? (
 								<TurnBlock
 									turn={turn}
