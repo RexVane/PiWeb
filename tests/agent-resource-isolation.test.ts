@@ -148,6 +148,31 @@ describe("real SDK session resource isolation", () => {
 		}
 	});
 
+	it("refreshes the shared model runtime in place and hands hot sessions the new model object", async () => {
+		// 回归：保存 models.json 后换了一个新 runtime，会话还挂在旧实例上（选新 provider 报 No API key、扩展 provider 消失）
+		const modelsFile = path.join(process.env.PI_CODING_AGENT_DIR!, "models.json");
+		const write = (contextWindow: number) => fs.writeFile(modelsFile, JSON.stringify({
+			providers: { "piweb-refresh": { baseUrl: "http://127.0.0.1:9/v1", api: "openai-completions", apiKey: "local", models: [{ id: "m1", contextWindow }] } },
+		}));
+		const rt = await pi.getModelRuntime();
+		try {
+			await write(1000);
+			await pi.refreshModelRuntime();
+			expect(await pi.getModelRuntime()).toBe(rt);
+			expect(rt.getModel("piweb-refresh", "m1")?.contextWindow).toBe(1000);
+			const { session } = await create();
+			expect(session.modelRuntime).toBe(rt);
+			session.agent.state.model = rt.getModel("piweb-refresh", "m1")!;
+			await write(2000);
+			await pi.refreshModelRuntime();
+			await manager.reloadSessionsForCwd(cwd);
+			expect(session.model?.contextWindow).toBe(2000);
+		} finally {
+			await fs.rm(modelsFile, { force: true });
+			await pi.refreshModelRuntime();
+		}
+	});
+
 	it("keeps custom choices on snapshot-triggered reload for both same-cwd sessions", async () => {
 		const a = await create();
 		const b = await create();

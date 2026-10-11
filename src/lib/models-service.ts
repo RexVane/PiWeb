@@ -12,7 +12,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { filterModelsByPiScope } from "./models/model-scope";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
-import { getAgentDir, getModelRuntime, resetModelRuntime } from "./pi";
+import { getAgentDir, getModelRuntime, refreshModelRuntime } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
 import { reloadSessionsForCwd } from "./agent-manager";
 import {
@@ -1336,9 +1336,9 @@ export async function writeCustomProviders(content: string, revision?: string): 
 			await fs.rm(temporary, { force: true }).catch(() => undefined);
 		}
 	}));
-	resetModelRuntime();
+	await refreshModelRuntime();
 	invalidateModelList();
-	// 已打开的会话持有保存前的旧 runtime：不清掉的话，在里面选新 provider 的模型
-	// 会报 "No API key for X"（新 runtime 有配置，旧 runtime 查不到）。让活跃会话就地重建。
+	// 会话与共享 runtime 是同一个实例，刷新后目录已是新的；再让活跃会话重载一次，
+	// 把当前模型对象换成新配置（改了 baseUrl / contextWindow 等字段时生效）
 	await reloadSessionsForCwd();
 }

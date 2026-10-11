@@ -1090,6 +1090,11 @@ async function reloadManagedResources(m: Managed): Promise<boolean> {
 	m.resourceReloadPending = false;
 	try {
 		await m.session.reload();
+		// SDK 的 reload 不会换当前模型对象：models.json 改了 baseUrl / contextWindow 后，
+		// 会话手里还是旧对象。按 provider/id 从（已就地刷新的）共享 runtime 取一次新的。
+		const current = m.session.model;
+		const fresh = current && m.session.modelRuntime.getModel(current.provider, current.id);
+		if (fresh && fresh !== current) m.session.agent.state.model = fresh;
 		return true;
 	} catch (err) {
 		publish(m, { type: "error", message: `重载扩展失败：${String((err as Error)?.message ?? err)}`, ts: Date.now() });

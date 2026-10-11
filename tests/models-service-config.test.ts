@@ -6,10 +6,10 @@ import lockfile from "proper-lockfile";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ resetModelRuntime: vi.fn(), getModelRuntime: vi.fn() }));
+const mocks = vi.hoisted(() => ({ refreshModelRuntime: vi.fn(), getModelRuntime: vi.fn() }));
 vi.mock("../src/lib/pi", () => ({
 	getAgentDir: () => process.env.PI_CODING_AGENT_DIR,
-	resetModelRuntime: mocks.resetModelRuntime,
+	refreshModelRuntime: mocks.refreshModelRuntime,
 	getModelRuntime: mocks.getModelRuntime,
 }));
 
@@ -28,7 +28,7 @@ beforeEach(async () => {
 	file = path.join(agentDir, "models.json");
 	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 	vi.stubGlobal("fetch", vi.fn(() => { throw new Error("network is forbidden"); }));
-	mocks.resetModelRuntime.mockReset();
+	mocks.refreshModelRuntime.mockReset().mockResolvedValue(undefined);
 	mocks.getModelRuntime.mockReset().mockImplementation(() => { throw new Error("application runtime is forbidden during validation"); });
 });
 
@@ -78,7 +78,7 @@ describe("JSONC model configuration", () => {
 		}
 		expect(fetch).not.toHaveBeenCalled();
 		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
-		expect(mocks.resetModelRuntime).toHaveBeenCalledOnce();
+		expect(mocks.refreshModelRuntime).toHaveBeenCalledOnce();
 		await expectOnlyConfig();
 	});
 
@@ -105,7 +105,7 @@ describe("JSONC model configuration", () => {
 		await expect(readCustomProviders()).rejects.toThrow(CustomProvidersValidationError);
 		await expect(writeCustomProviders('{"providers":{}}')).rejects.toThrow();
 		expect(await fs.readFile(file, "utf8")).toBe(content);
-		expect(mocks.resetModelRuntime).not.toHaveBeenCalled();
+		expect(mocks.refreshModelRuntime).not.toHaveBeenCalled();
 		await expectOnlyConfig();
 	});
 
@@ -180,7 +180,7 @@ describe("JSONC model configuration", () => {
 		vi.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("rename denied"), { code: "EACCES" }));
 		await expect(writeCustomProviders(JSON.stringify({ providers: { gateway: provider } }))).rejects.toThrow("rename denied");
 		expect(await fs.readFile(file, "utf8")).toBe(original);
-		expect(mocks.resetModelRuntime).not.toHaveBeenCalled();
+		expect(mocks.refreshModelRuntime).not.toHaveBeenCalled();
 		await expectOnlyConfig();
 	});
 });

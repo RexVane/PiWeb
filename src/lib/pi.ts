@@ -38,9 +38,20 @@ export function getModelRuntime(): Promise<PiModelRuntime> {
 	return modelRuntimePromise;
 }
 
-/** 重建 ModelRuntime（models.json / auth.json 落盘后调用，让目录与认证立即生效） */
-export function resetModelRuntime(): void {
-	modelRuntimePromise = null;
+/**
+ * models.json 落盘后调用：就地刷新共享的 ModelRuntime，让目录与认证立即生效。
+ * 不能换一个新实例 —— 活跃会话、扩展注册的 provider 都挂在旧实例上，换掉后会话里
+ * 选新 provider 的模型会报 "No API key"，扩展 provider 也会从目录里消失。
+ * 只读本地配置不联网；刷新失败才退回整体重建。
+ */
+export async function refreshModelRuntime(): Promise<void> {
+	const pending = modelRuntimePromise;
+	if (!pending) return;
+	try {
+		await (await pending).refresh({ allowNetwork: false });
+	} catch {
+		if (modelRuntimePromise === pending) modelRuntimePromise = null;
+	}
 }
 
 const settingsCache = new Map<string, SettingsManager>();

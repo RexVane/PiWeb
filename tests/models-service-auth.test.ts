@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({ getModelRuntime: vi.fn() }));
 vi.mock("../src/lib/pi", () => ({
 	getModelRuntime: mocks.getModelRuntime,
 	getAgentDir: () => { throw new Error("auth tests must not access user files"); },
-	resetModelRuntime: vi.fn(),
+	refreshModelRuntime: vi.fn(),
 }));
 
 import { answerLogin, cancelLogin, loginState, removeApiKey, setApiKey, startLogin } from "../src/lib/models-service";
