@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { resolveGitBin } from "./growth-service";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
 
 const exec = promisify(execFile);
@@ -61,8 +62,9 @@ const EMPTY: GitInfo = {
 /** 单次差异输出上限：超过则截断并标记（详情栏不是完整的 diff 工具） */
 const MAX_DIFF_BYTES = 400 * 1024;
 
-function runGit(cwd: string, args: string[], maxBuffer = 4 * 1024 * 1024): Promise<string> {
-	return exec("git", args, { cwd, timeout: 15_000, maxBuffer, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } }).then((r) => r.stdout);
+/** 与生长记录共用解析出的 git（macOS 从 GUI / launchd 启动时 PATH 里常常没有 Homebrew 的 git） */
+async function runGit(cwd: string, args: string[], maxBuffer = 4 * 1024 * 1024): Promise<string> {
+	return exec(await resolveGitBin(), args, { cwd, timeout: 15_000, maxBuffer, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } }).then((r) => r.stdout);
 }
 
 function kindOf(x: string, y: string): GitFileEntry["kind"] {
@@ -164,7 +166,7 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 			.split("\n")
 			.filter(Boolean)
 			.map((line) => {
-				const [hash, subject, author, relative] = line.split("");
+				const [hash, subject, author, relative] = line.split("\x1f");
 				return { hash, subject: subject ?? "", author: author ?? "", relative: relative ?? "" };
 			});
 	} catch {

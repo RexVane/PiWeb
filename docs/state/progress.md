@@ -36,3 +36,4 @@
 - 2026-10-11 21:40 | #026 | 插件 | 停用/启用包时不再被 SettingsManager 还没落盘的旧 packages 盖回去；扩展路径只在 Windows 上不分大小写（Linux/mac 上大小写不同的目录不再被当成项目目录） | claude-opus-5-5
 - 2026-10-11 21:40 | #027 | 会话 | 导出会话时中文文件名下载下来是一串 %E4%BD%A0…：改用 filename*=UTF-8 原名 + ASCII 兜底 | claude-opus-5-5
 - 2026-10-11 21:40 | #028 | 规范 | .gitignore 补全：所有 .env*（只放行 .env.example）、.claude/.codex 等 AI 工具私有目录 | claude-opus-5-5
+- 2026-10-11 21:42 | #029 | Git | Git 面板的提交分隔符改成看得见的 \x1f 写法；Git 面板与生长记录共用解析出的 git（macOS 从图形界面启动时也能找到 Homebrew 的 git） | claude-opus-5-5

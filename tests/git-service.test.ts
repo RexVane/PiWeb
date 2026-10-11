@@ -31,6 +31,26 @@ describe("Git status failures", () => {
 	}, 15_000);
 });
 
+describe("recent commits", () => {
+	it("splits hash, subject, author and relative time on the unit separator", async () => {
+		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-log-"));
+		try {
+			execFileSync("git", ["init", "-q", temporary], { windowsHide: true });
+			await fs.writeFile(path.join(temporary, "a.txt"), "a\n");
+			const git = (...args: string[]) => execFileSync("git", ["-C", temporary, "-c", "user.name=测试 作者", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+			git("add", "a.txt");
+			git("commit", "-q", "-m", "改一下 | 带空格的标题");
+			const [commit] = (await gitInfo(temporary)).commits;
+			expect(commit.hash).toMatch(/^[0-9a-f]{7,}$/);
+			expect(commit.subject).toBe("改一下 | 带空格的标题");
+			expect(commit.author).toBe("测试 作者");
+			expect(commit.relative).not.toBe("");
+		} finally {
+			await fs.rm(temporary, { recursive: true, force: true });
+		}
+	}, 15_000);
+});
+
 describe("untracked Git diffs", () => {
 	it("bounds large reads and rejects directory links outside the repository", async () => {
 		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-diff-"));

@@ -128,9 +128,9 @@ type Env = Record<string, string | undefined>;
 /**
  * 解析 git 可执行文件：macOS GUI/launchd 启动的进程 PATH 常不含 Homebrew，
  * spawn("git") 会 ENOENT → 生长快照整体误判不可用。PATH 找不到时退回常见安装位置。
- * 只在非 Windows 生效；结果缓存到 registry（成功后不再变）。
+ * 只在非 Windows 生效；结果缓存到 registry（成功后不再变）。git-service 也用它。
  */
-async function resolveGitBin(): Promise<string> {
+export async function resolveGitBin(): Promise<string> {
 	if (registry.gitBin) return registry.gitBin;
 	let bin = "git";
 	if (process.platform !== "win32") {
