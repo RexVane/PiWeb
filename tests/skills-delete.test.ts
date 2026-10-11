@@ -86,6 +86,65 @@ describe("deleteSkill", () => {
 		}
 	});
 
+	/**
+	 * 回归：SDK 认技能根下直接放的平铺 foo.md。它的 dirname 就是技能根，
+	 * 旧实现按目录删，会把整个全局技能目录（连同别的技能）一起删掉。
+	 */
+	it("平铺技能（技能根下的 foo.md）只删这个文件，不动技能根和别的技能", async () => {
+		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
+		const root = path.join(agentDir, "skills");
+		const sibling = path.join(root, "other-skill");
+		mkdirSync(sibling, { recursive: true });
+		writeFileSync(path.join(sibling, "SKILL.md"), "---\nname: other-skill\n---\nbody\n");
+		const flat = path.join(root, "flat.md");
+		writeFileSync(flat, "---\nname: flat\n---\nbody\n");
+		fakeSkills.set("flat", { name: "flat", filePath: flat });
+		fakeSkills.set("other-skill", { name: "other-skill", filePath: path.join(sibling, "SKILL.md") });
+		try {
+			const expected = await expanded(flat);
+			await expect(deleteSkill(flat, undefined)).resolves.toEqual({ removed: expected });
+			expect(fs.existsSync(flat)).toBe(false);
+			expect(fs.existsSync(path.join(sibling, "SKILL.md"))).toBe(true);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("SKILL.md 直接放在技能根里时只删文件，技能根保留", async () => {
+		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
+		const root = path.join(agentDir, "skills");
+		mkdirSync(root, { recursive: true });
+		const file = path.join(root, "SKILL.md");
+		writeFileSync(file, "---\nname: root-skill\n---\nbody\n");
+		writeFileSync(path.join(root, "notes.txt"), "keep me");
+		fakeSkills.set("root-skill", { name: "root-skill", filePath: file });
+		try {
+			await deleteSkill(file, undefined);
+			expect(fs.existsSync(file)).toBe(false);
+			expect(fs.existsSync(path.join(root, "notes.txt"))).toBe(true);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
+	it("技能目录里还有别的已发现技能时只删 SKILL.md", async () => {
+		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
+		const outer = path.join(agentDir, "skills", "outer");
+		const inner = path.join(outer, "inner");
+		mkdirSync(inner, { recursive: true });
+		writeFileSync(path.join(outer, "SKILL.md"), "---\nname: outer\n---\nbody\n");
+		writeFileSync(path.join(inner, "SKILL.md"), "---\nname: inner\n---\nbody\n");
+		fakeSkills.set("outer", { name: "outer", filePath: path.join(outer, "SKILL.md") });
+		fakeSkills.set("inner", { name: "inner", filePath: path.join(inner, "SKILL.md") });
+		try {
+			await deleteSkill(path.join(outer, "SKILL.md"), undefined);
+			expect(fs.existsSync(path.join(outer, "SKILL.md"))).toBe(false);
+			expect(fs.existsSync(path.join(inner, "SKILL.md"))).toBe(true);
+		} finally {
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+
 	it("removes the skill directory for a project skill", async () => {
 		const cwd = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-"));
 		const filePath = makeSkillDir("project");

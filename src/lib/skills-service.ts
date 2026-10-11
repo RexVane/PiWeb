@@ -133,25 +133,47 @@ export async function readSkillFile(filePath: string, cwd?: string): Promise<str
 	return fs.readFile(authorized, "utf8");
 }
 
-/** 删除技能（SKILL.md 所在目录）。包技能（node_modules 内）随包安装，删除会被还原 → 拒绝并用禁用管理。 */
+/** 技能根与用户目录本身：哪怕 SKILL.md 直接放在里面，也只能删文件，绝不能删目录 */
+function protectedDirs(context: ScopeContext): Set<string> {
+	const dirs = [
+		context.agentDir,
+		`${context.agentDir}/skills`,
+		`${context.agentDir}/web-skills`,
+		context.home,
+		`${context.home}/.pi`,
+		`${context.home}/.agents`,
+		`${context.home}/.agents/skills`,
+	];
+	if (context.cwd) dirs.push(context.cwd, `${context.cwd}/.pi`, `${context.cwd}/.pi/skills`, `${context.cwd}/.agents`, `${context.cwd}/.agents/skills`);
+	return new Set(dirs);
+}
+
+/**
+ * 删除技能。包技能（node_modules 内）随包安装，删除会被还原 → 拒绝并用禁用管理。
+ *
+ * 只有「<名字>/SKILL.md」这种技能才连目录一起删。SDK 也认技能根下直接放的平铺 `foo.md`，
+ * 它的 dirname 就是技能根本身（~/.pi/agent/skills、项目 .pi/skills…），按目录删会把整个技能根
+ * 连同其它技能一起删掉 —— 所以平铺技能、以及目录不归它独占的情况，一律只删这一个文件。
+ */
 export async function deleteSkill(filePath: string, cwd?: string): Promise<{ removed: string }> {
 	const skills = await listSkills(cwd);
 	const authorized = await resolveDiscoveredPath(filePath, skills.map((skill) => skill.filePath));
 	const context = await scopeContext(cwd);
-	if ((await classifyScope(authorized, context)) === "package") {
+	const scope = await classifyScope(authorized, context);
+	if (scope === "package") {
 		throw new Error("package-managed skill: disable it instead (it is reinstalled with the package)");
 	}
 	const skillDir = path.dirname(authorized);
-	// 只删技能目录本身，不能误删父目录（全局技能目录 ~/.pi/agent/skills、项目 .agents/skills 等）
-	const normalizedSkillDir = await toComparablePath(skillDir);
-	const knownRoots = [`${context.agentDir}/skills`, `${context.agentDir}/web-skills`];
-	if (!knownRoots.includes(normalizedSkillDir)) {
-		// 非已知根：项目内技能目录，至少确认 SKILL.md 直接位于其下且目录名非空
-		if (path.basename(skillDir) === "") throw new Error("refusing to delete workspace root");
-	}
-	await fs.rm(skillDir, { recursive: true, force: true });
+	const comparableDir = await toComparablePath(skillDir);
+	const comparableFile = await toComparablePath(authorized);
+	const others = await Promise.all(skills.map((skill) => toComparablePath(skill.filePath)));
+	const ownsDir = path.basename(authorized) === "SKILL.md"
+		&& path.dirname(skillDir) !== skillDir
+		&& !protectedDirs(context).has(comparableDir)
+		&& !others.some((other) => other !== comparableFile && within(other, comparableDir));
+	const removed = ownsDir ? skillDir : authorized;
+	await fs.rm(removed, { recursive: ownsDir, force: true });
 	await reloadAllLoaders();
-	const scope = await classifyScope(authorized, context);
 	await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
-	return { removed: skillDir };
+	return { removed };
 }
