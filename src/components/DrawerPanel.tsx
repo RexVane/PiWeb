@@ -87,22 +87,10 @@ export function DrawerPanel({
 
 	return (
 		<div className="flex h-full min-h-0 flex-col" data-testid="drawer-panel">
-			{/* 头部:与 PromptPanel / ProjectPanel 同一套排布。
-			    提示词 / Git 两个面板自带同款标题行(含关闭),这里就不再叠一层;
-			    「导入会话」段落没有标题行,抽屉自己出这行,并关掉整个抽屉。 */}
-			{section === "import" && (
-				<div className="hairline-b flex items-center gap-1.5 px-3 pb-2 pt-3">
-					<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, fontWeight: 600 }}>
-						{t.drawerPanel}
-					</span>
-					<button className="icon-btn" style={{ width: 22, height: 22 }} title={t.close} aria-label={t.close} onClick={onClose}>
-						<IconCloseOutline14 size={13} />
-					</button>
-				</div>
-			)}
-
 			{/* 入口列表：横向一排图标，不显示文字（名字放 title / aria-label）。
-			    激活态复用设置页那套下划线（.settings-tab-underline），不自创样式。 */}
+			    激活态复用设置页那套下划线（.settings-tab-underline），不自创样式。
+			    悬停底色交给 CSS（.drawer-tab:hover）：以前用 onMouseEnter/Leave 直接改 style，
+			    悬停时点下去这一项变成选中，移开时「选中就不复原」，底色就永远留在上面。 */}
 			<div className="hairline-b flex items-stretch gap-1 px-2" role="tablist" aria-label={t.drawerSections}>
 				{entries.map((entry) => (
 					<button
@@ -110,16 +98,10 @@ export function DrawerPanel({
 						type="button"
 						role="tab"
 						aria-selected={section === entry.id}
-						className="settings-tab-underline flex flex-1 items-center justify-center rounded-t-lg"
+						className="settings-tab-underline drawer-tab flex flex-1 items-center justify-center rounded-t-lg"
 						data-active={section === entry.id}
 						title={entry.label}
 						aria-label={entry.label}
-						onMouseEnter={(e) => {
-							if (section !== entry.id) e.currentTarget.style.background = "var(--dsw-hover)";
-						}}
-						onMouseLeave={(e) => {
-							if (section !== entry.id) e.currentTarget.style.background = "transparent";
-						}}
 						onClick={() => onSectionChange(entry.id)}
 						data-testid={`drawer-entry-${entry.id}`}
 					>
@@ -128,12 +110,23 @@ export function DrawerPanel({
 				))}
 			</div>
 
-			{/* 所选入口的内容:项目 / 提示词 / Git 三个面板自带标题行与滚动,导入段落沿用抽屉的留白 */}
+			{/* 所选入口的内容:项目 / 提示词 / Git 三个面板自带标题行与滚动。
+			    「导入会话」段落没有标题行,这里补一行,排布照抄 PromptPanel(同样在入口列表下面、关掉整个抽屉) */}
 			<div className="flex min-h-0 flex-1 flex-col">
 				{section === "import" ? (
-					<div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-						<SessionImportSection cwd={cwd} />
-					</div>
+					<>
+						<div className="hairline-b flex items-center gap-2 px-4 py-2.5">
+							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13.5, fontWeight: 600 }}>
+								{t.importSessions}
+							</span>
+							<button type="button" className="icon-btn" style={{ width: 26, height: 26 }} title={t.close} aria-label={t.close} onClick={onClose}>
+								<IconCloseOutline14 size={14} />
+							</button>
+						</div>
+						<div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+							<SessionImportSection cwd={cwd} />
+						</div>
+					</>
 				) : section === "project" ? (
 					<ProjectPanel
 						growth={growth}

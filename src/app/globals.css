@@ -532,6 +532,22 @@ textarea::placeholder {
 .settings-tab-underline[data-active="true"]::after {
 	background: var(--dsw-label-primary);
 }
+/* 应用外壳占满「实际可见」的高度。100vh 在手机浏览器里是工具栏收起时的大视口：
+   地址栏在底部的浏览器（如手机 Edge）里，最下面的输入框正好被工具栏盖住、页面又不滚动，
+   看起来就是没有输入框。dvh 是实际可见高度，不认它的老浏览器退回 100vh。
+   兜底必须放进 @supports：写成两行 height，构建时的 CSS 压缩会只留后一行，老浏览器就没了高度。 */
+.pw-app-shell {
+	height: 100vh;
+}
+@supports (height: 100dvh) {
+	.pw-app-shell {
+		height: 100dvh;
+	}
+}
+/* 右侧抽屉的入口条：未选中项悬停给底色（设置页的同款下划线 tab 没有底色） */
+.drawer-tab:hover:not([data-active="true"]) {
+	background: var(--dsw-hover);
+}
 
 .btn-primary-circle {
 	display: inline-flex;
@@ -2133,5 +2149,16 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 		width: 100vw;
 		height: 100vh;
 		border-radius: 0;
+	}
+}
+/* 全屏查看器同样按实际可见高度铺满（理由见 .pw-app-shell）；放在上面两条之后才压得住它们 */
+@supports (height: 100dvh) {
+	.pw-viewer[data-fullscreen] {
+		height: 100dvh;
+	}
+	@media (max-width: 840px) {
+		.pw-viewer {
+			height: 100dvh;
+		}
 	}
 }

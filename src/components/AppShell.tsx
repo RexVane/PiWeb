@@ -726,7 +726,7 @@ export function AppShell() {
 
 	return (
 		<div
-			className="grid h-screen w-screen overflow-hidden"
+			className="pw-app-shell grid w-screen overflow-hidden"
 			style={{
 				gridTemplateColumns: gridCols,
 				// 收起/展开不做过渡：grid-template-columns 是布局属性，动画它会让浏览器逐帧
