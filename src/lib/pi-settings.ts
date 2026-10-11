@@ -5,7 +5,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { invalidateJsonFile, readJsonObject } from "./agent-config";
+import { invalidateJsonFile, readJsonObject, readJsonObjectFresh } from "./agent-config";
 import { getAgentDir, reloadSettingsManagers } from "./pi";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 
@@ -102,7 +102,7 @@ export async function patchPiSettings(value: unknown): Promise<void> {
 	const patch = validatePiSettingsPatch(value);
 	const file = settingsFile();
 	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
-		const raw = await readSettingsFileStrict();
+		const raw = await readJsonObjectFresh(file);
 		if (patch.compaction) raw.compaction = { ...section(raw, "compaction"), ...patch.compaction };
 		if (patch.retry) raw.retry = { ...section(raw, "retry"), ...patch.retry };
 		await fs.mkdir(path.dirname(file), { recursive: true });

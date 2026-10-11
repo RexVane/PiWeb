@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { invalidateJsonFile, readJsonObject, readJsonObjectSafe } from "./agent-config";
+import { invalidateJsonFile, readJsonObjectFresh, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getPackageManager, getResourceLoader, getSettingsManager, reloadAllLoaders, resourceLoaderReady } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
 import { flushSettingsOrThrow, withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
@@ -52,8 +52,9 @@ async function readSettingsFile(filePath: string): Promise<Record<string, unknow
 	return readJsonObjectSafe(filePath);
 }
 
+/** 只用在写路径（预检、改写、落盘核对）：SDK 刚 flush 过的文件不能拿缓存里的旧版来判断 */
 async function readSettingsFileStrict(filePath: string): Promise<Record<string, unknown>> {
-	return readJsonObject(filePath);
+	return readJsonObjectFresh(filePath);
 }
 
 async function prepareSettingsWrite(cwd: string, file: string): Promise<ReturnType<typeof getSettingsManager>> {

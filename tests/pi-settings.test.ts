@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import lockfile from "proper-lockfile";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getEnabledModelPatterns, getPiSettings, patchPiSettings, validatePiSettingsPatch } from "../src/lib/pi-settings";
 import { withSettingsWriteLock } from "../src/lib/settings-write-lock";
 
@@ -71,6 +71,30 @@ it("preserves unrelated fields and refuses to overwrite malformed settings", asy
 		await expect(patchPiSettings({ retry: { maxRetries: 3 } })).rejects.toThrow();
 		expect(await fs.readFile(file, "utf8")).toBe("{broken json");
 	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		await fs.rm(agentDir, { recursive: true, force: true });
+	}
+});
+
+it("re-reads settings.json inside the write lock even when the cache stamp did not change", async () => {
+	// 回归：读-改-写走了校验戳缓存；pi 自己写文件不会作废它，同一时刻的等长写入戳不变，
+	// 于是拿旧内容合并、把 pi 刚写的字段盖了回去
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-settings-stale-"));
+	const file = path.join(agentDir, "settings.json");
+	const realStat = fs.stat.bind(fs);
+	try {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		await fs.writeFile(file, JSON.stringify({ theme: "dark" }));
+		await getPiSettings();
+		const frozen = await realStat(file);
+		vi.spyOn(fs, "stat").mockImplementation(async (target, ...rest) => (target === file ? frozen : realStat(target, ...rest)) as never);
+		await fs.writeFile(file, JSON.stringify({ theme: "lite" }));
+		await patchPiSettings({ retry: { maxRetries: 4 } });
+		expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({ theme: "lite", retry: { maxRetries: 4 } });
+	} finally {
+		vi.restoreAllMocks();
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
 		await fs.rm(agentDir, { recursive: true, force: true });

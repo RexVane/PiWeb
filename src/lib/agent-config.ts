@@ -71,6 +71,15 @@ export async function readJsonObject(file: string): Promise<JsonObject> {
 	return copyOf(entry.value);
 }
 
+/**
+ * 读-改-写的临界区里用：绕过校验戳直接读盘。别的写入者（pi 的 SettingsManager、pi CLI）不会作废这里的缓存，
+ * 同一时刻落盘的等长内容戳不变，拿缓存去合并会把对方刚写的字段盖回去。返回副本。
+ */
+export async function readJsonObjectFresh(file: string): Promise<JsonObject> {
+	cache.delete(file);
+	return readJsonObject(file);
+}
+
 /** 宽松读：读不到、解析失败都退化成 `{}`（"没配就当默认"的场景）。返回副本。 */
 export async function readJsonObjectSafe(file: string): Promise<JsonObject> {
 	try {
