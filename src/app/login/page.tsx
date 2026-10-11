@@ -28,6 +28,9 @@ function LoginForm() {
 	const [password, setPassword] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	// 认证可能是「密码登录」也可能是「启动令牌」开的。后者没有密码可输，
+	// 再给一个密码框就是死表单 —— 怎么填都错，用户只会以为坏了。
+	const [authMethod, setAuthMethod] = useState<"unknown" | "password" | "token">("unknown");
 	const inputRef = useRef<HTMLInputElement>(null);
 
 	// 认证未启用 / 已登录：不用停留
@@ -38,7 +41,11 @@ function LoginForm() {
 				const response = await fetch("/api/web-auth");
 				const result = await response.json();
 				if (!alive || !result?.success) return;
-				if (!result.data.enabled || result.data.authenticated) router.replace(next);
+				if (!result.data.enabled || result.data.authenticated) {
+					router.replace(next);
+					return;
+				}
+				setAuthMethod(result.data.passwordConfigured ? "password" : "token");
 			} catch {
 				/* 网络异常时留在页面，提交时会再次尝试 */
 			}
@@ -78,33 +85,37 @@ function LoginForm() {
 			<div className="glass-modal flex w-[min(92vw,380px)] flex-col gap-4 p-7" style={{ borderRadius: 24, boxShadow: "var(--dsw-elevation-prominent)" }}>
 				<div className="flex flex-col items-center gap-2">
 					<PiMark size={40} />
-					<div style={{ fontSize: 16, fontWeight: 600 }}>{t.loginTitle}</div>
-					<div className="text-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", lineHeight: 1.55 }}>{t.loginDesc}</div>
+					<div style={{ fontSize: 16, fontWeight: 600 }}>{authMethod === "token" ? t.loginTokenTitle : t.loginTitle}</div>
+					<div className="text-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", lineHeight: 1.55 }}>{authMethod === "token" ? t.loginTokenDesc : t.loginDesc}</div>
 				</div>
-				<input
-					ref={inputRef}
-					autoFocus
-					type="password"
-					autoComplete="current-password"
-					aria-label={t.loginPassword}
-					value={password}
-					placeholder={t.loginPassword}
-					onChange={(event) => setPassword(event.target.value)}
-					onKeyDown={(event) => {
-						if (event.key === "Enter" && !event.nativeEvent.isComposing) void submit();
-					}}
-					className="w-full rounded-xl px-3 py-2.5"
-					style={{ fontSize: 14, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }}
-				/>
-				{error ? <div role="alert" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{error}</div> : null}
-				<button
-					className="btn-primary-white w-full"
-					style={{ height: 38, opacity: busy || !password ? 0.55 : 1 }}
-					disabled={busy || !password}
-					onClick={() => void submit()}
-				>
-					{busy ? t.loginSubmitting : t.loginSubmit}
-				</button>
+				{authMethod === "token" ? null : (
+					<>
+						<input
+							ref={inputRef}
+							autoFocus
+							type="password"
+							autoComplete="current-password"
+							aria-label={t.loginPassword}
+							value={password}
+							placeholder={t.loginPassword}
+							onChange={(event) => setPassword(event.target.value)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter" && !event.nativeEvent.isComposing) void submit();
+							}}
+							className="w-full rounded-xl px-3 py-2.5"
+							style={{ fontSize: 14, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }}
+						/>
+						{error ? <div role="alert" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{error}</div> : null}
+						<button
+							className="btn-primary-white w-full"
+							style={{ height: 38, opacity: busy || !password ? 0.55 : 1 }}
+							disabled={busy || !password}
+							onClick={() => void submit()}
+						>
+							{busy ? t.loginSubmitting : t.loginSubmit}
+						</button>
+					</>
+				)}
 			</div>
 		</div>
 	);

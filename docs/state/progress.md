@@ -23,3 +23,4 @@
 - 2026-10-11 19:58 | #013 | 远程 | 退休 piweb-remote 整个仓库（功能已被内置「远程连接」完全覆盖），实体移入 backups 并在 INDEX 登记 | deepseek-flash
 - 2026-10-11 20:09 | #014 | 远程 | 注入元素 id 与 502 文案去掉已退休的项目名：piweb-remote-mobile-fit → piweb-mobile-fit，错误前缀改 [远程连接] | deepseek-flash
 - 2026-10-11 20:25 | #015 | 远程 | 公网地址固定不变：只认 cloudflared 给出的第一个地址（累积匹配，避免被 chunk 切断漏掉），抓到即摘监听 | deepseek-flash
+- 2026-10-11 20:33 | #016 | 认证 | 修「密码认证 已启用（PI_WEB_PASSWORD）」这行说错：认证其实由启动令牌打开；登录页在没有密码时改给令牌提示，不再摆死表单 | deepseek-flash

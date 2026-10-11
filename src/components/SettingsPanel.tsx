@@ -179,7 +179,7 @@ function GeneralSection({
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
 	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
-	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
+	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean; passwordConfigured: boolean } | null>(null);
 	const [settingsLoading, setSettingsLoading] = useState(true);
 	const [settingsSaving, setSettingsSaving] = useState(false);
 	const [settingsError, setSettingsError] = useState<"load" | "save" | null>(null);
@@ -211,7 +211,7 @@ function GeneralSection({
 		} else setPiSettings(null);
 		if (health.status === "fulfilled" && health.value?.piWeb) setVersions({ piWeb: health.value.piWeb, piEngine: health.value.piEngine });
 		else setVersions(null);
-		if (auth.status === "fulfilled" && typeof auth.value?.enabled === "boolean") setWebAuth({ enabled: auth.value.enabled, authenticated: auth.value.authenticated === true });
+		if (auth.status === "fulfilled" && typeof auth.value?.enabled === "boolean") setWebAuth({ enabled: auth.value.enabled, authenticated: auth.value.authenticated === true, passwordConfigured: auth.value.passwordConfigured === true });
 		else setWebAuth(null);
 		if ([sec, ps, health].some((item) => item.status === "rejected")) setSettingsError("load");
 		setSettingsLoading(false);
@@ -442,7 +442,7 @@ function GeneralSection({
 				</div>
 			</Row>
 			{webAuth?.enabled ? (
-				<Row title={t.webAuth} desc={t.webAuthOn}>
+				<Row title={t.webAuth} desc={webAuth.passwordConfigured ? t.webAuthPasswordOn : t.webAuthTokenOn}>
 					<button
 						className="btn-outline"
 						style={{ height: 30, padding: "0 14px", fontSize: 12.5 }}

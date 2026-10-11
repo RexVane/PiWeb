@@ -239,17 +239,25 @@ describe("launch token exchange", () => {
 describe("web-auth route", () => {
 	it("reports enabled + authenticated state", async () => {
 		const anonymous = await GET(apiRequest("/api/web-auth"));
-		expect(await anonymous.json()).toMatchObject({ success: true, data: { enabled: true, authenticated: false } });
+		expect(await anonymous.json()).toMatchObject({ success: true, data: { enabled: true, authenticated: false, passwordConfigured: true } });
 
 		const cookie = await sessionCookie();
 		const signed = await GET(apiRequest("/api/web-auth", { headers: { cookie } }));
-		expect(await signed.json()).toMatchObject({ success: true, data: { enabled: true, authenticated: true } });
+		expect(await signed.json()).toMatchObject({ success: true, data: { enabled: true, authenticated: true, passwordConfigured: true } });
+	});
+
+	it("reports passwordConfigured:false when only the launch token enables auth", async () => {
+		// 这时登录页不能摆密码框：根本没有密码可输，怎么填都错
+		delete process.env.PI_WEB_PASSWORD;
+		process.env.PI_WEB_AUTH = "1";
+		const response = await GET(apiRequest("/api/web-auth"));
+		expect(await response.json()).toMatchObject({ success: true, data: { enabled: true, authenticated: false, passwordConfigured: false } });
 	});
 
 	it("reports enabled:false when authentication is off", async () => {
 		delete process.env.PI_WEB_PASSWORD;
 		const response = await GET(apiRequest("/api/web-auth"));
-		expect(await response.json()).toMatchObject({ success: true, data: { enabled: false, authenticated: true } });
+		expect(await response.json()).toMatchObject({ success: true, data: { enabled: false, authenticated: true, passwordConfigured: false } });
 	});
 
 	it("rejects wrong passwords with 401", async () => {

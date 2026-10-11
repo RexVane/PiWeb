@@ -30,7 +30,12 @@ export async function GET(request: Request) {
 	const authenticated = !enabled
 		|| (password ? validBasicAuthorization(request.headers.get("authorization"), password) : false)
 		|| validSessionCookie(request, loadWebSecret());
-	return NextResponse.json({ success: true, data: { enabled, authenticated } }, { headers: { "Cache-Control": "no-store" } });
+	// passwordConfigured 决定 UI 该说「密码登录」还是「启动令牌」：
+	// 认证可以只靠 PI_WEB_AUTH=1 打开，那时根本没有密码可输（登录页给出死表单就是骗人）。
+	return NextResponse.json(
+		{ success: true, data: { enabled, authenticated, passwordConfigured: Boolean(password) } },
+		{ headers: { "Cache-Control": "no-store" } },
+	);
 }
 
 export async function POST(request: Request) {
