@@ -186,7 +186,65 @@ export async function saveUpload(name: unknown, dataBase64: unknown): Promise<{ 
 		throw error;
 	}
 	await handle.close();
+	scheduleUploadSweep();
 	return { path: target, name: safeName, size: buffer.length };
+}
+
+/** 上传超过这么多天、且没有任何会话记录提到它，才会被清理 */
+export const UPLOAD_RETENTION_DAYS = 30;
+const UPLOAD_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let lastUploadSweep = 0;
+
+/** 上传成功后顺带在后台清理，每个进程每天最多一次 */
+function scheduleUploadSweep(): void {
+	const now = Date.now();
+	if (now - lastUploadSweep < UPLOAD_SWEEP_INTERVAL_MS) return;
+	lastUploadSweep = now;
+	void sweepUploads(now).catch(() => undefined);
+}
+
+/**
+ * 清理 web-uploads：消息里引用的是上传文件的绝对路径，所以只要还有会话 JSONL 提到文件名就保留
+ * （会话被删、或归档过期删除后，它的附件才变成孤儿）；没发出去的草稿留 30 天的余量。
+ * 会话目录读不全就整次放弃，宁可不删也不误删。返回删掉的文件名。
+ */
+export async function sweepUploads(now = Date.now(), retentionDays = UPLOAD_RETENTION_DAYS): Promise<string[]> {
+	const agentDir = getAgentDir();
+	const dir = path.join(agentDir, "web-uploads");
+	const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+	const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+	// 文件名 → 在 JSONL 里可能出现的写法（原样 / JSON 转义后）
+	const candidates = new Map<string, string[]>();
+	for (const entry of entries) {
+		if (!entry.isFile()) continue;
+		const stat = await fs.stat(path.join(dir, entry.name)).catch(() => null);
+		if (!stat || stat.mtimeMs > cutoff) continue;
+		candidates.set(entry.name, [entry.name, JSON.stringify(entry.name).slice(1, -1)]);
+	}
+	if (!candidates.size) return [];
+	const sessionsRoot = path.join(agentDir, "sessions");
+	let sessionFiles: string[];
+	try {
+		sessionFiles = (await fs.readdir(sessionsRoot, { recursive: true })).filter((name) => name.endsWith(".jsonl"));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") return [];
+		sessionFiles = [];
+	}
+	for (const name of sessionFiles) {
+		let text: string;
+		try {
+			text = await fs.readFile(path.join(sessionsRoot, name), "utf8");
+		} catch {
+			return [];
+		}
+		for (const [file, needles] of candidates) if (needles.some((needle) => text.includes(needle))) candidates.delete(file);
+		if (!candidates.size) return [];
+	}
+	const removed: string[] = [];
+	for (const file of candidates.keys()) {
+		await fs.unlink(path.join(dir, file)).then(() => removed.push(file), () => undefined);
+	}
+	return removed;
 }
 
 export function parseUploadLength(value: string | null): number {
@@ -221,6 +279,7 @@ export async function saveUploadStream(name: unknown, stream: ReadableStream<Uin
 		if (size === 0) throw new BoundaryError("empty upload");
 		if (expectedSize !== undefined && size !== expectedSize) throw new BoundaryError("incomplete upload: size does not match the declared length");
 		complete = true;
+		scheduleUploadSweep();
 		return { path: target, name: safeName, size };
 	} finally {
 		await reader.cancel().catch(() => undefined);

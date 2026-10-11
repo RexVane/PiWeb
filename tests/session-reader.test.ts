@@ -76,6 +76,24 @@ describe("session-reader listSessions parity", () => {
 		expect((await listSessions("proj")).length).toBe(3);
 	}, 15_000);
 
+	it("clips a pasted wall of text to a title-sized first message", async () => {
+		// 唯一有意偏离 SDK 的字段：整段贴进来的提问不该随每次列表轮询原样下发
+		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
+		await fs.mkdir(dir, { recursive: true });
+		const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+		// 新模块实例：别吃到上一个用例 1.2 秒内的列表缓存
+		vi.resetModules();
+		const { FIRST_MESSAGE_MAX_CHARS, listSessions } = await import("../src/lib/session-reader");
+		// 截断点正好落在一个 emoji（代理对）中间
+		const text = `${"x".repeat(FIRST_MESSAGE_MAX_CHARS - 1)}😀${"y".repeat(50_000)}`;
+		await fs.writeFile(path.join(dir, "long.jsonl"), [
+			line({ type: "session", version: 3, id: "s-l", timestamp: "2026-09-10T01:00:00.000Z", cwd: "D:\\Proj" }),
+			line({ type: "message", id: "u1", parentId: null, timestamp: "2026-09-10T01:00:01.000Z", message: { role: "user", content: text, timestamp: 1789000000000 } }),
+		].join(""));
+		const [summary] = await listSessions();
+		expect(summary.firstMessage).toBe(`${"x".repeat(FIRST_MESSAGE_MAX_CHARS - 1)}…`);
+	}, 15_000);
+
 	it("reuses the persisted summary index after a restart, and still re-reads changed files", async () => {
 		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
 		await fs.mkdir(dir, { recursive: true });

@@ -33,11 +33,10 @@ async function isDirectory(target: string): Promise<boolean> {
 async function listRoots(): Promise<FsEntry[]> {
 	const roots: FsEntry[] = [];
 	if (process.platform === "win32") {
-		for (let code = 65; code <= 90; code += 1) {
-			const drive = `${String.fromCharCode(code)}:\\`;
-			if (await isDirectory(drive)) roots.push({ name: drive, path: drive });
-		}
-		return roots;
+		// 26 个盘符一起探：断开的网络盘、没插卡的读卡器一个就能卡上几秒，逐个探会把等待叠加起来
+		const drives = Array.from({ length: 26 }, (_, i) => `${String.fromCharCode(65 + i)}:\\`);
+		const present = await Promise.all(drives.map(isDirectory));
+		return drives.filter((_, i) => present[i]).map((drive) => ({ name: drive, path: drive }));
 	}
 	if (process.platform === "darwin") {
 		const volumes = await fs.readdir("/Volumes", { withFileTypes: true }).catch(() => []);

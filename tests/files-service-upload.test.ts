@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { saveUpload, saveUploadStream } from "../src/lib/files-service";
+import { saveUpload, saveUploadStream, sweepUploads } from "../src/lib/files-service";
 import { POST } from "../src/app/api/files/route";
 
 /** 拖拽上传的限额与安全（dsh 语义：原样字节保存 + 路径引用） */
@@ -23,6 +23,34 @@ describe("files-service saveUpload", () => {
 	});
 
 	const b64 = (bytes: number) => Buffer.alloc(bytes, 7).toString("base64");
+
+	it("sweeps only old uploads that no session mentions any more", async () => {
+		const uploads = path.join(tempDir, "web-uploads");
+		await fs.mkdir(uploads, { recursive: true });
+		const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+		for (const name of ["kept-by-session.zip", "orphan.zip", "fresh-orphan.zip"]) await fs.writeFile(path.join(uploads, name), "x");
+		await fs.utimes(path.join(uploads, "kept-by-session.zip"), old, old);
+		await fs.utimes(path.join(uploads, "orphan.zip"), old, old);
+		// 会话里引用的是 JSON 转义过的 Windows 绝对路径
+		const sessions = path.join(tempDir, "sessions", "--D--Proj--");
+		await fs.mkdir(sessions, { recursive: true });
+		await fs.writeFile(path.join(sessions, "a.jsonl"), `${JSON.stringify({ type: "message", message: { role: "user", content: `附件 ${path.join(uploads, "kept-by-session.zip")}` } })}\n`);
+
+		expect(await sweepUploads()).toEqual(["orphan.zip"]);
+		expect((await fs.readdir(uploads)).sort()).toEqual(["fresh-orphan.zip", "kept-by-session.zip"]);
+	});
+
+	it("keeps every upload when a session file cannot be read", async () => {
+		const uploads = path.join(tempDir, "web-uploads");
+		await fs.mkdir(uploads, { recursive: true });
+		const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+		await fs.writeFile(path.join(uploads, "orphan.zip"), "x");
+		await fs.utimes(path.join(uploads, "orphan.zip"), old, old);
+		// 一个叫 .jsonl 的目录：readFile 必然失败
+		await fs.mkdir(path.join(tempDir, "sessions", "broken.jsonl"), { recursive: true });
+		expect(await sweepUploads()).toEqual([]);
+		expect(await fs.readdir(uploads)).toEqual(["orphan.zip"]);
+	});
 
 	it("saves the payload byte-for-byte into web-uploads and reports path/size", async () => {
 		const data = Buffer.from([0x50, 0x4b, 0x03, 0x04]).toString("base64");

@@ -31,6 +31,18 @@ function toSummary(info: {
 	};
 }
 
+/** firstMessage 只当侧栏标题与搜索用：整段贴进来的长提问不该随每 3 秒一次的列表轮询反复下发 */
+export const FIRST_MESSAGE_MAX_CHARS = 300;
+
+function clipFirstMessage(text: string): string {
+	if (text.length <= FIRST_MESSAGE_MAX_CHARS) return text;
+	let end = FIRST_MESSAGE_MAX_CHARS;
+	const last = text.charCodeAt(end - 1);
+	// 别把代理对（emoji 等）切成半个
+	if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+	return `${text.slice(0, end)}…`;
+}
+
 /**
  * 单个 JSONL → 摘要，与 SDK `SessionManager.listAll()` 的口径一致：
  * 首行必须是 session 头；名字取最后一条 session_info；messageCount 计全部 message 条目；
@@ -82,7 +94,7 @@ async function summarize(filePath: string, stat: { mtime: Date }): Promise<Sessi
 			created: new Date(String(header.timestamp)),
 			modified,
 			messageCount,
-			firstMessage: firstMessage || "(no messages)",
+			firstMessage: clipFirstMessage(firstMessage) || "(no messages)",
 		});
 	} catch {
 		return null;
@@ -106,7 +118,8 @@ interface CachedSummary {
  * 按 mtime + 大小校验，命中就沿用摘要——侧栏首次渲染从"全量解析"变成"读一个小 JSON"。
  * 索引只是加速：读不到、版本不符、写不进去都退化成全量扫描，绝不影响正确性。
  */
-const INDEX_VERSION = 1;
+/** 2：firstMessage 开始截断，旧索引里的整段原文要重新摘要 */
+const INDEX_VERSION = 2;
 const INDEX_FILENAME = "piweb-session-index.json";
 const INDEX_MAX_ENTRIES = 5000;
 const INDEX_SAVE_DELAY_MS = 1500;
