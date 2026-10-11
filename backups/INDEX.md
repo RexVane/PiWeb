@@ -39,3 +39,4 @@
 - 2026-10-11 13:19 | .tmp-perf/warm-30193.log | backups/files/warm-30193-20261011-131921.log | 临时性能探针脚本，调研完成归档（未进 git）
 - 2026-10-11 13:19 | .tmp-perf/warm-30194.log | backups/files/warm-30194-20261011-131921.log | 临时性能探针脚本，调研完成归档（未进 git）
 - 2026-10-11 19:58 | D:\AIApp\piweb-remote（整个仓库，116 文件，含 .git 历史与自身 backups） | backups/piweb-remote-20261011-195833/ | 功能已被 PiWeb 内置的「远程连接」插件完全覆盖（注入资产逐字节相同，且内置版另有隧道控制面、开机自启与设置界面），整体退休；末次提交 8197773，历史随目录保留
+- 2026-10-12 00:14 | package-lock.json（另一会话升级 SDK 后未提交的版本） | backups/files/package-lock-20261012-001436.json | 补回 npm 重写时丢掉的 4 个 @emnapi 条目前留底（未进 git）
