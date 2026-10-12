@@ -1,55 +1,64 @@
 // @vitest-environment jsdom
 /**
- * 上下文圆环弹窗：冷会话也列出 Memory / Skills / Buffer 等能算的分项，并给「现在统计」；
- * 点了之后等新分项（不再是冷的）到来，System Prompt 与工具定义补齐、提示消失。
+ * 上下文圆环里的「窗口滑块」：拖动改当前模型的 contextWindow，POST /api/models 的 setContextWindow，
+ * 并乐观显示新值（服务端换绑后由用量事件接管）。没有当前模型时不显示滑块。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ContextMeter } from "@/components/ContextMeter";
-import type { ContextBreakdown } from "@/lib/types";
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.unstubAllGlobals();
+});
 
-const COLD: ContextBreakdown = { systemPrompt: 0, systemTools: 0, customTools: 0, memory: 1200, skills: 300, compacted: 0, autoCompactBuffer: 16384, cold: true };
-const WARM: ContextBreakdown = { systemPrompt: 2500, systemTools: 4100, customTools: 900, memory: 1200, skills: 310, compacted: 0, autoCompactBuffer: 16384 };
-const MESSAGES = [{ role: "user", content: [{ type: "text", text: "hello there, please look at the project" }] }];
-
-function meter(breakdown: ContextBreakdown, loadFull?: () => unknown) {
-	return <ContextMeter percent={12} tokens={24000} contextWindow={200000} source={{ systemChars: 0, messages: MESSAGES, breakdown, loadFull }} />;
+function okResponse() {
+	return { ok: true, status: 200, json: async () => ({ success: true }) };
 }
 
-describe("上下文圆环弹窗", () => {
-	it("冷会话列出能算的分项，点「现在统计」后等新分项补齐", async () => {
-		const loadFull = vi.fn(async () => ({ success: true }));
-		const view = render(meter(COLD, loadFull));
-		fireEvent.click(screen.getByTitle("12% 上下文已用"));
+function renderMeter(overrides: Record<string, unknown> = {}) {
+	return render(
+		<ContextMeter
+			percent={10}
+			tokens={12800}
+			contextWindow={128000}
+			model={{ provider: "openai", id: "gpt-5" }}
+			{...overrides}
+		/>,
+	);
+}
 
-		for (const label of ["Memory（AGENTS.md）", "Skills", "Auto-Compact Buffer", "User Messages", "Free Space"]) expect(screen.getByText(label)).toBeTruthy();
-		expect(screen.queryByText("System Prompt")).toBeNull();
-		expect(screen.getByText(/会话还没启动/)).toBeTruthy();
+describe("context meter window slider", () => {
+	it("renders the slider and posts the new window to /api/models", async () => {
+		const fetchMock = vi.fn(async () => okResponse());
+		vi.stubGlobal("fetch", fetchMock);
+		const { container } = renderMeter();
 
-		fireEvent.click(screen.getByRole("button", { name: "现在统计" }));
-		expect(loadFull).toHaveBeenCalledTimes(1);
-		expect((screen.getByRole("button", { name: "统计中…" }) as HTMLButtonElement).disabled).toBe(true);
+		// 打开弹窗
+		fireEvent.click(container.querySelector(".icon-btn")!);
+		const slider = (await screen.findByLabelText("上下文窗口")) as HTMLInputElement;
+		expect(slider.value).toBeDefined();
 
-		view.rerender(meter(WARM, loadFull));
-		for (const label of ["System Prompt", "System Tools", "Custom Tools", "Memory（AGENTS.md）", "Skills"]) expect(screen.getByText(label)).toBeTruthy();
-		expect(screen.queryByText(/会话还没启动/)).toBeNull();
-		expect(screen.queryByRole("button", { name: /统计/ })).toBeNull();
+		// 拖到最大 → 2M，乐观显示 + 去抖后 POST
+		fireEvent.change(slider, { target: { value: "100" } });
+		expect(container.textContent).toContain("2M");
+
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 3000 });
+		const [url, options] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe("/api/models");
+		expect(JSON.parse(String(options.body))).toEqual({
+			action: "setContextWindow",
+			providerId: "openai",
+			modelId: "gpt-5",
+			contextWindow: 2000000,
+		});
 	});
 
-	it("启动失败（例如没配模型）把按钮还回来，可以再点", async () => {
-		const loadFull = vi.fn(async () => ({ success: false, error: "no model" }));
-		render(meter(COLD, loadFull));
-		fireEvent.click(screen.getByTitle("12% 上下文已用"));
-		fireEvent.click(screen.getByRole("button", { name: "现在统计" }));
-		expect(await screen.findByRole("button", { name: "现在统计" })).toBeTruthy();
-	});
-
-	it("没有启动入口（不在会话里）就只列分项，不给按钮", () => {
-		render(meter(COLD));
-		fireEvent.click(screen.getByTitle("12% 上下文已用"));
-		expect(screen.getByText("Skills")).toBeTruthy();
-		expect(screen.queryByRole("button", { name: "现在统计" })).toBeNull();
+	it("does not render the slider without a current model", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => okResponse()));
+		const { container } = renderMeter({ model: null });
+		fireEvent.click(container.querySelector(".icon-btn")!);
+		await waitFor(() => expect(container.querySelector(".popover")).toBeTruthy());
+		expect(screen.queryByLabelText("上下文窗口")).toBeNull();
 	});
 });

@@ -11,13 +11,29 @@
  * 其余分项照常显示，另给「现在统计」按需启动会话，分项随后经 context_breakdown 事件刷新。
  * 无对话时不渲染（由父组件经 contextVisible 控制）。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useI18n } from "@/i18n";
 import { classifyMessageChars } from "@/lib/process-format";
 import type { ContextBreakdown } from "@/lib/types";
 
 function fmtTok(n: number): string {
 	return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(Math.round(n));
+}
+
+/** 窗口滑块：对数映射 8K..2M，取值取整到 1K，避免出现 127999 这种 */
+const WINDOW_MIN = 8_000;
+const WINDOW_MAX = 2_000_000;
+function fmtWindow(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 2)}M`;
+	return `${Math.round(n / 1000)}K`;
+}
+function windowSliderValue(tokens: number): number {
+	const clamped = Math.min(WINDOW_MAX, Math.max(WINDOW_MIN, tokens));
+	return Math.round(((Math.log(clamped) - Math.log(WINDOW_MIN)) / (Math.log(WINDOW_MAX) - Math.log(WINDOW_MIN))) * 100);
+}
+function windowFromSlider(value: number): number {
+	const raw = Math.exp(Math.log(WINDOW_MIN) + (value / 100) * (Math.log(WINDOW_MAX) - Math.log(WINDOW_MIN)));
+	return Math.max(WINDOW_MIN, Math.round(raw / 1000) * 1000);
 }
 
 /** 13 类分段的定义（顺序即渲染顺序） */
@@ -32,11 +48,14 @@ export function ContextMeter({
 	percent,
 	tokens,
 	contextWindow,
+	model,
 	source,
 }: {
 	percent: number | null;
 	tokens: number | null;
 	contextWindow: number | null;
+	/** 当前会话用的模型；有它才显示「上下文窗口」滑块（改的是该模型的 modelOverrides） */
+	model?: { provider: string; id: string } | null;
 	/** 分段数据源：消息字符统计只在弹窗打开时执行（流式期间消息每 token 都变，不能常驻扫描） */
 	source?: {
 		systemChars: number;
@@ -69,6 +88,56 @@ export function ContextMeter({
 	const used = tokens ?? 0;
 	const window_ = contextWindow ?? 0;
 	const b = source?.breakdown;
+
+	// 上下文窗口滑块：拖动改当前模型的 contextWindow（写 modelOverrides），服务端立即换绑并广播用量。
+	// 服务端值追平草稿后就清掉草稿，让后续快照/用量事件接管显示。
+	const [draftWindow, setDraftWindow] = useState<number | null>(null);
+	const [savingWindow, setSavingWindow] = useState(false);
+	const [windowError, setWindowError] = useState<string | null>(null);
+	const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const pendingWindow = useRef<number | null>(null);
+	const shownWindow = draftWindow ?? window_;
+
+	useEffect(() => {
+		if (draftWindow !== null && window_ === draftWindow) setDraftWindow(null);
+	}, [window_, draftWindow]);
+	useEffect(() => {
+		setDraftWindow(null);
+		setWindowError(null);
+	}, [model?.provider, model?.id]);
+	useEffect(() => () => {
+		if (saveTimer.current) clearTimeout(saveTimer.current);
+	}, []);
+
+	const commitWindow = useCallback(async (value: number) => {
+		if (!model) return;
+		setSavingWindow(true);
+		setWindowError(null);
+		try {
+			const res = await fetch("/api/models", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "setContextWindow", providerId: model.provider, modelId: model.id, contextWindow: value }),
+			});
+			const json = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null;
+			if (!res.ok || !json?.success) throw new Error(json?.error || `request failed (${res.status})`);
+		} catch (error) {
+			setWindowError(error instanceof Error ? error.message : String(error));
+			setDraftWindow(null);
+		} finally {
+			setSavingWindow(false);
+		}
+	}, [model]);
+
+	const slideWindow = (event: ChangeEvent<HTMLInputElement>) => {
+		const value = windowFromSlider(Number(event.target.value));
+		setDraftWindow(value);
+		pendingWindow.current = value;
+		if (saveTimer.current) clearTimeout(saveTimer.current);
+		saveTimer.current = setTimeout(() => {
+			if (pendingWindow.current !== null) void commitWindow(pendingWindow.current);
+		}, 350);
+	};
 
 	// 消息分项只在弹窗打开时统计（≈4 字符/token，与 SDK 一致）
 	const messageSegments = useMemo(() => {
@@ -165,6 +234,28 @@ export function ContextMeter({
 						))}
 						{window_ > 0 && <SegmentRow label={t.contextFreeSpace} tokens={free} color="var(--dsw-selector)" />}
 					</div>
+					{/* 上下文窗口滑块：拖动即改，服务端换绑后圆环即时刷新，不用刷新页面 */}
+					{model && window_ > 0 && (
+						<div className="mt-3 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }}>
+							<div className="flex items-center justify-between gap-2" style={{ color: "var(--dsw-label-tertiary)" }}>
+								<span>{t.contextWindowLabel}</span>
+								<span style={{ color: windowError ? "var(--dsw-danger)" : "var(--dsw-label-secondary)", opacity: savingWindow ? 0.55 : 1 }}>
+									{fmtWindow(shownWindow)}
+								</span>
+							</div>
+							<input
+								type="range"
+								min={0}
+								max={100}
+								step={1}
+								value={windowSliderValue(shownWindow)}
+								onChange={slideWindow}
+								aria-label={t.contextWindowLabel}
+								style={{ width: "100%", accentColor: "var(--dsw-accent)", marginTop: 6 }}
+							/>
+							{windowError && <div style={{ color: "var(--dsw-danger)", fontSize: 11, marginTop: 2 }}>{windowError}</div>}
+						</div>
+					)}
 					{cold && source?.loadFull ? (
 						<div className="mt-3 flex items-center justify-between gap-2" style={{ color: "var(--dsw-label-tertiary)" }}>
 							<span className="min-w-0" style={{ fontSize: 11.5 }}>{t.contextColdHint}</span>

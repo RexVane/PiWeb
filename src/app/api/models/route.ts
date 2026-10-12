@@ -14,6 +14,7 @@ import {
 	readCustomProviders,
 	removeApiKey,
 	setApiKey,
+	setModelContextWindow,
 	startLogin,
 	writeCustomProviders,
 } from "@/lib/models-service";
@@ -73,11 +74,14 @@ export async function POST(req: Request) {
 				| "saveCustomProviders"
 				| "discoverModels"
 				| "providerUsage"
+				| "setContextWindow"
 				| "loginStart"
 				| "loginState"
 				| "loginAnswer"
 				| "loginCancel";
 			providerId?: string;
+			modelId?: string;
+			contextWindow?: number;
 			apiKey?: string;
 			baseUrl?: string;
 			api?: string;
@@ -114,6 +118,13 @@ export async function POST(req: Request) {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });
 			const usage = await providerUsage(body.providerId, body.force === true);
 			return NextResponse.json({ success: true, data: { usage } });
+		}
+		if (body.action === "setContextWindow") {
+			if (!body.providerId || !body.modelId || typeof body.contextWindow !== "number") {
+				return NextResponse.json({ success: false, error: "missing fields" }, { status: 400 });
+			}
+			await setModelContextWindow(body.providerId, body.modelId, body.contextWindow);
+			return NextResponse.json({ success: true, data: { contextWindow: body.contextWindow } });
 		}
 		if (body.action === "loginStart") {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });

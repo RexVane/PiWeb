@@ -475,6 +475,37 @@ export async function refreshSessionModels(): Promise<void> {
 	}
 }
 
+/**
+ * 把某个模型的新 contextWindow 立即应用到所有正在用它的会话，并广播用量。
+ *
+ * 会话的上下文窗口（圆环、自动压缩阈值都读 model.contextWindow）绑定在创建时的 Model 对象上；
+ * 只刷新运行时不够，必须换绑（或就地改窗口）再推一次 usage，前端圆环才会即时刷新——不用刷新页面。
+ * 与 refreshSessionModels 的区别：不挑空闲会话（改窗口不打断流式），且强制把窗口设成目标值。
+ * 返回被更新的会话数。
+ */
+export async function applyContextWindow(providerId: string, modelId: string, contextWindow: number): Promise<number> {
+	const rt = await getModelRuntime();
+	let applied = 0;
+	for (const m of sessions.values()) {
+		const session = m.session;
+		if (!session) continue;
+		const current = session.model;
+		if (!current || current.provider !== providerId || current.id !== modelId) continue;
+		try {
+			const fresh = rt.getModel(providerId, modelId);
+			if (fresh && fresh !== current) session.agent.state.model = fresh;
+			// 运行时没换新对象（就地更新）时，直接改窗口，保证立即生效
+			const model = session.model as { contextWindow?: number } | undefined;
+			if (model && model.contextWindow !== contextWindow) model.contextWindow = contextWindow;
+			publishUsage(m);
+			applied += 1;
+		} catch {
+			/* 单个会话失败不影响其它 */
+		}
+	}
+	return applied;
+}
+
 function translate(m: Managed, evt: AgentSessionEvent): void {
 	m.ledger.onEvent(evt);
 	growthOf(m).onEvent(evt);

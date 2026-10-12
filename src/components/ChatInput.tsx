@@ -711,6 +711,7 @@ export function ChatInput({
 							percent={contextPercent}
 							tokens={contextTokens}
 							contextWindow={contextWindow}
+							model={model}
 							source={contextSource}
 						/>
 					)}

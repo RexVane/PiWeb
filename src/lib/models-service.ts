@@ -14,7 +14,7 @@ import { filterModelsByPiScope } from "./models/model-scope";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getModelRuntime, refreshModelRuntime } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
-import { reloadSessionsForCwd, refreshSessionModels } from "./agent-manager";
+import { reloadSessionsForCwd, refreshSessionModels, applyContextWindow } from "./agent-manager";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -1342,4 +1342,46 @@ export async function writeCustomProviders(content: string, revision?: string): 
 	// 会话与共享 runtime 是同一个实例，刷新后目录已是新的；再让活跃会话重载一次，
 	// 把当前模型对象换成新配置（改了 baseUrl / contextWindow 等字段时生效）
 	await reloadSessionsForCwd();
+}
+
+/**
+ * 只改某个模型的 contextWindow（写进该 provider 的 modelOverrides.<modelId>，保留其它字段），
+ * 并让改动立即生效：刷新共享运行时，再把新窗口应用到所有正在用该模型的会话并广播用量。
+ *
+ * 与 writeCustomProviders 的区别：不做资源重载（改窗口不需要），适合圆环滑块这类随时可能连点的操作。
+ */
+export async function setModelContextWindow(providerId: string, modelId: string, contextWindow: number): Promise<void> {
+	if (!providerId.trim() || !modelId.trim()) throw new CustomProvidersValidationError("missing provider or model");
+	if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) {
+		throw new CustomProvidersValidationError("contextWindow 必须是正整数");
+	}
+	const file = modelsJsonPath();
+	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
+		const previous = await readCustomProvidersSnapshot(file);
+		const parsed = parseCustomProviders(previous.content ?? '{"providers":{}}');
+		if (!isRecord(parsed.providers[providerId])) parsed.providers[providerId] = {};
+		const provider = parsed.providers[providerId];
+		const overrides: Record<string, unknown> = isRecord(provider.modelOverrides) ? provider.modelOverrides : {};
+		provider.modelOverrides = overrides;
+		if (!isRecord(overrides[modelId])) overrides[modelId] = {};
+		const model = overrides[modelId] as Record<string, unknown>;
+		model.contextWindow = contextWindow;
+		validateTokenLimits(parsed);
+		const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+		try {
+			// 现有文件先落一份做结构校验（损坏时不能当成空文件覆盖），与原写入路径一致
+			if (previous.content !== undefined) {
+				await fs.writeFile(temporary, JSON.stringify(parseCustomProviders(previous.content), null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+				await validateStagedCustomProviders(temporary);
+			}
+			await fs.writeFile(temporary, JSON.stringify(parsed, null, 2), { encoding: "utf8", flag: "w" });
+			await validateStagedCustomProviders(temporary);
+			await fs.rename(temporary, file);
+		} finally {
+			await fs.rm(temporary, { force: true }).catch(() => undefined);
+		}
+	}));
+	await refreshModelRuntime();
+	invalidateModelList();
+	await applyContextWindow(providerId, modelId, contextWindow);
 }
