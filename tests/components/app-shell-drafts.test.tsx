@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { writeRememberedHeroModel } from "@/lib/hero-model-memory";
 
 const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn() }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
@@ -44,7 +45,8 @@ const textarea = () => screen.getByRole("textbox") as HTMLTextAreaElement;
 const go = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
 // 轨迹页签已移除：用「切到别的会话再切回来」制造同样的重挂载（草稿与待接收状态由父层持有）
 const remount = (returnTo = "Open A") => { go("Open B"); go(returnTo); };
-beforeEach(() => { localStorage.clear(); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
+// 新会话页不再自动选模型：这些用例模拟用户在 /workspace 里选过 test-model（记住的选择），草稿才能发出去
+beforeEach(() => { localStorage.clear(); writeRememberedHeroModel(localStorage, "/workspace", { provider: model.provider, id: model.id }); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
@@ -136,5 +138,16 @@ describe("AppShell session-owned composer drafts", () => {
 		expect(textarea().value).toBe(success ? "" : "hero prompt");
 		go("New hero");
 		expect(textarea().value).toBe("");
+	});
+
+	it("does not preselect a model for a workspace with no remembered choice, so the composer stays blocked", async () => {
+		localStorage.clear();
+		render(<AppShell />);
+		go("New hero");
+		expect(textarea().disabled).toBe(true);
+		fireEvent.change(textarea(), { target: { value: "too early" } });
+		fireEvent.keyDown(textarea(), { key: "Enter" });
+		expect(mocks.newSession).not.toHaveBeenCalled();
+		expect(mocks.sendCommand).not.toHaveBeenCalled();
 	});
 });

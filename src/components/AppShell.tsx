@@ -42,6 +42,7 @@ import type { TreeNode } from "@/lib/growth-tree";
 import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
 import type { NewSessionDefaults } from "@/lib/model-defaults";
+import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
@@ -183,28 +184,8 @@ export function AppShell() {
 			setHeroModel(null);
 			return;
 		}
-		// 先从 localStorage 读工作区级别的选择
-		const saved = localStorage.getItem(`piweb.heroModel.${heroCwd}`);
-		if (saved) {
-			try {
-				setHeroModel(JSON.parse(saved));
-				return;
-			} catch {
-				/* 忽略解析错误 */
-			}
-		}
-		// 再从全局默认
-		const globalSaved = localStorage.getItem("piweb.heroModel");
-		if (globalSaved) {
-			try {
-				setHeroModel(JSON.parse(globalSaved));
-				return;
-			} catch {
-				/* 忽略解析错误 */
-			}
-		}
-		// 没有记住的选择时，由 defaultModel 按服务端给出的建议取
-		setHeroModel(null);
+		// 只认这个工作区自己记住的模型；没有就不预选，输入框等用户在新会话页选
+		setHeroModel(readRememberedHeroModel(localStorage, heroCwd));
 	}, [heroCwd]);
 	useEffect(() => {
 		setHeroDefaults(null);
@@ -327,32 +308,28 @@ export function AppShell() {
 			})),
 		[models],
 	);
-	// 新会话的建议模型按 pi 的初始模型规则由服务端算好；它不在当前目录里（或还没取到）时退回第一个认证的模型
-	const suggestedModel = useMemo(() => {
-		const s = heroDefaults?.model;
-		return s ? modelChoices.find((m) => m.provider === s.provider && m.id === s.id) : undefined;
-	}, [heroDefaults, modelChoices]);
-	const defaultModel = useMemo(
-		() => suggestedModel ?? modelChoices.find((m) => authByProvider[m.provider]),
-		[suggestedModel, modelChoices, authByProvider],
+	// 新会话页当前选中的模型：只有在这个工作区选过（或记住过）才有；没有就是 undefined，输入框保持禁用
+	const heroChoice = useMemo(
+		() => (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : undefined),
+		[heroModel, modelChoices],
 	);
 	const heroModelLevels = useMemo(
-		() => (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-		[heroModel, modelChoices, defaultModel],
+		() => heroChoice?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+		[heroChoice],
 	);
 	/**
 	 * 新会话实际会用的思考档位：用户显式选过才算选择（下发时才带上）；界面平时只显示这里算出的生效值，
 	 * 不把它当作选择发给服务端。
 	 */
 	const heroEffectiveThinking = useMemo(() => {
-		const choice = heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel;
+		const choice = heroChoice;
 		return newSessionThinkingLevel({
 			supported: heroModelLevels,
 			requested: heroThinking,
 			modelOverride: choice ? heroDefaults?.modelThinkingLevels[`${choice.provider}/${choice.id}`] : undefined,
 			defaultLevel: heroDefaults?.defaultThinkingLevel,
 		});
-	}, [heroModel, modelChoices, defaultModel, heroModelLevels, heroThinking, heroDefaults]);
+	}, [heroChoice, heroModelLevels, heroThinking, heroDefaults]);
 
 
 	// ---------- 拖拽 ----------
@@ -530,12 +507,14 @@ export function AppShell() {
 			setError(t.pickWorkspaceFirst);
 			return { success: false };
 		}
-		// 用户没手动选过模型时也要把界面显示的默认模型显式下发，
-		// 否则后端不 setModel、SDK 自选的默认与界面显示不一致。
-		const effective = heroModel ?? (defaultModel ? { provider: defaultModel.provider, id: defaultModel.id } : null);
+		// 没选模型不建会话：输入框本来就禁用，这里再拦一次；模型一律显式下发，不让 SDK 自选
+		if (!heroChoice) {
+			setError(t.blockedComposer);
+			return { success: false };
+		}
 		const p = await newSession(cwd, {
-			provider: effective?.provider,
-			modelId: effective?.id,
+			provider: heroChoice.provider,
+			modelId: heroChoice.id,
 			thinking: heroThinking || undefined,
 		});
 		if (!p) return { success: false };
@@ -891,20 +870,15 @@ export function AppShell() {
 							providerNames={providerNames}
 							authByProvider={authByProvider}
 							addWorkspaceByPicker={addWorkspaceByPicker}
-							heroModel={heroModel}
+							heroChoice={heroChoice}
 							onSelectHeroModel={(provider, id) => {
 								const choice = { provider, id };
 								setHeroModel(choice);
-								// 保存用户的选择：优先用工作区级别，再回落到全局
-								if (heroCwd) {
-									localStorage.setItem(`piweb.heroModel.${heroCwd}`, JSON.stringify(choice));
-								} else {
-									localStorage.setItem("piweb.heroModel", JSON.stringify(choice));
-								}
+								// 只记在当前工作区名下
+								if (heroCwd) writeRememberedHeroModel(localStorage, heroCwd, choice);
 								const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
 								if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
 							}}
-							defaultModel={defaultModel}
 							heroModelLevels={heroModelLevels}
 							heroEffectiveThinking={heroEffectiveThinking}
 							onSelectHeroThinking={setHeroThinking}
@@ -1188,9 +1162,8 @@ function Hero({
 	providerNames,
 	authByProvider,
 	addWorkspaceByPicker,
-	heroModel,
+	heroChoice,
 	onSelectHeroModel,
-	defaultModel,
 	heroModelLevels,
 	heroEffectiveThinking,
 	onSelectHeroThinking,
@@ -1214,9 +1187,8 @@ function Hero({
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
 	addWorkspaceByPicker: () => Promise<string | null>;
-	heroModel: { provider: string; id: string } | null;
+	heroChoice?: ModelChoice;
 	onSelectHeroModel: (provider: string, id: string) => void;
-	defaultModel?: ModelChoice;
 	heroModelLevels: string[];
 	heroEffectiveThinking: string;
 	onSelectHeroThinking: (level: string) => void;
@@ -1327,7 +1299,7 @@ function Hero({
 					contextTokens={null}
 					contextWindow={null}
 					contextVisible={false}
-					model={heroModel ? models.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) ?? { provider: heroModel.provider, id: heroModel.id, name: heroModel.id, reasoning: false, contextWindow: 0 } : defaultModel}
+					model={heroChoice}
 					thinkingLevel={heroEffectiveThinking}
 					thinkingLevels={heroModelLevels}
 					models={models}
