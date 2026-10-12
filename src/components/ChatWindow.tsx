@@ -30,6 +30,7 @@ import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { useI18n } from "@/i18n";
+import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
 import type { ToolCardState } from "@/hooks/usePiWeb";
 import type { ContextResource, TrajEntry, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
 import {
@@ -128,16 +129,16 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 							<>
 								<div className="flex items-center justify-between gap-2">
 									<span style={{ color: "var(--dsw-label-caption)" }}>{t.inputTokens}</span>
-									<span>{fmtTok(billed)}</span>
+									<span>{fmtTokens(billed)}</span>
 								</div>
 								<div className="flex items-center justify-between gap-2">
 									<span style={{ color: "var(--dsw-label-caption)" }}>{t.outputTokens}</span>
-									<span>{fmtTok(usage.output ?? 0)}</span>
+									<span>{fmtTokens(usage.output ?? 0)}</span>
 								</div>
 								{(usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) > 0 && (
 									<div className="flex items-center justify-between gap-2">
 										<span style={{ color: "var(--dsw-label-caption)" }}>{t.cacheHits}</span>
-										<span>{Math.round(((usage.cacheRead ?? 0) / Math.max(billed, 1)) * 100)}%</span>
+										<span>{fmtPercent(((usage.cacheRead ?? 0) / Math.max(billed, 1)) * 100)}</span>
 									</div>
 								)}
 							</>
@@ -710,7 +711,7 @@ function WorkingStep({ startedAt, outputTokens, workingMessage, hasLiveStep }: {
 			<div className="pw-line">
 				{label ? <span className="pw-shimmer">{label}</span> : <span className="pw-verb">{fillBold(WORKING_FOR, { d: fmtSpan(elapsed) })}</span>}
 				{label && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
-				{outputTokens ? <span className="pw-meta">↓ {fmtTok(outputTokens)} tokens</span> : null}
+				{outputTokens ? <span className="pw-meta">↓ {fmtTokens(outputTokens)} tokens</span> : null}
 			</div>
 		</Step>
 	);
@@ -1243,22 +1244,6 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 	);
 }
 
-function fmtTok(n: number): string {
-	const scaled = (value: number) => value >= 100 ? String(Math.round(value)) : String(Math.round(value * 10) / 10);
-	return n >= 1_000_000 ? `${scaled(n / 1_000_000)}M` : n >= 1000 ? `${scaled(n / 1000)}K` : String(n);
-}
-
-function fmtDuration(ms: number): string {
-	const seconds = ms / 1000;
-	if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`;
-	const whole = Math.round(seconds);
-	return `${Math.floor(whole / 60)}m${whole % 60}s`;
-}
-
-function fmtThroughput(tokensPerSecond: number): string {
-	return tokensPerSecond >= 10 ? String(Math.round(tokensPerSecond)) : String(Math.round(tokensPerSecond * 10) / 10);
-}
-
 export function SessionStatsBar({
 	stats,
 }: {
@@ -1281,15 +1266,18 @@ export function SessionStatsBar({
 	if (speeds.length) groups.push(speeds.join(" · "));
 	const billedInput = stats.tokens.input + stats.tokens.cacheRead + stats.tokens.cacheWrite;
 	if (billedInput > 0 || stats.tokens.output > 0) {
-		if (billedInput > 0) groups.push(`${t.cacheHits} ${Math.round((stats.tokens.cacheRead / billedInput) * 100)}%`);
-		groups.push(`${t.inputTokens} ${fmtTok(billedInput)} tok · ${t.outputTokens} ${fmtTok(stats.tokens.output)} tok`);
+		if (billedInput > 0) groups.push(`${t.cacheHits} ${fmtPercent((stats.tokens.cacheRead / billedInput) * 100)}`);
+		groups.push(`${t.inputTokens} ${fmtTokens(billedInput)} tok · ${t.outputTokens} ${fmtTokens(stats.tokens.output)} tok`);
 	}
 	const line = groups.join(" | ");
 	return (
 		// 悬停显示完整统计：自定义浮层固定在统计条上方（原生 title 位置不可控）
+		// 容器只有 544px（内容窄轴下限）而整行实测 959px，以前一律省略号截断：
+		// 提高精度后更长，「输入 / 输出 tokens」这类用户最关心的反而看不到。
+		// 改成允许换行：窄屏折成两行完整显示，代价是纵向多占 20px。
 		<div className="group relative mx-auto mt-1 block w-full px-4 pt-1 text-center">
 			<div
-				className="overflow-hidden text-ellipsis whitespace-nowrap"
+				className="[overflow-wrap:anywhere]"
 				style={{ fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: "20px", color: "var(--dsw-label-caption)" }}
 			>
 				{line}

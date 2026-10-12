@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { IconCloseOutline14, IconSearchOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
+import { fmtTokens } from "@/lib/format";
 import type { TrajEntry, TrajTokens } from "@/lib/types";
 import styles from "./TrajectoryAnalyzer.module.css";
 
@@ -26,10 +27,7 @@ const KIND_NAME: Record<TrajEntry["kind"], string> = {
 };
 
 function fmtTok(value?: number): string {
-	if (value == null) return "—";
-	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-	if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-	return String(value);
+	return value == null ? "—" : fmtTokens(value);
 }
 
 function fmtTime(ts: number): string {
@@ -45,8 +43,8 @@ function durationOf(entry: TrajEntry): number | undefined {
 
 function fmtDur(ms?: number): string {
 	if (ms == null) return "—";
-	if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
-	if (ms >= 1_000) return `${(ms / 1_000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
+	if (ms >= 60_000) return `${(ms / 60_000).toFixed(2)}m`;
+	if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`;
 	return `${Math.round(ms)}ms`;
 }
 

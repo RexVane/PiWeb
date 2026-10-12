@@ -17,6 +17,7 @@ import {
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
+import { fmtBytes } from "@/lib/format";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import type { ImageAttachment } from "@/lib/types";
 
@@ -773,9 +774,7 @@ export function ChatInput({
 }
 
 function fmtUploadSize(bytes: number): string {
-	if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-	if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
-	return `${bytes}B`;
+	return fmtBytes(bytes).replace(/ /g, "");
 }
 
 /**

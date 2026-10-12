@@ -53,7 +53,7 @@ describe("PromptPanel", () => {
 		expect(screen.getByText("个人")).toBeTruthy();
 		expect(screen.getByText("包 @scope/pkg")).toBeTruthy();
 		// 文件大小一并显示
-		expect(screen.getByText("2.0 KB")).toBeTruthy();
+		expect(screen.getByText("2.00 KB")).toBeTruthy();
 	});
 
 	it("reads a file on click and hands it to the viewer", async () => {

@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/i18n";
+import { fmtBytes } from "@/lib/format";
 import { IconRefreshOutline14, IconCloseOutline14 } from "@/components/icons";
 
 export type PromptSourceKind = "system" | "append" | "agents" | "skill" | "template" | "tool" | "assembled";
@@ -45,10 +46,7 @@ export interface PromptSourcesData {
 const GROUP_KINDS: PromptSourceKind[] = ["system", "append", "agents", "skill", "template", "tool", "assembled"];
 
 function formatBytes(bytes: number | undefined): string {
-	if (!bytes) return "";
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+	return bytes ? fmtBytes(bytes) : "";
 }
 
 export function PromptPanel({

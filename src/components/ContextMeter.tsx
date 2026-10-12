@@ -13,12 +13,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
-import { classifyMessageChars } from "@/lib/process-format";
+import { fmtPercent, fmtTokens } from "@/lib/format";
+import { classifyMessageChars, scaleSegmentsToTotal } from "@/lib/process-format";
 import type { ContextBreakdown } from "@/lib/types";
-
-function fmtTok(n: number): string {
-	return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(Math.round(n));
-}
 
 /** 13 类分段的定义（顺序即渲染顺序） */
 interface Segment {
@@ -84,12 +81,12 @@ export function ContextMeter({
 	}, [open, source]);
 
 	const p = percent ?? 0;
-	const usageLabel = percent === null ? t.contextUnknown : `${Math.round(p)}% ${t.contextUsed}`;
+	const usageLabel = percent === null ? t.contextUnknown : `${fmtPercent(p)} ${t.contextUsed}`;
 	const r = 5.5;
 	const c = 2 * Math.PI * r;
 	const shown = Math.max(0, Math.min(100, p));
 
-	const segments: Segment[] = b
+	const rawSegments: Segment[] = b
 		? [
 				{ key: "systemPrompt", label: t.contextSystemPrompt, tokens: b.systemPrompt, color: "var(--dsw-accent)" },
 				{ key: "systemTools", label: t.contextSystemTools, tokens: b.systemTools, color: "#8B7EC8" },
@@ -111,10 +108,18 @@ export function ContextMeter({
 				{ key: "tools", label: t.contextTools, tokens: Math.max(0, used - Math.max(0, Math.round((source?.systemChars ?? 0) / 4)) - messageSegments.user - messageSegments.agentText - messageSegments.agentThinking), color: "var(--dsw-warn)" },
 			];
 
-	// Free Space：窗口余量（窗口未知则不显示）；分段条不归一化到已用之和
-	const usedSum = segments.reduce((sum, s) => sum + s.tokens, 0);
-	const free = window_ > 0 ? Math.max(0, window_ - usedSum) : 0;
-	const barTotal = window_ > 0 ? window_ : usedSum || 1;
+	// 分项只提供比例，总量锚定到真实用量：头部、分项之和、Free Space 三者才能对上。
+	// 真实用量未知（冷会话 / 刚压缩完）时 keep 估算口径。
+	const anchor = tokens !== null && tokens > 0 ? tokens : null;
+	// Auto-Compact Buffer 是「预留」不是已用内容，不参与按比例归一化，
+	// 它从窗口余量里单独扣（Free = 窗口 − 真实用量 − 预留）。
+	const reserved = rawSegments.filter((s) => s.key === "buffer");
+	const scaled = scaleSegmentsToTotal(rawSegments.filter((s) => s.key !== "buffer"), anchor);
+	const segments: Segment[] = [...scaled, ...reserved];
+	const usedSum = scaled.reduce((sum, s) => sum + s.tokens, 0);
+	const reservedSum = reserved.reduce((sum, s) => sum + s.tokens, 0);
+	const free = window_ > 0 ? Math.max(0, window_ - (anchor ?? usedSum) - reservedSum) : 0;
+	const barTotal = window_ > 0 ? window_ : (usedSum + reservedSum) || 1;
 	const bar = (n: number) => `${(n / barTotal) * 100}%`;
 
 	return (
@@ -147,7 +152,7 @@ export function ContextMeter({
 						{usageLabel}
 					</div>
 					<div style={{ color: "var(--dsw-label-tertiary)" }} className="mt-1">
-						{tokens === null ? "—" : `~${fmtTok(used)}`} / {window_ > 0 ? fmtTok(window_) : "—"}
+						{tokens === null ? "—" : `~${fmtTokens(used)}`} / {window_ > 0 ? fmtTokens(window_) : "—"}
 					</div>
 
 					{/* 分段占用条（mac 磁盘存储条式多色分段，含 Free Space） */}
@@ -199,7 +204,7 @@ function SegmentRow({ label, tokens, color }: { label: string; tokens: number; c
 				<span className="inline-block rounded-full" style={{ width: 7, height: 7, background: color }} />
 				{label}
 			</span>
-			<span>~{fmtTok(tokens)}</span>
+			<span>~{fmtTokens(tokens)}</span>
 		</div>
 	);
 }

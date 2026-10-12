@@ -35,6 +35,7 @@ import { RemoteSection } from "@/components/RemoteSection";
 import { CopyCommand } from "@/components/update/CopyCommand";
 import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } from "@/components/update/update-store";
 import { useI18n } from "@/i18n";
+import { fmtTokens } from "@/lib/format";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { applyFontChoice, CUSTOM_PREFIX, FONT_PRESETS, loadFontChoice } from "@/lib/font";
 import {
@@ -1753,10 +1754,9 @@ function ModelsSection() {
 	);
 }const fieldCls = "w-full rounded-xl px-3 py-2";
 
-/** 配额展示：token 数转 M（53,000,000 → 53M），小数值原样 */
+/** 配额展示：token 数转换单位（53,000,000 → 53.00M），与统计条 / 上下文弹窗口径一致 */
 function fmtQuotaTokens(value: number): string {
-	if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
-	return value.toLocaleString();
+	return fmtTokens(value);
 }
 
 /** 套餐值来自服务端声明（如 "pro"/"plus"），首字母大写后直接跟在标签后显示。 */
