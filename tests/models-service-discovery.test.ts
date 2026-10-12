@@ -5,6 +5,7 @@ import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	apisByUsage,
+	catalogCapabilities,
 	builtinCatalogModelIds,
 	discoverModels,
 	isPublicModelDiscoveryAddress,
@@ -204,5 +205,39 @@ describe("custom provider credential boundaries", () => {
 		const merged = JSON.parse(preserveCustomProviderApiKeys(incoming, previous));
 
 		expect(merged.providers.gateway).toEqual({ baseUrl: "https://new.test/v1" });
+	});
+});
+
+describe("模型目录里的能力字段", () => {
+	it("各家命名都能读出来，读不到就留空", () => {
+		// 本机中转：context_window + modalities.input
+		expect(catalogCapabilities({ context_window: 1_000_000, max_output_tokens: 32_000, modalities: { input: ["text", "image"], output: ["text"] } }))
+			.toEqual({ contextWindow: 1_000_000, maxTokens: 32_000, vision: true });
+		// OpenRouter：context_length + architecture.input_modalities + top_provider
+		expect(catalogCapabilities({ context_length: 200_000, top_provider: { max_completion_tokens: 8192 }, architecture: { input_modalities: ["text"] } }))
+			.toEqual({ contextWindow: 200_000, maxTokens: 8192, vision: false });
+		// llama.cpp 风格：顶层 input_modalities + max_input_tokens，modalities 也可能是数组
+		expect(catalogCapabilities({ max_input_tokens: 4096, input_modalities: ["text", "image"] })).toEqual({ contextWindow: 4096, vision: true });
+		expect(catalogCapabilities({ modalities: ["text", "image"] })).toEqual({ vision: true });
+		// 什么都没给就留空，让表单补缺省（不能自己编一个数）
+		expect(catalogCapabilities({})).toEqual({});
+		expect(catalogCapabilities({ context_window: 0, max_output_tokens: -1 })).toEqual({});
+	});
+
+	it("发现模型时把容量与视觉一起带回来", async () => {
+		process.env.PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY = "1";
+		await withCatalogServer((_request, response) => {
+			response.end(JSON.stringify({ data: [
+				{ id: "with-all", name: "全部都有", context_window: 1_000_000, max_output_tokens: 32_000, modalities: { input: ["text", "image"] } },
+				{ id: "partial", context_length: 200_000, architecture: { input_modalities: ["text"] } },
+				{ id: "plain" },
+			] }));
+		}, async (baseUrl) => {
+			expect(await discoverModels({ baseUrl })).toEqual([
+				{ id: "with-all", name: "全部都有", contextWindow: 1_000_000, maxTokens: 32_000, vision: true },
+				{ id: "partial", contextWindow: 200_000, vision: false },
+				{ id: "plain" },
+			]);
+		});
 	});
 });

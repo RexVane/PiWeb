@@ -49,6 +49,7 @@ import {
 	type StreamStyle,
 } from "@/lib/chat/stream-settings";
 import {
+	formatCapacity,
 	isInertProviderConfig,
 	modelDraftFromConfig,
 	modelDraftsFromProviderConfig,
@@ -56,6 +57,7 @@ import {
 	validateModelDrafts,
 	type ModelDraft,
 } from "@/lib/model-draft";
+import type { CustomModelGap } from "@/lib/models-service";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
@@ -879,6 +881,13 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 
 // ---------- Models ----------
 
+/** 体检结果：哪些模型缺字段、会被 pi 的缺省值顶掉（/api/models 的 modelAudit） */
+interface ModelAudit {
+	gaps: CustomModelGap[];
+	defaults: { contextWindow: number; maxTokens: number; vision: boolean };
+	fallbacks: { contextWindow: number; maxTokens: number; vision: boolean };
+}
+
 function ModelsSection() {
 	const { t } = useI18n();
 	const [providers, setProviders] = useState<ProviderView[]>([]);
@@ -1147,6 +1156,40 @@ function ModelsSection() {
 			return { success: false, error: error instanceof Error ? error.message : t.toastError };
 		}
 	};
+
+	// 体检：models[] 里没写 contextWindow / maxTokens / input 的条目会被 pi 的缺省顶掉
+	// （128000 / 16384 / 只文本）。发现模型时能自动填，这里是给既有配置兜底的入口。
+	const [audit, setAudit] = useState<ModelAudit | null>(null);
+	const gapLabel: Record<CustomModelGap["missing"][number], string> = {
+		contextWindow: t.modelFieldGapContextWindow,
+		maxTokens: t.modelFieldGapMaxTokens,
+		input: t.modelFieldGapInput,
+	};
+	const [auditBusy, setAuditBusy] = useState(false);
+	const loadAudit = async () => {
+		try {
+			const result = await request({ action: "modelAudit" });
+			// 不信任载荷形状：拿到别的数据结构时宁可不显示体检卡片，也不能让设置页崩掉
+			if (result.success && Array.isArray(result.data?.gaps)) setAudit(result.data as ModelAudit);
+		} catch {
+			/* 体检失败不该影响设置面板本身 */
+		}
+	};
+	const fixAudit = async () => {
+		setAuditBusy(true);
+		try {
+			const result = await request({ action: "fixModelDefaults" });
+			if (!result.success) throw new Error(result.error || t.toastError);
+			notify(true, t.modelAuditFixed.replace("{n}", String(result.data?.filled ?? 0)));
+			await load();
+			await loadAudit();
+		} catch (error) {
+			notify(false, error instanceof Error ? error.message : t.toastError);
+		} finally {
+			setAuditBusy(false);
+		}
+	};
+	useEffect(() => { void loadAudit(); }, [providers.length]);
 
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
@@ -1497,7 +1540,13 @@ function ModelsSection() {
 													});
 													const result = await response.json();
 													if (!result.success) throw new Error(result.error || t.toastError);
-													return (result.data.models ?? []).map((model: { id: string; name?: string }) => ({ id: model.id, name: model.name ?? "" }));
+													return (result.data.models ?? []).map((model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }) => ({
+												id: model.id,
+												name: model.name ?? "",
+												...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+												...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
+												...(model.vision === undefined ? {} : { vision: model.vision }),
+											}));
 												}}
 												discoverDisabled={!cBaseUrl.trim()}
 											/>
@@ -1554,7 +1603,13 @@ function ModelsSection() {
 																});
 																const result = await response.json();
 																if (!result.success) throw new Error(result.error || t.toastError);
-																return (result.data.models ?? []).map((model: { id: string; name?: string }) => ({ id: model.id, name: model.name ?? "" }));
+																return (result.data.models ?? []).map((model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }) => ({
+												id: model.id,
+												name: model.name ?? "",
+												...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+												...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
+												...(model.vision === undefined ? {} : { vision: model.vision }),
+											}));
 															}}
 															discoverDisabled={!(bBaseUrl.trim() || p.baseUrl)}
 														/>
@@ -1596,6 +1651,34 @@ function ModelsSection() {
 					);
 				})}
 			</div>
+
+			{/* 模型配置体检：不填的字段会被 pi 的缺省值悄悄顶掉 */}
+			{audit && audit.gaps.length > 0 ? (
+				<div className="flex flex-col gap-2 rounded-2xl p-3" style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-hover)" }}>
+					<div className="flex items-start gap-3">
+						<div className="min-w-0 flex-1">
+							<div style={{ fontSize: 13, fontWeight: 600 }}>{t.modelAuditTitle.replace("{n}", String(audit.gaps.length))}</div>
+							<div className="mt-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", lineHeight: 1.6 }}>
+								{t.modelAuditDesc
+									.replace("{ctx}", formatCapacity(audit.fallbacks.contextWindow))
+									.replace("{out}", formatCapacity(audit.fallbacks.maxTokens))
+									.replace("{defaults}", formatCapacity(audit.defaults.contextWindow) + " / " + formatCapacity(audit.defaults.maxTokens))}
+							</div>
+						</div>
+						<button className="btn-primary-white flex-none" style={{ height: 32 }} disabled={auditBusy} onClick={() => void fixAudit()}>
+							{auditBusy ? t.saving : t.modelAuditFix}
+						</button>
+					</div>
+					<div className="flex flex-col gap-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)" }}>
+						{audit.gaps.slice(0, 8).map((gap) => (
+							<div key={gap.provider + ":" + gap.id} className="truncate" title={gap.provider + " / " + gap.id}>
+								{gap.id} · {gap.missing.map((field) => gapLabel[field]).join("、")}
+							</div>
+						))}
+						{audit.gaps.length > 8 ? <div>{t.modelAuditMore.replace("{n}", String(audit.gaps.length - 8))}</div> : null}
+					</div>
+				</div>
+			) : null}
 
 			{/* 两个添加按钮 */}
 			<div className="flex gap-3">

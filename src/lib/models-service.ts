@@ -11,6 +11,7 @@ import { BlockList, isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { filterModelsByPiScope } from "./models/model-scope";
+import { MODEL_FIELD_DEFAULTS, modelInputFor } from "./model-draft";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getModelRuntime, modelRuntimeVersion, refreshModelRuntime, refreshModelRuntimeIfFilesChanged } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
@@ -61,6 +62,65 @@ export interface ProviderView {
 export interface DiscoveredModel {
 	id: string;
 	name?: string;
+	/** 端点自报的上下文窗口（各家字段名不同，见 catalogCapabilities） */
+	contextWindow?: number;
+	/** 端点自报的单次输出上限 */
+	maxTokens?: number;
+	/** 端点自报的输入模态里有 image */
+	vision?: boolean;
+}
+
+/**
+ * ⚠️ 这是 pi 在模型没写这些字段时用的值（dist/core/provider-composer.js:105-110），不是推荐值：
+ * 它们只适合几年前「128k + 16k + 纯文本」的模型，现在的模型普遍是 1M + 32k + 有视觉。
+ * 放在这里是为了向用户解释「不填会被当成什么」；写入时用 model-draft 的 MODEL_FIELD_DEFAULTS。
+ */
+export const PI_MODEL_FALLBACKS = { contextWindow: 128_000, maxTokens: 16_384, vision: false } as const;
+
+export type CustomModelField = "input" | "contextWindow" | "maxTokens";
+
+export interface CustomModelGap {
+	provider: string;
+	providerName: string | null;
+	id: string;
+	name: string | null;
+	missing: CustomModelField[];
+}
+
+function positiveInt(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * 从模型目录条目里挑出能力字段。各家命名不同，能给就读、读不到就留空（由表单补缺省）：
+ * - 上下文：`context_window`（本机中转）/ `context_length`（OpenRouter）/ `max_input_tokens`；
+ * - 输出上限：`max_output_tokens` / `max_completion_tokens` / `top_provider.max_completion_tokens`；
+ * - 视觉：`modalities.input`（本机中转）/ `architecture.input_modalities`（OpenRouter / llama.cpp）。
+ */
+export function catalogCapabilities(value: Record<string, unknown>): Pick<DiscoveredModel, "contextWindow" | "maxTokens" | "vision"> {
+	const architecture = isRecord(value.architecture) ? value.architecture : undefined;
+	const modalities = value.modalities ?? architecture?.input_modalities ?? value.input_modalities;
+	const inputList = Array.isArray(modalities)
+		? modalities
+		: isRecord(modalities) && Array.isArray(modalities.input)
+			? modalities.input
+			: undefined;
+	const topProvider = isRecord(value.top_provider) ? value.top_provider : undefined;
+	const contextWindow = positiveInt(value.context_window)
+		?? positiveInt(value.context_length)
+		?? positiveInt(value.max_input_tokens)
+		?? positiveInt(architecture?.context_length);
+	const maxTokens = positiveInt(value.max_output_tokens)
+		?? positiveInt(value.max_completion_tokens)
+		?? positiveInt(topProvider?.max_completion_tokens);
+	const vision = inputList
+		? inputList.some((item) => typeof item === "string" && item.toLowerCase() === "image")
+		: undefined;
+	return {
+		...(contextWindow === undefined ? {} : { contextWindow }),
+		...(maxTokens === undefined ? {} : { maxTokens }),
+		...(vision === undefined ? {} : { vision }),
+	};
 }
 
 let builtInCatalogPromise: Promise<Map<string, Set<string>>> | null = null;
@@ -539,7 +599,7 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 				const id = typeof value.id === "string" ? value.id.trim() : "";
 				if (!id) return null;
 				const name = typeof value.name === "string" && value.name.trim() ? value.name.trim() : undefined;
-				return { id, ...(name ? { name } : {}) };
+				return { id, ...(name ? { name } : {}), ...catalogCapabilities(value) };
 			})
 			.filter((model): model is DiscoveredModel => Boolean(model))
 			.filter((model, index, all) => all.findIndex((item) => item.id === model.id) === index)
@@ -1333,6 +1393,70 @@ export async function readCustomProviders(): Promise<{ content: string; exists: 
 		exists: snapshot.content !== undefined,
 		revision: snapshot.revision,
 	};
+}
+
+/**
+ * 体检：models.json 里哪些模型的字段会被 pi 的缺省值顶掉（见 PI_MODEL_FALLBACKS）。
+ * 只看 providers[].models[]——modelOverrides 是覆盖内置模型的，那些模型 pi 的目录里有真值。
+ * 内容经过脱敏也不影响：这里只关心字段在不在，不读值。
+ */
+export function customModelGaps(content: string): CustomModelGap[] {
+	const parsed = parseCustomProviders(content);
+	const gaps: CustomModelGap[] = [];
+	for (const [providerId, provider] of Object.entries(parsed.providers)) {
+		const models = Array.isArray(provider.models) ? provider.models : [];
+		for (const model of models) {
+			if (!isRecord(model)) continue;
+			const id = typeof model.id === "string" ? model.id.trim() : "";
+			if (!id) continue;
+			const missing: CustomModelField[] = [];
+			if (model.contextWindow === undefined) missing.push("contextWindow");
+			if (model.maxTokens === undefined) missing.push("maxTokens");
+			if (!Array.isArray(model.input)) missing.push("input");
+			if (!missing.length) continue;
+			gaps.push({
+				provider: providerId,
+				providerName: typeof provider.name === "string" ? provider.name : null,
+				id,
+				name: typeof model.name === "string" ? model.name : null,
+				missing,
+			});
+		}
+	}
+	return gaps;
+}
+
+/**
+ * 一键补全：给 models[] 里缺字段的条目补上默认值（MODEL_FIELD_DEFAULTS）。
+ * 只填空、不覆盖已有值；apiKey 由 writeCustomProviders 从原文件恢复，这里不碰。
+ */
+export function fillCustomModelDefaults(
+	content: string,
+	defaults: typeof MODEL_FIELD_DEFAULTS = MODEL_FIELD_DEFAULTS,
+): { content: string; filled: number } {
+	const parsed = parseCustomProviders(content);
+	let filled = 0;
+	for (const provider of Object.values(parsed.providers)) {
+		const models = Array.isArray(provider.models) ? provider.models : [];
+		for (const model of models) {
+			if (!isRecord(model)) continue;
+			let touched = false;
+			if (model.contextWindow === undefined) {
+				model.contextWindow = defaults.contextWindow;
+				touched = true;
+			}
+			if (model.maxTokens === undefined) {
+				model.maxTokens = defaults.maxTokens;
+				touched = true;
+			}
+			if (!Array.isArray(model.input)) {
+				model.input = modelInputFor(defaults.vision);
+				touched = true;
+			}
+			if (touched) filled += 1;
+		}
+	}
+	return { content: JSON.stringify(parsed, null, 2), filled };
 }
 
 function validateTokenLimits(parsed: CustomProvidersFile): void {

@@ -5,10 +5,27 @@ export interface ModelDraft {
 	name: string;
 	contextWindow?: number;
 	maxTokens?: number;
+	/** 输入模态里有 image（models.json 的 `input`）。undefined = 源里没写：pi 会当成只文本、把贴图换成占位文字 */
+	vision?: boolean;
 	source?: Readonly<Record<string, unknown>>;
 	/** 来自 modelOverrides：只覆盖内置模型的部分字段。缺省 = models[] 里的定义或新加的行 */
 	origin?: "override";
 }
+
+/**
+ * models.json 里模型的 `input` 字段（pi 用它判断能不能收图）。
+ * 没写 → pi 按只文本处理，而且提示语会说是「模型不支持图像」，很容易被当成模型能力问题。
+ */
+export function modelInputFor(vision: boolean): string[] {
+	return vision ? ["text", "image"] : ["text"];
+}
+
+/**
+ * 用户没填、端点也没给时的兜底值。必须写进 models.json：
+ * 留空会被 pi 的过时缺省顶掉（128000 / 16384 / 只文本），而现在的模型普遍是 1M + 32k + 有视觉。
+ * 端点给了真值就用真值，这里只在两个来源都没有时生效。
+ */
+export const MODEL_FIELD_DEFAULTS = { contextWindow: 1_000_000, maxTokens: 32_000, vision: true } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -16,11 +33,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function modelDraftFromConfig(value: unknown): ModelDraft {
 	const source = isRecord(value) ? value : { id: typeof value === "string" ? value : "" };
+	const input = Array.isArray(source.input)
+		? source.input.filter((item): item is string => typeof item === "string")
+		: undefined;
 	return {
 		id: String(source.id ?? ""),
 		name: typeof source.name === "string" ? source.name : "",
 		contextWindow: typeof source.contextWindow === "number" ? source.contextWindow : undefined,
 		maxTokens: typeof source.maxTokens === "number" ? source.maxTokens : undefined,
+		// 只有源里写了 input 才算「声明过」：没写 ≠ 只文本，而是「会被 pi 当只文本」
+		vision: input ? input.includes("image") : undefined,
 		source,
 	};
 }
@@ -71,13 +93,24 @@ export function validateModelDrafts(models: ModelDraft[]): { index: number; reas
 	return undefined;
 }
 
-/** Only edited form fields replace the source; unknown/nested configuration is opaque. */
-export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: string }): Record<string, unknown> {
+/**
+ * Only edited form fields replace the source; unknown/nested configuration is opaque.
+ *
+ * fillDefaults：行会写进 models[] 时补齐缺的字段——包括源里没写 contextWindow / maxTokens / input 的情况。
+ * 不补就等于把这三个值交给 pi 的缺省（128000 / 16384 / 只文本），而它们早就过时了。
+ * 覆盖内置模型的行传 false：那些模型 pi 的目录里有真值，编一个 1M 反而会顶掉正确值。
+ */
+export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: string }, fillDefaults = false): Record<string, unknown> {
 	const result: Record<string, unknown> = { ...model.source };
 	const original = model.source ? modelDraftFromConfig(model.source) : undefined;
+	/** 源里有值、现在被清空 = 用户主动清掉的，不拿缺省填回去 */
+	const cleared = (key: "contextWindow" | "maxTokens" | "vision") => model[key] === undefined && original?.[key] !== undefined;
+	const withDefaults = (key: "contextWindow" | "maxTokens") => model[key] === undefined && fillDefaults && !cleared(key);
 	for (const field of ["id", "name", "contextWindow", "maxTokens"] as const) {
-		if (original && Object.is(model[field], original[field])) continue;
-		const value = model[field];
+		const value = (field === "contextWindow" || field === "maxTokens") && withDefaults(field)
+			? MODEL_FIELD_DEFAULTS[field]
+			: model[field];
+		if (original && Object.is(value, original[field])) continue;
 		if (field === "id" || field === "name") {
 			const text = typeof value === "string" ? value.trim() : "";
 			if (field === "id" || text) result[field] = text;
@@ -85,6 +118,9 @@ export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: s
 		} else if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) result[field] = value;
 		else delete result[field];
 	}
+	// input 是数组：源里从来没写过也算「要写」，否则 pi 会把这个模型当只文本、把贴图换成占位文字
+	const vision = model.vision ?? (fillDefaults && !cleared("vision") ? MODEL_FIELD_DEFAULTS.vision : undefined);
+	if (vision !== undefined && !Object.is(vision, original?.vision)) result.input = modelInputFor(vision);
 	return result;
 }
 
@@ -114,7 +150,7 @@ export function serializeProviderDraft(
 	if (draft.apiKey?.trim()) result.apiKey = draft.apiKey.trim();
 	const { definitions, overrides } = catalogIds
 		? splitBuiltinModels(draft.models, catalogIds)
-		: { definitions: draft.models.map(serializeModelDraft), overrides: undefined };
+		: { definitions: draft.models.map((model) => serializeModelDraft(model, true)), overrides: undefined };
 	// An explicit empty array removes the overrides. Do not merge rows back by ID.
 	if (definitions.length || Object.prototype.hasOwnProperty.call(source, "models")) {
 		result.models = definitions;
@@ -146,11 +182,16 @@ function splitBuiltinModels(models: ModelDraft[], catalogIds: ReadonlySet<string
 	const definitions: Record<string, unknown>[] = [];
 	const overrides: Array<[string, Record<string, unknown>]> = [];
 	for (const model of models) {
+		const id = model.id.trim();
+		const source = isRecord(model.source) ? model.source : undefined;
+		// 自带 api / baseUrl 的 models[] 条目是手写的完整定义，原样留在 models[]
+		const fullDefinition = model.origin !== "override" && (source?.api !== undefined || source?.baseUrl !== undefined);
+		const keptOverride = model.origin === "override" && source !== undefined && modelDraftFromConfig(source).id === id;
+		const asOverride = !fullDefinition && (catalogIds.has(id) || keptOverride);
+		// 内置 provider 这张表单不补缺省：覆盖行有目录真值，而这里的手写定义是用户逐字段填的，
+		// 替他编一个 1M 会盖掉他本来就想要的空（缺字段由设置页的体检统一提示、按需补）
 		const serialized = serializeModelDraft(model);
-		const id = String(serialized.id ?? "");
-		const fullDefinition = model.origin !== "override" && (serialized.api !== undefined || serialized.baseUrl !== undefined);
-		const keptOverride = model.origin === "override" && model.source !== undefined && modelDraftFromConfig(model.source).id === id;
-		if (fullDefinition || !(catalogIds.has(id) || keptOverride)) {
+		if (!asOverride) {
 			definitions.push(serialized);
 			continue;
 		}

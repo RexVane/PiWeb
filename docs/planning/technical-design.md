@@ -472,3 +472,52 @@ Web 端原来只有「在文件面板点引用」这条鼠标路径，缺的是�
 - 选中后文件夹与文件都落成引用 chip（文件夹 = 引用整个目录；要往下钻就继续打 `@src/lib/`），
   正文里的 `@token` 被清掉，发送时统一拼成 `@路径` 行——复用既有链路，与 pi 的 `@` 语法一致。
 - 候选被截断、或走了目录遍历时在菜单里说明来源，不静默少候选。
+
+## 11. 模型能力自动识别与配置体检（2026-10-12）
+
+### 11.1 问题：不填字段就会被 pi 的过时缺省顶掉
+
+models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，pi 就用三个缺省值顶
+（`dist/core/provider-composer.js:105-110`：`["text"]` / `128000` / `16384`）。实测后果：
+
+- `lilililwan/DeepSeek-V4.1-Flash` 没写 `input` → 贴的截图被换成
+  `[Current model does not support images. The image will be omitted from this request.]`；
+  那句提示把「配置里没声明」说成「模型不支持」，把人引向「是不是模型不行」；
+- 同一条没写 `contextWindow` 时，会话在 **128,444 tokens** 就被自动压缩（真实窗口 1M，等于在 1/8 处丢历史）；
+- 而 `virtual-models.js:78` 的同类缺省是 `["text","image"]` —— 同一个字段，两个相反缺省。
+
+### 11.2 端点其实拿得到这些值
+
+`POST /api/models {action:"discoverModels"}` 之前只留 `id` / `name`，把端点返回的能力字段全丢了。
+实测本机 magpie 中转（41 个模型）：
+
+| 字段 | 覆盖率 |
+| --- | --- |
+| 上下文窗口 | 40/41（98%） |
+| 输出上限 | 39/41（95%） |
+| 视觉模态 | 28/41（68%） |
+
+而且值与会话里实际生效的一致（`commandcode-plan/deepseek/deepseek-v4.1-flash` 端点给 1,000,000 / 200,000 / 有视觉）。
+字段名各家不同，`catalogCapabilities()` 统一读：`context_window` / `context_length` / `max_input_tokens`、
+`max_output_tokens` / `max_completion_tokens` / `top_provider.max_completion_tokens`、
+`modalities.input` / `architecture.input_modalities` / 顶层 `input_modalities`。读不到就留空，不编数。
+
+### 11.3 改动
+
+1. **发现即预填**：`DiscoveredModel` 带上 contextWindow / maxTokens / vision，采纳候选时一起进草稿。
+2. **表单加「视觉」开关**（原来连输入框都没有）；容量占位提示从 `128K` / `16K` 改成 `1M` / `32K`。
+3. **保存时补缺省**：自定义 provider 的 `models[]` 行缺字段就写 `MODEL_FIELD_DEFAULTS`（1M / 32k / `["text","image"]`）；
+   用户主动清空的字段不填回去；内置 provider 的覆盖行不补（那些模型 pi 的目录里有真值）。
+4. **体检 + 一键补全**：设置页列出「会被 pi 缺省顶掉」的条目（只看 `models[]`，不碰 `modelOverrides`），
+   `{action:"modelAudit"}` 查、`{action:"fixModelDefaults"}` 补（只填空、带 revision 乐观锁，apiKey 由 `writeCustomProviders` 从原文件恢复）。
+
+### 11.4 验收（生产构建 + 真实数据）
+
+拿**改配置之前的备份**当 models.json 起服务：体检自己报出 3 条，与手工扫描逐条一致；
+一键补全 `filled=3`，再查为 0 条；补完 gpt-6 得到 1M/32k、lilililwan 得到 `["text","image"]`，
+而它们已有的 1M / 32k 未被覆盖（只填空）。
+
+### 11.5 仍未解决（在 pi 侧）
+
+三个缺省值本身、以及那句误导性的提示语，都在 pi 包里；npm 一升级就回去了，
+只能在 PiWeb 侧兜住（预填 + 体检），或去上游提。

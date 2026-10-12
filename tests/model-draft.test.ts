@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-	isInertProviderConfig, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts,
+	MODEL_FIELD_DEFAULTS, isInertProviderConfig, modelDraftFromConfig, modelInputFor, modelDraftsFromProviderConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts,
 } from "../src/lib/model-draft";
 
 const model = {
@@ -111,5 +111,39 @@ describe("builtin provider overrides", () => {
 		for (const field of ["baseUrl", "headers", "compat", "apiKey", "oauth", "authHeader", "futureField"]) {
 			expect(isInertProviderConfig({ api: "x", [field]: field === "authHeader" ? false : "value" })).toBe(false);
 		}
+	});
+});
+
+describe("模型字段缺省（视觉 / 容量）", () => {
+	it("源里没写 input 时 vision 是 undefined，不等于「只文本」", () => {
+		expect(modelDraftFromConfig({ id: "a" }).vision).toBeUndefined();
+		expect(modelDraftFromConfig({ id: "a", input: ["text"] }).vision).toBe(false);
+		expect(modelDraftFromConfig({ id: "a", input: ["text", "image"] }).vision).toBe(true);
+	});
+
+	it("写进 models[] 的自定义模型补缺省：不补就会被 pi 的 128000 / 16384 / 只文本 顶掉", () => {
+		expect(serializeModelDraft({ id: "proxy", name: "" }, true)).toEqual({
+			id: "proxy",
+			contextWindow: MODEL_FIELD_DEFAULTS.contextWindow,
+			maxTokens: MODEL_FIELD_DEFAULTS.maxTokens,
+			input: modelInputFor(true),
+		});
+		// 内置 provider 那张表单不补（覆盖行有目录真值），保持原行为
+		expect(serializeModelDraft({ id: "proxy", name: "" })).toEqual({ id: "proxy" });
+	});
+
+	it("已有值不被覆盖；用户主动清空的字段也不拿缺省填回去", () => {
+		const source = { id: "m", contextWindow: 200_000, maxTokens: 8_192, input: ["text"] };
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source) }, true)).toEqual(source);
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source), vision: true }, true)).toEqual({ ...source, input: ["text", "image"] });
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source), contextWindow: undefined }, true)).not.toHaveProperty("contextWindow");
+	});
+
+	it("内置模型的覆盖行不补缺省，只写用户改过的字段", () => {
+		const catalogIds = new Set(["claude-x"]);
+		const row = { id: "claude-x", name: "", origin: "override" as const, source: { id: "claude-x" } };
+		expect(serializeProviderDraft({}, { baseUrl: "https://x.invalid", models: [row] }, "anthropic-messages", catalogIds).modelOverrides).toBeUndefined();
+		const edited = serializeProviderDraft({}, { baseUrl: "https://x.invalid", models: [{ ...row, contextWindow: 500_000 }] }, "anthropic-messages", catalogIds);
+		expect(edited.modelOverrides).toEqual({ "claude-x": { contextWindow: 500_000 } });
 	});
 });

@@ -11,6 +11,7 @@ import {
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
+import { MODEL_FIELD_DEFAULTS } from "@/lib/model-draft";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
 import { formatCapacity, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
@@ -130,7 +131,7 @@ export function ProviderSetupModal({
 						baseUrl: baseUrl.trim(),
 						api,
 						...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-						models: models.map(serializeModelDraft),
+						models: models.map((model) => serializeModelDraft(model, true)),
 					},
 				});
 			}
@@ -155,7 +156,14 @@ export function ProviderSetupModal({
 		});
 		const result = await response.json();
 		if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
-		return (result.data.models ?? []).map((model: { id: string; name?: string }) => ({ id: model.id, name: model.name ?? "" }));
+		return (result.data.models ?? []).map((model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }) => ({
+			id: model.id,
+			name: model.name ?? "",
+			// 端点给的真值直接带上；没给的留给保存时补缺省
+			...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
+			...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
+			...(model.vision === undefined ? {} : { vision: model.vision }),
+		}));
 	};
 
 	return (
@@ -421,7 +429,13 @@ export function ModelCatalog({
 			for (const candidate of candidates) {
 				const id = candidate.id.trim();
 				if (!id || !picked.has(id) || byId.has(id) || inCatalog(id)) continue;
-				byId.set(id, { id, name: candidate.name ?? "" });
+				byId.set(id, {
+					id,
+					name: candidate.name ?? "",
+					...(candidate.contextWindow ? { contextWindow: candidate.contextWindow } : {}),
+					...(candidate.maxTokens ? { maxTokens: candidate.maxTokens } : {}),
+					...(candidate.vision === undefined ? {} : { vision: candidate.vision }),
+				});
 			}
 			return [...byId.values()];
 		});
@@ -506,7 +520,7 @@ export function ModelCatalog({
 												style={{ borderColor: Number.isNaN(model.contextWindow) ? "var(--dsw-danger)" : undefined }}
 												value={capacityValue(model, index, "contextWindow")}
 												onChange={(event) => editCapacity(index, "contextWindow", event.target.value)}
-												placeholder="128K"
+												placeholder="1M"
 											/>
 										</label>
 										<label className={styles.capacityField}>
@@ -516,8 +530,12 @@ export function ModelCatalog({
 												style={{ borderColor: Number.isNaN(model.maxTokens) ? "var(--dsw-danger)" : undefined }}
 												value={capacityValue(model, index, "maxTokens")}
 												onChange={(event) => editCapacity(index, "maxTokens", event.target.value)}
-												placeholder="16K"
+												placeholder="32K"
 											/>
+										</label>
+										<label className={styles.capacityField} title={t.visionHint}>
+											<span>{t.visionLabel}</span>
+											<input type="checkbox" checked={model.vision ?? MODEL_FIELD_DEFAULTS.vision} onChange={(event) => updateModel(index, { vision: event.target.checked })} />
 										</label>
 										<span className={styles.capacityHint}>{t.capacityHint}</span>
 									</div>
