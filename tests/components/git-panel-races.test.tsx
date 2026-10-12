@@ -16,6 +16,24 @@ const response = (data: unknown) => ({ ok: true, json: async () => ({ success: t
 const patch = (text: string) => response({ patch: `@@ -0,0 +1 @@\n+${text}\n`, truncated: false, binary: false });
 
 describe("GitPanel request isolation", () => {
+	it("uses full server counts when the visible patch is truncated", async () => {
+		vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("diff=")
+			? response({ patch: "@@ -0,0 +1,7000 @@\n+visible prefix\n", truncated: true, binary: false, stats: { add: 7000, del: 25 } })
+			: response(info())));
+		render(<GitPanel cwd="/repo" onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByTitle("a.ts"));
+		expect(await screen.findByText("+7000")).toBeTruthy();
+		expect(screen.getByText("−25")).toBeTruthy();
+	});
+	it("does not present counts from a truncated legacy patch as complete", async () => {
+		vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("diff=")
+			? response({ patch: "@@ -0,0 +1,7000 @@\n+visible prefix\n", truncated: true, binary: false })
+			: response(info())));
+		render(<GitPanel cwd="/repo" onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByTitle("a.ts"));
+		await screen.findByText("visible prefix", { exact: false });
+		expect(screen.queryByText("+1")).toBeNull();
+	});
 	it("ignores late A diff under B's title and aborts on view exit/unmount", async () => {
 		const a = deferred<ReturnType<typeof response>>();
 		const b = deferred<ReturnType<typeof response>>();

@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { resolveGitBin } from "./growth-service";
+import { parseNumstat, resolveGitBin } from "./growth-service";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
 
 const exec = promisify(execFile);
@@ -188,11 +188,34 @@ export interface GitDiffResult {
 	patch: string;
 	truncated: boolean;
 	binary: boolean;
+	/** 完整 diff 的 Git numstat，独立于用于展示的 patch 截断。二进制不计行数。 */
+	stats: { add: number; del: number };
 }
 
-function truncate(patch: string): GitDiffResult {
-	if (Buffer.byteLength(patch) <= MAX_DIFF_BYTES) return { patch, truncated: false, binary: false };
-	return { patch: Buffer.from(patch).subarray(0, MAX_DIFF_BYTES).toString("utf8"), truncated: true, binary: false };
+async function fullDiffStats(root: string, args: string[], noIndex = false): Promise<{ stats: GitDiffResult["stats"]; binary: boolean }> {
+	let raw: string;
+	try {
+		raw = await runGit(root, args);
+	} catch (error) {
+		// --no-index 的退出码 1 表示有差异，stdout 仍是有效的 numstat。
+		const result = error as { code?: number; stdout?: string };
+		if (!noIndex || result.code !== 1 || typeof result.stdout !== "string" || !result.stdout) throw error;
+		raw = result.stdout;
+	}
+	let add = 0;
+	let del = 0;
+	let binary = false;
+	for (const entry of parseNumstat(raw).values()) {
+		add += entry.add;
+		del += entry.del;
+		binary ||= entry.binary;
+	}
+	return { stats: { add, del }, binary };
+}
+
+function truncate(patch: string, stats: GitDiffResult["stats"]): GitDiffResult {
+	if (Buffer.byteLength(patch) <= MAX_DIFF_BYTES) return { patch, truncated: false, binary: false, stats };
+	return { patch: Buffer.from(patch).subarray(0, MAX_DIFF_BYTES).toString("utf8"), truncated: true, binary: false, stats };
 }
 
 function assertRepoRelative(root: string, relPath: unknown): string {
@@ -216,6 +239,8 @@ export async function gitDiff(cwdValue: unknown, relPath: unknown, mode: unknown
 		if (!isPathInside(realRoot, realFile)) throw new BoundaryError("path escapes the repository");
 		const stat = await fs.stat(realFile).catch(() => null);
 		if (!stat?.isFile()) throw new BoundaryError("file not found");
+		const { stats, binary } = await fullDiffStats(root, ["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--", "/dev/null", realFile], true);
+		if (binary) return { patch: "", truncated: false, binary: true, stats };
 		const buffer = Buffer.alloc(Math.min(stat.size, MAX_DIFF_BYTES + 1));
 		const handle = await fs.open(realFile, "r");
 		let bytesRead = 0;
@@ -229,8 +254,7 @@ export async function gitDiff(cwdValue: unknown, relPath: unknown, mode: unknown
 			await handle.close();
 		}
 		const head = buffer.subarray(0, bytesRead);
-		if (head.includes(0)) return { patch: "", truncated: false, binary: true };
-		const text = head.subarray(0, MAX_DIFF_BYTES).toString("utf8").replace(/\r/g, "");
+		const text = head.subarray(0, MAX_DIFF_BYTES).toString("utf8").replace(/\r\n/g, "\n");
 		const lines = text.split("\n");
 		if (lines[lines.length - 1] === "") lines.pop();
 		const body = lines.map((l) => `+${l}`).join("\n");
@@ -238,12 +262,16 @@ export async function gitDiff(cwdValue: unknown, relPath: unknown, mode: unknown
 			patch: `--- /dev/null\n+++ b/${rel}\n@@ -0,0 +1,${lines.length} @@\n${body}\n`,
 			truncated: stat.size > MAX_DIFF_BYTES,
 			binary: false,
+			stats,
 		};
 	}
-	const args = mode === "staged" ? ["diff", "--cached", "--no-color", "--", rel] : ["diff", "--no-color", "--", rel];
-	const out = await runGit(root, args, 8 * 1024 * 1024);
-	if (/^Binary files .* differ$/m.test(out)) return { patch: "", truncated: false, binary: true };
-	return truncate(out);
+	const scope = mode === "staged" ? ["--cached"] : [];
+	const [out, counts] = await Promise.all([
+		runGit(root, ["diff", ...scope, "--no-color", "--no-ext-diff", "--no-textconv", "--", rel], 8 * 1024 * 1024),
+		fullDiffStats(root, ["diff", ...scope, "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--", rel]),
+	]);
+	if (counts.binary) return { patch: "", truncated: false, binary: true, stats: counts.stats };
+	return truncate(out, counts.stats);
 }
 
 /** 单次提交的内容（含各文件 patch） */
@@ -253,6 +281,9 @@ export async function gitShow(cwdValue: unknown, hash: unknown): Promise<GitDiff
 	if (!available || !root) throw new BoundaryError("not a git repository");
 	if (typeof hash !== "string" || !/^[0-9a-f]{4,40}$/i.test(hash)) throw new BoundaryError("invalid commit hash");
 	const title = (await runGit(root, ["log", "-1", "--pretty=%h %s%n%an · %cr", hash])).trim();
-	const out = await runGit(root, ["show", "--no-color", "--format=", "--patch", hash], 8 * 1024 * 1024);
-	return { title, ...truncate(out) };
+	const [out, counts] = await Promise.all([
+		runGit(root, ["show", "--no-color", "--no-ext-diff", "--no-textconv", "--format=", "--patch", hash], 8 * 1024 * 1024),
+		fullDiffStats(root, ["show", "--no-ext-diff", "--no-textconv", "--format=", "--numstat", "-z", hash]),
+	]);
+	return { title, ...truncate(out, counts.stats), binary: counts.binary && !out.includes("@@ ") };
 }

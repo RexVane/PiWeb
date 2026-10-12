@@ -49,6 +49,36 @@ describe("trajectory timing", () => {
 		});
 	});
 
+	it("restores SDK durations across cold history without inventing TTFT or decoding time", () => {
+		const entries = buildTrajectoryFromEntries([
+			{ type: "message", message: { role: "assistant", timestamp: 1000, durationMs: 1250,
+				content: [{ type: "toolCall", id: "read-1", name: "read", arguments: {} }, { type: "toolCall", id: "bash-1", name: "bash", arguments: {} }], usage: { output: 50 } } },
+			{ type: "message", message: { role: "toolResult", toolCallId: "bash-1", timestamp: 90000, durationMs: 240, content: [] } },
+			{ type: "message", message: { role: "toolResult", toolCallId: "read-1", timestamp: 95000, durationMs: 12, content: [] } },
+			{ type: "message", message: { role: "assistant", timestamp: 100000, content: [] } },
+		]);
+		expect(entries.find((entry) => entry.kind === "message")?.timing).toEqual({ durationMs: 1250 });
+		expect(entries.find((entry) => entry.toolCallId === "bash-1")?.timing).toEqual({ durationMs: 240 });
+		expect(entries.find((entry) => entry.toolCallId === "read-1")?.timing).toEqual({ durationMs: 12 });
+		expect(entries.at(-1)?.timing).toBeUndefined();
+	});
+
+	it("uses the same SDK duration for live and restored replies, including tool-only output", () => {
+		const message = { role: "assistant", timestamp: 1000, durationMs: 150, content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }], usage: { output: 10 } };
+		const ledger = new TrajLedger();
+		ledger.onEvent({ type: "turn_start" } as any, 1000);
+		ledger.onEvent({ type: "message_start", message } as any, 1020);
+		ledger.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "" } } as any, 1030);
+		ledger.onEvent({ type: "message_update", assistantMessageEvent: { type: "toolcall_delta", delta: "{}" } } as any, 1040);
+		ledger.onEvent({ type: "message_end", message } as any, 1200);
+		expect(ledger.entries[0].timing).toEqual({ ttftMs: 40, decodeMs: 160, durationMs: 150 });
+		expect(buildTrajectoryFromEntries([{ type: "message", message }])[0].timing?.durationMs).toBe(ledger.entries[0].timing?.durationMs);
+	});
+
+	it.each([-1, NaN, Infinity, "100"])("does not accept invalid historical duration %s", (durationMs) => {
+		expect(buildTrajectoryFromEntries([{ type: "message", message: { role: "assistant", content: [], durationMs } }])[0].timing).toBeUndefined();
+	});
+
 	it("flags irreversibly damaged historical output without rendering replacement characters", () => {
 		const entries = buildTrajectoryFromEntries([
 			{

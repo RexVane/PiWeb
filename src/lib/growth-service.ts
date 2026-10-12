@@ -433,8 +433,12 @@ export function parseNumstat(raw: string): Map<string, { add: number; del: numbe
 	for (let i = 0; i < tokens.length; i += 1) {
 		const t = tokens[i];
 		if (!t) continue;
-		const [a, d, rest] = t.split("\t");
-		if (a === undefined || d === undefined) continue;
+		const first = t.indexOf("\t");
+		const second = t.indexOf("\t", first + 1);
+		if (first < 0 || second < 0) continue;
+		const a = t.slice(0, first);
+		const d = t.slice(first + 1, second);
+		const rest = t.slice(second + 1);
 		const binary = a === "-" || d === "-";
 		const entry = { add: binary ? 0 : Number(a) || 0, del: binary ? 0 : Number(d) || 0, binary };
 		if (rest === undefined || rest === "") {

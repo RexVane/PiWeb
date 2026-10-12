@@ -9,11 +9,33 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import { ChatWindow } from "@/components/ChatWindow";
+import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
 import type { RoundBadge } from "@/components/ChatWindow";
-import type { WebMessage } from "@/lib/types";
+import type { WebMessage, WebStats } from "@/lib/types";
 
 afterEach(cleanup);
+
+const measuredStats: WebStats = { userMessages: 1, assistantMessages: 2, toolCalls: 2, totalMessages: 5,
+	tokens: { input: 100, cacheRead: 900, cacheWrite: 0, output: 20, total: 1020 }, cost: 0,
+	llmMs: 1250, toolMs: 500, llmTimedSteps: 1, toolTimedCalls: 1, ttftMs: 100, ttftSteps: 1, decodeMs: 200, decodeTokens: 20, decodeSteps: 1 };
+
+describe("session stats measurement scope", () => {
+	it("includes cached input and shows timing coverage and live sample counts", () => {
+		const { container } = render(<SessionStatsBar stats={measuredStats} />);
+		const text = container.textContent;
+		expect(text).toContain("输入 1.00K tok · 输出 20 tok");
+		expect(text).toContain("缓存命中 90.00%");
+		expect(text).toContain("1/2 条有计时");
+		expect(text).toContain("首 token 平均 0.10s (实时测量 1 步)");
+		expect(text).toContain("100.00 tok/s (实时测量 1 步)");
+	});
+	it("does not fabricate historical TTFT or speed when only durations are stored", () => {
+		const { container } = render(<SessionStatsBar stats={{ ...measuredStats, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0, decodeSteps: 0 }} />);
+		expect(container.textContent).toContain("LLM 1.25s");
+		expect(container.textContent).not.toContain("首 token");
+		expect(container.textContent).not.toContain("tok/s");
+	});
+});
 
 const userMessage = {
 	role: "user",

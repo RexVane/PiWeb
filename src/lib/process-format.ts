@@ -86,11 +86,12 @@ export function classifyMessageChars(
 			if (content.type === "text") {
 				const chars = content.text?.length ?? 0;
 				if (message.role === "user") out.user += chars;
-				else out.agentText += chars;
+				else if (message.role === "toolResult") out.toolOutput += chars;
+				else if (message.role !== "system") out.agentText += chars;
 			} else if (content.type === "thinking") {
 				out.agentThinking += content.thinking?.length ?? 0;
 			} else if (content.type === "toolCall") {
-				out.agentToolCall += JSON.stringify(content.arguments ?? "").length;
+				out.agentToolCall += ((content as { name?: string }).name?.length ?? 0) + JSON.stringify(content.arguments ?? "").length;
 			} else if (content.type === "toolResult") {
 				out.toolOutput += (content as { text?: string }).text?.length ?? 0;
 			}
@@ -323,35 +324,4 @@ export function trimNoiseTail(lines: string[]): string[] {
 	let end = lines.length;
 	while (end > 0 && !/[\p{L}\p{N}]/u.test(lines[end - 1])) end -= 1;
 	return end === lines.length ? lines : lines.slice(0, end);
-}
-
-/**
- * 上下文分段归一：把「字符数 ÷ 4」的分项按比例缩放到真实用量。
- *
- * 分项本身只提供**比例**：`estimateTokensOf` / `classifyMessageChars` 都是字符/4 启发式，
- * 对中文严重失真（实测本机会话约 10.9 字符/token，不是 4），而弹窗头部的用量来自 SDK 的
- * 真实 usage。两套口径直接并列会让「分项之和 ≠ 头部」（实测差 9.2%）、
- * 并让 Free Space 与头部对不上（头部 + Free ≠ 窗口）。这里把分项之和锚定到 total：
- * 比例不变、合计精确相等，于是头部、分项、Free Space 三者自洽。
- *
- * 用最大余数法分配取整误差，保证缩放后求和**精确**等于 total。
- */
-export function scaleSegmentsToTotal<T extends { tokens: number }>(segments: T[], total: number | null | undefined): T[] {
-	const values = segments.map((s) => (Number.isFinite(s.tokens) ? Math.max(0, s.tokens) : 0));
-	const sum = values.reduce((a, b) => a + b, 0);
-	const target = total == null || !Number.isFinite(total) || total <= 0 ? 0 : Math.round(total);
-	// 总量未知或分项全为 0：保持原样（弹窗会退回估算口径）
-	if (target <= 0 || sum <= 0) return segments;
-	const exact = values.map((v) => (v / sum) * target);
-	const floors = exact.map((v) => Math.floor(v));
-	let remainder = target - floors.reduce((a, b) => a + b, 0);
-	const order = exact
-		.map((v, i) => ({ i, frac: v - Math.floor(v) }))
-		.sort((a, b) => b.frac - a.frac || a.i - b.i);
-	for (const { i } of order) {
-		if (remainder <= 0) break;
-		floors[i] += 1;
-		remainder -= 1;
-	}
-	return segments.map((s, i) => ({ ...s, tokens: Math.max(0, floors[i]) }));
 }

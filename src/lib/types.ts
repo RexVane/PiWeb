@@ -168,6 +168,11 @@ export interface WebStats {
 	ttftSteps: number;
 	decodeMs: number;
 	decodeTokens: number;
+	/** 有持久化耗时的消息 / 工具数量；旧历史缺数据时显示覆盖范围。 */
+	llmTimedSteps?: number;
+	toolTimedCalls?: number;
+	/** 生成速度实际测到的回复数，不代表整个历史。 */
+	decodeSteps?: number;
 }
 
 // ---------- 项目生长（每轮一个 git commit） ----------
@@ -238,6 +243,8 @@ export interface ContextResource {
  * 这里只放服务端才能拿到的部分。
  */
 export interface ContextBreakdown {
+	/** 当前投影中实际文本的字符数；不将估算 token 按比例分摊。 */
+	characters?: { systemPrompt: number; systemTools: number; customTools: number; memory: number; skills: number; compacted: number };
 	/** SDK 内建 system prompt 正文（不含 memory/skills/tools 段）的估算 token */
 	systemPrompt: number;
 	/** 内建工具（SDK 自带 bash/read/edit 等）定义的估算 token */

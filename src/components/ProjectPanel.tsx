@@ -175,7 +175,13 @@ export function ProjectPanel({
 		};
 	}, [cwd, gitRefreshKey, latestCommit]);
 
-	const totals = useMemo(() => sumChanges(growth.changes), [growth.changes]);
+	const totals = useMemo(() => {
+		if (selected && growth.scope === "round") {
+			const st = selected.stats;
+			return { files: st.added + st.modified + st.deleted + st.renamed, add: st.add, del: st.del };
+		}
+		return growth.changesReady === false ? null : sumChanges(growth.changes);
+	}, [selected, growth.scope, growth.changes, growth.changesReady]);
 	const piRounds = useMemo(() => rounds.filter((round) => round.kind === "round").length, [rounds]);
 	const maxLines = useMemo(() => Math.max(1, ...rounds.map(changedLines)), [rounds]);
 	const railRef = useRef<HTMLDivElement>(null);
@@ -304,9 +310,12 @@ export function ProjectPanel({
 					<div className="mt-0.5 flex items-center gap-2" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 						<span>{fmtTime(selected.ts)}</span>
 						<span>·</span>
-						<span>{t.growthRoundFiles.replace("{n}", String(totals.files))}</span>
-						<span style={{ color: "var(--dsw-success)" }}>+{totals.add}</span>
-						<span style={{ color: "var(--dsw-danger)" }}>−{totals.del}</span>
+						{growth.scope === "session" && <span>{t.growthScopeSession}</span>}
+						{totals ? <>
+							<span>{t.growthRoundFiles.replace("{n}", String(totals.files))}</span>
+							<span style={{ color: "var(--dsw-success)" }}>+{totals.add}</span>
+							<span style={{ color: "var(--dsw-danger)" }}>−{totals.del}</span>
+						</> : <span>—</span>}
 						{statusText && <span style={{ color: "var(--dsw-warn)" }}>{statusText}</span>}
 						<span className="flex-1" />
 						{onJumpToChat && selected.promptIds[0] && (
@@ -397,7 +406,7 @@ export function ProjectPanel({
 										data-kind={round.kind}
 										data-active={selected?.commit === round.commit || undefined}
 										style={{ height: h, background: roundColor(round) }}
-										title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)} · ${t.growthRoundFiles.replace("{n}", String(round.changes.length))} +${round.stats.add} −${round.stats.del}`}
+										title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)} · ${t.growthRoundFiles.replace("{n}", String(round.stats.added + round.stats.modified + round.stats.deleted + round.stats.renamed))} +${round.stats.add} −${round.stats.del}`}
 										onClick={() => growth.select(round.commit)}
 									/>
 								);

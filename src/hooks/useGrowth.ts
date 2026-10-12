@@ -39,6 +39,8 @@ export interface GrowthApi {
 	range: { from: string; to: string } | null;
 	/** 所选范围的变更 */
 	changes: GrowthChange[];
+	/** 当前范围的完整 diff 已读取；加载或失败时不能将 [] 当成零改动。 */
+	changesReady?: boolean;
 	tree: TreeNode;
 	/** 所选轮的全部文件路径（快速打开用） */
 	filePaths: string[];
@@ -618,6 +620,7 @@ export function useGrowth({
 		scope,
 		range,
 		changes,
+		changesReady: inlineChanges !== null || Boolean(range && rangeChanges?.key === `${key}|${range.from}..${range.to}` && !rangeChanges.error),
 		tree,
 		filePaths,
 		expanded,

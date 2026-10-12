@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { gitDiff, gitInfo } from "../src/lib/git-service";
+import { gitDiff, gitInfo, gitShow } from "../src/lib/git-service";
 import { BoundaryError } from "../src/lib/path-security";
 
 describe("Git status failures", () => {
@@ -49,6 +49,36 @@ describe("recent commits", () => {
 			await fs.rm(temporary, { recursive: true, force: true });
 		}
 	}, 15_000);
+});
+
+describe("complete Git line counts", () => {
+	it("keeps full numstat for truncated worktree/staged/commit/untracked patches and binary files", async () => {
+		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-numstat-"));
+		try {
+			const git = (...args: string[]) => execFileSync("git", ["-C", temporary, "-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+			git("init", "-q");
+			await fs.writeFile(path.join(temporary, "large.txt"), "original\n");
+			git("add", ".");
+			git("commit", "-q", "-m", "base");
+			const lines = 7000;
+			const content = Array.from({ length: lines }, (_, i) => `${i} ${"x".repeat(90)}\n`).join("");
+			await fs.writeFile(path.join(temporary, "large.txt"), content);
+			const worktree = await gitDiff(temporary, "large.txt", "worktree");
+			expect(worktree).toMatchObject({ truncated: true, stats: { add: lines, del: 1 } });
+			expect(worktree.patch.split("\n").filter((line) => line.startsWith("+")).length).toBeLessThan(lines);
+			git("add", "large.txt");
+			expect(await gitDiff(temporary, "large.txt", "staged")).toMatchObject({ truncated: true, stats: { add: lines, del: 1 } });
+			git("commit", "-q", "-m", "large change");
+			const hash = git("rev-parse", "HEAD").toString().trim();
+			expect(await gitShow(temporary, hash)).toMatchObject({ truncated: true, stats: { add: lines, del: 1 } });
+			await fs.writeFile(path.join(temporary, "untracked.txt"), content);
+			expect(await gitDiff(temporary, "untracked.txt", "untracked")).toMatchObject({ truncated: true, stats: { add: lines, del: 0 } });
+			await fs.writeFile(path.join(temporary, "binary.dat"), Buffer.from([0, 1, 2]));
+			expect(await gitDiff(temporary, "binary.dat", "untracked")).toMatchObject({ binary: true, stats: { add: 0, del: 0 } });
+		} finally {
+			await fs.rm(temporary, { recursive: true, force: true });
+		}
+	}, 30_000);
 });
 
 describe("untracked Git diffs", () => {

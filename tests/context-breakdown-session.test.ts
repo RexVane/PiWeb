@@ -45,6 +45,36 @@ afterAll(async () => {
 });
 
 describe("上下文分项", () => {
+	it("冷热会话使用同一份持久用量和耗时，独立 usage 与压缩调用都计入累计", async () => {
+		const { SessionManager } = await import("../src/lib/pi");
+		const sm = SessionManager.create(cwd);
+		const usage = (input: number, output: number, cacheRead = 0) => ({ input, output, cacheRead, cacheWrite: 0, totalTokens: input + output + cacheRead, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+		const userId = sm.appendMessage({ role: "user", content: "hello", timestamp: 1000 });
+		sm.appendMessage({ role: "assistant", api: "anthropic-messages", provider: "anthropic", model: "test", content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }], timestamp: 1100, stopReason: "toolUse", durationMs: 250, usage: usage(100, 50, 900) });
+		sm.appendMessage({ role: "toolResult", toolCallId: "t1", toolName: "read", content: [{ type: "text", text: "result" }], timestamp: 5000, durationMs: 50, isError: false });
+		sm.appendUsage("summary", "anthropic", "test", usage(90, 10));
+		sm.appendCompaction("summary", userId, 1050, undefined, false, usage(120, 20));
+		const m = manager.getManaged(sm.getSessionFile()!);
+		managed.push(m);
+		const cold = (await manager.buildSnapshot(m)).stats!;
+		expect(cold).toMatchObject({ llmMs: 250, toolMs: 50, llmTimedSteps: 1, toolTimedCalls: 1, ttftSteps: 0, decodeMs: 0,
+			tokens: { input: 310, output: 80, cacheRead: 900, cacheWrite: 0, total: 1290 } });
+		await manager.ensureSession(m);
+		expect((await manager.buildSnapshot(m)).stats).toEqual(cold);
+	}, 60_000);
+
+	it("冷会话已有系统投影时按保存的分段统计，不拿磁盘资源或全部工具估算充数", async () => {
+		const { SessionManager } = await import("../src/lib/pi");
+		const sm = SessionManager.create(cwd);
+		const tool = { name: "read", description: "Read", parameters: { type: "object" } };
+		sm.appendMessage({ role: "system", content: "core", sections: { project_context: "memory", skills: "skill", rules: "rules" }, toolsAdded: [tool], timestamp: 1000 } as any);
+		sm.appendMessage({ role: "assistant", api: "anthropic-messages", provider: "anthropic", model: "test", content: [], timestamp: 1100, stopReason: "stop", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
+		const m = manager.getManaged(sm.getSessionFile()!);
+		managed.push(m);
+		const breakdown = (await manager.buildSnapshot(m)).contextBreakdown!;
+		expect(breakdown.characters).toEqual({ systemPrompt: 9, memory: 6, skills: 5, systemTools: JSON.stringify(tool).length, customTools: 0, compacted: 0 });
+		expect(breakdown.cold).toBeUndefined();
+	}, 60_000);
 	it("冷会话照算 Memory / Skills / Buffer，标 cold；启动后推送带 System Prompt 与工具的新分项", async () => {
 		const { sessionPath } = await manager.createNewSession(cwd);
 		const m = manager.getManaged(sessionPath);

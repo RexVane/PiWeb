@@ -90,7 +90,7 @@ export function ChatInput({
 	/** 上下文分段数据源：ContextMeter 弹窗打开时才做字符统计 */
 	contextSource?: {
 		systemChars: number;
-		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string }> }[];
+		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
 		breakdown?: import("@/lib/types").ContextBreakdown;
 		loadFull?: () => Promise<unknown> | unknown;
 	};

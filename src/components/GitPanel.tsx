@@ -51,6 +51,7 @@ interface DiffResult {
 	patch: string;
 	truncated: boolean;
 	binary: boolean;
+	stats?: { add: number; del: number };
 	title?: string;
 }
 
@@ -191,7 +192,8 @@ export function GitPanel({
 	const error = view ? diffError : statusError || info?.statusError || "";
 
 	const parsed = useMemo(() => (diff?.patch ? parseUnifiedDiff(diff.patch) : null), [diff]);
-	const stats = parsed ? diffStats(parsed) : null;
+	// 新服务端给完整 Git 统计；旧服务端只在 patch 完整时才允许本地计数。
+	const stats = diff?.binary ? null : diff?.stats ?? (parsed && !diff?.truncated ? diffStats(parsed) : null);
 
 	const conflicts = info?.files.filter((f) => f.kind === "conflict") ?? [];
 	const staged = info?.files.filter((f) => f.kind !== "conflict" && f.kind !== "untracked" && f.indexStatus !== " ") ?? [];

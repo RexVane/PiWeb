@@ -51,6 +51,19 @@ describe("ProjectPanel rounds", () => {
 		expect(screen.queryByRole("button", { name: /跟随|Follow/ })).toBeNull();
 	});
 
+	it("uses complete round stats while the changed-file list is truncated or loading", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		render(<ProjectPanel growth={{ ...growth, selected: { ...piRound, truncated: true }, changes: [], changesReady: false }} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		expect(screen.getByTestId("growth-round-summary").textContent).toMatch(/2 个文件\s*\+12\s*−3/);
+	});
+	it("shows unknown instead of zero until the session diff has loaded", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		render(<ProjectPanel growth={{ ...growth, selected: piRound, scope: "session", changesReady: false }} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		const text = screen.getByTestId("growth-round-summary").textContent;
+		expect(text).toContain("—");
+		expect(text).not.toContain("+0");
+	});
+
 	it("opens the round picker from the counter and jumps to a clamped round number", () => {
 		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
 		const select = vi.fn();

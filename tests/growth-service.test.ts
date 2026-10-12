@@ -45,6 +45,12 @@ describe("growth-service parsers", () => {
 		expect(m.get("b.ts")).toEqual({ add: 0, del: 0, binary: false });
 	});
 
+	it("preserves tabs in file paths so distinct numstat entries cannot overwrite each other", () => {
+		const stats = parseNumstat("3\t1\ta\tfirst.ts\0" + "7\t2\ta\tsecond.ts\0");
+		expect(stats.size).toBe(2);
+		expect([...stats.values()].reduce((sum, entry) => sum + entry.add, 0)).toBe(10);
+	});
+
 	it("parses ls-tree blobs only", () => {
 		const raw = ["100644 blob 0123456789abcdef0123456789abcdef01234567      12\tsrc/a b.ts", "160000 commit 0123456789abcdef0123456789abcdef01234567       -\tsub", ""].join("\0");
 		expect(parseLsTree(raw)).toEqual([{ path: "src/a b.ts", size: 12 }]);

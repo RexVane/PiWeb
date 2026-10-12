@@ -31,13 +31,12 @@ import {
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
+import { projectedContextUsage } from "./session/metrics";
 import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
 import { newSessionThinkingLevel } from "./thinking-level";
-import { estimateTokensOf } from "./process-format";
-import { getPiSettings } from "./pi-settings";
 import { getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
@@ -69,6 +68,8 @@ interface Managed {
 	viewerGraceUntil?: number;
 	/** 本轮已排队推送上下文分项（publishContextBreakdown 合并同一轮的多次触发） */
 	breakdownQueued?: boolean;
+	/** 首次运行后 pi 才会把系统分段持久化，届时用它把分类从差分换成投影口径，只换一次 */
+	breakdownProjected?: boolean;
 	buffer: { seq: number; json: string }[];
 	seq: number;
 	/**
@@ -373,30 +374,36 @@ function publishTraj(m: Managed): void {
 	}
 }
 
-function timingStats(m: Managed): Pick<WebStats, "llmMs" | "toolMs" | "ttftMs" | "ttftSteps" | "decodeMs" | "decodeTokens"> {
+function timingStats(m: Managed): Pick<WebStats, "llmMs" | "toolMs" | "ttftMs" | "ttftSteps" | "decodeMs" | "decodeTokens" | "llmTimedSteps" | "toolTimedCalls" | "decodeSteps"> {
 	let llmMs = 0;
 	let toolMs = 0;
 	let ttftMs = 0;
 	let ttftSteps = 0;
 	let decodeMs = 0;
 	let decodeTokens = 0;
+	let llmTimedSteps = 0;
+	let toolTimedCalls = 0;
+	let decodeSteps = 0;
 	for (const entry of m.ledger.entries) {
 		if (entry.kind === "tool") {
+			if (entry.timing?.durationMs !== undefined) toolTimedCalls++;
 			toolMs += Math.max(0, entry.timing?.durationMs ?? 0);
 			continue;
 		}
 		if (entry.kind !== "message") continue;
+		if (entry.timing?.durationMs !== undefined) llmTimedSteps++;
 		llmMs += Math.max(0, entry.timing?.durationMs ?? 0);
 		if (entry.timing?.ttftMs !== undefined) {
 			ttftMs += Math.max(0, entry.timing.ttftMs);
 			ttftSteps += 1;
 		}
-		if (entry.timing?.decodeMs !== undefined && entry.tokens?.output !== undefined) {
-			decodeMs += Math.max(0, entry.timing.decodeMs);
+		if ((entry.timing?.decodeMs ?? 0) > 0 && entry.tokens?.output !== undefined) {
+			decodeSteps++;
+			decodeMs += Math.max(0, entry.timing?.decodeMs ?? 0);
 			decodeTokens += Math.max(0, entry.tokens.output);
 		}
 	}
-	return { llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens };
+	return { llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens, llmTimedSteps, toolTimedCalls, decodeSteps };
 }
 
 function sessionStats(m: Managed): WebStats | null {
@@ -433,7 +440,7 @@ function coldSessionStats(m: Managed): WebStats {
 		cost += Number(usage.cost?.total ?? 0);
 	};
 	for (const entry of m.sm.getEntries() as any[]) {
-		if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) addUsage(entry.usage);
+		if ((entry.type === "usage" || entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) addUsage(entry.usage);
 		if (entry.type !== "message" || !entry.message) continue;
 		totalMessages += 1;
 		const message = entry.message;
@@ -515,7 +522,14 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			// the browser receives the durable entry ID without reordering later tool events.
 			deferPublish(m, () => {
 				const msg = projectMessage(m, raw);
-				if (msg.role === "assistant") msg.endedAt = now;
+				if (msg.role === "assistant") {
+					msg.endedAt = now;
+					// 首次回复结束后 pi 已把系统分段写进会话文件，此时分类能读到投影（比 systemPrompt 差分精确）
+					if (!m.breakdownProjected) {
+						m.breakdownProjected = true;
+						publishContextBreakdown(m);
+					}
+				}
 				const usage = usageEvent(m);
 				return usage
 					? [{ type: "message", message: msg, phase: "end", ts: now }, usage]
@@ -767,13 +781,9 @@ const SKILLS_SECTION_START = "The following skills provide specialized instructi
 const SKILLS_SECTION_END = "</available_skills>";
 
 /**
- * 上下文占用的服务端估算分项。systemPrompt 是整段拼接（正文 + memory + skills + 工具列表），
- * 所以 Memory / Skills 从资源加载器与 systemPrompt 的资源段差分得出：
- * SDK 的拼接顺序固定为 正文 → context files → skills → 工具列表，按内容定位切块。
- *
- * 冷会话（只浏览历史、不冷启动 agent）拿不到组装后的 system prompt 和工具定义，这三项为 0、标 cold；
- * Memory / Skills / Compacted / Buffer 不依赖 agent，照常从发现缓存、会话文件和设置里算，
- * 不能因为没启动就整块归零（那样弹窗只剩消息几类）。
+ * 当前上下文的字符分类，优先读 SDK 投影中的系统分段、工具 schema 与摘要。
+ * 旧客户端仍可读取字符/4 的估算字段；新客户端仅将字符数作为分类数据。
+ * 没有持久化系统消息且尚未启动的会话，资源来自发现缓存并标记 cold。
  */
 async function buildContextBreakdown(m: Managed, resources: ContextResource[]): Promise<ContextBreakdown> {
 	const session = m.session;
@@ -783,64 +793,56 @@ async function buildContextBreakdown(m: Managed, resources: ContextResource[]): 
 	};
 	// Memory：AGENTS.md 等注入文件（contextResources 的 project 部分）
 	const memoryText = resources.filter((r) => r.source === "project").map((r) => r.content).join("\n\n");
-	breakdown.memory = estimateTokensOf(memoryText);
-	if (session) {
-		try {
+	// 字符分项只读取当前投影中的内容。历史压缩摘要、未激活工具不混入当前统计。
+	const characters = { systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0 };
+	try {
+		const messages = m.sm.buildSessionProjection().messages as any[];
+		const system = messages.findLast((message) => message.role === "system");
+		if (system) {
+			const contentChars = typeof system.content === "string" ? system.content.length : textOf(system.content).length;
+			characters.memory = system.sections?.project_context?.length ?? 0;
+			characters.skills = system.sections?.skills?.length ?? 0;
+			characters.systemPrompt = contentChars + Object.entries(system.sections ?? {})
+				.filter(([key]) => key !== "project_context" && key !== "skills")
+				.reduce((sum, [, value]) => sum + (typeof value === "string" ? value.length : 0), 0);
+			const builtinNames = new Set(session
+				? session.getAllTools().filter((tool: any) => tool.sourceInfo?.source === "builtin").map((tool) => tool.name)
+				: ["read", "bash", "edit", "write", "grep", "find", "ls"]);
+			for (const tool of system.toolsAdded ?? []) {
+				characters[builtinNames.has(tool.name) ? "systemTools" : "customTools"] += JSON.stringify(tool).length;
+			}
+			delete breakdown.cold;
+		} else if (session) {
 			const prompt = session.systemPrompt ?? "";
-			// Skills：按 SDK 的 formatSkillsForPrompt 段落定位。该段落没有 Markdown 标题（以
-			// "The following skills provide specialized instructions…" 开头、</available_skills> 结尾），
-			// 以前按 "## Skills" 找永远找不到，技能段一直是 0。
-			try {
-				if (session.resourceLoader.getSkills().skills.length && prompt) {
-					const start = prompt.indexOf(SKILLS_SECTION_START);
-					const end = prompt.indexOf(SKILLS_SECTION_END);
-					if (start >= 0 && end > start) breakdown.skills = estimateTokensOf(prompt.slice(start, end + SKILLS_SECTION_END.length));
-				}
-			} catch {
-				/* loader 不可用则跳过 */
+			characters.memory = memoryText.length;
+			const start = prompt.indexOf(SKILLS_SECTION_START);
+			const end = prompt.indexOf(SKILLS_SECTION_END);
+			characters.skills = start >= 0 && end > start ? prompt.slice(start, end + SKILLS_SECTION_END.length).length : 0;
+			characters.systemPrompt = Math.max(0, prompt.length - characters.memory - characters.skills);
+			const active = new Set(session.getActiveToolNames());
+			for (const tool of session.getAllTools().filter((tool) => active.has(tool.name))) {
+				const size = JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }).length;
+				characters[(tool as any).sourceInfo?.source === "builtin" ? "systemTools" : "customTools"] += size;
 			}
-			// System Prompt 正文 = 全文减去资源段与 skills 段的近似差分，下限 0
-			breakdown.systemPrompt = Math.max(0, estimateTokensOf(prompt) - breakdown.memory - breakdown.skills);
-			// 工具：builtin 与扩展注册的分开统计（schema + description + guidelines 序列化估算）
-			for (const tool of session.getAllTools()) {
-				const size = estimateTokensOf(JSON.stringify({
-					name: tool.name,
-					description: tool.description,
-					parameters: tool.parameters,
-					promptGuidelines: tool.promptGuidelines,
-				}));
-				if ((tool as { sourceInfo?: { source?: string } }).sourceInfo?.source === "builtin") breakdown.systemTools += size;
-				else breakdown.customTools += size;
-			}
-		} catch {
-			/* systemPrompt / getAllTools 不可用则保持 0 */
-		}
-	} else {
-		// 冷会话：技能段用发现缓存里的清单按 SDK 同一个格式化函数估算（启动后改用实际 prompt 里的那段）
-		try {
+		} else {
+			// 初次启动前只能读到待注入的资源，界面保留 cold 提示。
+			characters.memory = memoryText.length;
 			const loader = peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
-			breakdown.skills = estimateTokensOf(formatSkillsForPrompt(loader.getSkills().skills).trim());
-		} catch {
-			/* 发现缓存还没好则跳过 */
+			characters.skills = formatSkillsForPrompt(loader.getSkills().skills).trim().length;
 		}
-	}
-	// 最新一次压缩的摘要（会话文件里就有，冷热都能算）
-	try {
-		const entries = m.sm.getEntries() as unknown as { type?: string; summary?: string }[];
-		for (let i = entries.length - 1; i >= 0; i -= 1) {
-			const entry = entries[i];
-			if (entry?.type === "compaction" && typeof entry.summary === "string") {
-				breakdown.compacted = estimateTokensOf(entry.summary);
-				break;
-			}
+		for (const message of messages) {
+			if (message.role === "compactionSummary" || message.role === "branchSummary") characters.compacted += message.summary?.length ?? 0;
 		}
+		breakdown.characters = characters;
+		// 保留旧客户端的估算字段，当前客户端直接展示实际字符数。
+		for (const key of Object.keys(characters) as Array<keyof typeof characters>) breakdown[key] = Math.ceil(characters[key] / 4);
 	} catch {
-		/* entries 不可用则跳过 */
+		/* 投影不可用时不给字符分项，不能从旧 token 估算反推字符数。 */
 	}
-	// auto-compact 预留 = compaction.reserveTokens（启用时）
+	// auto-compact 预留读本工作区、当前模型实际使用的设置。
 	try {
-		const settings = await getPiSettings();
-		if (settings.compaction.enabled) breakdown.autoCompactBuffer = settings.compaction.reserveTokens;
+		const compaction = getSettingsManager(m.cwd).getCompactionSettings(session?.model);
+		if (compaction.enabled) breakdown.autoCompactBuffer = compaction.reserveTokens;
 	} catch {
 		/* 设置读取失败则保持 0 */
 	}
@@ -1356,42 +1358,13 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		const usage = session.getContextUsage() ?? null;
 		contextUsage = usage ? { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent } : null;
 	} else if (model) {
-		// 冷会话没有 SDK 实例：用最后一轮 assistant 用量（input+cache+output ≈ 该轮后的
-		// 上下文规模）除以模型窗口估算，避免上下文计量永远显示 0% / —
+		// 冷会话也使用当前分支投影，包含最后一次 API 用量之后的用户消息和工具输出。
 		try {
 			const rt = await getModelRuntime();
 			const modelMeta = (rt.getModels(model.provider) as any[]).find((x) => String(x.id) === model.id);
-			const window = Number(modelMeta?.contextWindow ?? 0);
-			let lastTurnTokens = 0;
-			// 与 SDK getContextUsage 同一条规则：最近一次压缩之后还没有新的助手回复时，上下文大小未知（不能拿压缩前的用量充数）
-			const entries = m.sm.getEntries() as Array<{ type?: string; message?: { role?: string; stopReason?: string } }>;
-			let compactedSinceLastAssistant = false;
-			for (let i = entries.length - 1; i >= 0; i--) {
-				const e = entries[i];
-				if (e.type === "compaction" || e.type === "branch_summary") {
-					compactedSinceLastAssistant = true;
-					break;
-				}
-				if (e.type === "message" && e.message?.role === "assistant" && e.message.stopReason !== "error" && e.message.stopReason !== "aborted") break;
-			}
-			for (let i = messages.length - 1; i >= 0 && !compactedSinceLastAssistant; i--) {
-				const msg = messages[i];
-				if (msg.role === "assistant" && msg.usage) {
-					lastTurnTokens =
-						Number(msg.usage.input ?? 0) +
-						Number(msg.usage.cacheRead ?? 0) +
-						Number(msg.usage.cacheWrite ?? 0) +
-						Number(msg.usage.output ?? 0);
-					break;
-				}
-			}
-			if (window > 0 && lastTurnTokens > 0) {
-				contextUsage = { tokens: lastTurnTokens, contextWindow: window, percent: (lastTurnTokens / window) * 100 };
-			} else if (window > 0) {
-				contextUsage = { tokens: null, contextWindow: window, percent: null };
-			}
+			contextUsage = projectedContextUsage(m.sm.buildSessionProjection(), m.sm.getBranch(), Number(modelMeta?.contextWindow ?? 0));
 		} catch {
-			/* 模型目录不可用则维持 null（UI 显示 0%） */
+			/* 模型或投影不可用时用量未知。 */
 		}
 	}
 

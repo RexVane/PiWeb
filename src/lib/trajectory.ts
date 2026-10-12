@@ -1,11 +1,16 @@
 /**
  * 轨迹账本：对齐 dsh ui-trajectory 的 cell 模型（system/user/message/tool/compacted）。
  * 活跃会话由 pi 事件实时驱动；冷会话从 JSONL 条目离线重建。
- * pi 无耗时字段——TTFT/decode 由服务端自测，仅活跃会话有值。
+ * pi 持久化 LLM / 工具 durationMs；TTFT/decode 由服务端自测，仅活跃会话有值。
  */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { TrajEntry, TrajTokens } from "./types";
 import { sanitizeToolOutput } from "./text-sanitize";
+
+/** 只恢复 SDK 已记录的耗时，不从相邻消息时间戳推算。 */
+function storedDuration(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
 
 export function toTrajTokens(u: any): TrajTokens | undefined {
 	if (!u || typeof u !== "object") return undefined;
@@ -88,6 +93,8 @@ export class TrajLedger {
 						e.encodingLoss = result.encodingLoss || e.encodingLoss;
 						e.isError = m.isError === true;
 						e.tokens = toTrajTokens(m.usage) ?? e.tokens;
+						const durationMs = storedDuration(m.durationMs);
+						if (durationMs !== undefined) e.timing = { ...e.timing, durationMs };
 						this.touch(e);
 					}
 				}
@@ -96,7 +103,7 @@ export class TrajLedger {
 			case "message_update": {
 				const e: any = evt.assistantMessageEvent;
 				if (!e) break;
-				if ((e.type === "text_delta" || e.type === "thinking_delta") && this.streamingStart) {
+				if ((e.type === "text_delta" || e.type === "thinking_delta" || e.type === "toolcall_delta") && e.delta?.length > 0 && this.streamingStart) {
 					if (this.streamingStart.firstToken === undefined) {
 						this.streamingStart.firstToken = now;
 						const last = this.entries[this.entries.length - 1];
@@ -127,6 +134,8 @@ export class TrajLedger {
 							durationMs: now - this.streamingStart.t0,
 						};
 					}
+					const durationMs = storedDuration(m.durationMs);
+					if (durationMs !== undefined) e.timing = { ...e.timing, durationMs };
 					e.tokens = toTrajTokens(m.usage);
 					e.thinking = textOf(
 						(m.content ?? []).filter((c: any) => c.type === "thinking").map((c: any) => c.thinking),
@@ -194,7 +203,8 @@ export class TrajLedger {
 					e.encodingLoss = result.encodingLoss || e.encodingLoss;
 					e.isError = evt.isError === true;
 					const startedAt = this.toolStart.get(evt.toolCallId);
-					if (startedAt !== undefined) e.timing = { ...(e.timing ?? {}), durationMs: now - startedAt };
+					const durationMs = storedDuration((evt as any).durationMs) ?? (startedAt !== undefined ? now - startedAt : undefined);
+					if (durationMs !== undefined) e.timing = { ...(e.timing ?? {}), durationMs };
 					this.touch(e);
 				}
 				this.toolStart.delete(evt.toolCallId);
@@ -236,6 +246,7 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 			} else if (m.role === "assistant") {
 				const thinking = textOf((m.content ?? []).filter((c: any) => c.type === "thinking"));
 				const text = textOf((m.content ?? []).filter((c: any) => c.type === "text"));
+				const durationMs = storedDuration(m.durationMs);
 				out.push({
 					seq: seq++,
 					kind: "message",
@@ -244,6 +255,7 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 					detail: text,
 					thinking: thinking || undefined,
 					tokens: toTrajTokens(m.usage),
+					...(durationMs === undefined ? {} : { timing: { durationMs } }),
 					isError: m.stopReason === "error" || undefined,
 				});
 				for (const c of m.content ?? []) {
@@ -269,6 +281,8 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 					target.encodingLoss = result.encodingLoss || target.encodingLoss;
 					target.isError = m.isError === true || undefined;
 					target.tokens = toTrajTokens(m.usage) ?? target.tokens;
+					const durationMs = storedDuration(m.durationMs);
+					if (durationMs !== undefined) target.timing = { durationMs };
 				}
 			}
 		} else if (raw.type === "compaction") {
