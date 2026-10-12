@@ -35,6 +35,7 @@ import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajecto
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
+import { newSessionThinkingLevel } from "./thinking-level";
 import { estimateTokensOf } from "./process-format";
 import { getPiSettings } from "./pi-settings";
 import { getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
@@ -348,6 +349,22 @@ function reapplyDesiredLevel(m: Managed, session: AgentSession): void {
 	if (!m.desiredThinkingLevel) return;
 	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel as any);
 	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never);
+}
+
+/**
+ * 新会话页选定模型后的思考档位：与界面显示的生效值同一规则（每模型覆盖 → 设置默认 → medium，再按模型能力钳制）。
+ * SDK 切换模型时会沿用会话原来的档位，新会话不能沿用：那个档位是 SDK 按它自己的初始模型定的。
+ */
+function applyNewSessionThinking(m: Managed, session: AgentSession): void {
+	const model = session.model;
+	if (!model) return;
+	const settings = getSettingsManager(m.cwd);
+	const level = newSessionThinkingLevel({
+		supported: session.getAvailableThinkingLevels() as unknown as string[],
+		modelOverride: settings.getModelThinkingLevel(model.provider, model.id),
+		defaultLevel: settings.getDefaultThinkingLevel(),
+	});
+	if (level !== session.thinkingLevel) session.setThinkingLevel(level as never);
 }
 
 function publishTraj(m: Managed): void {
@@ -1614,6 +1631,8 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
 				await session.setModel(model, { persist: false });
 				reapplyDesiredLevel(m, session);
+				// 新会话页选的模型（fresh）：思考档位按新会话的规则定；之后显式选的档位仍会覆盖
+				if (cmd.fresh === true && !m.desiredThinkingLevel) applyNewSessionThinking(m, session);
 				publishModelState(m, session);
 				return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: session.getAvailableThinkingLevels() } };
 			}

@@ -815,7 +815,7 @@ export function usePiWeb() {
 				const id = idOf(p);
 				// 工具预设取通用设置的持久化选择；模型/思考级别由 Hero 页显式下发
 				const setup: Record<string, unknown>[] = [{ cmd: "setToolPreset", preset: savedToolPreset() }];
-				if (overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId });
+				if (overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId, fresh: true });
 				if (overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
 				for (const command of setup) {
 					const configured = await sendCommand(command, id);

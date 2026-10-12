@@ -340,6 +340,8 @@ export interface AgentCommand {
 	instructions?: string;
 	provider?: string;
 	modelId?: string;
+	/** setModel：新会话页选的模型，思考档位按新会话的规则定（不沿用会话原来的档位） */
+	fresh?: boolean;
 	level?: string;
 	preset?: ToolPreset;
 	entryId?: string;
