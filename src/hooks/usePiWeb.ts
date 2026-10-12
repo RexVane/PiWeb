@@ -76,6 +76,10 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 	const s = { ...state };
 	switch (evt.type) {
 		case "delta": {
+			// 又开始出 token 了：不管有没有收到重试结束事件，重试行都收掉。
+			// 只靠 retry_end 不够——SDK 换了事件名、某条路径没发结束事件、旧服务端压根不发，
+			// 界面就会挂着「重试 1/5」而模型其实早在正常输出了（用户已反馈两次）。
+			s.retryNotice = null;
 			// 新服务端按稳定流 ID 定位；旧协议仍按最近 pending 消息兼容。
 			const msgs = [...s.messages];
 			// 从尾部找：增量几乎总是落在最后一条消息上，长会话里从头扫每个 token 都是一次全表遍历

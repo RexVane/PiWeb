@@ -96,4 +96,14 @@ describe("PiWeb SSE event folding", () => {
 		const withError = foldPiWebEvent({ ...retrying, error: "boom" } as PiWebState, { type: "retry_end", attempt: 1, ts: 3 });
 		expect(withError.error).toBe("boom");
 	});
+
+	it("also clears the retry notice as soon as tokens stream again (no retry_end needed)", () => {
+		// 保险丝：旧版 PiWeb 不发 retry_end，SDK 也可能换事件名。只要模型又开始出 token，
+		// 重试行就必须收掉——用户已经两次看到「模型正常输出了，界面还挂着重试 1/5」。
+		const initial = { snapshot: { isStreaming: true }, messages: [], retryNotice: null, error: null } as unknown as PiWebState;
+		const retrying = foldPiWebEvent(initial, { type: "retry", attempt: 1, maxAttempts: 5, message: "ECONNRESET", ts: 1 });
+		expect(retrying.retryNotice).toMatch(/^重试 1\/5/);
+		const streaming = foldPiWebEvent(retrying, { type: "delta", kind: "text", delta: "接着写", ts: 2 } as never);
+		expect(streaming.retryNotice).toBeNull();
+	});
 });
