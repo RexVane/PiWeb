@@ -43,7 +43,6 @@ interface GithubIdentity {
 	login: string;
 	name?: string;
 	avatar?: string;
-	source: "gh" | "remote" | "git";
 	url?: string;
 	repo?: string;
 }

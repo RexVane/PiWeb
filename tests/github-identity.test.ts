@@ -57,7 +57,7 @@ describe("GitHub 身份降级链", () => {
 
 	it("离线时用 remote 的 owner，不联网、不给头像（面板退回首字母）", async () => {
 		const identity = await awaitGithubIdentity(root);
-		expect(identity).toMatchObject({ login: "RexVane", source: "remote", repo: "RexVane/PiWeb", url: "https://github.com/RexVane" });
+		expect(identity).toMatchObject({ login: "RexVane", repo: "RexVane/PiWeb", url: "https://github.com/RexVane" });
 		expect(identity?.avatar).toBeUndefined();
 		expect(fetch).not.toHaveBeenCalled();
 	});

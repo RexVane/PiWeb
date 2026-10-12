@@ -63,7 +63,7 @@ describe("GitPanel 三个区", () => {
 
 describe("GitPanel GitHub 身份", () => {
 	it("有身份时显示头像与 @账号", async () => {
-		stubFetch({ login: "RexVane", name: "心安", avatar: "data:image/png;base64,AAAA", source: "gh", url: "https://github.com/RexVane", repo: "RexVane/PiWeb" });
+		stubFetch({ login: "RexVane", name: "心安", avatar: "data:image/png;base64,AAAA", url: "https://github.com/RexVane", repo: "RexVane/PiWeb" });
 		render(<GitPanel cwd="/repo" onClose={vi.fn()} />);
 		expect(await screen.findByText("@RexVane")).toBeTruthy();
 		expect(screen.getByText("· RexVane/PiWeb")).toBeTruthy();
@@ -72,7 +72,7 @@ describe("GitPanel GitHub 身份", () => {
 	});
 
 	it("取不到头像时退回首字母，不留空位", async () => {
-		stubFetch({ login: "octocat", source: "remote", url: "https://github.com/octocat" });
+		stubFetch({ login: "octocat", url: "https://github.com/octocat" });
 		render(<GitPanel cwd="/repo" onClose={vi.fn()} />);
 		expect(await screen.findByText("@octocat")).toBeTruthy();
 		expect(document.querySelector('img[src^="data:image"]')).toBeNull();

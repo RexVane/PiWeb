@@ -29,7 +29,6 @@ export interface GithubIdentity {
 	name?: string;
 	/** data URL；取不到头像时省略，UI 退回首字母 */
 	avatar?: string;
-	source: "gh" | "remote" | "git";
 	/** 账号主页，点击可跳转 */
 	url?: string;
 	/** `owner/repo`（来自 origin remote），没配 remote 就没有 */
@@ -42,7 +41,8 @@ const AVATAR_TIMEOUT_MS = 8_000;
 const AVATAR_SIZE = 64;
 const AVATAR_MAX_BYTES = 256 * 1_024;
 const CACHE_FILENAME = "piweb-github-identity.json";
-const CACHE_VERSION = 1;
+// 身份字段一变就提版本：旧的缓存条目直接作废重取，避免返回已经删掉的字段
+const CACHE_VERSION = 2;
 
 interface CacheFile {
 	version: number;
@@ -192,16 +192,15 @@ async function compute(root: string): Promise<GithubIdentity | null> {
 			name: account.name,
 			url: account.url ?? `https://github.com/${account.login}`,
 			avatar: await avatarDataUrl(account.login),
-			source: "gh",
 			repo: remote?.repo,
 		};
 	}
 	if (remote) {
-		return { login: remote.owner, url: `https://github.com/${remote.owner}`, avatar: await avatarDataUrl(remote.owner), source: "remote", repo: remote.repo };
+		return { login: remote.owner, url: `https://github.com/${remote.owner}`, avatar: await avatarDataUrl(remote.owner), repo: remote.repo };
 	}
 	try {
 		const name = (await git(root, ["config", "user.name"])).trim();
-		if (name) return { login: name, source: "git" };
+		if (name) return { login: name };
 	} catch {
 		/* 什么都没配 */
 	}
