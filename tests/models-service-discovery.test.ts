@@ -4,6 +4,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	apisByUsage,
 	builtinCatalogModelIds,
 	discoverModels,
 	isPublicModelDiscoveryAddress,
@@ -26,6 +27,16 @@ async function withCatalogServer<T>(handler: (request: IncomingMessage, response
 		await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 	}
 }
+
+describe("provider default API", () => {
+	it("puts the protocol most models use first, ties alphabetical", () => {
+		// 回归：以前取字母序第一个，大部分模型走 responses 的 provider 会给新模型配上 completions
+		const models = [{ api: "openai-responses" }, { api: "openai-completions" }, { api: "openai-responses" }, { api: "" }, {}];
+		expect(apisByUsage(models)).toEqual(["openai-responses", "openai-completions"]);
+		expect(apisByUsage([{ api: "b" }, { api: "a" }])).toEqual(["a", "b"]);
+		expect(apisByUsage([])).toEqual([]);
+	});
+});
 
 describe("built-in catalog model IDs", () => {
 	it("covers the static catalog and remote/extension models, but not models[] definitions", async () => {

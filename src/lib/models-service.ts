@@ -43,6 +43,7 @@ export interface ProviderView {
 	baseUrl?: string;
 	apiKeyLabel?: string;
 	authTypes: Array<"api_key" | "oauth">;
+	/** 用到的协议，用的模型最多的在前：apis[0] 是这家的默认协议（新加模型的 api、探测目录时的鉴权方式） */
 	apis: string[];
 	builtIn: boolean;
 	authConfigured: boolean;
@@ -156,6 +157,19 @@ export async function listModelsForPiWeb(): Promise<{ providers: ProviderView[];
 	};
 }
 
+/**
+ * provider 用到的协议，按用它的模型数从多到少排（同数按字母序）。apis[0] 当这家的默认协议用：
+ * 以前取字母序第一个，多协议的 provider 会挑到少数派（比如大部分模型走 responses 却给新模型配上 completions）。
+ */
+export function apisByUsage(models: ReadonlyArray<{ api?: unknown }>): string[] {
+	const counts = new Map<string, number>();
+	for (const model of models) {
+		const api = String(model.api ?? "");
+		if (api) counts.set(api, (counts.get(api) ?? 0) + 1);
+	}
+	return [...counts].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0)).map(([api]) => api);
+}
+
 /** auth.json 各条目的凭证类型（与 storedCredentialFor 同样的两层数据结构）；读取失败不影响目录 */
 async function readStoredAuthTypes(): Promise<Map<string, "api_key" | "oauth">> {
 	const out = new Map<string, "api_key" | "oauth">();
@@ -234,7 +248,7 @@ async function listModelsUncached(): Promise<{
 			baseUrl: typeof p.baseUrl === "string" ? p.baseUrl : undefined,
 			apiKeyLabel: typeof p.auth?.apiKey?.name === "string" ? p.auth.apiKey.name : undefined,
 			authTypes,
-			apis: [...new Set(list.map((mm) => String(mm.api ?? "")).filter(Boolean))].sort(),
+			apis: apisByUsage(list),
 			builtIn: builtInCatalog.has(pid),
 			authConfigured: auth?.configured === true,
 			authSource: auth?.source,
