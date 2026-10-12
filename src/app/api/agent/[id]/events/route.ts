@@ -104,7 +104,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 		headers: {
 			// 轮询的响应不标成 SSE：隧道对 text/event-stream 另有处理，普通文本响应结束时一定整份送达
 			"Content-Type": poll ? "text/plain; charset=utf-8" : "text/event-stream; charset=utf-8",
-			"Cache-Control": "no-cache, no-transform",
+			// no-transform 让中间代理（Cloudflare 隧道边缘）不再压缩：SSE 必须带（压缩会把流攒住）；
+			// 轮询的响应很快就结束，放开让隧道压（实测快照 41 KB → 8.5 KB，流式批次约少九成）。
+			// Next 自己不压缩路由处理器的响应，所以本机、局域网不受影响
+			"Cache-Control": poll ? "no-cache" : "no-cache, no-transform",
 			Connection: "keep-alive",
 			"X-Accel-Buffering": "no",
 		},

@@ -75,6 +75,7 @@ describe("SSE（局域网 / 本机）", () => {
 	it("事件流常开，先快照后增量", async () => {
 		const response = await open();
 		expect(response.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+		expect(response.headers.get("cache-control")).toBe("no-cache, no-transform");
 		const { result, cancel } = collect(response);
 		await vi.advanceTimersByTimeAsync(10);
 		manager.publish("{\"type\":\"agent_start\"}");
@@ -93,6 +94,8 @@ describe("长轮询（?poll=1，快速隧道）", () => {
 	it("首次请求发完快照就结束，不发 retry / 心跳；结束后留看客宽限", async () => {
 		const response = await open("?poll=1");
 		expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+		// 不带 no-transform，隧道边缘才会压缩轮询响应
+		expect(response.headers.get("cache-control")).toBe("no-cache");
 		const { result } = collect(response);
 		await vi.advanceTimersByTimeAsync(100);
 		expect(result.done).toBe(true);
