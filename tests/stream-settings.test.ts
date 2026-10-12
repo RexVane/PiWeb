@@ -1,5 +1,5 @@
 /**
- * 流式推进数学（lib/stream-settings）：
+ * 流式推进数学（lib/chat/stream-settings）：
  * - 不变量：显示内容始终是目标前缀、单调增长、最终追平；
  * - 各样式的手感差异：即时一帧追平、打字机固定节奏、平滑积压越多推得越快、渐显停在整词处；
  * - 代理对安全：不在 emoji 中间切出半个字符。
@@ -14,7 +14,7 @@ import {
 	streamStepMs,
 	type StreamSettings,
 	type StreamStyle,
-} from "@/lib/stream-settings";
+} from "@/lib/chat/stream-settings";
 
 const make = (style: StreamStyle, speed = 3): StreamSettings => ({ style, speed, caret: false });
 

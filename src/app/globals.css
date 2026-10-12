@@ -838,16 +838,6 @@ textarea::placeholder {
 .pw-stream > .pw-stream-tail:last-child > :last-child {
 	margin-bottom: 0;
 }
-/* 围栏未闭合时的尾巴：与最终渲染同样的 md-code-block 结构（复制按钮都在），
-   只差语法着色——闭合升级为零布局跳变，不会闪一下。 */
-.pw-stream-code {
-	font-family: var(--font-mono);
-	font-size: 13px;
-	line-height: 1.55;
-	white-space: pre-wrap;
-	word-break: break-word;
-}
-
 /* 渐显样式：只让尾巴里新出现的元素柔和淡入。
    动画若挂在容器全部直接子级上，块升级（段落从尾巴进入稳定块）会重建 DOM，
    已经显示过的内容就把入场动画重播一遍——那正是输出时「闪烁几下」的来源；
@@ -866,8 +856,11 @@ textarea::placeholder {
 	}
 }
 
-/* 打字光标：挂在尾巴最后一个元素的行内末尾（不会另起一行） */
-.pw-stream-caret .pw-stream-tail > :last-child::after {
+/* 打字光标：挂在尾巴最后一个元素的行内末尾（不会另起一行）。
+   代码块和列表是块级容器，挂在外层会落到下一行，改挂到代码文字 / 最后一项的末尾 */
+.pw-stream-caret .pw-stream-tail > :last-child:not(.md-code-block, ul, ol)::after,
+.pw-stream-caret .pw-stream-tail > .md-code-block:last-child code::after,
+.pw-stream-caret .pw-stream-tail > :is(ul, ol):last-child > li:last-child::after {
 	content: "";
 	display: inline-block;
 	width: 2px;
@@ -888,7 +881,9 @@ textarea::placeholder {
 	.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
 		animation: none;
 	}
-	.pw-stream-caret .pw-stream-tail > :last-child::after {
+	.pw-stream-caret .pw-stream-tail > :last-child:not(.md-code-block, ul, ol)::after,
+	.pw-stream-caret .pw-stream-tail > .md-code-block:last-child code::after,
+	.pw-stream-caret .pw-stream-tail > :is(ul, ol):last-child > li:last-child::after {
 		animation: none;
 	}
 }

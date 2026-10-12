@@ -6,9 +6,15 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
-import { StreamingMarkdownBlock, createStreamingSplitter, splitStreamingMarkdown } from "@/components/MarkdownBlock";
+import { StreamingMarkdownBlock, createStreamingSplitter, splitOpenFence, splitStreamingMarkdown } from "@/components/MarkdownBlock";
+import { ChatScrollContext } from "@/components/chat/chat-scroll";
+import { DEFAULT_STREAM_SETTINGS, setStreamSettings } from "@/lib/chat/stream-settings";
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	setStreamSettings(DEFAULT_STREAM_SETTINGS);
+	vi.useRealTimers();
+});
 
 describe("splitStreamingMarkdown", () => {
 	it("在围栏外空行处切出稳定块，尾巴保留最后一段", () => {
@@ -45,6 +51,38 @@ describe("splitStreamingMarkdown", () => {
 		expect(blocks).toEqual(["前言。\n\n"]);
 		expect(tail).toBe("- 甲\n- 乙\n");
 	});
+
+	it("围栏里的 ```js、更短的 ``` 都不算闭合（CommonMark）", () => {
+		const withInfo = splitStreamingMarkdown("````md\n```js\n\nx\n```\n\n还在里面\n");
+		expect(withInfo.blocks).toEqual([]);
+		expect(withInfo.tailInFence).toBe(true);
+		const closed = splitStreamingMarkdown("```\n```js\n\n```\n\n后面");
+		expect(closed.blocks).toEqual(["```\n```js\n\n```\n\n"]);
+		expect(closed.tail).toBe("后面");
+	});
+
+	it("列表项下面缩进的续段不切开，续段之后的下一项也还在同一个列表里", () => {
+		const { blocks, tail } = splitStreamingMarkdown("1. 甲\n\n   甲的续段\n\n2. 乙\n\n正文\n");
+		expect(blocks).toEqual(["1. 甲\n\n   甲的续段\n\n2. 乙\n\n"]);
+		expect(tail).toBe("正文\n");
+	});
+});
+
+describe("splitOpenFence", () => {
+	it("开头的 ``` 行不进代码，围栏前的文字单独交给 Markdown", () => {
+		expect(splitOpenFence("说明：\n```python\ndef f():\n    return 1\n")).toEqual({
+			before: "说明：\n",
+			lang: "python",
+			code: "def f():\n    return 1\n",
+		});
+	});
+
+	it("正在敲、还没换行的闭合行不露出来", () => {
+		expect(splitOpenFence("```js\nlet a = 1;\n``").code).toBe("let a = 1;\n");
+		expect(splitOpenFence("~~~\nx\n~~").code).toBe("x\n");
+		// 不同字符的半行是代码本身
+		expect(splitOpenFence("~~~\nx\n``").code).toBe("x\n``");
+	});
 });
 
 describe("createStreamingSplitter 增量切分", () => {
@@ -58,6 +96,9 @@ describe("createStreamingSplitter 增量切分", () => {
 		"甲\n\n",
 		"甲\n\n乙",
 		"前言。\n\n- 甲\n- 乙\n\n正文",
+		"````md\n```js\n\nx\n```\n\n还在里面\n````\n\n后面",
+		"1. 甲\n\n   甲的续段\n\n2. 乙\n\n正文",
+		"- 甲\n懒续行\n\n- 乙\n\n```\n\n```\n\n尾巴",
 	];
 
 	it("逐字喂进去的结果与一次性切分一致（边界不因增量而漂移）", () => {
@@ -101,5 +142,51 @@ describe("StreamingMarkdownBlock 平滑推进", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("未闭合的代码块：开头的 ``` 行不显示，结构和最终渲染一样是 pre > code（不折行）", () => {
+		setStreamSettings({ style: "instant" });
+		const { container } = render(<StreamingMarkdownBlock text={"说明：\n\n```python\ndef f():\n"} />);
+		const code = container.querySelector(".md-code-block > pre > code");
+		expect(code?.textContent).toBe("def f():\n");
+		expect(code?.className).toBe("hljs language-python");
+		expect(container.textContent).not.toContain("```");
+	});
+
+	it("回答结束后先按原节奏把积压放完，再换成整段渲染", () => {
+		setStreamSettings({ style: "typewriter", speed: 1 });
+		vi.useFakeTimers();
+		const target = "a".repeat(30);
+		const { container, rerender } = render(<StreamingMarkdownBlock text="" />);
+		rerender(<StreamingMarkdownBlock text={target} />);
+		act(() => { vi.advanceTimersByTime(24); });
+		rerender(<StreamingMarkdownBlock text={target} live={false} />);
+		// 不会一口吐完
+		expect(container.textContent).toBe("a");
+		expect(container.querySelector(".pw-stream")).not.toBeNull();
+		for (let i = 0; i < 40; i += 1) act(() => { vi.advanceTimersByTime(24); });
+		expect(container.textContent).toBe(target);
+		// 追平后和历史消息同一种渲染
+		expect(container.querySelector(".pw-stream")).toBeNull();
+		expect(container.querySelector(".md")).not.toBeNull();
+	});
+
+	it("贴底听对话区的：对话区说不贴就不贴，说贴才贴", () => {
+		vi.useFakeTimers();
+		const pin = vi.fn();
+		let stuck = false;
+		const scroll = { shouldPin: () => stuck, pin };
+		const ui = (text: string) => (
+			<ChatScrollContext.Provider value={scroll}>
+				<StreamingMarkdownBlock text={text} />
+			</ChatScrollContext.Provider>
+		);
+		const { rerender } = render(ui(""));
+		rerender(ui("abcdefghij".repeat(10)));
+		act(() => { vi.advanceTimersByTime(16 * 5); });
+		expect(pin).not.toHaveBeenCalled();
+		stuck = true;
+		act(() => { vi.advanceTimersByTime(16 * 5); });
+		expect(pin).toHaveBeenCalled();
 	});
 });

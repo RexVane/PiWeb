@@ -9,7 +9,7 @@
  * 首屏不再下载这 472KB；AppShell 在空闲时预取，真正打开会话时通常已经就绪。
  *
  * 流式输出版（v7）：
- * - 显示样式可配（见 lib/stream-settings）：平滑 / 打字机 / 渐显 / 即时，速度五档、可选打字光标；
+ * - 显示样式可配（见 lib/chat/stream-settings）：平滑 / 打字机 / 渐显 / 即时，速度五档、可选打字光标；
  *   设置里改完下一帧生效，正在流的那条回答不用重开。
  * - 逐帧推进：把「已到达的完整文本」和「已显示的文本」分开，每帧只把显示进度往前推一小步，
  *   服务端 token 再来得快、再成串到达，界面也是匀速长出来的，不再一跳一跳。
@@ -17,11 +17,13 @@
  *   每帧代价只与「新增的那几个字」成正比（旧版每帧重扫全文才是长回答的卡顿来源）。
  * - 代码围栏内的 tail 用纯文本渲染，等闭合后再交给 highlight.js 高亮一次，
  *   避免流式代码块每帧重新高亮。
+ * - 贴底听对话区的（见 chat/chat-scroll）；回答结束后先把还没放出来的字放完，再换成整段渲染。
  */
-import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { ChatScrollContext } from "@/components/chat/chat-scroll";
 import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -31,7 +33,7 @@ import {
 	streamStepMs,
 	subscribeStreamSettings,
 	type StreamSettings,
-} from "@/lib/stream-settings";
+} from "@/lib/chat/stream-settings";
 import { useI18n } from "@/i18n";
 
 type MarkdownTextNode = { value?: unknown; children?: MarkdownTextNode[] };
@@ -140,7 +142,39 @@ export const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: strin
 
 /** 列表项（含有序列表）；用于避免在松散列表内部的空行处切块 */
 const LIST_ITEM_RE = /^ {0,3}(?:[-*+]|\d+[.)])\s/;
-const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+/** 围栏行：标记 + 其后的内容（开头行是语言等信息，闭合行只能是空白） */
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+/** 缩进起头的行：上面列表项的续行，或缩进代码块——都和前面连着，不从这里切 */
+const INDENTED_RE = /^[ \t]+\S/;
+
+interface FenceState {
+	inFence: boolean;
+	char: string;
+	length: number;
+}
+
+/**
+ * 按 CommonMark 推进围栏状态，返回这一行开启 / 闭合了围栏，或者都不是。
+ * 闭合行必须是同一种字符、不短于开头、后面没有别的内容：围栏里出现 "```js" 或更短的 "```"
+ * 都还是代码。反引号开头行的信息里不能再有反引号，否则那一行只是普通文本。
+ */
+function advanceFence(state: FenceState, line: string): "open" | "close" | null {
+	const fence = FENCE_RE.exec(line);
+	if (!fence) return null;
+	const [, marker, rest] = fence;
+	if (!state.inFence) {
+		if (marker[0] === "`" && rest.includes("`")) return null;
+		state.inFence = true;
+		state.char = marker[0];
+		state.length = marker.length;
+		return "open";
+	}
+	if (marker[0] === state.char && marker.length >= state.length && rest.trim() === "") {
+		state.inFence = false;
+		return "close";
+	}
+	return null;
+}
 
 export interface StreamingSplit {
 	/** 已稳定的完整块：文本不再变，各自记忆化，不会跟着尾巴一起重新解析 */
@@ -157,26 +191,29 @@ export interface StreamingSplit {
  *
  * 切分规则：
  * - 只在代码围栏之外的空行处切：空行是天然的块边界，两侧各自都是完整可解析的 Markdown；
- * - 空行前后都是列表项（松散列表）时不切，保持有序列表序号连续；
+ * - 还在列表里、下一行又是列表项（松散列表）时不切，保持有序列表序号连续。列表项下面缩进的
+ *   续段不算离开列表；空行后顶格的非列表行才算；
+ * - 下一行缩进起头时不切：那是上面列表项的续段（或缩进代码块），切开会被当成独立段落；
  * - 半行（还没换行符）不急着判：半行 "2." 看着不像列表项，写完 "2. 乙" 才是，判早了会
  *   把松散列表切开、序号重排。只有「再长也不会改变判定」时才就地判，否则等下一行写完。
  */
 export function createStreamingSplitter(): { update: (text: string) => StreamingSplit } {
 	let prevText = "";
 	let scanPos = 0;
-	let inFence = false;
-	let fenceChar = "";
+	let fence: FenceState = { inFence: false, char: "", length: 0 };
 	let segStart = 0;
-	let prevNonEmpty = "";
+	/** 最近一次顶格内容是列表项（还在列表里） */
+	let inList = false;
+	let prevBlank = true;
 	let blocks: string[] = [];
 
 	const reset = () => {
 		prevText = "";
 		scanPos = 0;
-		inFence = false;
-		fenceChar = "";
+		fence = { inFence: false, char: "", length: 0 };
 		segStart = 0;
-		prevNonEmpty = "";
+		inList = false;
+		prevBlank = true;
 		blocks = [];
 	};
 
@@ -190,38 +227,70 @@ export function createStreamingSplitter(): { update: (text: string) => Streaming
 				// 半行不判：等换行到了再判（围栏行、空行边界都可能被这半行改变）
 				if (nl === -1) break;
 				const line = text.slice(scanPos, nl);
-				const fence = FENCE_RE.exec(line);
-				if (fence) {
-					const ch = fence[1][0];
-					if (!inFence) {
-						inFence = true;
-						fenceChar = ch;
-					} else if (ch === fenceChar) {
-						inFence = false;
-					}
-				}
-				if (!inFence && line.trim() === "") {
+				const wasInFence = fence.inFence;
+				const fenceStep = advanceFence(fence, line);
+				const blank = line.trim() === "";
+				if (!fence.inFence && blank) {
 					const nextStart = nl + 1;
 					const nextNl = text.indexOf("\n", nextStart);
 					const nextLine = text.slice(nextStart, nextNl === -1 ? text.length : nextNl);
-					// 下一行是否已经写完，或者「再长也不会改变判定」（非空且前一段不是列表项）
+					const nextIndented = INDENTED_RE.test(nextLine);
+					// 下一行是否已经写完，或者「再长也不会改变判定」：缩进起头的永远不切；
+					// 不在列表里时，非空的下一行写成什么都要切
 					const decidable =
 						nextNl !== -1 ||
-						(nextStart < text.length && nextLine.trim() !== "" && !LIST_ITEM_RE.test(prevNonEmpty));
+						(nextStart < text.length && nextLine.trim() !== "" && (nextIndented || !inList));
 					if (!decidable) break; // scanPos 留在空行处，等下一行写完再判
-					const looseList = LIST_ITEM_RE.test(prevNonEmpty) && LIST_ITEM_RE.test(nextLine);
-					if (!looseList && nextLine.trim() !== "") {
+					const keepTogether = nextIndented || (inList && LIST_ITEM_RE.test(nextLine));
+					if (!keepTogether && nextLine.trim() !== "") {
 						const seg = text.slice(segStart, nextStart);
 						if (seg.trim()) blocks.push(seg);
 						segStart = nextStart;
 					}
 				}
-				if (line.trim() !== "") prevNonEmpty = line;
+				// 列表状态只看围栏外的行：列表项进入列表；顶格的围栏、或空行后顶格的普通行离开列表
+				if (!wasInFence && !blank) {
+					if (LIST_ITEM_RE.test(line)) inList = true;
+					else if (fenceStep === "open" ? !INDENTED_RE.test(line) : prevBlank && !INDENTED_RE.test(line)) inList = false;
+				}
+				if (!wasInFence || !fence.inFence) prevBlank = blank;
 				scanPos = nl + 1;
 			}
-			return { blocks: blocks.slice(), tail: text.slice(segStart), tailInFence: inFence };
+			return { blocks: blocks.slice(), tail: text.slice(segStart), tailInFence: fence.inFence };
 		},
 	};
+}
+
+/**
+ * 把落在未闭合围栏里的尾巴拆成「围栏前的 Markdown」和「围栏里的代码」。
+ * 开头那行（```python）不能当代码露出来；正在敲、还没换行的闭合行也不露。
+ */
+export function splitOpenFence(tail: string): { before: string; lang: string; code: string } {
+	const state: FenceState = { inFence: false, char: "", length: 0 };
+	let openAt = -1;
+	let codeAt = 0;
+	let lang = "";
+	let pos = 0;
+	while (pos < tail.length) {
+		const nl = tail.indexOf("\n", pos);
+		// 开头行一定是完整行：切分器只按完整行判围栏
+		if (nl === -1) break;
+		const line = tail.slice(pos, nl);
+		if (advanceFence(state, line) === "open") {
+			openAt = pos;
+			codeAt = nl + 1;
+			lang = (FENCE_RE.exec(line)?.[2] ?? "").trim().split(/\s+/)[0] ?? "";
+		}
+		pos = nl + 1;
+	}
+	if (openAt === -1 || !state.inFence) return { before: tail, lang: "", code: "" };
+	let code = tail.slice(codeAt);
+	const partial = code.slice(code.lastIndexOf("\n") + 1);
+	const marker = partial.trimStart();
+	if (marker && partial.length - marker.length <= 3 && marker[0] === state.char && /^(`+|~+)\s*$/.test(marker)) {
+		code = code.slice(0, code.length - partial.length);
+	}
+	return { before: tail.slice(0, openAt), lang, code };
 }
 
 /** 一次性切分（冷启动 / 测试用）；流式循环里请复用 createStreamingSplitter 的扫描进度 */
@@ -239,8 +308,14 @@ interface StreamView extends StreamingSplit {
 	shown: string;
 }
 
-export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ text }: { text: string }) {
+/**
+ * live：回答还在流。结束后（live 变 false）组件不急着换掉——先按原节奏把还没放出来的字放完，
+ * 追平后再渲染成整段 Markdown（和历史消息同一种渲染，脚注、引用式链接这类跨块语法也就对了）。
+ * 一结束就整段替换的话，打字机这类慢样式积压的一两百字会一口吐出来。
+ */
+export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ text, live = true }: { text: string; live?: boolean }) {
 	const settings = useStreamSettings();
+	const scroll = useContext(ChatScrollContext);
 	const splitterRef = useRef<{ update: (text: string) => StreamingSplit } | null>(null);
 	if (!splitterRef.current) splitterRef.current = createStreamingSplitter();
 	const [view, setView] = useState<StreamView>(() => ({ shown: text, ...splitterRef.current!.update(text) }));
@@ -248,13 +323,8 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 	const targetRef = useRef(text);
 	const settingsRef = useRef(settings);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const containerRef = useRef<HTMLDivElement | null>(null);
-	/** 提交前采样的「用户是否贴着底部」；升级/推进导致内容变高时据此跟随贴底 */
-	const wasAtBottomRef = useRef(false);
 
 	const commit = (shown: string) => {
-		const scroller = containerRef.current?.closest<HTMLElement>(".overflow-y-auto");
-		wasAtBottomRef.current = !!scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
 		const next: StreamView = { shown, ...splitterRef.current!.update(shown) };
 		viewRef.current = next;
 		setView(next);
@@ -311,26 +381,40 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 
 	useEffect(() => () => stopTimer(), []);
 
-	// 逐帧推进会让内容在贴底状态下往下长：提交后（绘制前）跟着贴底，界面不再跳动。
-	// 用户往上滚了就不跟（wasAtBottom 在提交前采样，滚开之后自然是 false）。
+	const settled = !live && view.shown === text;
+
+	// 逐帧推进会让内容往下长：提交后（绘制前）跟着贴底，界面不再跳动。
+	// 贴不贴听对话区的（往上翻过、大纲正在跳转都会松开），这里不另量距离、不另设阈值；
+	// 追平那一帧和换成整段渲染那一帧同样会变高，也要贴。
 	useLayoutEffect(() => {
-		if (view.shown === targetRef.current || !wasAtBottomRef.current) return;
-		const scroller = containerRef.current?.closest<HTMLElement>(".overflow-y-auto");
-		if (scroller) scroller.scrollTop = scroller.scrollHeight;
-	}, [view]);
+		if (scroll?.shouldPin()) scroll.pin();
+	}, [view, settled, scroll]);
+
+	if (settled) return <MarkdownBlock text={text} />;
 
 	const { shown, blocks, tail, tailInFence } = view;
 	// 尾巴常驻同一个 key 的容器：块升级时尾巴原地更新而不是整棵重挂——
 	// 重挂会让渐显动画在「已经显示过的内容」上重播一遍，正是输出时闪烁几下的来源。
-	// 围栏未闭合时用与最终渲染相同的 md-code-block 结构（含复制按钮），闭合升级只有
-	// 语法着色的差别，没有布局跳变。
-	const tailNode = tailInFence
-		? <div className="md-code-block"><div className="md-code-copy"><CopyButton text={tail} /></div><pre className="pw-stream-code">{tail}</pre></div>
-		: <MarkdownContent text={tail} />;
+	// 围栏未闭合时用与最终渲染相同的结构（md-code-block > pre > code，含复制按钮，同样不折行），
+	// 闭合升级只有语法着色的差别，没有布局跳变；开头的 ``` 行不进代码。
+	let tailNode: React.ReactNode;
+	if (tailInFence) {
+		const { before, lang, code } = splitOpenFence(tail);
+		tailNode = (
+			<>
+				{before.trim() ? <MarkdownContent text={before} /> : null}
+				<div className="md-code-block">
+					<div className="md-code-copy"><CopyButton text={code} /></div>
+					<pre><code className={lang ? `hljs language-${lang}` : undefined}>{code}</code></pre>
+				</div>
+			</>
+		);
+	} else {
+		tailNode = <MarkdownContent text={tail} />;
+	}
 
 	return (
 		<div
-			ref={containerRef}
 			className={settings.caret ? "md pw-stream pw-stream-caret" : "md pw-stream"}
 			data-stream-style={settings.style}
 			data-stream-pending={shown === text ? undefined : ""}

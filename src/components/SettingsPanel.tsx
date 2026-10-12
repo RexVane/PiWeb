@@ -44,7 +44,7 @@ import {
 	STREAM_STYLES,
 	type StreamSettings,
 	type StreamStyle,
-} from "@/lib/stream-settings";
+} from "@/lib/chat/stream-settings";
 import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
@@ -474,7 +474,9 @@ function GeneralSection({
 							<button
 								key={level}
 								type="button"
-								className="transition-colors"
+								className="transition-colors disabled:opacity-50"
+								// 即时样式不排队，速度对它没有意义：置灰，免得以为调了没反应
+								disabled={stream.style === "instant"}
 								style={{
 									flex: "1 1 84px",
 									padding: "10px 8px",

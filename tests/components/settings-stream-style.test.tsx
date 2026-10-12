@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 /**
  * 设置 → 流式输出：样式 / 速度 / 打字光标三项都要能点、能存、能立刻生效。
- * 偏好是模块级单例（lib/stream-settings），所以断言直接看它的返回值；
+ * 偏好是模块级单例（lib/chat/stream-settings），所以断言直接看它的返回值；
  * 用例前后都归位，免得串味到别的用例。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
-import { DEFAULT_STREAM_SETTINGS, getStreamSettings, setStreamSettings } from "@/lib/stream-settings";
+import { DEFAULT_STREAM_SETTINGS, getStreamSettings, setStreamSettings } from "@/lib/chat/stream-settings";
 
 vi.mock("@/lib/theme", () => ({ applyPebrelTheme: () => {}, loadPebrelTheme: () => "dsh", loadThemeMode: () => "system" }));
 
@@ -59,5 +59,14 @@ describe("设置里的流式输出", () => {
 		expect((await screen.findByRole("button", { name: /渐显/ })).getAttribute("aria-pressed")).toBe("true");
 		expect(screen.getByRole("button", { name: "慢" }).getAttribute("aria-pressed")).toBe("true");
 		expect(screen.getByRole("switch", { name: "打字光标" }).getAttribute("aria-checked")).toBe("true");
+	});
+
+	it("即时样式下速度置灰，换回别的样式又能调", async () => {
+		setStreamSettings({ style: "instant" });
+		setup();
+		const fastest = (await screen.findByRole("button", { name: "极快" })) as HTMLButtonElement;
+		expect(fastest.disabled).toBe(true);
+		fireEvent.click(screen.getByRole("button", { name: /^平滑/ }));
+		expect(fastest.disabled).toBe(false);
 	});
 });

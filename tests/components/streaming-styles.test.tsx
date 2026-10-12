@@ -2,12 +2,12 @@
 /**
  * 流式显示样式（设置里可选的四种）+ 打字光标。
  * 组件只做「按偏好把显示进度往前推」这一件事，所以这里盯三样：显示出来的文字、推进的节拍、DOM 结构。
- * 偏好是模块级单例（lib/stream-settings），每个用例前后都归位，避免相互串味。
+ * 偏好是模块级单例（lib/chat/stream-settings），每个用例前后都归位，避免相互串味。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { StreamingMarkdownBlock } from "@/components/MarkdownBlock";
-import { DEFAULT_STREAM_SETTINGS, setStreamSettings } from "@/lib/stream-settings";
+import { DEFAULT_STREAM_SETTINGS, setStreamSettings } from "@/lib/chat/stream-settings";
 
 beforeEach(() => setStreamSettings(DEFAULT_STREAM_SETTINGS));
 

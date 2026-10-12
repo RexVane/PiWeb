@@ -28,6 +28,7 @@ import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView
 import { languageForPath } from "@/lib/highlight";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
+import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { useI18n } from "@/i18n";
 import type { ToolCardState } from "@/hooks/usePiWeb";
 import type { ContextResource, TrajEntry, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
@@ -614,9 +615,13 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 // ---------- 叙述：模型在工具之间说的话，作为阶段标题（基线对齐，主色） ----------
 
 const NarrationBlock = memo(function NarrationBlock({ text, live, error }: { text: string; live?: boolean; error?: boolean }) {
+	// 流过的这一段一直交给流式组件：live 结束后它先把还没放出来的字放完，再自己换成整段渲染。
+	// 一结束就换成 <Markdown>，打字机这类慢样式积压的字会一口吐出来。
+	const [streamed, setStreamed] = useState(Boolean(live));
+	if (live && !streamed) setStreamed(true);
 	return (
 		<div className="pw-narr" data-error={error || undefined}>
-			{live ? <StreamingMarkdown text={text} /> : <Markdown text={text} />}
+			{streamed ? <StreamingMarkdown text={text} live={Boolean(live)} /> : <Markdown text={text} />}
 		</div>
 	);
 });
@@ -1425,6 +1430,16 @@ export function ChatWindow({
 	const widthPreference = useRef<number | null>(null);
 	const widthDrag = useRef<{ side: "left" | "right"; origin: number; width: number; pointerId: number } | null>(null);
 	const stickToBottom = useRef(true);
+	/** 上一次滚动事件时的 scrollTop：比它小就是在往上走（用户翻看、大纲 / 搜索跳转） */
+	const lastScrollTop = useRef(0);
+	// 流式正文逐帧变高时据此决定要不要跟着贴底（见 chat/chat-scroll）
+	const chatScroll = useMemo<ChatScroll>(() => ({
+		shouldPin: () => stickToBottom.current,
+		pin: () => {
+			const node = scrollRef.current;
+			if (node) node.scrollTop = node.scrollHeight;
+		},
+	}), []);
 	const { t } = useI18n();
 	useEffect(() => {
 		const root = rootRef.current;
@@ -1635,89 +1650,98 @@ export function ChatWindow({
 					}}
 				/>
 			))}
-			<div
-				ref={scrollRef}
-				className="min-h-0 flex-1 overflow-y-auto"
-				role="log"
-				aria-live="polite"
-				aria-relevant="additions"
-				onScroll={(event) => {
-					const node = event.currentTarget;
-					const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
-					stickToBottom.current = atBottom;
-					setAwayFromBottom(!atBottom);
-					if (atBottom) setUnseen(0);
-					scheduleUpgradeCheck();
-				}}
-			>
-				<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
-					{turns.map((turn, ti) => (
-						// 回合间 28px 的分隔挂在槽上：用户消息现在总是槽里的第一个子元素，它自己的 mt-7 会被 first:mt-0 吃掉
-						<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className="mt-7 first:mt-0">
-							{isNear(ti) ? (
-								<TurnBlock
-									turn={turn}
-									messages={messages}
-									tools={tools}
-									cwd={cwd}
-									isStreaming={isStreaming}
-									isLast={ti === turns.length - 1}
-									lastAssistantIndex={lastAssistantIndex}
-									contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
-									retryNotice={retryNotice}
-									streamStartedAt={streamStartedAt}
-									runningTool={runningTool}
-									outputTokens={stats?.tokens.output}
-									workingMessage={workingMessage}
-									onFork={onFork}
-									onEditMessage={onEditMessage}
-									roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
-									onShowRound={onShowRound}
-									onInspectTool={onOpenTrajectory}
-									onOpenFile={onOpenFile}
-								/>
-							) : (
-								<TurnLite turn={turn} messages={messages} />
-							)}
-						</div>
-					))}
-					{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
-					{isStreaming && streamStartedAt && turns.length === 0 && (
-						<div className="pw-turn">
-							<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} hasLiveStep={Boolean(runningTool)} />
-						</div>
-					)}
-					{/* 重连提示：跟随消息流显示在最后一条输出下面 */}
-					{!connected && (
-						<div className="mt-3 flex justify-center">
-							<div
-								className="rounded-full px-3 py-1"
-								style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-caption)", border: "0.5px dashed var(--dsw-border-l3)" }}
+			<ChatScrollContext.Provider value={chatScroll}>
+				<div
+					ref={scrollRef}
+					className="min-h-0 flex-1 overflow-y-auto"
+					role="log"
+					aria-live="polite"
+					aria-relevant="additions"
+					onScroll={(event) => {
+						const node = event.currentTarget;
+						const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
+						const atBottom = distance < 96;
+						// 往上走就立刻松开贴底，不等离底 96px：流式正文每帧都会贴一次底，
+						// 大纲 / 搜索的平滑跳转刚起步、还在 96px 以内时就会被拽回去。
+						// 已经在最底下（内容变短被浏览器夹回来）不算往上翻。
+						const movedUp = node.scrollTop < lastScrollTop.current - 1 && distance > 2;
+						lastScrollTop.current = node.scrollTop;
+						if (movedUp) stickToBottom.current = false;
+						else stickToBottom.current = atBottom;
+						setAwayFromBottom(!atBottom);
+						if (atBottom) setUnseen(0);
+						scheduleUpgradeCheck();
+					}}
+				>
+					<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
+						{turns.map((turn, ti) => (
+							// 回合间 28px 的分隔挂在槽上：用户消息现在总是槽里的第一个子元素，它自己的 mt-7 会被 first:mt-0 吃掉
+							<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className="mt-7 first:mt-0">
+								{isNear(ti) ? (
+									<TurnBlock
+										turn={turn}
+										messages={messages}
+										tools={tools}
+										cwd={cwd}
+										isStreaming={isStreaming}
+										isLast={ti === turns.length - 1}
+										lastAssistantIndex={lastAssistantIndex}
+										contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
+										retryNotice={retryNotice}
+										streamStartedAt={streamStartedAt}
+										runningTool={runningTool}
+										outputTokens={stats?.tokens.output}
+										workingMessage={workingMessage}
+										onFork={onFork}
+										onEditMessage={onEditMessage}
+										roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
+										onShowRound={onShowRound}
+										onInspectTool={onOpenTrajectory}
+										onOpenFile={onOpenFile}
+									/>
+								) : (
+									<TurnLite turn={turn} messages={messages} />
+								)}
+							</div>
+						))}
+						{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
+						{isStreaming && streamStartedAt && turns.length === 0 && (
+							<div className="pw-turn">
+								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} hasLiveStep={Boolean(runningTool)} />
+							</div>
+						)}
+						{/* 重连提示：跟随消息流显示在最后一条输出下面 */}
+						{!connected && (
+							<div className="mt-3 flex justify-center">
+								<div
+									className="rounded-full px-3 py-1"
+									style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-caption)", border: "0.5px dashed var(--dsw-border-l3)" }}
+								>
+									{t.reconnecting}
+								</div>
+							</div>
+						)}
+						{compaction && (
+							<div className="mt-3 flex justify-center" role="status">
+								<div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-hover)", color: "var(--dsw-label-secondary)" }}>
+									<span>{compaction.phase === "start" ? t.compacting : compaction.errorMessage ? `${t.compactionFailed}: ${compaction.errorMessage}` : t.compactionComplete}</span>
+									{compaction.phase === "end" && <button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn">×</button>}
+								</div>
+							</div>
+						)}
+						{error && (
+							<button
+								className="mt-3 rounded-xl px-3 py-2 text-left"
+								style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-danger)", color: "white" }}
+								onClick={onClearError}
+								role="alert"
 							>
-								{t.reconnecting}
-							</div>
-						</div>
-					)}
-					{compaction && (
-						<div className="mt-3 flex justify-center" role="status">
-							<div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-hover)", color: "var(--dsw-label-secondary)" }}>
-								<span>{compaction.phase === "start" ? t.compacting : compaction.errorMessage ? `${t.compactionFailed}: ${compaction.errorMessage}` : t.compactionComplete}</span>
-								{compaction.phase === "end" && <button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn">×</button>}
-							</div>
-						</div>
-					)}
-					{error && (
-						<button
-							className="mt-3 rounded-xl px-3 py-2 text-left"
-							style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-danger)", color: "white" }}
-							onClick={onClearError}
-							role="alert"
-						>
-							{error}
-						</button>
-					)}
+								{error}
+							</button>
+						)}
+					</div>
 				</div>
-			</div>
+			</ChatScrollContext.Provider>
 			{/* 右侧大纲导航：从助手回答的标题和用户消息生成，随滚动高亮，悬停展开 */}
 			<OutlineRail scrollRef={scrollRef} revision={`${messages.length}:${nearTurns.size}:${isStreaming ? 1 : 0}`} />
 			{/* 脱离底部时的“回到底部”浮钮：与输入框卡片同轴，挂在右上角顶部，图标带新内容角标 */}
