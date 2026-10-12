@@ -117,7 +117,9 @@ describe("输入框 @ 引用", () => {
 		fireEvent.keyDown(textarea, { key: "Tab" });
 
 		const chip = screen.getByTestId("composer-references").querySelector("[title]");
-		expect(chip?.getAttribute("title")).toBe("src/lib");
+		// 目录带尾斜杠存：chip 靠它显示成文件夹（lib/ + 文件夹图标）
+		expect(chip?.getAttribute("title")).toBe("src/lib/");
+		expect(chip?.textContent).toContain("lib/");
 		expect((textarea as HTMLTextAreaElement).value).toBe("");
 		expect(calls).toHaveLength(1);
 	});

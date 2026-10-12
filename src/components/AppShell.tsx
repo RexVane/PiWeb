@@ -635,7 +635,9 @@ export function AppShell() {
 		if (!path) return;
 		updateDraft(draftKey, (previous) => {
 			const references = previous.references ?? [];
-			if (references.includes(path)) return previous;
+			// 目录在 @ 选择器里存成 `src/lib/`：去重按去掉尾斜杠比较，避免同一目录两条
+			const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "");
+			if (references.some((existing) => samePath(existing, path))) return previous;
 			return { ...previous, references: [...references, path] };
 		});
 		requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-testid="composer"] textarea')?.focus());

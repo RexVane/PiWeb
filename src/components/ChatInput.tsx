@@ -156,6 +156,8 @@ export function ChatInput({
 	const uploadBusy = uploadCount > 0 || pendingUploadCount > 0;
 	const sendBusy = sending || pendingSend;
 	const [dragActive, setDragActive] = useState(false);
+	/** 待发送图片的放大预览下标；null = 没开 */
+	const [previewImage, setPreviewImage] = useState<number | null>(null);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
@@ -173,6 +175,13 @@ export function ChatInput({
 	const enterBehavior = useEnterBehavior();
 	const queuedCount = queue.steering.length + queue.followUp.length;
 	const [restoreTick, setRestoreTick] = useState(0);
+
+	useEffect(() => {
+		if (previewImage === null) return;
+		const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setPreviewImage(null); };
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	}, [previewImage]);
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -228,13 +237,17 @@ export function ChatInput({
 	const applyMention = (candidate: PathCandidate) => {
 		if (!mention) return;
 		const { start, tokenEnd } = mention;
-		const path = candidate.path;
+		// 目录存成 `src/lib/`：chip 靠尾斜杠判断文件夹（去重会把尾斜杠归一化掉）
+		const path = candidate.dir ? `${candidate.path}/` : candidate.path;
 		changeDraft((previous) => {
 			const refs = previous.references ?? [];
+			// 目录带尾斜杠、文件不带：去重按去掉尾斜杠比较，
+			// 否则「文件面板引用的 src/lib」与「@ 选的 src/lib/」会变成两个 chip
+			const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "");
 			return {
 				...previous,
 				text: previous.text.slice(0, start) + previous.text.slice(tokenEnd),
-				references: refs.includes(path) ? refs : [...refs, path],
+				references: refs.some((existing) => samePath(existing, path)) ? refs : [...refs, path],
 			};
 		});
 		setMention(null);
@@ -598,21 +611,25 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：图片 */}
+			{/* 附件轨：图片。缩略图不裁切（截图被裁成方形就看不出贴的是哪张），点开可放大核对 */}
 			{images.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-2 px-1">
 					{images.map((img, i) => (
 						<div key={i} className="relative">
-							<img
-								src={`data:${img.mimeType};base64,${img.data}`}
-								alt=""
-								className="h-14 w-14 rounded-lg object-cover"
-								style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-							/>
+							<button type="button" className="block" title={t.imagePreview} aria-label={t.imagePreview} onClick={() => setPreviewImage(i)}>
+								<img
+									src={`data:${img.mimeType};base64,${img.data}`}
+									alt=""
+									className="max-h-24 max-w-32 rounded-lg object-contain"
+									style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+								/>
+							</button>
 							<button
-								className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-[10px]"
+								type="button"
+								className="absolute -right-1.5 -top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px]"
 								style={{ background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
 								disabled={sendBusy}
+								aria-label={`${t.delete} ${i + 1}`}
 								onClick={() => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, index) => index !== i) }))}
 							>
 								✕
@@ -622,16 +639,35 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
+			{/* 放大预览：手机上没法用本机程序打开图片，应用内看最实在 */}
+			{previewImage !== null && images[previewImage] ? (
+				<div
+					className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+					style={{ background: "rgba(0, 0, 0, .72)" }}
+					role="dialog"
+					aria-modal="true"
+					aria-label={t.imagePreview}
+					onClick={() => setPreviewImage(null)}
+				>
+					<img
+						src={`data:${images[previewImage].mimeType};base64,${images[previewImage].data}`}
+						alt=""
+						className="max-h-full max-w-full rounded-xl object-contain"
+					/>
+				</div>
+			) : null}
+{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
 			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
 			{references.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-1.5 px-1" data-testid="composer-references">
-					{references.map((path) => (
+					{references.map((path) => {
+						const chip = referenceChipOf(path);
+						return (
 						<span
 							key={path}
 							className="flex items-center gap-1 rounded-md px-2 py-1"
 							style={{
-								maxWidth: 240,
+								maxWidth: 260,
 								fontSize: 12,
 								fontFamily: "var(--font-mono)",
 								color: "var(--dsw-label-secondary)",
@@ -640,8 +676,12 @@ export function ChatInput({
 							}}
 							title={path}
 						>
-							<IconAtOutline16 size={11} style={{ flex: "none", color: "var(--dsw-accent)" }} />
-							<span className="truncate">{referenceLabelOf(path)}</span>
+							{chip.dir ? (
+								<IconFolderClose16 size={12} style={{ flex: "none", color: "var(--dsw-warn)" }} />
+							) : (
+								<IconFileOutline16 size={12} style={{ flex: "none", color: "var(--dsw-accent)" }} />
+							)}
+							<span className="truncate">{chip.text}</span>
 							<button
 								type="button"
 								className="flex h-4 w-4 flex-none items-center justify-center rounded-full text-[10px]"
@@ -653,7 +693,8 @@ export function ChatInput({
 								✕
 							</button>
 						</span>
-					))}
+						);
+					})}
 				</div>
 			)}
 
@@ -933,8 +974,16 @@ function fmtUploadSize(bytes: number): string {
  * 引用 chip 上的显示文本:只要最后一段(文件名/目录名),太挤就靠 CSS 截断。
  * 目录引用带尾斜杠,和文件区分开(与项目结构图里的展示一致)。
  */
-function referenceLabelOf(path: string): string {
-	const trimmed = path.replace(/[\\/]+$/, "");
-	const base = trimmed.split(/[\\/]/).filter(Boolean).pop() ?? path;
-	return /[\\/]$/.test(path) ? `${base}/` : base;
+/**
+ * chip 上显示的短标签。只取 basename 会分不清两件事：目录与同名文件
+ * （`src/lib` 与 `src/lib.ts` 都显示 `lib`；`a/index.ts` 与 `b/index.ts` 都显示 `index.ts`）。
+ * 规则：目录带尾斜杠（`lib/`，配文件夹图标）；其余最多保留**尾部两段**
+ * （`src/lib/index.ts` → `…/lib/index.ts`）。完整路径仍在 title 里。
+ */
+function referenceChipOf(path: string): { text: string; dir: boolean } {
+	const dir = /[\\/]$/.test(path);
+	const parts = path.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+	if (!parts.length) return { text: path, dir };
+	const tail = parts.slice(-2).join("/");
+	return { text: dir ? `${tail}/` : parts.length > 2 ? `…/${tail}` : tail, dir };
 }

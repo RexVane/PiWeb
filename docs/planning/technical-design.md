@@ -527,3 +527,34 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 
 三个缺省值本身、以及那句误导性的提示语，都在 pi 包里；npm 一升级就回去了，
 只能在 PiWeb 侧兜住（预填 + 体检），或去上游提。
+
+## 12. 输入卡的 chip 显示（引用 / 图片，2026-10-12）
+
+### 12.1 引用 chip：目录与同名文件分不清
+
+`referenceLabelOf` 只取 basename：`src/lib`（目录）显示 `lib`、`src/lib/index.ts` 显示 `index.ts` —— 
+目录和文件长得一样（只有 hover 的 title 能区分），`a/index.ts` 与 `b/index.ts` 也完全同形。
+
+改成 `referenceChipOf`：
+- 目录存成带尾斜杠的形式（`src/lib/`），chip 显示 `src/lib/` 并换成文件夹图标；
+- 其余最多保留**尾部两段**（`src/lib/index.ts` → `…/lib/index.ts`），同名文件立刻区分得开；
+- 完整路径仍在 `title` 里。
+
+尾斜杠引入了新的重复风险（面板引用 `src/lib` 与 @ 选择器引用 `src/lib/`），所以两处去重
+（`ChatInput.applyMention`、`AppShell.insertIntoComposer`）都改成「去掉尾斜杠再比较」。
+
+### 12.2 图片 chip：被裁成方形、点不开
+
+原来是 `h-14 w-14 object-cover`（56px **裁切**），而对话里已发送的图是 `object-contain` 最大 288px：
+贴一张截图在输入框里根本看不出是哪张，也没法核对。
+
+- 缩略图改 `max-h-24 max-w-32 object-contain`（不裁切，按比例放大到 96×128 以内）；
+- 点缩略图 → 应用内放大预览（全屏遮罩，点任意处或 Esc 关闭）——手机上没法「用本机程序打开」，
+  应用内预览是唯一可行的核对方式；
+- ✕ 命中区 20 → 22px，并补 `aria-label`（按序号标识，删的是哪张一目了然）。
+
+### 12.3 验收
+
+`tests/components/chat-input-chips.test.tsx`：目录/同名文件/无父目录三类标签、完整路径仍在 title、
+缩略图不带 `object-cover`、点开放大显示的是对应那张、Esc 关闭、按序号删除。
+
