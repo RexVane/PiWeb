@@ -4,11 +4,14 @@
  * 点了之后等新分项（不再是冷的）到来，System Prompt 与工具定义补齐、提示消失。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ContextMeter } from "@/components/ContextMeter";
 import type { ContextBreakdown } from "@/lib/types";
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.unstubAllGlobals();
+});
 
 /** 精度与归一化（#064 调研）：百分比两位小数；分项之和 = 头部真实用量 */
 const USAGE_LABEL = "12.00% 上下文估算";
@@ -84,5 +87,113 @@ describe("上下文圆环弹窗", () => {
 		fireEvent.click(screen.getByTitle("上下文用量未知"));
 		expect(screen.getByText("Free Space").parentElement?.textContent).toBe("Free Space—");
 		expect(screen.queryByText("~183.62K tok")).toBeNull();
+	});
+});
+
+/** 改上下文窗口（重做 PR #27）：精确数字输入，不用滑块；给内置原值对照，写明是全局配置 */
+describe("上下文圆环里改窗口", () => {
+	const MODEL = { provider: "anthropic", id: "claude-haiku-4-5" };
+
+	function stubModelsApi(save: (body: Record<string, unknown>) => { status?: number; payload: unknown }) {
+		const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+			const body = JSON.parse(String(init?.body));
+			if (body.action === "contextWindowInfo") return { ok: true, status: 200, json: async () => ({ success: true, data: { contextWindow: 200000, builtin: 200000 } }) };
+			const { status = 200, payload } = save(body);
+			return { ok: status < 400, status, json: async () => payload };
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		return fetchMock;
+	}
+	const input = () => screen.getByRole("textbox", { name: "上下文窗口" }) as HTMLInputElement;
+
+	it("没有模型就不给修改入口", () => {
+		render(meter(WARM));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		expect(screen.queryByRole("button", { name: "修改" })).toBeNull();
+	});
+
+	it("填精确值保存：给内置原值对照、填大了提醒、说明是全局配置；保存后圆环按新窗口重算", async () => {
+		const fetchMock = stubModelsApi((body) => ({ payload: { success: true, data: { contextWindow: body.contextWindow, builtin: 200000 } } }));
+		const view = render(<ContextMeter percent={12} tokens={24000} contextWindow={200000} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} />);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		expect(screen.getByText("200,000")).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "修改" }));
+		expect(input().value).toBe("200K");
+		expect(await screen.findByText("pi 内置目录：200,000")).toBeTruthy();
+		expect(screen.getByText(/全局配置（models.json）/)).toBeTruthy();
+		expect(screen.queryByText(/比内置目录大/)).toBeNull();
+
+		fireEvent.change(input(), { target: { value: "1M" } });
+		expect(screen.getByText(/比内置目录大/)).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+		await waitFor(() => expect(screen.queryByRole("textbox", { name: "上下文窗口" })).toBeNull());
+		expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ action: "setContextWindow", providerId: "anthropic", modelId: "claude-haiku-4-5", contextWindow: 1000000 });
+		// 冷会话等不到用量事件：先用回来的新值重算（24000 / 1000000 = 2.40%）
+		expect(screen.getByText("1,000,000")).toBeTruthy();
+		expect(screen.getByText("2.40% 上下文估算")).toBeTruthy();
+
+		// 快照 / 用量追上来后交还给 props
+		view.rerender(<ContextMeter percent={2.4} tokens={24000} contextWindow={1000000} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} />);
+		expect(screen.getByText("1,000,000")).toBeTruthy();
+		view.rerender(<ContextMeter percent={20} tokens={24000} contextWindow={120000} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} />);
+		expect(screen.getByText("120,000")).toBeTruthy();
+	});
+
+	it("保存后快照还没追上时先显示刚保存的值；props 变成别的值（别处改过）就以 props 为准", async () => {
+		stubModelsApi((body) => ({ payload: { success: true, data: { contextWindow: body.contextWindow, builtin: 200000 } } }));
+		const meter = (contextWindow: number) => (
+			<ContextMeter percent={12} tokens={24000} contextWindow={contextWindow} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} />
+		);
+		const view = render(meter(200000));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByRole("button", { name: "修改" }));
+		fireEvent.change(input(), { target: { value: "1M" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(screen.queryByRole("textbox", { name: "上下文窗口" })).toBeNull());
+		expect(screen.getByText("1,000,000")).toBeTruthy();
+
+		view.rerender(meter(200000));
+		expect(screen.getByText("1,000,000")).toBeTruthy();
+
+		view.rerender(meter(150000));
+		expect(screen.getByText("150,000")).toBeTruthy();
+		expect(screen.queryByText("1,000,000")).toBeNull();
+	});
+
+	it("非法输入不能保存；「填入」用内置值；Esc 取消不发请求、不冒泡", async () => {
+		const save = vi.fn(() => ({ payload: { success: true, data: { contextWindow: 1, builtin: 200000 } } }));
+		const fetchMock = stubModelsApi(save);
+		const outer = vi.fn();
+		render(<div onKeyDown={outer}><ContextMeter percent={12} tokens={24000} contextWindow={128000} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} /></div>);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByRole("button", { name: "修改" }));
+		await screen.findByText("pi 内置目录：200,000");
+
+		for (const bad of ["", "abc", "0", "-5"]) {
+			fireEvent.change(input(), { target: { value: bad } });
+			expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true);
+			expect(screen.getByText(/填正整数/)).toBeTruthy();
+		}
+		fireEvent.click(screen.getByRole("button", { name: "填入" }));
+		expect(input().value).toBe("200K");
+
+		fireEvent.keyDown(input(), { key: "Escape" });
+		expect(screen.queryByRole("textbox", { name: "上下文窗口" })).toBeNull();
+		expect(outer).not.toHaveBeenCalled();
+		expect(save).not.toHaveBeenCalled();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("保存失败留在编辑态并显示原因", async () => {
+		stubModelsApi(() => ({ status: 409, payload: { success: false, error: "models.json 已被修改，请重新加载后再保存" } }));
+		render(<ContextMeter percent={12} tokens={24000} contextWindow={200000} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} />);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByRole("button", { name: "修改" }));
+		fireEvent.keyDown(input(), { key: "Enter" });
+		expect((await screen.findByRole("alert")).textContent).toContain("models.json 已被修改");
+		expect(input().value).toBe("200K");
+		expect(screen.getByText("12.00% 上下文估算")).toBeTruthy();
 	});
 });

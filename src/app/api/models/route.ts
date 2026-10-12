@@ -4,6 +4,7 @@ import {
 	answerLogin,
 	builtinCatalogModelIds,
 	cancelLogin,
+	contextWindowInfo,
 	CustomProvidersConflictError,
 	CustomProvidersValidationError,
 	discoverModels,
@@ -15,6 +16,7 @@ import {
 	readCustomProviders,
 	removeApiKey,
 	setApiKey,
+	setModelContextWindow,
 	startLogin,
 	writeCustomProviders,
 } from "@/lib/models-service";
@@ -80,11 +82,15 @@ export async function POST(req: Request) {
 				| "saveCustomProviders"
 				| "discoverModels"
 				| "providerUsage"
+				| "contextWindowInfo"
+				| "setContextWindow"
 				| "loginStart"
 				| "loginState"
 				| "loginAnswer"
 				| "loginCancel";
 			providerId?: string;
+			modelId?: string;
+			contextWindow?: number;
 			apiKey?: string;
 			baseUrl?: string;
 			api?: string;
@@ -121,6 +127,16 @@ export async function POST(req: Request) {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });
 			const usage = await providerUsage(body.providerId, body.force === true);
 			return NextResponse.json({ success: true, data: { usage } });
+		}
+		if (body.action === "contextWindowInfo" || body.action === "setContextWindow") {
+			if (typeof body.providerId !== "string" || !body.providerId || typeof body.modelId !== "string" || !body.modelId) {
+				return NextResponse.json({ success: false, error: "missing providerId or modelId" }, { status: 400 });
+			}
+			if (body.action === "contextWindowInfo") {
+				return NextResponse.json({ success: true, data: await contextWindowInfo(body.providerId, body.modelId) });
+			}
+			if (typeof body.contextWindow !== "number") return NextResponse.json({ success: false, error: "missing contextWindow" }, { status: 400 });
+			return NextResponse.json({ success: true, data: await setModelContextWindow(body.providerId, body.modelId, body.contextWindow) });
 		}
 		if (body.action === "loginStart") {
 			if (!body.providerId) return NextResponse.json({ success: false, error: "missing providerId" }, { status: 400 });

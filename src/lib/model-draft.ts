@@ -320,3 +320,32 @@ export function fillModelFields(providers: Readonly<Record<string, unknown>>, fi
 	}
 	return { providers: next, filled };
 }
+
+/**
+ * 改一个模型的上下文窗口，写在 pi 实际取值的那一层（modelOverrides 最后套用，压过 models[]）：
+ * - 已有 modelOverrides.<id>.contextWindow → 改它；
+ * - 否则 models[] 里定义了这个 ID → 改那几条（设置页编辑表单显示的就是它们）；
+ * - 都没有（内置目录、远程目录、扩展补的模型）→ 写 modelOverrides.<id>.contextWindow，同一条覆盖的其它字段保留。
+ * 不改入参。
+ */
+export function withContextWindow(providers: Readonly<Record<string, unknown>>, provider: string, id: string, contextWindow: number): Record<string, unknown> {
+	const next = JSON.parse(JSON.stringify(providers)) as Record<string, unknown>;
+	const existing = Object.prototype.hasOwnProperty.call(next, provider) ? next[provider] : undefined;
+	const config: Record<string, unknown> = isRecord(existing) ? existing : {};
+	next[provider] = config;
+	const overrides = isRecord(config.modelOverrides) ? config.modelOverrides : undefined;
+	const override = overrides && Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : undefined;
+	if (isRecord(override) && override.contextWindow !== undefined) {
+		override.contextWindow = contextWindow;
+		return next;
+	}
+	const defined = Array.isArray(config.models) ? config.models.filter((model) => isRecord(model) && typeof model.id === "string" && model.id.trim() === id) : [];
+	if (defined.length) {
+		for (const model of defined as Record<string, unknown>[]) model.contextWindow = contextWindow;
+		return next;
+	}
+	const table = overrides ?? {};
+	config.modelOverrides = table;
+	table[id] = { ...(isRecord(override) ? override : {}), contextWindow };
+	return next;
+}

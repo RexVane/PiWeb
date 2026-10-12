@@ -1255,6 +1255,22 @@ function swapCurrentModelObject(session: AgentSession): void {
 	if (fresh && fresh !== current) session.agent.state.model = fresh;
 }
 
+/**
+ * 共享目录刷新后，给正在用这个模型的会话换上新模型对象（上下文窗口等字段跟着变），再推一次用量让圆环当场更新。
+ * 运行中的会话也换：SDK 在扩展注册 provider 时同样会中途替换 agent.state.model，已发出的请求不受影响。
+ */
+export function refreshSessionModels(provider: string, id: string): number {
+	let n = 0;
+	for (const m of sessions.values()) {
+		const current = m.session?.model;
+		if (!m.session || current?.provider !== provider || current.id !== id) continue;
+		swapCurrentModelObject(m.session);
+		publishUsage(m);
+		n += 1;
+	}
+	return n;
+}
+
 export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 	const key = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
 	let n = 0;

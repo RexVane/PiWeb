@@ -618,3 +618,24 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 几何是纯函数 `deckLayout` / `fanLayout`，单测覆盖对称、中间最高、按宽度不出界；视觉在无头 Chrome 里截图核对过
 （平铺 / 7 张牌堆 / 640 宽 5、7 张扇形 / 360 宽 16 张扇形 / 预览）。
 
+
+## 13. 上下文圆环里改窗口（外部 PR #27 重做，2026-10-13）
+
+外部贡献者 cnluzx 的 PR #27 想在对话框右下角的圆环弹窗里直接调当前模型的上下文窗口。想法有用，但原实现没合，按本地代码重做：
+
+| PR #27 的做法 | 问题 | 重做后 |
+| --- | --- | --- |
+| 对数滑块 8K–2M、100 档、取整到 1K，停手 350ms 自动保存 | 落不到 128000 / 200000 这类真实值（拖到 200K 附近只有 197K / 208K）；多报一档就是上游 400（见 §11.3 第 3 条） | 精确数字输入（与设置页同一套 `parseCapacity`，支持 200K / 1M），点「保存」才写 |
+| 弹窗里没有说明 | 写的是全局 `models.json`（pi 终端共用），入口却在单个会话里 | 输入框下写明「改的是这个模型的全局配置」 |
+| — | 没有对照值 | 内置目录有原值就并排给出（`contextWindowInfo` 读 `modelsPath: null` 的原始 SDK 目录），填得比它大时提醒；没有原值时提醒填真实上限 |
+| 一律写 `modelOverrides.<id>` | 自定义模型（`models[]`）的值分散到两处，设置页表单显示的还是旧值 | `withContextWindow` 写在 pi 实际取值的那一层：已有覆盖写了窗口就改覆盖（它最后套用）；否则 `models[]` 定义了就改那几条；都没有才写覆盖 |
+| 抄一份写盘逻辑 | 少了「校验期间文件被别的程序改过」的检测 | 抽出 `replaceCustomProvidersFile`，与设置页保存共用旧文件校验、SDK 校验、改动检测、原子替换 |
+| 新增 `refreshSessionModels()`（保存配置后换绑会话），未 await | 本地已有同样做法的 `swapCurrentModelObject`（#072） | 不重复；写完刷新共享目录，`refreshSessionModels(provider, id)` 只给用这个模型的会话换对象并推一次用量，不重载会话资源 |
+| 拿不到新对象时直接改 `model.contextWindow` | 可能改到 pi 内置目录的共享对象 | 不就地改任何模型对象 |
+| — | 冷会话（没启动）没有用量推送，窗口要等下一次快照才变 | 保存后先用服务端回的新值重算百分比；窗口值一变（快照 / 用量追上来，或别处改了）或换了模型，就以 props 为准 |
+
+运行中的会话也当场换模型对象：SDK 在扩展注册 provider 时同样会中途替换 `agent.state.model`，已发出的请求不受影响。
+接口：`POST /api/models {action:"contextWindowInfo" | "setContextWindow", providerId, modelId, contextWindow?}`，
+返回 `{ contextWindow, builtin }`；目录里没有的模型、非正整数都 400。
+测试：`tests/models-service-context-window.test.ts` 用真实 `ModelRuntime` 读临时 `models.json`，验证三种写入层级下 pi 取到的值确实变了；
+`tests/components/context-meter.test.tsx` 覆盖输入校验、对照提示、Esc 不冒泡、保存失败留在编辑态、保存后重算、快照没追上时保持保存值、别处改了则以 props 为准。

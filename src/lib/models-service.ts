@@ -14,7 +14,8 @@ import { filterModelsByPiScope } from "./models/model-scope";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getModelRuntime, modelRuntimeVersion, refreshModelRuntime, refreshModelRuntimeIfFilesChanged } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
-import { reloadSessionsForCwd } from "./agent-manager";
+import { refreshSessionModels, reloadSessionsForCwd } from "./agent-manager";
+import { withContextWindow } from "./model-draft";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -105,7 +106,7 @@ export function catalogCapabilities(value: Record<string, unknown>): Pick<Discov
 	};
 }
 
-let builtInCatalogPromise: Promise<Map<string, Set<string>>> | null = null;
+let builtInCatalogPromise: Promise<Map<string, Map<string, number>>> | null = null;
 
 /** 目录短缓存：页面挂载与设置关闭都会拉一次；认证探测（每个供应商一次网络往返）不必秒级重复 */
 let listCache: { at: number; value: Promise<{ providers: ProviderView[]; models: ModelView[] }> } | null = null;
@@ -133,14 +134,17 @@ export function modelListStamp(): string {
 	return listCache ? String(listCache.at) : "none";
 }
 
-/** Read the unmodified SDK catalog through its public modelsPath:null option: provider ID → model IDs. */
-function getBuiltInCatalog(): Promise<Map<string, Set<string>>> {
+/** Read the unmodified SDK catalog through its public modelsPath:null option: provider ID → model ID → built-in context window. */
+function getBuiltInCatalog(): Promise<Map<string, Map<string, number>>> {
 	if (!builtInCatalogPromise) {
 		builtInCatalogPromise = ModelRuntime.create({
 			modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
 			credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
 		})
-			.then((runtime) => new Map(runtime.getProviders().map((provider) => [provider.id, new Set(runtime.getModels(provider.id).map((model) => model.id))])))
+			.then((runtime) => new Map(runtime.getProviders().map((provider) => [
+				provider.id,
+				new Map(runtime.getModels(provider.id).map((model) => [model.id, Number((model as { contextWindow?: unknown }).contextWindow) || 0])),
+			])))
 			.catch((error) => {
 				builtInCatalogPromise = null;
 				throw error;
@@ -162,7 +166,7 @@ export async function builtinCatalogModelIds(content: string, models: ReadonlyAr
 		const rows = Array.isArray(provider.models) ? provider.models : [];
 		defined.set(providerId, new Set(rows.flatMap((row) => (isRecord(row) && typeof row.id === "string" ? [row.id] : []))));
 	}
-	const ids = new Map([...catalog].map(([providerId, modelIds]) => [providerId, new Set(modelIds)]));
+	const ids = new Map([...catalog].map(([providerId, modelIds]) => [providerId, new Set(modelIds.keys())]));
 	for (const model of models) {
 		if (!defined.get(model.provider)?.has(model.id)) ids.get(model.provider)?.add(model.id);
 	}
@@ -1408,6 +1412,38 @@ async function validateStagedCustomProviders(file: string): Promise<void> {
 	if (error) throw new CustomProvidersValidationError(error);
 }
 
+/**
+ * 校验后原子替换 models.json（调用方已持两把锁）：现有文件先过一遍 SDK 校验（坏文件不能当空文件覆盖），
+ * 新内容校验通过、且期间没被别的程序改过才落盘。
+ */
+async function replaceCustomProvidersFile(
+	file: string,
+	previous: { content: string | undefined; revision: string },
+	next: CustomProvidersFile,
+	prepare?: (old: CustomProvidersFile) => void,
+): Promise<void> {
+	const old = parseCustomProviders(previous.content ?? '{"providers":{}}');
+	const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		if (previous.content !== undefined) {
+			await fs.writeFile(temporary, JSON.stringify(old, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+			// A damaged existing config is never treated as an empty/missing file.
+			await validateStagedCustomProviders(temporary);
+		}
+		prepare?.(old);
+		validateTokenLimits(next);
+		await fs.writeFile(temporary, JSON.stringify(next, null, 2), {
+			encoding: "utf8", flag: previous.content === undefined ? "wx" : "w", mode: 0o600,
+		});
+		await validateStagedCustomProviders(temporary);
+		// Also detect non-cooperating writers that changed the file during validation.
+		if ((await readCustomProvidersSnapshot(file)).revision !== previous.revision) throw new CustomProvidersConflictError();
+		await fs.rename(temporary, file);
+	} finally {
+		await fs.rm(temporary, { force: true }).catch(() => undefined);
+	}
+}
+
 export async function writeCustomProviders(content: string, revision?: string): Promise<void> {
 	const file = modelsJsonPath();
 	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
@@ -1415,32 +1451,56 @@ export async function writeCustomProviders(content: string, revision?: string): 
 		// Compare before parsing or restoring secrets; stale clients must reload, not overwrite.
 		if (revision !== undefined && revision !== previous.revision) throw new CustomProvidersConflictError();
 		const parsed = parseCustomProviders(content);
-		const old = parseCustomProviders(previous.content ?? '{"providers":{}}');
-		const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-		try {
-			if (previous.content !== undefined) {
-				await fs.writeFile(temporary, JSON.stringify(old, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
-				// A damaged existing config is never treated as an empty/missing file.
-				await validateStagedCustomProviders(temporary);
-			}
+		await replaceCustomProvidersFile(file, previous, parsed, (old) => {
 			mergeCustomProviderApiKeys(parsed, old);
 			// 本地网关无 key 也得给占位值，否则 SDK 判定「未配置」→ 发消息报 No API key
 			applyLocalPlaceholderKeys(parsed);
-			validateTokenLimits(parsed);
-			await fs.writeFile(temporary, JSON.stringify(parsed, null, 2), {
-				encoding: "utf8", flag: previous.content === undefined ? "wx" : "w", mode: 0o600,
-			});
-			await validateStagedCustomProviders(temporary);
-			// Also detect non-cooperating writers that changed the file during validation.
-			if ((await readCustomProvidersSnapshot(file)).revision !== previous.revision) throw new CustomProvidersConflictError();
-			await fs.rename(temporary, file);
-		} finally {
-			await fs.rm(temporary, { force: true }).catch(() => undefined);
-		}
+		});
 	}));
 	await refreshModelRuntime();
 	invalidateModelList();
 	// 会话与共享 runtime 是同一个实例，刷新后目录已是新的；再让活跃会话重载一次，
 	// 把当前模型对象换成新配置（改了 baseUrl / contextWindow 等字段时生效）
 	await reloadSessionsForCwd();
+}
+
+export interface ContextWindowInfo {
+	/** 当前生效的值（已套用 models.json） */
+	contextWindow: number;
+	/** pi 内置目录里的原值；不在内置目录里的模型（自定义、远程目录、扩展补的）为 null */
+	builtin: number | null;
+}
+
+async function contextWindowOf(providerId: string, modelId: string): Promise<ContextWindowInfo> {
+	const model = (await getModelRuntime()).getModel(providerId, modelId) as { contextWindow?: unknown } | undefined;
+	if (!model) throw new CustomProvidersValidationError(`找不到模型：${providerId}/${modelId}`);
+	const builtin = (await getBuiltInCatalog()).get(providerId)?.get(modelId);
+	return { contextWindow: Number(model.contextWindow) || 0, builtin: builtin || null };
+}
+
+/** 上下文圆环「修改窗口」用：当前值，加内置目录原值给用户对照（只对照，不替用户决定） */
+export async function contextWindowInfo(providerId: string, modelId: string): Promise<ContextWindowInfo> {
+	await refreshModelRuntimeIfFilesChanged();
+	return contextWindowOf(providerId, modelId);
+}
+
+/**
+ * 只改一个模型的上下文窗口（写在 pi 实际取值的那一层，见 withContextWindow），与设置页共用校验和原子替换。
+ * 不重载会话资源：刷新共享目录后，只给正在用这个模型的会话换上新模型对象并推一次用量，圆环当场更新。
+ */
+export async function setModelContextWindow(providerId: string, modelId: string, contextWindow: number): Promise<ContextWindowInfo> {
+	if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0) throw new CustomProvidersValidationError("contextWindow 必须是正整数");
+	// 只给目录里有的模型写：未知 provider / ID 不落进配置
+	await contextWindowOf(providerId, modelId);
+	const file = modelsJsonPath();
+	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
+		const previous = await readCustomProvidersSnapshot(file);
+		const parsed = parseCustomProviders(previous.content ?? '{"providers":{}}');
+		const providers = withContextWindow(parsed.providers, providerId, modelId, contextWindow) as CustomProvidersFile["providers"];
+		await replaceCustomProvidersFile(file, previous, { ...parsed, providers });
+	}));
+	await refreshModelRuntime();
+	invalidateModelList();
+	refreshSessionModels(providerId, modelId);
+	return contextWindowOf(providerId, modelId);
 }
