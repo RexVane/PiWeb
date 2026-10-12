@@ -168,8 +168,9 @@ export function ExtensionNotices({
 	// 有 children 时容器常驻：children 自己决定显示与否，容器里没东西时什么也看不见（pointer-events-none）
 	if (!notices.length && !children) return null;
 	const color = (type: string) => (type === "error" ? "var(--dsw-danger)" : type === "warning" ? "var(--dsw-warn)" : "var(--dsw-accent)");
+	// 手机上输入卡占满底部，放底部会盖住发送按钮：窄屏改挂到顶栏下面
 	return (
-		<div className="pointer-events-none fixed bottom-24 right-4 z-[110] flex w-[min(92vw,360px)] flex-col gap-2">
+		<div className="pointer-events-none fixed right-4 top-16 z-[110] flex w-[min(92vw,360px)] flex-col gap-2 sm:top-auto sm:bottom-24">
 			{children}
 			{notices.map((n) => (
 				<button
