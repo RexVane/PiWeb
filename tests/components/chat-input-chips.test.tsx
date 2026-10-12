@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ChatInput, type ChatDraft } from "@/components/ChatInput";
+import { deckLayout, fanLayout } from "@/components/composer/ComposerImages";
 
 afterEach(cleanup);
 
@@ -62,52 +63,142 @@ describe("图片 chip", () => {
 	const png = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
 	const jpeg = { type: "image" as const, data: "BBBB", mimeType: "image/jpeg" };
 
-	it("缩略图不裁切，点开可放大，Esc 关闭", () => {
+	it("缩略图不裁切，点开可放大，Esc 关闭且不外溢，焦点还给缩略图", () => {
 		renderInput({ images: [png, jpeg] });
 		const thumbs = screen.getAllByLabelText("点击放大预览");
 		expect(thumbs).toHaveLength(2);
 		expect(thumbs[0].querySelector("img")?.className).toContain("object-contain");
 		expect(thumbs[0].querySelector("img")?.className).not.toContain("object-cover");
+		thumbs[0].focus();
 		fireEvent.click(thumbs[0]);
 		const dialog = screen.getByRole("dialog");
+		// 挂在 body 上：输入卡祖先的 backdrop-filter 会让 fixed 只盖住输入卡
+		expect(dialog.parentElement).toBe(document.body);
 		expect(dialog.querySelector("img")?.getAttribute("src")).toContain("AAAA");
-		fireEvent.keyDown(document, { key: "Escape" });
+		expect(document.activeElement?.getAttribute("aria-label")).toBe("关闭");
+
+		// 页面上其它监听 document 的面板（文件预览、设置等）不该跟着被 Esc 关掉
+		const outer = vi.fn();
+		document.addEventListener("keydown", outer);
+		fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+		document.removeEventListener("keydown", outer);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(outer).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(thumbs[0]);
+	});
+
+	it("预览里 ← → 切换、显示第几张，点背景关闭、点图片不关", () => {
+		renderInput({ images: [png, jpeg] });
+		fireEvent.click(screen.getAllByLabelText("点击放大预览")[0]);
+		const dialog = screen.getByRole("dialog");
+		expect(dialog.textContent).toContain("1 / 2");
+		fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+		expect(dialog.querySelector("img")?.getAttribute("src")).toContain("BBBB");
+		expect(dialog.textContent).toContain("2 / 2");
+		// 循环：最后一张再往右回到第一张
+		fireEvent.click(within(dialog).getByLabelText("下一张"));
+		expect(dialog.querySelector("img")?.getAttribute("src")).toContain("AAAA");
+		fireEvent.click(dialog.querySelector("img")!);
+		expect(screen.queryByRole("dialog")).toBeTruthy();
+		fireEvent.click(dialog);
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
-	it("超过 4 张折叠成牌堆，点开后沿弧线扇开（同一批卡片做 transform，才有扇开动画）", () => {
-		const many = Array.from({ length: 6 }, (_, i) => ({ type: "image" as const, data: `IMG${i}`, mimeType: "image/png" }));
-		renderInput({ images: many });
+	const many = (count: number) => Array.from({ length: count }, (_, i) => ({ type: "image" as const, data: `IMG${i}`, mimeType: "image/png" }));
+	const poseOf = (card: HTMLElement) => {
+		const match = /translate\(([-\d.]+)px, ([-\d.]+)px\) rotate\(([-\d.]+)deg\)/.exec(card.style.transform);
+		return match ? { x: Number(match[1]), y: Number(match[2]), angle: Number(match[3]) } : null;
+	};
+
+	it("超过 4 张折叠成牌堆：正面在最上、后面最多露 4 层边、只有正面能点能删", () => {
+		renderInput({ images: many(7) });
 		const fan = screen.getByTestId("image-fan");
-		const cards = () => [...fan.children] as HTMLElement[];
-
-		// 折叠：就是 96 高的一条，卡片不旋转、只用 4px 错位叠起来
-		expect(screen.getByTestId("images-toggle").textContent).toBe("展开 5");
+		const cards = [...fan.children] as HTMLElement[];
+		expect(screen.getByTestId("images-toggle").textContent).toBe("展开 6");
+		expect(screen.getByTestId("images-toggle").getAttribute("aria-expanded")).toBe("false");
 		expect(fan.style.height).toBe("96px");
-		expect(cards().every((card) => !card.style.transform)).toBe(true);
-		expect(cards()[1].style.marginLeft).toBe("-44px"); // -48 + 1*4：向右侧错开 4px
-		expect(cards()[0].style.zIndex).toBe("0"); // 正面那张在最上（后面的是负 z）
-		expect(cards()[1].style.zIndex).toBe("-1");
+		expect(fan.style.width).toBe("112px"); // 96 + 4 层 × 4px
+		// 只横向错位、不旋转；第 5 张起叠在第 4 层下面不显示
+		expect(cards.map(poseOf)).toEqual([0, 4, 8, 12, 16, 16, 16].map((x) => ({ x, y: 0, angle: 0 })));
+		expect(cards.map((card) => card.dataset.hidden ?? "")).toEqual(["", "", "", "", "", "true", "true"]);
+		// 层级是正数、正面那张最高（负 z-index 会掉到输入卡背景后面）
+		expect(cards.map((card) => Number(card.style.zIndex))).toEqual([7, 6, 5, 4, 3, 2, 1]);
+		// 后面几张只露个边：不进 Tab 顺序，也没有删除按钮
+		expect(screen.getByLabelText("删除 1")).toBeTruthy();
+		expect(screen.queryByLabelText("删除 2")).toBeNull();
+		expect(cards.map((card) => card.querySelector("button")!.tabIndex)).toEqual([0, -1, -1, -1, -1, -1, -1]);
+	});
 
-		// 展开：容器变高，卡片绕枢轴旋转成扇形（中心那张 0 度，两侧对称）
+	it("展开沿向上拱的弧线扇开：同一批卡片换 transform、左右对称、中间最高，每张都能删", () => {
+		renderInput({ images: many(7) });
+		const fan = screen.getByTestId("image-fan");
+		const before = [...fan.children];
 		fireEvent.click(screen.getByTestId("images-toggle"));
 		expect(screen.getByTestId("images-toggle").textContent).toBe("收起");
-		expect(fan.style.height).toBe("152px");
-		const angles = cards().map((card) => /rotate\(([-\d.]+)deg\)/.exec(card.style.transform)?.[1]);
-		expect(angles[0]).toBe(angles[5] === undefined ? undefined : `-${Number(angles[5])}`);
-		// 6 张时步长 14 度：-35 -21 -7 +7 +21 +35，中心两张刚好在 0 两侧
-		expect(angles).toEqual(["-35", "-21", "-7", "7", "21", "35"]);
-		// 展开后每张都能点开预览（点第 3 张预览的就是第 3 张）
-		fireEvent.click(screen.getAllByLabelText("点击放大预览")[2]);
-		expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toContain("IMG2");
+		expect(screen.getByTestId("images-toggle").getAttribute("aria-expanded")).toBe("true");
+		const cards = [...fan.children] as HTMLElement[];
+		// 同一批 DOM 节点：transform 才能过渡出扇开的动画
+		expect(cards).toEqual(before);
+		const poses = cards.map((card) => poseOf(card)!);
+		expect(poses[3].angle).toBe(0);
+		for (let i = 0; i < 3; i += 1) {
+			expect(poses[i].angle).toBe(-poses[6 - i].angle);
+			expect(poses[i].y).toBe(poses[6 - i].y);
+			expect(poses[i].y).toBeGreaterThan(poses[i + 1].y);
+		}
+		expect(poses.every((pose, i) => i === 0 || pose.x > poses[i - 1].x)).toBe(true);
+		expect(Number(fan.style.height.replace("px", ""))).toBeGreaterThan(96);
+		expect(cards.every((card) => !card.dataset.hidden)).toBe(true);
+		// 层级顺序不变（左压右），每张露出来的右侧条带里都有自己的删除按钮
+		expect(cards.map((card) => Number(card.style.zIndex))).toEqual([7, 6, 5, 4, 3, 2, 1]);
+		expect(Array.from({ length: 7 }, (_, i) => screen.queryByLabelText(`删除 ${i + 1}`))).not.toContain(null);
 
-		// 预览大图里也能删（扇形里卡片叠着，删除按钮靠悬停才露出来）
-		fireEvent.click(within(screen.getByRole("dialog")).getByText("删除"));
-		expect(screen.queryByRole("dialog")).toBeNull();
-		expect(cards()).toHaveLength(5);
+		// 悬停那张抬起来、放到最上层
+		fireEvent.mouseEnter(cards[3]);
+		expect(cards[3].style.zIndex).toBe("8");
+		expect(poseOf(cards[3])!.y).toBeLessThan(poses[3].y);
+		fireEvent.mouseLeave(cards[3]);
+		expect(cards[3].style.zIndex).toBe("4");
 
 		fireEvent.click(screen.getByTestId("images-toggle"));
 		expect(fan.style.height).toBe("96px");
+	});
+
+	it("预览里删除后接着看下一张；删的是哪张，其余卡片的 DOM 原样保留", () => {
+		renderInput({ images: many(6) });
+		const fan = screen.getByTestId("image-fan");
+		const second = fan.querySelector('img[src*="IMG1"]');
+		fireEvent.click(screen.getByTestId("images-toggle"));
+		fireEvent.click(screen.getAllByLabelText("点击放大预览")[2]);
+		const dialog = screen.getByRole("dialog");
+		expect(dialog.querySelector("img")?.getAttribute("src")).toContain("IMG2");
+		fireEvent.click(within(dialog).getByText("删除"));
+		expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toContain("IMG3");
+		expect(screen.getByRole("dialog").textContent).toContain("3 / 5");
+		expect(fan.children).toHaveLength(5);
+		// key 不再是「base64 前 12 位 + 下标」：删掉中间一张，后面的卡片不会被复用成别的图
+		expect(fan.querySelector('img[src*="IMG1"]')).toBe(second);
+	});
+
+	it("扇形按容器宽度铺开：宽时间距有上限，窄时挤一挤但不出界", () => {
+		const wide = fanLayout(5, 800);
+		expect(wide.cards[1].x - wide.cards[0].x).toBeLessThanOrEqual(76);
+		expect(wide.width).toBeLessThan(500);
+		const narrow = fanLayout(16, 340);
+		expect(narrow.width).toBeLessThanOrEqual(340);
+		expect(narrow.cards[15].x).toBeGreaterThan(narrow.cards[0].x);
+		expect(deckLayout(2)).toMatchObject({ width: 100, height: 96 });
+	});
+
+	it("张数多、条带太窄时标成拥挤：删除按钮只在悬停 / 聚焦那张上出现（不挤成一排）", () => {
+		renderInput({ images: many(16) });
+		const fan = screen.getByTestId("image-fan");
+		fireEvent.click(screen.getByTestId("images-toggle"));
+		expect(fan.dataset.crowded).toBe("true");
+		cleanup();
+		renderInput({ images: many(6) });
+		fireEvent.click(screen.getByTestId("images-toggle"));
+		expect(screen.getByTestId("image-fan").dataset.crowded).toBeUndefined();
 	});
 	it("不超过 4 张不折叠", () => {
 		renderInput({ images: [png, jpeg, { ...png, data: "CCCC" }, { ...png, data: "DDDD" }] });

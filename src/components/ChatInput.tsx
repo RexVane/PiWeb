@@ -16,6 +16,7 @@ import {
 	IconTerminalOutline14,
 } from "@/components/icons";
 import { ContextMeter } from "@/components/ContextMeter";
+import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
@@ -47,15 +48,6 @@ export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [], 
 
 type SendResult = { success: boolean; error?: string };
 const MAX_UPLOAD_FILES = 16;
-/** 超过这个数量就折叠（引用 chip 与待发送图片各自计数） */
-const COLLAPSE_AT = 4;
-/** 牌堆正面那张的边长（后面的只露出 4px 右边缘） */
-const DECK_SIZE = 96;
-/** 扇形展开：每张之间最多转多少度、以及旋转枢轴在卡片下方多远处（越大弧越平） */
-const FAN_STEP_MAX = 14;
-const FAN_PIVOT = 150;
-/** 扇形展开时整条占多高（卡片往上拱 + 旋转出来的四个角） */
-const FAN_HEIGHT = DECK_SIZE + 56;
 
 /** abort / clearQueue 命令的返回：服务端清出来的排队文本，放回输入框用 */
 type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
@@ -165,13 +157,8 @@ export function ChatInput({
 	const uploadBusy = uploadCount > 0 || pendingUploadCount > 0;
 	const sendBusy = sending || pendingSend;
 	const [dragActive, setDragActive] = useState(false);
-	/** 待发送图片的放大预览下标；null = 没开 */
-	const [previewImage, setPreviewImage] = useState<number | null>(null);
-	/** 引用 chip / 图片超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉 */
+	/** 引用 chip 超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉（图片的折叠在 ComposerImages 里） */
 	const [refsExpanded, setRefsExpanded] = useState(false);
-	const [imagesExpanded, setImagesExpanded] = useState(false);
-	/** 鼠标停在扇形里哪张上（抬起来 + 让删除按钮露出来） */
-	const [fanHover, setFanHover] = useState<number | null>(null);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
@@ -189,13 +176,6 @@ export function ChatInput({
 	const enterBehavior = useEnterBehavior();
 	const queuedCount = queue.steering.length + queue.followUp.length;
 	const [restoreTick, setRestoreTick] = useState(0);
-
-	useEffect(() => {
-		if (previewImage === null) return;
-		const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setPreviewImage(null); };
-		document.addEventListener("keydown", onKey);
-		return () => document.removeEventListener("keydown", onKey);
-	}, [previewImage]);
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -524,29 +504,6 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	/** 一张待发送图片：点开预览 + 右上角按序号删除。deck 给了就按固定边长画（牌堆与扇形要能对上） */
-	const renderImageCard = (img: ImageAttachment, index: number, deck?: number, deleteAlwaysVisible = true) => (
-		<div className="group relative">
-			<button type="button" className="block" title={t.imagePreview} aria-label={t.imagePreview} onClick={() => setPreviewImage(index)}>
-				<img
-					src={`data:${img.mimeType};base64,${img.data}`}
-					alt=""
-					className={deck ? "rounded-lg object-contain" : "max-h-24 max-w-32 rounded-lg object-contain"}
-					style={{ border: "0.5px solid var(--dsw-border-l2)", ...(deck ? { width: deck, height: deck } : {}) }}
-				/>
-			</button>
-			<button
-				type="button"
-				className={`absolute -right-1.5 -top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px] transition-opacity ${deleteAlwaysVisible ? "" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}
-				style={{ background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
-				disabled={sendBusy}
-				aria-label={`${t.delete} ${index + 1}`}
-				onClick={() => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, at) => at !== index) }))}
-			>
-				✕
-			</button>
-		</div>
-	);
 	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
 
 	return (
@@ -667,119 +624,51 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：图片。超过 4 张折叠成牌堆，展开时沿弧线扇开（同一批卡片做 transform，所以有扇开动画） */}
+			{/* 附件轨：图片（超过 4 张折叠成牌堆，展开沿弧线扇开；点开可放大、切换、删除） */}
 			{images.length > 0 && (
-				<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
-					{images.length > COLLAPSE_AT ? (
-						<div
-							className="relative flex-none"
-							data-testid="image-fan"
-							style={{
-								width: imagesExpanded ? "100%" : DECK_SIZE + Math.min(images.length - 1, 4) * 4,
-								height: imagesExpanded ? FAN_HEIGHT : DECK_SIZE,
-								transition: "width 260ms ease, height 260ms ease",
-							}}
-						>
-							{images.map((img, i) => {
-								// 每张之间转 STEP 度、绕卡片下方的枢轴旋转：中心那张最高，两侧顺着弧往下垂
-								const step = Math.min(FAN_STEP_MAX, 100 / Math.max(1, images.length - 1));
-								const angle = (i - (images.length - 1) / 2) * step;
-								const lifted = fanHover === i;
-								return (
-									<div
-										key={`${img.data.slice(0, 12)}-${i}`}
-										className="absolute"
-										onMouseEnter={() => setFanHover(i)}
-										onMouseLeave={() => setFanHover((current) => (current === i ? null : current))}
-										style={{
-											left: "50%",
-											bottom: imagesExpanded ? 24 : 0,
-											// 牌堆时横向错位 4px；展开后回到中心靠旋转铺开
-											marginLeft: -DECK_SIZE / 2 + (imagesExpanded ? 0 : i * 4),
-											transformOrigin: `50% ${FAN_PIVOT}px`,
-											transform: imagesExpanded ? `rotate(${angle}deg)${lifted ? " translateY(-10px)" : ""}` : undefined,
-											zIndex: lifted ? images.length + 1 : imagesExpanded ? i : -i,
-											transition: "transform 260ms cubic-bezier(.2, .8, .25, 1), bottom 260ms ease, margin-left 260ms ease",
-										}}
-									>
-										{renderImageCard(img, i, DECK_SIZE, !imagesExpanded)}
-									</div>
-								);
-							})}
-						</div>
-					) : (
-					images.map((img, i) => <div key={`${img.data.slice(0, 12)}-${i}`}>{renderImageCard(img, i)}</div>)
-					)}
-					{images.length > COLLAPSE_AT ? (
-						<button type="button" className="pw-chip" data-testid="images-toggle" onClick={() => { setImagesExpanded((open) => !open); setFanHover(null); }}>
-							{imagesExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(images.length - 1))}
-						</button>
-					) : null}
-				</div>
+				<ComposerImages
+					images={images}
+					disabled={sendBusy}
+					onRemove={(index) => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, at) => at !== index) }))}
+				/>
 			)}
 
-			{/* 放大预览：手机上没法用本机程序打开图片，应用内看最实在 */}
-			{previewImage !== null && images[previewImage] ? (
-				<div
-					className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-					style={{ background: "rgba(0, 0, 0, .72)" }}
-					role="dialog"
-					aria-modal="true"
-					aria-label={t.imagePreview}
-					onClick={() => setPreviewImage(null)}
-				>
-					<img
-						src={`data:${images[previewImage].mimeType};base64,${images[previewImage].data}`}
-						alt=""
-						className="max-h-full max-w-full rounded-xl object-contain"
-					/>
-					{/* 扇形里卡片叠着不好点删除：预览大图时也给一个（手机上尤其需要） */}
-					<button
-						type="button"
-						className="pw-chip absolute right-5 top-5"
-						onClick={(event) => { event.stopPropagation(); const removed = previewImage; changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, at) => at !== removed) })); setPreviewImage(null); }}
-					>
-						{t.delete}
-					</button>
-				</div>
-			) : null}
-{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
 			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
 			{references.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-1.5 px-1" data-testid="composer-references">
 					{(refsExpanded ? references : references.slice(0, COLLAPSE_AT)).map((path) => {
 						const chip = referenceChipOf(path);
 						return (
-						<span
-							key={path}
-							className="flex items-center gap-1 rounded-md px-2 py-1"
-							style={{
-								maxWidth: 260,
-								fontSize: 12,
-								fontFamily: "var(--font-mono)",
-								color: "var(--dsw-label-secondary)",
-								background: "var(--dsw-selector)",
-								border: "0.5px solid var(--dsw-border-l3)",
-							}}
-							title={path}
-						>
-							{chip.dir ? (
-								<IconFolderClose16 size={12} style={{ flex: "none", color: "var(--dsw-warn)" }} />
-							) : (
-								<IconFileOutline16 size={12} style={{ flex: "none", color: "var(--dsw-accent)" }} />
-							)}
-							<span className="truncate">{chip.text}</span>
-							<button
-								type="button"
-								className="flex h-4 w-4 flex-none items-center justify-center rounded-full text-[10px]"
-								style={{ color: "var(--dsw-label-caption)" }}
-								disabled={sendBusy}
-								onClick={() => changeDraft((previous) => ({ ...previous, references: (previous.references ?? []).filter((p) => p !== path) }))}
-								aria-label={`${t.delete} ${path}`}
+							<span
+								key={path}
+								className="flex items-center gap-1 rounded-md px-2 py-1"
+								style={{
+									maxWidth: 260,
+									fontSize: 12,
+									fontFamily: "var(--font-mono)",
+									color: "var(--dsw-label-secondary)",
+									background: "var(--dsw-selector)",
+									border: "0.5px solid var(--dsw-border-l3)",
+								}}
+								title={path}
 							>
-								✕
-							</button>
-						</span>
+								{chip.dir ? (
+									<IconFolderClose16 size={12} style={{ flex: "none", color: "var(--dsw-warn)" }} />
+								) : (
+									<IconFileOutline16 size={12} style={{ flex: "none", color: "var(--dsw-accent)" }} />
+								)}
+								<span className="truncate">{chip.text}</span>
+								<button
+									type="button"
+									className="flex h-4 w-4 flex-none items-center justify-center rounded-full text-[10px]"
+									style={{ color: "var(--dsw-label-caption)" }}
+									disabled={sendBusy}
+									onClick={() => changeDraft((previous) => ({ ...previous, references: (previous.references ?? []).filter((p) => p !== path) }))}
+									aria-label={`${t.delete} ${path}`}
+								>
+									✕
+								</button>
+							</span>
 						);
 					})}
 					{references.length > COLLAPSE_AT ? (
@@ -790,6 +679,7 @@ export function ChatInput({
 				</div>
 			)}
 
+			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
 			{uploads.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-2 px-1">
 					{uploads.map((f, i) => (
@@ -1065,11 +955,7 @@ function fmtUploadSize(bytes: number): string {
 }
 
 /**
- * 引用 chip 上的显示文本:只要最后一段(文件名/目录名),太挤就靠 CSS 截断。
- * 目录引用带尾斜杠,和文件区分开(与项目结构图里的展示一致)。
- */
-/**
- * chip 上显示的短标签。只取 basename 会分不清两件事：目录与同名文件
+ * 引用 chip 上显示的短标签。只取 basename 会分不清两件事：目录与同名文件
  * （`src/lib` 与 `src/lib.ts` 都显示 `lib`；`a/index.ts` 与 `b/index.ts` 都显示 `index.ts`）。
  * 规则：目录带尾斜杠（`lib/`，配文件夹图标）；其余最多保留**尾部两段**
  * （`src/lib/index.ts` → `…/lib/index.ts`）。完整路径仍在 title 里。

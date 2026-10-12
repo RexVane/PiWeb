@@ -1712,6 +1712,169 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	pointer-events: none;
 }
 
+/* 输入卡待发送图片：平铺缩略图 / 牌堆 / 扇形（src/components/composer/ComposerImages.tsx） */
+.pw-image-thumb {
+	position: relative;
+	flex: none;
+}
+.pw-image-thumb img {
+	display: block;
+	box-shadow: 0 0 0 0.5px var(--dsw-border-l2);
+}
+.pw-image-fan {
+	position: relative;
+	flex: none;
+	transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1), height 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pw-image-card {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 96px;
+	height: 96px;
+	transition: transform 360ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 200ms ease;
+}
+.pw-image-card[data-hidden="true"] {
+	opacity: 0;
+	pointer-events: none;
+}
+.pw-image-face {
+	display: block;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	border-radius: 10px;
+	/* 不透明的底：长图上下留白的地方不能透出后面那张 */
+	background: linear-gradient(var(--dsw-selector), var(--dsw-selector)), var(--dsw-glass-input);
+	box-shadow: 0 0 0 0.5px var(--dsw-border-l3), 0 1px 3px rgba(0, 0, 0, 0.12);
+	transition: box-shadow var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-image-card[data-lifted="true"] .pw-image-face {
+	box-shadow: 0 0 0 0.5px var(--dsw-border-l4), 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+.pw-image-face img {
+	transition: opacity 240ms ease;
+}
+/* 牌堆里后面几张只露空白卡边，一眼看出是一叠；扇开时图淡入 */
+.pw-image-fan:not([data-expanded="true"]) .pw-image-card + .pw-image-card .pw-image-face img {
+	opacity: 0;
+}
+.pw-image-face:focus-visible {
+	outline: 2px solid var(--dsw-accent);
+	outline-offset: 2px;
+}
+/* 张数多、露出的条带太窄：删除按钮只在悬停 / 聚焦那张上出现，免得挤成一排 */
+.pw-image-fan[data-crowded="true"] .pw-image-delete {
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-image-fan[data-crowded="true"] .pw-image-card:hover .pw-image-delete,
+.pw-image-fan[data-crowded="true"] .pw-image-card:focus-within .pw-image-delete {
+	opacity: 1;
+	pointer-events: auto;
+}
+.pw-image-delete {
+	position: absolute;
+	top: -6px;
+	right: -6px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 999px;
+	font-size: 11px;
+	background: var(--dsw-label-primary);
+	color: var(--dsw-bg-base);
+	/* 一圈底色描边：压在别的图片上也看得清 */
+	box-shadow: 0 0 0 1.5px var(--dsw-glass-input);
+}
+.pw-image-delete:disabled {
+	opacity: 0.4;
+}
+/* 放大预览 */
+.pw-viewer {
+	position: fixed;
+	inset: 0;
+	z-index: 200;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 56px 16px 24px;
+	background: rgba(0, 0, 0, 0.78);
+}
+.pw-viewer-bar {
+	position: absolute;
+	top: 12px;
+	left: 16px;
+	right: 16px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.pw-viewer-count {
+	flex: 1;
+	font-size: 13px;
+	font-variant-numeric: tabular-nums;
+	color: rgba(255, 255, 255, 0.78);
+}
+.pw-viewer-btn {
+	height: 30px;
+	min-width: 30px;
+	padding: 0 12px;
+	border-radius: 999px;
+	font-size: 13px;
+	color: #fff;
+	background: rgba(255, 255, 255, 0.14);
+	transition: background var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-viewer-btn:hover {
+	background: rgba(255, 255, 255, 0.24);
+}
+.pw-viewer-btn:disabled {
+	opacity: 0.4;
+}
+.pw-viewer-image {
+	max-width: 100%;
+	max-height: 100%;
+	object-fit: contain;
+	border-radius: 12px;
+}
+.pw-viewer-nav {
+	position: absolute;
+	top: 50%;
+	width: 40px;
+	height: 40px;
+	margin-top: -20px;
+	border-radius: 999px;
+	font-size: 26px;
+	line-height: 38px;
+	color: #fff;
+	background: rgba(255, 255, 255, 0.14);
+	transition: background var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-viewer-nav:hover {
+	background: rgba(255, 255, 255, 0.24);
+}
+.pw-viewer-nav[data-side="prev"] {
+	left: 16px;
+}
+.pw-viewer-nav[data-side="next"] {
+	right: 16px;
+}
+.pw-viewer-btn:focus-visible,
+.pw-viewer-nav:focus-visible {
+	outline: 2px solid #fff;
+	outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+	.pw-image-fan,
+	.pw-image-card {
+		transition: none;
+	}
+}
+
 /* 设置页模型体检卡片里的小输入框 / 下拉（容量、视觉） */
 .pw-audit-field {
 	width: 100%;
