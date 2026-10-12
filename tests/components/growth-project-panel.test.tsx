@@ -165,3 +165,33 @@ describe("GrowthConsentDialog", () => {
 		expect(onAnswer).toHaveBeenLastCalledWith(false);
 	});
 });
+
+describe("轮次列表：区分有没有改动（方案 1）", () => {
+	it("有改动的显示 +N −M，没改动的整行降对比度，选中的那行不灰", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		const select = vi.fn();
+		const changed: GrowthEntry = { ...piRound, n: 3 };
+		// 空跑的一轮：只在对话里说了话，没动过文件
+		const empty: GrowthEntry = { ...piRound, commit: h("e"), parent: h("d"), tree: h("5"), parentTree: h("4"), n: 4, title: "空跑一轮", changes: [], stats: { added: 0, modified: 0, deleted: 0, renamed: 0, add: 0, del: 0 } };
+		render(
+			<ProjectPanel
+				growth={{ ...growth, rounds: [changed, empty], selected: changed, changes: changed.changes, select }}
+				workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()}
+			/>,
+		);
+		fireEvent.click(screen.getByTestId("growth-round-picker"));
+		const rows = [...screen.getByTestId("growth-round-list").querySelectorAll("[role=option]")];
+		const changedRow = rows.find((row) => row.textContent?.includes("把保存按钮改成红色"))!;
+		const emptyRow = rows.find((row) => row.textContent?.includes("空跑一轮"))!;
+		// 有改动：正常亮度 + 改动量（fixture 里是 +12 −3）
+		expect(changedRow.getAttribute("style") ?? "").not.toContain("opacity");
+		expect(changedRow.textContent).toContain("+12");
+		expect(changedRow.textContent).toContain("−3");
+		// 没改动：整行降对比度，且不显示改动量
+		expect(emptyRow.getAttribute("style")).toContain("opacity: 0.45");
+		expect(emptyRow.textContent).not.toContain("+");
+		// 列表还开着，直接点空跑那行也能选（选中后由调用方换成 selected，不再灰）
+		fireEvent.click(emptyRow);
+		expect(select).toHaveBeenCalledWith(h("e"));
+	});
+});
