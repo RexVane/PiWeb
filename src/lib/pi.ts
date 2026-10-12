@@ -23,6 +23,8 @@ import {
 	loadProjectContextFiles,
 } from "@earendil-works/pi-coding-agent";
 
+import { modelFilesFingerprint, reloadStoredCredentials } from "./model-files";
+
 export { createAgentSession, getAgentDir, loadProjectContextFiles, SessionManager };
 
 // Child tools inherit these defaults; Node itself already decodes source and JSON as UTF-8.
@@ -30,9 +32,15 @@ process.env.PYTHONUTF8 ??= "1";
 process.env.PYTHONIOENCODING ??= "utf-8";
 
 let modelRuntimePromise: Promise<PiModelRuntime> | null = null;
+/** 共享运行时每创建一次、每刷新一次就加一：模型列表缓存据此作废（见 models-service） */
+let modelRuntimeGeneration = 0;
+/** 上一次加载目录时 models.json / auth.json 的指纹 */
+let modelFilesSeen: string | null = null;
 
 export function getModelRuntime(): Promise<PiModelRuntime> {
 	if (!modelRuntimePromise) {
+		modelFilesSeen = modelFilesFingerprint(getAgentDir());
+		modelRuntimeGeneration += 1;
 		modelRuntimePromise = ModelRuntime.create().catch((err) => {
 			modelRuntimePromise = null;
 			throw err;
@@ -41,20 +49,37 @@ export function getModelRuntime(): Promise<PiModelRuntime> {
 	return modelRuntimePromise;
 }
 
+export function modelRuntimeVersion(): number {
+	return modelRuntimeGeneration;
+}
+
 /**
  * models.json 落盘后调用：就地刷新共享的 ModelRuntime，让目录与认证立即生效。
  * 不能换一个新实例 —— 活跃会话、扩展注册的 provider 都挂在旧实例上，换掉后会话里
  * 选新 provider 的模型会报 "No API key"，扩展 provider 也会从目录里消失。
- * 只读本地配置不联网；刷新失败才退回整体重建。
+ * 只读本地配置不联网；刷新失败才退回整体重建。手改的 auth.json 也在这里重读（SDK 的存储会缓存它）。
  */
 export async function refreshModelRuntime(): Promise<void> {
 	const pending = modelRuntimePromise;
 	if (!pending) return;
+	// 先记指纹再刷新：刷新期间又改的文件，下一次检查还能发现
+	modelFilesSeen = modelFilesFingerprint(getAgentDir());
+	modelRuntimeGeneration += 1;
 	try {
-		await (await pending).refresh({ allowNetwork: false });
+		const runtime = await pending;
+		reloadStoredCredentials(runtime);
+		await runtime.refresh({ allowNetwork: false });
 	} catch {
 		if (modelRuntimePromise === pending) modelRuntimePromise = null;
 	}
+}
+
+/** 读目录的入口调用：models.json / auth.json 的指纹变了才刷新（两次 stat，不读内容）。返回是否刷新过。 */
+export async function refreshModelRuntimeIfFilesChanged(): Promise<boolean> {
+	if (!modelRuntimePromise) return false;
+	if (modelFilesFingerprint(getAgentDir()) === modelFilesSeen) return false;
+	await refreshModelRuntime();
+	return true;
 }
 
 const settingsCache = new Map<string, SettingsManager>();

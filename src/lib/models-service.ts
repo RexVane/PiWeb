@@ -12,7 +12,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { filterModelsByPiScope } from "./models/model-scope";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
-import { getAgentDir, getModelRuntime, refreshModelRuntime } from "./pi";
+import { getAgentDir, getModelRuntime, modelRuntimeVersion, refreshModelRuntime, refreshModelRuntimeIfFilesChanged } from "./pi";
 import { getEnabledModelPatterns } from "./pi-settings";
 import { reloadSessionsForCwd } from "./agent-manager";
 import {
@@ -68,6 +68,8 @@ let builtInCatalogPromise: Promise<Map<string, Set<string>>> | null = null;
 /** 目录短缓存：页面挂载与设置关闭都会拉一次；认证探测（每个供应商一次网络往返）不必秒级重复 */
 let listCache: { at: number; value: Promise<{ providers: ProviderView[]; models: ModelView[] }> } | null = null;
 const LIST_TTL_MS = 5_000;
+/** 缓存是按哪一代共享运行时算的：运行时刷新过（手改文件、/reload）就整体作废 */
+let listedGeneration = -1;
 
 /**
  * 认证探测结果单独缓存：目录只活 5 秒，但「这个 provider 能不能用」在一次会话里几乎不变。
@@ -125,10 +127,16 @@ export async function builtinCatalogModelIds(content: string, models: ReadonlyAr
 	return Object.fromEntries([...ids].map(([providerId, modelIds]) => [providerId, [...modelIds].sort()]));
 }
 
-export function listModels(): Promise<{
+export async function listModels(): Promise<{
 	providers: ProviderView[];
 	models: ModelView[];
 }> {
+	// 手改过 models.json / auth.json 时先刷新共享目录（只做两次 stat），再看缓存是不是还对得上
+	await refreshModelRuntimeIfFilesChanged();
+	if (listedGeneration !== modelRuntimeVersion()) {
+		listedGeneration = modelRuntimeVersion();
+		invalidateModelList();
+	}
 	if (listCache && Date.now() - listCache.at < LIST_TTL_MS) return listCache.value;
 	const value = listModelsUncached().catch((error) => {
 		listCache = null;

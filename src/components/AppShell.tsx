@@ -587,7 +587,7 @@ export function AppShell() {
 				void sendCommand({ cmd: "fork" }).then((r) => {
 					if (r.success && r.data?.sessionPath) openSession(r.data.sessionPath);
 				});
-			} else if (name === "reload") void sendCommand({ cmd: "reload" });
+			} else if (name === "reload") void sendCommand({ cmd: "reload" }).then(() => refreshModels());
 			else setError(t.cmdUnknown.replace("{name}", name));
 		},
 		[sendCommand, currentId, closeSession, openSession, setError, t],

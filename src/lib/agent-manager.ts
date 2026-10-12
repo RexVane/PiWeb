@@ -25,6 +25,7 @@ import {
 	SessionManager,
 	createAgentSession,
 	getModelRuntime,
+	refreshModelRuntime,
 	openSessionManager,
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
@@ -1215,11 +1216,7 @@ async function reloadManagedResources(m: Managed): Promise<boolean> {
 	m.resourceReloadPending = false;
 	try {
 		await m.session.reload();
-		// SDK 的 reload 不会换当前模型对象：models.json 改了 baseUrl / contextWindow 后，
-		// 会话手里还是旧对象。按 provider/id 从（已就地刷新的）共享 runtime 取一次新的。
-		const current = m.session.model;
-		const fresh = current && m.session.modelRuntime.getModel(current.provider, current.id);
-		if (fresh && fresh !== current) m.session.agent.state.model = fresh;
+		swapCurrentModelObject(m.session);
 		return true;
 	} catch (err) {
 		publish(m, { type: "error", message: `重载扩展失败：${String((err as Error)?.message ?? err)}`, ts: Date.now() });
@@ -1227,6 +1224,16 @@ async function reloadManagedResources(m: Managed): Promise<boolean> {
 	} finally {
 		if (m.resourceReloadPending && !isManagedBusy(m)) queueMicrotask(() => void reloadManagedResources(m));
 	}
+}
+
+/**
+ * SDK 的 reload 不会换当前模型对象：models.json 改了 baseUrl / contextWindow 后，会话手里还是旧对象。
+ * 按 provider/id 从（已就地刷新的）共享 runtime 取一次新的。
+ */
+function swapCurrentModelObject(session: AgentSession): void {
+	const current = session.model;
+	const fresh = current && session.modelRuntime.getModel(current.provider, current.id);
+	if (fresh && fresh !== current) session.agent.state.model = fresh;
 }
 
 export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
@@ -1719,8 +1726,17 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 			}
 			case "reload": {
 				if (isManagedBusy(m)) return { ok: false, error: "session is busy" };
+				// /reload：先就地刷新共享的模型目录（models.json / auth.json 可能是手改的）；其它会话手里的
+				// 模型对象跟着换新，忙着的等本轮结束再换；本会话重载资源后再换一次
+				await refreshModelRuntime();
+				for (const other of sessions.values()) {
+					if (other === m || !other.session) continue;
+					if (isManagedBusy(other)) other.resourceReloadPending = true;
+					else swapCurrentModelObject(other.session);
+				}
 				const session = await ensureSession(m);
 				await session.reload();
+				swapCurrentModelObject(session);
 				return { ok: true };
 			}
 			case "fork": {
