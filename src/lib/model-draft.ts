@@ -21,11 +21,14 @@ export function modelInputFor(vision: boolean): string[] {
 }
 
 /**
- * 用户没填、端点也没给时的兜底值。必须写进 models.json：
- * 留空会被 pi 的过时缺省顶掉（128000 / 16384 / 只文本），而现在的模型普遍是 1M + 32k + 有视觉。
- * 端点给了真值就用真值，这里只在两个来源都没有时生效。
+ * 用户没填、端点也没给时的兜底值（只用于容量）。必须写进 models.json：
+ * 留空会被 pi 的过时缺省顶掉（128000 / 16384），而现在的模型普遍是 1M + 32k。
+ *
+ * ⚠️ 视觉（`input`）不在里面：那是「这个模型能不能收图」的能力声明，
+ * 编错了会把图片发给不支持它的上游（可能 400），所以宁可留空由用户表态——
+ * 留空的代价 pi 会按纯文本处理，体检卡片会把这类条目列出来提醒。
  */
-export const MODEL_FIELD_DEFAULTS = { contextWindow: 1_000_000, maxTokens: 32_000, vision: true } as const;
+export const MODEL_FIELD_DEFAULTS = { contextWindow: 1_000_000, maxTokens: 32_000 } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -96,15 +99,16 @@ export function validateModelDrafts(models: ModelDraft[]): { index: number; reas
 /**
  * Only edited form fields replace the source; unknown/nested configuration is opaque.
  *
- * fillDefaults：行会写进 models[] 时补齐缺的字段——包括源里没写 contextWindow / maxTokens / input 的情况。
- * 不补就等于把这三个值交给 pi 的缺省（128000 / 16384 / 只文本），而它们早就过时了。
+ * fillDefaults：行会写进 models[] 时补齐缺的**容量**字段（contextWindow / maxTokens）——包括源里没写的情况。
+ * 不补就等于把这两个值交给 pi 的缺省（128000 / 16384），而它们早就过时了。
+ * 视觉（input）**不在这里补**：那是能力声明，猜错会把图发给不收图的上游，留给端点或用户表态。
  * 覆盖内置模型的行传 false：那些模型 pi 的目录里有真值，编一个 1M 反而会顶掉正确值。
  */
 export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: string }, fillDefaults = false): Record<string, unknown> {
 	const result: Record<string, unknown> = { ...model.source };
 	const original = model.source ? modelDraftFromConfig(model.source) : undefined;
 	/** 源里有值、现在被清空 = 用户主动清掉的，不拿缺省填回去 */
-	const cleared = (key: "contextWindow" | "maxTokens" | "vision") => model[key] === undefined && original?.[key] !== undefined;
+	const cleared = (key: "contextWindow" | "maxTokens") => model[key] === undefined && original?.[key] !== undefined;
 	const withDefaults = (key: "contextWindow" | "maxTokens") => model[key] === undefined && fillDefaults && !cleared(key);
 	for (const field of ["id", "name", "contextWindow", "maxTokens"] as const) {
 		const value = (field === "contextWindow" || field === "maxTokens") && withDefaults(field)
@@ -118,9 +122,15 @@ export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: s
 		} else if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) result[field] = value;
 		else delete result[field];
 	}
-	// input 是数组：源里从来没写过也算「要写」，否则 pi 会把这个模型当只文本、把贴图换成占位文字
-	const vision = model.vision ?? (fillDefaults && !cleared("vision") ? MODEL_FIELD_DEFAULTS.vision : undefined);
-	if (vision !== undefined && !Object.is(vision, original?.vision)) result.input = modelInputFor(vision);
+	// input 是数组：只在明确表态时写（端点报的或用户选的），不默认猜视觉
+	// （猜错会把图片发给不收图的上游；留空只是被 pi 当纯文本，体检卡片会提醒）
+	const vision = model.vision;
+	if (vision === undefined) {
+		// 源里声明过、现在选「未声明」= 明确取消这个声明（否则保留源值会让人取消不掉）
+		if (original?.vision !== undefined) delete result.input;
+	} else if (!Object.is(vision, original?.vision)) {
+		result.input = modelInputFor(vision);
+	}
 	return result;
 }
 

@@ -1175,10 +1175,11 @@ function ModelsSection() {
 			/* 体检失败不该影响设置面板本身 */
 		}
 	};
-	const fixAudit = async () => {
+	/** 补容量（vision 不给）或按用户明确表态补视觉 */
+	const fixAudit = async (vision?: boolean) => {
 		setAuditBusy(true);
 		try {
-			const result = await request({ action: "fixModelDefaults" });
+			const result = await request({ action: "fixModelDefaults", ...(vision === undefined ? {} : { vision }) });
 			if (!result.success) throw new Error(result.error || t.toastError);
 			notify(true, t.modelAuditFixed.replace("{n}", String(result.data?.filled ?? 0)));
 			await load();
@@ -1669,6 +1670,13 @@ function ModelsSection() {
 							{auditBusy ? t.saving : t.modelAuditFix}
 						</button>
 					</div>
+					{audit.gaps.some((gap) => gap.missing.includes("input")) ? (
+						<div className="flex flex-wrap items-center gap-2" style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)" }}>
+							<span>{t.modelAuditVision.replace("{n}", String(audit.gaps.filter((gap) => gap.missing.includes("input")).length))}</span>
+							<button className="btn-outline" style={{ height: 24, padding: "0 10px", fontSize: 12 }} disabled={auditBusy} onClick={() => void fixAudit(true)}>{t.modelAuditVisionOn}</button>
+							<button className="btn-outline" style={{ height: 24, padding: "0 10px", fontSize: 12 }} disabled={auditBusy} onClick={() => void fixAudit(false)}>{t.modelAuditVisionOff}</button>
+						</div>
+					) : null}
 					<div className="flex flex-col gap-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)" }}>
 						{audit.gaps.slice(0, 8).map((gap) => (
 							<div key={gap.provider + ":" + gap.id} className="truncate" title={gap.provider + " / " + gap.id}>

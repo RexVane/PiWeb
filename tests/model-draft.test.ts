@@ -115,21 +115,22 @@ describe("builtin provider overrides", () => {
 });
 
 describe("模型字段缺省（视觉 / 容量）", () => {
-	it("源里没写 input 时 vision 是 undefined，不等于「只文本」", () => {
-		expect(modelDraftFromConfig({ id: "a" }).vision).toBeUndefined();
-		expect(modelDraftFromConfig({ id: "a", input: ["text"] }).vision).toBe(false);
-		expect(modelDraftFromConfig({ id: "a", input: ["text", "image"] }).vision).toBe(true);
-	});
-
-	it("写进 models[] 的自定义模型补缺省：不补就会被 pi 的 128000 / 16384 / 只文本 顶掉", () => {
+	it("写进 models[] 的自定义模型只补容量缺省；视觉不猜", () => {
 		expect(serializeModelDraft({ id: "proxy", name: "" }, true)).toEqual({
 			id: "proxy",
 			contextWindow: MODEL_FIELD_DEFAULTS.contextWindow,
 			maxTokens: MODEL_FIELD_DEFAULTS.maxTokens,
-			input: modelInputFor(true),
 		});
 		// 内置 provider 那张表单不补（覆盖行有目录真值），保持原行为
 		expect(serializeModelDraft({ id: "proxy", name: "" })).toEqual({ id: "proxy" });
+	});
+
+	it("视觉只在明确表态时写：有 / 无 / 取消声明", () => {
+		expect(serializeModelDraft({ id: "m", name: "", vision: true }, true).input).toEqual(modelInputFor(true));
+		expect(serializeModelDraft({ id: "m", name: "", vision: false }, true).input).toEqual(["text"]);
+		// 源里声明过、现在选「未声明」→ 取消这个声明
+		const source = { id: "m", input: ["text", "image"] };
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source), vision: undefined }, true)).not.toHaveProperty("input");
 	});
 
 	it("已有值不被覆盖；用户主动清空的字段也不拿缺省填回去", () => {

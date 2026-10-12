@@ -91,6 +91,8 @@ export async function POST(req: Request) {
 				| "loginAnswer"
 				| "loginCancel";
 			providerId?: string;
+			/** fixModelDefaults：视觉必须由用户表态（true/false），不给就只补容量 */
+			vision?: boolean;
 			apiKey?: string;
 			baseUrl?: string;
 			api?: string;
@@ -126,7 +128,7 @@ export async function POST(req: Request) {
 		if (body.action === "fixModelDefaults") {
 			// content 与 revision 取同一份快照：否则中间插进来一个写入者会把旧内容盖回去
 			const snapshot = await readCustomProviders();
-			const filled = fillCustomModelDefaults(snapshot.content);
+			const filled = fillCustomModelDefaults(snapshot.content, MODEL_FIELD_DEFAULTS, typeof body.vision === "boolean" ? body.vision : undefined);
 			if (!filled.filled) return NextResponse.json({ success: true, data: { filled: 0 } });
 			await writeCustomProviders(filled.content, snapshot.revision);
 			return NextResponse.json({ success: true, data: { filled: filled.filled, requiresSessionReopen: true } });

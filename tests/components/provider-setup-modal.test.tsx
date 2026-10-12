@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ProviderSetupModal, formatCapacity, parseCapacity, validateModelDrafts } from "@/components/ProviderSetupModal";
 import type { ProviderView } from "@/lib/models-service";
 
@@ -178,5 +178,38 @@ describe("ProviderSetupModal (builtin mode)", () => {
 				modelOverrides: { "grok-4": { name: "Grok Four" } },
 			},
 		}));
+	});
+});
+
+describe("ProviderSetupModal (custom mode): 自动识别", () => {
+	it("URL 和密钥填完就自己去拉模型目录，并把容量与视觉一起填好", async () => {
+		vi.useFakeTimers();
+		const calls: string[] = [];
+		vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+			calls.push(String(url));
+			expect(JSON.parse(String(init?.body)).action).toBe("discoverModels");
+			return { ok: true, json: async () => ({ success: true, data: { models: [
+				{ id: "auto-a", name: "A", contextWindow: 1_000_000, maxTokens: 32_000, vision: true },
+				{ id: "auto-b", name: "B" },
+			] } }) };
+		}));
+		render(
+			<ProviderSetupModal mode="custom" providers={[]} existingIds={[]} onClose={vi.fn()}
+				onSaveBuiltin={vi.fn(async () => ({ success: true }))} onSaveCustom={vi.fn(async () => ({ success: true }))} />,
+		);
+		// 还没填地址：不该有请求
+		expect(calls).toHaveLength(0);
+		fireEvent.change(screen.getByPlaceholderText("https://gateway.example/v1"), { target: { value: "https://gateway.example/v1" } });
+		fireEvent.change(screen.getByPlaceholderText("输入 API 密钥，或留空使用环境认证"), { target: { value: "sk-test" } });
+		await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
+		expect(calls).toEqual(["/api/models"]);
+		// 候选被自动采纳：容量与视觉来自端点
+		expect(screen.getByDisplayValue("auto-a")).toBeTruthy();
+		expect(screen.getByDisplayValue("auto-b")).toBeTruthy();
+		expect(screen.getByText(/已自动识别 2 个模型/)).toBeTruthy();
+		// auto-a 展开后能看到端点给的容量；auto-b 只填了 id/name
+		fireEvent.click(screen.getAllByTitle("容量")[0]);
+		expect(screen.getByDisplayValue("1M")).toBeTruthy();
+		expect(screen.getByDisplayValue("32K")).toBeTruthy();
 	});
 });

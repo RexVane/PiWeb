@@ -77,6 +77,12 @@ export interface DiscoveredModel {
  */
 export const PI_MODEL_FALLBACKS = { contextWindow: 128_000, maxTokens: 16_384, vision: false } as const;
 
+/** 体检卡片里怎么填：容量用默认值补，视觉必须由用户表态（不猜能力） */
+export interface ModelFieldDefaults {
+	contextWindow: number;
+	maxTokens: number;
+}
+
 export type CustomModelField = "input" | "contextWindow" | "maxTokens";
 
 export interface CustomModelGap {
@@ -1433,6 +1439,8 @@ export function customModelGaps(content: string): CustomModelGap[] {
 export function fillCustomModelDefaults(
 	content: string,
 	defaults: typeof MODEL_FIELD_DEFAULTS = MODEL_FIELD_DEFAULTS,
+	/** 视觉是能力声明，不能默认猜：不给就只填容量，端点上没报的可由用户一键表态 */
+	vision?: boolean,
 ): { content: string; filled: number } {
 	const parsed = parseCustomProviders(content);
 	let filled = 0;
@@ -1449,8 +1457,8 @@ export function fillCustomModelDefaults(
 				model.maxTokens = defaults.maxTokens;
 				touched = true;
 			}
-			if (!Array.isArray(model.input)) {
-				model.input = modelInputFor(defaults.vision);
+			if (vision !== undefined && !Array.isArray(model.input)) {
+				model.input = modelInputFor(vision);
 				touched = true;
 			}
 			if (touched) filled += 1;

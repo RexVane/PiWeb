@@ -11,7 +11,7 @@ import {
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
-import { MODEL_FIELD_DEFAULTS } from "@/lib/model-draft";
+import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
 import { formatCapacity, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
@@ -302,6 +302,8 @@ export function ProviderSetupModal({
 								updateModel={updateModel}
 								discover={discoverAvailableModels}
 								discoverDisabled={!baseUrl.trim()}
+								// 还没有任何模型行且 URL（+ 密钥，本机网关可省）填好：停手后自动去识别
+								autoDiscover={models.length === 0 && baseUrl.trim() && (apiKey.trim() || looksPrivateEndpoint(baseUrl)) ? { signature: `${baseUrl.trim()}|${api}|${apiKey.trim()}`, privateHost: looksPrivateEndpoint(baseUrl) } : undefined}
 							/>
 						</>
 					)}
@@ -328,6 +330,18 @@ export function ProviderSetupModal({
  * 每行 = ID + 名称，折叠展开两个容量字段（K/M 写法）；
  * 「从提供商获取」产出候选勾选对话框，采纳不覆盖已配置行。
  */
+/** 候选 → 表单行：端点报的容量与视觉一起带上，没报的留空（保存时按缺省补容量，视觉由用户表态） */
+function draftFromCandidate(candidate: ModelDraft): ModelDraft {
+	const id = candidate.id.trim();
+	return {
+		id,
+		name: candidate.name ?? "",
+		...(candidate.contextWindow ? { contextWindow: candidate.contextWindow } : {}),
+		...(candidate.maxTokens ? { maxTokens: candidate.maxTokens } : {}),
+		...(candidate.vision === undefined ? {} : { vision: candidate.vision }),
+	};
+}
+
 export function ModelCatalog({
 	models,
 	setModels,
@@ -336,6 +350,7 @@ export function ModelCatalog({
 	catalogIds,
 	discover,
 	discoverDisabled,
+	autoDiscover,
 }: {
 	models: ModelDraft[];
 	setModels: React.Dispatch<React.SetStateAction<ModelDraft[]>>;
@@ -346,6 +361,11 @@ export function ModelCatalog({
 	/** 用表单当前值探测远端目录（allowPrivate：用户勾选了允许访问本机/私网地址）；抛错时错误显示在目录内 */
 	discover?: (allowPrivate: boolean) => Promise<ModelDraft[]>;
 	discoverDisabled?: boolean;
+	/**
+	 * 自动识别：签名（URL + 协议 + 密钥）变了就自己去拉一次模型目录。
+	 * 只在「还没有任何模型行」时给出；采纳后签名失效，不会重复添加。
+	 */
+	autoDiscover?: { signature: string; privateHost: boolean };
 }) {
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
@@ -394,6 +414,35 @@ export function ModelCatalog({
 
 	const inCatalog = (id: string) => catalogIds?.has(id.trim()) ?? false;
 
+	// 自动识别：URL / 密钥填完停手 0.8 秒后自己去拉一次目录，不用再点按钮。
+	// 只在还没有任何模型行时生效；本机/私网地址自动勾上允许（服务端仍会自己再判一次）。
+	const auto = autoDiscover;
+	const autoDone = useRef("");
+	const [autoStatus, setAutoStatus] = useState<"" | "loading" | "done" | "failed">("");
+	const [autoFound, setAutoFound] = useState(0);
+	useEffect(() => {
+		if (!auto?.signature || !discover || autoDone.current === auto.signature) return;
+		const allow = allowPrivate || auto.privateHost;
+		const timer = setTimeout(() => {
+			autoDone.current = auto.signature;
+			setAutoStatus("loading");
+			void (async () => {
+				try {
+					const found = await discover(allow);
+					setAutoFound(found.length);
+					setAutoStatus("done");
+					// 新 provider：直接把候选收进来（容量与视觉按端点填好）
+					setModels((current) => (current.length ? current : found.map(draftFromCandidate)));
+				} catch {
+					// 自动跑失败不弹错：按钮还在，手动点能看到具体原因
+					setAutoStatus("failed");
+				}
+			})();
+		}, 800);
+		return () => clearTimeout(timer);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [auto?.signature, auto?.privateHost, allowPrivate, discover]);
+
 	const startDiscover = async () => {
 		if (!discover || discovering) return;
 		setDiscovering(true);
@@ -429,13 +478,7 @@ export function ModelCatalog({
 			for (const candidate of candidates) {
 				const id = candidate.id.trim();
 				if (!id || !picked.has(id) || byId.has(id) || inCatalog(id)) continue;
-				byId.set(id, {
-					id,
-					name: candidate.name ?? "",
-					...(candidate.contextWindow ? { contextWindow: candidate.contextWindow } : {}),
-					...(candidate.maxTokens ? { maxTokens: candidate.maxTokens } : {}),
-					...(candidate.vision === undefined ? {} : { vision: candidate.vision }),
-				});
+				byId.set(id, draftFromCandidate(candidate));
 			}
 			return [...byId.values()];
 		});
@@ -464,6 +507,9 @@ export function ModelCatalog({
 					<div className={styles.label}>{t.modelCatalog}</div>
 					<div className={styles.catalogStatus}>
 						{inheritedCount ? t.usingDefaultModels.replace("{count}", String(inheritedCount)) : t.customModelsRequired}
+						{autoStatus === "loading" ? ` · ${t.autoDiscovering}` : null}
+						{autoStatus === "done" ? ` · ${t.autoDiscovered.replace("{n}", String(autoFound))}` : null}
+						{autoStatus === "failed" ? ` · ${t.autoDiscoverFailed}` : null}
 					</div>
 				</div>
 				{discover ? (
@@ -535,7 +581,19 @@ export function ModelCatalog({
 										</label>
 										<label className={styles.capacityField} title={t.visionHint}>
 											<span>{t.visionLabel}</span>
-											<input type="checkbox" checked={model.vision ?? MODEL_FIELD_DEFAULTS.vision} onChange={(event) => updateModel(index, { vision: event.target.checked })} />
+											<select
+												className={styles.input}
+												value={model.vision === undefined ? "unset" : model.vision ? "image" : "text"}
+												onChange={(event) => {
+													const choice = event.target.value;
+													// 未声明 = 不写 input：pi 按纯文本处理，体检卡片会列出来提醒
+													updateModel(index, { vision: choice === "unset" ? undefined : choice === "image" });
+												}}
+											>
+												<option value="unset">{t.visionUnset}</option>
+												<option value="image">{t.visionOn}</option>
+												<option value="text">{t.visionOff}</option>
+											</select>
 										</label>
 										<span className={styles.capacityHint}>{t.capacityHint}</span>
 									</div>

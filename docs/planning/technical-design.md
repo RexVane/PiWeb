@@ -505,17 +505,23 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 ### 11.3 改动
 
 1. **发现即预填**：`DiscoveredModel` 带上 contextWindow / maxTokens / vision，采纳候选时一起进草稿。
-2. **表单加「视觉」开关**（原来连输入框都没有）；容量占位提示从 `128K` / `16K` 改成 `1M` / `32K`。
-3. **保存时补缺省**：自定义 provider 的 `models[]` 行缺字段就写 `MODEL_FIELD_DEFAULTS`（1M / 32k / `["text","image"]`）；
+2. **表单加「视觉」三态**（未声明 / 有视觉 / 纯文本；原来连输入框都没有）；容量占位提示从 `128K` / `16K` 改成 `1M` / `32K`。
+3. **保存时补容量缺省**：自定义 provider 的 `models[]` 行缺 `contextWindow` / `maxTokens` 就写 `MODEL_FIELD_DEFAULTS`（1M / 32k）；
    用户主动清空的字段不填回去；内置 provider 的覆盖行不补（那些模型 pi 的目录里有真值）。
+   **视觉不自动补**：那是能力声明，猜错了会把图片发给不收图的上游（可能 400）；留空只是被 pi 当纯文本，体检会提醒。
 4. **体检 + 一键补全**：设置页列出「会被 pi 缺省顶掉」的条目（只看 `models[]`，不碰 `modelOverrides`），
-   `{action:"modelAudit"}` 查、`{action:"fixModelDefaults"}` 补（只填空、带 revision 乐观锁，apiKey 由 `writeCustomProviders` 从原文件恢复）。
+   `{action:"modelAudit"}` 查、`{action:"fixModelDefaults"}` 补（只填空、带 revision 乐观锁，apiKey 由 `writeCustomProviders` 从原文件恢复）；
+   视觉另给「全部标为有视觉 / 全部标为纯文本」两个明确按钮，一次表态就不再有提醒。
+5. **填完 URL 和密钥就自动识别**：自定义 provider 还没有任何模型行时，地址（+密钥，本机网关可省）停手 0.8 秒后
+   自动拉一次模型目录并采纳候选；本机/私网地址自动勾上「允许访问本机/私有网络地址」（服务端仍会自己再判一次，
+   见 `src/lib/model-endpoint.ts`）。自动跑失败不弹错，按钮还在，手动点能看到原因。
 
 ### 11.4 验收（生产构建 + 真实数据）
 
 拿**改配置之前的备份**当 models.json 起服务：体检自己报出 3 条，与手工扫描逐条一致；
-一键补全 `filled=3`，再查为 0 条；补完 gpt-6 得到 1M/32k、lilililwan 得到 `["text","image"]`，
-而它们已有的 1M / 32k 未被覆盖（只填空）。
+一键补全（只补容量）后，缺的 `contextWindow` / `maxTokens` 补上、已有的值未被覆盖；
+视觉再按显式表态补 `input`。组件测试覆盖：填完 URL 与密钥后自动发一次 `discoverModels`、
+候选被采纳且容量与视觉来自端点（`tests/components/provider-setup-modal.test.tsx`）。
 
 ### 11.5 仍未解决（在 pi 侧）
 
