@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
@@ -12,7 +12,7 @@ import {
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
-import { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { formatCapacity, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
 import styles from "./ProviderSetupModal.module.css";
 
@@ -34,6 +34,7 @@ type SubmitResult = { success: boolean; error?: string };
 export function ProviderSetupModal({
 	mode,
 	providers,
+	catalogModelIds,
 	existingIds,
 	onClose,
 	onSaveBuiltin,
@@ -42,6 +43,8 @@ export function ProviderSetupModal({
 }: {
 	mode: "builtin" | "custom";
 	providers: ProviderView[];
+	/** 内置 provider → 目录里的模型 ID：同 ID 的行写 modelOverrides，「获取可用模型」里不再可选 */
+	catalogModelIds?: Readonly<Record<string, readonly string[]>>;
 	existingIds: string[];
 	onClose: () => void;
 	onSaveBuiltin: (value: BuiltinProviderSetup) => Promise<SubmitResult>;
@@ -66,6 +69,7 @@ export function ProviderSetupModal({
 	const [error, setError] = useState("");
 	const pickerRef = useRef<HTMLDivElement>(null);
 	const selected = providers.find((provider) => provider.id === selectedId);
+	const catalogIds = useMemo(() => new Set(catalogModelIds?.[selectedId] ?? []), [catalogModelIds, selectedId]);
 	const filtered = providers.filter((provider) => {
 		const needle = search.trim().toLocaleLowerCase();
 		return !needle || provider.name.toLocaleLowerCase().includes(needle) || provider.id.toLocaleLowerCase().includes(needle);
@@ -114,12 +118,8 @@ export function ProviderSetupModal({
 				if (authMethod === "oauth" && onOAuthLogin) {
 					result = await onOAuthLogin(selected.id);
 				} else {
-					const config: Record<string, unknown> = {};
-					if (baseUrl.trim()) config.baseUrl = baseUrl.trim();
-					if (models.length) {
-						config.api = selected.apis[0] ?? "openai-completions";
-						config.models = models.map(serializeModelDraft);
-					}
+					// 与目录同 ID 的行进 modelOverrides，新 ID 才进 models[]（并带上协议）
+					const config = serializeProviderDraft({}, { baseUrl, models }, selected.apis[0] ?? "openai-completions", catalogIds);
 					result = await onSaveBuiltin({ providerId: selected.id, apiKey: apiKey.trim(), config });
 				}
 			} else {
@@ -255,7 +255,7 @@ export function ProviderSetupModal({
 											<label className={styles.label}>{t.apiAddress}</label>
 											<input className={styles.input} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={selected?.baseUrl || t.providerDefault} />
 										</div>
-											<ModelCatalog models={models} setModels={setModels} updateModel={updateModel} inheritedCount={selected?.modelCount ?? 0} discover={discoverAvailableModels} discoverDisabled={!baseUrl.trim()} />
+											<ModelCatalog models={models} setModels={setModels} updateModel={updateModel} inheritedCount={selected?.modelCount ?? 0} catalogIds={catalogIds} discover={discoverAvailableModels} discoverDisabled={!baseUrl.trim()} />
 									</div>
 								) : null}
 							</div>
@@ -325,6 +325,7 @@ export function ModelCatalog({
 	setModels,
 	updateModel,
 	inheritedCount,
+	catalogIds,
 	discover,
 	discoverDisabled,
 }: {
@@ -332,6 +333,8 @@ export function ModelCatalog({
 	setModels: React.Dispatch<React.SetStateAction<ModelDraft[]>>;
 	updateModel: (index: number, patch: Partial<ModelDraft>) => void;
 	inheritedCount?: number;
+	/** 内置 provider 的目录模型 ID：候选里已在目录中的不能勾选（本来就能选），同 ID 的行只覆盖填写的字段 */
+	catalogIds?: ReadonlySet<string>;
 	/** 用表单当前值探测远端目录（allowPrivate：用户勾选了允许访问本机/私网地址）；抛错时错误显示在目录内 */
 	discover?: (allowPrivate: boolean) => Promise<ModelDraft[]>;
 	discoverDisabled?: boolean;
@@ -381,6 +384,8 @@ export function ModelCatalog({
 		});
 	};
 
+	const inCatalog = (id: string) => catalogIds?.has(id.trim()) ?? false;
+
 	const startDiscover = async () => {
 		if (!discover || discovering) return;
 		setDiscovering(true);
@@ -391,10 +396,12 @@ export function ModelCatalog({
 				setDiscoverError(t.discoverEmpty);
 				return;
 			}
-			// 已配置的行默认不勾选：采纳永远不覆盖用户改过的内容
+			// 已配置的行默认不勾选：采纳永远不覆盖用户改过的内容。
+			// 内置目录里已有的模型本来就能选，加成行只会变成一条空覆盖：排到后面、不可勾选
 			const known = new Set(models.map((model) => model.id.trim()).filter(Boolean));
-			setCandidates(found);
-			setPicked(new Set(found.filter((model) => !known.has(model.id.trim())).map((model) => model.id)));
+			const ordered = [...found.filter((model) => !inCatalog(model.id)), ...found.filter((model) => inCatalog(model.id))];
+			setCandidates(ordered);
+			setPicked(new Set(ordered.filter((model) => !known.has(model.id.trim()) && !inCatalog(model.id)).map((model) => model.id)));
 		} catch (reason) {
 			setDiscoverError(reason instanceof Error ? reason.message : t.toastError);
 		} finally {
@@ -413,7 +420,7 @@ export function ModelCatalog({
 			const byId = new Map(current.map((model) => [model.id.trim(), model]));
 			for (const candidate of candidates) {
 				const id = candidate.id.trim();
-				if (!id || !picked.has(id) || byId.has(id)) continue;
+				if (!id || !picked.has(id) || byId.has(id) || inCatalog(id)) continue;
 				byId.set(id, { id, name: candidate.name ?? "" });
 			}
 			return [...byId.values()];
@@ -422,7 +429,9 @@ export function ModelCatalog({
 	};
 
 	const visibleCandidates = candidates ?? [];
-	const allVisiblePicked = visibleCandidates.length > 0 && visibleCandidates.every((model) => picked.has(model.id));
+	// 「全选」只管能勾的那些
+	const selectableCandidates = visibleCandidates.filter((model) => !inCatalog(model.id));
+	const allVisiblePicked = selectableCandidates.length > 0 && selectableCandidates.every((model) => picked.has(model.id));
 
 	const togglePick = (id: string) =>
 		setPicked((current) => {
@@ -432,6 +441,7 @@ export function ModelCatalog({
 		});
 
 	const firstInvalid = validateModelDrafts(models);
+	const overridesBuiltin = models.some((model) => inCatalog(model.id));
 
 	return (
 		<div className={styles.catalog}>
@@ -520,6 +530,7 @@ export function ModelCatalog({
 			) : (
 				<div className={styles.modelEmpty}>{inheritedCount ? t.modelCatalogEmptyBuiltin : t.modelCatalogEmptyCustom}</div>
 			)}
+			{overridesBuiltin ? <div className={styles.catalogHint}>{t.catalogOverrideHint}</div> : null}
 			<button className={styles.addModel} onClick={() => setModels((current) => [...current, { id: "", name: "" }])}>
 				<IconPlusOutline16 size={14} />
 				{t.addModel}
@@ -532,13 +543,17 @@ export function ModelCatalog({
 							<span>{t.candidateTitle.replace("{count}", String(candidates.length))}</span>
 						</div>
 						<div className={styles.candidateList}>
-							{visibleCandidates.map((model) => (
-								<label className={styles.candidateRow} key={model.id}>
-									<input type="checkbox" checked={picked.has(model.id)} onChange={() => togglePick(model.id)} />
-									<span className={styles.candidateId}>{model.id}</span>
-									{model.name ? <span className={styles.candidateName}>{model.name}</span> : null}
-								</label>
-							))}
+							{visibleCandidates.map((model) => {
+								const listed = inCatalog(model.id);
+								return (
+									<label className={styles.candidateRow} data-disabled={listed || undefined} key={model.id}>
+										<input type="checkbox" checked={!listed && picked.has(model.id)} disabled={listed} onChange={() => togglePick(model.id)} />
+										<span className={styles.candidateId}>{model.id}</span>
+										{model.name ? <span className={styles.candidateName}>{model.name}</span> : null}
+										{listed ? <span className={styles.candidateTag}>{t.candidateInCatalog}</span> : null}
+									</label>
+								);
+							})}
 							{visibleCandidates.length === 0 ? <div className={styles.modelEmpty}>—</div> : null}
 						</div>
 						<div className={styles.candidateActions}>
@@ -546,11 +561,12 @@ export function ModelCatalog({
 								<input
 									type="checkbox"
 									checked={allVisiblePicked}
+									disabled={selectableCandidates.length === 0}
 									onChange={() =>
 										setPicked((current) => {
 											const next = new Set(current);
-											if (visibleCandidates.every((model) => next.has(model.id))) visibleCandidates.forEach((model) => next.delete(model.id));
-											else visibleCandidates.forEach((model) => next.add(model.id));
+											if (selectableCandidates.every((model) => next.has(model.id))) selectableCandidates.forEach((model) => next.delete(model.id));
+											else selectableCandidates.forEach((model) => next.add(model.id));
 											return next;
 										})
 									}

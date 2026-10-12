@@ -11,14 +11,26 @@ const originalModel = { id: "test-model", name: "Test model", reasoning: true, i
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false } = {}) {
+function setup({ builtin = false, conflict = false, catalog, extraProviders = [] }: {
+	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[];
+} = {}) {
 	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
 	let revision = "rev-1";
 	const writes: Array<{ action: string; content: string; revision: string }> = [];
+	const keys: Array<{ providerId: string; apiKey: string }> = [];
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-		if (url === "/api/models?custom=1") return response({ providers: [{ id: "gateway", name: "Gateway", builtIn: builtin, authReady: true, authConfigured: true, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }], customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: ["gateway"] } });
+		if (url === "/api/models?custom=1") return response({
+			providers: [{ id: "gateway", name: "Gateway", builtIn: builtin, authReady: true, authConfigured: true, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }, ...extraProviders],
+			customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: ["gateway"] },
+			...(catalog ? { catalogModelIds: catalog } : {}),
+		});
 		if (url === "/api/models") {
 			const body = JSON.parse(String(init?.body));
+			if (body.action === "setKey") {
+				keys.push(body);
+				return response({});
+			}
+			if (body.action === "loginState") return response({ prompt: null, notifyLog: [], done: true });
 			if (body.action !== "saveCustomProviders") throw new Error("unexpected action");
 			writes.push(body);
 			if (conflict) return { ok: false, status: 409, json: async () => ({ success: false, error: "Model configuration changed; reload before saving." }) };
@@ -35,7 +47,7 @@ function setup({ builtin = false, conflict = false } = {}) {
 	vi.stubGlobal("fetch", fetchMock);
 	render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
 	fireEvent.click(screen.getByRole("button", { name: "模型" }));
-	return { writes, fetchMock, saved: () => saved };
+	return { writes, keys, fetchMock, saved: () => saved };
 }
 function response(data: unknown) { return { ok: true, status: 200, json: async () => ({ success: true, data }) }; }
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "编辑" })); }
@@ -86,5 +98,30 @@ describe("SettingsPanel model round trip and revision", () => {
 		expect(saved().providers.gateway.api).toBe("openai-responses");
 		expect(saved().providers.gateway.oauth).toEqual({ flow: "device" });
 		expect(saved().providers.gateway.headers).toEqual({ "x-test": "opaque" });
+	});
+
+	it("writes edits of built-in catalog models as modelOverrides instead of redefining them in models[]", async () => {
+		// 回归：同 ID 的 models[] 会让 SDK 用默认值整条重建内置模型（丢 reasoning / 上下文 / 价格 / 思考档位）
+		const { writes, saved } = setup({ builtin: true, catalog: { gateway: ["test-model"] } });
+		await edit();
+		fireEvent.click(screen.getByRole("button", { name: "自定义设置" }));
+		expect(screen.getByText(/与内置目录同 ID 的行只覆盖填写的字段/)).toBeTruthy();
+		fireEvent.change(screen.getByDisplayValue("Test model"), { target: { value: "Renamed" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		const overridden: Record<string, unknown> = { ...originalModel };
+		delete overridden.id;
+		expect(saved().providers.gateway.models).toEqual([{ id: "delete-me", reasoning: false }]);
+		expect((saved().providers.gateway as Record<string, unknown>).modelOverrides).toEqual({ "test-model": { ...overridden, name: "Renamed" } });
+	});
+
+	it("adds a built-in provider with only an API key without writing an empty models.json entry", async () => {
+		// SDK 不认空条目（must specify baseUrl / models / …），以前这一步整次保存失败、密钥也没存上
+		const { writes, keys } = setup({ extraProviders: [{ id: "deepseek", name: "DeepSeek", builtIn: true, authReady: false, authConfigured: false, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }] });
+		fireEvent.click(await screen.findByRole("button", { name: "添加提供方" }));
+		fireEvent.change(await screen.findByPlaceholderText("输入 API 密钥，或留空使用环境认证"), { target: { value: "sk-test" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(keys).toEqual([expect.objectContaining({ action: "setKey", providerId: "deepseek", apiKey: "sk-test" })]));
+		expect(writes).toHaveLength(0);
 	});
 });

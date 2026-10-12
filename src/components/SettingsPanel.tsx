@@ -47,7 +47,14 @@ import {
 	type StreamSettings,
 	type StreamStyle,
 } from "@/lib/chat/stream-settings";
-import { modelDraftFromConfig, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import {
+	isInertProviderConfig,
+	modelDraftFromConfig,
+	modelDraftsFromProviderConfig,
+	serializeProviderDraft,
+	validateModelDrafts,
+	type ModelDraft,
+} from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
@@ -877,6 +884,8 @@ function ModelsSection() {
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
 	const [customRevision, setCustomRevision] = useState<string | null>(null);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
+	// 内置 provider → 目录里的模型 ID：编辑时同 ID 的行写 modelOverrides，「获取可用模型」里不再可选
+	const [catalogModelIds, setCatalogModelIds] = useState<Record<string, string[]>>({});
 	const [editing, setEditing] = useState<string | null>(null);
 	const [keyDraft, setKeyDraft] = useState("");
 	const [adding, setAdding] = useState<"builtin" | "custom" | null>(null);
@@ -955,6 +964,7 @@ function ModelsSection() {
 				throw new Error("invalid model configuration");
 			}
 			setProviders(j.data.providers);
+			setCatalogModelIds(j.data.catalogModelIds ?? {});
 			setSecretProviderIds(new Set(j.data.customProviders?.secretProviderIds ?? []));
 			setCustom({ ...parsed, providers: parsed.providers ?? {} });
 			setCustomRevision(typeof j.data.customProviders?.revision === "string" ? j.data.customProviders.revision : null);
@@ -1210,10 +1220,28 @@ function ModelsSection() {
 			setCName(typeof override?.name === "string" ? override.name : "");
 			setCModels((override?.models ?? []).map(modelDraftFromConfig));
 		} else {
-			// 内置 provider：从 models.json 覆盖层初始化（若有）
+			// 内置 provider：从 models.json 覆盖层初始化（若有），models[] 定义和 modelOverrides 覆盖都作为行
 			setBBaseUrl(typeof override?.baseUrl === "string" ? override.baseUrl : "");
-			setBModels((override?.models ?? []).map(modelDraftFromConfig));
+			setBModels(modelDraftsFromProviderConfig(override));
 		}
+	};
+
+	const catalogIdsOf = (providerId: string): ReadonlySet<string> => new Set(catalogModelIds[providerId] ?? []);
+
+	/**
+	 * 内置 provider 的条目写回：什么都没覆盖时删掉条目（SDK 不认空条目，会让整份 models.json 存不进去）。
+	 * 前端拿到的配置不含 apiKey，存了密钥的条目不能当成空的删掉。
+	 * 返回 null = models.json 不用动（原本就没有条目、这次也没覆盖任何东西，比如只填了密钥）。
+	 */
+	const withBuiltinEntry = (providerId: string, config: Record<string, unknown>): Record<string, any> | null => {
+		const next = { ...custom.providers };
+		if (isInertProviderConfig(config) && !secretProviderIds.has(providerId)) {
+			if (!Object.prototype.hasOwnProperty.call(next, providerId)) return null;
+			delete next[providerId];
+		} else {
+			next[providerId] = config;
+		}
+		return next;
 	};
 
 	const saveCustomEdit = async () => {
@@ -1247,12 +1275,12 @@ function ModelsSection() {
 		if (invalid) return;
 		setEditBusy(true);
 		try {
-			const next = { ...custom.providers };
-			next[provider.id] = serializeProviderDraft(next[provider.id] ?? {}, {
+			const config = serializeProviderDraft(custom.providers[provider.id] ?? {}, {
 				baseUrl: bBaseUrl,
 				models: bModels,
-			}, provider.apis[0] ?? "openai-completions");
-			const j = await saveCustom(next);
+			}, provider.apis[0] ?? "openai-completions", catalogIdsOf(provider.id));
+			const next = withBuiltinEntry(provider.id, config);
+			const j = next ? await saveCustom(next) : { success: true };
 			if (j.success && keyDraft.trim()) {
 				void call({ action: "setKey", providerId: provider.id, apiKey: keyDraft.trim() });
 				setOauthDone(null);
@@ -1283,8 +1311,9 @@ function ModelsSection() {
 	};
 
 	const saveBuiltinSetup = async ({ providerId, apiKey, config }: BuiltinProviderSetup) => {
-		const next = { ...custom.providers, [providerId]: { ...custom.providers[providerId], ...config } };
-		const result = await saveCustom(next);
+		const next = withBuiltinEntry(providerId, { ...custom.providers[providerId], ...config });
+		// 只填了密钥：models.json 不需要条目，直接去存密钥
+		const result = next ? await saveCustom(next) : { success: true };
 		if (result.success && apiKey) {
 			// 多步认证（Vertex/Bedrock/Cloudflare 等）的后续提示经登录弹窗应答；
 			// 不能 await setKey —— 它会挂起到全部提示答完。
@@ -1514,6 +1543,7 @@ function ModelsSection() {
 															setModels={setBModels}
 															updateModel={(index, patch) => setBModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
 															inheritedCount={p.modelCount}
+															catalogIds={catalogIdsOf(p.id)}
 															discover={async (allowPrivate) => {
 																const response = await fetch("/api/models", {
 																	method: "POST",
@@ -1594,6 +1624,7 @@ function ModelsSection() {
 				<ProviderSetupModal
 					mode={adding}
 					providers={addable}
+					catalogModelIds={catalogModelIds}
 					existingIds={providers.map((provider) => provider.id)}
 					onClose={() => setAdding(null)}
 					onSaveBuiltin={saveBuiltinSetup}

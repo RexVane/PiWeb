@@ -62,7 +62,7 @@ export interface DiscoveredModel {
 	name?: string;
 }
 
-let builtInProviderIdsPromise: Promise<Set<string>> | null = null;
+let builtInCatalogPromise: Promise<Map<string, Set<string>>> | null = null;
 
 /** 目录短缓存：页面挂载与设置关闭都会拉一次；认证探测（每个供应商一次网络往返）不必秒级重复 */
 let listCache: { at: number; value: Promise<{ providers: ProviderView[]; models: ModelView[] }> } | null = null;
@@ -88,20 +88,40 @@ export function modelListStamp(): string {
 	return listCache ? String(listCache.at) : "none";
 }
 
-/** Read the unmodified SDK catalog through its public modelsPath:null option. */
-function getBuiltInProviderIds(): Promise<Set<string>> {
-	if (!builtInProviderIdsPromise) {
-		builtInProviderIdsPromise = ModelRuntime.create({
+/** Read the unmodified SDK catalog through its public modelsPath:null option: provider ID → model IDs. */
+function getBuiltInCatalog(): Promise<Map<string, Set<string>>> {
+	if (!builtInCatalogPromise) {
+		builtInCatalogPromise = ModelRuntime.create({
 			modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
 			credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
 		})
-			.then((runtime) => new Set(runtime.getProviders().map((provider) => provider.id)))
+			.then((runtime) => new Map(runtime.getProviders().map((provider) => [provider.id, new Set(runtime.getModels(provider.id).map((model) => model.id))])))
 			.catch((error) => {
-				builtInProviderIdsPromise = null;
+				builtInCatalogPromise = null;
 				throw error;
 			});
 	}
-	return builtInProviderIdsPromise;
+	return builtInCatalogPromise;
+}
+
+/**
+ * 内置 provider 的目录模型 ID（provider → 排好序的 ID），给设置页的模型表单分流：与目录同 ID 的行写
+ * modelOverrides（只覆盖填写的字段），新 ID 才写 models[]——同 ID 的 models[] 条目会被 SDK 按默认值整条重建。
+ * 目录 = SDK 静态目录 ∪ 当前目录里不是 models.json `models[]` 定义出来的模型（远程目录缓存、OAuth / 扩展补的）。
+ * content 是 readCustomProviders 读到的那份，models 是同一时刻的完整目录。
+ */
+export async function builtinCatalogModelIds(content: string, models: ReadonlyArray<{ provider: string; id: string }>): Promise<Record<string, string[]>> {
+	const catalog = await getBuiltInCatalog();
+	const defined = new Map<string, Set<string>>();
+	for (const [providerId, provider] of Object.entries(parseCustomProviders(content).providers)) {
+		const rows = Array.isArray(provider.models) ? provider.models : [];
+		defined.set(providerId, new Set(rows.flatMap((row) => (isRecord(row) && typeof row.id === "string" ? [row.id] : []))));
+	}
+	const ids = new Map([...catalog].map(([providerId, modelIds]) => [providerId, new Set(modelIds)]));
+	for (const model of models) {
+		if (!defined.get(model.provider)?.has(model.id)) ids.get(model.provider)?.add(model.id);
+	}
+	return Object.fromEntries([...ids].map(([providerId, modelIds]) => [providerId, [...modelIds].sort()]));
 }
 
 function envKeyOf(providerId: string): string | null {
@@ -161,7 +181,7 @@ async function listModelsUncached(): Promise<{
 	models: ModelView[];
 }> {
 	const rt = await getModelRuntime();
-	const builtInProviderIds = await getBuiltInProviderIds();
+	const builtInCatalog = await getBuiltInCatalog();
 	const providers = rt.getProviders() as any[];
 	const storedAuthTypes = await readStoredAuthTypes();
 	const out: ProviderView[] = [];
@@ -215,7 +235,7 @@ async function listModelsUncached(): Promise<{
 			apiKeyLabel: typeof p.auth?.apiKey?.name === "string" ? p.auth.apiKey.name : undefined,
 			authTypes,
 			apis: [...new Set(list.map((mm) => String(mm.api ?? "")).filter(Boolean))].sort(),
-			builtIn: builtInProviderIds.has(pid),
+			builtIn: builtInCatalog.has(pid),
 			authConfigured: auth?.configured === true,
 			authSource: auth?.source,
 			authReady,

@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	builtinCatalogModelIds,
 	discoverModels,
 	isPublicModelDiscoveryAddress,
 	isTrustedCredentialEndpoint,
@@ -23,6 +26,32 @@ async function withCatalogServer<T>(handler: (request: IncomingMessage, response
 		await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 	}
 }
+
+describe("built-in catalog model IDs", () => {
+	it("covers the static catalog and remote/extension models, but not models[] definitions", async () => {
+		const staticRuntime = await ModelRuntime.create({
+			modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
+			credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
+		});
+		const builtin = staticRuntime.getModels("anthropic")[0].id;
+		const content = JSON.stringify({ providers: {
+			anthropic: { models: [{ id: builtin, name: "Same ID" }, { id: "proxy-only-model" }] },
+			gateway: { baseUrl: "https://gateway.invalid", api: "openai-completions", models: [{ id: "m" }] },
+		} });
+		const ids = await builtinCatalogModelIds(content, [
+			{ provider: "anthropic", id: builtin },
+			{ provider: "anthropic", id: "proxy-only-model" },
+			{ provider: "anthropic", id: "remote-catalog-model" },
+			{ provider: "gateway", id: "m" },
+		]);
+		// 同 ID 的 models[] 定义不能把内置模型挤出目录，否则下次编辑又会写回 models[]
+		expect(ids.anthropic).toContain(builtin);
+		expect(ids.anthropic).toContain("remote-catalog-model");
+		expect(ids.anthropic).not.toContain("proxy-only-model");
+		expect(ids.anthropic).toEqual([...ids.anthropic].sort());
+		expect(ids).not.toHaveProperty("gateway");
+	});
+});
 
 describe("provider model discovery", () => {
 	it("reuses stored credentials only for a configured provider endpoint", () => {

@@ -489,6 +489,12 @@
 	color: var(--dsw-danger);
 	padding: 4px 0;
 }
+.catalogHint {
+	margin-top: 8px;
+	font-size: 11.5px;
+	line-height: 1.5;
+	color: var(--dsw-label-caption);
+}
 
 /* ---- 候选选择对话框 ---- */
 .candidateMask {
@@ -541,6 +547,20 @@
 }
 .candidateRow:hover {
 	background: var(--dsw-hover);
+}
+/* 已在内置目录里的候选：不可勾选 */
+.candidateRow[data-disabled] {
+	cursor: default;
+	color: var(--dsw-label-tertiary);
+}
+.candidateRow[data-disabled]:hover {
+	background: transparent;
+}
+.candidateTag {
+	flex: none;
+	margin-left: auto;
+	font-size: 11px;
+	color: var(--dsw-label-caption);
 }
 .candidateId {
 	font-family: var(--font-mono);

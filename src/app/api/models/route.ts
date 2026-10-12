@@ -2,6 +2,7 @@ import { gzipSync } from "node:zlib";
 import { NextResponse } from "next/server";
 import {
 	answerLogin,
+	builtinCatalogModelIds,
 	cancelLogin,
 	CustomProvidersConflictError,
 	CustomProvidersValidationError,
@@ -58,7 +59,13 @@ export async function GET(req: Request) {
 		const providers = full
 			? data.providers
 			: data.providers.map((p) => ({ id: p.id, name: p.name, authReady: p.authReady, builtIn: p.builtIn, modelCount: p.modelCount }));
-		return jsonMaybeGzip(req, { success: true, data: { providers, models, customProviders } }, `${modelListStamp()}:${full ? "full" : "piweb"}`);
+		// 设置页编辑内置 provider 时据此把「覆盖已有模型」写进 modelOverrides，而不是 models[]
+		const catalogModelIds = customProviders ? await builtinCatalogModelIds(customProviders.content, data.models) : undefined;
+		return jsonMaybeGzip(
+			req,
+			{ success: true, data: { providers, models, customProviders, ...(catalogModelIds ? { catalogModelIds } : {}) } },
+			`${modelListStamp()}:${custom ? "custom" : full ? "full" : "piweb"}`,
+		);
 	} catch (err: any) {
 		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
 	}

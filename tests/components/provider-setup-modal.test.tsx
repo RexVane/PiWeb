@@ -4,7 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { ProviderSetupModal, formatCapacity, parseCapacity, validateModelDrafts } from "@/components/ProviderSetupModal";
 import type { ProviderView } from "@/lib/models-service";
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.unstubAllGlobals();
+});
 
 function provider(overrides: Partial<ProviderView> = {}): ProviderView {
 	return {
@@ -125,5 +128,55 @@ describe("ProviderSetupModal (builtin mode)", () => {
 		fireEvent.click(screen.getByRole("button", { name: "保存" }));
 		await waitFor(() => expect(screen.getByText("boom")).toBeTruthy());
 		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it("keeps built-in catalog models out of discovered picks and saves their edits as overrides", async () => {
+		// 回归：「获取可用模型」默认勾选目录里已有的 ID，采纳后写成同 ID 的 models[]，内置模型被整条重建
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ success: true, data: { models: [{ id: "grok-4", name: "Remote name" }, { id: "grok-new", name: "Grok New" }] } }),
+		})));
+		const onSaveBuiltin = vi.fn(async () => ({ success: true }));
+		render(
+			<ProviderSetupModal
+				mode="builtin"
+				providers={[provider({ apis: ["openai-responses", "openai-completions"] })]}
+				catalogModelIds={{ xai: ["grok-4"] }}
+				existingIds={[]}
+				onClose={vi.fn()}
+				onSaveBuiltin={onSaveBuiltin}
+				onSaveCustom={vi.fn(async () => ({ success: true }))}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "自定义设置" }));
+		fireEvent.change(screen.getByPlaceholderText("提供方默认"), { target: { value: "https://proxy.invalid/v1" } });
+		fireEvent.click(screen.getByRole("button", { name: "获取可用模型" }));
+
+		const listed = (await screen.findByText("已在目录中")).closest("label")!;
+		const listedBox = listed.querySelector("input")!;
+		expect(listed.textContent).toContain("grok-4");
+		expect(listedBox.disabled).toBe(true);
+		expect(listedBox.checked).toBe(false);
+		const fresh = screen.getByText("grok-new").closest("label")!.querySelector("input")!;
+		expect(fresh.checked).toBe(true);
+		// 新模型排在已在目录里的前面
+		expect(fresh.compareDocumentPosition(listedBox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "添加 1 个" }));
+
+		fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+		fireEvent.change(screen.getAllByPlaceholderText("模型 ID")[1], { target: { value: "grok-4" } });
+		fireEvent.change(screen.getAllByPlaceholderText("显示名称（可选）")[1], { target: { value: "Grok Four" } });
+		expect(screen.getByText(/与内置目录同 ID 的行只覆盖填写的字段/)).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(onSaveBuiltin).toHaveBeenCalledWith({
+			providerId: "xai",
+			apiKey: "",
+			config: {
+				baseUrl: "https://proxy.invalid/v1",
+				models: [{ id: "grok-new", name: "Grok New" }],
+				api: "openai-responses",
+				modelOverrides: { "grok-4": { name: "Grok Four" } },
+			},
+		}));
 	});
 });
