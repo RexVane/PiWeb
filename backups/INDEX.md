@@ -47,3 +47,9 @@
 - 2026-10-13 02:54 | .next/diagnostics | 未备份（构建产物，可重新 build 生成） | 同上，Prebuild 步骤一并清理
 - 2026-10-13 02:54 | .next/trace | 未备份（构建产物，可重新 build 生成） | 同上，Prebuild 步骤一并清理
 - 2026-10-13 02:54 | .next/trace-build | 未备份（构建产物，可重新 build 生成） | 同上，Prebuild 步骤一并清理
+- 2026-10-13 03:10 | refs/heads/pr-27 | HEAD 7b03f5e（git branch pr-27 7b03f5e 可恢复；GitHub 仍有 refs/pull/27/head） | 本地残留：PR #27 已关闭，其改动已由 #095 在 main 上重做
+- 2026-10-13 03:10 | refs/heads/pr-28 | HEAD e8c5e28（git branch pr-28 e8c5e28 可恢复） | 本地残留：依赖升级 PR #28 已由 #094 合并进 main
+- 2026-10-13 03:10 | refs/heads/pr-29 | HEAD 0db7e72（git branch pr-29 0db7e72 可恢复） | 本地残留：依赖升级 PR #29 已由 #094 合并进 main
+- 2026-10-13 03:10 | refs/heads/pr-30 | HEAD 59d36d8（git branch pr-30 59d36d8 可恢复） | 本地残留：依赖升级 PR #30 已由 #094 合并进 main
+- 2026-10-13 03:10 | refs/heads/pr-31 | HEAD 015c83c（git branch pr-31 015c83c 可恢复） | 本地残留：依赖升级 PR #31 已由 #094 合并进 main
+- 2026-10-13 03:10 | refs/heads/pr-32 | HEAD ccb357b（git branch pr-32 ccb357b 可恢复） | 本地残留：依赖升级 PR #32 已由 #094 合并进 main
