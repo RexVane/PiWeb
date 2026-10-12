@@ -6,14 +6,11 @@ import {
 	cancelLogin,
 	CustomProvidersConflictError,
 	CustomProvidersValidationError,
-	customModelGaps,
 	discoverModels,
-	fillCustomModelDefaults,
 	listModels,
 	listModelsForPiWeb,
 	loginState,
 	modelListStamp,
-	PI_MODEL_FALLBACKS,
 	providerUsage,
 	readCustomProviders,
 	removeApiKey,
@@ -21,7 +18,6 @@ import {
 	startLogin,
 	writeCustomProviders,
 } from "@/lib/models-service";
-import { MODEL_FIELD_DEFAULTS } from "@/lib/model-draft";
 
 export const dynamic = "force-dynamic";
 
@@ -83,16 +79,12 @@ export async function POST(req: Request) {
 				| "removeKey"
 				| "saveCustomProviders"
 				| "discoverModels"
-				| "modelAudit"
-				| "fixModelDefaults"
 				| "providerUsage"
 				| "loginStart"
 				| "loginState"
 				| "loginAnswer"
 				| "loginCancel";
 			providerId?: string;
-			/** fixModelDefaults：视觉必须由用户表态（true/false），不给就只补容量 */
-			vision?: boolean;
 			apiKey?: string;
 			baseUrl?: string;
 			api?: string;
@@ -119,19 +111,6 @@ export async function POST(req: Request) {
 			}
 			await writeCustomProviders(body.content, body.revision);
 			return NextResponse.json({ success: true, data: { requiresSessionReopen: true } });
-		}
-		if (body.action === "modelAudit") {
-			// 体检不碰网络也不改文件：只把「会被 pi 缺省值顶掉」的条目列出来
-			const { content } = await readCustomProviders();
-			return NextResponse.json({ success: true, data: { gaps: customModelGaps(content), defaults: MODEL_FIELD_DEFAULTS, fallbacks: PI_MODEL_FALLBACKS } });
-		}
-		if (body.action === "fixModelDefaults") {
-			// content 与 revision 取同一份快照：否则中间插进来一个写入者会把旧内容盖回去
-			const snapshot = await readCustomProviders();
-			const filled = fillCustomModelDefaults(snapshot.content, MODEL_FIELD_DEFAULTS, typeof body.vision === "boolean" ? body.vision : undefined);
-			if (!filled.filled) return NextResponse.json({ success: true, data: { filled: 0 } });
-			await writeCustomProviders(filled.content, snapshot.revision);
-			return NextResponse.json({ success: true, data: { filled: filled.filled, requiresSessionReopen: true } });
 		}
 		if (body.action === "discoverModels") {
 			if (!body.baseUrl) return NextResponse.json({ success: false, error: "missing baseUrl" }, { status: 400 });

@@ -181,6 +181,26 @@ describe("ProviderSetupModal (builtin mode)", () => {
 	});
 });
 
+describe("ProviderSetupModal (custom mode): 保存", () => {
+	it("容量和视觉没填就不写，交给 pi 的缺省，不替用户猜 1M / 32K", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+		const onSaveCustom = vi.fn(async () => ({ success: true }));
+		render(
+			<ProviderSetupModal mode="custom" providers={[]} existingIds={[]} onClose={vi.fn()}
+				onSaveBuiltin={vi.fn(async () => ({ success: true }))} onSaveCustom={onSaveCustom} />,
+		);
+		fireEvent.change(screen.getByPlaceholderText("acme-gateway"), { target: { value: "acme" } });
+		fireEvent.change(screen.getByPlaceholderText("https://gateway.example/v1"), { target: { value: "https://gateway.example/v1" } });
+		fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+		fireEvent.change(screen.getByPlaceholderText("模型 ID"), { target: { value: "m1" } });
+		fireEvent.click(screen.getByRole("button", { name: "创建提供方" }));
+		await waitFor(() => expect(onSaveCustom).toHaveBeenCalledWith({
+			providerId: "acme",
+			config: { name: "acme", baseUrl: "https://gateway.example/v1", api: "openai-completions", models: [{ id: "m1" }] },
+		}));
+	});
+});
+
 describe("ProviderSetupModal (custom mode): 自动识别", () => {
 	it("URL 和密钥填完就自己去拉模型目录，并把容量与视觉一起填好", async () => {
 		vi.useFakeTimers();

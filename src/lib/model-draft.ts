@@ -21,14 +21,14 @@ export function modelInputFor(vision: boolean): string[] {
 }
 
 /**
- * 用户没填、端点也没给时的兜底值（只用于容量）。必须写进 models.json：
- * 留空会被 pi 的过时缺省顶掉（128000 / 16384），而现在的模型普遍是 1M + 32k。
+ * pi 在 models[] 条目没写这些字段时用的值（provider-composer.js 的 modelFromJson：
+ * `contextWindow ?? 128000`、`maxTokens ?? 16384`、`input ?? ["text"]`）。只用来向用户解释「不填会被当成什么」。
  *
- * ⚠️ 视觉（`input`）不在里面：那是「这个模型能不能收图」的能力声明，
- * 编错了会把图片发给不支持它的上游（可能 400），所以宁可留空由用户表态——
- * 留空的代价 pi 会按纯文本处理，体检卡片会把这类条目列出来提醒。
+ * PiWeb 不替用户编容量：maxTokens 会原样当成请求的 max_tokens 发出去（pi-ai simple-options），
+ * contextWindow 决定 max_tokens 的钳制和自动压缩的时机——往大了猜，上游会直接拒绝请求；
+ * 往小了猜只是提前压缩。所以只写端点报的或用户填的值，缺的交给体检卡片提醒。
  */
-export const MODEL_FIELD_DEFAULTS = { contextWindow: 1_000_000, maxTokens: 32_000 } as const;
+export const PI_MODEL_FALLBACKS = { contextWindow: 128_000, maxTokens: 16_384 } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -47,6 +47,23 @@ export function modelDraftFromConfig(value: unknown): ModelDraft {
 		// 只有源里写了 input 才算「声明过」：没写 ≠ 只文本，而是「会被 pi 当只文本」
 		vision: input ? input.includes("image") : undefined,
 		source,
+	};
+}
+
+function positiveInt(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/** 「获取可用模型」返回的一条 → 表单行：端点报了容量与视觉就带上，没报的留空（不猜） */
+export function modelDraftFromCatalog(entry: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }): ModelDraft {
+	const contextWindow = positiveInt(entry.contextWindow);
+	const maxTokens = positiveInt(entry.maxTokens);
+	return {
+		id: entry.id.trim(),
+		name: entry.name ?? "",
+		...(contextWindow === undefined ? {} : { contextWindow }),
+		...(maxTokens === undefined ? {} : { maxTokens }),
+		...(typeof entry.vision === "boolean" ? { vision: entry.vision } : {}),
 	};
 }
 
@@ -98,22 +115,13 @@ export function validateModelDrafts(models: ModelDraft[]): { index: number; reas
 
 /**
  * Only edited form fields replace the source; unknown/nested configuration is opaque.
- *
- * fillDefaults：行会写进 models[] 时补齐缺的**容量**字段（contextWindow / maxTokens）——包括源里没写的情况。
- * 不补就等于把这两个值交给 pi 的缺省（128000 / 16384），而它们早就过时了。
- * 视觉（input）**不在这里补**：那是能力声明，猜错会把图发给不收图的上游，留给端点或用户表态。
- * 覆盖内置模型的行传 false：那些模型 pi 的目录里有真值，编一个 1M 反而会顶掉正确值。
+ * 容量留空就不写（交给 pi 的缺省，见 PI_MODEL_FALLBACKS），不替用户编值。
  */
-export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: string }, fillDefaults = false): Record<string, unknown> {
+export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: string }): Record<string, unknown> {
 	const result: Record<string, unknown> = { ...model.source };
 	const original = model.source ? modelDraftFromConfig(model.source) : undefined;
-	/** 源里有值、现在被清空 = 用户主动清掉的，不拿缺省填回去 */
-	const cleared = (key: "contextWindow" | "maxTokens") => model[key] === undefined && original?.[key] !== undefined;
-	const withDefaults = (key: "contextWindow" | "maxTokens") => model[key] === undefined && fillDefaults && !cleared(key);
 	for (const field of ["id", "name", "contextWindow", "maxTokens"] as const) {
-		const value = (field === "contextWindow" || field === "maxTokens") && withDefaults(field)
-			? MODEL_FIELD_DEFAULTS[field]
-			: model[field];
+		const value = model[field];
 		if (original && Object.is(value, original[field])) continue;
 		if (field === "id" || field === "name") {
 			const text = typeof value === "string" ? value.trim() : "";
@@ -160,7 +168,7 @@ export function serializeProviderDraft(
 	if (draft.apiKey?.trim()) result.apiKey = draft.apiKey.trim();
 	const { definitions, overrides } = catalogIds
 		? splitBuiltinModels(draft.models, catalogIds)
-		: { definitions: draft.models.map((model) => serializeModelDraft(model, true)), overrides: undefined };
+		: { definitions: draft.models.map((model) => serializeModelDraft(model)), overrides: undefined };
 	// An explicit empty array removes the overrides. Do not merge rows back by ID.
 	if (definitions.length || Object.prototype.hasOwnProperty.call(source, "models")) {
 		result.models = definitions;
@@ -198,8 +206,6 @@ function splitBuiltinModels(models: ModelDraft[], catalogIds: ReadonlySet<string
 		const fullDefinition = model.origin !== "override" && (source?.api !== undefined || source?.baseUrl !== undefined);
 		const keptOverride = model.origin === "override" && source !== undefined && modelDraftFromConfig(source).id === id;
 		const asOverride = !fullDefinition && (catalogIds.has(id) || keptOverride);
-		// 内置 provider 这张表单不补缺省：覆盖行有目录真值，而这里的手写定义是用户逐字段填的，
-		// 替他编一个 1M 会盖掉他本来就想要的空（缺字段由设置页的体检统一提示、按需补）
 		const serialized = serializeModelDraft(model);
 		if (!asOverride) {
 			definitions.push(serialized);
@@ -226,4 +232,91 @@ export function isInertProviderConfig(config: Readonly<Record<string, unknown>>)
 	if (Array.isArray(config.models) && config.models.length) return false;
 	if (isRecord(config.modelOverrides) && Object.keys(config.modelOverrides).length) return false;
 	return Object.keys(config).every((field) => INERT_PROVIDER_FIELDS.has(field));
+}
+
+export type CustomModelField = "contextWindow" | "maxTokens" | "input";
+
+/** 体检的一条：models[] 里有字段没写的模型（已写的值一并带上，界面要显示） */
+export interface CustomModelGap {
+	provider: string;
+	/** 在 models[] 里的位置：手写的文件可能有重复 ID，按位置定位才准 */
+	index: number;
+	id: string;
+	name: string | null;
+	contextWindow?: number;
+	maxTokens?: number;
+	vision?: boolean;
+	missing: CustomModelField[];
+}
+
+/**
+ * 体检：models.json 里哪些模型有字段没写、会落到 pi 的缺省上（见 PI_MODEL_FALLBACKS）。
+ * 只看 providers[].models[]——modelOverrides 覆盖的是内置模型，那些模型 pi 的目录里有真值。
+ * 读的是设置页已经载入的那份配置（密钥已去掉也不影响），保存后重新载入就自动刷新。
+ */
+export function customModelGaps(providers: Readonly<Record<string, unknown>>): CustomModelGap[] {
+	const gaps: CustomModelGap[] = [];
+	for (const [provider, config] of Object.entries(providers)) {
+		const models = isRecord(config) && Array.isArray(config.models) ? config.models : [];
+		models.forEach((model, index) => {
+			if (!isRecord(model)) return;
+			const id = typeof model.id === "string" ? model.id.trim() : "";
+			if (!id) return;
+			const missing: CustomModelField[] = [];
+			if (model.contextWindow === undefined) missing.push("contextWindow");
+			if (model.maxTokens === undefined) missing.push("maxTokens");
+			if (!Array.isArray(model.input)) missing.push("input");
+			if (!missing.length) return;
+			const declared = modelDraftFromConfig(model);
+			gaps.push({
+				provider,
+				index,
+				id,
+				name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : null,
+				...(declared.contextWindow === undefined ? {} : { contextWindow: declared.contextWindow }),
+				...(declared.maxTokens === undefined ? {} : { maxTokens: declared.maxTokens }),
+				...(declared.vision === undefined ? {} : { vision: declared.vision }),
+				missing,
+			});
+		});
+	}
+	return gaps;
+}
+
+/** 用户在体检卡片里给某个模型填的值；没填的字段不带 */
+export interface ModelFieldFill {
+	provider: string;
+	index: number;
+	id: string;
+	contextWindow?: number;
+	maxTokens?: number;
+	vision?: boolean;
+}
+
+/**
+ * 按用户填的值补字段：只补空着的（已写的值不改），按 provider + 位置定位并核对 ID，对不上就跳过。
+ * 不改入参；返回新的 providers 与实际补了几个模型。
+ */
+export function fillModelFields(providers: Readonly<Record<string, unknown>>, fills: readonly ModelFieldFill[]): { providers: Record<string, unknown>; filled: number } {
+	const next = JSON.parse(JSON.stringify(providers)) as Record<string, unknown>;
+	let filled = 0;
+	for (const fill of fills) {
+		const config = Object.prototype.hasOwnProperty.call(next, fill.provider) ? next[fill.provider] : undefined;
+		const model = isRecord(config) && Array.isArray(config.models) ? config.models[fill.index] : undefined;
+		if (!isRecord(model) || typeof model.id !== "string" || model.id.trim() !== fill.id) continue;
+		let touched = false;
+		for (const key of ["contextWindow", "maxTokens"] as const) {
+			const value = positiveInt(fill[key]);
+			if (model[key] === undefined && value !== undefined) {
+				model[key] = value;
+				touched = true;
+			}
+		}
+		if (typeof fill.vision === "boolean" && !Array.isArray(model.input)) {
+			model.input = modelInputFor(fill.vision);
+			touched = true;
+		}
+		if (touched) filled += 1;
+	}
+	return { providers: next, filled };
 }

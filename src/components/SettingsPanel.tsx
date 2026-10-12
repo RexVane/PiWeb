@@ -23,6 +23,7 @@ import {
 	IconShieldOutline16,
 	IconSkillOutline16,
 	IconTrashOutline16,
+	IconWarningOutline16,
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import {
@@ -49,15 +50,21 @@ import {
 	type StreamStyle,
 } from "@/lib/chat/stream-settings";
 import {
+	customModelGaps,
+	fillModelFields,
 	formatCapacity,
 	isInertProviderConfig,
+	modelDraftFromCatalog,
 	modelDraftFromConfig,
 	modelDraftsFromProviderConfig,
+	parseCapacity,
+	PI_MODEL_FALLBACKS,
 	serializeProviderDraft,
 	validateModelDrafts,
+	type CustomModelGap,
 	type ModelDraft,
+	type ModelFieldFill,
 } from "@/lib/model-draft";
-import type { CustomModelGap } from "@/lib/models-service";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
@@ -881,11 +888,153 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 
 // ---------- Models ----------
 
-/** 体检结果：哪些模型缺字段、会被 pi 的缺省值顶掉（/api/models 的 modelAudit） */
-interface ModelAudit {
+type AuditRow = { contextWindow: string; maxTokens: string; vision: "" | "image" | "text" };
+const EMPTY_AUDIT_ROW: AuditRow = { contextWindow: "", maxTokens: "", vision: "" };
+
+/**
+ * 模型配置体检：models[] 里有字段没写的模型，pi 会按 PI_MODEL_FALLBACKS / 纯文本处理。
+ * 不替用户猜——空着的格子由用户填（支持 256K / 1M 写法），保存时只补空字段，已写的值不改。
+ */
+function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 	gaps: CustomModelGap[];
-	defaults: { contextWindow: number; maxTokens: number; vision: boolean };
-	fallbacks: { contextWindow: number; maxTokens: number; vision: boolean };
+	providerLabel: (id: string) => string;
+	busy: boolean;
+	/** 保存成功返回 true（之后清空填写） */
+	onSave: (fills: ModelFieldFill[]) => Promise<boolean>;
+}) {
+	const { t } = useI18n();
+	const [rows, setRows] = useState<Record<string, AuditRow>>({});
+	const keyOf = (gap: CustomModelGap) => `${gap.provider}\u0000${gap.index}`;
+	const rowOf = (gap: CustomModelGap) => rows[keyOf(gap)] ?? EMPTY_AUDIT_ROW;
+	const edit = (gap: CustomModelGap, patch: Partial<AuditRow>) =>
+		setRows((current) => ({ ...current, [keyOf(gap)]: { ...(current[keyOf(gap)] ?? EMPTY_AUDIT_ROW), ...patch } }));
+	const visionGaps = gaps.filter((gap) => gap.missing.includes("input"));
+	const markVision = (vision: "image" | "text") =>
+		setRows((current) => {
+			const next = { ...current };
+			for (const gap of visionGaps) next[keyOf(gap)] = { ...(next[keyOf(gap)] ?? EMPTY_AUDIT_ROW), vision };
+			return next;
+		});
+
+	// 每行填的文本 → 要写的值；有一格格式不对就不让保存（那一格标红）
+	let invalid = false;
+	const fills: ModelFieldFill[] = [];
+	for (const gap of gaps) {
+		const row = rows[keyOf(gap)];
+		if (!row) continue;
+		const contextWindow = gap.missing.includes("contextWindow") ? parseCapacity(row.contextWindow) : undefined;
+		const maxTokens = gap.missing.includes("maxTokens") ? parseCapacity(row.maxTokens) : undefined;
+		if (Number.isNaN(contextWindow) || Number.isNaN(maxTokens)) {
+			invalid = true;
+			continue;
+		}
+		const vision = gap.missing.includes("input") && row.vision ? row.vision === "image" : undefined;
+		if (contextWindow === undefined && maxTokens === undefined && vision === undefined) continue;
+		fills.push({ provider: gap.provider, index: gap.index, id: gap.id, contextWindow, maxTokens, vision });
+	}
+
+	const save = async () => {
+		if (await onSave(fills)) setRows({});
+	};
+
+	const capacityCell = (gap: CustomModelGap, field: "contextWindow" | "maxTokens", label: string) => {
+		if (!gap.missing.includes(field)) {
+			return (
+				<span className="truncate" style={{ fontFamily: "var(--font-mono)", color: "var(--dsw-label-secondary)" }}>
+					<span className="sm:hidden" style={{ color: "var(--dsw-label-caption)" }}>{label} </span>
+					{formatCapacity(gap[field]) || "—"}
+				</span>
+			);
+		}
+		const text = rowOf(gap)[field];
+		return (
+			<input
+				className="pw-audit-field"
+				style={{ fontFamily: "var(--font-mono)" }}
+				value={text}
+				onChange={(event) => edit(gap, { [field]: event.target.value })}
+				placeholder={label}
+				aria-label={`${gap.id} ${label}`}
+				aria-invalid={Number.isNaN(parseCapacity(text)) || undefined}
+				disabled={busy}
+			/>
+		);
+	};
+
+	return (
+		<section className="flex flex-col gap-3 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-hover)" }} data-testid="model-audit">
+			<div className="flex items-start gap-2.5">
+				<IconWarningOutline16 size={16} style={{ flex: "none", marginTop: 1, color: "var(--dsw-warn)" }} />
+				<div className="min-w-0 flex-1">
+					<div style={{ fontSize: 13.5, fontWeight: 600 }}>{t.modelAuditTitle.replace("{n}", String(gaps.length))}</div>
+					<div className="mt-1" style={{ fontSize: 12, color: "var(--dsw-label-caption)", lineHeight: 1.65 }}>
+						{t.modelAuditDesc
+							.replace("{ctx}", formatCapacity(PI_MODEL_FALLBACKS.contextWindow))
+							.replace("{out}", formatCapacity(PI_MODEL_FALLBACKS.maxTokens))}
+					</div>
+				</div>
+			</div>
+
+			<div style={{ fontSize: 12.5 }} role="table" aria-label={t.modelAuditTitle.replace("{n}", String(gaps.length))}>
+				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_92px_92px_108px]" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+					<span role="columnheader">{t.modelAuditColModel}</span>
+					<span role="columnheader">{t.modelAuditColContext}</span>
+					<span role="columnheader">{t.modelAuditColOutput}</span>
+					<span role="columnheader">{t.modelAuditColVision}</span>
+				</div>
+				<div className="max-h-[320px] overflow-y-auto" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }}>
+					{gaps.map((gap) => (
+						<div
+							key={keyOf(gap)}
+							role="row"
+							className="grid grid-cols-3 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_92px_92px_108px]"
+							style={{ borderBottom: "0.5px solid var(--dsw-border-l1)" }}
+						>
+							<div role="cell" className="col-span-3 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
+								<div className="truncate" style={{ fontWeight: 500 }}>{gap.name ?? gap.id}</div>
+								<div className="truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+									{providerLabel(gap.provider)} / {gap.id}
+								</div>
+							</div>
+							<div role="cell" className="min-w-0">{capacityCell(gap, "contextWindow", t.modelAuditColContext)}</div>
+							<div role="cell" className="min-w-0">{capacityCell(gap, "maxTokens", t.modelAuditColOutput)}</div>
+							<div role="cell" className="min-w-0">
+								{gap.missing.includes("input") ? (
+									<select
+										className="pw-audit-field"
+										value={rowOf(gap).vision}
+										onChange={(event) => edit(gap, { vision: event.target.value as AuditRow["vision"] })}
+										aria-label={`${gap.id} ${t.modelAuditColVision}`}
+										disabled={busy}
+									>
+										<option value="">{t.visionUnset}</option>
+										<option value="image">{t.visionOn}</option>
+										<option value="text">{t.visionOff}</option>
+									</select>
+								) : (
+									<span style={{ color: "var(--dsw-label-secondary)" }}>{gap.vision ? t.visionOn : t.visionOff}</span>
+								)}
+							</div>
+						</div>
+					))}
+				</div>
+			</div>
+
+			<div className="flex flex-wrap items-center gap-2">
+				{visionGaps.length > 0 ? (
+					<>
+						<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.modelAuditVisionQuick}</span>
+						<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={busy} onClick={() => markVision("image")}>{t.modelAuditVisionOn}</button>
+						<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={busy} onClick={() => markVision("text")}>{t.modelAuditVisionOff}</button>
+					</>
+				) : null}
+				<span className="flex-1" />
+				<button className="btn-primary-white" style={{ height: 32 }} disabled={busy || invalid || fills.length === 0} onClick={() => void save()}>
+					{busy ? t.saving : fills.length ? t.modelAuditSave.replace("{n}", String(fills.length)) : t.modelAuditSaveIdle}
+				</button>
+			</div>
+		</section>
+	);
 }
 
 function ModelsSection() {
@@ -1157,40 +1306,9 @@ function ModelsSection() {
 		}
 	};
 
-	// 体检：models[] 里没写 contextWindow / maxTokens / input 的条目会被 pi 的缺省顶掉
-	// （128000 / 16384 / 只文本）。发现模型时能自动填，这里是给既有配置兜底的入口。
-	const [audit, setAudit] = useState<ModelAudit | null>(null);
-	const gapLabel: Record<CustomModelGap["missing"][number], string> = {
-		contextWindow: t.modelFieldGapContextWindow,
-		maxTokens: t.modelFieldGapMaxTokens,
-		input: t.modelFieldGapInput,
-	};
+	// 体检：直接从已载入的配置算（不另发请求），每次保存后 load() 重新载入就自动刷新
+	const gaps = useMemo(() => customModelGaps(custom.providers ?? {}), [custom]);
 	const [auditBusy, setAuditBusy] = useState(false);
-	const loadAudit = async () => {
-		try {
-			const result = await request({ action: "modelAudit" });
-			// 不信任载荷形状：拿到别的数据结构时宁可不显示体检卡片，也不能让设置页崩掉
-			if (result.success && Array.isArray(result.data?.gaps)) setAudit(result.data as ModelAudit);
-		} catch {
-			/* 体检失败不该影响设置面板本身 */
-		}
-	};
-	/** 补容量（vision 不给）或按用户明确表态补视觉 */
-	const fixAudit = async (vision?: boolean) => {
-		setAuditBusy(true);
-		try {
-			const result = await request({ action: "fixModelDefaults", ...(vision === undefined ? {} : { vision }) });
-			if (!result.success) throw new Error(result.error || t.toastError);
-			notify(true, t.modelAuditFixed.replace("{n}", String(result.data?.filled ?? 0)));
-			await load();
-			await loadAudit();
-		} catch (error) {
-			notify(false, error instanceof Error ? error.message : t.toastError);
-		} finally {
-			setAuditBusy(false);
-		}
-	};
-	useEffect(() => { void loadAudit(); }, [providers.length]);
 
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
@@ -1234,6 +1352,18 @@ function ModelsSection() {
 			return result;
 		}
 		return call({ action: "saveCustomProviders", revision: customRevision, content: JSON.stringify({ ...custom, providers: content }, null, 2) });
+	};
+
+	/** 体检卡片的保存：只补空字段，走与编辑 provider 同一条写入（revision 乐观锁、密钥由服务端从原文件恢复） */
+	const saveAuditFills = async (fills: ModelFieldFill[]): Promise<boolean> => {
+		const { providers: next, filled } = fillModelFields(custom.providers ?? {}, fills);
+		if (!filled) return true;
+		setAuditBusy(true);
+		try {
+			return Boolean((await saveCustom(next)).success);
+		} finally {
+			setAuditBusy(false);
+		}
 	};
 
 	const providerName = (id: string) => providers.find((p) => p.id === id)?.name ?? id;
@@ -1541,13 +1671,7 @@ function ModelsSection() {
 													});
 													const result = await response.json();
 													if (!result.success) throw new Error(result.error || t.toastError);
-													return (result.data.models ?? []).map((model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }) => ({
-												id: model.id,
-												name: model.name ?? "",
-												...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
-												...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
-												...(model.vision === undefined ? {} : { vision: model.vision }),
-											}));
+													return (result.data.models ?? []).map(modelDraftFromCatalog);
 												}}
 												discoverDisabled={!cBaseUrl.trim()}
 											/>
@@ -1604,13 +1728,7 @@ function ModelsSection() {
 																});
 																const result = await response.json();
 																if (!result.success) throw new Error(result.error || t.toastError);
-																return (result.data.models ?? []).map((model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }) => ({
-												id: model.id,
-												name: model.name ?? "",
-												...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
-												...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
-												...(model.vision === undefined ? {} : { vision: model.vision }),
-											}));
+																return (result.data.models ?? []).map(modelDraftFromCatalog);
 															}}
 															discoverDisabled={!(bBaseUrl.trim() || p.baseUrl)}
 														/>
@@ -1653,39 +1771,9 @@ function ModelsSection() {
 				})}
 			</div>
 
-			{/* 模型配置体检：不填的字段会被 pi 的缺省值悄悄顶掉 */}
-			{audit && audit.gaps.length > 0 ? (
-				<div className="flex flex-col gap-2 rounded-2xl p-3" style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-hover)" }}>
-					<div className="flex items-start gap-3">
-						<div className="min-w-0 flex-1">
-							<div style={{ fontSize: 13, fontWeight: 600 }}>{t.modelAuditTitle.replace("{n}", String(audit.gaps.length))}</div>
-							<div className="mt-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", lineHeight: 1.6 }}>
-								{t.modelAuditDesc
-									.replace("{ctx}", formatCapacity(audit.fallbacks.contextWindow))
-									.replace("{out}", formatCapacity(audit.fallbacks.maxTokens))
-									.replace("{defaults}", formatCapacity(audit.defaults.contextWindow) + " / " + formatCapacity(audit.defaults.maxTokens))}
-							</div>
-						</div>
-						<button className="btn-primary-white flex-none" style={{ height: 32 }} disabled={auditBusy} onClick={() => void fixAudit()}>
-							{auditBusy ? t.saving : t.modelAuditFix}
-						</button>
-					</div>
-					{audit.gaps.some((gap) => gap.missing.includes("input")) ? (
-						<div className="flex flex-wrap items-center gap-2" style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)" }}>
-							<span>{t.modelAuditVision.replace("{n}", String(audit.gaps.filter((gap) => gap.missing.includes("input")).length))}</span>
-							<button className="btn-outline" style={{ height: 24, padding: "0 10px", fontSize: 12 }} disabled={auditBusy} onClick={() => void fixAudit(true)}>{t.modelAuditVisionOn}</button>
-							<button className="btn-outline" style={{ height: 24, padding: "0 10px", fontSize: 12 }} disabled={auditBusy} onClick={() => void fixAudit(false)}>{t.modelAuditVisionOff}</button>
-						</div>
-					) : null}
-					<div className="flex flex-col gap-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)" }}>
-						{audit.gaps.slice(0, 8).map((gap) => (
-							<div key={gap.provider + ":" + gap.id} className="truncate" title={gap.provider + " / " + gap.id}>
-								{gap.id} · {gap.missing.map((field) => gapLabel[field]).join("、")}
-							</div>
-						))}
-						{audit.gaps.length > 8 ? <div>{t.modelAuditMore.replace("{n}", String(audit.gaps.length - 8))}</div> : null}
-					</div>
-				</div>
+			{/* 模型配置体检：没写的字段 pi 会按缺省处理；由用户填，不替他猜 */}
+			{gaps.length > 0 ? (
+				<ModelFieldAudit gaps={gaps} providerLabel={providerName} busy={auditBusy || customRevision === null} onSave={saveAuditFills} />
 			) : null}
 
 			{/* 两个添加按钮 */}
@@ -1843,7 +1931,9 @@ function ModelsSection() {
 
 		</div>
 	);
-}const fieldCls = "w-full rounded-xl px-3 py-2";
+}
+
+const fieldCls = "w-full rounded-xl px-3 py-2";
 
 /** 配额展示：token 数转换单位（53,000,000 → 53.00M），与统计条 / 上下文弹窗口径一致 */
 function fmtQuotaTokens(value: number): string {
@@ -2116,7 +2206,7 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 
 // ---------- Plugins ----------
 
-/** 导出仅供测试（其余 section 不导出）；插件卡片的状态徽标曾写死过 */
+/** 导出仅供测试（其余 section 不导出）；插件/扩展卡片的状态徽标曾写死过 */
 export function PluginsSection({ cwd }: { cwd: string }) {
 	const { t, lang } = useI18n();
 	const confirmUninstall = (source: string) => window.confirm(t.confirmUninstallPackage.replace("{source}", source));
@@ -2236,7 +2326,7 @@ export function PluginsSection({ cwd }: { cwd: string }) {
 
 	/**
 	 * 插件/扩展的状态徽标。以前这里是写死的「已启用」：头部按 e.disabled 显示「已停用」，
-	 * 展开区却恒定显示「已启用」，同一张卡片自相矛盾（用户截图报的就是这个）。
+	 * 展开区却恒定显示「已启用」，同一张卡片自相矛盾（用户看到的正是这个）。
 	 * 现在只剩这一处指示，颜色与文案都跟着真实状态走。
 	 */
 	const stateBadge = (disabled: boolean) => (

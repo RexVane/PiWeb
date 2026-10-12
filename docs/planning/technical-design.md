@@ -505,23 +505,27 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 ### 11.3 改动
 
 1. **发现即预填**：`DiscoveredModel` 带上 contextWindow / maxTokens / vision，采纳候选时一起进草稿。
-2. **表单加「视觉」三态**（未声明 / 有视觉 / 纯文本；原来连输入框都没有）；容量占位提示从 `128K` / `16K` 改成 `1M` / `32K`。
-3. **保存时补容量缺省**：自定义 provider 的 `models[]` 行缺 `contextWindow` / `maxTokens` 就写 `MODEL_FIELD_DEFAULTS`（1M / 32k）；
-   用户主动清空的字段不填回去；内置 provider 的覆盖行不补（那些模型 pi 的目录里有真值）。
-   **视觉不自动补**：那是能力声明，猜错了会把图片发给不收图的上游（可能 400）；留空只是被 pi 当纯文本，体检会提醒。
-4. **体检 + 一键补全**：设置页列出「会被 pi 缺省顶掉」的条目（只看 `models[]`，不碰 `modelOverrides`），
-   `{action:"modelAudit"}` 查、`{action:"fixModelDefaults"}` 补（只填空、带 revision 乐观锁，apiKey 由 `writeCustomProviders` 从原文件恢复）；
-   视觉另给「全部标为有视觉 / 全部标为纯文本」两个明确按钮，一次表态就不再有提醒。
+2. **表单加「视觉」三态**（未声明 / 有视觉 / 纯文本；原来连输入框都没有）；容量占位提示保持 pi 的真实缺省 `128K` / `16K`。
+3. **不替用户猜值**：只写端点报的、或用户填的；留空就不写，由 pi 按 `PI_MODEL_FALLBACKS`（128K / 16K / 纯文本）处理。
+   曾经保存时盲填 1M / 32K（#078），已撤掉（#086）：pi-ai 每次请求都按 `clampMaxTokensToContext(contextWindow − 估算 − 4096)`
+   发 `max_tokens`，**往大里猜会让上游直接拒绝**（窗口只有 128K 的模型被当 1M，`max_tokens` 超限报 400）；
+   往小里猜只是提前压缩，可以接受，但也不该悄悄发生，所以交给体检提醒。视觉同理：猜错会把图片发给不收图的上游。
+4. **体检 + 当场填写**：设置页列出「有字段没写、会落到 pi 缺省上」的条目（`customModelGaps`，只看 `models[]`，不碰 `modelOverrides`），
+   每行空着的格子可以直接填（容量支持 256K / 1M 写法，视觉三态，另有「都有视觉 / 都是纯文本」一键表态）。
+   保存走设置页已有的 `saveCustomProviders`（`fillModelFields` 只填空、按 provider + 位置定位并核对 ID；
+   revision 乐观锁、apiKey 由 `writeCustomProviders` 从原文件恢复），存完重新载入，体检跟着刷新。
+   缺口从已载入的配置算，不再单独开 `modelAudit` / `fixModelDefaults` 接口。
 5. **填完 URL 和密钥就自动识别**：自定义 provider 还没有任何模型行时，地址（+密钥，本机网关可省）停手 0.8 秒后
    自动拉一次模型目录并采纳候选；本机/私网地址自动勾上「允许访问本机/私有网络地址」（服务端仍会自己再判一次，
    见 `src/lib/model-endpoint.ts`）。自动跑失败不弹错，按钮还在，手动点能看到原因。
 
 ### 11.4 验收（生产构建 + 真实数据）
 
-拿**改配置之前的备份**当 models.json 起服务：体检自己报出 3 条，与手工扫描逐条一致；
-一键补全（只补容量）后，缺的 `contextWindow` / `maxTokens` 补上、已有的值未被覆盖；
-视觉再按显式表态补 `input`。组件测试覆盖：填完 URL 与密钥后自动发一次 `discoverModels`、
-候选被采纳且容量与视觉来自端点（`tests/components/provider-setup-modal.test.tsx`）。
+拿**改配置之前的备份**当 models.json 起服务：体检自己报出 3 条，与手工扫描逐条一致（#078 时的验收）。
+#086 起补全改成只写用户填的值：`tests/model-audit.test.ts` 覆盖只填空、已有值与 `modelOverrides` 不动、
+位置或 ID 对不上就跳过、补完体检缺口消失；`tests/model-draft.test.ts` 覆盖容量留空就不写、端点值原样带进表单。
+组件测试覆盖：自定义 provider 没填容量时保存出的条目只有 `id`；自动识别后候选被采纳且容量与视觉来自端点
+（`tests/components/provider-setup-modal.test.tsx`）。
 
 ### 11.5 仍未解决（在 pi 侧）
 

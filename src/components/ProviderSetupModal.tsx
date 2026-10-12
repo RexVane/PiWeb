@@ -13,7 +13,7 @@ import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
 import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
-import { formatCapacity, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { formatCapacity, modelDraftFromCatalog, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
 import styles from "./ProviderSetupModal.module.css";
 
@@ -131,7 +131,7 @@ export function ProviderSetupModal({
 						baseUrl: baseUrl.trim(),
 						api,
 						...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-						models: models.map((model) => serializeModelDraft(model, true)),
+						models: models.map((model) => serializeModelDraft(model)),
 					},
 				});
 			}
@@ -156,14 +156,7 @@ export function ProviderSetupModal({
 		});
 		const result = await response.json();
 		if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
-		return (result.data.models ?? []).map((model: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }) => ({
-			id: model.id,
-			name: model.name ?? "",
-			// 端点给的真值直接带上；没给的留给保存时补缺省
-			...(model.contextWindow ? { contextWindow: model.contextWindow } : {}),
-			...(model.maxTokens ? { maxTokens: model.maxTokens } : {}),
-			...(model.vision === undefined ? {} : { vision: model.vision }),
-		}));
+		return (result.data.models ?? []).map(modelDraftFromCatalog);
 	};
 
 	return (
@@ -330,18 +323,6 @@ export function ProviderSetupModal({
  * 每行 = ID + 名称，折叠展开两个容量字段（K/M 写法）；
  * 「从提供商获取」产出候选勾选对话框，采纳不覆盖已配置行。
  */
-/** 候选 → 表单行：端点报的容量与视觉一起带上，没报的留空（保存时按缺省补容量，视觉由用户表态） */
-function draftFromCandidate(candidate: ModelDraft): ModelDraft {
-	const id = candidate.id.trim();
-	return {
-		id,
-		name: candidate.name ?? "",
-		...(candidate.contextWindow ? { contextWindow: candidate.contextWindow } : {}),
-		...(candidate.maxTokens ? { maxTokens: candidate.maxTokens } : {}),
-		...(candidate.vision === undefined ? {} : { vision: candidate.vision }),
-	};
-}
-
 export function ModelCatalog({
 	models,
 	setModels,
@@ -432,7 +413,7 @@ export function ModelCatalog({
 					setAutoFound(found.length);
 					setAutoStatus("done");
 					// 新 provider：直接把候选收进来（容量与视觉按端点填好）
-					setModels((current) => (current.length ? current : found.map(draftFromCandidate)));
+					setModels((current) => (current.length ? current : found.map(modelDraftFromCatalog)));
 				} catch {
 					// 自动跑失败不弹错：按钮还在，手动点能看到具体原因
 					setAutoStatus("failed");
@@ -478,7 +459,7 @@ export function ModelCatalog({
 			for (const candidate of candidates) {
 				const id = candidate.id.trim();
 				if (!id || !picked.has(id) || byId.has(id) || inCatalog(id)) continue;
-				byId.set(id, draftFromCandidate(candidate));
+				byId.set(id, modelDraftFromCatalog(candidate));
 			}
 			return [...byId.values()];
 		});
@@ -566,7 +547,7 @@ export function ModelCatalog({
 												style={{ borderColor: Number.isNaN(model.contextWindow) ? "var(--dsw-danger)" : undefined }}
 												value={capacityValue(model, index, "contextWindow")}
 												onChange={(event) => editCapacity(index, "contextWindow", event.target.value)}
-												placeholder="1M"
+												placeholder="128K"
 											/>
 										</label>
 										<label className={styles.capacityField}>
@@ -576,7 +557,7 @@ export function ModelCatalog({
 												style={{ borderColor: Number.isNaN(model.maxTokens) ? "var(--dsw-danger)" : undefined }}
 												value={capacityValue(model, index, "maxTokens")}
 												onChange={(event) => editCapacity(index, "maxTokens", event.target.value)}
-												placeholder="32K"
+												placeholder="16K"
 											/>
 										</label>
 										<label className={styles.capacityField} title={t.visionHint}>

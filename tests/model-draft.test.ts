@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-	MODEL_FIELD_DEFAULTS, isInertProviderConfig, modelDraftFromConfig, modelInputFor, modelDraftsFromProviderConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts,
+	isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelInputFor, modelDraftsFromProviderConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts,
 } from "../src/lib/model-draft";
 
 const model = {
@@ -114,33 +114,37 @@ describe("builtin provider overrides", () => {
 	});
 });
 
-describe("模型字段缺省（视觉 / 容量）", () => {
-	it("写进 models[] 的自定义模型只补容量缺省；视觉不猜", () => {
-		expect(serializeModelDraft({ id: "proxy", name: "" }, true)).toEqual({
-			id: "proxy",
-			contextWindow: MODEL_FIELD_DEFAULTS.contextWindow,
-			maxTokens: MODEL_FIELD_DEFAULTS.maxTokens,
-		});
-		// 内置 provider 那张表单不补（覆盖行有目录真值），保持原行为
+describe("模型字段（视觉 / 容量）不替用户猜", () => {
+	it("容量留空就不写：自定义 provider 与内置 provider 的表单都一样", () => {
 		expect(serializeModelDraft({ id: "proxy", name: "" })).toEqual({ id: "proxy" });
+		const saved = serializeProviderDraft({}, { baseUrl: "https://gateway.invalid/v1", models: [{ id: "proxy", name: "" }] });
+		expect(saved.models).toEqual([{ id: "proxy" }]);
 	});
 
 	it("视觉只在明确表态时写：有 / 无 / 取消声明", () => {
-		expect(serializeModelDraft({ id: "m", name: "", vision: true }, true).input).toEqual(modelInputFor(true));
-		expect(serializeModelDraft({ id: "m", name: "", vision: false }, true).input).toEqual(["text"]);
+		expect(serializeModelDraft({ id: "m", name: "", vision: true }).input).toEqual(modelInputFor(true));
+		expect(serializeModelDraft({ id: "m", name: "", vision: false }).input).toEqual(["text"]);
 		// 源里声明过、现在选「未声明」→ 取消这个声明
 		const source = { id: "m", input: ["text", "image"] };
-		expect(serializeModelDraft({ ...modelDraftFromConfig(source), vision: undefined }, true)).not.toHaveProperty("input");
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source), vision: undefined })).not.toHaveProperty("input");
 	});
 
-	it("已有值不被覆盖；用户主动清空的字段也不拿缺省填回去", () => {
+	it("已有值原样保留；用户清空的字段就删掉", () => {
 		const source = { id: "m", contextWindow: 200_000, maxTokens: 8_192, input: ["text"] };
-		expect(serializeModelDraft({ ...modelDraftFromConfig(source) }, true)).toEqual(source);
-		expect(serializeModelDraft({ ...modelDraftFromConfig(source), vision: true }, true)).toEqual({ ...source, input: ["text", "image"] });
-		expect(serializeModelDraft({ ...modelDraftFromConfig(source), contextWindow: undefined }, true)).not.toHaveProperty("contextWindow");
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source) })).toEqual(source);
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source), vision: true })).toEqual({ ...source, input: ["text", "image"] });
+		expect(serializeModelDraft({ ...modelDraftFromConfig(source), contextWindow: undefined })).not.toHaveProperty("contextWindow");
 	});
 
-	it("内置模型的覆盖行不补缺省，只写用户改过的字段", () => {
+	it("端点报的能力带进表单行，没报的留空", () => {
+		expect(modelDraftFromCatalog({ id: " a ", name: "A", contextWindow: 1_000_000, maxTokens: 32_000, vision: true }))
+			.toEqual({ id: "a", name: "A", contextWindow: 1_000_000, maxTokens: 32_000, vision: true });
+		expect(modelDraftFromCatalog({ id: "b" })).toEqual({ id: "b", name: "" });
+		// 0、负数、小数都不是有效容量：留空，不写进配置
+		expect(modelDraftFromCatalog({ id: "c", contextWindow: 0, maxTokens: 1.5, vision: false })).toEqual({ id: "c", name: "", vision: false });
+	});
+
+	it("内置模型的覆盖行只写用户改过的字段", () => {
 		const catalogIds = new Set(["claude-x"]);
 		const row = { id: "claude-x", name: "", origin: "override" as const, source: { id: "claude-x" } };
 		expect(serializeProviderDraft({}, { baseUrl: "https://x.invalid", models: [row] }, "anthropic-messages", catalogIds).modelOverrides).toBeUndefined();

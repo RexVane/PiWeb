@@ -1712,6 +1712,29 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	pointer-events: none;
 }
 
+/* 设置页模型体检卡片里的小输入框 / 下拉（容量、视觉） */
+.pw-audit-field {
+	width: 100%;
+	height: 30px;
+	padding: 0 8px;
+	border: 0.5px solid var(--dsw-border-l2);
+	border-radius: 9px;
+	background: var(--dsw-glass-input);
+	color: var(--dsw-label-primary);
+	font-size: 12.5px;
+	transition: border-color var(--ds-duration-fast) var(--ds-ease-in-out), box-shadow var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-audit-field:focus {
+	border-color: var(--dsw-accent);
+	box-shadow: 0 0 0 2px var(--dsw-accent-soft);
+}
+.pw-audit-field[aria-invalid="true"] {
+	border-color: var(--dsw-danger);
+}
+.pw-audit-field:disabled {
+	opacity: 0.55;
+}
+
 /* 项目栏 */
 .pw-project {
 	background: var(--dsw-sidebar-fill);
