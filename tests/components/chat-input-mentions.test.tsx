@@ -153,6 +153,72 @@ describe("输入框 @ 引用", () => {
 		await waitFor(() => expect(onSend).toHaveBeenCalledWith("看一下 @fuzzy", []));
 	});
 
+	it("Esc 只关当前这个 token：光标在里面移动不再弹，改了字重新弹", async () => {
+		stubIndex();
+		const { textarea } = renderInput("/workspace-esc-caret");
+		type(textarea, "@fuz");
+		await screen.findByTestId("mention-menu");
+		fireEvent.keyDown(textarea, { key: "Escape" });
+		expect(screen.queryByTestId("mention-menu")).toBeNull();
+
+		textarea.focus();
+		(textarea as HTMLTextAreaElement).setSelectionRange(2, 2);
+		fireEvent.keyUp(textarea, { key: "ArrowLeft" });
+		expect(screen.queryByTestId("mention-menu")).toBeNull();
+
+		type(textarea, "@fuzz");
+		expect(await screen.findByTestId("mention-menu")).toBeTruthy();
+	});
+
+	it("Esc 过的位置换成别的 token 会重新弹（回归：原来按位置记，同长度的新 token 一直不弹）", async () => {
+		stubIndex();
+		const { textarea } = renderInput("/workspace-esc-replace");
+		type(textarea, "@fuz");
+		await screen.findByTestId("mention-menu");
+		fireEvent.keyDown(textarea, { key: "Escape" });
+		type(textarea, "@REA");
+		const menu = await screen.findByTestId("mention-menu");
+		await waitFor(() => expect(menu.textContent).toContain("README.md"));
+	});
+
+	it("光标移进 token 会弹，选中一段文字时不弹", async () => {
+		stubIndex();
+		const { textarea } = renderInput("/workspace-caret");
+		type(textarea, "@fuz 后面");
+		expect(screen.queryByTestId("mention-menu")).toBeNull();
+		textarea.focus();
+		(textarea as HTMLTextAreaElement).setSelectionRange(2, 2);
+		fireEvent.keyUp(textarea, { key: "ArrowLeft" });
+		expect(await screen.findByTestId("mention-menu")).toBeTruthy();
+		(textarea as HTMLTextAreaElement).setSelectionRange(1, 3);
+		fireEvent.keyUp(textarea, { key: "ArrowLeft", shiftKey: true });
+		expect(screen.queryByTestId("mention-menu")).toBeNull();
+	});
+
+	it("输入法组字时 Esc / 方向键 / Enter 归输入法，不动候选", async () => {
+		stubIndex();
+		const { textarea } = renderInput("/workspace-ime");
+		type(textarea, "@");
+		const menu = await screen.findByTestId("mention-menu");
+		await waitFor(() => expect(within(menu).getAllByRole("option").length).toBeGreaterThan(1));
+		fireEvent.keyDown(textarea, { key: "ArrowDown", isComposing: true });
+		expect(within(menu).getAllByRole("option")[0].getAttribute("aria-selected")).toBe("true");
+		fireEvent.keyDown(textarea, { key: "Escape", isComposing: true });
+		expect(screen.queryByTestId("mention-menu")).toBeTruthy();
+		fireEvent.keyDown(textarea, { key: "Enter", isComposing: true });
+		expect(screen.queryByTestId("composer-references")).toBeNull();
+	});
+
+	it("没有工作区时 @ 不弹候选、不拉清单，Enter 照常发送", async () => {
+		const calls = stubIndex();
+		const { textarea, onSend } = renderInput("");
+		type(textarea, "@fuz");
+		expect(screen.queryByTestId("mention-menu")).toBeNull();
+		fireEvent.keyDown(textarea, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("@fuz", []));
+		expect(calls).toHaveLength(0);
+	});
+
 	it("没有候选时不拦 Enter：`@某人` 这种文字能直接发出去", async () => {
 		stubIndex([]);
 		const { textarea, onSend } = renderInput("/workspace-nomatch");

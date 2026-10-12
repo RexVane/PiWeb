@@ -179,7 +179,7 @@ export function ChatInput({
 	// @ 引用：打字触发候选，选中后落成引用 chip（发送时统一拼成 `@路径` 行）
 	const [mention, setMention] = useState<{ query: string; start: number; tokenEnd: number } | null>(null);
 	const [mentionIdx, setMentionIdx] = useState(0);
-	/** 被 Esc 关掉的那个 token（`@abc`）；同一个 token 不再弹，改了字重新弹 */
+	/** 被 Esc 关掉的那个 token（位置 + 原文）；光标在它里面移动不再弹，改了字、或换成别的 token 重新弹 */
 	const mentionDismissed = useRef<string | null>(null);
 	const mentionMenuRef = useRef<HTMLDivElement>(null);
 	const taRef = useRef<HTMLTextAreaElement>(null);
@@ -232,11 +232,19 @@ export function ChatInput({
 		mentionMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 	}, [mentionIdx, suggestions.length]);
 
-	/** 文本 / 光标变了就重新判是否在 @ token 里（Esc 关过的同一个 token 不再弹） */
+	/**
+	 * 文本 / 光标变了就重新判是否在 @ token 里（Esc 关过的同一个 token 不再弹）。
+	 * 没有工作区就不弹：没有候选来源，菜单只会空转还拦着方向键和 Esc。
+	 */
 	const syncMention = (value: string, caret: number | null) => {
-		const token = caret === null ? null : atToken(value, caret);
-		const key = token ? `${token.start}:${token.tokenEnd}` : null;
-		if (!token || mentionDismissed.current === key) {
+		const token = caret === null || !cwd ? null : atToken(value, caret);
+		if (!token) {
+			// 离开 token 就忘掉 Esc：之后在同一位置打新的 @ 照常弹
+			mentionDismissed.current = null;
+			setMention(null);
+			return;
+		}
+		if (mentionDismissed.current === `${token.start}:${value.slice(token.start, token.tokenEnd)}`) {
 			setMention(null);
 			return;
 		}
@@ -247,7 +255,7 @@ export function ChatInput({
 	};
 
 	const closeMention = (dismiss: boolean) => {
-		if (dismiss && mention) mentionDismissed.current = `${mention.start}:${mention.tokenEnd}`;
+		if (dismiss && mention) mentionDismissed.current = `${mention.start}:${text.slice(mention.start, mention.tokenEnd)}`;
 		setMention(null);
 		setMentionIdx(0);
 	};
@@ -850,18 +858,19 @@ export function ChatInput({
 						suppressHydrationWarning
 						className="min-w-0 flex-1 resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
-							onChange={(e) => {
-								const value = e.target.value;
-								setText(value);
-								setCmdDismissed(false);
-								setCmdIdx(0);
-								syncMention(value, e.target.selectionStart);
-								autoSize();
-							}}
-							onSelect={(e) => {
-								const ta = e.target as HTMLTextAreaElement;
-								syncMention(ta.value, ta.selectionStart);
-							}}
+						onChange={(e) => {
+							const value = e.target.value;
+							setText(value);
+							setCmdDismissed(false);
+							setCmdIdx(0);
+							syncMention(value, e.target.selectionStart);
+							autoSize();
+						}}
+						onSelect={(e) => {
+							// 选中了一段文字时不弹：那时 Enter / Tab 应该照常工作
+							const ta = e.target as HTMLTextAreaElement;
+							syncMention(ta.value, ta.selectionStart === ta.selectionEnd ? ta.selectionStart : null);
+						}}
 						onPaste={(e) => {
 							const files = Array.from(e.clipboardData.files);
 							if (files.length) {
@@ -870,7 +879,8 @@ export function ChatInput({
 							}
 						}}
 						onKeyDown={(e) => {
-							if (mentionMode) {
+							// 输入法组字时的按键归输入法（Esc 取消组字、↑↓ 选字、Enter 上屏），一律不当候选操作
+							if (mentionMode && !e.nativeEvent.isComposing) {
 								// 候选开着时优先于发送：Esc 关掉、↑↓ 选、Enter / Tab 采纳。
 								// 没有候选时不拦 Enter——`@某人` 这种不成候选的文字要能直接发出去。
 								if (e.key === "Escape") {
@@ -889,7 +899,7 @@ export function ChatInput({
 										setMentionIdx((i) => Math.max(i - 1, 0));
 										return;
 									}
-									if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
+									if (e.key === "Enter" || e.key === "Tab") {
 										e.preventDefault();
 										const picked = suggestions[effectiveMentionIdx];
 										if (picked) applyMention(picked.candidate);

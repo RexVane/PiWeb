@@ -5,7 +5,7 @@
  * 按工作区缓存（含 in-flight 去重），过期后**先用手上的旧清单渲染、再后台刷新**——
  * 打字过程中绝不能因为一次刷新把候选列表清空。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { buildCandidates, dirsOfPaths, type PathCandidate } from "@/lib/workspace-index";
 
 export interface WorkspaceFiles {
@@ -29,10 +29,9 @@ interface CachedIndex {
 const cache = new Map<string, CachedIndex>();
 const inflight = new Map<string, Promise<CachedIndex>>();
 
-async function fetchIndex(cwd: string, signal: AbortSignal): Promise<CachedIndex> {
-	const response = await fetch(`/api/files?index=1&cwd=${encodeURIComponent(cwd)}`, { signal, cache: "no-store" });
+async function fetchIndex(cwd: string): Promise<CachedIndex> {
+	const response = await fetch(`/api/files?index=1&cwd=${encodeURIComponent(cwd)}`, { cache: "no-store" });
 	const payload = await response.json();
-	signal.throwIfAborted();
 	if (!response.ok || !payload.success) throw new Error(payload.error || `request failed (${response.status})`);
 	const data = payload.data as { files: string[]; source: "git" | "disk"; truncated: boolean };
 	const entry: CachedIndex = {
@@ -45,18 +44,21 @@ async function fetchIndex(cwd: string, signal: AbortSignal): Promise<CachedIndex
 	return entry;
 }
 
-/** 同一工作区并发只发一次请求；失败不进缓存（下次打开会重试） */
-function loadIndex(cwd: string, signal: AbortSignal): Promise<CachedIndex> {
+/**
+ * 同一工作区并发只发一次请求；失败不进缓存（下次打开会重试）。
+ * 共享的请求不挂任何一方的 AbortSignal：先打开的输入框关了（中止），后来的还在等同一个结果，
+ * 不能让它跟着收到 AbortError。各方用完就不理结果，请求本身让它跑完、顺手填进缓存。
+ */
+function loadIndex(cwd: string): Promise<CachedIndex> {
 	const running = inflight.get(cwd);
 	if (running) return running;
-	const promise = fetchIndex(cwd, signal).finally(() => inflight.delete(cwd));
+	const promise = fetchIndex(cwd).finally(() => inflight.delete(cwd));
 	inflight.set(cwd, promise);
 	return promise;
 }
 
-export function useWorkspaceFiles(cwd: string, enabled: boolean): WorkspaceFiles & { refresh: () => void } {
+export function useWorkspaceFiles(cwd: string, enabled: boolean): WorkspaceFiles {
 	const [state, setState] = useState<WorkspaceFiles>({ status: "idle", candidates: [], source: null, truncated: false, error: null });
-	const [nonce, setNonce] = useState(0);
 	const scope = useRef<{ cwd: string; controller: AbortController }>({ cwd: "", controller: new AbortController() });
 
 	useEffect(() => {
@@ -74,7 +76,7 @@ export function useWorkspaceFiles(cwd: string, enabled: boolean): WorkspaceFiles
 			setState({ status: "loading", candidates: [], source: null, truncated: false, error: null });
 		}
 
-		void loadIndex(cwd, controller.signal).then(
+		void loadIndex(cwd).then(
 			(entry) => {
 				if (isCurrent()) setState({ status: "ready", candidates: entry.candidates, source: entry.source, truncated: entry.truncated, error: null });
 			},
@@ -85,12 +87,7 @@ export function useWorkspaceFiles(cwd: string, enabled: boolean): WorkspaceFiles
 			},
 		);
 		return () => controller.abort();
-	}, [cwd, enabled, nonce]);
+	}, [cwd, enabled]);
 
-	const refresh = useCallback(() => {
-		if (cwd) cache.delete(cwd);
-		setNonce((value) => value + 1);
-	}, [cwd]);
-
-	return { ...state, refresh };
+	return state;
 }

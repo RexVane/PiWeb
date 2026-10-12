@@ -1287,14 +1287,16 @@ function Hero({
 
 				{/* 输入卡 */}
 				<ChatInput
-						draft={draft}
-						onDraftChange={onDraftChange}
-						onUploadError={onUploadError}
-						onUploadProgress={onUploadProgress}
-						uploadFailure={uploadFailure}
-						pendingUploadCount={pendingUploadCount}
-						pendingSend={pendingSend}
-						onSendPendingChange={onSendPendingChange}
+					draft={draft}
+					onDraftChange={onDraftChange}
+					onUploadError={onUploadError}
+					onUploadProgress={onUploadProgress}
+					uploadFailure={uploadFailure}
+					pendingUploadCount={pendingUploadCount}
+					pendingSend={pendingSend}
+					onSendPendingChange={onSendPendingChange}
+					// 新会话也能 @ 引用：候选来自上面选中的工作区
+					cwd={cwd}
 					commands={commands}
 					onCommand={onCommand}
 					isStreaming={false}
