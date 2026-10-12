@@ -2116,7 +2116,8 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 
 // ---------- Plugins ----------
 
-function PluginsSection({ cwd }: { cwd: string }) {
+/** 导出仅供测试（其余 section 不导出）；插件卡片的状态徽标曾写死过 */
+export function PluginsSection({ cwd }: { cwd: string }) {
 	const { t, lang } = useI18n();
 	const confirmUninstall = (source: string) => window.confirm(t.confirmUninstallPackage.replace("{source}", source));
 	const [tab, setTab] = useState<"config" | "list">("config");
@@ -2233,13 +2234,23 @@ function PluginsSection({ cwd }: { cwd: string }) {
 		})),
 	].filter((x) => !query || x.name.toLowerCase().includes(query));
 
-	const badge = (
+	/**
+	 * 插件/扩展的状态徽标。以前这里是写死的「已启用」：头部按 e.disabled 显示「已停用」，
+	 * 展开区却恒定显示「已启用」，同一张卡片自相矛盾（用户截图报的就是这个）。
+	 * 现在只剩这一处指示，颜色与文案都跟着真实状态走。
+	 */
+	const stateBadge = (disabled: boolean) => (
 		<span
 			className="flex flex-none items-center gap-1.5 rounded-md px-1.5 py-0.5"
-			style={{ fontSize: 10.5, background: "rgba(34,197,94,.12)", color: "var(--dsw-success)" }}
+			style={{
+				fontSize: 10.5,
+				...(disabled
+					? { background: "var(--dsw-selector)", color: "var(--dsw-label-tertiary)" }
+					: { background: "rgba(34,197,94,.12)", color: "var(--dsw-success)" }),
+			}}
 		>
-			<span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--dsw-success)" }} />
-			{t.enabled}
+			<span className="h-1.5 w-1.5 rounded-full" style={{ background: disabled ? "var(--dsw-label-tertiary)" : "var(--dsw-success)" }} />
+			{disabled ? t.disabled : t.enabled}
 		</span>
 	);
 
@@ -2356,9 +2367,8 @@ function PluginsSection({ cwd }: { cwd: string }) {
 											{e.error && (
 												<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-danger)", background: "var(--pw-danger-soft, rgba(236,19,19,.12))" }}>{t.extensionLoadError}</span>
 											)}
-											{e.disabled && !e.error && (
-												<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-label-tertiary)", background: "var(--dsw-selector)" }}>{t.disabled}</span>
-											)}
+											{/* 状态只在这一处显示：展开区不再重复（更不能写死成「已启用」） */}
+											{!e.error && stateBadge(e.disabled === true)}
 										</div>
 										<div className="truncate" style={{ fontSize: 12, color: e.error ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }} title={e.error ?? e.path}>
 											{e.error ?? e.path}
@@ -2380,7 +2390,6 @@ function PluginsSection({ cwd }: { cwd: string }) {
 											>
 												{scopeLabel(scope)}
 											</span>
-											{badge}
 										</div>
 										<div className="break-all" style={{ fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 											{e.path}
