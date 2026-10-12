@@ -7,7 +7,7 @@
  *   现在不裁切、可点开放大、Esc 关闭。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ChatInput, type ChatDraft } from "@/components/ChatInput";
 
 afterEach(cleanup);
@@ -75,24 +75,40 @@ describe("图片 chip", () => {
 		expect(screen.queryByRole("dialog")).toBeNull();
 	});
 
-	it("超过 4 张折叠成牌堆：只显示正面那张 + 「展开 N」，展开后逐张可点开", () => {
+	it("超过 4 张折叠成牌堆，点开后沿弧线扇开（同一批卡片做 transform，才有扇开动画）", () => {
 		const many = Array.from({ length: 6 }, (_, i) => ({ type: "image" as const, data: `IMG${i}`, mimeType: "image/png" }));
 		renderInput({ images: many });
-		// 牌堆：只有正面那张是可点的缩略图（后面几张只是露出的边缘）
-		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(1);
-		expect(screen.getByTestId("images-toggle").textContent).toBe("展开 5");
-		// 露出的边缘是后面几张的图，不是装饰
-		expect(document.querySelectorAll('img[src*="IMG1"]').length).toBeGreaterThan(0);
+		const fan = screen.getByTestId("image-fan");
+		const cards = () => [...fan.children] as HTMLElement[];
 
+		// 折叠：就是 96 高的一条，卡片不旋转、只用 4px 错位叠起来
+		expect(screen.getByTestId("images-toggle").textContent).toBe("展开 5");
+		expect(fan.style.height).toBe("96px");
+		expect(cards().every((card) => !card.style.transform)).toBe(true);
+		expect(cards()[1].style.marginLeft).toBe("-44px"); // -48 + 1*4：向右侧错开 4px
+		expect(cards()[0].style.zIndex).toBe("0"); // 正面那张在最上（后面的是负 z）
+		expect(cards()[1].style.zIndex).toBe("-1");
+
+		// 展开：容器变高，卡片绕枢轴旋转成扇形（中心那张 0 度，两侧对称）
 		fireEvent.click(screen.getByTestId("images-toggle"));
-		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(6);
+		expect(screen.getByTestId("images-toggle").textContent).toBe("收起");
+		expect(fan.style.height).toBe("152px");
+		const angles = cards().map((card) => /rotate\(([-\d.]+)deg\)/.exec(card.style.transform)?.[1]);
+		expect(angles[0]).toBe(angles[5] === undefined ? undefined : `-${Number(angles[5])}`);
+		// 6 张时步长 14 度：-35 -21 -7 +7 +21 +35，中心两张刚好在 0 两侧
+		expect(angles).toEqual(["-35", "-21", "-7", "7", "21", "35"]);
+		// 展开后每张都能点开预览（点第 3 张预览的就是第 3 张）
 		fireEvent.click(screen.getAllByLabelText("点击放大预览")[2]);
 		expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toContain("IMG2");
-		fireEvent.keyDown(document, { key: "Escape" });
-		fireEvent.click(screen.getByTestId("images-toggle"));
-		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(1);
-	});
 
+		// 预览大图里也能删（扇形里卡片叠着，删除按钮靠悬停才露出来）
+		fireEvent.click(within(screen.getByRole("dialog")).getByText("删除"));
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(cards()).toHaveLength(5);
+
+		fireEvent.click(screen.getByTestId("images-toggle"));
+		expect(fan.style.height).toBe("96px");
+	});
 	it("不超过 4 张不折叠", () => {
 		renderInput({ images: [png, jpeg, { ...png, data: "CCCC" }, { ...png, data: "DDDD" }] });
 		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(4);

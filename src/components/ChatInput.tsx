@@ -51,6 +51,11 @@ const MAX_UPLOAD_FILES = 16;
 const COLLAPSE_AT = 4;
 /** 牌堆正面那张的边长（后面的只露出 4px 右边缘） */
 const DECK_SIZE = 96;
+/** 扇形展开：每张之间最多转多少度、以及旋转枢轴在卡片下方多远处（越大弧越平） */
+const FAN_STEP_MAX = 14;
+const FAN_PIVOT = 150;
+/** 扇形展开时整条占多高（卡片往上拱 + 旋转出来的四个角） */
+const FAN_HEIGHT = DECK_SIZE + 56;
 
 /** abort / clearQueue 命令的返回：服务端清出来的排队文本，放回输入框用 */
 type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
@@ -165,6 +170,8 @@ export function ChatInput({
 	/** 引用 chip / 图片超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉 */
 	const [refsExpanded, setRefsExpanded] = useState(false);
 	const [imagesExpanded, setImagesExpanded] = useState(false);
+	/** 鼠标停在扇形里哪张上（抬起来 + 让删除按钮露出来） */
+	const [fanHover, setFanHover] = useState<number | null>(null);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
@@ -504,9 +511,9 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	/** 一张待发送图片：点开预览 + 右上角按序号删除；deck 给了就按固定边长画（牌堆正面要对齐） */
-	const renderImageCard = (img: ImageAttachment, index: number, deck?: number) => (
-		<div className="relative">
+	/** 一张待发送图片：点开预览 + 右上角按序号删除。deck 给了就按固定边长画（牌堆与扇形要能对上） */
+	const renderImageCard = (img: ImageAttachment, index: number, deck?: number, deleteAlwaysVisible = true) => (
+		<div className="group relative">
 			<button type="button" className="block" title={t.imagePreview} aria-label={t.imagePreview} onClick={() => setPreviewImage(index)}>
 				<img
 					src={`data:${img.mimeType};base64,${img.data}`}
@@ -517,7 +524,7 @@ export function ChatInput({
 			</button>
 			<button
 				type="button"
-				className="absolute -right-1.5 -top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px]"
+				className={`absolute -right-1.5 -top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px] transition-opacity ${deleteAlwaysVisible ? "" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"}`}
 				style={{ background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
 				disabled={sendBusy}
 				aria-label={`${t.delete} ${index + 1}`}
@@ -527,7 +534,6 @@ export function ChatInput({
 			</button>
 		</div>
 	);
-
 	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
 
 	return (
@@ -642,31 +648,51 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：图片。超过 4 张先折叠成牌堆（正面 + 右边缘露出后面几张 + 「展开 N」），展开后逐张点开预览 */}
+			{/* 附件轨：图片。超过 4 张折叠成牌堆，展开时沿弧线扇开（同一批卡片做 transform，所以有扇开动画） */}
 			{images.length > 0 && (
 				<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
-					{/* 牌堆：正面那张可预览/删除，后面的只露 4px 右边缘 */}
-					{images.length > COLLAPSE_AT && !imagesExpanded ? (
-						<div className="relative flex-none" style={{ width: DECK_SIZE + Math.min(images.length - 1, 4) * 4, height: DECK_SIZE }}>
-							{images.slice(1, 5).map((img, i) => (
-								<div
-									key={`${img.data.slice(0, 12)}-${i}`}
-									className="absolute overflow-hidden rounded-lg"
-									style={{ left: (i + 1) * 4, top: 0, width: DECK_SIZE, height: DECK_SIZE, zIndex: 5 - i, border: "0.5px solid var(--dsw-border-l2)" }}
-									aria-hidden
-								>
-									<img src={`data:${img.mimeType};base64,${img.data}`} alt="" className="h-full w-full object-cover" />
-								</div>
-							))}
-							<div className="absolute" style={{ left: 0, top: 0, zIndex: 10 }}>
-								{renderImageCard(images[0], 0, DECK_SIZE)}
-							</div>
+					{images.length > COLLAPSE_AT ? (
+						<div
+							className="relative flex-none"
+							data-testid="image-fan"
+							style={{
+								width: imagesExpanded ? "100%" : DECK_SIZE + Math.min(images.length - 1, 4) * 4,
+								height: imagesExpanded ? FAN_HEIGHT : DECK_SIZE,
+								transition: "width 260ms ease, height 260ms ease",
+							}}
+						>
+							{images.map((img, i) => {
+								// 每张之间转 STEP 度、绕卡片下方的枢轴旋转：中心那张最高，两侧顺着弧往下垂
+								const step = Math.min(FAN_STEP_MAX, 100 / Math.max(1, images.length - 1));
+								const angle = (i - (images.length - 1) / 2) * step;
+								const lifted = fanHover === i;
+								return (
+									<div
+										key={`${img.data.slice(0, 12)}-${i}`}
+										className="absolute"
+										onMouseEnter={() => setFanHover(i)}
+										onMouseLeave={() => setFanHover((current) => (current === i ? null : current))}
+										style={{
+											left: "50%",
+											bottom: imagesExpanded ? 24 : 0,
+											// 牌堆时横向错位 4px；展开后回到中心靠旋转铺开
+											marginLeft: -DECK_SIZE / 2 + (imagesExpanded ? 0 : i * 4),
+											transformOrigin: `50% ${FAN_PIVOT}px`,
+											transform: imagesExpanded ? `rotate(${angle}deg)${lifted ? " translateY(-10px)" : ""}` : undefined,
+											zIndex: lifted ? images.length + 1 : imagesExpanded ? i : -i,
+											transition: "transform 260ms cubic-bezier(.2, .8, .25, 1), bottom 260ms ease, margin-left 260ms ease",
+										}}
+									>
+										{renderImageCard(img, i, DECK_SIZE, !imagesExpanded)}
+									</div>
+								);
+							})}
 						</div>
 					) : (
 					images.map((img, i) => <div key={`${img.data.slice(0, 12)}-${i}`}>{renderImageCard(img, i)}</div>)
 					)}
 					{images.length > COLLAPSE_AT ? (
-						<button type="button" className="pw-chip" data-testid="images-toggle" onClick={() => setImagesExpanded((open) => !open)}>
+						<button type="button" className="pw-chip" data-testid="images-toggle" onClick={() => { setImagesExpanded((open) => !open); setFanHover(null); }}>
 							{imagesExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(images.length - 1))}
 						</button>
 					) : null}
@@ -688,6 +714,14 @@ export function ChatInput({
 						alt=""
 						className="max-h-full max-w-full rounded-xl object-contain"
 					/>
+					{/* 扇形里卡片叠着不好点删除：预览大图时也给一个（手机上尤其需要） */}
+					<button
+						type="button"
+						className="pw-chip absolute right-5 top-5"
+						onClick={(event) => { event.stopPropagation(); const removed = previewImage; changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, at) => at !== removed) })); setPreviewImage(null); }}
+					>
+						{t.delete}
+					</button>
 				</div>
 			) : null}
 {/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
