@@ -30,16 +30,31 @@ function renderInput(initialDraft: Partial<ChatDraft>) {
 
 describe("引用 chip 的显示", () => {
 	it("目录带尾斜杠，其余保留尾部两段：目录和同名文件都分得清", () => {
-		renderInput({ references: ["src/lib/", "src/lib/index.ts", "src/components/index.ts", "README.md", "Makefile"] });
+		renderInput({ references: ["src/lib/", "src/lib/index.ts", "src/components/index.ts", "README.md"] });
 		const chips = screen.getByTestId("composer-references");
 		// 只取标签那一段（chip 里还有 ✕ 按钮，textContent 会把它也带上）
 		const labels = [...chips.querySelectorAll("[title] span.truncate")].map((node) => node.textContent);
-		expect(labels[0]).toBe("src/lib/");
-		expect(labels[2]).toBe("…/components/index.ts");
-		expect(labels[3]).toBe("README.md");
-		expect(labels[4]).toBe("Makefile");
+		expect(labels).toEqual(["src/lib/", "…/lib/index.ts", "…/components/index.ts", "README.md"]);
 		// 完整路径仍在 title 里（hover 能看到）
 		expect(chips.querySelector('[title="src/lib/index.ts"]')).toBeTruthy();
+	});
+
+	it("超过 4 个先折叠：前 4 个 + 「展开 N」，点开显示全部并能收起", () => {
+		const many = Array.from({ length: 7 }, (_, i) => `src/lib/file-${i}.ts`);
+		renderInput({ references: many });
+		const chips = screen.getByTestId("composer-references");
+		expect(chips.querySelectorAll("[title] span.truncate")).toHaveLength(4);
+		expect(screen.getByTestId("references-toggle").textContent).toBe("展开 3");
+
+		fireEvent.click(screen.getByTestId("references-toggle"));
+		expect(screen.getByTestId("composer-references").querySelectorAll("[title] span.truncate")).toHaveLength(7);
+		fireEvent.click(screen.getByTestId("references-toggle"));
+		expect(screen.getByTestId("composer-references").querySelectorAll("[title] span.truncate")).toHaveLength(4);
+	});
+
+	it("不超过 4 个不出现折叠开关", () => {
+		renderInput({ references: ["a.ts", "b.ts", "c.ts", "d.ts"] });
+		expect(screen.queryByTestId("references-toggle")).toBeNull();
 	});
 });
 
@@ -58,6 +73,30 @@ describe("图片 chip", () => {
 		expect(dialog.querySelector("img")?.getAttribute("src")).toContain("AAAA");
 		fireEvent.keyDown(document, { key: "Escape" });
 		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("超过 4 张折叠成牌堆：只显示正面那张 + 「展开 N」，展开后逐张可点开", () => {
+		const many = Array.from({ length: 6 }, (_, i) => ({ type: "image" as const, data: `IMG${i}`, mimeType: "image/png" }));
+		renderInput({ images: many });
+		// 牌堆：只有正面那张是可点的缩略图（后面几张只是露出的边缘）
+		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(1);
+		expect(screen.getByTestId("images-toggle").textContent).toBe("展开 5");
+		// 露出的边缘是后面几张的图，不是装饰
+		expect(document.querySelectorAll('img[src*="IMG1"]').length).toBeGreaterThan(0);
+
+		fireEvent.click(screen.getByTestId("images-toggle"));
+		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(6);
+		fireEvent.click(screen.getAllByLabelText("点击放大预览")[2]);
+		expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toContain("IMG2");
+		fireEvent.keyDown(document, { key: "Escape" });
+		fireEvent.click(screen.getByTestId("images-toggle"));
+		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(1);
+	});
+
+	it("不超过 4 张不折叠", () => {
+		renderInput({ images: [png, jpeg, { ...png, data: "CCCC" }, { ...png, data: "DDDD" }] });
+		expect(screen.getAllByLabelText("点击放大预览")).toHaveLength(4);
+		expect(screen.queryByTestId("images-toggle")).toBeNull();
 	});
 
 	it("删除按钮按序号标识，删掉的是对应那张", () => {

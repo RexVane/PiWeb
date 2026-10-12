@@ -47,6 +47,10 @@ export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [], 
 
 type SendResult = { success: boolean; error?: string };
 const MAX_UPLOAD_FILES = 16;
+/** 超过这个数量就折叠（引用 chip 与待发送图片各自计数） */
+const COLLAPSE_AT = 4;
+/** 牌堆正面那张的边长（后面的只露出 4px 右边缘） */
+const DECK_SIZE = 96;
 
 /** abort / clearQueue 命令的返回：服务端清出来的排队文本，放回输入框用 */
 type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
@@ -158,6 +162,9 @@ export function ChatInput({
 	const [dragActive, setDragActive] = useState(false);
 	/** 待发送图片的放大预览下标；null = 没开 */
 	const [previewImage, setPreviewImage] = useState<number | null>(null);
+	/** 引用 chip / 图片超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉 */
+	const [refsExpanded, setRefsExpanded] = useState(false);
+	const [imagesExpanded, setImagesExpanded] = useState(false);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
@@ -497,6 +504,30 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
+	/** 一张待发送图片：点开预览 + 右上角按序号删除；deck 给了就按固定边长画（牌堆正面要对齐） */
+	const renderImageCard = (img: ImageAttachment, index: number, deck?: number) => (
+		<div className="relative">
+			<button type="button" className="block" title={t.imagePreview} aria-label={t.imagePreview} onClick={() => setPreviewImage(index)}>
+				<img
+					src={`data:${img.mimeType};base64,${img.data}`}
+					alt=""
+					className={deck ? "rounded-lg object-contain" : "max-h-24 max-w-32 rounded-lg object-contain"}
+					style={{ border: "0.5px solid var(--dsw-border-l2)", ...(deck ? { width: deck, height: deck } : {}) }}
+				/>
+			</button>
+			<button
+				type="button"
+				className="absolute -right-1.5 -top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px]"
+				style={{ background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
+				disabled={sendBusy}
+				aria-label={`${t.delete} ${index + 1}`}
+				onClick={() => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, at) => at !== index) }))}
+			>
+				✕
+			</button>
+		</div>
+	);
+
 	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
 
 	return (
@@ -611,31 +642,34 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：图片。缩略图不裁切（截图被裁成方形就看不出贴的是哪张），点开可放大核对 */}
+			{/* 附件轨：图片。超过 4 张先折叠成牌堆（正面 + 右边缘露出后面几张 + 「展开 N」），展开后逐张点开预览 */}
 			{images.length > 0 && (
-				<div className="mb-2 flex flex-wrap gap-2 px-1">
-					{images.map((img, i) => (
-						<div key={i} className="relative">
-							<button type="button" className="block" title={t.imagePreview} aria-label={t.imagePreview} onClick={() => setPreviewImage(i)}>
-								<img
-									src={`data:${img.mimeType};base64,${img.data}`}
-									alt=""
-									className="max-h-24 max-w-32 rounded-lg object-contain"
-									style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-								/>
-							</button>
-							<button
-								type="button"
-								className="absolute -right-1.5 -top-1.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px]"
-								style={{ background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }}
-								disabled={sendBusy}
-								aria-label={`${t.delete} ${i + 1}`}
-								onClick={() => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, index) => index !== i) }))}
-							>
-								✕
-							</button>
+				<div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+					{/* 牌堆：正面那张可预览/删除，后面的只露 4px 右边缘 */}
+					{images.length > COLLAPSE_AT && !imagesExpanded ? (
+						<div className="relative flex-none" style={{ width: DECK_SIZE + Math.min(images.length - 1, 4) * 4, height: DECK_SIZE }}>
+							{images.slice(1, 5).map((img, i) => (
+								<div
+									key={`${img.data.slice(0, 12)}-${i}`}
+									className="absolute overflow-hidden rounded-lg"
+									style={{ left: (i + 1) * 4, top: 0, width: DECK_SIZE, height: DECK_SIZE, zIndex: 5 - i, border: "0.5px solid var(--dsw-border-l2)" }}
+									aria-hidden
+								>
+									<img src={`data:${img.mimeType};base64,${img.data}`} alt="" className="h-full w-full object-cover" />
+								</div>
+							))}
+							<div className="absolute" style={{ left: 0, top: 0, zIndex: 10 }}>
+								{renderImageCard(images[0], 0, DECK_SIZE)}
+							</div>
 						</div>
-					))}
+					) : (
+					images.map((img, i) => <div key={`${img.data.slice(0, 12)}-${i}`}>{renderImageCard(img, i)}</div>)
+					)}
+					{images.length > COLLAPSE_AT ? (
+						<button type="button" className="pw-chip" data-testid="images-toggle" onClick={() => setImagesExpanded((open) => !open)}>
+							{imagesExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(images.length - 1))}
+						</button>
+					) : null}
 				</div>
 			)}
 
@@ -660,7 +694,7 @@ export function ChatInput({
 			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
 			{references.length > 0 && (
 				<div className="mb-2 flex flex-wrap gap-1.5 px-1" data-testid="composer-references">
-					{references.map((path) => {
+					{(refsExpanded ? references : references.slice(0, COLLAPSE_AT)).map((path) => {
 						const chip = referenceChipOf(path);
 						return (
 						<span
@@ -695,6 +729,11 @@ export function ChatInput({
 						</span>
 						);
 					})}
+					{references.length > COLLAPSE_AT ? (
+						<button type="button" className="pw-chip" data-testid="references-toggle" onClick={() => setRefsExpanded((open) => !open)}>
+							{refsExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(references.length - COLLAPSE_AT))}
+						</button>
+					) : null}
 				</div>
 			)}
 
