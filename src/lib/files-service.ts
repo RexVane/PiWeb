@@ -88,6 +88,20 @@ async function walkWorkspaceFiles(root: string): Promise<{ files: string[]; trun
 }
 
 /**
+ * git 失败时只有「不是仓库」「没装 git」两种该退回遍历——界面会把 disk 来源解释成这两种情况。
+ * 其它失败（safe.directory 拒绝、索引损坏、超时）照实报错：退回遍历会把 .gitignore 掉的文件混进候选，还给出错误的解释。
+ */
+function gitIndexFailure(error: unknown): "fallback" | Error {
+	const e = error as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
+	if (e.code === "ENOENT") return "fallback";
+	const stderr = String(e.stderr ?? "");
+	if (/not a git repository/i.test(stderr)) return "fallback";
+	if (e.killed) return new Error("git ls-files timed out");
+	const fatal = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+	return new Error(`git ls-files failed: ${fatal.find((line) => line.startsWith("fatal:")) ?? fatal[0] ?? e.message}`);
+}
+
+/**
  * @ 引用的候选清单：git 可见的文件（含未被忽略的未跟踪文件）。
  * `git ls-files` 的路径相对当前目录，所以 cwd 就是工作区根，输出天然是工作区相对路径。
  */
@@ -100,12 +114,14 @@ export async function listWorkspaceIndex(cwdValue: unknown): Promise<WorkspaceIn
 			timeout: 15_000,
 			maxBuffer: 64 * 1024 * 1024,
 			windowsHide: true,
-			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+			// LC_ALL=C：报错固定为英文，「不是仓库」才认得出来（中文界面的 git 会翻译这句）；-z 输出的路径不受影响
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
 		});
 		const files = parseLsFiles(stdout).sort((a, b) => a.localeCompare(b));
 		return { files: files.slice(0, INDEX_LIMIT), source: "git", truncated: files.length > INDEX_LIMIT };
-	} catch {
-		// 不是仓库 / 没有 git：退回遍历，界面仍可用（source 会说明来源）
+	} catch (error) {
+		const failure = gitIndexFailure(error);
+		if (failure !== "fallback") throw failure;
 		const walked = await walkWorkspaceFiles(root);
 		return { files: walked.files.sort((a, b) => a.localeCompare(b)), source: "disk", truncated: walked.truncated };
 	}

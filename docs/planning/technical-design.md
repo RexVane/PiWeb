@@ -475,6 +475,9 @@ fd 用 Rust 正则，`c++` 这种 JS 编不过的模式退回字面匹配（`c++
 
 - `source=git`：`git ls-files -z --cached --others --exclude-standard`（含未被忽略的未跟踪文件，尊重 `.gitignore`）；
 - `source=disk`：不是仓库（或机器上没 git）时退回目录遍历，跳过 `node_modules` / `dist` / `.next` 等重目录，深度上限 12 层。
+- 只有这两种情况才退回遍历（ENOENT，或 stderr 含 `not a git repository`；调用时设 `LC_ALL=C`，免得中文界面的 git 把这句翻译掉）。
+  其它失败（safe.directory 拒绝、索引损坏、超时）照实报错，菜单显示错误——退回遍历会把 `.gitignore` 掉的文件混进候选，
+  还会显示「不是 git 仓库」这条错误的解释。
 
 文件夹不单独下发——前端从文件路径推导父目录，省掉一半 payload（`.gitignore` 排除掉的目录自然也进不了候选）。
 实测本仓库：**730 个文件 / 23 KB / 73 ms**，加 60 个目录共 790 条候选。上限 20000 条，超出时置 `truncated` 并在菜单里写明。

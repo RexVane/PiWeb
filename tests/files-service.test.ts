@@ -108,6 +108,21 @@ it("indexes git-visible files for @ references, honoring .gitignore", async () =
 	}
 }, 30_000);
 
+it("surfaces git failures other than 'not a repository' instead of silently walking the disk", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-broken-"));
+	try {
+		execFileSync("git", ["init", "-q", cwd], { windowsHide: true });
+		// LC_ALL=C 只让报错固定成英文，非 ASCII 路径照常
+		await fs.writeFile(path.join(cwd, "中文 文件.txt"), "x");
+		expect((await listWorkspaceIndex(cwd)).files).toEqual(["中文 文件.txt"]);
+
+		await fs.writeFile(path.join(cwd, ".git", "index"), "not an index");
+		await expect(listWorkspaceIndex(cwd)).rejects.toThrow(/^git ls-files failed: fatal: .*index/);
+	} finally {
+		await fs.rm(cwd, { recursive: true, force: true });
+	}
+}, 30_000);
+
 it("falls back to a directory walk outside git, skipping heavy directories and capping depth", async () => {
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-disk-"));
 	try {

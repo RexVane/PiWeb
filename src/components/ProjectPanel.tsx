@@ -84,7 +84,7 @@ function roundColor(round: GrowthEntry): string {
 	return "var(--dsw-warn)";
 }
 
-/** 这一轮有没有实际改动（轮次列表用它标黄：改过的一眼能认出来，没改的保持次要色） */
+/** 这一轮有没有实际改动（轮次列表据此把没改动的轮降成次要色，改过的才显示 +/− 行数） */
 function hasChanges(round: GrowthEntry): boolean {
 	const st = round.stats;
 	return Boolean(st.added || st.modified || st.deleted || st.renamed || st.add || st.del);
@@ -494,40 +494,40 @@ export function ProjectPanel({
 									{/* 轮次列表:当前轮高亮,打开时自动滚到它 */}
 									<div ref={roundListRef} className="min-h-0 max-h-[260px] overflow-y-auto border-t pt-1" style={{ borderColor: "var(--dsw-border-l1)" }}>
 										{rounds.map((round) => {
-										const changed = hasChanges(round);
-										// 没改动的轮整行降对比度，扫视时自然被跳过；选中的那行不灰（否则像被禁用）
-										const dimmed = !changed && selected?.commit !== round.commit;
-										return (
-											<button
-												key={round.commit}
-												type="button"
-												role="option"
-												aria-selected={selected?.commit === round.commit}
-												data-selected={selected?.commit === round.commit || undefined}
-												className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors"
-												style={{ background: selected?.commit === round.commit ? "var(--dsw-active)" : "transparent", ...(dimmed ? { opacity: 0.45 } : {}) }}
-												onMouseEnter={(e) => {
-													if (selected?.commit !== round.commit) e.currentTarget.style.background = "var(--dsw-hover)";
-												}}
-												onMouseLeave={(e) => {
-													if (selected?.commit !== round.commit) e.currentTarget.style.background = "transparent";
-												}}
-												title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)}`}
-												onClick={() => {
-													growth.select(round.commit);
-													setRoundPickerOpen(false);
-												}}
-											>
-												<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5 }}>{roundTitle(round, tt)}</span>
-												{changed && (round.stats.add > 0 || round.stats.del > 0) ? (
-													<span className="flex-none" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
-														<span style={{ color: "var(--dsw-success)" }}>+{round.stats.add}</span> <span style={{ color: "var(--dsw-danger)" }}>−{round.stats.del}</span>
-													</span>
-												) : null}
-												<span className="flex-none" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtTime(round.ts)}</span>
-											</button>
-										);
-									})}
+											const changed = hasChanges(round);
+											// 没改动的轮整行降对比度，扫视时自然被跳过；选中的那行不灰（否则像被禁用）
+											const dimmed = !changed && selected?.commit !== round.commit;
+											return (
+												<button
+													key={round.commit}
+													type="button"
+													role="option"
+													aria-selected={selected?.commit === round.commit}
+													data-selected={selected?.commit === round.commit || undefined}
+													className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors"
+													style={{ background: selected?.commit === round.commit ? "var(--dsw-active)" : "transparent", ...(dimmed ? { opacity: 0.45 } : {}) }}
+													onMouseEnter={(e) => {
+														if (selected?.commit !== round.commit) e.currentTarget.style.background = "var(--dsw-hover)";
+													}}
+													onMouseLeave={(e) => {
+														if (selected?.commit !== round.commit) e.currentTarget.style.background = "transparent";
+													}}
+													title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)}`}
+													onClick={() => {
+														growth.select(round.commit);
+														setRoundPickerOpen(false);
+													}}
+												>
+													<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5 }}>{roundTitle(round, tt)}</span>
+													{changed && (round.stats.add > 0 || round.stats.del > 0) ? (
+														<span className="flex-none" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
+															<span style={{ color: "var(--dsw-success)" }}>+{round.stats.add}</span> <span style={{ color: "var(--dsw-danger)" }}>−{round.stats.del}</span>
+														</span>
+													) : null}
+													<span className="flex-none" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtTime(round.ts)}</span>
+												</button>
+											);
+										})}
 									</div>
 								</div>
 							)}
