@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lib/version", () => ({ getRuntimeVersions: async () => ({ piWeb: "1.0.0", piEngine: "1.0.0" }) }));
 
-import { createUpdateService, canSelfUpdateNpmInstall } from "../src/lib/update-service";
+import { createUpdateService, canSelfUpdateNpmInstall, UpdateBusyError } from "../src/lib/update-service";
 import { installPiUpdate, prepareRelease } from "../scripts/release.mjs";
 import { selectProductionBuild } from "../scripts/build-output.mjs";
 
@@ -308,5 +308,57 @@ describe("npm-installed PiWeb updates from the registry", () => {
 		});
 		await expect(createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("piweb", { assertIdle: async () => {} }))
 			.rejects.toThrow(/incomplete production build/);
+	});
+
+	/**
+	 * 成品包没有 devDependencies，以前单独更新 pi 会走「装依赖 + npm run check」，在成品包里注定失败。
+	 * 现在只换 pi 的两个包：它们在 serverExternalPackages 里，运行时从安装目录加载，重启即生效。
+	 */
+	describe("updating only pi inside the installed package", () => {
+		const PI_INSTALL = ["install", "--save-exact", "@earendil-works/pi-coding-agent@latest", "@earendil-works/pi-ai@latest", "--omit=dev", "--no-audit", "--no-fund"];
+
+		function piInstaller(root: string, version = "2.5.0") {
+			return vi.fn(async (command: string, args: string[], options: CommandOptions) => {
+				expect(command).toBe("npm");
+				expect(options.cwd).toBe(root);
+				if (args[0] === "install") {
+					const manifestFile = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent", "package.json");
+					await fs.mkdir(path.dirname(manifestFile), { recursive: true });
+					await fs.writeFile(manifestFile, JSON.stringify({ version }));
+				}
+				return "";
+			});
+		}
+
+		it("runs only the fixed npm command, without Git, a rebuild or a release manifest", async () => {
+			const root = await npmInstallation();
+			const run = piInstaller(root);
+			const result = await createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("pi", { assertIdle: async () => {} });
+			expect(run.mock.calls.map(([, args]) => args)).toEqual([PI_INSTALL]);
+			expect(result).toEqual({ buildDir: ".next", buildId: "installed-build", version: "2.5.0", needsRestart: true });
+			await expect(fs.access(path.join(root, ".next-releases", "active.json"))).rejects.toThrow();
+		});
+
+		it("works on Windows too: the package directory itself is not replaced", async () => {
+			const root = await npmInstallation();
+			const service = createUpdateService({ root, run: piInstaller(root), versions, platform: "win32" });
+			expect(await service.checkForUpdate("pi").then((check) => check.selfUpdate)).toBe(true);
+			await expect(service.runUpdate("pi", { assertIdle: async () => {} })).resolves.toMatchObject({ version: "2.5.0" });
+		});
+
+		it("refuses while a session is running, before touching node_modules", async () => {
+			const root = await npmInstallation();
+			const run = piInstaller(root);
+			const busy = async () => { throw new UpdateBusyError("session running"); };
+			await expect(createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("pi", { assertIdle: busy })).rejects.toThrow(/session running/);
+			expect(run).not.toHaveBeenCalled();
+		});
+
+		it("fails when the installed build is incomplete instead of after a restart", async () => {
+			const root = await npmInstallation();
+			await fs.rm(path.join(root, ".next", "required-server-files.json"));
+			await expect(createUpdateService({ root, run: piInstaller(root), versions, platform: "linux" }).runUpdate("pi", { assertIdle: async () => {} }))
+				.rejects.toThrow(/incomplete production build/);
+		});
 	});
 });

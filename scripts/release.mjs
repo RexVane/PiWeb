@@ -93,7 +93,7 @@ export async function verifyReleaseConfig(root = process.cwd(), env = process.en
 }
 
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
-const PI_AI_PACKAGE = "@earendil-works/pi-ai";
+export const PI_AI_PACKAGE = "@earendil-works/pi-ai";
 
 /**
  * Shared by the UI and update:pi; called only after the building state is durable.

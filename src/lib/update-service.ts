@@ -5,7 +5,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { installPiUpdate, PI_PACKAGE, prepareRelease } from "../../scripts/release.mjs";
+import { installPiUpdate, PI_AI_PACKAGE, PI_PACKAGE, prepareRelease } from "../../scripts/release.mjs";
 import { assertInstallation, readProductionBuild } from "../../scripts/build-output.mjs";
 import { runCommand } from "../../scripts/process-runner.mjs";
 import { isNewer } from "./semver";
@@ -153,14 +153,34 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		return { ...readProductionBuild(installation, ".next"), version, needsRestart: true };
 	}
 
+	/**
+	 * 只换 npm 成品包里的 pi 依赖：成品包没有 devDependencies，跑不了 typecheck / 构建，也不需要——
+	 * pi 两个包都在 serverExternalPackages 里，运行时从这里的 node_modules 加载，重启即用上新版。
+	 * Windows 也能做：运行中的服务没加载 pi 的原生模块，pi 目录也不是服务的工作目录，不会 EBUSY。
+	 * 图标不用同步：成品包自带 public/provider-icons，清单也和 pi 版本无关。
+	 */
+	async function installPiIntoPackage(installation: string, assertIdle: () => Promise<void>): Promise<UpdateResult> {
+		await assertIdle();
+		await run("npm", ["install", "--save-exact", `${PI_PACKAGE}@latest`, `${PI_AI_PACKAGE}@latest`, "--omit=dev", "--no-audit", "--no-fund"], {
+			cwd: installation, env: commandEnv, timeoutMs: 600_000,
+		});
+		await assertIdle();
+		assertInstallation(installation);
+		const version = await readPackageVersion(path.join(installation, "node_modules", PI_PACKAGE, "package.json"));
+		return { ...readProductionBuild(installation, ".next"), version, needsRestart: true };
+	}
+
 	async function runUpdate(target: UpdateTarget, { assertIdle = async () => {} }: { assertIdle?: () => Promise<void> } = {}): Promise<UpdateResult> {
 		assertTarget(target);
 		if (updateRunning) throw new UpdateBusyError("an update is already running");
 		updateRunning = true;
 		try {
 			const installation = await checkedRoot();
-			// npm 安装：装发布好的成品即可——不需要 Git，也不需要本地构建（成品包自带 .next）。
-			if (target === "piweb" && isNpmInstall(installation)) return await installFromRegistry(installation, assertIdle);
+			// npm 安装：装发布好的成品即可——不需要 Git，也不需要本地构建（成品包自带 .next）；
+			// 单独更新 pi 只换依赖，同样不重建。
+			if (isNpmInstall(installation)) {
+				return target === "piweb" ? await installFromRegistry(installation, assertIdle) : await installPiIntoPackage(installation, assertIdle);
+			}
 			let version = "";
 			const release = await prepareRelease({
 				root: installation, env, run,
