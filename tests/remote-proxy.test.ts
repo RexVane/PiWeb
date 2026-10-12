@@ -156,7 +156,8 @@ describe("mobile injection proxy", () => {
 		});
 		const port = await proxyFor(await listen(server));
 		await new Promise<void>((resolve, reject) => {
-			const req = http.request({ host: "127.0.0.1", port, path: "/sse", headers: { host: "pi.example.com" } }, (res) => {
+			// agent: false：客户端直连代理入口，不经过 globalAgent（NODE_USE_ENV_PROXY=1 时它会走 HTTP_PROXY，那个代理不会把断开传给上游）
+			const req = http.request({ host: "127.0.0.1", port, path: "/sse", headers: { host: "pi.example.com" }, agent: false }, (res) => {
 				res.once("data", () => {
 					req.destroy();
 					resolve();
