@@ -41,6 +41,7 @@ import { useFileViewer } from "@/hooks/useFileViewer";
 import type { TreeNode } from "@/lib/growth-tree";
 import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
+import type { NewSessionDefaults } from "@/lib/model-defaults";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
 // dsh ui-layout columns.ts 几何常量
@@ -164,6 +165,8 @@ export function AppShell() {
 	const growthSelectLatest = useRef<() => void>(() => {});
 	const [heroCwd, setHeroCwd] = useState("");
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
+	/** 当前工作区的新会话默认值（pi 的初始模型规则 + 设置里的思考档位），切换工作区时重新取 */
+	const [heroDefaults, setHeroDefaults] = useState<NewSessionDefaults | null>(null);
 	const [heroThinking, setHeroThinking] = useState("");
 	const [isNarrow, setIsNarrow] = useState(false);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -199,8 +202,22 @@ export function AppShell() {
 				/* 忽略解析错误 */
 			}
 		}
-		// 最后用系统建议（第一个认证的）
+		// 没有记住的选择时，由 defaultModel 按服务端给出的建议取
 		setHeroModel(null);
+	}, [heroCwd]);
+	useEffect(() => {
+		setHeroDefaults(null);
+		if (!heroCwd) return;
+		let stale = false;
+		fetch(`/api/models/defaults?cwd=${encodeURIComponent(heroCwd)}`)
+			.then((r) => r.json() as Promise<{ success?: boolean; data?: NewSessionDefaults }>)
+			.then((json) => {
+				if (!stale && json.success && json.data) setHeroDefaults(json.data);
+			})
+			.catch(() => undefined);
+		return () => {
+			stale = true;
+		};
 	}, [heroCwd]);
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
@@ -309,7 +326,15 @@ export function AppShell() {
 			})),
 		[models],
 	);
-	const defaultModel = useMemo(() => modelChoices.find((m) => authByProvider[m.provider]), [modelChoices, authByProvider]);
+	// 新会话的建议模型按 pi 的初始模型规则由服务端算好；它不在当前目录里（或还没取到）时退回第一个认证的模型
+	const suggestedModel = useMemo(() => {
+		const s = heroDefaults?.model;
+		return s ? modelChoices.find((m) => m.provider === s.provider && m.id === s.id) : undefined;
+	}, [heroDefaults, modelChoices]);
+	const defaultModel = useMemo(
+		() => suggestedModel ?? modelChoices.find((m) => authByProvider[m.provider]),
+		[suggestedModel, modelChoices, authByProvider],
+	);
 	const heroModelLevels = useMemo(
 		() => (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
 		[heroModel, modelChoices, defaultModel],
