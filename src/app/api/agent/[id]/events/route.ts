@@ -1,11 +1,23 @@
-import { buildSnapshot, getManaged, parseLastEventId, sseEventId, subscribe, unsubscribe } from "@/lib/agent-manager";
+import { buildSnapshot, getManaged, holdViewer, parseLastEventId, sseEventId, subscribe, unsubscribe } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
 
 export const dynamic = "force-dynamic";
 
-/** SSE：先推完整快照，再推增量；心跳保活；断线由浏览器 EventSource 自动重连（带 Last-Event-ID） */
+/** 轮询模式：第一条事件写出后再等这么久把同一批凑齐，然后结束响应 */
+const POLL_BATCH_MS = 50;
+/** 轮询模式：一直没有事件就在这么久后空着结束，浏览器马上再来 */
+const POLL_HOLD_MS = 25_000;
+/** 轮询模式：两次请求之间仍算有人在看（扩展弹窗不被当成无人值守、会话不被回收） */
+const POLL_VIEWER_GRACE_MS = 30_000;
+
+/**
+ * SSE：先推完整快照，再推增量；心跳保活；断线由浏览器 EventSource 自动重连（带 Last-Event-ID）。
+ * `?poll=1` 是给 Cloudflare 快速隧道用的长轮询（隧道不支持 SSE，见 lib/chat/event-stream）：
+ * 同样的帧格式，但发完一批就结束响应，由浏览器带着 Last-Event-ID 再来取下一批。
+ */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
+	const poll = new URL(req.url).searchParams.get("poll") === "1";
 	let sessionPath: string;
 	try {
 		// allowPending：Hero 发首条消息时订阅先于 JSONL 落盘；此时拒绝会让
@@ -28,6 +40,17 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	let closed = false;
 	let subscriber: ((seq: number, json: string) => void) | null = null;
 	let ping: ReturnType<typeof setInterval> | null = null;
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const stop = () => {
+		closed = true;
+		if (ping) clearInterval(ping);
+		if (pollTimer) clearTimeout(pollTimer);
+		if (batchTimer) clearTimeout(batchTimer);
+		if (subscriber) unsubscribe(m, subscriber);
+		if (poll) holdViewer(m, POLL_VIEWER_GRACE_MS);
+	};
 
 	const stream = new ReadableStream<Uint8Array>({
 		async start(controller) {
@@ -36,9 +59,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 			};
 			const close = () => {
 				if (closed) return;
-				closed = true;
-				if (ping) clearInterval(ping);
-				if (subscriber) unsubscribe(m, subscriber);
+				stop();
 				try {
 					controller.close();
 				} catch {
@@ -48,11 +69,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 			subscriber = (seq: number, json: string) => {
 				write(`id: ${sseEventId(m, seq)}\ndata: ${json}\n\n`);
 				if (json.includes('"state":"disposed"')) close();
+				else if (poll && !batchTimer) batchTimer = setTimeout(close, POLL_BATCH_MS);
 			};
 			const send = subscriber;
 
-			ping = setInterval(() => write(`: ping\n\n`), 15_000);
-			write(`retry: 2000\n\n`);
+			if (poll) pollTimer = setTimeout(close, POLL_HOLD_MS);
+			else {
+				ping = setInterval(() => write(`: ping\n\n`), 15_000);
+				write(`retry: 2000\n\n`);
+			}
 
 			req.signal.addEventListener("abort", close, { once: true });
 
@@ -61,23 +86,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 			const snap = await buildSnapshot(m);
 			if (closed) return;
 			send(snap.seq, JSON.stringify({ type: "snapshot", snapshot: snap, ts: Date.now() }));
+			// send 里可能已经关了流：这时再订阅就是一个永远不退订的死订阅者，会话也永远回收不掉
+			if (closed) return;
 			if (!subscribe(m, send, snap.seq)) {
 				const latest = await buildSnapshot(m);
 				if (closed) return;
 				send(latest.seq, JSON.stringify({ type: "snapshot", snapshot: latest, ts: Date.now() }));
-				subscribe(m, send, latest.seq);
+				if (!closed) subscribe(m, send, latest.seq);
 			}
 		},
 		cancel() {
-			closed = true;
-			if (ping) clearInterval(ping);
-			if (subscriber) unsubscribe(m, subscriber);
+			if (!closed) stop();
 		},
 	});
 
 	return new Response(stream, {
 		headers: {
-			"Content-Type": "text/event-stream; charset=utf-8",
+			// 轮询的响应不标成 SSE：隧道对 text/event-stream 另有处理，普通文本响应结束时一定整份送达
+			"Content-Type": poll ? "text/plain; charset=utf-8" : "text/event-stream; charset=utf-8",
 			"Cache-Control": "no-cache, no-transform",
 			Connection: "keep-alive",
 			"X-Accel-Buffering": "no",

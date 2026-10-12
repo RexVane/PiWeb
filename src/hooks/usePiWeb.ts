@@ -4,6 +4,7 @@
  * 中央状态：会话列表轮询、当前会话 SSE 订阅、事件折叠（快照→增量）、命令发送。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import type {
 	GrowthConsentRequest,
@@ -350,7 +351,7 @@ export function usePiWeb() {
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
 	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
-	const esRef = useRef<EventSource | null>(null);
+	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
 	const presetRestoreAttemptRef = useRef<string | null>(null);
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
@@ -674,38 +675,21 @@ export function usePiWeb() {
 			? { ...current, connected: false }
 			: { ...emptyState(savedToolPreset()), connected: false });
 		let retryDelayMs = 2000;
+		const eventsUrl = `/api/agent/${currentId}/events`;
 		const connect = () => {
-			const es = new EventSource(`/api/agent/${currentId}/events`);
-			esRef.current = es;
-			es.onopen = () => {
-				retryDelayMs = 2000;
-				setState((s) => ({ ...s, connected: true }));
-			};
-			es.onerror = () => {
-				setState((s) => ({ ...s, connected: false }));
-				if (esRef.current !== es) return;
-				// 网络断开时浏览器自己会重连，并带上 Last-Event-ID 让服务端从环形缓冲续放
-				// （只补漏掉的几条事件）。这时手动重建就等于丢掉续传、每次都拉一份全量快照。
-				if (es.readyState !== EventSource.CLOSED) return;
-				// 浏览器对非 200 响应会永久放弃自动重连：这里手动兜底，关掉后延迟重建，
-				// 重建时会拿到全新快照。
-				es.close();
-				esRef.current = null;
-				const delay = retryDelayMs;
-				retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
-				retryTimer = setTimeout(() => {
-					if (esRef.current === null) connect();
-				}, delay);
-			};
 			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
 			const batcher = createEventBatcher<WebEvent>({
 				flush: (events) => setState((s) => events.reduce((acc, evt) => foldPiWebEvent(acc, evt), s)),
 			});
 			batcherRef.current = batcher;
-			es.onmessage = (e) => {
+			const onOpen = () => {
+				retryDelayMs = 2000;
+				setState((s) => ({ ...s, connected: true }));
+			};
+			const onMessage = (data: string) => {
 				let parsed: any;
 				try {
-					parsed = JSON.parse(e.data);
+					parsed = JSON.parse(data);
 				} catch {
 					// 单帧损坏（代理截断等）只丢弃该帧，不能让 EventSource 回调抛异常
 					return;
@@ -737,6 +721,36 @@ export function usePiWeb() {
 					batcher.push(parsed as WebEvent);
 				}
 			};
+			// Cloudflare 快速隧道不支持 SSE（流被攒成 128KB 一块，快照永远收不全）：改用长轮询，
+			// 失败退避、Last-Event-ID 续传都在 pollEventStream 里
+			if (usesEventPolling(window.location.hostname)) {
+				esRef.current = pollEventStream(eventsUrl, {
+					onOpen,
+					onMessage,
+					onError: () => setState((s) => ({ ...s, connected: false })),
+				});
+				return;
+			}
+			const es = new EventSource(eventsUrl);
+			esRef.current = es;
+			es.onopen = onOpen;
+			es.onerror = () => {
+				setState((s) => ({ ...s, connected: false }));
+				if (esRef.current !== es) return;
+				// 网络断开时浏览器自己会重连，并带上 Last-Event-ID 让服务端从环形缓冲续放
+				// （只补漏掉的几条事件）。这时手动重建就等于丢掉续传、每次都拉一份全量快照。
+				if (es.readyState !== EventSource.CLOSED) return;
+				// 浏览器对非 200 响应会永久放弃自动重连：这里手动兜底，关掉后延迟重建，
+				// 重建时会拿到全新快照。
+				es.close();
+				esRef.current = null;
+				const delay = retryDelayMs;
+				retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
+				retryTimer = setTimeout(() => {
+					if (esRef.current === null) connect();
+				}, delay);
+			};
+			es.onmessage = (e) => onMessage(e.data);
 		};
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		connect();

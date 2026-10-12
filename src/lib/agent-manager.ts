@@ -63,6 +63,8 @@ interface Managed {
 	session: AgentSession | null;
 	creating: Promise<AgentSession> | null;
 	subscribers: Set<(seq: number, json: string) => void>;
+	/** 长轮询的浏览器在两次请求之间没有订阅，到这个时间点之前仍算有人在看（见 holdViewer） */
+	viewerGraceUntil?: number;
 	buffer: { seq: number; json: string }[];
 	seq: number;
 	/**
@@ -877,7 +879,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			installSessionPolicy(m, session);
 			applyToolPolicy(m, session);
 			session.subscribe((evt) => { if (!m.disposed) translate(m, evt); });
-			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && m.subscribers.size > 0 });
+			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m) });
 			m.ui = ui;
 			await session.bindExtensions({
 				mode: "rpc",
@@ -1086,13 +1088,13 @@ export async function disposeSessionPath(sessionPath: string): Promise<void> {
 export function reap(): void {
 	const now = Date.now();
 	for (const m of [...sessions.values()]) {
-		if (m.subscribers.size > 0 || now - m.lastActive <= IDLE_MS) continue;
+		if (hasViewers(m) || now - m.lastActive <= IDLE_MS) continue;
 		if (!m.creating && !isManagedBusy(m)) disposeSession(m);
 	}
 	const active = [...sessions.values()].filter((m) => m.session);
 	if (active.length > MAX_ACTIVE) {
 		const evictable = active
-			.filter((m) => !m.creating && !isManagedBusy(m) && m.subscribers.size === 0)
+			.filter((m) => !m.creating && !isManagedBusy(m) && !hasViewers(m))
 			.sort((a, b) => a.lastActive - b.lastActive);
 		for (const m of evictable.slice(0, active.length - MAX_ACTIVE)) disposeSession(m);
 	}
@@ -1198,7 +1200,7 @@ export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 		if (cwd && key(m.cwd) !== key(cwd)) continue;
 		if (!m.session) {
 			// 冷会话没有扩展运行时可重建，但页面可能开着：把新清单（模板 / 技能 / 信任）推过去
-			if (m.subscribers.size > 0) publishResources(m);
+			if (hasViewers(m)) publishResources(m);
 			continue;
 		}
 		if (m.creating || isManagedBusy(m)) {
@@ -1444,6 +1446,18 @@ export function subscribe(
 
 export function unsubscribe(m: Managed, send: (seq: number, json: string) => void): void {
 	m.subscribers.delete(send);
+}
+
+/**
+ * 长轮询（快速隧道）的一次请求结束时调用：下一次请求到来前的这段空档仍算有人在看，
+ * 否则扩展弹窗会被当成无人值守直接取默认值，会话也可能被当成没人开着回收掉。
+ */
+export function holdViewer(m: Managed, ms: number): void {
+	m.viewerGraceUntil = Math.max(m.viewerGraceUntil ?? 0, Date.now() + ms);
+}
+
+function hasViewers(m: Managed): boolean {
+	return m.subscribers.size > 0 || (m.viewerGraceUntil ?? 0) > Date.now();
 }
 
 // ---------- 命令执行 ----------
