@@ -1,7 +1,10 @@
 # PiWeb 启动与本地配置读取：技术方案
 
-> 调研与实测数据见本文 §1、§2；方案见 §3。所有数字来自本机（Windows / NTFS / Defender 开启，
-> 36 个会话 / 17.5MB JSONL、1 个已认证 provider）生产构建实测，脚本见 §5。
+> 调研与实测数据见本文 §1、§2;方案见 §3。所有数字来自本机(Windows / NTFS / Defender 开启,
+> 36 个会话 / 17.5MB JSONL、1 个已认证 provider)生产构建实测,脚本见 §5。
+>
+> §6 是**后续待做**的性能项(大会话快照体积),§7 是 2026-10-12 功能与显示走查的发现。
+> 两节都只记录结论与数据,尚未实现。
 
 ## 1. 结论（一句话）
 
@@ -187,5 +190,231 @@ A = 改前（`PIWEB_SKIP_WARMUP=1` + 摘要索引移开），B = 改后（默认
 调研用的探针（冷/热首屏、轮询、会话打开、SDK 加载、dev 对照、微基准）已归档到
 `backups/files/*-20261011-131921.mjs`；其中 `probe-v8`（预热效果）、`probe-v11-minwarm`（最小预热集）、
 `micro-bench`（读盘微基准）、`sdk-load-bench`（SDK 加载）是主要证据来源。
-本次改后的 A/B 脚本是一次性的（`%TEMP%\piweb-verify.mjs`、`%TEMP%\piweb-index-ab.mjs`），
-未进仓库；要长期回归的话，把 §4.2 的三段逻辑并进 `scripts/` 更合适。
+本次改后的 A/B 脚本是一次性的(`%TEMP%\piweb-verify.mjs`、`%TEMP%\piweb-index-ab.mjs`),
+未进仓库;要长期回归的话,把 §4.2 的三段逻辑并进 `scripts/` 更合适。
+
+---
+
+## 6. 待做:大会话快照体积(`trajectory.detail` 占 92%)
+
+> 状态:**只调研、未实现**。触发条件:「打开大会话变慢」或「远程 / 隧道下开会话等待明显」。
+> 当前使用体感正常,按用户决定先记录、后做。
+
+### 6.1 问题
+
+打开 1587 条消息的会话(`--D--AIApp-PiWeb--/2026-10-11T12-18-59-789Z_import-claude-*.jsonl`),
+SSE 首个快照帧 **6,376,665 字节(6.38 MB)**,gzip 后 1.82 MB(29.2%)。
+
+- 本机(127.0.0.1)首字节 125ms,靠 localhost 带宽兜住了;
+- 走 Cloudflare 隧道 / 远程时,这 6.38 MB 是明着的等待开销;
+- `#062` 只给 `?poll=1`(隧道长轮询)开了压缩,本机与局域网的 SSE 仍带 `no-transform` 不压缩
+  (`src/app/api/agent/[id]/events/route.ts` 注释:压缩会把 SSE 流攒住,破坏逐字效果)。
+
+对照:706 条消息的会话快照 1.74 MB;同进程重开该会话仍是全量快照。
+
+### 6.2 构成(实测,同一份快照)
+
+| 字段 | 大小 | 占比 |
+|---|---|---|
+| `messages`(1587 条) | 2.872 MB | 50.6% |
+| `trajectory`(1589 条) | 2.793 MB | 49.2% |
+| 其余 28 个字段 | 0.007 MB | 0.2% |
+
+`messages` 按 role:`toolResult` 941 条 **2.186 MB**、`assistant` 634 条 0.604 MB、`user` 12 条 0.081 MB。
+
+`trajectory` 按字段(关键):
+
+| 字段 | 大小 | 占 trajectory |
+|---|---|---|
+| **`detail`** | **2.578 MB** | **92.3%** |
+| `tokens` | 0.037 MB | 1.3% |
+| 其余 7 个字段(`seq`/`kind`/`ts`/`title`/`toolName`/`toolCallId`/`isError`) | 0.178 MB | 6.4% |
+
+**两个视图是同一份数据**:抽查 `toolu_01FPmhmNd6EpvoGyC2uPxJmG` ——
+`trajectory[].detail` 11,020 字节,`messages[toolResult]` 11,532 字节,同为该工具输出全文;
+941 个 `toolCallId` 在两边各存一份。
+
+### 6.3 方案(按收益排序)
+
+**方案 1(推荐,低风险):`trajectory` 只推摘要,`detail` 按需拉**
+
+- 服务端 `buildSnapshot`(`src/lib/agent-manager.ts:1411`)序列化 trajectory 时去掉 `detail`/`preview`/`thinking`;
+- 新增 `GET /api/agent/[id]/trajectory/[seq]` 取单条全文;
+- `openToolTrajectory`(`src/components/AppShell.tsx:341`)改成点开时按 `seq` 拉全文再 `setSelected`。
+- 实测收益:`trajectory` 2.793 → **0.200 MB(−92.8%)**,整条快照 5.672 → **3.079 MB(−45.7%)**。
+- 聊天视图**不受影响**:`ChatWindow` 只用 `timing`/`tokens`/`title`/`isError`,不读 `detail`
+  (`ChatWindow.tsx:929` 传 `trajectory`,`onInspectTool` 走 `openToolTrajectory`)。
+
+**方案 2(收益最大,风险中高):在方案 1 之上,`messages` 的 `toolResult` 也改截断预览**
+
+- 快照里 `toolResult` 只发前 ~2KB 预览,全文按需拉。
+- 预估 5.672 MB → **约 1 MB(−82%)**。但聊天视图要改成懒加载全文,
+  `messages` 不再是权威内容,要动 SSE 协议语义。
+- 是「工具卡默认折叠、点开才要全文」这个既有交互的延伸,但涉及面大。
+
+**方案 3(独立小改):本机 / 局域网 SSE 也开压缩**
+
+- 一条配置改动:6.38 → 1.82 MB(传输 −71%),零协议改动。
+- 但压缩只能对**快照帧**做,不能对整个 SSE 流做(会把流攒住,破坏逐字效果),
+  要按帧判断,略绕。与方案 1/2 不冲突,可叠加。
+
+### 6.4 未决
+
+- 方案 1 的 API 形状:`/api/agent/[id]/trajectory/[seq]` 还是复用 `?detail=1` 查询参数;
+- `env-lazy` 的 trajectory 条目(`environmentTrajectory`)没有 `detail`,要确认摘要字段完整;
+- 增量 `traj` 事件(`src/lib/types.ts:116`)也带完整 `entry`,流式期间每个 dirty entry 重发全文 ——
+  方案 1 若只改快照,增量路径仍会推 `detail`。**要做就得两条路径一起改**,否则没省到。
+
+---
+
+## 7. 待做:数字显示精度与格式统一
+
+> 状态:**只调研、未实现**。诉求(2026-10-12 用户提出):「缓存、tokens 数、输出速度、上下文计算
+> 这些显示的数字,想精确到小数点后两位」。调研结论:**统一到「两位」不是对每个指标都对**,
+> 下面按指标给出建议精度。
+
+### 7.1 现状(实测,同一个 13 轮会话)
+
+底部统计条当前实际渲染:
+
+```
+13 轮 · 493 步 | LLM 19m30s · 工具调用 3m57s | 首 token 平均 5.3s · 107 tok/s | 缓存命中 98% | 输入 42.7M tok · 输出 273K tok
+```
+
+| 指标 | 当前格式 | 当前精度 | 数据来源 |
+|---|---|---|---|
+| 轮次 / 步数 | `13 轮 · 493 步` | 整数 | `stats.userMessages` / `assistantMessages` |
+| LLM 耗时 | `19m30s` | 秒(无小数) | `fmtDuration`(ChatWindow:1251) |
+| 工具调用耗时 | `3m57s` | 秒(无小数) | 同上 |
+| 首 token 平均 | `5.3s` | 0.1s | `fmtDuration` |
+| **输出速度** | `107 tok/s` | **整数**(≥10 时 `Math.round`) | `fmtThroughput`(ChatWindow:1258) |
+| **缓存命中** | `98%` | **整数**(`Math.round`) | ChatWindow:1284 |
+| 输入 tokens | `42.7M tok` | ≥100 时取整;否则 0.1 | `fmtTok`(ChatWindow:1246) |
+| 输出 tokens | `273K tok` | ≥100 时取整 | 同上 |
+| 上下文占用(按钮) | `9% 上下文已用` | **整数** | ContextMeter:87 `Math.round(p)` |
+| 上下文明细(弹窗) | `~86.6K / 1000.0K` | 0.1K | ContextMeter:20 `toFixed(1)` |
+| 上下文分段逐项 | `~40.8K` 等 12 项 | 0.1K | 同上 |
+| 单条耗时(弹层) | `19 分 30 秒` | 秒 | `formatRunDuration`(ChatWindow:58) |
+| 花费 | `$0.0000` | 4 位小数 | ChatWindow:148 `toFixed(4)` |
+| 轨迹条目 tokens | `1.2M` / `262.4K` | 0.1 | `fmtTok`(TrajectoryView:28) |
+| 轨迹条目耗时 | `1.5m` / `3.2s` / `450ms` | 0.1 / ms | `fmtDur`(TrajectoryView:46) |
+| 资源大小 | `5.4 KB` | 0.1 | `formatBytes`(PromptPanel:47) |
+| 附件大小 | `1.2MB` / `512KB` | 0.1 / 整数 | ChatInput:776 |
+| 配额 tokens | `53M` | 0.1 | `fmtQuotaTokens`(SettingsPanel:1726) |
+| 会话时间(侧栏) | `3月` / `2mo` | 整数 | SessionSidebar:46 |
+
+### 7.2 发现的两个真问题
+
+**问题 1:`fmtTok` 有三份互不一致的实现,同一数字显示不同**
+
+| n | ChatWindow | ContextMeter | TrajectoryView |
+|---|---|---|---|
+| 262400 | `262K` | `262.4K` | `262.4K` |
+| 1234567 | `1.2M` | `1234.6K` ← 不换单位 | `1.2M` |
+| 53000000 | `53M` | `53000.0K` ← 不换单位 | `53.0M` |
+| 42000 | `42K` | `42.0K` | `42.0K` |
+
+`ChatWindow.fmtTok` 是唯一「≥100 就不显示小数」的,`ContextMeter` 是唯一「M 单位不切换」的。
+同一个 token 数在统计条、上下文弹窗、轨迹面板里出现三种写法。
+
+**问题 2:统计条溢出被省略号切掉(实测)**
+
+```
+容器 544px / 内容 959px → 被切掉 415px,textOverflow: ellipsis
+```
+
+即「输入 42.7M tok · 输出 273K tok」之后的内容用户看不到(悬停浮层里才有完整行)。
+**任何提高精度的改动都会让切得更早**,所以精度问题必须和布局问题一起解。
+
+### 7.3 建议精度(按指标给,不是一律两位)
+
+「两位小数」对**比率和速率**合理,对**大数 tokens 和秒级耗时**没意义(273.45K tok 的末两位
+是估算噪声,上下文分项本来就是「字符数 ÷ 4」的启发式)。建议:
+
+| 指标 | 建议 | 理由 |
+|---|---|---|
+| 缓存命中 | `98.42%`(两位) | 比率,两位有意义;现在 `Math.round` 丢掉了 0.5% 的差 |
+| 输出速度 | `107.34 tok/s`(两位) | 速率,两位有意义 |
+| 上下文占用 | `9.42%`(两位) | 比率;现在整数看不出 8.6% 和 9.4% 的差 |
+| 首 token 平均 | `5.32s`(两位) | 时长,两位有意义 |
+| 上下文分项 | `~86.61K`(两位) | 与占用百分比口径一致 |
+| 输入 / 输出 tokens | `42.73M` / `273.15K`(两位) | 可选;末两位是估算噪声,但用户要求一致就照做 |
+| LLM / 工具耗时 | 保持 `19m30s` | 分钟级 + 两位小数的秒 = `19m30.42s`,读起来更差 |
+| 花费 | 保持 4 位 | 金额,4 位是惯例 |
+| 轮次 / 步数 / 文件数 | 保持整数 | 计数,不存在小数 |
+
+### 7.4 方案
+
+**方案 1(推荐):抽 `src/lib/format.ts`,统一所有数字格式**
+
+- 新增共享模块,导出 `fmtTok` / `fmtPercent` / `fmtThroughput` / `fmtDuration` / `fmtBytes`,
+  每个带明确的小数位参数;
+- 删掉三份重复的 `fmtTok`(ChatWindow / ContextMeter / TrajectoryView)、两份 `fmtDuration`
+  (ChatWindow / TrajectoryView)、两份字节格式(PromptPanel / ChatInput);
+- 精度按 §7.3 表设定,集中在一处,以后要调只改一行;
+- 加单测锁住每个格式(现在**零**格式相关测试)。
+
+**方案 2:只改精度,不抽公共模块**
+
+- 就地改 12 处 `toFixed`/`Math.round`;
+- 改动面小,但三份 `fmtTok` 仍然不一致,下次还会漂移。
+
+**方案 3(与布局一起解,推荐并入方案 1)**
+
+统计条现在 959px 装进 544px。提高精度后会到约 1061px(两位)/ 1108px。
+可选做法:
+- 窄屏时分两行(现在单行 `whitespace: nowrap`);
+- 或按优先级截断:始终保留「缓存命中 / tok/s / 上下文」这几个用户最关心的,把「输入 / 输出 tokens」移到悬停浮层;
+- 或降低该项字号。
+
+### 7.5 未决
+
+- 「两位小数」是否包括**大数 tokens**(42.73M)与**估算类**上下文分项 —— 用户原话是「所有都是这样」,
+  但估算值给两位小数会有「精确的假象」。建议除 tokens 外都两位,待确认。
+- 统计条布局:分两行 vs 优先级截断,需要视觉确认。
+- `i18n` 里 `statsCounts` 等模板带 `{turns}` 占位符,精度改动不涉及文案;但若统计条改分段,
+  建议把整行拆成多个 `<span>` 以便单独省略。
+---
+
+## 8. 功能与显示走查发现(2026-10-12)
+
+> 状态:**只记录、未修**。用无头 Chromium 走查了 13 个区域(设置 6 个分区、模型/工具/插件/技能/远程、
+> 对话视图、工具卡、上下文计量、提示词、Git、项目 + 成长树、文件查看器、轨迹详情、导入会话)。
+> **全程 0 条 console 错误、0 条 JS 错误。**
+
+### 8.1 正常项
+
+| 区域 | 实测 |
+|---|---|
+| 通用设置 | 语言 / 6 套主题 / 亮暗 / 界面字体 + 对话字体 / 流式样式 4 种 + 速度 5 档 / 光标 / Enter 行为 / 自动压缩 / 自动重试 / 双版本更新 / 退出登录 |
+| 模型 · 工具 · 插件 · 技能 | 全渲染 |
+| 远程连接 | 局域网 4 个网卡地址 + 公网开关 + 已登录设备 |
+| 对话视图 | 3 回合 → 1226 DOM 节点;思考折叠、工具卡、失败卡、代码块 |
+| 工具卡展开 | 1226 → 1412 节点,diff 内容正确 |
+| 上下文计量 | 12 个分项全部算出(System 786 / Tools 2.1K / Memory 931 / Skills 382 / Thinking 40.8K / Tool Output 29.9K / Compacted 4.8K / Free 904.5K) |
+| 提示词面板 | 项目记忆 / 9 个技能 / 10 个内置工具 / 系统提示词 / 压缩摘要 |
+| Git 详情 | 分支 main · 领先 1 · 干净 · 10 条提交 |
+| 项目 + 成长树 | 轮次切换、14 文件 +421 −63、目录树、M/A 状态、行数 |
+| 文件查看器 | 面包屑 + 变更/内容/渲染 tab + 折叠未改动 + 行号 diff |
+| 轨迹详情 | 摘要/预览/原始/来源 4 tab + Call ID + 完整 patch |
+| 导入会话 | 6 个来源 × 15 条 + 兜底工作区 + 已导入标记 |
+
+### 8.2 Bug A:侧栏会话预览显示 `bash · bash`(工具名重复)
+
+`src/lib/agent-manager.ts:1763`(`activeStatus()`):
+
+```ts
+lastStep = [e.toolName, (e.preview ?? e.title ?? "").split("\n")[0].slice(0, 80)]
+  .filter(Boolean).join(" · ");
+```
+
+工具刚 `tool_execution_start`、还没收到 `tool_execution_update` 时 `preview` 为空,回落到 `title`
+——而 tool 条目的 `title` 就是 `evt.toolName`(`src/lib/trajectory.ts:163`),
+于是拼出 `bash · bash`。**修法**:回落到 `detail`(args JSON)里取 `command` 等摘要,
+或该情况下不拼第二段。
+
+### 8.3 Bug B:轮次条 8 个按钮缺 `aria-label`
+
+成长树底部的轮次圆点(「你的修改」/「第 1 轮」…「第 3 轮」)和「上一轮 / 下一轮」按钮,
+可访问名称只挂在 `title` 上,没有 `aria-label`;`title` 不参与可访问名称计算时屏幕阅读器读不到。
+**修法**:补 `aria-label`(可复用同一个 `title` 文案)。
