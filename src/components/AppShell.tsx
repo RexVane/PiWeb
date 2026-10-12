@@ -939,6 +939,7 @@ export function AppShell() {
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ChatInput
+											cwd={panelCwd}
 											key={draftKey}
 												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
 												onDraftChange={saveSessionDraft}
@@ -1237,6 +1238,7 @@ function Hero({
 
 				{/* 输入卡 */}
 				<ChatInput
+					cwd={cwd}
 						draft={draft}
 						onDraftChange={onDraftChange}
 						onUploadError={onUploadError}

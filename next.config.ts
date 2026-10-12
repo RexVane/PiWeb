@@ -46,7 +46,7 @@ export default (phase: string): NextConfig => {
 		// pi SDK 与其动态加载的扩展都运行在服务端（Node runtime），不对客户端打包。
 		// pi-ai 也走运行时加载：打进 .next 的话，服务里会有两份 pi-ai（pi-coding-agent 自己从
 		// node_modules 再加载一份），npm 成品包单独更新 pi 后打包的那份还停在旧版本。
-		serverExternalPackages: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai"],
+		serverExternalPackages: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "@earendil-works/pi-tui"],
 		// Image prompts allow 268 MB of base64 plus text and JSON framing.
 		experimental: { proxyClientMaxBodySize: "272mb" },
 	};

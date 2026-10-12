@@ -6,7 +6,7 @@
  * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
  * 排队中的消息列在输入卡上方，↑（空输入框时）取回编辑。Enter 发送 / Shift+Enter 换行。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
 	IconAtOutline16,
 	IconFileOutline16,
@@ -19,6 +19,8 @@ import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import type { ImageAttachment } from "@/lib/types";
+import type { FileCompletion, FileCompletions } from "@/lib/file-completion";
+import { fileIconSrc, folderIconSrc } from "@/lib/file-icons";
 
 export interface SlashCommand {
 	name: string;
@@ -48,6 +50,7 @@ const MAX_UPLOAD_FILES = 16;
 type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
 
 export function ChatInput({
+	cwd,
 	disabled,
 	isStreaming,
 	contextPercent,
@@ -81,6 +84,7 @@ export function ChatInput({
 	pendingSend = false,
 	onSendPendingChange,
 }: {
+	cwd?: string;
 	disabled?: boolean;
 	isStreaming: boolean;
 	contextPercent: number | null;
@@ -153,6 +157,13 @@ export function ChatInput({
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
 	const [cmdDismissed, setCmdDismissed] = useState(false);
+	const [cursor, setCursor] = useState(0);
+	const [fileDismissed, setFileDismissed] = useState(false);
+	const [fileIdx, setFileIdx] = useState(0);
+	const [fileResult, setFileResult] = useState<{ text: string; cursor: number; cwd: string; data: FileCompletions } | null>(null);
+	const [fileError, setFileError] = useState("");
+	const fileMenuRef = useRef<HTMLDivElement>(null);
+	const fileMenuId = useId();
 	const taRef = useRef<HTMLTextAreaElement>(null);
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
@@ -179,6 +190,48 @@ export function ChatInput({
 	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.split(" ")[0].toLowerCase()));
 	const visibleCommands = filteredCommands;
 	const commandMode = typedCommandMode;
+	// The server owns token parsing, search and replacement through pi's provider.
+	const atCandidate = text.slice(0, cursor).split("\n").at(-1)?.includes("@") ?? false;
+	const fileMode = !!cwd && atCandidate && !fileDismissed && !commandMode && !disabled && !sendBusy;
+	const fileItems = fileMode && fileResult?.text === text && fileResult.cursor === cursor && fileResult.cwd === cwd ? fileResult.data.items : [];
+	const effectiveFileIdx = Math.min(fileIdx, Math.max(0, fileItems.length - 1));
+	useEffect(() => {
+		setFileError("");
+		if (!fileMode || !cwd) return;
+		const controller = new AbortController();
+		const timer = setTimeout(() => {
+			void (async () => {
+				try {
+					const response = await fetch("/api/files/complete", {
+						method: "POST", headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ cwd, text, cursor }), signal: controller.signal,
+					});
+					const result = await response.json();
+					if (!response.ok || !result.success) throw new Error(result.error || t.fileSearchFailed);
+					if (!controller.signal.aborted) {
+						setFileResult({ cwd, text, cursor, data: result.data });
+						setFileIdx(0);
+					}
+				} catch (error) {
+					if (!controller.signal.aborted) setFileError(error instanceof Error ? error.message : String(error));
+				}
+			})();
+		}, 120);
+		return () => { clearTimeout(timer); controller.abort(); };
+	}, [cwd, text, cursor, fileMode, t.fileSearchFailed]);
+	useEffect(() => {
+		fileMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" });
+	}, [effectiveFileIdx, fileItems]);
+	const selectFile = (item: FileCompletion) => {
+		setText(item.text);
+		setCursor(item.cursor);
+		setFileResult(null);
+		setFileDismissed(false);
+		requestAnimationFrame(() => {
+			taRef.current?.focus();
+			taRef.current?.setSelectionRange(item.cursor, item.cursor);
+		});
+	};
 	// 命令菜单滚动：.popover 的 overflow:hidden 会压掉 overflow-y-auto（unlayered CSS 优先），
 	// 内联 overflowY 强制可滚；键盘导航时把选中项滚进视野
 	const cmdMenuRef = useRef<HTMLDivElement>(null);
@@ -445,6 +498,22 @@ export function ChatInput({
 					{attachmentError}
 				</div>
 			)}
+			{fileMode && fileError && <div role="alert" className="mb-2 px-2" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{fileError}</div>}
+			{fileItems.length > 0 && (
+				<div ref={fileMenuRef} id={fileMenuId} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] py-1.5" role="listbox" aria-label={t.fileCatalog} style={{ overflowY: "auto" }}>
+					<div className="px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.fileCatalog} · {t.fileCompletionHint}</div>
+					{fileItems.map((item, i) => (
+						<button key={item.value} id={`${fileMenuId}-${i}`} type="button" role="option" aria-selected={i === effectiveFileIdx}
+							className="flex w-full items-center gap-3 px-4 py-2 text-left"
+							style={{ background: i === effectiveFileIdx ? "var(--dsw-hover)" : "transparent" }}
+							onMouseEnter={() => setFileIdx(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => selectFile(item)}>
+							<img alt="" src={item.label.endsWith("/") ? folderIconSrc(item.label.slice(0, -1), false) : fileIconSrc(item.label)} width={18} height={18} />
+							<span className="truncate" style={{ fontSize: 14, color: "var(--dsw-label-primary)" }}>{item.label}</span>
+							<span className="ml-auto truncate" style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>{item.description}</span>
+						</button>
+					))}
+				</div>
+			)}
 			{/* 斜杠命令菜单（dsh：悬浮于输入卡上方，同宽） */}
 			{commandMode && visibleCommands.length > 0 && (
 				<div ref={cmdMenuRef} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog} style={{ overflowY: "auto" }}>
@@ -601,16 +670,23 @@ export function ChatInput({
 						value={text}
 						disabled={disabled || isBlocked || sendBusy}
 						rows={1}
+						aria-controls={fileItems.length ? fileMenuId : undefined}
+						aria-activedescendant={fileItems.length ? `${fileMenuId}-${effectiveFileIdx}` : undefined}
 						placeholder={adopted ? (adopted.argumentHint ?? t.inputPlaceholder) : !disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						suppressHydrationWarning
 						className="min-w-0 flex-1 resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
-							onChange={(e) => {
+						onChange={(e) => {
 							setText(e.target.value);
-									setCmdDismissed(false);
+							setCursor(e.target.selectionStart);
+							setFileDismissed(false);
+							setCmdDismissed(false);
 							setCmdIdx(0);
 							autoSize();
 						}}
+						onSelect={(e) => setCursor(e.currentTarget.selectionStart)}
+						onBlur={() => setFileDismissed(true)}
+						onFocus={() => setFileDismissed(false)}
 						onPaste={(e) => {
 							const files = Array.from(e.clipboardData.files);
 							if (files.length) {
@@ -619,6 +695,24 @@ export function ChatInput({
 							}
 						}}
 						onKeyDown={(e) => {
+							if (e.nativeEvent.isComposing) return;
+							if (fileMode && e.key === "Escape") {
+								e.preventDefault();
+								setFileDismissed(true);
+								return;
+							}
+							if (fileItems.length > 0) {
+								if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+									e.preventDefault();
+									setFileIdx((i) => (i + (e.key === "ArrowDown" ? 1 : -1) + fileItems.length) % fileItems.length);
+									return;
+								}
+								if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey)) {
+									e.preventDefault();
+									selectFile(fileItems[effectiveFileIdx]);
+									return;
+								}
+							}
 							if (adopted && text === "" && (e.key === "Backspace" || e.key === "Escape")) {
 								// 空参数时退格/Esc：摘掉命令胶囊
 								e.preventDefault();
