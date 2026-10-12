@@ -125,11 +125,6 @@ export async function builtinCatalogModelIds(content: string, models: ReadonlyAr
 	return Object.fromEntries([...ids].map(([providerId, modelIds]) => [providerId, [...modelIds].sort()]));
 }
 
-function envKeyOf(providerId: string): string | null {
-	void providerId;
-	return null;
-}
-
 export function listModels(): Promise<{
 	providers: ProviderView[];
 	models: ModelView[];
@@ -170,7 +165,7 @@ export function apisByUsage(models: ReadonlyArray<{ api?: unknown }>): string[] 
 	return [...counts].sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0)).map(([api]) => api);
 }
 
-/** auth.json 各条目的凭证类型（与 storedCredentialFor 同样的两层数据结构）；读取失败不影响目录 */
+/** auth.json 各条目的凭证类型（顶层和 providers 两层都认）；读取失败不影响目录 */
 async function readStoredAuthTypes(): Promise<Map<string, "api_key" | "oauth">> {
 	const out = new Map<string, "api_key" | "oauth">();
 	try {
@@ -299,28 +294,46 @@ export async function removeApiKey(providerId: string): Promise<void> {
 	invalidateModelList();
 }
 
-/** 已存凭证回退：编辑表单的 key 框为空（「留空保持不变」）时，从这里取。oauth=true 表示来自 OAuth 令牌（部分端点不适用）。 */
-async function storedCredentialFor(providerId: string): Promise<{ key: string; oauth: boolean; accountId?: string } | undefined> {
-	// 自定义 provider / 内置覆盖层：models.json providers[id].apiKey。
-	// 损坏/权限失败不能静默回退到别的凭证；JSONC 与编辑器使用相同解析规则。
-	const custom = await readCustomProvidersSnapshot(modelsJsonPath());
-	if (custom.content !== undefined) {
-		const key = parseCustomProviders(custom.content).providers[providerId]?.apiKey;
-		if (typeof key === "string" && key.trim()) return { key: key.trim(), oauth: false };
-	}
-	// 内置 provider：auth.json 条目 —— API key 直接用；OAuth 条目的 access 就是
-	// SDK 发请求时的 Bearer key（如 xai 的 toAuth 返回 { apiKey: credential.access }）
+interface ConfiguredCredential {
+	key: string;
+	/** 来自 OAuth 令牌（部分端点只认它，部分端点不认它） */
+	oauth: boolean;
+	/** openai-codex：ChatGPT 账号 ID，用量端点要带 */
+	accountId?: string;
+	/** 认证结果自带的地址（如 Copilot 企业版），也算这家已配置的地址 */
+	baseUrl?: string;
+}
+
+/**
+ * 该 provider 当前生效的凭证，和 SDK 发请求时同一套解析（ModelRuntime.getAuth）：运行时 key → auth.json
+ * （OAuth 快过期会先刷新并写回）→ models.json 的 apiKey（$ENV / ${ENV} / !command 照样解析）→ 环境变量。
+ * 编辑表单的 key 框留空（「留空保持不变」）时的模型目录探测、各家用量探测都从这里取。
+ * 拿不到或解析失败都返回 undefined：报错里可能带着命令原文，不往外带。
+ */
+async function configuredCredentialFor(providerId: string): Promise<ConfiguredCredential | undefined> {
 	try {
-		const parsed = JSON.parse(await fs.readFile(path.join(getAgentDir(), "auth.json"), "utf8")) as Record<string, any>;
-		const entry = parsed?.[providerId] ?? parsed?.providers?.[providerId];
-		const key = entry?.apiKey ?? entry?.api_key ?? entry?.key;
-		if (typeof key === "string" && key.trim()) return { key: key.trim(), oauth: false };
-		if (entry?.type === "oauth" && typeof entry?.access === "string" && entry.access.trim()) {
-			const accountId = typeof entry.accountId === "string" && entry.accountId.trim() ? entry.accountId.trim() : undefined;
-			return { key: entry.access.trim(), oauth: true, ...(accountId === undefined ? {} : { accountId }) };
-		}
+		const rt = await getModelRuntime();
+		const resolved = await rt.getAuth(providerId, { signal: AbortSignal.timeout(20_000) });
+		const key = (resolved?.auth.apiKey ?? bearerToken(resolved?.auth.headers))?.trim();
+		if (!resolved || !key) return undefined;
+		const oauth = (await rt.checkAuth(providerId).catch(() => undefined))?.type === "oauth";
+		// SDK 发 Codex 请求时也是从令牌里取账号 ID
+		const accountId = oauth && providerId === "openai-codex" ? openaiAuthClaims(key)?.chatgpt_account_id : undefined;
+		return {
+			key,
+			oauth,
+			...(typeof accountId === "string" && accountId.trim() ? { accountId: accountId.trim() } : {}),
+			...(resolved.auth.baseUrl ? { baseUrl: resolved.auth.baseUrl } : {}),
+		};
 	} catch {
-		/* 同上 */
+		return undefined;
+	}
+}
+
+/** 只给请求头的认证结果（如 kimi-coding 的 OAuth）：从 Authorization: Bearer 里取令牌 */
+function bearerToken(headers: Record<string, string | null> | undefined): string | undefined {
+	for (const [name, value] of Object.entries(headers ?? {})) {
+		if (name.toLowerCase() === "authorization" && value) return /^Bearer\s+(\S+)/i.exec(value.trim())?.[1];
 	}
 	return undefined;
 }
@@ -458,18 +471,18 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	if (base.username || base.password) throw new Error("API 地址不能包含用户名或密码");
 	const endpoint = modelsEndpoint(base);
 	const headers: Record<string, string> = { Accept: "application/json" };
-	// 表单 key 为空时回退到该 provider 的已存凭证（编辑场景：占位符「留空保持不变」）
-	const credential = input.apiKey?.trim()
+	// 表单 key 为空时回退到该 provider 已配置的凭证（编辑场景：占位符「留空保持不变」）
+	const credential: ConfiguredCredential | undefined = input.apiKey?.trim()
 		? { key: input.apiKey.trim(), oauth: false }
 		: input.providerId
-			? await storedCredentialFor(input.providerId)
+			? await configuredCredentialFor(input.providerId)
 			: undefined;
 	if (credential && !input.apiKey?.trim()) {
 		const rt = await getModelRuntime();
 		const provider = rt.getProviders().find((p) => p.id === input.providerId);
-		const configuredUrls = [provider?.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
+		const configuredUrls = [provider?.baseUrl, credential.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
 		if (!isTrustedCredentialEndpoint(endpoint, configuredUrls)) {
-			throw new Error("已存凭证只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
+			throw new Error("已配置的凭证只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
 		}
 	}
 	const apiKey = credential?.key;
@@ -620,15 +633,20 @@ function isoOrUndefined(value: unknown): string | undefined {
 	return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : undefined;
 }
 
-/** 从 access token 的 JWT 本地读套餐声明：端点不可用时界面仍显示套餐。 */
-export function planTypeFromAccessToken(accessToken: string): string | undefined {
+/** ChatGPT access token（JWT）里的 OpenAI 声明：套餐、账号 ID 都在这里 */
+function openaiAuthClaims(accessToken: string): Record<string, any> | undefined {
 	try {
-		const payload = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64").toString("utf8")) as Record<string, any>;
-		const value = payload?.["https://api.openai.com/auth"]?.chatgpt_plan_type;
-		return typeof value === "string" && value.trim() ? value.trim() : undefined;
+		const payload = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64").toString("utf8")) as unknown;
+		return asRecord(asRecord(payload)?.["https://api.openai.com/auth"]);
 	} catch {
 		return undefined;
 	}
+}
+
+/** 从 access token 的 JWT 本地读套餐声明：端点不可用时界面仍显示套餐。 */
+export function planTypeFromAccessToken(accessToken: string): string | undefined {
+	const value = openaiAuthClaims(accessToken)?.chatgpt_plan_type;
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 /**
@@ -667,7 +685,7 @@ export function parseCodexUsagePayload(value: unknown): Omit<QuotaUsage, "kind" 
 }
 
 async function probeCodexUsage(): Promise<QuotaUsage | null> {
-	const credential = await storedCredentialFor("openai-codex");
+	const credential = await configuredCredentialFor("openai-codex");
 	if (!credential) return null;
 	// JWT 里的套餐声明本地可得，端点失败时用它兜底，界面不至于整块空白
 	const fallbackPlan = planTypeFromAccessToken(credential.key);
@@ -718,7 +736,7 @@ export function parseAnthropicUsagePayload(value: unknown): Omit<QuotaUsage, "ki
 }
 
 async function probeAnthropicUsage(): Promise<QuotaUsage | null> {
-	const credential = await storedCredentialFor("anthropic");
+	const credential = await configuredCredentialFor("anthropic");
 	// 该端点只认订阅 OAuth 令牌；API key 走的是按量计费，没有这组窗口
 	if (!credential?.oauth) return null;
 	const payload = await fetchUsageJson(ANTHROPIC_USAGE_ENDPOINT, {
@@ -791,7 +809,7 @@ const MOONSHOT_HOSTS: Record<string, { base: string; currency: string }> = {
 };
 
 async function probeDeepSeekBalance(): Promise<BalanceUsage | null> {
-	const credential = await storedCredentialFor("deepseek");
+	const credential = await configuredCredentialFor("deepseek");
 	if (!credential) return null;
 	const payload = await fetchUsageJson("https://api.deepseek.com/user/balance", {
 		headers: { Authorization: `Bearer ${credential.key}` },
@@ -801,7 +819,7 @@ async function probeDeepSeekBalance(): Promise<BalanceUsage | null> {
 }
 
 async function probeOpenRouterBalance(): Promise<BalanceUsage | null> {
-	const credential = await storedCredentialFor("openrouter");
+	const credential = await configuredCredentialFor("openrouter");
 	if (!credential) return null;
 	const payload = await fetchUsageJson("https://openrouter.ai/api/v1/key", {
 		headers: { Authorization: `Bearer ${credential.key}` },
@@ -811,7 +829,7 @@ async function probeOpenRouterBalance(): Promise<BalanceUsage | null> {
 }
 
 async function probeMoonshotBalance(providerId: "moonshotai" | "moonshotai-cn"): Promise<BalanceUsage | null> {
-	const credential = await storedCredentialFor(providerId);
+	const credential = await configuredCredentialFor(providerId);
 	if (!credential) return null;
 	const host = MOONSHOT_HOSTS[providerId];
 	const payload = await fetchUsageJson(`${host.base}/v1/users/me/balance`, {
@@ -928,7 +946,7 @@ export function parseOpencodeUsagePayload(value: unknown): Omit<QuotaUsage, "kin
 }
 
 async function probeKimiCodingUsage(): Promise<QuotaUsage | null> {
-	const credential = await storedCredentialFor("kimi-coding");
+	const credential = await configuredCredentialFor("kimi-coding");
 	if (!credential) return null;
 	const payload = await fetchUsageJson("https://api.kimi.com/coding/v1/usages", {
 		headers: { Authorization: `Bearer ${credential.key}`, Accept: "application/json" },
@@ -939,7 +957,7 @@ async function probeKimiCodingUsage(): Promise<QuotaUsage | null> {
 }
 
 async function probeCopilotUsage(): Promise<QuotaUsage | null> {
-	const credential = await storedCredentialFor("github-copilot");
+	const credential = await configuredCredentialFor("github-copilot");
 	if (!credential?.oauth) return null;
 	// 凭据本身就是 Copilot 令牌（tid=...），直接可用于这个内部端点
 	const payload = await fetchUsageJson("https://api.github.com/copilot_internal/user", {
@@ -951,7 +969,7 @@ async function probeCopilotUsage(): Promise<QuotaUsage | null> {
 }
 
 async function probeVercelGatewayBalance(): Promise<BalanceUsage | null> {
-	const credential = await storedCredentialFor("vercel-ai-gateway");
+	const credential = await configuredCredentialFor("vercel-ai-gateway");
 	if (!credential) return null;
 	const payload = await fetchUsageJson("https://ai-gateway.vercel.sh/v1/credits", {
 		headers: { Authorization: `Bearer ${credential.key}` },
@@ -961,7 +979,7 @@ async function probeVercelGatewayBalance(): Promise<BalanceUsage | null> {
 }
 
 async function probeOpencodeUsage(): Promise<QuotaUsage | null> {
-	const credential = await storedCredentialFor("opencode-go");
+	const credential = await configuredCredentialFor("opencode-go");
 	if (!credential) return null;
 	const payload = await fetchUsageJson("https://opencode.ai/zen/go/v1/usage", {
 		headers: { Authorization: `Bearer ${credential.key}`, Accept: "application/json" },
@@ -972,7 +990,7 @@ async function probeOpencodeUsage(): Promise<QuotaUsage | null> {
 }
 
 async function probeXaiUsage(): Promise<XaiUsage | null> {
-	const credential = await storedCredentialFor("xai");
+	const credential = await configuredCredentialFor("xai");
 	if (!credential) return null;
 	const key = credential.key;
 	let model = "";
