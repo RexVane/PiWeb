@@ -76,7 +76,8 @@ function kindOf(x: string, y: string): GitFileEntry["kind"] {
 	return "modified";
 }
 
-async function repoRoot(cwd: string): Promise<{ available: boolean; root: string | null }> {
+/** 解析仓库根（GitHub 身份解析也要用，所以导出） */
+export async function repoRoot(cwd: string): Promise<{ available: boolean; root: string | null }> {
 	try {
 		const out = (await runGit(cwd, ["rev-parse", "--show-toplevel"])).trim();
 		return { available: true, root: out ? path.resolve(out) : null };

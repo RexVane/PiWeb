@@ -39,6 +39,15 @@ interface GitInfo {
 	statusError?: string;
 }
 
+interface GithubIdentity {
+	login: string;
+	name?: string;
+	avatar?: string;
+	source: "gh" | "remote" | "git";
+	url?: string;
+	repo?: string;
+}
+
 interface DiffResult {
 	patch: string;
 	truncated: boolean;
@@ -75,6 +84,7 @@ export function GitPanel({
 }) {
 	const { t } = useI18n();
 	const [info, setInfo] = useState<GitInfo | null>(null);
+	const [identity, setIdentity] = useState<GithubIdentity | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [statusError, setStatusError] = useState("");
 	const [diffError, setDiffError] = useState("");
@@ -104,6 +114,23 @@ export function GitPanel({
 			if (isCurrent()) setLoading(false);
 		}
 	}, [cwd]);
+
+	// GitHub 身份单独拉：要走网络（gh / 头像），不能拖慢上面那条纯本地的状态读取
+	useEffect(() => {
+		setIdentity(null);
+		if (!cwd) return;
+		const controller = new AbortController();
+		void (async () => {
+			try {
+				const r = await fetch(`/api/github?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal });
+				const j = await r.json();
+				if (j?.success && j.data?.identity) setIdentity(j.data.identity as GithubIdentity);
+			} catch {
+				/* 取不到就只显示分支，不报错 */
+			}
+		})();
+		return () => controller.abort();
+	}, [cwd, refreshKey]);
 
 	useEffect(() => {
 		setInfo(null);
@@ -171,6 +198,23 @@ export function GitPanel({
 	const staged = info?.files.filter((f) => f.kind !== "conflict" && f.kind !== "untracked" && f.indexStatus !== " ") ?? [];
 	const unstaged = info?.files.filter((f) => f.kind !== "conflict" && f.kind !== "untracked" && f.workStatus !== " ") ?? [];
 	const untracked = info?.files.filter((f) => f.kind === "untracked") ?? [];
+
+	/**
+	 * 按 Git 的三个区呈现（分支 / 上游那些是「版本库」侧，在别的行）：
+	 * - 暂存区：`git add` 过的，下次 commit 会带上；
+	 * - 工作区：改了还没 add 的 + 未跟踪的新文件（都属于「还没进暂存区」）；
+	 * - 冲突单独置顶（不先解决，提交走不下去）。
+	 * 未跟踪文件要整份当新增行看，模式逐文件给，不能按组统一。
+	 */
+	const areas: Array<{ key: string; label: string; entries: Array<{ file: GitFileEntry; mode: "staged" | "worktree" | "untracked" }>; danger?: boolean }> = [
+		{ key: "conflict", label: t.gitConflict, entries: conflicts.map((file) => ({ file, mode: "worktree" as const })), danger: true },
+		{ key: "staged", label: t.gitStagingArea, entries: staged.map((file) => ({ file, mode: "staged" as const })) },
+		{
+			key: "worktree",
+			label: t.gitWorkingTree,
+			entries: [...unstaged.map((file) => ({ file, mode: "worktree" as const })), ...untracked.map((file) => ({ file, mode: "untracked" as const }))],
+		},
+	].filter((area) => area.entries.length > 0);
 
 	const openFile = (f: GitFileEntry, mode: "staged" | "worktree" | "untracked", label: string) => changeView({ kind: "file", path: f.path, mode, label });
 
@@ -247,6 +291,39 @@ export function GitPanel({
 				)}
 				{!view && info?.isRepo && (
 					<div className="flex flex-col gap-4">
+						{/* GitHub 身份：头像 + 账号（取不到就整行不出现） */}
+						{identity && (
+							<div className="flex items-center gap-2">
+								{identity.avatar ? (
+									// eslint-disable-next-line @next/next/no-img-element
+									<img src={identity.avatar} alt="" width={22} height={22} className="flex-none rounded-full" />
+								) : (
+									<span
+										className="grid flex-none place-items-center rounded-full"
+										style={{ width: 22, height: 22, background: "var(--dsw-selector)", fontSize: 11, fontWeight: 600, color: "var(--dsw-label-secondary)" }}
+										aria-hidden
+									>
+										{identity.login.slice(0, 1).toUpperCase()}
+									</span>
+								)}
+								<a
+									href={identity.url ?? `https://github.com/${identity.login}`}
+									target="_blank"
+									rel="noreferrer"
+									className="min-w-0 truncate"
+									style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)", textDecoration: "none" }}
+									title={identity.name ? `${identity.name} (@${identity.login})` : `@${identity.login}`}
+								>
+									@{identity.login}
+								</a>
+								{identity.repo && (
+									<span className="min-w-0 truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }} title={identity.repo}>
+										· {identity.repo}
+									</span>
+								)}
+							</div>
+						)}
+
 						{/* 分支行 */}
 						<div className="flex flex-wrap items-center gap-2" style={{ fontSize: 12.5 }}>
 							<span
@@ -280,45 +357,37 @@ export function GitPanel({
 						{error ? null : info.files.length === 0 ? (
 							<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.gitNoChanges}</div>
 						) : (
-							[
-								{ label: t.gitConflict, list: conflicts, mode: "worktree" as const },
-								{ label: t.gitStaged, list: staged, mode: "staged" as const },
-								{ label: t.gitUnstaged, list: unstaged, mode: "worktree" as const },
-								{ label: t.gitUntracked, list: untracked, mode: "untracked" as const },
-							].map(
-								(group) =>
-									group.list.length > 0 && (
-										<div key={group.label}>
-											<div className="mb-1 flex items-center gap-2" style={{ fontSize: 11.5, color: group.mode === "worktree" && group.label === t.gitConflict ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }}>
-												<span style={{ fontWeight: 600 }}>{group.label}</span>
-												<span>{group.list.length}</span>
-											</div>
-											<div className="flex flex-col">
-												{group.list.map((f) => (
-													<button
-														key={`${group.label}:${f.path}`}
-														type="button"
-														className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors"
-														title={f.path}
-														onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-														onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-														onClick={() => openFile(f, group.mode, group.mode === "staged" ? t.gitStagedDiff : group.mode === "untracked" ? t.gitUntracked : t.gitWorktreeDiff)}
-													>
-														<span
-															className="flex-none rounded px-1 text-center"
-															style={{ minWidth: 16, fontSize: 10.5, fontFamily: "var(--font-mono)", fontWeight: 600, color: KIND_COLOR[f.kind], background: "var(--dsw-hover)" }}
-														>
-															{f.kind === "untracked" ? "?" : f.kind === "conflict" ? "!" : group.mode === "staged" ? f.indexStatus : f.workStatus !== " " ? f.workStatus : f.indexStatus}
-														</span>
-														<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--dsw-label-secondary)" }}>
-															{f.path}
-														</span>
-													</button>
-												))}
-											</div>
-										</div>
-									),
-							)
+							areas.map((area) => (
+								<div key={area.key}>
+									<div className="mb-1 flex items-center gap-2" style={{ fontSize: 11.5, color: area.danger ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }}>
+										<span style={{ fontWeight: 600 }}>{area.label}</span>
+										<span>{area.entries.length}</span>
+									</div>
+									<div className="flex flex-col">
+										{area.entries.map(({ file: f, mode }) => (
+											<button
+												key={`${area.key}:${f.path}`}
+												type="button"
+												className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors"
+												title={f.path}
+												onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
+												onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+												onClick={() => openFile(f, mode, mode === "staged" ? t.gitStagedDiff : mode === "untracked" ? t.gitUntracked : t.gitWorktreeDiff)}
+											>
+												<span
+													className="flex-none rounded px-1 text-center"
+													style={{ minWidth: 16, fontSize: 10.5, fontFamily: "var(--font-mono)", fontWeight: 600, color: KIND_COLOR[f.kind], background: "var(--dsw-hover)" }}
+												>
+													{f.kind === "untracked" ? "?" : f.kind === "conflict" ? "!" : mode === "staged" ? f.indexStatus : f.workStatus !== " " ? f.workStatus : f.indexStatus}
+												</span>
+												<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--dsw-label-secondary)" }}>
+													{f.path}
+												</span>
+											</button>
+										))}
+									</div>
+								</div>
+							))
 						)}
 
 						{/* 最近提交 */}
