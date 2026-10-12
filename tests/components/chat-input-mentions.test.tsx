@@ -7,7 +7,7 @@
  * 数据源只断言 HTTP 层：/api/files?index=1（服务端索引在 tests/files-service.test.ts）。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ChatInput } from "@/components/ChatInput";
 
 afterEach(() => {
@@ -80,9 +80,12 @@ describe("输入框 @ 引用", () => {
 		expect(calls[0]).toContain("/api/files?index=1");
 		expect(menu.textContent).toContain("src/lib/fuzzy.ts");
 
-		type(textarea, "@fz");
+		type(textarea, "@fuz");
 		await waitFor(() => expect(screen.getByTestId("mention-menu").textContent).toContain("src/lib/fuzzy.ts"));
 		expect(screen.getByTestId("mention-menu").textContent).not.toContain("ChatInput.tsx");
+		// 和 pi 终端一样按字面匹配文件名：跳字母的 @fz 不算命中
+		type(textarea, "@fz");
+		await waitFor(() => expect(screen.getByTestId("mention-menu").textContent).toContain("没有匹配的文件"));
 		// 过滤在本地算：整轮只拉了一次清单
 		expect(calls).toHaveLength(1);
 	});
@@ -109,8 +112,10 @@ describe("输入框 @ 引用", () => {
 		const { textarea } = renderInput("/workspace-folder");
 		type(textarea, "@src/lib");
 		const menu = await screen.findByTestId("mention-menu");
-		// 目录候选带尾斜杠显示
-		expect(menu.textContent).toContain("src/lib/");
+		// 和 pi 一样：名字（目录带尾斜杠）在前、路径在后
+		const [first] = within(menu).getAllByRole("option");
+		expect(first.textContent).toBe("lib/src/lib");
+		expect(first.getAttribute("title")).toBe("src/lib/");
 
 		fireEvent.keyDown(textarea, { key: "ArrowDown" });
 		fireEvent.keyDown(textarea, { key: "ArrowUp" });

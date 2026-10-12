@@ -6,7 +6,7 @@
  * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
  * 排队中的消息列在输入卡上方，↑（空输入框时）取回编辑。Enter 发送 / Shift+Enter 换行。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	IconAtOutline16,
 	IconFileOutline16,
@@ -217,10 +217,15 @@ export function ChatInput({
 	const commandMode = typedCommandMode;
 
 	// ---------- @ 引用：输入 @ 弹候选，选中落成引用 chip ----------
-	// 候选清单一次拉全量（工作区 git 可见文件），之后每个字符都在本地匹配：和 pi 终端一样是瞬时的。
+	// 候选清单一次拉全量（工作区 git 可见文件），之后每个字符都在本地匹配；规则与 pi 终端的 @ 补全一致（见 workspace-index）。
 	const mentionMode = mention !== null;
+	const mentionQuery = mention?.query ?? null;
 	const files = useWorkspaceFiles(cwd ?? "", mentionMode);
-	const suggestions = mention ? suggestPaths(files.candidates, mention.query, 50) : [];
+	// 只在候选清单或查询变了时重算：光标移动、其它状态变化引起的重渲染不该每次扫一遍全量清单
+	const suggestions = useMemo(
+		() => (mentionQuery === null ? [] : suggestPaths(files.candidates, mentionQuery)),
+		[files.candidates, mentionQuery],
+	);
 	const effectiveMentionIdx = Math.min(mentionIdx, Math.max(0, suggestions.length - 1));
 
 	useEffect(() => {
@@ -590,7 +595,7 @@ export function ChatInput({
 					{files.status === "ready" && suggestions.length === 0 && (
 						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.mentionNoMatch}</div>
 					)}
-					{suggestions.map((candidate, i) => (
+					{suggestions.map(({ candidate, label, description }, i) => (
 						<button
 							key={`${candidate.dir ? "d" : "f"}:${candidate.path}`}
 							type="button"
@@ -607,9 +612,15 @@ export function ChatInput({
 							) : (
 								<IconFileOutline16 size={13} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
 							)}
-							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-secondary)" }}>
-								{candidateText(candidate)}
+							{/* 和 pi 终端一样：名字在前，路径在后；根目录下的条目两者相同，不重复显示 */}
+							<span className="flex-none truncate" style={{ maxWidth: "55%", fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-primary)" }}>
+								{label}
 							</span>
+							{description.replace(/\/$/, "") !== label.replace(/\/$/, "") && (
+								<span className="min-w-0 flex-1 truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+									{description}
+								</span>
+							)}
 						</button>
 					))}
 				</div>
@@ -880,8 +891,8 @@ export function ChatInput({
 									}
 									if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
 										e.preventDefault();
-										const candidate = suggestions[effectiveMentionIdx];
-										if (candidate) applyMention(candidate);
+										const picked = suggestions[effectiveMentionIdx];
+										if (picked) applyMention(picked.candidate);
 										return;
 									}
 								}

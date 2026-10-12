@@ -42,3 +42,4 @@
 - 2026-10-12 00:14 | package-lock.json（另一会话升级 SDK 后未提交的版本） | backups/files/package-lock-20261012-001436.json | 补回 npm 重写时丢掉的 4 个 @emnapi 条目前留底（未进 git）
 - 2026-10-12 10:48 | -o | backups/files/-o-20261012-104820 | 调试时 curl 参数被误当成 cookie 文件名生成的空 cookie 文件（只有表头，无内容）
 2026-10-12 18:39 | src/lib/model-suggestion.ts | backups/files/model-suggestion-20261012-183900.ts | 草稿（服务端建议模型的第一版，后被 src/lib/model-defaults.ts 替代）：删除时漏了备份，本条补记；实体由会话里的写入记录还原，与写入时内容一致；删除时间未记录，发生在本次会话中
+- 2026-10-13 01:17 | src/lib/fuzzy.ts | HEAD 0c1432d（git restore --source=0c1432d -- src/lib/fuzzy.ts） | #078 移植的 pi-tui fuzzy.js 只用于斜杠命令等参数补全，pi 的 @ 文件补全并不用它；#089 改成照搬 pi 的 @ 算法（fd 过滤 + scoreEntry）后不再被引用
