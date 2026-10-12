@@ -15,8 +15,8 @@ afterEach(() => {
 });
 
 const EXTENSIONS = [
-	{ name: "orca-titlebar-spinner", path: "C:\Users\guica\.pi\agent\extensions\orca-titlebar-spinner.ts", disabled: true },
-	{ name: "orca-agent-status", path: "C:\Users\guica\.pi\agent\extensions\orca-agent-status.ts", disabled: false },
+	{ name: "orca-titlebar-spinner", path: "/home/user/.pi/agent/extensions/orca-titlebar-spinner.ts", disabled: true },
+	{ name: "orca-agent-status", path: "/home/user/.pi/agent/extensions/orca-agent-status.ts", disabled: false },
 ];
 
 function stubPlugins() {

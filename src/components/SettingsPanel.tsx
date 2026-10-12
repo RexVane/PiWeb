@@ -2206,7 +2206,7 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 
 // ---------- Plugins ----------
 
-/** 导出仅供测试（其余 section 不导出）；插件/扩展卡片的状态徽标曾写死过 */
+/** 导出仅供测试（其余 section 不导出） */
 export function PluginsSection({ cwd }: { cwd: string }) {
 	const { t, lang } = useI18n();
 	const confirmUninstall = (source: string) => window.confirm(t.confirmUninstallPackage.replace("{source}", source));
@@ -2324,11 +2324,7 @@ export function PluginsSection({ cwd }: { cwd: string }) {
 		})),
 	].filter((x) => !query || x.name.toLowerCase().includes(query));
 
-	/**
-	 * 插件/扩展的状态徽标。以前这里是写死的「已启用」：头部按 e.disabled 显示「已停用」，
-	 * 展开区却恒定显示「已启用」，同一张卡片自相矛盾（用户看到的正是这个）。
-	 * 现在只剩这一处指示，颜色与文案都跟着真实状态走。
-	 */
+	/** 扩展卡片的启用状态：每张卡只在头部显示这一处，展开区不重复 */
 	const stateBadge = (disabled: boolean) => (
 		<span
 			className="flex flex-none items-center gap-1.5 rounded-md px-1.5 py-0.5"
@@ -2457,7 +2453,6 @@ export function PluginsSection({ cwd }: { cwd: string }) {
 											{e.error && (
 												<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-danger)", background: "var(--pw-danger-soft, rgba(236,19,19,.12))" }}>{t.extensionLoadError}</span>
 											)}
-											{/* 状态只在这一处显示：展开区不再重复（更不能写死成「已启用」） */}
 											{!e.error && stateBadge(e.disabled === true)}
 										</div>
 										<div className="truncate" style={{ fontSize: 12, color: e.error ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }} title={e.error ?? e.path}>
@@ -2562,7 +2557,7 @@ export function PluginsSection({ cwd }: { cwd: string }) {
 														<span className="h-3 w-3 flex-none animate-spin rounded-full border border-[var(--dsw-label-tertiary)] border-t-transparent" />
 													) : !isDisabled ? (
 														<span
-																	className="h-2 w-2 flex-none rounded-full"
+															className="h-2 w-2 flex-none rounded-full"
 															style={{ background: "#22c55e", boxShadow: "0 0 5px rgba(34, 197, 94, 0.4)" }}
 														/>
 													) : null}
@@ -2576,8 +2571,8 @@ export function PluginsSection({ cwd }: { cwd: string }) {
 													>
 														{isDisabled ? t.disabled : t.enabled}
 													</span>
-														<IconChevronDown14
-															size={13}
+													<IconChevronDown14
+														size={13}
 														style={{
 															color: "var(--dsw-label-tertiary)",
 															transform: isMenuOpen ? "rotate(180deg)" : "none",
