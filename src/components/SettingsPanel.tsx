@@ -32,6 +32,8 @@ import {
 	type CustomProviderSetup,
 } from "@/components/ProviderSetupModal";
 import { RemoteSection } from "@/components/RemoteSection";
+import { CopyCommand } from "@/components/update/CopyCommand";
+import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } from "@/components/update/update-store";
 import { useI18n } from "@/i18n";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { applyFontChoice, CUSTOM_PREFIX, FONT_PRESETS, loadFontChoice } from "@/lib/font";
@@ -582,61 +584,20 @@ function VersionLink({ href, value }: { href: string; value?: string }) {
 	);
 }
 
-type UpdatePhase = "idle" | "checking" | "available" | "updating" | "latest" | "updated" | "error";
-
 /** 检查更新 / 更新控件：npm 安装的 piweb 走 npm install -g @rexvane/piweb@latest（服务端固定参数），
- *  Git 检出仍走 git pull + 本地构建；pi 走 npm install @latest。 */
-function UpdateControl({ target }: { target: "piweb" | "pi" }) {
+ *  Git 检出仍走 git pull + 本地构建；pi 走 npm install @latest（npm 安装只换依赖、不重建）。
+ *  状态和右下角提示条共用（update-store）：启动检查的结果一到，这里直接显示「更新到 vX」或「已是最新」。 */
+function UpdateControl({ target }: { target: UpdateTarget }) {
 	const { t } = useI18n();
-	const [phase, setPhase] = useState<UpdatePhase>("idle");
-	const [latest, setLatest] = useState("");
-	const [command, setCommand] = useState("");
-	const [error, setError] = useState("");
+	const { phase, latest, command, error, busy: sessionBusy } = useUpdates().targets[target];
 	const busy = phase === "checking" || phase === "updating";
 
-	const post = async (action: "check" | "update") => {
-		const r = await fetch("/api/update", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ target, action }),
-		});
-		return r.json();
-	};
-
-	const check = async () => {
-		setPhase("checking");
-		setError("");
-		try {
-			const j = await post("check");
-			if (!j.success) throw new Error(j.error);
-			if (j.data.canUpdate) {
-				setLatest(j.data.latest);
-				setCommand(j.data.command ?? "");
-				setPhase("available");
-			} else {
-				setPhase("latest");
-			}
-		} catch (e: any) {
-			setError(String(e?.message ?? e));
-			setPhase("error");
-		}
-	};
-
-	const run = async () => {
-		setPhase("updating");
-		try {
-			const j = await post("update");
-			if (!j.success) throw new Error(j.error);
-			setLatest(j.data.version ?? latest);
-			setPhase("updated");
-		} catch (e: any) {
-			setError(String(e?.message ?? e));
-			setPhase("error");
-		}
-	};
+	useEffect(() => {
+		void loadUpdates();
+	}, []);
 
 	if (phase === "idle" || phase === "latest" || phase === "error") {
-		const label = phase === "latest" ? t.upToDate : phase === "error" ? t.updateFailed : t.checkUpdate;
+		const label = phase === "latest" ? t.upToDate : phase === "error" ? (sessionBusy ? t.updateBusy : t.updateFailed) : t.checkUpdate;
 		const color = phase === "latest" ? "var(--dsw-label-tertiary)" : phase === "error" ? "var(--dsw-danger)" : "var(--dsw-label-primary)";
 		return (
 			<button
@@ -645,7 +606,7 @@ function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 				style={{ height: 26, padding: "0 10px", fontSize: 12, color }}
 				title={error || undefined}
 				disabled={busy}
-				onClick={() => void check()}
+				onClick={() => void checkUpdate(target)}
 			>
 				{label}
 			</button>
@@ -656,19 +617,24 @@ function UpdateControl({ target }: { target: "piweb" | "pi" }) {
 		if (command) {
 			return (
 				<span className="flex flex-col items-end gap-0.5" style={{ maxWidth: 300 }}>
-					<code style={{ fontSize: 11, color: "var(--dsw-label-primary)", whiteSpace: "nowrap", overflowX: "auto", maxWidth: "100%" }}>{command}</code>
+					<CopyCommand command={command} />
 					<span style={{ fontSize: 11, color: "var(--dsw-label-tertiary)", textAlign: "right" }}>{t.updateManualHint}</span>
 				</span>
 			);
 		}
 		return (
-			<button type="button" className="btn-primary-white" style={{ height: 26, padding: "0 12px", fontSize: 12 }} onClick={() => void run()}>
+			<button type="button" className="btn-primary-white" style={{ height: 26, padding: "0 12px", fontSize: 12 }} onClick={() => void runUpdate(target)}>
 				{t.updateTo.replace("{v}", latest)}
 			</button>
 		);
 	}
 	if (phase === "updated") {
-		return <span style={{ fontSize: 12, color: "var(--dsw-success)", maxWidth: 260, textAlign: "right" }}>{t.updatedTo.replace("{v}", latest)}</span>;
+		return (
+			<span className="flex flex-col items-end gap-0.5" style={{ maxWidth: 280, textAlign: "right" }}>
+				<span style={{ fontSize: 12, color: "var(--dsw-success)" }}>{t.updatedTo.replace("{v}", latest)}</span>
+				<span style={{ fontSize: 11, color: "var(--dsw-label-tertiary)" }}>{t.updateRestartHint}</span>
+			</span>
+		);
 	}
 	return (
 		<span className="flex items-center gap-1.5" style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>

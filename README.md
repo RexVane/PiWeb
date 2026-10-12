@@ -105,13 +105,22 @@ The package registers only the `piweb` command, so it never conflicts with the o
 npm install -g @rexvane/piweb@latest
 ```
 
-npm replaces the installed version in place, so there is nothing to uninstall first. This is
-the same command the in-app "Check for updates" button runs. `latest` is npm's default tag,
-so `npm install -g @rexvane/piweb` behaves identically; if your registry is a mirror that
-syncs with a delay, add `--registry=https://registry.npmjs.org` to get a release the moment
-it is published. Restart `piweb` afterwards to serve the new version.
+npm replaces the installed version in place, so there is nothing to uninstall first. `latest`
+is npm's default tag, so `npm install -g @rexvane/piweb` behaves identically; if your registry
+is a mirror that syncs with a delay, add `--registry=https://registry.npmjs.org` to get a
+release the moment it is published. Restart `piweb` afterwards to serve the new version.
 
 Or install a specific version: `npm install -g @rexvane/piweb@0.3.4`.
+
+**Updating from the UI**: every time PiWeb starts it checks PiWeb and pi for new versions in the
+background. When one is available it prints `[更新] 有新版本：…` in the terminal and shows a notice
+in the bottom-right corner of the page (once per start). Click "Update" in the notice or in
+Settings → General to install in place — no trip to the repository. Restart `piweb` when it says
+so; the process never restarts itself.
+
+- The pi engine can be updated on its own (npm installs swap only pi's two packages, no rebuild).
+- On Windows a running npm install cannot replace itself (files are locked), so the PiWeb entry shows the command with a copy button: stop `piweb` first, then run the command above.
+- To skip the network check, set `PI_WEB_UPDATE_CHECK=0` before starting; "Check for updates" in Settings still works.
 
 ### Uninstall
 

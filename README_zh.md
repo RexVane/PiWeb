@@ -105,12 +105,19 @@ piweb
 npm install -g @rexvane/piweb@latest
 ```
 
-npm 会原地替换已安装的版本，不用先卸载。界面里的「检查更新」按钮执行的就是这条命令；
-`latest` 是 npm 的默认标签，所以直接写 `npm install -g @rexvane/piweb` 效果完全一样。
-如果你用的镜像是国内源、同步有延迟，可以加 `--registry=https://registry.npmjs.org`
-当天就拿到新版本。装完重启 `piweb` 即可用上新版本。
+npm 会原地替换已安装的版本，不用先卸载。`latest` 是 npm 的默认标签，所以直接写
+`npm install -g @rexvane/piweb` 效果完全一样。如果你用的镜像是国内源、同步有延迟，可以加
+`--registry=https://registry.npmjs.org` 当天就拿到新版本。装完重启 `piweb` 即可用上新版本。
 
 也可以装指定版本：`npm install -g @rexvane/piweb@0.3.4`。
+
+**在界面里更新**：每次启动 PiWeb 都会在后台检查 PiWeb 和 pi 有没有新版本，有的话终端打印一行
+`[更新] 有新版本：…`，页面右下角弹出提示条（同一次启动只提醒一次）。点提示条或 设置 → 通用 里的「更新」
+就地安装，不用跳仓库；装好后按提示重启 `piweb` 生效，进程不会自己重启。
+
+- pi 内核可以单独更新（npm 安装只换 pi 的两个包，不重建）。
+- Windows 上运行中的 npm 安装不能替换自己（文件被占用），PiWeb 那一项会给出命令和复制按钮：先停掉 `piweb`，再在终端运行上面的命令。
+- 不想联网检查：启动前设 `PI_WEB_UPDATE_CHECK=0`，仍可在设置里手动点「检查更新」。
 
 ### 删除
 

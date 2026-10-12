@@ -152,9 +152,12 @@ export function ExtensionDialogHost({
 export function ExtensionNotices({
 	notices,
 	onDismiss,
+	children,
 }: {
 	notices: { id: string; message: string; type: "info" | "warning" | "error"; ts: number }[];
 	onDismiss: (id: string) => void;
+	/** 同一摞里的其它常驻提示（如更新提示条），排在扩展通知上面，免得两处浮层叠在一起 */
+	children?: React.ReactNode;
 }) {
 	// 通知 6 秒后自动消失
 	useEffect(() => {
@@ -162,10 +165,12 @@ export function ExtensionNotices({
 		const timers = notices.map((n) => setTimeout(() => onDismiss(n.id), Math.max(500, 6000 - (Date.now() - n.ts))));
 		return () => timers.forEach(clearTimeout);
 	}, [notices, onDismiss]);
-	if (!notices.length) return null;
+	// 有 children 时容器常驻：children 自己决定显示与否，容器里没东西时什么也看不见（pointer-events-none）
+	if (!notices.length && !children) return null;
 	const color = (type: string) => (type === "error" ? "var(--dsw-danger)" : type === "warning" ? "var(--dsw-warn)" : "var(--dsw-accent)");
 	return (
 		<div className="pointer-events-none fixed bottom-24 right-4 z-[110] flex w-[min(92vw,360px)] flex-col gap-2">
+			{children}
 			{notices.map((n) => (
 				<button
 					key={n.id}

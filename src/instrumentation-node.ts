@@ -12,6 +12,9 @@ export async function registerNode() {
 	const { authEnabled } = await import("./lib/web-auth");
 	if (authEnabled()) (await import("./lib/web-launch-token")).publishLaunchToken();
 
+	// 每次启动检查一次 PiWeb / pi 有没有新版本：不等结果，查到了在终端打一行，页面右下角也会提醒
+	void (await import("./lib/update/startup-check")).ensureStartupCheck().catch(() => {});
+
 	const { remoteBlocked, remoteLanEnabled, startLan } = await import("./lib/remote/supervisor");
 	if (!remoteLanEnabled()) return;
 

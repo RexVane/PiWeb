@@ -9,6 +9,7 @@ import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
+import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import type { DrawerSection } from "@/components/DrawerPanel";
@@ -1037,7 +1038,10 @@ export function AppShell() {
 			)}
 			{/* 只有远程设备（手机走 tailnet）会走到这里：本机仍然用系统原生对话框 */}
 			<DirectoryPicker open={dirPickerOpen} onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />
-			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice} />
+			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice}>
+				{/* 每次启动提醒一次有没有新版本（PiWeb / pi），和扩展通知摞在同一处 */}
+				<UpdateNotice />
+			</ExtensionNotices>
 			<SettingsPanel
 				open={settingsOpen}
 				onClose={() => {

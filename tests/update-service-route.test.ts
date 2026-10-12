@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ activeStatus: vi.fn(), runUpdate: vi.fn(), checkForUpdate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ activeStatus: vi.fn(), runUpdate: vi.fn(), checkForUpdate: vi.fn(), ensureStartupCheck: vi.fn(), recordCheck: vi.fn(), markUpdated: vi.fn() }));
 vi.mock("../src/lib/agent-manager", () => ({ activeStatus: mocks.activeStatus }));
 vi.mock("../src/lib/update-service", () => ({
 	runUpdate: mocks.runUpdate,
@@ -8,7 +8,9 @@ vi.mock("../src/lib/update-service", () => ({
 	UpdateBusyError: class UpdateBusyError extends Error {},
 }));
 
-import { POST } from "../src/app/api/update/route";
+vi.mock("../src/lib/update/startup-check", () => ({ ensureStartupCheck: mocks.ensureStartupCheck, recordCheck: mocks.recordCheck, markUpdated: mocks.markUpdated }));
+
+import { GET, POST } from "../src/app/api/update/route";
 
 function request(body: unknown) {
 	return new Request("http://127.0.0.1/api/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -68,5 +70,29 @@ describe("update API input and maintenance guard", () => {
 		expect(response.status).toBe(200);
 		expect(mocks.checkForUpdate).toHaveBeenCalledWith("pi");
 		expect(mocks.runUpdate).not.toHaveBeenCalled();
+	});
+});
+
+describe("startup update results", () => {
+	it("GET returns the startup check (waiting for it) and is never cached", async () => {
+		mocks.ensureStartupCheck.mockResolvedValue({ startId: "start-1", results: { piweb: { current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: true } } });
+		const response = await GET();
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(await response.json()).toEqual({ success: true, data: { startId: "start-1", results: { piweb: { current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: true } } } });
+	});
+
+	it("GET without a startup check (PI_WEB_UPDATE_CHECK=0) leaves the page on manual checks", async () => {
+		mocks.ensureStartupCheck.mockResolvedValue(null);
+		expect(await (await GET()).json()).toEqual({ success: true, data: { startId: null, results: {} } });
+	});
+
+	it("manual checks and finished updates rewrite the cached result; failures do not", async () => {
+		await POST(request({ target: "pi", action: "check" }));
+		expect(mocks.recordCheck).toHaveBeenCalledWith("pi", { current: "1.0.0", latest: "2.0.0", canUpdate: true });
+		mocks.runUpdate.mockRejectedValueOnce(new Error("build failed"));
+		await POST(request({ target: "piweb", action: "update" }));
+		expect(mocks.markUpdated).not.toHaveBeenCalled();
+		await POST(request({ target: "piweb", action: "update" }));
+		expect(mocks.markUpdated).toHaveBeenCalledWith("piweb", "2.0.0");
 	});
 });
