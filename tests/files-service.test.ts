@@ -1,8 +1,9 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
-import { isSafeWindowsEditorArgument, listWorkspaceDir, readWorkspaceFile } from "../src/lib/files-service";
+import { isSafeWindowsEditorArgument, listWorkspaceDir, listWorkspaceIndex, parseLsFiles, readWorkspaceFile } from "../src/lib/files-service";
 import { utf8Prefix } from "../src/lib/text-sanitize";
 
 it("rejects cmd.exe metacharacters in editor arguments", () => {
@@ -81,4 +82,54 @@ it("sorts directory junctions with directories before paged files", async () => 
 	} finally {
 		await fs.rm(cwd, { recursive: true, force: true });
 	}
+});
+
+it("indexes git-visible files for @ references, honoring .gitignore", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-index-"));
+	try {
+		execFileSync("git", ["init", "-q", cwd], { windowsHide: true });
+		await fs.writeFile(path.join(cwd, ".gitignore"), "ignored.txt\nnode_modules/\n");
+		await fs.mkdir(path.join(cwd, "src", "app"), { recursive: true });
+		await fs.writeFile(path.join(cwd, "tracked.txt"), "tracked\n");
+		execFileSync("git", ["-C", cwd, "add", "tracked.txt"], { windowsHide: true });
+		await fs.writeFile(path.join(cwd, "untracked.txt"), "untracked\n");
+		await fs.writeFile(path.join(cwd, "src", "app", "main.ts"), "main\n");
+		await fs.writeFile(path.join(cwd, "ignored.txt"), "ignored\n");
+		await fs.mkdir(path.join(cwd, "node_modules", "pkg"), { recursive: true });
+		await fs.writeFile(path.join(cwd, "node_modules", "pkg", "index.js"), "ignored\n");
+
+		const index = await listWorkspaceIndex(cwd);
+		expect(index.source).toBe("git");
+		expect(index.truncated).toBe(false);
+		expect(index.files).toEqual([".gitignore", "src/app/main.ts", "tracked.txt", "untracked.txt"]);
+		expect(index.files.some((file) => file.includes("node_modules"))).toBe(false);
+	} finally {
+		await fs.rm(cwd, { recursive: true, force: true });
+	}
+}, 30_000);
+
+it("falls back to a directory walk outside git, skipping heavy directories and capping depth", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-disk-"));
+	try {
+		await fs.mkdir(path.join(cwd, "src", "deep"), { recursive: true });
+		await fs.writeFile(path.join(cwd, "src", "deep", "file.ts"), "x");
+		await fs.mkdir(path.join(cwd, "node_modules", "pkg"), { recursive: true });
+		await fs.writeFile(path.join(cwd, "node_modules", "pkg", "index.js"), "x");
+		const beyond = path.join(cwd, ...Array.from({ length: 14 }, (_, i) => `d${i}`));
+		await fs.mkdir(beyond, { recursive: true });
+		await fs.writeFile(path.join(beyond, "too-deep.ts"), "x");
+
+		const index = await listWorkspaceIndex(cwd);
+		expect(index.source).toBe("disk");
+		expect(index.files).toContain("src/deep/file.ts");
+		expect(index.files.some((file) => file.includes("node_modules"))).toBe(false);
+		expect(index.files).not.toContain(`${Array.from({ length: 14 }, (_, i) => `d${i}`).join("/")}/too-deep.ts`);
+	} finally {
+		await fs.rm(cwd, { recursive: true, force: true });
+	}
+}, 30_000);
+
+it("parses ls-files output into safe workspace-relative paths", () => {
+	expect(parseLsFiles("b.ts\0a.ts\0b.ts\0src\\win.ts\0../escape.ts\0/etc/passwd\0")).toEqual(["b.ts", "a.ts", "src/win.ts"]);
+	expect(parseLsFiles("")).toEqual([]);
 });

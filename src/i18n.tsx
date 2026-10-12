@@ -336,6 +336,13 @@ const zh = {
 	contextColdHint: "会话还没启动，System Prompt 和工具定义要启动后才算得出",
 	contextCountNow: "现在统计",
 	contextCounting: "统计中…",
+	// @ 文件引用（输入 @ 弹候选）
+	mentionFiles: "@ 引用文件 / 文件夹",
+	mentionHint: "↑↓ 选择 · Enter 引用 · Esc 关闭",
+	mentionNoMatch: "没有匹配的文件",
+	mentionTruncated: "候选已截断",
+	mentionDiskSource: "目录遍历",
+	mentionDiskSourceHint: "当前工作区不是 git 仓库（或没装 git）：候选来自目录遍历，会跳过 node_modules、构建产物等目录；列为 git 仓库后候选会自动按 .gitignore 过滤",
 	// 统计条
 	turns: "轮次",
 	toolCalls: "工具调用",
@@ -1032,6 +1039,13 @@ const en: Dict = {
 	contextColdHint: "Session not started yet — System Prompt and tool definitions are counted once it starts",
 	contextCountNow: "Count now",
 	contextCounting: "Counting…",
+	// @ file references (type @ to open the picker)
+	mentionFiles: "@ reference files / folders",
+	mentionHint: "↑↓ select · Enter reference · Esc close",
+	mentionNoMatch: "No matching files",
+	mentionTruncated: "list truncated",
+	mentionDiskSource: "directory scan",
+	mentionDiskSourceHint: "This workspace is not a git repository (or git is missing): candidates come from a directory scan that skips node_modules and build output; in a git repository they follow .gitignore automatically",
 	turns: "turns",
 	toolCalls: "tool calls",
 	cost: "cost",

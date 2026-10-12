@@ -1011,6 +1011,7 @@ export function AppShell() {
 											authByProvider={authByProvider}
 											queue={snapshot?.queue ?? { steering: [], followUp: [] }}
 											commands={slashCommands}
+											cwd={panelCwd}
 											onCommand={runSlashCommand}
 											onSend={sendPrompt}
 											onSteer={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}

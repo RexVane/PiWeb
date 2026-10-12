@@ -2,12 +2,16 @@
  * files-service：会话工作区的文件浏览（详情栏「文件」面板）。
  * 安全边界：目标路径必须落在工作区根内（realpath 双重校验，防符号链接逃逸）。
  */
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
 import { getAgentDir } from "./pi";
+import { resolveGitBin } from "./growth-service";
 import { utf8Prefix } from "./text-sanitize";
+
+const exec = promisify(execFile);
 
 export interface FileEntry {
 	name: string;
@@ -28,6 +32,85 @@ export interface DirListing {
 const MAX_READ_BYTES = 256 * 1024;
 /** 单次目录响应上限；后续条目通过 offset 分页获取。 */
 const MAX_ENTRIES = 2000;
+
+/**
+ * @ 引用的候选索引上限。一次拉给浏览器做本地模糊匹配，所以是一份完整清单：
+ * 每敲一个字符不再发请求（实测本仓库 700 余条 ≈ 30 KB）。
+ * 超大仓库截断到上限并在界面标出，不静默少候选。
+ */
+const INDEX_LIMIT = 20_000;
+/** 非 git 工作区的退路：只跳过这些明显不该当候选的重目录，其余照常列举 */
+const INDEX_SKIP_DIRS = new Set([".git", "node_modules", ".next", ".next-dev", ".venv", "venv", "__pycache__", "dist", "build", "out", "target", ".turbo", ".cache"]);
+const INDEX_MAX_DEPTH = 12;
+
+export interface WorkspaceIndex {
+	/** 工作区根下的相对路径（"/" 分隔）。只给文件：文件夹由前端从文件路径推导 */
+	files: string[];
+	/** git = `git ls-files`（尊重 .gitignore）；disk = 不是仓库时的目录遍历退路 */
+	source: "git" | "disk";
+	/** 候选被上限截断：匹配结果可能不全，界面要说明 */
+	truncated: boolean;
+}
+
+/** `git ls-files -z` 输出 → 相对路径数组（去重） */
+export function parseLsFiles(raw: string): string[] {
+	const seen = new Set<string>();
+	for (const entry of raw.split("\0")) {
+		if (!entry) continue;
+		const rel = entry.replace(/\\/g, "/");
+		if (rel.startsWith("/") || rel.split("/").includes("..")) continue;
+		seen.add(rel);
+	}
+	return [...seen];
+}
+
+/** 不是仓库（或机器上没有 git）时的退路：广度优先遍历，只收文件 */
+async function walkWorkspaceFiles(root: string): Promise<{ files: string[]; truncated: boolean }> {
+	const files: string[] = [];
+	let queue: Array<{ rel: string; depth: number }> = [{ rel: "", depth: 0 }];
+	while (queue.length) {
+		const next: typeof queue = [];
+		for (const dir of queue) {
+			const entries = await fs.readdir(path.join(root, dir.rel), { withFileTypes: true }).catch(() => []);
+			for (const entry of entries) {
+				const rel = dir.rel ? `${dir.rel}/${entry.name}` : entry.name;
+				if (entry.isDirectory()) {
+					if (dir.depth + 1 <= INDEX_MAX_DEPTH && !INDEX_SKIP_DIRS.has(entry.name)) next.push({ rel, depth: dir.depth + 1 });
+				} else if (entry.isFile()) {
+					files.push(rel);
+					if (files.length > INDEX_LIMIT) return { files: files.slice(0, INDEX_LIMIT), truncated: true };
+				}
+			}
+		}
+		queue = next;
+	}
+	return { files, truncated: false };
+}
+
+/**
+ * @ 引用的候选清单：git 可见的文件（含未被忽略的未跟踪文件）。
+ * `git ls-files` 的路径相对当前目录，所以 cwd 就是工作区根，输出天然是工作区相对路径。
+ */
+export async function listWorkspaceIndex(cwdValue: unknown): Promise<WorkspaceIndex> {
+	const root = await resolveWorkspacePath(cwdValue);
+	const git = await resolveGitBin();
+	try {
+		const { stdout } = await exec(git, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+			cwd: root,
+			timeout: 15_000,
+			maxBuffer: 64 * 1024 * 1024,
+			windowsHide: true,
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+		});
+		const files = parseLsFiles(stdout).sort((a, b) => a.localeCompare(b));
+		return { files: files.slice(0, INDEX_LIMIT), source: "git", truncated: files.length > INDEX_LIMIT };
+	} catch {
+		// 不是仓库 / 没有 git：退回遍历，界面仍可用（source 会说明来源）
+		const walked = await walkWorkspaceFiles(root);
+		return { files: walked.files.sort((a, b) => a.localeCompare(b)), source: "disk", truncated: walked.truncated };
+	}
+}
+
 
 function toRel(root: string, target: string): string {
 	const rel = path.relative(root, target).replace(/\\/g, "/");

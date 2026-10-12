@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import {
 	IconAtOutline16,
 	IconFileOutline16,
+	IconFolderClose16,
 	IconSendArrowUp14,
 	IconStopFill16,
 	IconTerminalOutline14,
@@ -17,8 +18,10 @@ import {
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
+import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { fmtBytes } from "@/lib/format";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
+import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/workspace-index";
 import type { ImageAttachment } from "@/lib/types";
 
 export interface SlashCommand {
@@ -56,6 +59,7 @@ export function ChatInput({
 	contextWindow,
 	contextSource,
 	contextVisible = true,
+	cwd,
 	model,
 	thinkingLevel,
 	thinkingLevels,
@@ -96,6 +100,8 @@ export function ChatInput({
 	};
 	/** 还没有对话时隐藏上下文计量 */
 	contextVisible?: boolean;
+	/** 工作区根：@ 引用的候选清单从这里取（不传就不启用 @ 引用） */
+	cwd?: string;
 	model?: { provider: string; id: string; name: string };
 	thinkingLevel?: string;
 	thinkingLevels: string[];
@@ -154,6 +160,12 @@ export function ChatInput({
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
 	const [cmdDismissed, setCmdDismissed] = useState(false);
+	// @ 引用：打字触发候选，选中后落成引用 chip（发送时统一拼成 `@路径` 行）
+	const [mention, setMention] = useState<{ query: string; start: number; tokenEnd: number } | null>(null);
+	const [mentionIdx, setMentionIdx] = useState(0);
+	/** 被 Esc 关掉的那个 token（`@abc`）；同一个 token 不再弹，改了字重新弹 */
+	const mentionDismissed = useRef<string | null>(null);
+	const mentionMenuRef = useRef<HTMLDivElement>(null);
 	const taRef = useRef<HTMLTextAreaElement>(null);
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
@@ -180,6 +192,62 @@ export function ChatInput({
 	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.split(" ")[0].toLowerCase()));
 	const visibleCommands = filteredCommands;
 	const commandMode = typedCommandMode;
+
+	// ---------- @ 引用：输入 @ 弹候选，选中落成引用 chip ----------
+	// 候选清单一次拉全量（工作区 git 可见文件），之后每个字符都在本地匹配：和 pi 终端一样是瞬时的。
+	const mentionMode = mention !== null;
+	const files = useWorkspaceFiles(cwd ?? "", mentionMode);
+	const suggestions = mention ? suggestPaths(files.candidates, mention.query, 50) : [];
+	const effectiveMentionIdx = Math.min(mentionIdx, Math.max(0, suggestions.length - 1));
+
+	useEffect(() => {
+		mentionMenuRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+	}, [mentionIdx, suggestions.length]);
+
+	/** 文本 / 光标变了就重新判是否在 @ token 里（Esc 关过的同一个 token 不再弹） */
+	const syncMention = (value: string, caret: number | null) => {
+		const token = caret === null ? null : atToken(value, caret);
+		const key = token ? `${token.start}:${token.tokenEnd}` : null;
+		if (!token || mentionDismissed.current === key) {
+			setMention(null);
+			return;
+		}
+		if (!mention || mention.start !== token.start || mention.query !== token.query) setMentionIdx(0);
+		if (!mention || mention.start !== token.start || mention.query !== token.query || mention.tokenEnd !== token.tokenEnd) {
+			setMention({ query: token.query, start: token.start, tokenEnd: token.tokenEnd });
+		}
+	};
+
+	const closeMention = (dismiss: boolean) => {
+		if (dismiss && mention) mentionDismissed.current = `${mention.start}:${mention.tokenEnd}`;
+		setMention(null);
+		setMentionIdx(0);
+	};
+
+	/** 选中候选：目录引用文件夹本身（要往下钻就继续打 `@src/lib/`），token 从正文里播掉 */
+	const applyMention = (candidate: PathCandidate) => {
+		if (!mention) return;
+		const { start, tokenEnd } = mention;
+		const path = candidate.path;
+		changeDraft((previous) => {
+			const refs = previous.references ?? [];
+			return {
+				...previous,
+				text: previous.text.slice(0, start) + previous.text.slice(tokenEnd),
+				references: refs.includes(path) ? refs : [...refs, path],
+			};
+		});
+		setMention(null);
+		setMentionIdx(0);
+		requestAnimationFrame(() => {
+			autoSize();
+			const ta = taRef.current;
+			if (ta) {
+				ta.focus();
+				ta.setSelectionRange(start, start);
+			}
+		});
+	};
 	// 命令菜单滚动：.popover 的 overflow:hidden 会压掉 overflow-y-auto（unlayered CSS 优先），
 	// 内联 overflowY 强制可滚；键盘导航时把选中项滚进视野
 	const cmdMenuRef = useRef<HTMLDivElement>(null);
@@ -446,6 +514,57 @@ export function ChatInput({
 					{attachmentError}
 				</div>
 			)}
+			{/* @ 引用候选（与斜杠菜单同一处锚点：输入卡上方） */}
+			{mentionMode && (
+				<div
+					ref={mentionMenuRef}
+					data-testid="mention-menu"
+					className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5"
+					role="listbox"
+					aria-label={t.mentionFiles}
+					style={{ overflowY: "auto" }}
+				>
+					<div className="flex items-center gap-2 px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+						<span>{t.mentionFiles}</span>
+						{files.truncated && <span style={{ color: "var(--dsw-warn)" }}>{t.mentionTruncated}</span>}
+						{files.source === "disk" && <span title={t.mentionDiskSourceHint}>{t.mentionDiskSource}</span>}
+						<span className="flex-1" />
+						<span>{t.mentionHint}</span>
+					</div>
+					{files.status === "loading" && (
+						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
+					)}
+					{files.status === "error" && (
+						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }} role="alert">{files.error}</div>
+					)}
+					{files.status === "ready" && suggestions.length === 0 && (
+						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.mentionNoMatch}</div>
+					)}
+					{suggestions.map((candidate, i) => (
+						<button
+							key={`${candidate.dir ? "d" : "f"}:${candidate.path}`}
+							type="button"
+							role="option"
+							aria-selected={i === effectiveMentionIdx}
+							className="flex w-full items-center gap-2 px-4 py-1.5 text-left transition-colors"
+							style={{ background: i === effectiveMentionIdx ? "var(--dsw-hover)" : "transparent" }}
+							onMouseEnter={() => setMentionIdx(i)}
+							onClick={() => applyMention(candidate)}
+							title={candidateText(candidate)}
+						>
+							{candidate.dir ? (
+								<IconFolderClose16 size={13} style={{ flex: "none", color: "var(--dsw-warn)" }} />
+							) : (
+								<IconFileOutline16 size={13} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
+							)}
+							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-secondary)" }}>
+								{candidateText(candidate)}
+							</span>
+						</button>
+					))}
+				</div>
+			)}
+
 			{/* 斜杠命令菜单（dsh：悬浮于输入卡上方，同宽） */}
 			{commandMode && visibleCommands.length > 0 && (
 				<div ref={cmdMenuRef} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog} style={{ overflowY: "auto" }}>
@@ -607,11 +726,17 @@ export function ChatInput({
 						className="min-w-0 flex-1 resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
 							onChange={(e) => {
-							setText(e.target.value);
-									setCmdDismissed(false);
-							setCmdIdx(0);
-							autoSize();
-						}}
+								const value = e.target.value;
+								setText(value);
+								setCmdDismissed(false);
+								setCmdIdx(0);
+								syncMention(value, e.target.selectionStart);
+								autoSize();
+							}}
+							onSelect={(e) => {
+								const ta = e.target as HTMLTextAreaElement;
+								syncMention(ta.value, ta.selectionStart);
+							}}
 						onPaste={(e) => {
 							const files = Array.from(e.clipboardData.files);
 							if (files.length) {
@@ -620,6 +745,33 @@ export function ChatInput({
 							}
 						}}
 						onKeyDown={(e) => {
+							if (mentionMode) {
+								// 候选开着时优先于发送：Esc 关掉、↑↓ 选、Enter / Tab 采纳。
+								// 没有候选时不拦 Enter——`@某人` 这种不成候选的文字要能直接发出去。
+								if (e.key === "Escape") {
+									e.preventDefault();
+									closeMention(true);
+									return;
+								}
+								if (suggestions.length > 0) {
+									if (e.key === "ArrowDown") {
+										e.preventDefault();
+										setMentionIdx((i) => Math.min(i + 1, suggestions.length - 1));
+										return;
+									}
+									if (e.key === "ArrowUp") {
+										e.preventDefault();
+										setMentionIdx((i) => Math.max(i - 1, 0));
+										return;
+									}
+									if ((e.key === "Enter" || e.key === "Tab") && !e.nativeEvent.isComposing) {
+										e.preventDefault();
+										const candidate = suggestions[effectiveMentionIdx];
+										if (candidate) applyMention(candidate);
+										return;
+									}
+								}
+							}
 							if (adopted && text === "" && (e.key === "Backspace" || e.key === "Escape")) {
 								// 空参数时退格/Esc：摘掉命令胶囊
 								e.preventDefault();

@@ -1,15 +1,18 @@
 import { NextResponse } from "next/server";
 import { BoundaryError } from "@/lib/path-security";
-import { listWorkspaceDir, openInEditor, parseUploadLength, readWorkspaceFile, saveUploadStream } from "@/lib/files-service";
+import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readWorkspaceFile, saveUploadStream } from "@/lib/files-service";
 
 export const dynamic = "force-dynamic";
 
-/** 工作区文件浏览：?cwd=&path=（目录列表）；?read=1&cwd=&path=（文本预览） */
+/** 工作区文件浏览：?cwd=&path=（目录列表）；?read=1&cwd=&path=（文本预览）；?index=1&cwd=（@ 引用候选全量清单） */
 export async function GET(req: Request) {
 	const url = new URL(req.url);
 	try {
 		if (url.searchParams.get("read") === "1") {
 			return NextResponse.json({ success: true, data: await readWorkspaceFile(url.searchParams.get("cwd"), url.searchParams.get("path")) });
+		}
+		if (url.searchParams.get("index") === "1") {
+			return NextResponse.json({ success: true, data: await listWorkspaceIndex(url.searchParams.get("cwd")) });
 		}
 		return NextResponse.json({ success: true, data: await listWorkspaceDir(url.searchParams.get("cwd"), url.searchParams.get("path"), url.searchParams.get("offset")) });
 	} catch (err: any) {
