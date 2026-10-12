@@ -82,4 +82,18 @@ describe("PiWeb SSE event folding", () => {
 		const real = foldPiWebEvent(initial, { type: "error", message: "No API key for X", ts: 4 });
 		expect(real.error).toBe("No API key for X");
 	});
+
+	it("clears the retry notice when the retry interval ends, without waiting for the next idle status", () => {
+		// 回归:重试成功后 SDK 发 auto_retry_end(success:true),而下一轮 agent 开始前
+		// 不会再发一条 isStreaming:false 的 status —— 只等 agent_settled 会让
+		// 「重试 1/5 terminated」一直挂在对话末尾(用户看到的"已经恢复了,但是还显示错误")。
+		const initial = { snapshot: { isStreaming: true }, retryNotice: null, error: null } as unknown as PiWebState;
+		const retrying = foldPiWebEvent(initial, { type: "retry", attempt: 1, maxAttempts: 5, message: "terminated", ts: 1 });
+		expect(retrying.retryNotice).toMatch(/^重试 1\/5.terminated$/);
+		const ended = foldPiWebEvent(retrying, { type: "retry_end", attempt: 1, ts: 2 });
+		expect(ended.retryNotice).toBeNull();
+		// 收掉重试行不能顺手抹掉真正的错误
+		const withError = foldPiWebEvent({ ...retrying, error: "boom" } as PiWebState, { type: "retry_end", attempt: 1, ts: 3 });
+		expect(withError.error).toBe("boom");
+	});
 });

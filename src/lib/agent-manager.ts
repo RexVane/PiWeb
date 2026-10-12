@@ -597,8 +597,8 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			else publish(m, { type: "model", thinkingLevel: (evt as any).level, ts: now });
 			break;
 		case "auto_retry_start":
-			// 重试是流程内通知：发一条结构化 retry 事件（界面聚合成「重试 n/max」一行），
-			// 不再走 error 通道，免得每次尝试都多出一条报错。
+			// 重试是流程内通知:发一条结构化 retry 事件(界面聚合成「重试 n/max」一行),
+			// 不再走 error 通道,免得每次尝试都多出一条报错。
 			publish(m, {
 				type: "retry",
 				attempt: Number((evt as any).attempt) || 0,
@@ -606,6 +606,13 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				message: String((evt as any).errorMessage ?? ""),
 				ts: now,
 			});
+			break;
+		case "auto_retry_end":
+			// 重试收尾:SDK 成功/最终失败/被中止都会发这条,而重试成功后的这轮对话
+			// agent_settled 之前界面上还留着「重试 1/5 terminated」那一行(用户看到的
+			// 就是「已经恢复了还显示错误」)。这里显式发一条清除事件,重试区间一结束
+			// 就收掉这行;真失败时紧随其后的 assistant error 消息会照常出错误块。
+			publish(m, { type: "retry_end", attempt: Number((evt as any).attempt) || 0, ts: now });
 			break;
 		default:
 			break;

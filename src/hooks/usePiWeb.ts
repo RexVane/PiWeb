@@ -251,10 +251,16 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 			s.growth = { ...s.growth, consent: evt.request };
 			return s;
 		case "retry":
-			// 只保留最后一次尝试：重试过程在界面上是「重试 3/5」这一条，而不是五行报错
+			// 只保留最后一次尝试:重试过程在界面上是「重试 3/5」这一条,而不是五行报错
 			s.retryNotice = evt.maxAttempts
 				? `重试 ${evt.attempt}/${evt.maxAttempts}${evt.message ? `：${evt.message}` : ""}`
 				: `重试 ${evt.attempt}${evt.message ? `：${evt.message}` : ""}`;
+			return s;
+		case "retry_end":
+			// 重试区间结束(SDK auto_retry_end):立刻收掉重试行。
+			// 重试常发生在下一轮 agent 开始之前,而那段间隙不会发 status:isStreaming=false,
+			// 所以不能只等 agent_settled —— 否则用户会一直看到「重试 1/5 terminated」。
+			s.retryNotice = null;
 			return s;
 		case "error":
 			// 旧服务端把自动重试塞在 error 里：同样按通知处理，不占错误条

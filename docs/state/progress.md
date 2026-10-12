@@ -70,3 +70,4 @@
 - 2026-10-12 11:08 | #060 | 上下文 | 修复 #021：上下文详情的分类找回来了——只浏览历史会话不启动 agent 后，服务端分项整块归零，弹窗只剩消息几类；现在 Memory / Skills / Compacted / Auto-Compact Buffer 不启动也照算，System Prompt 和工具定义点「现在统计」启动会话后补齐；会话启动、工具 / 资源重载、压缩后主动推送新分项，不用刷新页面 | claude-opus-5-5
 - 2026-10-12 11:25 | #061 | 更新 | 修复 #059：手机上更新提示条（和扩展通知）挂到顶栏下面，不再盖住输入卡的发送按钮；桌面仍在右下角 | claude-opus-5-5
 - 2026-10-12 12:01 | #062 | 远程 | 修复 #058：长轮询响应开压缩——轮询响应不再带 no-transform，让 Cloudflare 隧道边缘压缩；实测打开会话的数据约 55 KB → 15 KB，流式输出 400 个 token 约 87 KB → 12 KB，延迟不变；局域网和本机的 SSE 照旧不压缩 | claude-opus-5-5
+- 2026-10-12 12:52 | #063 | 对话 | 修复:重试成功后「重试 1/5 terminated」一直挂在对话末尾。pi 的 auto_retry_end(成功/取消/最终失败)PiWeb 没接,而重试成功后到下一轮 agent 开始之间不会再发 isStreaming:false 状态,只能等 agent_settled 才清,中间这段时间用户看到的就是「已经恢复了还显示错误」;现在 SDK 一收尾就发一条 retry_end 清掉重试行(真失败由紧随其后的错误块表达);顺带把 vitest 的 NODE_ENV 固定成 test(继承来的 NODE_ENV=production 会让 React 走生产构建,88+ 用例假失败) | claude-opus-5-5

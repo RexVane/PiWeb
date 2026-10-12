@@ -9,6 +9,7 @@ export default defineConfig({
 	test: {
 		// 默认 node；组件测试在文件头加 // @vitest-environment jsdom
 		environment: "node",
+		env: { NODE_ENV: "test" },
 		// SDK, Git and large-upload fixtures each allocate their own process and storage.
 		maxWorkers: 4,
 		// Heavy fixtures (real Git repositories, SDK module loading, uploads) can exceed the

@@ -145,8 +145,10 @@ export type WebEvent =
 	  }
 	| { type: "extension_ui_resolved"; id: string; ts: number }
 	| { type: "error"; message: string; ts: number }
-	/** 自动重试：流程内通知，界面聚合成一条「重试 n/max」，不作为错误条目累积 */
+	/** 自动重试:流程内通知,界面聚合成一条「重试 n/max」,不作为错误条目累积 */
 	| { type: "retry"; attempt: number; maxAttempts: number; message: string; ts: number }
+	/** 重试区间结束(SDK auto_retry_end):收掉「重试 n/max」那一行;真失败由后续 error 消息表达 */
+	| { type: "retry_end"; attempt: number; ts: number }
 	/** 项目生长：提交了一个 commit（pi 的一轮 / 用户两轮之间的修改 / 工作区基线） */
 	| { type: "growth"; round: GrowthRound; ts: number }
 	| { type: "growth_error"; message: string | null; ts: number }
