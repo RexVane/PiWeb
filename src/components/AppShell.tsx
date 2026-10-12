@@ -173,6 +173,35 @@ export function AppShell() {
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
 	}, []);
+	/** 新会话时加载用户之前的选择，或使用系统建议（第一个认证的） */
+	useEffect(() => {
+		if (!heroCwd) {
+			setHeroModel(null);
+			return;
+		}
+		// 先从 localStorage 读工作区级别的选择
+		const saved = localStorage.getItem(`piweb.heroModel.${heroCwd}`);
+		if (saved) {
+			try {
+				setHeroModel(JSON.parse(saved));
+				return;
+			} catch {
+				/* 忽略解析错误 */
+			}
+		}
+		// 再从全局默认
+		const globalSaved = localStorage.getItem("piweb.heroModel");
+		if (globalSaved) {
+			try {
+				setHeroModel(JSON.parse(globalSaved));
+				return;
+			} catch {
+				/* 忽略解析错误 */
+			}
+		}
+		// 最后用系统建议（第一个认证的）
+		setHeroModel(null);
+	}, [heroCwd]);
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
 		setDrawerOpen((cur) => {
@@ -825,7 +854,14 @@ export function AppShell() {
 							addWorkspaceByPicker={addWorkspaceByPicker}
 							heroModel={heroModel}
 							onSelectHeroModel={(provider, id) => {
-								setHeroModel({ provider, id });
+								const choice = { provider, id };
+								setHeroModel(choice);
+								// 保存用户的选择：优先用工作区级别，再回落到全局
+								if (heroCwd) {
+									localStorage.setItem(`piweb.heroModel.${heroCwd}`, JSON.stringify(choice));
+								} else {
+									localStorage.setItem("piweb.heroModel", JSON.stringify(choice));
+								}
 								const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
 								if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
 							}}
