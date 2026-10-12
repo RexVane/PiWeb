@@ -41,3 +41,4 @@
 - 2026-10-11 19:58 | D:\AIApp\piweb-remote（整个仓库，116 文件，含 .git 历史与自身 backups） | backups/piweb-remote-20261011-195833/ | 功能已被 PiWeb 内置的「远程连接」插件完全覆盖（注入资产逐字节相同，且内置版另有隧道控制面、开机自启与设置界面），整体退休；末次提交 8197773，历史随目录保留
 - 2026-10-12 00:14 | package-lock.json（另一会话升级 SDK 后未提交的版本） | backups/files/package-lock-20261012-001436.json | 补回 npm 重写时丢掉的 4 个 @emnapi 条目前留底（未进 git）
 - 2026-10-12 10:48 | -o | backups/files/-o-20261012-104820 | 调试时 curl 参数被误当成 cookie 文件名生成的空 cookie 文件（只有表头，无内容）
+2026-10-12 18:39 | src/lib/model-suggestion.ts | backups/files/model-suggestion-20261012-183900.ts | 草稿（服务端建议模型的第一版，后被 src/lib/model-defaults.ts 替代）：删除时漏了备份，本条补记；实体由会话里的写入记录还原，与写入时内容一致；删除时间未记录，发生在本次会话中
