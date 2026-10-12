@@ -202,34 +202,103 @@ describe("ProviderSetupModal (custom mode): 保存", () => {
 });
 
 describe("ProviderSetupModal (custom mode): 自动识别", () => {
-	it("URL 和密钥填完就自己去拉模型目录，并把容量与视觉一起填好", async () => {
-		vi.useFakeTimers();
-		const calls: string[] = [];
-		vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
-			calls.push(String(url));
-			expect(JSON.parse(String(init?.body)).action).toBe("discoverModels");
-			return { ok: true, json: async () => ({ success: true, data: { models: [
-				{ id: "auto-a", name: "A", contextWindow: 1_000_000, maxTokens: 32_000, vision: true },
-				{ id: "auto-b", name: "B" },
-			] } }) };
-		}));
+	const URL_PLACEHOLDER = "https://gateway.example/v1";
+	const KEY_PLACEHOLDER = "输入 API 密钥，或留空使用环境认证";
+
+	/** fetch 桩：每次请求挂起，测试按顺序手动放行，模拟慢端点和乱序返回 */
+	function deferredDiscovery() {
+		const pending: { body: { action: string; baseUrl: string; apiKey: string }; resolve: (models: object[]) => void }[] = [];
+		vi.stubGlobal("fetch", vi.fn((_url: string, init?: RequestInit) => new Promise((resolve) => {
+			pending.push({
+				body: JSON.parse(String(init?.body)),
+				resolve: (models) => resolve({ ok: true, json: async () => ({ success: true, data: { models } }) }),
+			});
+		})));
+		return pending;
+	}
+
+	function renderCustom(onSaveCustom = vi.fn(async () => ({ success: true }))) {
 		render(
 			<ProviderSetupModal mode="custom" providers={[]} existingIds={[]} onClose={vi.fn()}
-				onSaveBuiltin={vi.fn(async () => ({ success: true }))} onSaveCustom={vi.fn(async () => ({ success: true }))} />,
+				onSaveBuiltin={vi.fn(async () => ({ success: true }))} onSaveCustom={onSaveCustom} />,
 		);
-		// 还没填地址：不该有请求
-		expect(calls).toHaveLength(0);
-		fireEvent.change(screen.getByPlaceholderText("https://gateway.example/v1"), { target: { value: "https://gateway.example/v1" } });
-		fireEvent.change(screen.getByPlaceholderText("输入 API 密钥，或留空使用环境认证"), { target: { value: "sk-test" } });
-		await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
-		expect(calls).toEqual(["/api/models"]);
-		// 候选被自动采纳：容量与视觉来自端点
+		return onSaveCustom;
+	}
+
+	it("打字时不发请求，地址 / 密钥失焦才拉一次；端点报的容量照填，没报的留空", async () => {
+		const pending = deferredDiscovery();
+		const onSaveCustom = renderCustom();
+		fireEvent.change(screen.getByPlaceholderText("acme-gateway"), { target: { value: "acme" } });
+		const url = screen.getByPlaceholderText(URL_PLACEHOLDER);
+		const key = screen.getByPlaceholderText(KEY_PLACEHOLDER);
+		fireEvent.change(url, { target: { value: "https://gate" } });
+		fireEvent.change(url, { target: { value: URL_PLACEHOLDER } });
+		// 只填了地址（公网、还没密钥）就失焦：不该拿空密钥去试
+		fireEvent.blur(url);
+		fireEvent.change(key, { target: { value: "sk-te" } });
+		fireEvent.change(key, { target: { value: "sk-test" } });
+		expect(pending).toHaveLength(0);
+		fireEvent.blur(key);
+		expect(pending.map((call) => call.body)).toEqual([expect.objectContaining({ action: "discoverModels", baseUrl: URL_PLACEHOLDER, apiKey: "sk-test" })]);
+		// 同一组地址 + 密钥再失焦：不重复请求
+		fireEvent.blur(url);
+		expect(pending).toHaveLength(1);
+
+		await act(async () => pending[0].resolve([
+			{ id: "auto-a", name: "A", contextWindow: 1_000_000, maxTokens: 32_000, vision: true },
+			{ id: "auto-b", name: "B" },
+		]));
 		expect(screen.getByDisplayValue("auto-a")).toBeTruthy();
 		expect(screen.getByDisplayValue("auto-b")).toBeTruthy();
 		expect(screen.getByText(/已自动识别 2 个模型/)).toBeTruthy();
-		// auto-a 展开后能看到端点给的容量；auto-b 只填了 id/name
 		fireEvent.click(screen.getAllByTitle("容量")[0]);
 		expect(screen.getByDisplayValue("1M")).toBeTruthy();
 		expect(screen.getByDisplayValue("32K")).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "创建提供方" }));
+		await waitFor(() => expect(onSaveCustom).toHaveBeenCalledWith({
+			providerId: "acme",
+			config: {
+				name: "acme", baseUrl: URL_PLACEHOLDER, api: "openai-completions", apiKey: "sk-test",
+				models: [{ id: "auto-a", name: "A", contextWindow: 1_000_000, maxTokens: 32_000, input: ["text", "image"] }, { id: "auto-b", name: "B" }],
+			},
+		}));
+	});
+
+	it("地址改了，旧地址迟到的结果直接丢掉，不会把别家的模型塞进来", async () => {
+		const pending = deferredDiscovery();
+		renderCustom();
+		const url = screen.getByPlaceholderText(URL_PLACEHOLDER);
+		fireEvent.change(screen.getByPlaceholderText(KEY_PLACEHOLDER), { target: { value: "sk-test" } });
+		fireEvent.change(url, { target: { value: "https://old.example/v1" } });
+		fireEvent.blur(url);
+		expect(screen.getByText(/正在自动识别模型/)).toBeTruthy();
+		// 还没失焦就改了地址：在路上的那次作废
+		fireEvent.change(url, { target: { value: "https://new.example/v1" } });
+		expect(screen.queryByText(/正在自动识别模型/)).toBeNull();
+		fireEvent.blur(url);
+		expect(pending.map((call) => call.body.baseUrl)).toEqual(["https://old.example/v1", "https://new.example/v1"]);
+
+		await act(async () => pending[0].resolve([{ id: "old-model" }]));
+		expect(screen.queryByDisplayValue("old-model")).toBeNull();
+		expect(screen.getByText(/正在自动识别模型/)).toBeTruthy();
+		await act(async () => pending[1].resolve([{ id: "new-model" }]));
+		expect(screen.getByDisplayValue("new-model")).toBeTruthy();
+		expect(screen.queryByDisplayValue("old-model")).toBeNull();
+	});
+
+	it("自动采纳后把模型行都删了，再失焦也不会自己加回来", async () => {
+		const pending = deferredDiscovery();
+		renderCustom();
+		const url = screen.getByPlaceholderText(URL_PLACEHOLDER);
+		fireEvent.change(url, { target: { value: "http://127.0.0.1:11434/v1" } });
+		// 本机地址不要求密钥，并自动允许访问私网
+		fireEvent.blur(url);
+		expect(pending[0].body).toEqual(expect.objectContaining({ baseUrl: "http://127.0.0.1:11434/v1", allowPrivate: true }));
+		await act(async () => pending[0].resolve([{ id: "llama" }]));
+		fireEvent.click(screen.getByTitle("删除"));
+		expect(screen.queryByDisplayValue("llama")).toBeNull();
+		fireEvent.blur(url);
+		expect(pending).toHaveLength(1);
 	});
 });

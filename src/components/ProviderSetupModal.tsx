@@ -66,6 +66,13 @@ export function ProviderSetupModal({
 	const allApis = customApiOptions(providers.flatMap((provider) => provider.apis));
 	const [api, setApi] = useState(allApis.includes("openai-completions") ? "openai-completions" : (allApis[0] ?? "openai-completions"));
 	const [models, setModels] = useState<ModelDraft[]>([]);
+	// 自定义 provider 的自动识别只在地址 / 密钥输入完（失焦）或换协议时触发：
+	// 还没有任何模型行，且 URL（+ 密钥，本机网关可省）都填了，这次失焦才算数
+	const autoReady = models.length === 0 && Boolean(baseUrl.trim()) && Boolean(apiKey.trim() || looksPrivateEndpoint(baseUrl));
+	const [autoTrigger, setAutoTrigger] = useState(0);
+	const requestAutoDiscover = () => {
+		if (autoReady) setAutoTrigger((count) => count + 1);
+	};
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState("");
 	const pickerRef = useRef<HTMLDivElement>(null);
@@ -276,17 +283,17 @@ export function ProviderSetupModal({
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.apiAddress}</label>
-								<input className={styles.input} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://gateway.example/v1" />
+								<input className={styles.input} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} onBlur={requestAutoDiscover} placeholder="https://gateway.example/v1" />
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.apiProtocol}</label>
-								<select className={styles.select} value={api} onChange={(event) => setApi(event.target.value)}>
+								<select className={styles.select} value={api} onChange={(event) => { setApi(event.target.value); requestAutoDiscover(); }}>
 									{allApis.map((value) => <option key={value} value={value}>{value}</option>)}
 								</select>
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.apiKey}</label>
-								<input className={styles.input} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t.apiKeyOptional} />
+								<input className={styles.input} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} onBlur={requestAutoDiscover} placeholder={t.apiKeyOptional} />
 								<div className={styles.hint}>{t.customApiKeyHint}</div>
 							</div>
 							<ModelCatalog
@@ -295,8 +302,7 @@ export function ProviderSetupModal({
 								updateModel={updateModel}
 								discover={discoverAvailableModels}
 								discoverDisabled={!baseUrl.trim()}
-								// 还没有任何模型行且 URL（+ 密钥，本机网关可省）填好：停手后自动去识别
-								autoDiscover={models.length === 0 && baseUrl.trim() && (apiKey.trim() || looksPrivateEndpoint(baseUrl)) ? { signature: `${baseUrl.trim()}|${api}|${apiKey.trim()}`, privateHost: looksPrivateEndpoint(baseUrl) } : undefined}
+								autoDiscover={autoReady ? { signature: `${baseUrl.trim()}|${api}|${apiKey.trim()}`, privateHost: looksPrivateEndpoint(baseUrl), trigger: autoTrigger } : undefined}
 							/>
 						</>
 					)}
@@ -343,10 +349,10 @@ export function ModelCatalog({
 	discover?: (allowPrivate: boolean) => Promise<ModelDraft[]>;
 	discoverDisabled?: boolean;
 	/**
-	 * 自动识别：签名（URL + 协议 + 密钥）变了就自己去拉一次模型目录。
-	 * 只在「还没有任何模型行」时给出；采纳后签名失效，不会重复添加。
+	 * 自动识别：trigger 变了（地址 / 密钥失焦、换协议）就按当前签名（URL + 协议 + 密钥）拉一次模型目录。
+	 * 只在「还没有任何模型行」时给出；同一签名只跑一次，清空模型行后不会自己又加回来。
 	 */
-	autoDiscover?: { signature: string; privateHost: boolean };
+	autoDiscover?: { signature: string; privateHost: boolean; trigger: number };
 }) {
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
@@ -395,37 +401,62 @@ export function ModelCatalog({
 
 	const inCatalog = (id: string) => catalogIds?.has(id.trim()) ?? false;
 
-	// 自动识别：URL / 密钥填完停手 0.8 秒后自己去拉一次目录，不用再点按钮。
-	// 只在还没有任何模型行时生效；本机/私网地址自动勾上允许（服务端仍会自己再判一次）。
+	// 自动识别：地址 / 密钥输入框失焦时（父组件递增 trigger）自己去拉一次目录，不用再点按钮。
+	// 不按「停手」计时：那样会拿半截地址和半截密钥去发请求。同一签名只跑一次；
+	// 表单一改（签名变了）就作废还在路上的那次，迟到的结果不会把别的地址的模型塞进来。
 	const auto = autoDiscover;
 	const autoDone = useRef("");
-	const [autoStatus, setAutoStatus] = useState<"" | "loading" | "done" | "failed">("");
+	const autoSeq = useRef(0);
+	const autoPending = useRef(false);
+	// 处理过的最后一次 trigger：条目从无到有（如清空模型行）时 trigger 没变，不算一次新的失焦
+	const autoTriggerSeen = useRef(0);
+	const [autoStatus, setAutoStatus] = useState<"" | "loading" | "done" | "empty" | "failed">("");
 	const [autoFound, setAutoFound] = useState(0);
 	useEffect(() => {
-		if (!auto?.signature || !discover || autoDone.current === auto.signature) return;
-		const allow = allowPrivate || auto.privateHost;
-		const timer = setTimeout(() => {
-			autoDone.current = auto.signature;
-			setAutoStatus("loading");
-			void (async () => {
-				try {
-					const found = await discover(allow);
-					setAutoFound(found.length);
-					setAutoStatus("done");
-					// 新 provider：直接把候选收进来（容量与视觉按端点填好）
-					setModels((current) => (current.length ? current : found.map(modelDraftFromCatalog)));
-				} catch {
-					// 自动跑失败不弹错：按钮还在，手动点能看到具体原因
-					setAutoStatus("failed");
-				}
-			})();
-		}, 800);
-		return () => clearTimeout(timer);
+		if (!autoPending.current) return;
+		autoPending.current = false;
+		autoSeq.current += 1;
+		// 作废的那次不算跑过：改回原值再失焦还能重试
+		autoDone.current = "";
+		setAutoStatus("");
+	}, [auto?.signature]);
+	useEffect(() => {
+		if (!auto || auto.trigger === autoTriggerSeen.current) return;
+		autoTriggerSeen.current = auto.trigger;
+		if (!discover || autoDone.current === auto.signature) return;
+		autoDone.current = auto.signature;
+		autoPending.current = true;
+		const seq = ++autoSeq.current;
+		setAutoStatus("loading");
+		const settle = (status: "done" | "empty" | "failed") => {
+			if (seq !== autoSeq.current) return false;
+			autoPending.current = false;
+			setAutoStatus(status);
+			return true;
+		};
+		// 本机/私网地址自动允许（服务端仍会自己再判一次）
+		discover(allowPrivate || auto.privateHost).then(
+			(found) => {
+				if (!settle(found.length ? "done" : "empty")) return;
+				setAutoFound(found.length);
+				setModels((current) => (current.length ? current : found));
+			},
+			// 自动跑失败不弹错：按钮还在，手动点能看到具体原因
+			() => void settle("failed"),
+		);
+		// 只由失焦触发；discover 每次渲染都是新函数，放进依赖会让任何重渲染都重跑
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [auto?.signature, auto?.privateHost, allowPrivate, discover]);
+	}, [auto?.trigger]);
 
 	const startDiscover = async () => {
 		if (!discover || discovering) return;
+		// 手动点了就以候选对话框为准：点按钮时输入框失焦触发的那次自动识别作废
+		if (autoPending.current) {
+			autoPending.current = false;
+			autoSeq.current += 1;
+			autoDone.current = "";
+			setAutoStatus("");
+		}
 		setDiscovering(true);
 		setDiscoverError("");
 		try {
@@ -459,7 +490,7 @@ export function ModelCatalog({
 			for (const candidate of candidates) {
 				const id = candidate.id.trim();
 				if (!id || !picked.has(id) || byId.has(id) || inCatalog(id)) continue;
-				byId.set(id, modelDraftFromCatalog(candidate));
+				byId.set(id, candidate);
 			}
 			return [...byId.values()];
 		});
@@ -490,6 +521,7 @@ export function ModelCatalog({
 						{inheritedCount ? t.usingDefaultModels.replace("{count}", String(inheritedCount)) : t.customModelsRequired}
 						{autoStatus === "loading" ? ` · ${t.autoDiscovering}` : null}
 						{autoStatus === "done" ? ` · ${t.autoDiscovered.replace("{n}", String(autoFound))}` : null}
+						{autoStatus === "empty" ? ` · ${t.discoverEmpty}` : null}
 						{autoStatus === "failed" ? ` · ${t.autoDiscoverFailed}` : null}
 					</div>
 				</div>
