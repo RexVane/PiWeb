@@ -826,6 +826,73 @@ textarea::placeholder {
 	margin: 1em 0;
 }
 
+/* ---------- 流式正文：稳定块 + 未闭合代码围栏的纯文本尾巴共用一个 .md 容器 ---------- */
+.pw-stream {
+	display: flow-root;
+}
+/* 打字光标模式下尾巴外面包了一层：包层不能改变原有排版，
+   .md > *:first-child/:last-child 的边距归零要透传到最后那个内容元素上 */
+.pw-stream > .pw-stream-tail:first-child > :first-child {
+	margin-top: 0;
+}
+.pw-stream > .pw-stream-tail:last-child > :last-child {
+	margin-bottom: 0;
+}
+/* 围栏未闭合时的尾巴：与最终渲染同样的 md-code-block 结构（复制按钮都在），
+   只差语法着色——闭合升级为零布局跳变，不会闪一下。 */
+.pw-stream-code {
+	font-family: var(--font-mono);
+	font-size: 13px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+/* 渐显样式：只让尾巴里新出现的元素柔和淡入。
+   动画若挂在容器全部直接子级上，块升级（段落从尾巴进入稳定块）会重建 DOM，
+   已经显示过的内容就把入场动画重播一遍——那正是输出时「闪烁几下」的来源；
+   收窄到 .pw-stream-tail 内部后，升级进来的块不再带动画，视觉无缝。 */
+.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
+	animation: pw-stream-enter 240ms ease-out both;
+}
+@keyframes pw-stream-enter {
+	from {
+		opacity: 0;
+		transform: translateY(2px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* 打字光标：挂在尾巴最后一个元素的行内末尾（不会另起一行） */
+.pw-stream-caret .pw-stream-tail > :last-child::after {
+	content: "";
+	display: inline-block;
+	width: 2px;
+	height: 1.05em;
+	margin-left: 2px;
+	vertical-align: -0.18em;
+	border-radius: 1px;
+	background: var(--dsw-accent);
+	animation: pw-stream-caret 1.1s steps(2, start) infinite;
+}
+@keyframes pw-stream-caret {
+	50% {
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
+		animation: none;
+	}
+	.pw-stream-caret .pw-stream-tail > :last-child::after {
+		animation: none;
+	}
+}
+
 /* ---------- 代码高亮（highlight.js）：VS Code 式的分类着色，配色跟 Pi 自己的主题走 ---------- */
 :root {
 	--hl-comment: rgb(130, 136, 146);
