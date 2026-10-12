@@ -42,6 +42,7 @@ import type { TreeNode } from "@/lib/growth-tree";
 import { syncPebrelTheme } from "@/lib/theme";
 import type { ModelChoice } from "@/components/ModelSelector";
 import type { NewSessionDefaults } from "@/lib/model-defaults";
+import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
 // dsh ui-layout columns.ts 几何常量
@@ -339,6 +340,19 @@ export function AppShell() {
 		() => (heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel)?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
 		[heroModel, modelChoices, defaultModel],
 	);
+	/**
+	 * 新会话实际会用的思考档位：用户显式选过才算选择（下发时才带上）；界面平时只显示这里算出的生效值，
+	 * 不把它当作选择发给服务端。
+	 */
+	const heroEffectiveThinking = useMemo(() => {
+		const choice = heroModel ? modelChoices.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) : defaultModel;
+		return newSessionThinkingLevel({
+			supported: heroModelLevels,
+			requested: heroThinking,
+			modelOverride: choice ? heroDefaults?.modelThinkingLevels[`${choice.provider}/${choice.id}`] : undefined,
+			defaultLevel: heroDefaults?.defaultThinkingLevel,
+		});
+	}, [heroModel, modelChoices, defaultModel, heroModelLevels, heroThinking, heroDefaults]);
 
 
 	// ---------- 拖拽 ----------
@@ -892,7 +906,7 @@ export function AppShell() {
 							}}
 							defaultModel={defaultModel}
 							heroModelLevels={heroModelLevels}
-							heroThinking={heroThinking}
+							heroEffectiveThinking={heroEffectiveThinking}
 							onSelectHeroThinking={setHeroThinking}
 						/>
 						{/* 草稿阶段的错误行内显示（不再弹右下角） */}
@@ -1178,7 +1192,7 @@ function Hero({
 	onSelectHeroModel,
 	defaultModel,
 	heroModelLevels,
-	heroThinking,
+	heroEffectiveThinking,
 	onSelectHeroThinking,
 }: {
 	draft: ChatDraft;
@@ -1204,7 +1218,7 @@ function Hero({
 	onSelectHeroModel: (provider: string, id: string) => void;
 	defaultModel?: ModelChoice;
 	heroModelLevels: string[];
-	heroThinking: string;
+	heroEffectiveThinking: string;
 	onSelectHeroThinking: (level: string) => void;
 }) {
 	const { t } = useI18n();
@@ -1314,7 +1328,7 @@ function Hero({
 					contextWindow={null}
 					contextVisible={false}
 					model={heroModel ? models.find((m) => m.provider === heroModel.provider && m.id === heroModel.id) ?? { provider: heroModel.provider, id: heroModel.id, name: heroModel.id, reasoning: false, contextWindow: 0 } : defaultModel}
-					thinkingLevel={heroThinking || undefined}
+					thinkingLevel={heroEffectiveThinking}
 					thinkingLevels={heroModelLevels}
 					models={models}
 					providerNames={providerNames}
