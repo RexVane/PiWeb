@@ -195,6 +195,9 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) },
 			};
 			return s;
+		case "context_breakdown":
+			if (s.snapshot) s.snapshot = { ...s.snapshot, contextBreakdown: evt.breakdown };
+			return s;
 		case "resources":
 			if (s.snapshot) {
 				s.snapshot = {

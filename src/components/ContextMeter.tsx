@@ -7,6 +7,8 @@
  * 分段口径：全部为字符/4 启发式估算（与 SDK estimateTokens 一致），
  * 服务端分项（System Prompt / Tools / Memory / Skills / Compacted / Buffer）来自快照，
  * 消息分项（User / Agent Text / Thinking / Tool Call / Tool Output）弹窗打开时前端统计。
+ * 冷会话（只浏览历史、agent 没启动）拿不到组装后的 System Prompt 和工具定义：
+ * 其余分项照常显示，另给「现在统计」按需启动会话，分项随后经 context_breakdown 事件刷新。
  * 无对话时不渲染（由父组件经 contextVisible 控制）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -40,11 +42,20 @@ export function ContextMeter({
 		systemChars: number;
 		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown }> }[];
 		breakdown?: ContextBreakdown;
+		/** 冷会话里点「现在统计」：启动会话（prepare），System Prompt 与工具定义才算得出来 */
+		loadFull?: () => Promise<unknown> | unknown;
 	};
 }) {
 	const [open, setOpen] = useState(false);
+	const [counting, setCounting] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
+	const cold = Boolean(source?.breakdown?.cold);
+
+	// 新分项到了（不再是冷的）就收起「统计中」
+	useEffect(() => {
+		if (!cold) setCounting(false);
+	}, [cold]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -154,6 +165,26 @@ export function ContextMeter({
 						))}
 						{window_ > 0 && <SegmentRow label={t.contextFreeSpace} tokens={free} color="var(--dsw-selector)" />}
 					</div>
+					{cold && source?.loadFull ? (
+						<div className="mt-3 flex items-center justify-between gap-2" style={{ color: "var(--dsw-label-tertiary)" }}>
+							<span className="min-w-0" style={{ fontSize: 11.5 }}>{t.contextColdHint}</span>
+							<button
+								type="button"
+								className="btn-outline flex-none"
+								style={{ height: 24, padding: "0 10px", fontSize: 12 }}
+								disabled={counting}
+								onClick={() => {
+									setCounting(true);
+									// 启动失败（例如没配模型）就把按钮还回来；成功时等 context_breakdown 事件把冷标记去掉
+									void Promise.resolve(source.loadFull?.()).then((result) => {
+										if ((result as { success?: boolean } | undefined)?.success === false) setCounting(false);
+									}, () => setCounting(false));
+								}}
+							>
+								{counting ? t.contextCounting : t.contextCountNow}
+							</button>
+						</div>
+					) : null}
 				</div>
 			)}
 		</div>

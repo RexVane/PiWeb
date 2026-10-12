@@ -116,6 +116,8 @@ export type WebEvent =
 	| { type: "traj"; entry: TrajEntry; ts: number }
 	| { type: "name"; name: string; ts: number }
 	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; ts: number }
+	/** 上下文分项变了（会话启动、工具 / 资源重载、压缩之后）：替换快照里的 contextBreakdown */
+	| { type: "context_breakdown"; breakdown: ContextBreakdown; ts: number }
 	| {
 			/** 资源（扩展/技能/模板/命令）重载后的新清单；前端据此刷新 / 菜单与设置面板 */
 			type: "resources";
@@ -248,6 +250,11 @@ export interface ContextBreakdown {
 	compacted: number;
 	/** auto-compact 预留（compaction.reserveTokens 设置值；未启用为 0） */
 	autoCompactBuffer: number;
+	/**
+	 * 会话还没启动（只浏览历史不冷启动 agent）：systemPrompt / systemTools / customTools 拿不到、为 0，
+	 * 其余几项照常统计。前端据此提示并提供「现在统计」（prepare 启动会话）。
+	 */
+	cold?: boolean;
 }
 
 /** SSE 连接建立时先发的完整快照 */

@@ -6,7 +6,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { formatSkillsForPrompt, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import {
 	getResourceLoader,
 	createSessionResourceLoader,
@@ -65,6 +65,8 @@ interface Managed {
 	subscribers: Set<(seq: number, json: string) => void>;
 	/** 长轮询的浏览器在两次请求之间没有订阅，到这个时间点之前仍算有人在看（见 holdViewer） */
 	viewerGraceUntil?: number;
+	/** 本轮已排队推送上下文分项（publishContextBreakdown 合并同一轮的多次触发） */
+	breakdownQueued?: boolean;
 	buffer: { seq: number; json: string }[];
 	seq: number;
 	/**
@@ -581,6 +583,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				ts: now,
 			});
 			publishUsage(m);
+			publishContextBreakdown(m);
 			if ((evt as any).reason === "manual") {
 				publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: now });
 				if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
@@ -735,45 +738,46 @@ function loadContextResources(cwd: string, loader: AgentSession["resourceLoader"
 	];
 }
 
+const SKILLS_SECTION_START = "The following skills provide specialized instructions";
+const SKILLS_SECTION_END = "</available_skills>";
+
 /**
  * 上下文占用的服务端估算分项。systemPrompt 是整段拼接（正文 + memory + skills + 工具列表），
  * 所以 Memory / Skills 从资源加载器与 systemPrompt 的资源段差分得出：
  * SDK 的拼接顺序固定为 正文 → context files → skills → 工具列表，按内容定位切块。
+ *
+ * 冷会话（只浏览历史、不冷启动 agent）拿不到组装后的 system prompt 和工具定义，这三项为 0、标 cold；
+ * Memory / Skills / Compacted / Buffer 不依赖 agent，照常从发现缓存、会话文件和设置里算，
+ * 不能因为没启动就整块归零（那样弹窗只剩消息几类）。
  */
-async function buildContextBreakdown(
-	cwd: string,
-	session: AgentSession | null,
-	resources: ContextResource[],
-): Promise<ContextBreakdown> {
+async function buildContextBreakdown(m: Managed, resources: ContextResource[]): Promise<ContextBreakdown> {
+	const session = m.session;
 	const breakdown: ContextBreakdown = {
 		systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0, autoCompactBuffer: 0,
+		...(session ? {} : { cold: true }),
 	};
-	if (!session) return breakdown;
-	try {
-		const prompt = session.systemPrompt ?? "";
-		// Memory：AGENTS.md 等注入文件（contextResources 的 project 部分）
-		const memoryText = resources.filter((r) => r.source === "project").map((r) => r.content).join("\n\n");
-		breakdown.memory = estimateTokensOf(memoryText);
-		// Skills：从资源加载器取技能清单，按 SDK 的 formatSkillsForPrompt 段落定位。
-		// 该段落没有 Markdown 标题（原文以 "The following skills provide specialized instructions…" 开头，
-		// 结尾是 </available_skills>），以前按 "## Skills" 找永远找不到，技能段一直是 0。
+	// Memory：AGENTS.md 等注入文件（contextResources 的 project 部分）
+	const memoryText = resources.filter((r) => r.source === "project").map((r) => r.content).join("\n\n");
+	breakdown.memory = estimateTokensOf(memoryText);
+	if (session) {
 		try {
-			const { skills } = session.resourceLoader.getSkills();
-			if (skills.length && prompt) {
-				const start = prompt.indexOf("The following skills provide specialized instructions");
-				const end = prompt.indexOf("</available_skills>");
-				if (start >= 0 && end > start) breakdown.skills = estimateTokensOf(prompt.slice(start, end + "</available_skills>".length));
+			const prompt = session.systemPrompt ?? "";
+			// Skills：按 SDK 的 formatSkillsForPrompt 段落定位。该段落没有 Markdown 标题（以
+			// "The following skills provide specialized instructions…" 开头、</available_skills> 结尾），
+			// 以前按 "## Skills" 找永远找不到，技能段一直是 0。
+			try {
+				if (session.resourceLoader.getSkills().skills.length && prompt) {
+					const start = prompt.indexOf(SKILLS_SECTION_START);
+					const end = prompt.indexOf(SKILLS_SECTION_END);
+					if (start >= 0 && end > start) breakdown.skills = estimateTokensOf(prompt.slice(start, end + SKILLS_SECTION_END.length));
+				}
+			} catch {
+				/* loader 不可用则跳过 */
 			}
-		} catch {
-			/* loader 不可用则跳过 */
-		}
-		// System Prompt 正文 = 全文减去资源段与 skills 段的近似差分，下限 0
-		const estimatedSections = breakdown.memory + breakdown.skills;
-		breakdown.systemPrompt = Math.max(0, estimateTokensOf(prompt) - estimatedSections);
-		// 工具：builtin 与扩展注册的分开统计（schema + description + guidelines 序列化估算）
-		try {
-			const tools = session.getAllTools();
-			for (const tool of tools) {
+			// System Prompt 正文 = 全文减去资源段与 skills 段的近似差分，下限 0
+			breakdown.systemPrompt = Math.max(0, estimateTokensOf(prompt) - breakdown.memory - breakdown.skills);
+			// 工具：builtin 与扩展注册的分开统计（schema + description + guidelines 序列化估算）
+			for (const tool of session.getAllTools()) {
 				const size = estimateTokensOf(JSON.stringify({
 					name: tool.name,
 					description: tool.description,
@@ -784,38 +788,61 @@ async function buildContextBreakdown(
 				else breakdown.customTools += size;
 			}
 		} catch {
-			/* getAllTools 不可用则跳过 */
+			/* systemPrompt / getAllTools 不可用则保持 0 */
 		}
-		// 最新一次压缩的摘要
+	} else {
+		// 冷会话：技能段用发现缓存里的清单按 SDK 同一个格式化函数估算（启动后改用实际 prompt 里的那段）
 		try {
-			const entries = m_smEntries(session);
-			for (let i = entries.length - 1; i >= 0; i -= 1) {
-				const entry = entries[i] as { type?: string; summary?: string };
-				if (entry?.type === "compaction" && typeof entry.summary === "string") {
-					breakdown.compacted = estimateTokensOf(entry.summary);
-					break;
-				}
+			const loader = peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
+			breakdown.skills = estimateTokensOf(formatSkillsForPrompt(loader.getSkills().skills).trim());
+		} catch {
+			/* 发现缓存还没好则跳过 */
+		}
+	}
+	// 最新一次压缩的摘要（会话文件里就有，冷热都能算）
+	try {
+		const entries = m.sm.getEntries() as unknown as { type?: string; summary?: string }[];
+		for (let i = entries.length - 1; i >= 0; i -= 1) {
+			const entry = entries[i];
+			if (entry?.type === "compaction" && typeof entry.summary === "string") {
+				breakdown.compacted = estimateTokensOf(entry.summary);
+				break;
 			}
-		} catch {
-			/* entries 不可用则跳过 */
-		}
-		// auto-compact 预留 = compaction.reserveTokens（启用时）
-		try {
-			const settings = await getPiSettings();
-			if (settings.compaction.enabled) breakdown.autoCompactBuffer = settings.compaction.reserveTokens;
-		} catch {
-			/* 设置读取失败则保持 0 */
 		}
 	} catch {
-		/* systemPrompt 不可用则保持 0 */
+		/* entries 不可用则跳过 */
+	}
+	// auto-compact 预留 = compaction.reserveTokens（启用时）
+	try {
+		const settings = await getPiSettings();
+		if (settings.compaction.enabled) breakdown.autoCompactBuffer = settings.compaction.reserveTokens;
+	} catch {
+		/* 设置读取失败则保持 0 */
 	}
 	return breakdown;
 }
 
-/** SessionManager 的 getEntries 经由 session 暴露的形态（各版本字段名有差异，这里宽松取） */
-function m_smEntries(session: AgentSession): unknown[] {
-	const s = session as unknown as { sm?: { getEntries?: () => unknown[] }; sessionManager?: { getEntries?: () => unknown[] } };
-	return s.sm?.getEntries?.() ?? s.sessionManager?.getEntries?.() ?? [];
+/**
+ * 分项变了就推一次（会话启动、工具 / 资源重载、压缩之后）。分项以前只随快照下发：
+ * 打开冷会话时是 0，之后会话启动了弹窗也一直停在那份 0 上，直到刷新页面。
+ * 同一轮里多次触发（启动时 publishTools + publishResources）合并成一次。
+ */
+function publishContextBreakdown(m: Managed): void {
+	if (m.breakdownQueued || m.disposed) return;
+	m.breakdownQueued = true;
+	queueMicrotask(() => {
+		m.breakdownQueued = false;
+		if (m.disposed) return;
+		let resources: ContextResource[] = [];
+		try {
+			resources = loadContextResources(m.cwd, m.session?.resourceLoader);
+		} catch {
+			/* 读不到注入文件就按空算 Memory */
+		}
+		void buildContextBreakdown(m, resources).then((breakdown) => {
+			if (!m.disposed) publish(m, { type: "context_breakdown", breakdown, ts: Date.now() });
+		}, () => undefined);
+	});
 }
 
 /** resources 已经算过（快照）就传进来，免得资源发现结果再读一遍 */
@@ -991,6 +1018,7 @@ function shutdownSession(session: AgentSession): Promise<void> {
 
 function publishTools(m: Managed, session: AgentSession): void {
 	publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), toolPreset: m.toolPreset, customActiveTools: m.customActiveTools ?? null, ts: Date.now() });
+	publishContextBreakdown(m);
 }
 
 /** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界收敛到服务端选择。 */
@@ -1168,6 +1196,7 @@ function collectResources(m: Managed): ResourceBundle {
 
 export function publishResources(m: Managed): void {
 	publish(m, { type: "resources", ...collectResources(m), ts: Date.now() });
+	publishContextBreakdown(m);
 }
 
 /**
@@ -1361,7 +1390,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	// 服务端可得的上下文分项（估算；失败不影响快照）
 	let contextBreakdown: ContextBreakdown | undefined;
 	try {
-		contextBreakdown = await buildContextBreakdown(m.cwd, m.session, contextResources);
+		contextBreakdown = await buildContextBreakdown(m, contextResources);
 	} catch {
 		contextBreakdown = undefined;
 	}

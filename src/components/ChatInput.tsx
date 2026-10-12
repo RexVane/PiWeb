@@ -91,6 +91,7 @@ export function ChatInput({
 		systemChars: number;
 		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string }> }[];
 		breakdown?: import("@/lib/types").ContextBreakdown;
+		loadFull?: () => Promise<unknown> | unknown;
 	};
 	/** 还没有对话时隐藏上下文计量 */
 	contextVisible?: boolean;
