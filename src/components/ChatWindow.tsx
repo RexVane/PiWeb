@@ -1272,13 +1272,15 @@ export function SessionStatsBar({
 	}
 	const line = groups.join(" | ");
 	return (
-		// 悬停显示完整统计：自定义浮层固定在统计条上方（原生 title 位置不可控）
-		// 容器只有 544px（内容窄轴下限）而整行实测 959px，以前一律省略号截断：
-		// 提高精度后更长，「输入 / 输出 tokens」这类用户最关心的反而看不到。
-		// 改成允许换行：窄屏折成两行完整显示，代价是纵向多占 20px。
+		// 悬停显示完整统计:自定义浮层固定在统计条上方(原生 title 位置不可控)。
+		// 容器只有 544px(内容窄轴下限)而整行实测 959px,所以行本身保持单行 +
+		// 省略号:统计条只有 20px 高,折行会把输入卡顶上去(手机上尤其明显)。
+		// 想看完的方法有两条 —— 桌面悬停看浮层,手机上由「远程连接」的
+		// mobile-fit.css 把这一行改成横向滑动(见 src/lib/remote/assets.json),
+		// 所以 544px 里被省略号切掉的部分在手机上是滑得到的。
 		<div className="group relative mx-auto mt-1 block w-full px-4 pt-1 text-center">
 			<div
-				className="[overflow-wrap:anywhere]"
+				className="overflow-hidden text-ellipsis whitespace-nowrap"
 				style={{ fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: "20px", color: "var(--dsw-label-caption)" }}
 			>
 				{line}

@@ -37,6 +37,17 @@ describe("session stats measurement scope", () => {
 		expect(container.textContent).not.toContain("首 token");
 		expect(container.textContent).not.toContain("tok/s");
 	});
+	// 统计条只有 20px 高:之前改成允许换行(overflow-wrap:anywhere),窄屏折成两行
+	// 会把输入卡顶上去。行本身必须保持单行 + 省略号,超出的部分由
+	// mobile-fit.css 在手机上改成横向滑动(见 src/lib/remote/assets.json 第 4 条)。
+	it("keeps the stats line single-line so it can never push the composer up", () => {
+		const { container } = render(<SessionStatsBar stats={measuredStats} />);
+		const line = container.querySelector("div.text-center > div")!;
+		expect(line.className).toContain("overflow-hidden");
+		expect(line.className).toContain("text-ellipsis");
+		expect(line.className).toContain("whitespace-nowrap");
+		expect(line.className).not.toContain("[overflow-wrap:anywhere]");
+	});
 });
 
 const userMessage = {
