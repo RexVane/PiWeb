@@ -630,6 +630,7 @@ export function ChatInput({
 					images={images}
 					disabled={sendBusy}
 					onRemove={(index) => changeDraft((previous) => ({ ...previous, images: previous.images.filter((_, at) => at !== index) }))}
+					onClear={() => changeDraft((previous) => ({ ...previous, images: [] }))}
 				/>
 			)}
 

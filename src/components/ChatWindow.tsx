@@ -1257,15 +1257,12 @@ export function SessionStatsBar({
 			.replace("{steps}", String(stats.assistantMessages)),
 	];
 	const durations: string[] = [];
-	const coverage = (n: number | undefined, total: number) => n !== undefined && n < total
-		? ` (${t.statsTimedCoverage.replace("{n}", String(n)).replace("{total}", String(total))})` : "";
-	if (stats.llmMs > 0) durations.push(`LLM ${fmtDuration(stats.llmMs)}${coverage(stats.llmTimedSteps, stats.assistantMessages)}`);
-	if (stats.toolMs > 0) durations.push(`${t.toolCalls} ${fmtDuration(stats.toolMs)}${coverage(stats.toolTimedCalls, stats.toolCalls)}`);
+	if (stats.llmMs > 0) durations.push(`LLM ${fmtDuration(stats.llmMs)}`);
+	if (stats.toolMs > 0) durations.push(`${t.toolCalls} ${fmtDuration(stats.toolMs)}`);
 	if (durations.length) groups.push(durations.join(" · "));
 	const speeds: string[] = [];
-	const timedLabel = (steps: number) => ` (${t.statsMeasuredSteps.replace("{n}", String(steps))})`;
-	if (stats.ttftSteps > 0) speeds.push(`${t.ttftAverage} ${fmtDuration(stats.ttftMs / stats.ttftSteps)}${timedLabel(stats.ttftSteps)}`);
-	if (stats.decodeMs > 0) speeds.push(`${fmtThroughput(stats.decodeTokens / (stats.decodeMs / 1000))} tok/s${timedLabel(stats.decodeSteps ?? stats.ttftSteps)}`);
+	if (stats.ttftSteps > 0) speeds.push(`${t.ttftAverage} ${fmtDuration(stats.ttftMs / stats.ttftSteps)}`);
+	if (stats.decodeMs > 0) speeds.push(`${fmtThroughput(stats.decodeTokens / (stats.decodeMs / 1000))} tok/s`);
 	if (speeds.length) groups.push(speeds.join(" · "));
 	const billedInput = stats.tokens.input + stats.tokens.cacheRead + stats.tokens.cacheWrite;
 	if (billedInput > 0 || stats.tokens.output > 0) {

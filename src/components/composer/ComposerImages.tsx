@@ -99,7 +99,7 @@ function keyOf(image: ImageAttachment): string {
 
 const srcOf = (image: ImageAttachment) => `data:${image.mimeType};base64,${image.data}`;
 
-export function ComposerImages({ images, disabled, onRemove }: { images: ImageAttachment[]; disabled?: boolean; onRemove: (index: number) => void }) {
+export function ComposerImages({ images, disabled, onRemove, onClear }: { images: ImageAttachment[]; disabled?: boolean; onRemove: (index: number) => void; onClear?: () => void }) {
 	const { t } = useI18n();
 	const collapsible = images.length > COLLAPSE_AT;
 	const [expanded, setExpanded] = useState(false);
@@ -201,6 +201,21 @@ export function ComposerImages({ images, disabled, onRemove }: { images: ImageAt
 						</div>
 					))
 				)}
+				{images.length > 1 && onClear ? (
+					<button
+						type="button"
+						className="pw-chip"
+						data-testid="images-clear"
+						disabled={disabled}
+						onClick={() => {
+							onClear();
+							setLifted(null);
+							setPreview(null);
+						}}
+					>
+						{t.imageClearAll}
+					</button>
+				) : null}
 				{collapsible ? (
 					<button
 						type="button"

@@ -25,9 +25,11 @@ describe("session stats measurement scope", () => {
 		const text = container.textContent;
 		expect(text).toContain("输入 1.00K tok · 输出 20 tok");
 		expect(text).toContain("缓存命中 90.00%");
-		expect(text).toContain("1/2 条有计时");
-		expect(text).toContain("首 token 平均 0.10s (实时测量 1 步)");
-		expect(text).toContain("100.00 tok/s (实时测量 1 步)");
+		// 括号里的解释（计时覆盖、实时测量步数）不再显示在统计条上
+		expect(text).toContain("首 token 平均 0.10s");
+		expect(text).not.toContain("条有计时");
+		expect(text).not.toContain("实时测量");
+		expect(text).toContain("100.00 tok/s");
 	});
 	it("does not fabricate historical TTFT or speed when only durations are stored", () => {
 		const { container } = render(<SessionStatsBar stats={{ ...measuredStats, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0, decodeSteps: 0 }} />);
