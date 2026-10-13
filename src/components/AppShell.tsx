@@ -13,6 +13,8 @@ import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import type { DrawerSection } from "@/components/DrawerPanel";
+import { SideChatIcon } from "@/components/side-chat/icons";
+import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
 import { DirectoryPicker } from "@/components/DirectoryPicker";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
@@ -157,8 +159,12 @@ export function AppShell() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
-	// 默认进「项目」:项目栏降级成抽屉入口后,它是最常用的那一个
-	const [drawerSection, setDrawerSection] = useState<DrawerSection>("project");
+	/** 抽屉入口保存在浏览器；新用户先看到旁聊。 */
+	const [drawerSection, setDrawerSection] = useState<DrawerSection>("sidechat");
+	const chooseDrawerSection = useCallback((section: DrawerSection) => {
+		setDrawerSection(section);
+		localStorage.setItem("piweb.drawerSection", section);
+	}, []);
 	/** 右侧抽屉(最右一列):入口列表 + 内容 */
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	/** 打开抽屉时「落到最新轮」只跳过这一次(点 badge 指定轮次时用) */
@@ -177,6 +183,8 @@ export function AppShell() {
 		setRightWidth(restoreRightWidth());
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
+		const section = localStorage.getItem("piweb.drawerSection");
+		if (["sidechat", "project", "prompts", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
 	}, []);
 	/** 新会话时加载用户之前的选择，或使用系统建议（第一个认证的） */
 	useEffect(() => {
@@ -203,6 +211,7 @@ export function AppShell() {
 	}, [heroCwd]);
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
+		preserveChatReadingPosition();
 		setDrawerOpen((cur) => {
 			const v = next ?? !cur;
 			localStorage.setItem("piweb.drawerOpen", v ? "1" : "0");
@@ -212,11 +221,11 @@ export function AppShell() {
 	/** 切到某个抽屉入口并打开抽屉(顶栏图标 / 点 badge 都用这条) */
 	const openDrawerSection = useCallback(
 		(section: DrawerSection) => {
-			setDrawerSection(section);
+			chooseDrawerSection(section);
 			setSelected(null);
 			toggleDrawer(true);
 		},
-		[toggleDrawer],
+		[toggleDrawer, chooseDrawerSection],
 	);
 	// Ctrl/⌘+Shift+E：打开抽屉并切到「项目」入口；已经停在该入口时再按收起。
 	// 轨迹详情占着这一列时，这个快捷键把抽屉叫回来（而不是切到轨迹详情）。
@@ -351,12 +360,14 @@ export function AppShell() {
 				if (!frame) {
 					frame = requestAnimationFrame(() => {
 						frame = 0;
+						preserveChatReadingPosition();
 						commit(latest);
 					});
 				}
 			};
 			const up = () => {
 				if (frame) cancelAnimationFrame(frame);
+				preserveChatReadingPosition();
 				commit(latest);
 				persist(side === "sidebar" ? "piweb.sidebarW" : "piweb.drawerW", latest);
 				window.removeEventListener("pointermove", move);
@@ -372,6 +383,7 @@ export function AppShell() {
 	);
 
 	const toggleSidebar = () => {
+		preserveChatReadingPosition();
 		const next = !sidebarCollapsed;
 		setSidebarCollapsed(next);
 		localStorage.setItem("piweb.sidebarCollapsed", next ? "1" : "0");
@@ -386,6 +398,7 @@ export function AppShell() {
 	const openToolTrajectory = useCallback((toolCallId: string) => {
 		const entry = trajectoryRef.current.find((item) => item.toolCallId === toolCallId);
 		if (!entry) return;
+		preserveChatReadingPosition();
 		// 最右一列与抽屉互斥:选中轨迹详情即接管这一列,关掉后回落回抽屉的当前入口
 		setSelected(entry);
 	}, []);
@@ -704,11 +717,11 @@ export function AppShell() {
 	const growthSelect = growth.select;
 	const showRound = useCallback((commit: string) => {
 		skipLatestOnce.current = true;
-		setDrawerSection("project");
+		chooseDrawerSection("project");
 		setSelected(null);
 		toggleDrawer(true);
 		growthSelect(commit);
-	}, [toggleDrawer, growthSelect]);
+	}, [toggleDrawer, growthSelect, chooseDrawerSection]);
 	const jumpToChat = useCallback((messageId: string) => {
 		requestAnimationFrame(() => {
 			const node = document.querySelector<HTMLElement>(`[data-role="user"][data-message-id="${CSS.escape(messageId)}"]`);
@@ -752,9 +765,10 @@ export function AppShell() {
 				<DrawerPanel
 					cwd={panelCwd}
 					section={drawerSection}
-					onSectionChange={setDrawerSection}
+					onSectionChange={chooseDrawerSection}
 					onClose={() => toggleDrawer(false)}
 					sessionId={currentId}
+					sideChatReady={Boolean(snapshot?.model)}
 					promptRefreshKey={currentId}
 					gitRefreshKey={panelRefreshKey}
 					growth={growth}
@@ -907,10 +921,11 @@ export function AppShell() {
 									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
 										{title}
 									</span>
-									{/* 项目与提示词原来是两个平级图标,现已合并进右侧抽屉:
-									    抽屉顶部那条横向图标栏就是它们的新位置,顶栏只留一个抽屉开关。
-									    Ctrl/⌘+Shift+E 仍然直达项目入口(见快捷键绑定)。 */}
-									{/* 右侧抽屉:项目 / 提示词 / Git 详情 / 会话导入 四个入口都在里面 */}
+									{/* 旁聊直达按钮；旁聊与其他入口共用右侧抽屉。 */}
+									<button type="button" className="btn-ghost flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5" style={{ fontSize: 12.5, color: drawerOpen && !selected && drawerSection === "sidechat" ? "var(--dsw-accent)" : "var(--dsw-label-secondary)" }} aria-label={t.sideChat} aria-pressed={drawerOpen && !selected && drawerSection === "sidechat"} data-testid="side-chat-toggle" onClick={() => openDrawerSection("sidechat")}>
+										<SideChatIcon size={16} />{t.sideChat}
+									</button>
+									{/* 右侧抽屉的入口与开关 */}
 									<button
 										type="button"
 										className="icon-btn"

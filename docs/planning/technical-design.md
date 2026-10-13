@@ -639,3 +639,36 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 返回 `{ contextWindow, builtin }`；目录里没有的模型、非正整数都 400。
 测试：`tests/models-service-context-window.test.ts` 用真实 `ModelRuntime` 读临时 `models.json`，验证三种写入层级下 pi 取到的值确实变了；
 `tests/components/context-meter.test.tsx` 覆盖输入校验、对照提示、Esc 不冒泡、保存失败留在编辑态、保存后重算、快照没追上时保持保存值、别处改了则以 props 为准。
+
+## 14. 右侧旁聊
+
+需求见 `docs/planning/requirements.md`。旁聊在右侧抽屉中常驻，主会话顶栏提供直达入口；沿用现有调宽与手机抽屉布局。面板独立渲染问答和输入框，没有轮数、耗时、token 或缓存统计。
+
+### 14.1 主会话只提供背景
+
+`POST /api/agent/[id]/side-chat` 验证会话路径后，只读取主会话管理器的 `buildSessionContext()` 与当时已生成的正文。这尊重有效分支、上下文编辑及已有压缩摘要，正在流出的文字也可作为背景。不会调用主 AgentSession 的 prompt、abort、compact 或分支方法，不追加 Session 条目，也不推送主会话事件。
+
+通过已有 `ModelRuntime.streamSimple()` 发起独立模型调用，沿用主会话选中的模型、思考档位和 SDK 认证；使用独立的旁聊 affinity ID。工具集合为空，系统指令和思考内容不从主会话转发。旁聊用于解释现有背景，不能自行读取或修改文件。图片背景只保留附件标记，不转发图像数据。
+
+背景和旁聊历史按模型窗口保守限制 UTF-8 字节数，预留输出和协议开销。发生截断时向界面返回标记；不为旁聊触发主会话压缩，也不把字节预算显示成 token 统计。
+
+### 14.2 持久化与请求生命周期
+
+浏览器按主会话 ID 使用 `piweb.sidechat.v1.*` 保存独立线程、草稿和当前记录。`SideChatStore` 使用自己的订阅，不让旁聊输出触发 AppShell 或主 ChatWindow 的重渲染。关闭面板或切换到其他入口不停止回答；切换主会话时，各自的记录和迟到的回答归各自所有。新旁聊保留旧记录；失败重试复用原问题所在的位置。
+
+服务端只保留临时生成任务。POST 接受请求，GET 以 revision 等待更新并返回有限 JSON 响应，DELETE 停止指定旁聊任务。适用于本机、局域网和会缓冲 SSE 的 Cloudflare 快速隧道。生成中的正文按 offset 增量返回，最终正文修正或旧 cursor 仍可返回完整文本；客户端不重复追加文字。请求 ID 幂等，提前停止会留下短期取消标记，防止迟到的 POST 再发起调用。
+
+持久化按短间隔合并写入，完成、停止、切换记录立即保存，pagehide 补保存。页面刷新后可通过已保存的任务 ID 恢复尚在服务端生成的回答；服务重启或任务已过期时保留已有文字并允许重试。保存失败在面板内提示，不清空内存中的内容。不同浏览器和设备之间不共享旁聊记录。
+
+### 14.3 阅读位置
+
+主会话与旁聊各有滚动容器。打开、关闭或拖动列宽前，记录主会话视口中的文字 Range，布局改变后按其位移修正主会话滚动位置；不支持文字定位的浏览器退回段落锚点。连续拖拽先完成上一帧的校准，过期或宽度未变化的锚点不会在以后拉动主会话。
+
+### 14.4 验证
+
+- TypeScript 检查通过；全量测试 113 个文件通过、1 个文件跳过，932 项通过、2 项跳过。
+- `tests/integration/side-chat.test.ts` 使用真实 SessionManager 与 ModelRuntime，加 SDK 的离线 faux provider：多轮旁聊前后主会话文件逐字节一致，分支与上下文一致，冷会话不启动；停止旁聊不调用主会话的停止方法。
+- 组件验证多轮历史、关闭后完成、跨主会话迟到回答、历史恢复、新旁聊、停止与错误重试、输入法、增量回答修正、存储失败和阅读锚点。
+- Next.js 16.4.0 生产构建通过，输出位于独立验证目录，未切换 active release。
+- Chrome 在 1600×1000 与 390×844 视口通过实际页面检查：打开、发送、调宽、关闭保持阅读位置；旧记录、刷新恢复与手机输入框可见。测试使用固定 API 响应，不调用线上模型或真实用户会话。截图在 `docs/assets/side-chat-desktop.png`、`docs/assets/side-chat-mobile.png`。
+- 浏览器脚本：启动本地服务与带 debugging port 的独立 Chrome 后，运行 `node tests/end-to-end/side-chat-browser.mjs http://127.0.0.1:3217 9337 docs/assets`。

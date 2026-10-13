@@ -13,13 +13,15 @@ import { PromptPanel } from "@/components/PromptPanel";
 import { GitPanel } from "@/components/GitPanel";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import { SessionImportSection } from "@/components/SessionImportSection";
+import { SideChatPanel } from "@/components/side-chat/SideChatPanel";
+import { SideChatIcon } from "@/components/side-chat/icons";
 import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { TreeNode } from "@/lib/growth-tree";
 
-/** 抽屉里的入口,顺序即顶部入口列表的显示顺序:项目 → 提示词 → Git 详情 → 会话导入 */
-export type DrawerSection = "project" | "prompts" | "git" | "import";
+/** 抽屉入口：旁聊 → 项目 → 提示词 → Git 详情 → 会话导入。 */
+export type DrawerSection = "sidechat" | "project" | "prompts" | "git" | "import";
 
 export function DrawerPanel({
 	cwd,
@@ -27,6 +29,7 @@ export function DrawerPanel({
 	onSectionChange,
 	onClose,
 	sessionId,
+	sideChatReady,
 	promptRefreshKey,
 	gitRefreshKey,
 	growth,
@@ -48,6 +51,8 @@ export function DrawerPanel({
 	onSectionChange: (section: DrawerSection) => void;
 	onClose: () => void;
 	sessionId: string | null;
+	/** 主会话快照到达并有已选模型后，旁聊才可发送。 */
+	sideChatReady?: boolean;
 	/** 提示词面板重新拉取的键(切换会话) */
 	promptRefreshKey?: string | number | null;
 	/** Git 面板重新拉取的键(回合结束 / pi 改了文件) */
@@ -77,6 +82,7 @@ export function DrawerPanel({
 	const { t } = useI18n();
 
 	const entries: { id: DrawerSection; label: string; icon: React.ReactNode }[] = [
+		{ id: "sidechat", label: t.sideChat, icon: <SideChatIcon size={16} /> },
 		// 入口只用现有的 i18n 键;「提示词」是入口短名,和面板标题「提示词来源」区分开
 		{ id: "project", label: t.projectPanel, icon: <IconFolderOpenOutline16 size={15} /> },
 		{ id: "prompts", label: t.drawerPrompts, icon: <IconAgentPresetOutline16 size={15} /> },
@@ -113,7 +119,9 @@ export function DrawerPanel({
 			{/* 所选入口的内容:项目 / 提示词 / Git 三个面板自带标题行与滚动。
 			    「导入会话」段落没有标题行,这里补一行,排布照抄 PromptPanel(同样在入口列表下面、关掉整个抽屉) */}
 			<div className="flex min-h-0 flex-1 flex-col">
-				{section === "import" ? (
+				{section === "sidechat" ? (
+					<SideChatPanel sessionId={sessionId} ready={sideChatReady} onClose={onClose} />
+				) : section === "import" ? (
 					<>
 						<div className="hairline-b flex items-center gap-2 px-4 py-2.5">
 							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13.5, fontWeight: 600 }}>

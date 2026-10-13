@@ -29,6 +29,7 @@ import { languageForPath } from "@/lib/highlight";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
+import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
 import type { ToolCardState } from "@/hooks/usePiWeb";
@@ -1428,6 +1429,7 @@ export function ChatWindow({
 			if (node) node.scrollTop = node.scrollHeight;
 		},
 	}), []);
+	useChatReadingAnchor(rootRef, scrollRef, chatScroll.shouldPin);
 	const { t } = useI18n();
 	useEffect(() => {
 		const root = rootRef.current;
