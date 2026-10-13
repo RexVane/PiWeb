@@ -74,9 +74,9 @@ export function startSideChat(sessionPath: string, request: SideChatRequest): Si
 	const managed = getManaged(sessionPath);
 	const source = managed.sm.buildSessionContext();
 	const selected = managed.session?.model;
-	const provider = selected?.provider ?? source.model?.provider;
-	const modelId = selected?.id ?? source.model?.modelId;
-	if (!provider || !modelId) throw new BoundaryError("select a model in the main conversation first");
+	const provider = request.model?.provider ?? selected?.provider ?? source.model?.provider;
+	const modelId = request.model?.id ?? selected?.id ?? source.model?.modelId;
+	if (!provider || !modelId) throw new BoundaryError("select a model for the side chat first");
 	const thinking = managed.session?.thinkingLevel ?? source.thinkingLevel;
 	const messages: unknown[] = [...source.messages];
 	// A question may refer to the answer currently streaming in the main pane.
@@ -104,7 +104,7 @@ export function startSideChat(sessionPath: string, request: SideChatRequest): Si
 			const runtime = await getModelRuntime();
 			if (job.controller.signal.aborted) return;
 			const model = runtime.getModel(provider!, modelId!);
-			if (!model) throw new BoundaryError("the main conversation's model is unavailable");
+			if (!model) throw new BoundaryError("the selected side-chat model is unavailable");
 			const built = buildSideChatContext(background, request, model);
 			const level = clampThinkingLevel(model, (thinking || "off") as ModelThinkingLevel);
 			job.progress = { ...job.progress, model: model.name, contextTruncated: built.contextTruncated };

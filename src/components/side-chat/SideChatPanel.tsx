@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { IconCloseOutline14, IconNewChatOutline16, IconSendArrowUp14, IconStopFill16 } from "@/components/icons";
+import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { EMPTY_SIDE_CHAT, sideChatStore, type SideChatStore } from "./store";
 import styles from "./SideChatPanel.module.css";
@@ -10,9 +11,13 @@ import styles from "./SideChatPanel.module.css";
 const Markdown = dynamic(() => import("@/components/MarkdownBlock").then((module) => module.MarkdownBlock));
 const StreamingMarkdown = dynamic(() => import("@/components/MarkdownBlock").then((module) => module.StreamingMarkdownBlock));
 
-export function SideChatPanel({ sessionId, ready = true, onClose, store = sideChatStore }: {
+export function SideChatPanel({ sessionId, ready = true, mainModel, models = [], providerNames = {}, authByProvider = {}, onClose, store = sideChatStore }: {
 	sessionId: string | null;
 	ready?: boolean;
+	mainModel?: { provider: string; id: string; name: string };
+	models?: ModelChoice[];
+	providerNames?: Record<string, string>;
+	authByProvider?: Record<string, boolean>;
 	onClose: () => void;
 	store?: SideChatStore;
 }) {
@@ -27,6 +32,10 @@ export function SideChatPanel({ sessionId, ready = true, onClose, store = sideCh
 	const lastTop = useRef(0);
 	const busy = Boolean(thread?.request);
 	const threadId = thread?.id;
+	const selectedModel = thread?.model
+		? models.find((model) => model.provider === thread.model!.provider && model.id === thread.model!.id) ?? { ...thread.model, name: thread.model.id }
+		: mainModel;
+	const canSend = Boolean(sessionId && ready && selectedModel);
 
 	useEffect(() => {
 		pinned.current = true;
@@ -50,7 +59,7 @@ export function SideChatPanel({ sessionId, ready = true, onClose, store = sideCh
 	}, [thread?.draft, threadId]);
 
 	const send = () => {
-		if (!sessionId || !ready || busy || !thread?.draft.trim()) return;
+		if (!sessionId || !canSend || busy || !thread?.draft.trim()) return;
 		pinned.current = true;
 		store.send(sessionId);
 		textareaRef.current?.focus({ preventScroll: true });
@@ -101,14 +110,20 @@ export function SideChatPanel({ sessionId, ready = true, onClose, store = sideCh
 			</div>
 			{state.storageFailed && <p className={styles.storageError} role="alert">{t.sideChatStorageFailed}</p>}
 			<form className={styles.composer} onSubmit={(event) => { event.preventDefault(); send(); }}>
-				<textarea ref={textareaRef} aria-label={t.sideChatQuestion} placeholder={sessionId ? t.sideChatPlaceholder : t.sideChatPickSession} value={thread?.draft ?? ""} disabled={!sessionId || !ready}
+				<textarea ref={textareaRef} aria-label={t.sideChatQuestion} placeholder={sessionId ? t.sideChatPlaceholder : t.sideChatPickSession} value={thread?.draft ?? ""} disabled={!canSend}
 					onChange={(event) => sessionId && store.setDraft(sessionId, event.target.value)}
 					onKeyDown={(event) => {
 						if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); send(); }
 					}} />
 				<div className={styles.actions}>
+					<div className={styles.model} role="group" aria-label={t.sideChatModel}>
+						<ModelSelector model={selectedModel} models={models} providerNames={providerNames} authByProvider={authByProvider}
+							modelOnly disabled={!sessionId} thinkingLevels={[]} onSelectLevel={() => {}}
+							defaultOption={{ label: t.sideChatFollowMain, selected: !thread?.model, onSelect: () => sessionId && store.setModel(sessionId) }}
+							onSelectModel={(provider, id) => sessionId && store.setModel(sessionId, { provider, id })} />
+					</div>
 					{busy ? <button type="button" className={styles.send} title={t.stop} aria-label={t.stop} onClick={() => sessionId && store.stop(sessionId)}><IconStopFill16 size={15} /></button>
-						: <button type="submit" className={styles.send} title={t.send} aria-label={t.send} disabled={!sessionId || !ready || !thread?.draft.trim()}><IconSendArrowUp14 size={16} /></button>}
+						: <button type="submit" className={styles.send} title={t.send} aria-label={t.send} disabled={!canSend || !thread?.draft.trim()}><IconSendArrowUp14 size={16} /></button>}
 				</div>
 			</form>
 		</section>

@@ -24,11 +24,12 @@ import { buildSideChatContext, mainConversationText, parseSideChatRequest } from
 import { pollSideChat, startSideChat, stopSideChat } from "@/lib/side-chat/service";
 
 const faux = fauxProvider({ provider: "side-chat-test" });
+const fauxQuick = fauxProvider({ provider: "side-chat-quick" });
 let file: string;
 let sm: SessionManager;
 let managed: any;
 let spy: ReturnType<typeof vi.spyOn>;
-const request = (text = "复用 Session 存储是什么意思？", history: { role: "user" | "assistant"; text: string }[] = []) => ({ requestId: randomUUID(), threadId: randomUUID(), text, history });
+const request = (text = "复用 Session 存储是什么意思?", history: { role: "user" | "assistant"; text: string }[] = [], model?: { provider: string; id: string }) => ({ requestId: randomUUID(), threadId: randomUUID(), text, history, ...(model ? { model } : {}) });
 const params = () => ({ params: Promise.resolve({ id: Buffer.from(file).toString("base64url") }) });
 async function finish(requestId: string) {
 	let progress = await pollSideChat(file, requestId, -1, new AbortController().signal);
@@ -44,6 +45,7 @@ beforeAll(async () => {
 	mocks.root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-side-chat-"));
 	mocks.runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore() });
 	mocks.runtime.registerNativeProvider(faux.provider);
+	mocks.runtime.registerNativeProvider(fauxQuick.provider);
 	spy = vi.spyOn(mocks.runtime, "streamSimple");
 });
 beforeEach(async () => {
@@ -75,14 +77,18 @@ describe("side-chat isolation through the real Pi SDK", () => {
 		expect(firstAnswer.error).toBeUndefined();
 		expect(firstAnswer).toMatchObject({ done: true, text: "Session 存储就是主会话的 JSONL 文件。", aborted: false });
 		faux.setResponses([fauxAssistantMessage([fauxText("模型也由同一套配置目录提供。")])]);
-		const second = request("Model 又是怎么复用的？", [{ role: "user", text: first.text }, { role: "assistant", text: firstAnswer.text }]);
+		const quick = fauxQuick.getModel();
+		fauxQuick.setResponses([fauxAssistantMessage([fauxText("这个回答用的是旁聊自己选的模型。")])]);
+		const second = request("Model 又是怎么复用的?", [{ role: "user", text: first.text }, { role: "assistant", text: firstAnswer.text }], { provider: quick.provider, id: quick.id });
 		startSideChat(file, second);
-		expect((await finish(second.requestId)).text).toBe("模型也由同一套配置目录提供。");
+		expect((await finish(second.requestId)).text).toBe("这个回答用的是旁聊自己选的模型。");
 		const payload = JSON.stringify(spy.mock.calls.at(-1)![1]);
 		expect(payload).toContain(firstAnswer.text);
 		expect(payload).toContain("Web 与 CLI 读取同一份 JSONL");
 		expect(spy.mock.calls.at(-1)![1].tools).toEqual([]);
 		expect(spy.mock.calls.at(-1)![2].sessionId).toBe(`piweb-sidechat-${second.threadId}`);
+		// 旁聊单独选的模型覆盖主会话当前模型
+		expect(spy.mock.calls.at(-1)![0]).toMatchObject({ provider: quick.provider, id: quick.id });
 		expect(await fs.readFile(file)).toEqual(before);
 		expect(sm.getLeafId()).toBe(leaf);
 		expect(JSON.stringify(sm.buildSessionContext())).toBe(context);
@@ -153,6 +159,14 @@ describe("side-chat isolation through the real Pi SDK", () => {
 		expect((await POST(new Request("http://localhost", { method: "POST", body: JSON.stringify(request()) }), { params: Promise.resolve({ id: outside }) })).status).toBe(400);
 		expect(spy).not.toHaveBeenCalled();
 	});
+});
+
+it("rejects an unknown side-chat model before issuing a call", async () => {
+	const unknown = request("问题", [], { provider: "no-such-provider", id: "no-such-model" });
+	startSideChat(file, unknown);
+	const progress = await finish(unknown.requestId);
+	expect(progress.done).toBe(true);
+	expect(progress.error).toContain("unavailable");
 });
 
 describe("side-chat background bounds", () => {

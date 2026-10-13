@@ -27,6 +27,9 @@ export function ModelSelector({
 	onSelectLevel,
 	open: openProp,
 	onOpenChange,
+	modelOnly = false,
+	disabled = false,
+	defaultOption,
 }: {
 	model?: { provider: string; id: string; name: string };
 	thinkingLevel?: string;
@@ -38,6 +41,10 @@ export function ModelSelector({
 	onSelectLevel: (level: string) => void;
 	open?: boolean;
 	onOpenChange?: (open: boolean) => void;
+	/** Compact consumers can show just the model list. */
+	modelOnly?: boolean;
+	disabled?: boolean;
+	defaultOption?: { label: string; selected: boolean; onSelect: () => void };
 }) {
 	const [openState, setOpenState] = useState(false);
 	const open = openProp ?? openState;
@@ -104,10 +111,10 @@ export function ModelSelector({
 
 	const hasModel = Boolean(model?.id);
 	const modelName = hasModel ? (model?.name || model?.id || "") : "";
-	const effortLabel = hasModel && thinkingLevel && thinkingLevel !== "off" ? thinkingLevel : undefined;
-	const triggerTitle = hasModel
+	const effortLabel = !modelOnly && hasModel && thinkingLevel && thinkingLevel !== "off" ? thinkingLevel : undefined;
+	const triggerTitle = (defaultOption?.selected ? `${defaultOption.label} · ` : "") + (hasModel
 		? `${providerNames[model?.provider ?? ""] ?? model?.provider}/${modelName}${effortLabel ? ` · ${effortLabel}` : ""}`
-		: t.selectModel;
+		: t.selectModel);
 
 	return (
 		<div ref={ref} className="relative">
@@ -119,6 +126,7 @@ export function ModelSelector({
 				aria-label={triggerTitle}
 				aria-haspopup="menu"
 				aria-expanded={open}
+				disabled={disabled}
 				onClick={() => {
 					setOpen(!open);
 					setPane("model");
@@ -198,6 +206,14 @@ export function ModelSelector({
 					{pane === "model" && (
 						<div className="flex min-h-0 flex-col">
 							<div ref={listRef} className="max-h-[340px] overflow-y-auto py-1">
+								{defaultOption && (
+									<button type="button" role="menuitemradio" aria-checked={defaultOption.selected} data-selected={defaultOption.selected}
+										className="flex min-h-10 w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left"
+										style={{ fontSize: 13, background: defaultOption.selected ? "var(--dsw-active)" : undefined }}
+										onClick={() => { defaultOption.onSelect(); setOpen(false); }}>
+										{defaultOption.label}{defaultOption.selected && <IconCheckOutline14 size={14} />}
+									</button>
+								)}
 								{groups.length === 0 && (
 									<div className="px-3 py-3" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
 										{t.emptyModels}
@@ -213,7 +229,7 @@ export function ModelSelector({
 											{g.label}
 										</div>
 										{g.models.map((m) => {
-											const selected = model?.provider === m.provider && model?.id === m.id;
+											const selected = !defaultOption?.selected && model?.provider === m.provider && model?.id === m.id;
 											return (
 												<button
 													key={`${m.provider}/${m.id}`}
@@ -250,7 +266,7 @@ export function ModelSelector({
 							</div>
 							{/* 思考档位入口：模型只有一档（非推理模型 / models.json 没写 reasoning: true）时也显示，
 							    但置灰并说明是模型不支持，而不是让入口凭空消失 */}
-							{hasModel && (thinkingLevels.length > 1 ? (
+							{hasModel && !modelOnly && (thinkingLevels.length > 1 ? (
 								<button
 									type="button"
 									className="mt-1 flex w-full items-center justify-between gap-3 border-t px-3 pb-1 pt-2 text-left transition-colors"

@@ -73,13 +73,18 @@
 	line-height: 1.65;
 }
 .composer textarea::placeholder { color: var(--dsw-label-tertiary); }
-.actions { display: flex; justify-content: flex-end; padding-top: 5px; }
+.actions { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding-top: 5px; }
+.model { flex: 1; min-width: 0; }
+.model :global(.chip) { max-width: 100%; font-size: 12px; }
+.model :global(.chip:disabled) { opacity: 0.6; }
+.model :global([role="menu"]) { left: 0; right: auto; width: min(312px, calc(100% + 38px)); }
 .send {
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	width: 30px;
 	height: 30px;
+	flex-shrink: 0;
 	border-radius: 50%;
 	background: var(--dsw-label-primary);
 	color: var(--dsw-bg-base);

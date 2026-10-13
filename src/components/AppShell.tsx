@@ -768,7 +768,11 @@ export function AppShell() {
 					onSectionChange={chooseDrawerSection}
 					onClose={() => toggleDrawer(false)}
 					sessionId={currentId}
-					sideChatReady={Boolean(snapshot?.model)}
+					sideChatReady={Boolean(snapshot)}
+					mainModel={snapshot?.model}
+					models={modelChoices}
+					providerNames={providerNames}
+					authByProvider={authByProvider}
 					promptRefreshKey={currentId}
 					gitRefreshKey={panelRefreshKey}
 					growth={growth}

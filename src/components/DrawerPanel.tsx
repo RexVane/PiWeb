@@ -19,6 +19,7 @@ import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, Ic
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { TreeNode } from "@/lib/growth-tree";
+import type { ModelChoice } from "@/components/ModelSelector";
 
 /** 抽屉入口：旁聊 → 项目 → 提示词 → Git 详情 → 会话导入。 */
 export type DrawerSection = "sidechat" | "project" | "prompts" | "git" | "import";
@@ -30,6 +31,10 @@ export function DrawerPanel({
 	onClose,
 	sessionId,
 	sideChatReady,
+	mainModel,
+	models,
+	providerNames,
+	authByProvider,
 	promptRefreshKey,
 	gitRefreshKey,
 	growth,
@@ -51,8 +56,12 @@ export function DrawerPanel({
 	onSectionChange: (section: DrawerSection) => void;
 	onClose: () => void;
 	sessionId: string | null;
-	/** 主会话快照到达并有已选模型后，旁聊才可发送。 */
+	/** 主会话快照到达后，旁聊可以读取背景。 */
 	sideChatReady?: boolean;
+	mainModel?: { provider: string; id: string; name: string };
+	models?: ModelChoice[];
+	providerNames?: Record<string, string>;
+	authByProvider?: Record<string, boolean>;
 	/** 提示词面板重新拉取的键(切换会话) */
 	promptRefreshKey?: string | number | null;
 	/** Git 面板重新拉取的键(回合结束 / pi 改了文件) */
@@ -120,7 +129,7 @@ export function DrawerPanel({
 			    「导入会话」段落没有标题行,这里补一行,排布照抄 PromptPanel(同样在入口列表下面、关掉整个抽屉) */}
 			<div className="flex min-h-0 flex-1 flex-col">
 				{section === "sidechat" ? (
-					<SideChatPanel sessionId={sessionId} ready={sideChatReady} onClose={onClose} />
+					<SideChatPanel sessionId={sessionId} ready={sideChatReady} mainModel={mainModel} models={models} providerNames={providerNames} authByProvider={authByProvider} onClose={onClose} />
 				) : section === "import" ? (
 					<>
 						<div className="hairline-b flex items-center gap-2 px-4 py-2.5">

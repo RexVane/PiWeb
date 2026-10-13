@@ -70,6 +70,7 @@ const content = [
 	...Array.from({ length: 45 }, (_, index) => `## ${index + 1}. ${index === 18 ? "复用 Session 存储" : "实现说明"}\n\nWeb 与 CLI 读取同一份会话记录，消息按顺序写入 JSONL。会话管理器根据当前分支还原上下文；切换界面不会复制一份新的主会话。\n\n这里还有下一段内容：Model、Skill 与 Plugin 同样沿用 Pi 的配置。阅读过程中可以不断提问，旁聊回答只出现在右侧，主会话保留当前位置。\n\n\`SessionManager\` 保存会话条目，模型运行时提供模型和认证。`),
 ].join("\n\n");
 const model = { provider: "demo", id: "demo-model", name: "示例模型", reasoning: false, thinkingLevels: ["off"], contextWindow: 128000 };
+const quickModel = { provider: "demo", id: "demo-quick", name: "旁聊快问模型", reasoning: false, thinkingLevels: ["off"], contextWindow: 64000 };
 const messages = [{ id: "main-question", role: "user", content: [{ type: "text", text: "介绍 PiWeb 的复用机制" }], timestamp: 1 }, { id: "main-answer", role: "assistant", content: [{ type: "text", text: content }], stopReason: "stop", timestamp: 2 }];
 const snapshot = {
 	seq: 1, sessionPath: sourcePath, cwd: "/demo/project", name: "PiWeb 阅读示例", messages, model, thinkingLevel: "off", thinkingLevels: ["off"],
@@ -87,7 +88,7 @@ handlers.set("Fetch.requestPaused", async ({ requestId, request }) => {
 	let contentType = "application/json";
 	let body;
 	if (url.pathname === "/api/sessions") data = { sessions: [{ path: sourcePath, cwd: "/demo/project", name: snapshot.name, created: "2026-01-01T00:00:00Z", modified: "2026-01-01T00:00:00Z", messageCount: 2, firstMessage: "介绍 PiWeb 的复用机制" }], active: {}, workspaceRegistry: { workspaces: ["/demo/project"], removedWorkspaces: [], aliases: {}, archivedSessions: [] } };
-	else if (url.pathname === "/api/models") data = { models: [model], providers: [{ id: "demo", name: "Demo", authReady: true }] };
+	else if (url.pathname === "/api/models") data = { models: [model, quickModel], providers: [{ id: "demo", name: "Demo", authReady: true }] };
 	else if (url.pathname === "/api/workspaces") data = { workspaces: ["/demo/project"], removedWorkspaces: [], aliases: {}, archivedSessions: [] };
 	else if (url.pathname.endsWith("/events")) { contentType = "text/event-stream"; body = `id: fixture.1\ndata: ${JSON.stringify({ type: "snapshot", snapshot })}\n\n`; }
 	else if (url.pathname.endsWith("/side-chat")) {
@@ -101,7 +102,7 @@ handlers.set("Fetch.requestPaused", async ({ requestId, request }) => {
 			const input = jobs.get(id);
 			assert(input, "unknown side-chat request");
 			await new Promise((resolve) => setTimeout(resolve, 150));
-			data = { requestId: id, revision: 1, text: input.text.includes("Model") ? "Model 由 Pi 的模型运行时加载，沿用现有配置与认证。\n\n你可以接着问其他实现细节，主会话仍留在原处。" : "**复用 Session 存储**，就是 Web 与 CLI 使用同一份会话记录。\n\n1. 消息保存在 JSONL 文件中。\n2. 会话管理器根据当前分支读取消息。\n3. 旁聊单独保留自己的问答，主会话内容保持原样。", done: true, aborted: false, textOffset: 0 };
+			data = { requestId: id, revision: 1, text: input.model ? `这是 ${input.model.id} 的回答。\n\n旁聊可以单独选模型，主会话仍留在原处。` : input.text.includes("Model") ? "Model 由 Pi 的模型运行时加载，沿用现有配置与认证。\n\n你可以接着问其他实现细节，主会话仍留在原处。" : "**复用 Session 存储**，就是 Web 与 CLI 使用同一份会话记录。\n\n1. 消息保存在 JSONL 文件中。\n2. 会话管理器根据当前分支读取消息。\n3. 旁聊单独保留自己的问答，主会话内容保持原样。", done: true, aborted: false, textOffset: 0 };
 		}
 	} else if (url.pathname.startsWith("/api/agent/")) { if (request.postData) mainCommands.push(JSON.parse(request.postData)); }
 	else if (url.pathname === "/api/growth") data = { rounds: [], changes: [], root: "/demo/project", totalRounds: 0 };
@@ -146,15 +147,32 @@ async function ask(text) {
 	await evaluate("document.querySelector('[data-testid=side-chat-panel] form').requestSubmit()");
 	await until("!document.querySelector('[data-testid=side-chat-panel] [role=status]') && !!document.querySelector('[data-testid=side-chat-panel] .md')");
 }
-await ask("复用 Session 存储的详细逻辑是什么？");
-await ask("Model 又是怎么复用的？");
+await ask("复用 Session 存储的详细逻辑是什么?");
+await ask("Model 又是怎么复用的?");
 await until("document.querySelector('[data-testid=side-chat-panel]').textContent.includes('Model 由 Pi')");
 assert(Math.abs((await readingTop()) - initialTop) < 5, "side questions moved the main pane");
 assert.equal(prompts.length, 2);
 assert.equal(prompts[1].history.length, 2);
+assert.equal(prompts[0].model, undefined, "default side-chat request must follow the main model");
 assert(!mainCommands.some((item) => ["prompt", "abort", "compact"].includes(item.cmd)), "side chat sent a command to the main agent");
 assert.equal(await evaluate("document.querySelectorAll('.pi-main [data-role=user]').length"), 1);
 assert(!(await evaluate("document.querySelector('[data-testid=side-chat-panel]').textContent")).match(/缓存命中|工具调用|首 token|tok\/s/), "side panel displayed session statistics");
+// 旁聊模型：默认跟随主会话，换成旁聊专属模型后后续问题带显式模型
+await evaluate(`(() => {
+	const chip = [...document.querySelectorAll('[data-testid=side-chat-panel] .chip')].find(node => node.textContent.includes('示例模型'));
+	if (!chip) throw new Error('side-chat model chip not found');
+	chip.click();
+})()`);
+await until("[...document.querySelectorAll('[data-testid=side-chat-panel] [role=menuitemradio]')].some(node => node.textContent.includes('旁聊快问模型'))");
+assert.equal(await evaluate("[...document.querySelectorAll('[data-testid=side-chat-panel] [role=menuitemradio]')].some(node => node.textContent.includes('跟随主会话'))"), true, "following the main model must stay an option");
+await evaluate(`(() => {
+	const option = [...document.querySelectorAll('[data-testid=side-chat-panel] [role=menuitemradio]')].find(node => node.textContent.includes('旁聊快问模型'));
+	option.click();
+})()`);
+await until("document.querySelector('[data-testid=side-chat-panel] .chip').textContent.includes('旁聊快问模型')");
+await ask("换个模型再问一次");
+await until("document.querySelector('[data-testid=side-chat-panel]').textContent.includes('这是 demo-quick 的回答')");
+assert.deepEqual(prompts.at(-1).model, { provider: "demo", id: "demo-quick" }, "picked side-chat model was not sent with the question");
 await evaluate(`(() => {
 	const handle = [...document.querySelectorAll('.cursor-col-resize')].find(node => node.getBoundingClientRect().left > window.innerWidth / 2);
 	const x = handle.getBoundingClientRect().left + 4;
@@ -188,5 +206,5 @@ assert.equal(await evaluate("document.documentElement.scrollWidth <= window.inne
 assert.equal(await evaluate("document.querySelector('[data-testid=side-chat-panel] textarea').getBoundingClientRect().bottom <= window.innerHeight"), true, "mobile input was outside the screen");
 await screenshot("side-chat-mobile.png");
 assert.deepEqual(errors, [], "browser threw exceptions");
-console.log(JSON.stringify({ passed: true, checks: ["open preserves reading position", "multi-turn isolated requests", "simple panel without statistics", "drag preserves reading position", "close and reopen", "new chat keeps old history", "reload restores history", "mobile input fits"], screenshots: [path.join(artifactDir, "side-chat-desktop.png"), path.join(artifactDir, "side-chat-mobile.png")] }, null, 2));
+console.log(JSON.stringify({ passed: true, checks: ["open preserves reading position", "multi-turn isolated requests", "default follows the main model", "picking a side-chat model sends it", "simple panel without statistics", "drag preserves reading position", "close and reopen", "new chat keeps old history", "reload restores history", "mobile input fits"], screenshots: [path.join(artifactDir, "side-chat-desktop.png"), path.join(artifactDir, "side-chat-mobile.png")] }, null, 2));
 socket.close();

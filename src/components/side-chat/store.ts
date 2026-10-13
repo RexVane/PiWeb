@@ -1,6 +1,6 @@
 "use client";
 
-import { isSideChatId, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest } from "@/lib/side-chat/types";
+import { isSideChatId, isSideChatModel, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest } from "@/lib/side-chat/types";
 
 export interface SideChatMessage {
 	id: string;
@@ -16,6 +16,7 @@ export interface SideChatThread {
 	title: string;
 	messages: SideChatMessage[];
 	draft: string;
+	model?: SideChatModel;
 	request?: { id: string; revision: number };
 	connectionLost?: boolean;
 }
@@ -62,7 +63,7 @@ export class SideChatStore {
 					isSideChatId(thread.id) && typeof thread.title === "string" && typeof thread.draft === "string" && Array.isArray(thread.messages) && thread.messages.every((message) =>
 						isSideChatId(message.id) && (message.role === "user" || message.role === "assistant") && typeof message.text === "string") &&
 					(!thread.request || (isSideChatId(thread.request.id) && Number.isSafeInteger(thread.request.revision)))) && saved.threads.some((thread) => thread.id === saved.currentThreadId)) {
-					state = { ...saved, storageFailed: false };
+					state = { ...saved, storageFailed: false, threads: saved.threads.map((thread) => ({ ...thread, model: isSideChatModel(thread.model) ? thread.model : undefined })) };
 				}
 			}
 		} catch { /* A unavailable or full browser store must not disable questions. */ }
@@ -89,7 +90,7 @@ export class SideChatStore {
 		return () => { listeners.delete(listener); };
 	};
 
-	private newThread(): SideChatThread { return { id: this.options.id(), title: "", messages: [], draft: "" }; }
+	private newThread(model?: SideChatModel): SideChatThread { return { id: this.options.id(), title: "", messages: [], draft: "", ...(model ? { model: { ...model } } : {}) }; }
 	private notify(sessionId: string): void { for (const listener of this.listeners.get(sessionId) ?? []) listener(); }
 	private save(sessionId: string): void {
 		const timer = this.saves.get(sessionId);
@@ -118,11 +119,14 @@ export class SideChatStore {
 	setDraft(sessionId: string, text: string): void {
 		this.updateThread(sessionId, this.get(sessionId).currentThreadId, (thread) => ({ ...thread, draft: text }));
 	}
+	setModel(sessionId: string, model?: SideChatModel): void {
+		this.updateThread(sessionId, this.get(sessionId).currentThreadId, (thread) => ({ ...thread, model: model ? { ...model } : undefined }), true);
+	}
 	createThread(sessionId: string): void {
 		const state = this.get(sessionId);
 		const current = state.threads.find((thread) => thread.id === state.currentThreadId);
 		if (current && !current.messages.length && !current.draft) return;
-		const thread = this.newThread();
+		const thread = this.newThread(current?.model);
 		this.update(sessionId, { ...state, currentThreadId: thread.id, threads: [...state.threads, thread] }, true);
 	}
 	selectThread(sessionId: string, threadId: string): void {
@@ -146,7 +150,7 @@ export class SideChatStore {
 			? [...thread.messages.slice(0, -1), { id: previous!.id, role: "assistant", text: "", status: "pending" }]
 			: [...thread.messages, { id: this.options.id(), role: "user", text }, { id: this.options.id(), role: "assistant", text: "", status: "pending" }];
 		this.updateThread(sessionId, thread.id, (item) => ({ ...item, title: item.title || text.slice(0, 80), messages, draft: retrying ? item.draft : "", request: { id: requestId, revision: -1 }, connectionLost: false }), true);
-		void this.run(sessionId, thread.id, requestId, { requestId, threadId: thread.id, text, history });
+		void this.run(sessionId, thread.id, requestId, { requestId, threadId: thread.id, text, history, ...(thread.model ? { model: { ...thread.model } } : {}) });
 	}
 
 	private apply(sessionId: string, threadId: string, requestId: string, progress: SideChatProgress): void {

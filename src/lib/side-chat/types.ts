@@ -4,11 +4,24 @@ export interface SideChatHistoryMessage {
 	text: string;
 }
 
+export interface SideChatModel {
+	provider: string;
+	id: string;
+}
+
+export function isSideChatModel(value: unknown): value is SideChatModel {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const model = value as Record<string, unknown>;
+	return [model.provider, model.id].every((part) => typeof part === "string" && part.trim().length > 0 && part.length <= 512);
+}
+
 export interface SideChatRequest {
 	requestId: string;
 	threadId: string;
 	text: string;
 	history: SideChatHistoryMessage[];
+	/** Omitted means follow the main conversation's current model. */
+	model?: SideChatModel;
 }
 
 export interface SideChatProgress {
