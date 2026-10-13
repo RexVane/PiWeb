@@ -110,3 +110,4 @@
 - 2026-10-13 03:10 | #097 | 发布 | 发版后清理本地残留：删除本地分支 pr-27 至 pr-32（SHA 已记入 backups/INDEX.md，远端仍有提交）；%TEMP% 里本次建的 3 个目录、4 个文件先复制到 ~/.agents/backups 并校验，再删除；pr-18、pr-25 与 .next-releases 保留 | claude-haiku-5-5
 - 2026-10-13 03:26 | #098 | 上下文 | 弹窗去掉「估算占比/估算用量」两行和「内容分类（字符数）」标题及说明；进度条改成整条铺满上下文窗口，已用那一截按各类字符比例分段上色（拿不到分类 token，就只摊比例、不报每类 token 数），分项列表当图例，颜色与分段一一对应；已用基准优先最近请求的真实输入（API），没测到才退回 SDK 估算，Free Space 与进度条同基准 | deepseek-v4.1-flash
 - 2026-10-13 04:12 | #099 | 对话 | 统计条去掉括号里的解释（「实时测量 N 步」「N/M 条有计时」），悬停浮层同样干净；待发图片加「清空图片」一键清空（悬停单张删除原本就有）；图片放大预览改成从屏幕中心放大进来（transform-origin 居中 + 200ms 缩放淡入）；删掉随之无用的 statsMeasuredSteps / statsTimedCoverage 两个 i18n key | deepseek-v4.1-flash
+- 2026-10-13 04:58 | #100 | 文件面板 | 修类名撞车：图片预览与文件查看器都用 .pw-viewer，图片预览后写的那条（position:fixed/inset:0/深色遮罩）把文件查看器的玻璃弹层顶掉了，面板显示错位；图片预览全改名为 .pw-lightbox（-bar/-count/-btn/-image/-nav 一并），文件查看器的 .pw-viewer/-tabs/-tabstrip 原样保留 | deepseek-v4.1-flash

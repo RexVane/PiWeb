@@ -295,23 +295,23 @@ function ImageViewer({
 	}, [count, index]);
 
 	return (
-		<div ref={dialogRef} className="pw-viewer" role="dialog" aria-modal="true" aria-label={t.imageViewer} onClick={onClose}>
-			<div className="pw-viewer-bar" onClick={(event) => event.stopPropagation()}>
-				<span className="pw-viewer-count">{count > 1 ? `${index + 1} / ${count}` : ""}</span>
-				<button type="button" className="pw-viewer-btn" disabled={disabled} onClick={() => onRemove(index)}>
+		<div ref={dialogRef} className="pw-lightbox" role="dialog" aria-modal="true" aria-label={t.imageViewer} onClick={onClose}>
+			<div className="pw-lightbox-bar" onClick={(event) => event.stopPropagation()}>
+				<span className="pw-lightbox-count">{count > 1 ? `${index + 1} / ${count}` : ""}</span>
+				<button type="button" className="pw-lightbox-btn" disabled={disabled} onClick={() => onRemove(index)}>
 					{t.delete}
 				</button>
-				<button ref={closeRef} type="button" className="pw-viewer-btn" aria-label={t.close} onClick={onClose}>
+				<button ref={closeRef} type="button" className="pw-lightbox-btn" aria-label={t.close} onClick={onClose}>
 					✕
 				</button>
 			</div>
-			<img src={srcOf(images[index])} alt="" className="pw-viewer-image" onClick={(event) => event.stopPropagation()} />
+			<img src={srcOf(images[index])} alt="" className="pw-lightbox-image" onClick={(event) => event.stopPropagation()} />
 			{count > 1 ? (
 				<>
-					<button type="button" className="pw-viewer-nav" data-side="prev" aria-label={t.imagePrev} onClick={(event) => { event.stopPropagation(); go(-1); }}>
+					<button type="button" className="pw-lightbox-nav" data-side="prev" aria-label={t.imagePrev} onClick={(event) => { event.stopPropagation(); go(-1); }}>
 						‹
 					</button>
-					<button type="button" className="pw-viewer-nav" data-side="next" aria-label={t.imageNext} onClick={(event) => { event.stopPropagation(); go(1); }}>
+					<button type="button" className="pw-lightbox-nav" data-side="next" aria-label={t.imageNext} onClick={(event) => { event.stopPropagation(); go(1); }}>
 						›
 					</button>
 				</>
