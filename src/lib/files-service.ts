@@ -152,20 +152,24 @@ function checkIgnore(root: string, git: string, rels: string[]): Promise<string>
 		});
 		let out = "";
 		let err = "";
+		let inputError: Error | undefined;
+		// Pipe errors are asynchronous: try/catch around end() cannot handle EPIPE.
+		child.stdin.on("error", (error) => { inputError = error; });
 		const timer = setTimeout(() => { child.kill(); reject(new Error("git check-ignore timed out")); }, 10_000);
 		child.stdout.on("data", (chunk: Buffer) => { out += chunk.toString("utf8"); });
 		child.stderr.on("data", (chunk: Buffer) => { err += chunk.toString("utf8"); });
 		child.on("error", (error) => { clearTimeout(timer); reject(error); });
 		child.on("close", (code) => {
 			clearTimeout(timer);
-			if (code === 0) resolve(out);
+			if (inputError) reject(inputError);
+			else if (code === 0) resolve(out);
 			else if (code === 1) resolve("");
 			else reject(new Error(err.trim() || `git check-ignore exited with ${code}`));
 		});
 		try {
 			child.stdin.end(`${rels.join("\u0000")}\u0000`);
-		} catch {
-			// git 提前退出时 stdin 会 EPIPE；close 事件会给出真正的结论
+		} catch (error) {
+			inputError = error instanceof Error ? error : new Error(String(error));
 		}
 	});
 }

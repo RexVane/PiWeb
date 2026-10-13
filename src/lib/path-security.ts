@@ -28,47 +28,36 @@ export async function resolveSessionPath(id: string, options?: { allowPending?: 
 
 	const sessionsRoot = path.join(getAgentDir(), "sessions");
 	const realRoot = await fs.realpath(sessionsRoot).catch(() => path.resolve(sessionsRoot));
-	// A configured store may use a Windows short path or a directory junction.
-	// Admit either spelling here; the real target/nearest existing parent is still checked below.
-	const insideStore = (candidate: string) => isPathInside(sessionsRoot, candidate) || isPathInside(realRoot, candidate);
-	if (!insideStore(decoded)) throw new BoundaryError("session path is outside the Pi session store");
+	// Compare canonical paths, not spellings: Windows short paths and junctions
+	// can give the same store several legitimate absolute names.
+	const realFile = await fs.realpath(decoded).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return null;
+		throw error;
+	});
+	if (realFile) {
+		if (!isPathInside(realRoot, realFile)) throw new BoundaryError("session path escapes the Pi session store");
+		const stat = await fs.stat(realFile);
+		if (!stat.isFile()) throw new BoundaryError("session is not a file");
+		return options?.allowPending ? decoded : realFile;
+	}
+	if (!options?.allowPending) throw new BoundaryError("session not found");
 
-	// A freshly created session may not be materialized on disk yet
-	// (SessionManager is lazy); allow pending sessions through so setup
-	// commands can apply first. The real file is materialized by ensureSession.
-
-	if (options?.allowPending) {
-		const existing = await fs.realpath(decoded).catch((error: NodeJS.ErrnoException) => {
+	// SessionManager creates files lazily. The nearest existing parent must
+	// resolve inside the store; an outside link remains forbidden.
+	let parent = path.dirname(decoded);
+	for (;;) {
+		const realParent = await fs.realpath(parent).catch((error: NodeJS.ErrnoException) => {
 			if (error.code === "ENOENT") return null;
 			throw error;
 		});
-		if (!existing) {
-			let parent = path.dirname(decoded);
-			while (insideStore(parent)) {
-				const realParent = await fs.realpath(parent).catch((error: NodeJS.ErrnoException) => {
-					if (error.code === "ENOENT") return null;
-					throw error;
-				});
-				if (realParent) {
-					if (!isPathInside(realRoot, realParent)) throw new BoundaryError("session path escapes the Pi session store");
-					return decoded;
-				}
-				if (samePath(parent, sessionsRoot) || samePath(parent, realRoot)) break;
-				parent = path.dirname(parent);
-			}
-			throw new BoundaryError("session store not found");
+		if (realParent) {
+			if (!isPathInside(realRoot, realParent)) throw new BoundaryError("session path escapes the Pi session store");
+			return decoded;
 		}
-		if (!isPathInside(realRoot, existing)) throw new BoundaryError("session path escapes the Pi session store");
-		return decoded;
+		const next = path.dirname(parent);
+		if (next === parent) throw new BoundaryError("session store not found");
+		parent = next;
 	}
-
-	const realFile = await fs.realpath(decoded).catch(() => {
-		throw new BoundaryError("session not found");
-	});
-	if (!isPathInside(realRoot, realFile)) throw new BoundaryError("session path escapes the Pi session store");
-	const stat = await fs.stat(realFile);
-	if (!stat.isFile()) throw new BoundaryError("session is not a file");
-	return realFile;
 }
 
 export async function resolveWorkspacePath(value: unknown): Promise<string> {
