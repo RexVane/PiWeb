@@ -8,12 +8,14 @@ import { formatCapacity, parseCapacity } from "@/lib/model-draft";
 import { classifyMessageChars } from "@/lib/process-format";
 import type { ContextBreakdown, TrajTokens } from "@/lib/types";
 
-export function ContextMeter({ percent, tokens, contextWindow, model, source }: {
+export function ContextMeter({ percent, tokens, contextWindow, model, source, label }: {
 	percent: number | null;
 	tokens: number | null;
 	contextWindow: number | null;
 	/** 当前会话的模型：有它才能在弹窗里改上下文窗口 */
 	model?: { provider: string; id: string } | null;
+	/** 覆盖「上下文估算」这个措辞：真实用量（如旁聊）不该叫估算 */
+	label?: string;
 	source?: {
 		systemChars: number;
 		messages: Array<{ role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; usage?: TrajTokens; stopReason?: string }>;
@@ -56,7 +58,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source }: 
 	const recomputed = override !== null && known;
 	const p = recomputed ? used / override * 100 : percent ?? 0;
 	/** 圆环与悬停提示仍用 SDK 估算（那是「占窗口多少」），弹窗正文只留 API 出来的真实数字 */
-	const usageLabel = percent === null && !recomputed ? t.contextUnknown : `${fmtPercent(p)} ${t.contextEstimated}`;
+	const usageLabel = percent === null && !recomputed ? t.contextUnknown : `${fmtPercent(p)} ${label ?? t.contextEstimated}`;
 	const r = 5.5;
 	const circumference = 2 * Math.PI * r;
 	const reserved = Math.max(0, source?.breakdown?.autoCompactBuffer ?? 0);

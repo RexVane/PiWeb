@@ -3,7 +3,7 @@ import { getManaged } from "../agent-manager";
 import { BoundaryError } from "../path-security";
 import { getModelRuntime } from "../pi";
 import { buildSideChatContext, mainConversationText } from "./context";
-import type { SideChatProgress, SideChatRequest } from "./types";
+import type { SideChatProgress, SideChatRequest, SideChatUsage } from "./types";
 
 const IDLE_MS = 10 * 60_000;
 const RUN_MS = 15 * 60_000;
@@ -60,6 +60,13 @@ function settle(job: SideChatJob, update: Partial<SideChatProgress>): void {
 	publish(job, true);
 }
 
+/** 模型响应里的真实用量；拿不到就返回 undefined（不编数字） */
+function usageOf(message: AssistantMessage): SideChatUsage | undefined {
+	const usage = message.usage;
+	if (!usage) return undefined;
+	return { input: usage.input ?? 0, output: usage.output ?? 0, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0 };
+}
+
 function assistantText(message: AssistantMessage): string {
 	return message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n\n");
 }
@@ -107,7 +114,7 @@ export function startSideChat(sessionPath: string, request: SideChatRequest): Si
 			if (!model) throw new BoundaryError("the selected side-chat model is unavailable");
 			const built = buildSideChatContext(background, request, model);
 			const level = clampThinkingLevel(model, (thinking || "off") as ModelThinkingLevel);
-			job.progress = { ...job.progress, model: model.name, contextTruncated: built.contextTruncated };
+			job.progress = { ...job.progress, model: model.name, contextWindow: model.contextWindow, contextTruncated: built.contextTruncated };
 			publish(job);
 			const stream = runtime.streamSimple(model, built.context, {
 				signal: job.controller.signal,
@@ -124,9 +131,12 @@ export function startSideChat(sessionPath: string, request: SideChatRequest): Si
 					job.progress = { ...job.progress, text: [...blocks.entries()].sort(([a], [b]) => a - b).map(([, text]) => text).join("\n\n") };
 					publish(job);
 				} else if (event.type === "done") {
-					settle(job, { text: assistantText(event.message), lengthLimited: event.reason === "length" });
+					const usage = usageOf(event.message);
+					settle(job, { text: assistantText(event.message), lengthLimited: event.reason === "length", ...(usage ? { usage } : {}) });
 				} else if (event.type === "error") {
-					settle(job, { text: assistantText(event.error), aborted: event.reason === "aborted", error: event.reason === "aborted" ? undefined : event.error.errorMessage || "model request failed" });
+					// 出错时的响应里也可能有 usage（比如跑一半被截断），有就记下来
+					const usage = usageOf(event.error);
+					settle(job, { text: assistantText(event.error), aborted: event.reason === "aborted", error: event.reason === "aborted" ? undefined : event.error.errorMessage || "model request failed", ...(usage ? { usage } : {}) });
 				}
 			}
 			if (!job.progress.done) settle(job, { aborted: job.controller.signal.aborted, error: job.controller.signal.aborted ? undefined : "model stream ended before completion" });

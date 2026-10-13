@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { IconChevronDown14, IconCloseOutline14, IconNewChatOutline16, IconSendArrowUp14, IconStopFill16 } from "@/components/icons";
+import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { EMPTY_SIDE_CHAT, sideChatStore, type SideChatStore } from "./store";
@@ -77,6 +78,13 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 			document.removeEventListener("keydown", onKey);
 		};
 	}, [historyOpen]);
+
+	// 上下文：这次问出去的真实 prompt（input + 缓存读写）对上该模型的窗口。
+	// 没有真实用量就一律 null —— 圆环显示「用量未知」，不编数字。
+	const usage = thread?.usage;
+	const contextTokens = usage ? usage.input + usage.cacheRead + usage.cacheWrite : null;
+	const contextWindow = thread?.contextWindow ?? null;
+	const contextPercent = contextTokens !== null && contextWindow ? (contextTokens / contextWindow) * 100 : null;
 
 	const send = () => {
 		if (!sessionId || !canSend || busy || !thread?.draft.trim()) return;
@@ -154,6 +162,15 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 							modelOnly disabled={!sessionId} thinkingLevels={[]} onSelectLevel={() => {}}
 							defaultOption={{ label: t.sideChatFollowMain, selected: !thread?.model, onSelect: () => sessionId && store.setModel(sessionId) }}
 							onSelectModel={(provider, id) => sessionId && store.setModel(sessionId, { provider, id })} />
+					</div>
+					<div className={styles.meter}>
+						<ContextMeter
+							percent={contextPercent}
+							tokens={contextTokens}
+							contextWindow={contextWindow}
+							label={t.contextMeasured}
+							model={selectedModel ? { provider: selectedModel.provider, id: selectedModel.id } : null}
+						/>
 					</div>
 					{busy ? <button type="button" className={styles.send} title={t.stop} aria-label={t.stop} onClick={() => sessionId && store.stop(sessionId)}><IconStopFill16 size={15} /></button>
 						: <button type="submit" className={styles.send} title={t.send} aria-label={t.send} disabled={!canSend || !thread?.draft.trim()}><IconSendArrowUp14 size={16} /></button>}

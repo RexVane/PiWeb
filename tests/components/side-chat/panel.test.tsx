@@ -30,9 +30,9 @@ function setup() {
 		return answers.get(id)!.promise;
 	});
 	const store = new SideChatStore({ fetch: fetchImpl, storage: () => localStorage, id: () => `test-id-${++sequence}` });
-	const reply = async (text: string, index = -1) => {
+	const reply = async (text: string, index = -1, extra: Record<string, unknown> = {}) => {
 		const [id, pending] = [...answers.entries()].at(index)!;
-		await act(async () => pending.resolve(response({ ...initial(id), revision: 1, text, done: true })));
+		await act(async () => pending.resolve(response({ ...initial(id), revision: 1, text, done: true, ...extra })));
 	};
 	return { store, fetchImpl, reply, answers };
 }
@@ -238,3 +238,25 @@ describe("persistent, simple side-chat panel", () => {
 		expect(store.get("main-session-a").threads[0].draft).toBe("保留的问题");
 	});
 });
+
+	it("右下角的上下文环用回答里的真实用量；没报用量就显示未知", async () => {
+		const { store, reply } = setup();
+		render(panel(store));
+		// 还没问过：没有用量，圆环说「未知」而不是假装 0
+		expect(screen.getByTitle("上下文用量未知")).toBeTruthy();
+
+		fireEvent.change(questionInput(), { target: { value: "这个项目是做什么的?" } });
+		fireEvent.keyDown(questionInput(), { key: "Enter" });
+		// 1000 输入 + 9000 缓存读 = 10000，窗口 200000 → 5.00%
+		await reply("答案", -1, { usage: { input: 1000, output: 20, cacheRead: 9000, cacheWrite: 0 }, contextWindow: 200000 });
+		expect(screen.getByTitle("5.00% 上下文用量")).toBeTruthy();
+		// 文案是「上下文用量」而不是「上下文估算」：旁聊这边是模型报的真实数字
+		expect(screen.queryByTitle(/估算/)).toBeNull();
+
+		// 换一个没报用量的回答：沿用上一次的真实值，不回落成 0
+		fireEvent.change(questionInput(), { target: { value: "再问一句" } });
+		fireEvent.keyDown(questionInput(), { key: "Enter" });
+		await reply("第二答");
+		expect(screen.getByTitle("5.00% 上下文用量")).toBeTruthy();
+	});
+

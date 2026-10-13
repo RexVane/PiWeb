@@ -112,6 +112,8 @@
 .composer textarea::placeholder { color: var(--dsw-label-tertiary); }
 .actions { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding-top: 5px; }
 .model { flex: 1; min-width: 0; }
+/* 右下角的上下文环：夹在模型选择器与发送键之间 */
+.meter { display: flex; align-items: center; flex: none; }
 .model :global(.chip) { max-width: 100%; font-size: 12px; }
 .model :global(.chip:disabled) { opacity: 0.6; }
 .model :global([role="menu"]) { left: 0; right: auto; width: min(312px, calc(100% + 38px)); }

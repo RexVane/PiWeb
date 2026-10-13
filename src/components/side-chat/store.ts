@@ -1,6 +1,6 @@
 "use client";
 
-import { isSideChatId, isSideChatModel, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest } from "@/lib/side-chat/types";
+import { isSideChatId, isSideChatModel, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest, type SideChatUsage } from "@/lib/side-chat/types";
 
 export interface SideChatMessage {
 	id: string;
@@ -18,6 +18,9 @@ export interface SideChatThread {
 	draft: string;
 	model?: SideChatModel;
 	request?: { id: string; revision: number };
+	/** 最近一次回答的真实用量与窗口：面板右下角的上下文环用它 */
+	usage?: SideChatUsage;
+	contextWindow?: number;
 	connectionLost?: boolean;
 }
 export interface SideChatState {
@@ -162,6 +165,9 @@ export class SideChatStore {
 			const status = !progress.done ? "pending" : progress.error ? "error" : progress.aborted ? "aborted" : "done";
 			return {
 				...thread, connectionLost: false, request: progress.done ? undefined : { id: requestId, revision: progress.revision },
+				// 只在这次响应真的报了就更新；没报就保持上一次的值（不回落成 0）
+				...(progress.usage ? { usage: progress.usage } : {}),
+				...(progress.contextWindow ? { contextWindow: progress.contextWindow } : {}),
 				messages: thread.messages.map((message, index) => index === thread.messages.length - 1 ? {
 					...message, text, status, error: progress.error, contextTruncated: progress.contextTruncated, lengthLimited: progress.lengthLimited,
 				} : message),
