@@ -140,21 +140,18 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 
 	return (
 		<>
-			<div ref={railRef} className="mb-2 flex flex-wrap items-center gap-2 px-1" data-testid="composer-images">
+			<div ref={railRef} className="pointer-events-auto flex flex-wrap items-center gap-2 px-1" data-testid="composer-images">
 				{collapsible ? (
 					<div
 						className="pw-image-fan"
 						data-testid="image-fan"
 						data-expanded={fanned}
 						data-crowded={fanned && layout.gap < ROOMY_GAP ? true : undefined}
-						// 展开时整块浮到上方：容器自身尺寸不变，靠负 margin 抬上去——不推挤输入框，
-						// 也不改扇形几何（fanLayout 坐标不动，既有几何断言仍然成立）
+						// 容器（composer-attachments）已经浮在输入卡上方、不占布局高度，这里不用再抬
 						style={{
 							position: "relative",
 							width: fanned ? "100%" : layout.width,
 							height: layout.height,
-							marginTop: fanned ? -(layout.height - CARD) : 0,
-							zIndex: fanned ? 30 : undefined,
 						}}
 					>
 						{images.map((image, i) => {

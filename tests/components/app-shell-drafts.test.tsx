@@ -98,7 +98,7 @@ describe("AppShell session-owned composer drafts", () => {
 		expect(screen.queryByText("a.txt")).toBeNull();
 		go("Open A");
 		expect(textarea().value).toBe("draft A");
-		fireEvent.click(screen.getByRole("button", { name: "remove" }));
+		fireEvent.click(screen.getByRole("button", { name: "删除 a.txt" }));
 		remount();
 		expect(screen.queryByText("a.txt")).toBeNull();
 		fireEvent.paste(textarea(), { clipboardData: { files: [new File(["abc"], "a.txt", { type: "text/plain" })] } });

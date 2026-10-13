@@ -159,6 +159,8 @@ export function ChatInput({
 	const [dragActive, setDragActive] = useState(false);
 	/** 引用 chip 超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉（图片的折叠在 ComposerImages 里） */
 	const [refsExpanded, setRefsExpanded] = useState(false);
+	/** 上传文件超过 4 个时的展开状态（与引用同一套折叠规则） */
+	const [uploadsExpanded, setUploadsExpanded] = useState(false);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
@@ -624,6 +626,12 @@ export function ChatInput({
 				</div>
 			)}
 
+			{/*
+			 * 附件轨（图片 / 引用 / 上传文件）：绝对定位浮在输入卡上方，**不占布局高度** ——
+			 * 输入框位置不动，多出来的附件直接盖住后面的聊天记录（用户要的就是这个）。
+			 * 外层 pointer-events-none，只有附件本身接收点击，免得挡住聊天区的交互。
+			 */}
+			<div className="pointer-events-none absolute inset-x-0 bottom-full z-20 flex flex-col gap-1.5 pb-2" data-testid="composer-attachments">
 			{/* 附件轨：图片（超过 4 张折叠成牌堆，展开沿弧线扇开；点开可放大、切换、删除） */}
 			{images.length > 0 && (
 				<ComposerImages
@@ -636,7 +644,7 @@ export function ChatInput({
 
 			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
 			{references.length > 0 && (
-				<div className="mb-2 flex flex-wrap gap-1 px-1" data-testid="composer-references">
+				<div className="pointer-events-auto flex flex-wrap gap-1 px-1" data-testid="composer-references">
 					{(refsExpanded ? references : references.slice(0, COLLAPSE_AT)).map((path, i) => {
 						const chip = referenceChipOf(path);
 						return (
@@ -673,32 +681,34 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用） */}
+			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用）；超过 4 个折叠 */}
 			{uploads.length > 0 && (
-				<div className="mb-2 flex flex-wrap gap-2 px-1">
-					{uploads.map((f, i) => (
-						<div
-							key={f.path}
-							className="flex items-center gap-2 rounded-lg px-2.5 py-1.5"
-							style={{ border: "0.5px solid var(--dsw-border-l2)", background: "var(--dsw-hover)" }}
-							title={f.path}
-						>
-							<IconFileOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
-							<span className="max-w-[180px] truncate" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>{f.name}</span>
-							<span style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtUploadSize(f.size)}</span>
+				<div className="pointer-events-auto flex flex-wrap items-center gap-1 px-1" data-testid="composer-uploads">
+					{(uploadsExpanded ? uploads : uploads.slice(0, COLLAPSE_AT)).map((f, i) => (
+						<span key={f.path} className="pw-ref-chip group/ref" title={f.path}>
+							<IconFileOutline16 size={12} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+							<span className="max-w-[180px] truncate">{f.name}</span>
+							<span style={{ flex: "none", fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtUploadSize(f.size)}</span>
 							<button
-								className="flex h-5 w-5 items-center justify-center rounded-full text-[10px]"
-								style={{ color: "var(--dsw-label-caption)" }}
+								type="button"
+								className="pw-ref-close"
 								disabled={sendBusy}
 								onClick={() => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, index) => index !== i) }))}
-								aria-label="remove"
+								aria-label={`${t.delete} ${f.name}`}
 							>
 								✕
 							</button>
-						</div>
+						</span>
 					))}
+					{uploads.length > COLLAPSE_AT ? (
+						<button type="button" className="pw-chip" data-testid="uploads-toggle" onClick={() => setUploadsExpanded((open) => !open)}>
+							{uploadsExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(uploads.length - COLLAPSE_AT))}
+						</button>
+					) : null}
 				</div>
 			)}
+
+			</div>
 
 			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
 			<div

@@ -214,3 +214,38 @@ describe("图片 chip", () => {
 		expect(left[0].querySelector("img")?.getAttribute("src")).toContain("BBBB");
 	});
 });
+/** 附件轨整体浮在输入卡上方：不占布局高度、不把输入框顶上去，多的直接盖住聊天记录 */
+describe("附件轨的浮层与上传文件折叠", () => {
+	it("上传文件超过 4 个先折叠，点「展开 N」全出，再点收回", () => {
+		const uploads = [1, 2, 3, 4, 5, 6].map((i) => ({ name: `file-${i}.txt`, path: `/uploads/file-${i}.txt`, size: i * 1000 }));
+		renderInput({ uploads });
+		const rail = screen.getByTestId("composer-uploads");
+		// title 就是文件路径：用它数当前显示了几张
+		expect(rail.querySelectorAll("[title]")).toHaveLength(4);
+		expect(screen.getByTestId("uploads-toggle").textContent).toBe("展开 2");
+		fireEvent.click(screen.getByTestId("uploads-toggle"));
+		expect(rail.querySelectorAll("[title]")).toHaveLength(6);
+		expect(screen.getByTestId("uploads-toggle").textContent).toBe("收起");
+		fireEvent.click(screen.getByTestId("uploads-toggle"));
+		expect(rail.querySelectorAll("[title]")).toHaveLength(4);
+	});
+
+	it("三条轨道都在浮层里，浮层绝对定位于输入卡上方", () => {
+		renderInput({ uploads: [{ name: "note.txt", path: "/uploads/note.txt", size: 4 }], references: ["src/lib/format.ts"] });
+		const overlay = screen.getByTestId("composer-attachments");
+		expect(overlay.className).toContain("absolute");
+		expect(overlay.className).toContain("bottom-full");
+		// 点击穿透要靠 pointer-events-none + 轨道自己 pointer-events-auto
+		expect(overlay.className).toContain("pointer-events-none");
+		expect(overlay.contains(screen.getByTestId("composer-uploads"))).toBe(true);
+		expect(overlay.contains(screen.getByTestId("composer-references"))).toBe(true);
+	});
+
+	it("上传文件用与引用一致的降噪样式，删除按钮带文件名的无障碍标签", () => {
+		renderInput({ uploads: [{ name: "note.txt", path: "/uploads/note.txt", size: 4 }] });
+		const chip = screen.getByTestId("composer-uploads").querySelector(".pw-ref-chip") as HTMLElement;
+		expect(chip).toBeTruthy();
+		expect(screen.getByRole("button", { name: "删除 note.txt" })).toBeTruthy();
+	});
+});
+
