@@ -53,3 +53,6 @@
 - 2026-10-13 03:10 | refs/heads/pr-30 | HEAD 59d36d8（git branch pr-30 59d36d8 可恢复） | 本地残留：依赖升级 PR #30 已由 #094 合并进 main
 - 2026-10-13 03:10 | refs/heads/pr-31 | HEAD 015c83c（git branch pr-31 015c83c 可恢复） | 本地残留：依赖升级 PR #31 已由 #094 合并进 main
 - 2026-10-13 03:10 | refs/heads/pr-32 | HEAD ccb357b（git branch pr-32 ccb357b 可恢复） | 本地残留：依赖升级 PR #32 已由 #094 合并进 main
+- 2026-10-13 14:40 | .next-releases/sidechat-validation-20261013-132334 | 未备份（构建产物，可重新 build 生成，255 MB） | 旁聊 #105 的一次性浏览器验证构建，验证完成后清理
+- 2026-10-13 14:40 | .next-releases/sidechat-model-20261013-143310 | 未备份（构建产物，可重新 build 生成，255 MB） | 旁聊 #106 选模型的一次性浏览器验证构建，验证完成后清理
+- 2026-10-13 14:40 | %TEMP%\piweb-sidechat-validation（日志、无头 Chrome profile、临时 agent 目录） | 未备份（可重新生成，200 MB） | 旁聊 #105/#106 验证的日志与截图素材暂存，已按用户要求清理；截图成品在 docs/assets/
