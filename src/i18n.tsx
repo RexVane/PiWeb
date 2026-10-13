@@ -722,6 +722,9 @@ const zh = {
 	viewerNotInSnapshot: "此文件不在快照里（超过 1MB 或被排除），显示磁盘上的当前内容",
 	viewerLoadFailed: "加载失败",
 	viewerEmpty: "从左侧树里选择一个文件",
+	viewerOpenFolder: "打开文件夹预览",
+	viewerDirHint: "文件夹：共 {n} 项（已按 .gitignore 过滤）",
+	viewerDirMore: "加载更多",
 	// 流式输出
 	streamStyleTitle: "流式输出样式",
 	streamStyleDesc: "回答逐字出现的方式；改完立刻生效，正在流出的回答也一并换",
@@ -1453,6 +1456,9 @@ const en: Dict = {
 	viewerNotInSnapshot: "Not in the snapshot (over 1MB or excluded); showing the current content from disk",
 	viewerLoadFailed: "Failed to load",
 	viewerEmpty: "Pick a file from the tree on the left",
+	viewerOpenFolder: "Preview folder",
+	viewerDirHint: "Folder: {n} items (ignored files hidden)",
+	viewerDirMore: "Load more",
 	// Streaming text
 	streamStyleTitle: "Streaming text",
 	streamStyleDesc: "How the answer appears while it arrives; applies to the stream already running",

@@ -6,7 +6,7 @@
  * 文件页签：面包屑 + 模式（变更 / 内容 / 渲染）+ 折叠未改动 + 上一处 / 下一处 + 引用 / 编辑器打开。
  * 「变更」= 整文件行内 diff（FullDiff）；「内容」= 所选步的全文（被删文件显示删除前）；「渲染」= Markdown。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -45,6 +45,10 @@ function cachedJson<T>(url: string): Promise<T> {
 	}
 	return p;
 }
+
+/** 文件夹预览：一页目录条目（分页；后端已按 .gitignore 过滤） */
+interface DirEntry { name: string; kind: "dir" | "file"; size?: number }
+interface DirPage { dir: string; entries: DirEntry[]; nextOffset: number | null; truncated: boolean }
 
 interface Loaded {
 	key: string;
@@ -94,7 +98,7 @@ export function FileViewer({
 	onClose: () => void;
 	onSelectTab: (path: string | null) => void;
 	onCloseTab: (path: string) => void;
-	onOpen: (path: string, opts?: { from?: string; lazy?: boolean }) => void;
+	onOpen: (path: string, opts?: { from?: string; lazy?: boolean; kind?: "dir" | "file" }) => void;
 	onReference?: (path: string) => void;
 	onOpenEditor?: (path: string) => void;
 }) {
@@ -109,6 +113,8 @@ export function FileViewer({
 	const [treeFilter, setTreeFilter] = useState("");
 	const [reveal, setReveal] = useState<{ path: string; key: number } | null>(null);
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
+	const [dirPage, setDirPage] = useState<(DirPage & { key: string }) | null>(null);
+	const [dirMore, setDirMore] = useState<DirEntry[]>([]);
 	const diffRef = useRef<FullDiffHandle>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const quickInputRef = useRef<HTMLInputElement>(null);
@@ -121,15 +127,56 @@ export function FileViewer({
 	// 切页签：模式按是否有改动自动选，用户手动切过才保留
 	useEffect(() => {
 		setModeTouched(false);
+		setDirFallback(null);
 	}, [state.active]);
 	useEffect(() => {
 		if (modeTouched || !activeTab) return;
 		setMode(change && !activeTab.lazy ? "diff" : isMarkdown ? "render" : "content");
 	}, [activeTab, change, isMarkdown, modeTouched]);
 
+	/** 目录兜底：文件读取报 400（不存在 / 不是文件）时探一下目录接口，成功就当文件夹显示 */
+	const [dirFallback, setDirFallback] = useState<string | null>(null);
+	const dirPath = activeTab?.kind === "dir" ? activeTab.path : dirFallback;
+	const isDir = Boolean(dirPath);
+	// 文件夹：列目录（分页，后端已按 .gitignore 过滤），不读文件内容
+	useEffect(() => {
+		if (!dirPath || !cwd || !activeTab) {
+			setDirPage(null);
+			setDirMore([]);
+			return;
+		}
+		// @src/ 这类带尾斜杠的引用：列目录时去掉
+		const path_ = dirPath.replace(/\/+$/, "");
+		const key = `dir|${path_}`;
+		let alive = true;
+		setDirMore([]);
+		void (async () => {
+			try {
+				const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path_)}&offset=0`);
+				if (alive) setDirPage({ key, ...data });
+			} catch (error) {
+				if (alive) setDirPage({ key, dir: path_, entries: [], nextOffset: null, truncated: false, error: error instanceof Error ? error.message : t.viewerLoadFailed } as DirPage & { key: string; error?: string });
+			}
+		})();
+		return () => {
+			alive = false;
+		};
+	}, [activeTab, dirPath, cwd, t.viewerLoadFailed]);
+
+	/** 目录还有下一页时接着拉（大目录：node_modules 这种已被忽略，剩下的也不会太多） */
+	const loadMore = useCallback(async () => {
+		if (!activeTab || !cwd || !dirPage?.nextOffset) return;
+		try {
+			const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(activeTab.path)}&offset=${dirPage.nextOffset}`);
+			setDirPage({ key: `dir|${activeTab.path}`, ...data, entries: [...dirPage.entries, ...data.entries] });
+		} catch {
+			// 下一页失败就留在当前这页，用户可以再点
+		}
+	}, [activeTab, cwd, dirPage]);
+
 	// 取数据
 	useEffect(() => {
-		if (!activeTab) {
+		if (!activeTab || activeTab.kind === "dir") {
 			setLoaded(null);
 			return;
 		}
@@ -157,6 +204,15 @@ export function FileViewer({
 				done({ content: data.content, binary: data.binary, truncated: data.truncated, notice });
 			} catch (error) {
 				if ((error as { status?: number }).status !== 400) throw error;
+				// 400 有两种：文件不存在 / 路径其实是目录。探一下目录接口，能列出条目就当文件夹打开
+				try {
+					await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`);
+					done({ notice: null });
+					setDirFallback(tab.path);
+					return;
+				} catch {
+					// 目录也列不出来：照旧报「文件不存在」
+				}
 				done({ notice: "missing" });
 			}
 		};
@@ -379,7 +435,7 @@ export function FileViewer({
 									{stepBadge}
 								</span>
 							)}
-							{!activeTab.lazy && (
+							{!activeTab.lazy && !isDir && (
 								<span className="pw-seg" role="radiogroup">
 									{(["diff", "content", ...(isMarkdown ? ["render" as const] : [])] as Mode[]).map((m) => (
 										<button
@@ -398,7 +454,7 @@ export function FileViewer({
 									))}
 								</span>
 							)}
-							{activeTab.lazy && isMarkdown && (
+							{!isDir && activeTab.lazy && isMarkdown && (
 								<span className="pw-seg" role="radiogroup">
 									{(["content", "render"] as Mode[]).map((m) => (
 										<button key={m} type="button" role="radio" aria-checked={mode === m} data-active={mode === m} onClick={() => { setModeTouched(true); setMode(m); }}>
@@ -407,7 +463,7 @@ export function FileViewer({
 									))}
 								</span>
 							)}
-							{isDiffMode && (
+							{isDiffMode && !isDir && (
 								<>
 									<button type="button" className="pw-chip" data-active={folded} onClick={() => setFolded((f) => !f)}>
 										{folded ? t.viewerFold : t.viewerUnfold}
@@ -439,7 +495,32 @@ export function FileViewer({
 							</div>
 						)}
 						{loaded?.truncated && <div className="pw-viewer-notice" data-kind="warn">{mode === "diff" ? t.viewerPatchTruncated : t.filePreviewTruncated}</div>}
-						{!loaded || loaded.key !== `${activeTab.path}|${mode}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}` ? (
+						{isDir ? (
+							<div className="min-h-0 flex-1 overflow-auto" data-testid="viewer-dir">
+								<div className="px-3 py-2" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+									{t.viewerDirHint.replace("{n}", String(dirPage?.entries.length ?? 0))}
+								</div>
+								{dirPage?.entries.map((entry) => (
+									<button
+										key={entry.name}
+										type="button"
+										className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-[var(--dsw-hover)]"
+										onClick={() => (entry.kind === "dir"
+											? onOpen(`${dirPath!.replace(/\/+$/, "")}/${entry.name}`, { kind: "dir", lazy: true })
+											: onOpen(`${dirPath!.replace(/\/+$/, "")}/${entry.name}`, { lazy: true }))}
+									>
+										<img className="pw-tree-icon" src={entry.kind === "dir" ? "/file-icons/folder-close.svg" : fileIconSrc(entry.name)} alt="" />
+										<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: entry.kind === "dir" ? "inherit" : "var(--font-mono)" }}>{entry.name}</span>
+										{entry.kind === "file" && entry.size !== undefined && (
+											<span style={{ fontSize: 11, color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}>{entry.size} B</span>
+										)}
+									</button>
+								))}
+								{dirPage?.nextOffset ? (
+									<button type="button" className="pw-chip mx-3 my-2" onClick={() => void loadMore()}>{t.viewerDirMore}</button>
+								) : null}
+							</div>
+						) : !loaded || loaded.key !== `${activeTab.path}|${mode}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}` ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
 						) : loaded.error ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{loaded.error}</div>
@@ -480,7 +561,7 @@ export function FileViewer({
 							selectedPath={null}
 							onToggleDir={growth.toggleDir}
 							onExpandLazy={growth.expandLazy}
-							onOpenFile={(node: TreeNode) => onOpen(node.path, { from: node.from, lazy: node.lazy })}
+							onOpenFile={(node: TreeNode) => onOpen(node.path, { from: node.from, lazy: node.lazy, kind: node.kind })}
 							onReference={onReference}
 							onOpenEditor={onOpenEditor}
 							revealPath={reveal?.path ?? null}

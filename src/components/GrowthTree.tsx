@@ -6,7 +6,7 @@
  * 生成中呼吸态、新步入场动画、窗口化渲染、键盘导航（↑↓ 移动，←→ 收展，Enter 打开）。
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconAtOutline16, IconFileOutline16, IconTriangleRightFill14 } from "@/components/icons";
+import { IconAtOutline16, IconFileOutline16, IconFolderClose16, IconTriangleRightFill14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { fileIconSrc, folderIconSrc } from "@/lib/file-icons";
 import { flattenTree, treeNodeKey, type FlatRow, type TreeNode } from "@/lib/growth-tree";
@@ -182,14 +182,16 @@ export const GrowthTree = memo(function GrowthTree({
 							selected={row.node.kind === "file" && selectedPath === row.node.path}
 							focused={focused === treeNodeKey(row.node)}
 							onActivate={activate}
+							onOpenFolder={onOpenFile}
 							onFocusRow={setFocused}
 							onReference={onReference}
 							onOpenEditor={onOpenEditor}
 							pendingLabel={t.growthPending}
-								lazyLabel={t.growthLazyDir}
-								deletedLabel={t.growthStatD}
-								referenceLabel={t.fileReference}
+							lazyLabel={t.growthLazyDir}
+							deletedLabel={t.growthStatD}
+							referenceLabel={t.fileReference}
 							editorLabel={t.fileOpenEditor}
+							openFolderLabel={t.viewerOpenFolder}
 						/>
 					))}
 				</div>
@@ -205,6 +207,7 @@ const TreeRow = memo(function TreeRow({
 	selected,
 	focused,
 	onActivate,
+	onOpenFolder,
 	onFocusRow,
 	onReference,
 	onOpenEditor,
@@ -213,6 +216,7 @@ const TreeRow = memo(function TreeRow({
 	deletedLabel,
 	referenceLabel,
 	editorLabel,
+	openFolderLabel,
 }: {
 	row: FlatRow;
 	top: number;
@@ -220,6 +224,7 @@ const TreeRow = memo(function TreeRow({
 	selected: boolean;
 	focused: boolean;
 	onActivate: (row: FlatRow) => void;
+	onOpenFolder: (node: TreeNode) => void;
 	onFocusRow: (path: string) => void;
 	onReference?: (path: string) => void;
 	onOpenEditor?: (path: string) => void;
@@ -228,6 +233,7 @@ const TreeRow = memo(function TreeRow({
 	deletedLabel: string;
 	referenceLabel: string;
 	editorLabel: string;
+	openFolderLabel: string;
 }) {
 	const { node, depth, expanded } = row;
 	const isDir = node.kind === "dir";
@@ -253,6 +259,10 @@ const TreeRow = memo(function TreeRow({
 				onFocusRow(treeNodeKey(node));
 				onActivate(row);
 			}}
+			onDoubleClick={() => {
+				// 目录双击 = 打开文件夹预览（单击仍是展开/收起，不动既有习惯）
+				if (isDir) onOpenFolder(node);
+			}}
 		>
 			<span className="pw-tree-chevron" aria-hidden>
 				{isDir && <IconTriangleRightFill14 size={10} style={{ transform: expanded ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)" }} />}
@@ -264,8 +274,23 @@ const TreeRow = memo(function TreeRow({
 				{node.status === "R" && node.from && <span className="pw-tree-from">← {node.from.split("/").pop()}</span>}
 			</span>
 			{node.pending && <span className="pw-tree-pulse" aria-label={pendingLabel} />}
-			{!node.lazy && (onReference || (!isDir && onOpenEditor)) && (
+			{!node.lazy && (onReference || (!isDir && onOpenEditor) || isDir) && (
 				<span className="pw-tree-actions">
+					{isDir && (
+						<button
+							type="button"
+							className="icon-btn"
+							style={{ width: 18, height: 18, borderRadius: 5 }}
+							title={openFolderLabel}
+							aria-label={`${openFolderLabel}: ${node.path}`}
+							onClick={(e) => {
+								e.stopPropagation();
+								onOpenFolder(node);
+							}}
+						>
+							<IconFolderClose16 size={11} />
+						</button>
+					)}
 					{onReference && (
 						<button
 							type="button"

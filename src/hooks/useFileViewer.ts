@@ -8,11 +8,13 @@ import { useCallback, useState } from "react";
 
 export interface ViewerTab {
 	path: string;
-	/** 重命名前的路径（取 diff 用） */
+	/** 重命名前的路径(取 diff 用) */
 	from?: string;
-	/** 快照之外的文件（node_modules 等）：只能看磁盘上的当前内容 */
+	/** 快照之外的文件(node_modules 等):只能看磁盘上的当前内容 */
 	lazy?: boolean;
-	/** 内容由调用方直接提供（如技能文档）：不取 diff、不读磁盘 */
+	/** dir = 打开的是文件夹:正文区列目录(可逐层进入),不是文件内容 */
+	kind?: "dir" | "file";
+	/** 内容由调用方直接提供(如技能文档):不取 diff、不读磁盘 */
 	staticContent?: string;
 }
 
@@ -25,7 +27,7 @@ export interface ViewerState {
 
 export function useFileViewer() {
 	const [state, setState] = useState<ViewerState>({ open: false, tabs: [], active: null });
-	const open = useCallback((path: string, opts: { from?: string; lazy?: boolean } = {}) => {
+	const open = useCallback((path: string, opts: { from?: string; lazy?: boolean; kind?: "dir" | "file" } = {}) => {
 		setState((s) => {
 			const exists = s.tabs.some((tab) => tab.path === path);
 			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, ...opts } : tab)) : [...s.tabs, { path, ...opts }];

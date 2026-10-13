@@ -673,7 +673,7 @@ export function AppShell() {
 		watchRounds: Boolean(currentPath),
 		connected: state.connected,
 	});
-	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy }), [viewer]);
+	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy, kind: node.kind }), [viewer]);
 	// 打开面板时落在最新轮:useGrowth 活在 AppShell 里、不随抽屉卸载,state 不会自己回到最新,
 	// 所以每次从「关」变「开」(或换了工作区)都显式选一次最新轮。
 	// 新轮次出现时不再自动跳——用户打开面板后停在哪一轮就是哪一轮。
