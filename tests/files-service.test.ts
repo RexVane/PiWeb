@@ -36,6 +36,53 @@ it("paginates a large directory without dropping files", async () => {
 	}
 }, 20_000);
 
+
+it("目录列举跳过 .gitignore 忽略的条目，和快照树一个口径", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-ignore-"));
+	try {
+		const LF = String.fromCharCode(10);
+		await fs.writeFile(path.join(cwd, ".gitignore"), ["node_modules/", ".next/", "secret.txt", "backups/*", "!backups/INDEX.md"].join(LF));
+		await fs.mkdir(path.join(cwd, "node_modules"));
+		await fs.writeFile(path.join(cwd, "node_modules", "dep.js"), "x");
+		await fs.mkdir(path.join(cwd, ".next"));
+		await fs.writeFile(path.join(cwd, ".next", "build.js"), "x");
+		await fs.mkdir(path.join(cwd, "src"));
+		await fs.writeFile(path.join(cwd, "src", "index.ts"), "x");
+		await fs.writeFile(path.join(cwd, "secret.txt"), "s");
+		await fs.writeFile(path.join(cwd, "README.md"), "r");
+		await fs.mkdir(path.join(cwd, "backups"));
+		await fs.writeFile(path.join(cwd, "backups", "INDEX.md"), "i");
+		await fs.writeFile(path.join(cwd, "backups", "dump.bin"), "d");
+		execFileSync("git", ["init", "-q"], { cwd });
+
+		// 忽略的重目录与忽略的文件都不出现；项目自己的东西一个不少
+		const names = (await listWorkspaceDir(cwd, "", 0)).entries.map((entry) => entry.name);
+		expect(names).not.toContain("node_modules");
+		expect(names).not.toContain(".next");
+		expect(names).not.toContain("secret.txt");
+		// .git 本身也在这里（客户端那层单独挡掉），去掉它再看项目文件
+		expect(names.filter((name) => name !== ".git")).toEqual(["backups", "src", ".gitignore", "README.md"]);
+
+		// backups/ 目录本身没被忽略（只忽略它里面的实体）：进得去，里面只剩 INDEX.md
+		expect((await listWorkspaceDir(cwd, "backups", 0)).entries.map((entry) => entry.name)).toEqual(["INDEX.md"]);
+	} finally {
+		await fs.rm(cwd, { recursive: true, force: true });
+	}
+}, 20_000);
+
+it("不是 git 仓库时不过滤（宁可多显示，不能藏用户的项目文件）", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-nogit-"));
+	try {
+		await fs.writeFile(path.join(cwd, ".gitignore"), "node_modules/");
+		await fs.mkdir(path.join(cwd, "node_modules"));
+		await fs.writeFile(path.join(cwd, "keep.txt"), "k");
+		const names = (await listWorkspaceDir(cwd, "", 0)).entries.map((entry) => entry.name).sort();
+		expect(names).toEqual([".gitignore", "keep.txt", "node_modules"]);
+	} finally {
+		await fs.rm(cwd, { recursive: true, force: true });
+	}
+}, 20_000);
+
 it("limits large file previews to 256 KiB", async () => {
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-preview-"));
 	try {

@@ -133,6 +133,62 @@ function toRel(root: string, target: string): string {
 	return rel === "" ? "." : rel;
 }
 
+/** `git check-ignore -z` 输出 → 相对路径数组 */
+export function parseCheckIgnore(raw: string): string[] {
+	return raw.split("\u0000").filter(Boolean).map((entry) => entry.split("\\").join("/"));
+}
+
+/**
+ * 问 git 这个目录里哪些条目被 .gitignore 忽略（且未被跟踪）。
+ * 用 check-ignore --stdin 一次问完整个目录：0 = 有被忽略的，1 = 一条都没有，128 = 不是仓库。
+ * 条目多时命令行会超长，所以走 stdin 不走参数（单页最多 2000 条）。
+ */
+function checkIgnore(root: string, git: string, rels: string[]): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(git, ["check-ignore", "-z", "--stdin"], {
+			cwd: root,
+			windowsHide: true,
+			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+		});
+		let out = "";
+		let err = "";
+		const timer = setTimeout(() => { child.kill(); reject(new Error("git check-ignore timed out")); }, 10_000);
+		child.stdout.on("data", (chunk: Buffer) => { out += chunk.toString("utf8"); });
+		child.stderr.on("data", (chunk: Buffer) => { err += chunk.toString("utf8"); });
+		child.on("error", (error) => { clearTimeout(timer); reject(error); });
+		child.on("close", (code) => {
+			clearTimeout(timer);
+			if (code === 0) resolve(out);
+			else if (code === 1) resolve("");
+			else reject(new Error(err.trim() || `git check-ignore exited with ${code}`));
+		});
+		try {
+			child.stdin.end(`${rels.join("\u0000")}\u0000`);
+		} catch {
+			// git 提前退出时 stdin 会 EPIPE；close 事件会给出真正的结论
+		}
+	});
+}
+
+/**
+ * 这个目录里该从列表里去掉的名字:被 .gitignore 忽略的(node_modules/、.next、.claude 这类的构建产物与私有目录)。
+ * 判据用 git 自己的规则，和快照树、@ 引用清单同一口径；不是仓库 / 没装 git / git 出错一律不过滤
+ * （宁可多显示，也不能把用户的项目文件藏起来）。
+ */
+async function ignoredNames(root: string, dirRel: string, names: string[]): Promise<Set<string>> {
+	if (!names.length) return new Set();
+	try {
+		const git = await resolveGitBin();
+		const rels = names.map((name) => (dirRel ? `${dirRel}/${name}` : name));
+		const raw = await checkIgnore(root, git, rels);
+		// 输出是相对仓库根的路径：减掉当前目录前缀就回到名字集合
+		const prefix = dirRel ? `${dirRel}/` : "";
+		return new Set(parseCheckIgnore(raw).map((entry) => (prefix && entry.startsWith(prefix) ? entry.slice(prefix.length) : entry)));
+	} catch {
+		return new Set();
+	}
+}
+
 export async function listWorkspaceDir(cwdValue: unknown, relPath: unknown, offsetValue: unknown = 0): Promise<DirListing> {
 	const root = await resolveWorkspacePath(cwdValue);
 	const offset = offsetValue === null || offsetValue === "" ? 0 : Number(offsetValue);
@@ -174,8 +230,12 @@ export async function listWorkspaceDir(cwdValue: unknown, relPath: unknown, offs
 		if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
 		return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
 	});
-	const nextOffset = offset + MAX_ENTRIES < entries.length ? offset + MAX_ENTRIES : null;
-	const page = entries.slice(offset, offset + MAX_ENTRIES);
+	// .gitignore 忽略的条目(node_modules/、.next/ 这些)不进列表:和快照树、@ 引用清单同一口径
+	const relForIgnore = path.relative(root, real).replace(/\\/g, "/");
+	const ignored = await ignoredNames(root, relForIgnore, entries.map((entry) => entry.name));
+	const visible = ignored.size ? entries.filter((entry) => !ignored.has(entry.name)) : entries;
+	const nextOffset = offset + MAX_ENTRIES < visible.length ? offset + MAX_ENTRIES : null;
+	const page = visible.slice(offset, offset + MAX_ENTRIES);
 	for (let i = 0; i < page.length; i += 64) {
 		await Promise.all(page.slice(i, i + 64).map(async (entry) => {
 			if (entry.kind !== "file" || entry.size !== undefined) return;

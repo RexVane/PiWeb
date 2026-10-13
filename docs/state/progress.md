@@ -111,3 +111,5 @@
 - 2026-10-13 03:26 | #098 | 上下文 | 弹窗去掉「估算占比/估算用量」两行和「内容分类（字符数）」标题及说明；进度条改成整条铺满上下文窗口，已用那一截按各类字符比例分段上色（拿不到分类 token，就只摊比例、不报每类 token 数），分项列表当图例，颜色与分段一一对应；已用基准优先最近请求的真实输入（API），没测到才退回 SDK 估算，Free Space 与进度条同基准 | deepseek-v4.1-flash
 - 2026-10-13 04:12 | #099 | 对话 | 统计条去掉括号里的解释（「实时测量 N 步」「N/M 条有计时」），悬停浮层同样干净；待发图片加「清空图片」一键清空（悬停单张删除原本就有）；图片放大预览改成从屏幕中心放大进来（transform-origin 居中 + 200ms 缩放淡入）；删掉随之无用的 statsMeasuredSteps / statsTimedCoverage 两个 i18n key | deepseek-v4.1-flash
 - 2026-10-13 04:58 | #100 | 文件面板 | 修类名撞车：图片预览与文件查看器都用 .pw-viewer，图片预览后写的那条（position:fixed/inset:0/深色遮罩）把文件查看器的玻璃弹层顶掉了，面板显示错位；图片预览全改名为 .pw-lightbox（-bar/-count/-btn/-image/-nav 一并），文件查看器的 .pw-viewer/-tabs/-tabstrip 原样保留 | deepseek-v4.1-flash
+- 2026-10-13 05:41 | #101 | 设置 | 体检保存失败后刷新本地副本与 revision（以前只 success 才 load，撞一次 409 冲突就永久卡住，用户看到「反复填同一个、永远不成」）；「视觉」三态下拉改成「输入类型」文本/图片两个复选框，文本默认勾选且恒真，图片一勾即写 input，不碰就什么都不写 | deepseek-v4.1-flash
+- 2026-10-13 05:41 | #102 | 文件面板 | 目录列举按 .gitignore 过滤（git check-ignore --stdin 一次问完整个目录；node_modules/、.next/、.claude/ 这类不再混进树里，backups/ 目录本身不忽略、只忽略其中实体）；不是仓库/没装 git/ git 出错一律不过滤，宁可多显示也不藏用户文件 | deepseek-v4.1-flash
