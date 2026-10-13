@@ -147,7 +147,15 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 						data-testid="image-fan"
 						data-expanded={fanned}
 						data-crowded={fanned && layout.gap < ROOMY_GAP ? true : undefined}
-						style={{ width: fanned ? "100%" : layout.width, height: layout.height }}
+						// 展开时整块浮到上方：容器自身尺寸不变，靠负 margin 抬上去——不推挤输入框，
+						// 也不改扇形几何（fanLayout 坐标不动，既有几何断言仍然成立）
+						style={{
+							position: "relative",
+							width: fanned ? "100%" : layout.width,
+							height: layout.height,
+							marginTop: fanned ? -(layout.height - CARD) : 0,
+							zIndex: fanned ? 30 : undefined,
+						}}
 					>
 						{images.map((image, i) => {
 							const pose = layout.cards[i];

@@ -636,22 +636,16 @@ export function ChatInput({
 
 			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
 			{references.length > 0 && (
-				<div className="mb-2 flex flex-wrap gap-1.5 px-1" data-testid="composer-references">
-					{(refsExpanded ? references : references.slice(0, COLLAPSE_AT)).map((path) => {
+				<div className="mb-2 flex flex-wrap gap-1 px-1" data-testid="composer-references">
+					{(refsExpanded ? references : references.slice(0, COLLAPSE_AT)).map((path, i) => {
 						const chip = referenceChipOf(path);
 						return (
 							<span
 								key={path}
-								className="flex items-center gap-1 rounded-md px-2 py-1"
-								style={{
-									maxWidth: 260,
-									fontSize: 12,
-									fontFamily: "var(--font-mono)",
-									color: "var(--dsw-label-secondary)",
-									background: "var(--dsw-selector)",
-									border: "0.5px solid var(--dsw-border-l3)",
-								}}
+								className="pw-ref-chip group/ref"
 								title={path}
+								/* 与图片卡组同一套时序：从左往右错开浮上来，收起反向；不旋转（带文字转着读着累） */
+								style={{ animationDelay: `${Math.min(i * 14, 140)}ms` }}
 							>
 								{chip.dir ? (
 									<IconFolderClose16 size={12} style={{ flex: "none", color: "var(--dsw-warn)" }} />
@@ -661,8 +655,7 @@ export function ChatInput({
 								<span className="truncate">{chip.text}</span>
 								<button
 									type="button"
-									className="flex h-4 w-4 flex-none items-center justify-center rounded-full text-[10px]"
-									style={{ color: "var(--dsw-label-caption)" }}
+									className="pw-ref-close"
 									disabled={sendBusy}
 									onClick={() => changeDraft((previous) => ({ ...previous, references: (previous.references ?? []).filter((p) => p !== path) }))}
 									aria-label={`${t.delete} ${path}`}
