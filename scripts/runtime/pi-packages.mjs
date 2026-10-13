@@ -8,6 +8,7 @@ export const PI_RUNTIME_PACKAGES = Object.freeze([
 	"@earendil-works/pi-mcp",
 	"@earendil-works/pi-telemetry",
 	"@earendil-works/pi-tui",
+	"@earendil-works/chord",
 ]);
 
 /** @param {string} version */

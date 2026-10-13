@@ -4,18 +4,15 @@ name: publish
 # then trigger this workflow (Actions → publish → Run workflow, or `gh workflow run
 # publish --ref main`) when the batch is ready to ship.
 #
-#   1. bump the patch version (the repository's package.json is the version source of truth)
-#   2. prebuild the production bundle (.next, cache excluded) into the package —
-#      users install a ready-to-run artifact with zero compilation on their machine
-#   3. run the prepublishOnly gate (typecheck + tests) and publish to npm
-#   4. push the version commit and a v* tag back to main
-#   5. create a GitHub Release for the tag (notes = commit history since the previous tag)
-# Publishing only happens after the gate passes, and an already-published version
-# is bumped past, so a re-run never fails on E403.
+#   1. use the version already reviewed and merged through a PR
+#   2. prebuild and verify the production package with a clean installation
+#   3. run the typecheck/test publish gate, then publish to npm
+#   4. push only the version tag and create a GitHub Release
+# The workflow never writes to main. Update package.json/package-lock.json and
+# docs/state/progress.md on rexvane-piweb before merging the release PR.
 #
-# Requires the repository secret NPM_TOKEN (npm Automation token). The bot commit
-# it pushes back does not re-trigger this workflow, and the actor guard covers
-# manual re-runs on that commit.
+# Requires the repository secret NPM_TOKEN. Only a user-triggered run on main
+# can publish; version changes are reviewed in the release PR.
 on:
   workflow_dispatch:
 
@@ -29,7 +26,7 @@ jobs:
     timeout-minutes: 30
     if: github.actor != 'github-actions[bot]' && github.ref == 'refs/heads/main'
     permissions:
-      contents: write # push the version bump commit and the tag
+      contents: write # push the version tag and create the release
       id-token: write # npm provenance attestation
     steps:
       - uses: actions/checkout@v4
@@ -44,27 +41,17 @@ jobs:
 
       - run: npm ci
 
-      - name: Bump the patch version past anything already published
+      - name: Validate the release version from the merged PR
         id: version
         run: |
           set -euo pipefail
-          for _ in $(seq 1 50); do
-            npm version patch --no-git-tag-version >/dev/null
-            version="$(node -p "require('./package.json').version")"
-            if ! npm view "@rexvane/piweb@$version" version >/dev/null 2>&1; then break; fi
-            echo "@rexvane/piweb@$version is already published; bumping again"
-          done
+          version="$(node -e 'const v = require("./package.json").version; if (!/^\d+\.\d+\.\d+$/.test(v)) process.exit(1); console.log(v);')"
+          if npm view "@rexvane/piweb@$version" version >/dev/null 2>&1; then
+            echo "Version $version is already published; bump the version through a PR first."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "releasing @rexvane/piweb@$version"
-
-      - name: Append the release progress index
-        id: progress
-        run: |
-          set -euo pipefail
-          number="$(node -e 'const fs = require("node:fs"); const text = fs.readFileSync("docs/state/progress.md", "utf8"); const ids = [...text.matchAll(/#(\d+)\s*\|/g)].map(m => Number(m[1])); console.log(String(Math.max(0, ...ids) + 1).padStart(3, "0"));')"
-          stamp="$(node -e 'console.log(new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()))')"
-          printf -- '- %s | #%s | 发布 | 发布新版本 v%s | gpt-6\n' "$stamp" "$number" "${{ steps.version.outputs.version }}" >> docs/state/progress.md
-          echo "number=$number" >> "$GITHUB_OUTPUT"
 
       # 预构建：发布物自带 .next 产物（排除 cache），用户安装后零编译直接运行——
       # 安装时构建在 macOS 上踩了一串坑（staging 目录/junction/执行位），成品发布根除。
@@ -95,14 +82,11 @@ jobs:
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
           NEXT_TELEMETRY_DISABLED: "1"
 
-      - name: Push the version commit and tag
+      - name: Push the release tag
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore(release): 发布新版本 v${{ steps.version.outputs.version }} #${{ steps.progress.outputs.number }}" -m "- 更新 package.json、package-lock.json 版本，并追加 docs/state/progress.md 发布索引。" -m "- 通过类型检查、全量测试、生产构建和成品包全新安装启动检查后发布。"
           git tag "v${{ steps.version.outputs.version }}"
-          git push --atomic origin HEAD:main "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
 
       # npm 发布的同时创建 GitHub Release：说明文字 = 上一个版本以来的提交历史（去 merge 提交）
       - name: Create the GitHub release

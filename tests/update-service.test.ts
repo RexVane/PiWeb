@@ -165,7 +165,7 @@ describe("update service transactions", () => {
 		expect(result.version).toBe("2.5.0");
 		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? "verify" : `${command} ${args.join(" ")}`)).toEqual([
 			"npm view @earendil-works/pi-coding-agent@latest version",
-			"npm install --save-exact @earendil-works/pi-coding-agent@2.5.0 @earendil-works/pi-ai@2.5.0 @earendil-works/pi-agent-core@2.5.0 @earendil-works/pi-codemode@2.5.0 @earendil-works/pi-mcp@2.5.0 @earendil-works/pi-telemetry@2.5.0 @earendil-works/pi-tui@2.5.0 --no-audit --no-fund", "npm run sync:provider-icons", "verify", "npm run check",
+			"npm install --save-exact @earendil-works/pi-coding-agent@2.5.0 @earendil-works/pi-ai@2.5.0 @earendil-works/pi-agent-core@2.5.0 @earendil-works/pi-codemode@2.5.0 @earendil-works/pi-mcp@2.5.0 @earendil-works/pi-telemetry@2.5.0 @earendil-works/pi-tui@2.5.0 @earendil-works/chord@2.5.0 --no-audit --no-fund", "npm run sync:provider-icons", "verify", "npm run check",
 		]);
 		expect((await manifest(root)).state).toBe("ready");
 	});
@@ -318,7 +318,7 @@ describe("npm-installed PiWeb updates from the registry", () => {
 	 */
 	describe("updating only pi inside the installed package", () => {
 		const PI_VIEW = ["view", "@earendil-works/pi-coding-agent@latest", "version"];
-		const PI_INSTALL = ["install", "--save-exact", "@earendil-works/pi-coding-agent@2.5.0", "@earendil-works/pi-ai@2.5.0", "@earendil-works/pi-agent-core@2.5.0", "@earendil-works/pi-codemode@2.5.0", "@earendil-works/pi-mcp@2.5.0", "@earendil-works/pi-telemetry@2.5.0", "@earendil-works/pi-tui@2.5.0", "--omit=dev", "--no-audit", "--no-fund"];
+		const PI_INSTALL = ["install", "--save-exact", "@earendil-works/pi-coding-agent@2.5.0", "@earendil-works/pi-ai@2.5.0", "@earendil-works/pi-agent-core@2.5.0", "@earendil-works/pi-codemode@2.5.0", "@earendil-works/pi-mcp@2.5.0", "@earendil-works/pi-telemetry@2.5.0", "@earendil-works/pi-tui@2.5.0", "@earendil-works/chord@2.5.0", "--omit=dev", "--no-audit", "--no-fund"];
 
 		function piInstaller(root: string, version = "2.5.0") {
 			return vi.fn(async (command: string, args: string[], options: CommandOptions) => {
