@@ -117,7 +117,10 @@ describe("persistent, simple side-chat panel", () => {
 		fireEvent.change(questionInput(), { target: { value: "问题" } });
 		fireEvent.click(screen.getByRole("button", { name: "新旁聊" }));
 		expect(current(store).model).toEqual({ provider: "demo", id: "quick-model" });
-		fireEvent.change(screen.getByRole("combobox", { name: "旁聊记录" }), { target: { value: picked } });
+		fireEvent.click(screen.getByRole("button", { name: "旁聊记录" }));
+		// 菜单按新到旧排：最后一项就是最早那个（原旁聊）
+		fireEvent.click(screen.getAllByRole("menuitemradio").at(-1)!);
+		expect(current(store).id).toBe(picked);
 		fireEvent.click(screen.getByRole("button", { name: /快答模型/ }));
 		fireEvent.click(screen.getByRole("menuitemradio", { name: /跟随主会话/ }));
 		expect(current(store).model).toBeUndefined();
@@ -170,7 +173,9 @@ describe("persistent, simple side-chat panel", () => {
 		fireEvent.click(screen.getByRole("button", { name: "新旁聊" }));
 		expect(current(store).messages).toEqual([]);
 		expect(store.get("main-session-a").threads).toHaveLength(2);
-		fireEvent.change(screen.getByRole("combobox", { name: "旁聊记录" }), { target: { value: original } });
+		fireEvent.click(screen.getByRole("button", { name: "旁聊记录" }));
+		fireEvent.click(screen.getAllByRole("menuitemradio").at(-1)!);
+		expect(current(store).id).toBe(original);
 		expect(screen.getByText("这是 A 的回答。")).toBeTruthy();
 	});
 

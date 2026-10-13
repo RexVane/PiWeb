@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
-import { IconCloseOutline14, IconNewChatOutline16, IconSendArrowUp14, IconStopFill16 } from "@/components/icons";
+import { IconChevronDown14, IconCloseOutline14, IconNewChatOutline16, IconSendArrowUp14, IconStopFill16 } from "@/components/icons";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { EMPTY_SIDE_CHAT, sideChatStore, type SideChatStore } from "./store";
@@ -32,6 +32,9 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 	const lastTop = useRef(0);
 	const busy = Boolean(thread?.request);
 	const threadId = thread?.id;
+	/** 历史记录菜单是否展开 */
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const historyRef = useRef<HTMLDivElement>(null);
 	const selectedModel = thread?.model
 		? models.find((model) => model.provider === thread.model!.provider && model.id === thread.model!.id) ?? { ...thread.model, name: thread.model.id }
 		: mainModel;
@@ -58,6 +61,23 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 		textarea.style.height = `${Math.min(180, Math.max(64, textarea.scrollHeight))}px`;
 	}, [thread?.draft, threadId]);
 
+	// 历史记录菜单：点外部或 Esc 关掉（与圆环弹窗同一套做法）
+	useEffect(() => {
+		if (!historyOpen) return;
+		const onDown = (event: MouseEvent) => {
+			if (!historyRef.current?.contains(event.target as Node)) setHistoryOpen(false);
+		};
+		const onKey = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setHistoryOpen(false);
+		};
+		document.addEventListener("mousedown", onDown);
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("mousedown", onDown);
+			document.removeEventListener("keydown", onKey);
+		};
+	}, [historyOpen]);
+
 	const send = () => {
 		if (!sessionId || !canSend || busy || !thread?.draft.trim()) return;
 		pinned.current = true;
@@ -75,10 +95,23 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 				<button type="button" className="icon-btn" aria-label={t.close} title={t.close} onClick={onClose}><IconCloseOutline14 size={14} /></button>
 			</header>
 			{state.threads.length > 1 && (
-				<div className={styles.history}>
-					<select aria-label={t.sideChatHistory} value={threadId} onChange={(event) => sessionId && store.selectThread(sessionId, event.target.value)}>
-						{[...state.threads].reverse().map((item) => <option key={item.id} value={item.id}>{item.title || t.sideChatNew}{item.request ? " · …" : ""}</option>)}
-					</select>
+				// 原生 select 在深色界面里是系统白底菜单（又丑又不跟主题），改用与模型选择器一致的浮层菜单
+				<div className={styles.history} ref={historyRef}>
+					<button type="button" className={styles.historyButton} aria-label={t.sideChatHistory} aria-haspopup="menu" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}>
+						<span className="truncate">{thread ? `${thread.title || t.sideChatNew}${thread.request ? " · …" : ""}` : t.sideChatHistory}</span>
+						<IconChevronDown14 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
+					</button>
+					{historyOpen && (
+						<div className={styles.historyMenu} role="menu" aria-label={t.sideChatHistory}>
+							{[...state.threads].reverse().map((item) => (
+								<button key={item.id} type="button" role="menuitemradio" aria-checked={item.id === threadId} className={styles.historyItem}
+									onClick={() => { if (sessionId) store.selectThread(sessionId, item.id); setHistoryOpen(false); }}>
+									<span className="truncate">{item.title || t.sideChatNew}</span>
+									{item.request ? <span className={styles.historyMeta}>…</span> : null}
+								</button>
+							))}
+						</div>
+					)}
 				</div>
 			)}
 			<div className={styles.messages} ref={scrollRef} role="log" aria-label={t.sideChatMessages} aria-live="polite" aria-relevant="additions" onScroll={(event) => {
