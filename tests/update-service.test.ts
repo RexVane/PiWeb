@@ -56,6 +56,7 @@ function mockCommands(root: string, fail = "") {
 			await build(root, state.buildDir, "partial-or-stale");
 			throw new Error(`simulated ${fail} failure`);
 		}
+		if (command === "npm" && args[0] === "view") return "2.5.0\n";
 		if (key === "git pull --ff-only origin main") {
 			await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "pi-web", version: "2.0.0" }));
 		} else if (command === "npm" && args[0] === "install" && args.includes("--save-exact")) {
@@ -163,7 +164,8 @@ describe("update service transactions", () => {
 		const result = await createUpdateService({ root, run }).runUpdate("pi");
 		expect(result.version).toBe("2.5.0");
 		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? "verify" : `${command} ${args.join(" ")}`)).toEqual([
-			"npm install --save-exact @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest --no-audit --no-fund", "npm run sync:provider-icons", "verify", "npm run check",
+			"npm view @earendil-works/pi-coding-agent@latest version",
+			"npm install --save-exact @earendil-works/pi-coding-agent@2.5.0 @earendil-works/pi-ai@2.5.0 @earendil-works/pi-agent-core@2.5.0 @earendil-works/pi-codemode@2.5.0 @earendil-works/pi-mcp@2.5.0 @earendil-works/pi-telemetry@2.5.0 @earendil-works/pi-tui@2.5.0 --no-audit --no-fund", "npm run sync:provider-icons", "verify", "npm run check",
 		]);
 		expect((await manifest(root)).state).toBe("ready");
 	});
@@ -312,15 +314,17 @@ describe("npm-installed PiWeb updates from the registry", () => {
 
 	/**
 	 * 成品包没有 devDependencies，以前单独更新 pi 会走「装依赖 + npm run check」，在成品包里注定失败。
-	 * 现在只换 pi 的两个包：它们在 serverExternalPackages 里，运行时从安装目录加载，重启即生效。
+	 * 现在只换 pi 和配套依赖：引擎与 pi-ai 在 serverExternalPackages 里，重启即生效。
 	 */
 	describe("updating only pi inside the installed package", () => {
-		const PI_INSTALL = ["install", "--save-exact", "@earendil-works/pi-coding-agent@latest", "@earendil-works/pi-ai@latest", "--omit=dev", "--no-audit", "--no-fund"];
+		const PI_VIEW = ["view", "@earendil-works/pi-coding-agent@latest", "version"];
+		const PI_INSTALL = ["install", "--save-exact", "@earendil-works/pi-coding-agent@2.5.0", "@earendil-works/pi-ai@2.5.0", "@earendil-works/pi-agent-core@2.5.0", "@earendil-works/pi-codemode@2.5.0", "@earendil-works/pi-mcp@2.5.0", "@earendil-works/pi-telemetry@2.5.0", "@earendil-works/pi-tui@2.5.0", "--omit=dev", "--no-audit", "--no-fund"];
 
 		function piInstaller(root: string, version = "2.5.0") {
 			return vi.fn(async (command: string, args: string[], options: CommandOptions) => {
 				expect(command).toBe("npm");
 				expect(options.cwd).toBe(root);
+				if (args[0] === "view") return version + "\n";
 				if (args[0] === "install") {
 					const manifestFile = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent", "package.json");
 					await fs.mkdir(path.dirname(manifestFile), { recursive: true });
@@ -334,7 +338,7 @@ describe("npm-installed PiWeb updates from the registry", () => {
 			const root = await npmInstallation();
 			const run = piInstaller(root);
 			const result = await createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("pi", { assertIdle: async () => {} });
-			expect(run.mock.calls.map(([, args]) => args)).toEqual([PI_INSTALL]);
+			expect(run.mock.calls.map(([, args]) => args)).toEqual([PI_VIEW, PI_INSTALL]);
 			expect(result).toEqual({ buildDir: ".next", buildId: "installed-build", version: "2.5.0", needsRestart: true });
 			await expect(fs.access(path.join(root, ".next-releases", "active.json"))).rejects.toThrow();
 		});

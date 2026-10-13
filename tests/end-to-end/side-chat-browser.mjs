@@ -194,11 +194,15 @@ assert(Math.abs((await readingTop()) - initialTop) < 5, "closing the panel lost 
 await evaluate("document.querySelector('[data-testid=side-chat-toggle]').click()");
 await until("document.querySelector('[data-testid=side-chat-panel]')?.textContent.includes('Model 由 Pi')");
 await evaluate("document.querySelector('[data-testid=side-chat-panel] button[aria-label=新旁聊]').click()");
-await until("!!document.querySelector('[data-testid=side-chat-panel] select')");
+await until("!!document.querySelector('[data-testid=side-chat-panel] button[aria-haspopup=menu]')");
 assert.equal(await evaluate("document.querySelectorAll('[data-testid=side-chat-panel] [data-role=user]').length"), 0);
-await evaluate("(() => { const select = document.querySelector('[data-testid=side-chat-panel] select'); select.value=select.options[1].value; select.dispatchEvent(new Event('change',{bubbles:true})); })()");
+await evaluate("document.querySelector('[data-testid=side-chat-panel] button[aria-haspopup=menu]').click()");
+await until("!!document.querySelector('[data-testid=side-chat-panel] [role=menuitemradio]')");
+await evaluate("document.querySelectorAll('[data-testid=side-chat-panel] [role=menuitemradio]')[1].click()");
 await until("document.querySelector('[data-testid=side-chat-panel]')?.textContent.includes('Model 由 Pi')");
 await command("Page.reload");
+await until("!!document.querySelector('[data-testid=side-chat-toggle]')");
+await evaluate("document.querySelector('[data-testid=side-chat-toggle]').click()");
 await until("document.querySelector('[data-testid=side-chat-panel]')?.textContent.includes('Model 由 Pi')");
 await command("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await new Promise((resolve) => setTimeout(resolve, 300));

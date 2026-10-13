@@ -2,6 +2,8 @@
 
 import { isSideChatId, isSideChatModel, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest, type SideChatUsage } from "@/lib/side-chat/types";
 
+import { requestHistory } from "./request-history";
+
 export interface SideChatMessage {
 	id: string;
 	role: "user" | "assistant";
@@ -149,11 +151,12 @@ export class SideChatStore {
 		if (!text) return;
 		const requestId = this.options.id();
 		const historyMessages = retrying ? thread.messages.slice(0, -2) : thread.messages;
-		const history: SideChatHistoryMessage[] = historyMessages.filter((message) => message.text && (message.role === "user" || message.status === "done" || message.status === "aborted"))
+		const availableHistory: SideChatHistoryMessage[] = historyMessages.filter((message) => message.text && (message.role === "user" || message.status === "done" || message.status === "aborted"))
 			.map(({ role, text }) => ({ role, text }));
+		const { history, truncated } = requestHistory(availableHistory);
 		const messages: SideChatMessage[] = retrying
-			? [...thread.messages.slice(0, -1), { id: previous!.id, role: "assistant", text: "", status: "pending" }]
-			: [...thread.messages, { id: this.options.id(), role: "user", text }, { id: this.options.id(), role: "assistant", text: "", status: "pending" }];
+			? [...thread.messages.slice(0, -1), { id: previous!.id, role: "assistant", text: "", status: "pending", contextTruncated: truncated }]
+			: [...thread.messages, { id: this.options.id(), role: "user", text }, { id: this.options.id(), role: "assistant", text: "", status: "pending", contextTruncated: truncated }];
 		this.updateThread(sessionId, thread.id, (item) => ({ ...item, title: item.title || text.slice(0, 80), messages, draft: retrying ? item.draft : "", request: { id: requestId, revision: -1 }, connectionLost: false }), true);
 		void this.run(sessionId, thread.id, requestId, { requestId, threadId: thread.id, text, history, ...(thread.model ? { model: { ...thread.model } } : {}) });
 	}
@@ -172,7 +175,7 @@ export class SideChatStore {
 				...(progress.contextWindow ? { contextWindow: progress.contextWindow } : {}),
 				...(progress.characters ? { characters: progress.characters } : {}),
 				messages: thread.messages.map((message, index) => index === thread.messages.length - 1 ? {
-					...message, text, status, error: progress.error, contextTruncated: progress.contextTruncated, lengthLimited: progress.lengthLimited,
+					...message, text, status, error: progress.error, contextTruncated: message.contextTruncated || progress.contextTruncated, lengthLimited: progress.lengthLimited,
 				} : message),
 			};
 		}, progress.done);

@@ -39,6 +39,8 @@ export default (phase: string): NextConfig => {
 	return {
 		// Keep dev output separate so `next build` cannot invalidate a running dev server.
 		distDir: buildDir,
+		// A global installation must not infer its tracing root from a lockfile in the user's home.
+		outputFileTracingRoot: process.cwd(),
 		typescript: buildDir.startsWith(".next-releases/") ? { tsconfigPath: ".next-releases/tsconfig.json" } : undefined,
 		// Webpack's dev chunk names are stable. A per-process prefix prevents an older
 		// browser cache entry from hydrating HTML emitted by a newer dev server.

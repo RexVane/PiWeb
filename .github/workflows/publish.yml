@@ -27,7 +27,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && github.ref == 'refs/heads/main'
     permissions:
       contents: write # push the version bump commit and the tag
       id-token: write # npm provenance attestation
@@ -57,6 +57,15 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "releasing @rexvane/piweb@$version"
 
+      - name: Append the release progress index
+        id: progress
+        run: |
+          set -euo pipefail
+          number="$(node -e 'const fs = require("node:fs"); const text = fs.readFileSync("docs/state/progress.md", "utf8"); const ids = [...text.matchAll(/#(\d+)\s*\|/g)].map(m => Number(m[1])); console.log(String(Math.max(0, ...ids) + 1).padStart(3, "0"));')"
+          stamp="$(node -e 'console.log(new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()))')"
+          printf -- '- %s | #%s | 发布 | 发布新版本 v%s | gpt-6\n' "$stamp" "$number" "${{ steps.version.outputs.version }}" >> docs/state/progress.md
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
       # 预构建：发布物自带 .next 产物（排除 cache），用户安装后零编译直接运行——
       # 安装时构建在 macOS 上踩了一串坑（staging 目录/junction/执行位），成品发布根除。
       - name: Prebuild the production bundle
@@ -73,6 +82,11 @@ jobs:
       - name: Verify the packed artifact runs
         run: npm run verify:package
 
+      - name: Confirm main still points at the tested source
+        run: |
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
       - name: Publish
         run: npm publish --provenance --access public
         env:
@@ -86,14 +100,9 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore(release): v${{ steps.version.outputs.version }}"
+          git commit -am "chore(release): 发布新版本 v${{ steps.version.outputs.version }} #${{ steps.progress.outputs.number }}" -m "- 更新 package.json、package-lock.json 版本，并追加 docs/state/progress.md 发布索引。" -m "- 通过类型检查、全量测试、生产构建和成品包全新安装启动检查后发布。"
           git tag "v${{ steps.version.outputs.version }}"
-          git push origin HEAD:main || {
-            git fetch origin main
-            git rebase origin/main
-            git push origin HEAD:main
-          }
-          git push origin "v${{ steps.version.outputs.version }}"
+          git push --atomic origin HEAD:main "v${{ steps.version.outputs.version }}"
 
       # npm 发布的同时创建 GitHub Release：说明文字 = 上一个版本以来的提交历史（去 merge 提交）
       - name: Create the GitHub release

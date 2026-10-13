@@ -5,7 +5,8 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { installPiUpdate, PI_AI_PACKAGE, PI_PACKAGE, prepareRelease } from "../../scripts/release.mjs";
+import { installPiUpdate, PI_PACKAGE, prepareRelease } from "../../scripts/release.mjs";
+import { installPiRuntime } from "../../scripts/runtime/pi-packages.mjs";
 import { assertInstallation, readProductionBuild } from "../../scripts/build-output.mjs";
 import { runCommand } from "../../scripts/process-runner.mjs";
 import { isNewer } from "./semver";
@@ -155,15 +156,12 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 
 	/**
 	 * 只换 npm 成品包里的 pi 依赖：成品包没有 devDependencies，跑不了 typecheck / 构建，也不需要——
-	 * pi 两个包都在 serverExternalPackages 里，运行时从这里的 node_modules 加载，重启即用上新版。
+	 * pi 引擎和 pi-ai 都在 serverExternalPackages 里；配套依赖同步锁到同一版本，重启即用上新版。
 	 * Windows 也能做：运行中的服务没加载 pi 的原生模块，pi 目录也不是服务的工作目录，不会 EBUSY。
 	 * 图标不用同步：成品包自带 public/provider-icons，清单也和 pi 版本无关。
 	 */
 	async function installPiIntoPackage(installation: string, assertIdle: () => Promise<void>): Promise<UpdateResult> {
-		await assertIdle();
-		await run("npm", ["install", "--save-exact", `${PI_PACKAGE}@latest`, `${PI_AI_PACKAGE}@latest`, "--omit=dev", "--no-audit", "--no-fund"], {
-			cwd: installation, env: commandEnv, timeoutMs: 600_000,
-		});
+		await installPiRuntime({ root: installation, env: commandEnv, run }, { omitDev: true, assertIdle });
 		await assertIdle();
 		assertInstallation(installation);
 		const version = await readPackageVersion(path.join(installation, "node_modules", PI_PACKAGE, "package.json"));

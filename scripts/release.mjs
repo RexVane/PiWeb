@@ -7,6 +7,8 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { assertInstallation, assertLocalPath, readProductionBuild, resolveBuildOutput, RELEASES_DIR, RELEASE_MANIFEST } from "./build-output.mjs";
 import { runCommand } from "./process-runner.mjs";
 import { isMainModule } from "./entrypoint.mjs";
+import { installPiRuntime, PI_PACKAGE } from "./runtime/pi-packages.mjs";
+export { PI_PACKAGE, PI_AI_PACKAGE } from "./runtime/pi-packages.mjs";
 
 /**
  * Root of the PiWeb installation this module belongs to.
@@ -92,9 +94,6 @@ export async function verifyReleaseConfig(root = process.cwd(), env = process.en
 	}
 }
 
-export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
-export const PI_AI_PACKAGE = "@earendil-works/pi-ai";
-
 /**
  * Shared by the UI and update:pi; called only after the building state is durable.
  * @param {{root: string, env: Record<string, string | undefined>, run: typeof runCommand, signal?: AbortSignal}} context
@@ -102,10 +101,7 @@ export const PI_AI_PACKAGE = "@earendil-works/pi-ai";
  * @returns {Promise<string>}
  */
 export async function installPiUpdate({ root, env, run, signal }, assertIdle = async () => {}) {
-	await assertIdle();
-	await run("npm", ["install", "--save-exact", `${PI_PACKAGE}@latest`, `${PI_AI_PACKAGE}@latest`, "--no-audit", "--no-fund"], {
-		cwd: root, env, timeoutMs: 600_000, signal,
-	});
+	await installPiRuntime({ root, env, run, signal }, { assertIdle });
 	await run("npm", ["run", "sync:provider-icons"], { cwd: root, env, timeoutMs: 60_000, signal });
 	const manifest = JSON.parse(await fs.readFile(path.join(root, "node_modules", PI_PACKAGE, "package.json"), "utf8"));
 	if (typeof manifest.version !== "string" || !manifest.version) throw new Error("Pi engine package version is missing");

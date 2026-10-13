@@ -86,6 +86,17 @@ describe("release gate on the real tarball", () => {
 		expect(result.files).toContain(".next/required-server-files.json");
 	}, 60_000);
 
+	it("rejects an artifact whose Pi subpackages would float on a clean install", async () => {
+		const root = await fakePackage([".next"], async (dir) => {
+			await writeBuild(dir);
+			const manifestPath = path.join(dir, "package.json");
+			const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+			manifest.dependencies = { "@earendil-works/pi-coding-agent": "1.1.0", "@earendil-works/pi-ai": "1.1.0" };
+			await fs.writeFile(manifestPath, JSON.stringify(manifest));
+		});
+		await expect(async () => verifyPackedPackage(root, { log: () => {} })).rejects.toThrow(/Pi runtime dependency.*must be pinned/);
+	});
+
 	it("fails when the whitelist omits a runtime manifest (the 0.3.7 bug)", async () => {
 		const root = await fakePackage([".next/BUILD_ID", ".next/server"], (dir) => writeBuild(dir));
 		await expect(async () => verifyPackedPackage(root, { log: () => {} })).rejects.toThrow(/incomplete production build/);

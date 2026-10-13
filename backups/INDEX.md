@@ -56,3 +56,17 @@
 - 2026-10-13 14:40 | .next-releases/sidechat-validation-20261013-132334 | 未备份（构建产物，可重新 build 生成，255 MB） | 旁聊 #105 的一次性浏览器验证构建，验证完成后清理
 - 2026-10-13 14:40 | .next-releases/sidechat-model-20261013-143310 | 未备份（构建产物，可重新 build 生成，255 MB） | 旁聊 #106 选模型的一次性浏览器验证构建，验证完成后清理
 - 2026-10-13 14:40 | %TEMP%\piweb-sidechat-validation（日志、无头 Chrome profile、临时 agent 目录） | 未备份（可重新生成，200 MB） | 旁聊 #105/#106 验证的日志与截图素材暂存，已按用户要求清理；截图成品在 docs/assets/
+- 2026-10-13 21:26:33 | src/components/side-chat/SideChatPanel.tsx | backups/files/SideChatPanel-20261013-212633.tsx | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | src/components/side-chat/SideChatPanel.module.css | backups/files/SideChatPanel.module-20261013-212633.css | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | src/components/side-chat/icons.tsx | backups/files/icons-20261013-212633.tsx | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | src/components/side-chat/store.ts | backups/files/store-20261013-212633.ts | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | src/i18n.tsx | backups/files/i18n-20261013-212633.tsx | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | docs/planning/requirements.md | backups/files/requirements-20261013-212633.md | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | docs/planning/technical-design.md | backups/files/technical-design-20261013-212633.md | 用户取消旁聊导入导出，留存撤回前内容
+- 2026-10-13 21:26:33 | src/components/side-chat/backup.ts | backups/files/backup-20261013-212633.ts | 用户取消旁聊导入导出，新增文件移入备份
+- 2026-10-13 21:26:33 | tests/components/side-chat/backup.test.tsx | backups/files/backup.test-20261013-212633.tsx | 用户取消旁聊导入导出，新增文件移入备份
+- 2026-10-13 21:26:33 | tests/integration/side-chat/backup.test.ts | backups/files/backup.test-20261013-212633.ts | 用户取消旁聊导入导出，新增文件移入备份
+- 2026-10-13 21:26:33 | tests/integration/side-chat/fixtures.ts | backups/files/fixtures-20261013-212633.ts | 用户取消旁聊导入导出，新增文件移入备份
+- 2026-10-13 21:26:33 | tests/end-to-end/side-chat-backup-browser.mjs | backups/files/side-chat-backup-browser-20261013-212633.mjs | 用户取消旁聊导入导出，新增文件移入备份
+- 2026-10-13 21:26:33 | docs/assets/side-chat-backup-desktop.png | backups/images/side-chat-backup-desktop-20261013-212633.png | 用户取消旁聊导入导出，新增文件移入备份
+- 2026-10-13 21:26:33 | docs/assets/side-chat-backup-mobile.png | backups/images/side-chat-backup-mobile-20261013-212633.png | 用户取消旁聊导入导出，新增文件移入备份
