@@ -48,6 +48,8 @@ export interface SideChatProgress {
 	/** 该回答用的模型上下文窗口；拿不到就不写，界面宁可什么都不显示也不显示假数字 */
 	contextWindow?: number;
 	usage?: SideChatUsage;
+	/** 拼这次上下文时的真实字符数（分项用；系统提示词 + 引用的主会话背景） */
+	characters?: { systemPrompt: number; background: number };
 	contextTruncated?: boolean;
 	lengthLimited?: boolean;
 }

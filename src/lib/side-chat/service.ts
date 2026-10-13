@@ -114,7 +114,7 @@ export function startSideChat(sessionPath: string, request: SideChatRequest): Si
 			if (!model) throw new BoundaryError("the selected side-chat model is unavailable");
 			const built = buildSideChatContext(background, request, model);
 			const level = clampThinkingLevel(model, (thinking || "off") as ModelThinkingLevel);
-			job.progress = { ...job.progress, model: model.name, contextWindow: model.contextWindow, contextTruncated: built.contextTruncated };
+			job.progress = { ...job.progress, model: model.name, contextWindow: model.contextWindow, characters: built.characters, contextTruncated: built.contextTruncated };
 			publish(job);
 			const stream = runtime.streamSimple(model, built.context, {
 				signal: job.controller.signal,

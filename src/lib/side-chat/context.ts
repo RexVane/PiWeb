@@ -78,7 +78,7 @@ function historyMessage(item: SideChatHistoryMessage, model: Model<Api>): Messag
 }
 
 /** UTF-8 byte budgets are conservative bounds, not reported token measurements. */
-export function buildSideChatContext(mainText: string, request: SideChatRequest, model: Model<Api>): { context: Context; contextTruncated: boolean; maxTokens: number } {
+export function buildSideChatContext(mainText: string, request: SideChatRequest, model: Model<Api>): { context: Context; contextTruncated: boolean; maxTokens: number; characters: { systemPrompt: number; background: number } } {
 	const maxTokens = Math.min(model.maxTokens, 16_384, Math.max(256, Math.floor(model.contextWindow / 4)));
 	const available = Math.floor(model.contextWindow - maxTokens - 1024 - bytes(SYSTEM_PROMPT) - bytes(MAIN_PREFIX + MAIN_SUFFIX) - bytes(request.text));
 	if (available < 256) throw new BoundaryError("question is too long for this model's context window");
@@ -106,6 +106,9 @@ export function buildSideChatContext(mainText: string, request: SideChatRequest,
 	}
 	return {
 		maxTokens,
+		// 弹窗里的分项：这两块是旁聊自己的，字面长度就是实际发出去的字符数；
+		// 提问与历史回答由前端按消息分类统计（和主界面同一套）
+		characters: { systemPrompt: SYSTEM_PROMPT.length, background: (MAIN_PREFIX + background + MAIN_SUFFIX).length },
 		contextTruncated: mainTruncated || start > 0,
 		context: {
 			systemPrompt: SYSTEM_PROMPT,

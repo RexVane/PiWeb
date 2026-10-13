@@ -75,6 +75,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 		{ key: "system", label: t.contextSystemPrompt, value: b?.systemPrompt, color: "var(--dsw-accent)" },
 		{ key: "builtin", label: t.contextSystemTools, value: b?.systemTools, color: "#8B7EC8" },
 		{ key: "custom", label: t.contextCustomTools, value: b?.customTools, color: "#B39DDB" },
+		{ key: "background", label: t.contextBackground, value: b?.background, color: "#5B8DEF" },
 		{ key: "memory", label: t.contextMemory, value: b?.memory, color: "#5FA8D3" },
 		{ key: "skills", label: t.contextSkills, value: b?.skills, color: "#4FB286" },
 		{ key: "user", label: t.contextUserMessages, value: chars.user, color: "var(--dsw-success)" },

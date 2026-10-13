@@ -169,6 +169,14 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 							tokens={contextTokens}
 							contextWindow={contextWindow}
 							label={t.contextMeasured}
+							source={thread?.characters ? {
+								systemChars: 0,
+								messages: thread.messages.map((message) => ({ role: message.role, content: [{ type: "text", text: message.text }] })),
+								breakdown: {
+									characters: { systemPrompt: thread.characters.systemPrompt, background: thread.characters.background, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0 },
+									systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0, autoCompactBuffer: 0,
+								},
+							} : undefined}
 							model={selectedModel ? { provider: selectedModel.provider, id: selectedModel.id } : null}
 						/>
 					</div>

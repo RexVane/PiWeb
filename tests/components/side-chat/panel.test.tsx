@@ -260,3 +260,16 @@ describe("persistent, simple side-chat panel", () => {
 		expect(screen.getByTitle("5.00% 上下文用量")).toBeTruthy();
 	});
 
+	it("弹窗里的内容分类跟主界面同一套：系统提示词、引用的主会话背景、提问与历史回答", async () => {
+		const { store, reply } = setup();
+		render(panel(store));
+		fireEvent.change(questionInput(), { target: { value: "这个问题有多少字" } });
+		fireEvent.keyDown(questionInput(), { key: "Enter" });
+		// 1000 输入 / 200000 窗口 = 0.50%；分项是拼上下文时的真实字符数
+		await reply("答案", -1, { usage: { input: 1000, output: 20, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200000, characters: { systemPrompt: 1234, background: 5678 } });
+		fireEvent.click(screen.getByTitle("0.50% 上下文用量"));
+		for (const label of ["System Prompt", "Main Conversation", "User Messages", "Agent Text"]) expect(screen.getByText(label)).toBeTruthy();
+		expect(screen.getByText("1.23K 字符")).toBeTruthy();
+		expect(screen.getByText("5.68K 字符")).toBeTruthy();
+	});
+
