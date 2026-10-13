@@ -72,7 +72,7 @@ describe("side-chat isolation through the real Pi SDK", () => {
 		const leaf = sm.getLeafId();
 		const first = request();
 		const post = await POST(new Request("http://localhost/api/agent/main/side-chat", { method: "POST", body: JSON.stringify(first) }), params());
-		expect(post.status).toBe(200);
+		expect(post.status, await post.clone().text()).toBe(200);
 		const firstAnswer = await finish(first.requestId);
 		expect(firstAnswer.error).toBeUndefined();
 		expect(firstAnswer).toMatchObject({ done: true, text: "Session 存储就是主会话的 JSONL 文件。", aborted: false });

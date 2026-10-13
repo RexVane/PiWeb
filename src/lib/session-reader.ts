@@ -265,7 +265,7 @@ export async function deleteSession(sessionPath: string): Promise<void> {
 	const root = path.join(getAgentDir(), "sessions");
 	const realRoot = await fs.realpath(root).catch(() => path.resolve(root));
 	const target = path.resolve(sessionPath);
-	if (path.extname(target).toLowerCase() !== ".jsonl" || !isPathInside(path.resolve(root), target)) {
+	if (path.extname(target).toLowerCase() !== ".jsonl" || (!isPathInside(root, target) && !isPathInside(realRoot, target))) {
 		throw new BoundaryError("session path is outside the Pi session store");
 	}
 	const realTarget = await fs.realpath(target).catch((error: NodeJS.ErrnoException) => {
