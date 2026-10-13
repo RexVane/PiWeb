@@ -999,21 +999,25 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 							<div role="cell" className="min-w-0">{capacityCell(gap, "contextWindow", t.modelAuditColContext)}</div>
 							<div role="cell" className="min-w-0">{capacityCell(gap, "maxTokens", t.modelAuditColOutput)}</div>
 							<div role="cell" className="min-w-0">
-								{gap.missing.includes("input") ? (
-									<select
-										className="pw-audit-field"
-										value={rowOf(gap).vision}
-										onChange={(event) => edit(gap, { vision: event.target.value as AuditRow["vision"] })}
-										aria-label={`${gap.id} ${t.modelAuditColVision}`}
-										disabled={busy}
-									>
-										<option value="">{t.visionUnset}</option>
-										<option value="image">{t.visionOn}</option>
-										<option value="text">{t.visionOff}</option>
-									</select>
-								) : (
-									<span style={{ color: "var(--dsw-label-secondary)" }}>{gap.vision ? t.visionOn : t.visionOff}</span>
-								)}
+								{/* 输入类型：文本 pi 总是接受（勾上不可点），图片这一勾就是 models.json 的 input 里加 image */}
+								{gap.missing.includes("input") || true ? (
+									<div className="flex items-center gap-3" role="group" aria-label={`${gap.id} ${t.modelAuditColVision}`}>
+										<label className="flex cursor-default items-center gap-1" style={{ color: "var(--dsw-label-tertiary)" }} title={t.visionInputTextHint}>
+											<input type="checkbox" checked disabled readOnly />
+											{t.visionInputText}
+										</label>
+										<label className="flex items-center gap-1" style={{ color: "var(--dsw-label-secondary)" }} title={t.visionInputImageHint}>
+											<input
+												type="checkbox"
+												checked={gap.missing.includes("input") ? rowOf(gap).vision === "image" : gap.vision === true}
+												disabled={busy || !gap.missing.includes("input")}
+												onChange={(event) => edit(gap, { vision: event.target.checked ? "image" : "text" })}
+												aria-label={`${gap.id} ${t.visionInputImage}`}
+											/>
+											{t.visionInputImage}
+										</label>
+									</div>
+								) : null}
 							</div>
 						</div>
 					))}
@@ -1360,7 +1364,12 @@ function ModelsSection() {
 		if (!filled) return true;
 		setAuditBusy(true);
 		try {
-			return Boolean((await saveCustom(next)).success);
+			const result = await saveCustom(next);
+			// 失败（典型是 revision 冲突：写入期间 pi 自己动过 models.json）也必须刷新本地副本与 revision。
+			// 否则本地一直拿着旧 revision，之后每次保存都撞同一个 409——用户看到的就是「反复填、永远不成」。
+			// call() 只在成功时 load()，这里把失败那一半补上。
+			if (!result.success) await load();
+			return Boolean(result.success);
 		} finally {
 			setAuditBusy(false);
 		}
