@@ -5,7 +5,7 @@ import { installPiRuntime, piRuntimeSpecs, verifyPiRuntimePins } from "../../scr
 const names = [
 	"@earendil-works/pi-coding-agent", "@earendil-works/pi-ai",
 	"@earendil-works/pi-agent-core", "@earendil-works/pi-codemode",
-	"@earendil-works/pi-mcp", "@earendil-works/pi-telemetry", "@earendil-works/pi-tui",
+	"@earendil-works/pi-mcp", "@earendil-works/pi-telemetry", "@earendil-works/pi-tui", "@earendil-works/chord",
 ];
 const pinned = (version = "1.1.0") => ({ dependencies: Object.fromEntries(names.map((name) => [name, version])) });
 
