@@ -20,6 +20,11 @@ const COLD: ContextBreakdown = { systemPrompt: 0, systemTools: 0, customTools: 0
 const WARM: ContextBreakdown = { systemPrompt: 2500, systemTools: 4100, customTools: 900, memory: 1200, skills: 310, compacted: 0, autoCompactBuffer: 16384, characters: { systemPrompt: 10000, systemTools: 16400, customTools: 3600, memory: 4800, skills: 1240, compacted: 0 } };
 const MESSAGES = [{ role: "user", content: [{ type: "text", text: "hello there, please look at the project" }] }];
 
+const segmentWidth = (bar: HTMLElement, key: string) => Number.parseFloat((bar.querySelector(`[data-segment="${key}"]`) as HTMLElement).style.width);
+/** 分段宽度（不含预留那一段） */
+const typeWidths = (bar: HTMLElement) => [...bar.querySelectorAll("[data-segment]")].filter((el) => el.getAttribute("data-segment") !== "reserved")
+	.map((el) => Number.parseFloat((el as HTMLElement).style.width));
+
 function meter(breakdown: ContextBreakdown, loadFull?: () => unknown) {
 	return <ContextMeter percent={12} tokens={24000} contextWindow={200000} source={{ systemChars: 0, messages: MESSAGES, breakdown, loadFull }} />;
 }
@@ -68,7 +73,36 @@ describe("上下文圆环弹窗", () => {
 		expect(screen.getByText("~159.62K tok")).toBeTruthy();
 		expect(screen.getByText("10.00K 字符")).toBeTruthy();
 		expect(screen.getByText("4.80K 字符")).toBeTruthy();
-		expect(screen.getByText("内容分类（字符数）")).toBeTruthy();
+		// #087：说明文字与「估算占比」两行都去掉了，分项列表改当进度条的图例
+
+		// 弹窗正文不再有估算那两行，也没有说明段落
+		const popover = screen.getByTestId("context-bar").parentElement as HTMLElement;
+		expect(popover.textContent).not.toContain("上下文估算");
+		expect(popover.textContent).not.toContain("内容分类");
+		expect(popover.textContent).not.toContain("按当前文本统计");
+	});
+
+	/** 进度条 = 整扇窗口：已用那一截按各类字符比例分段（你问的「什么类型占多少」就在条上） */
+	it("进度条铺满整扇窗口：分段按字符比例、比例之和等于已用那一截", () => {
+		render(meter(WARM));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		const bar = screen.getByTestId("context-bar") as HTMLElement;
+		// 没有 API 输入时基准退回 SDK 估算：24000 / 200000 = 12%
+		expect(typeWidths(bar).reduce((sum, w) => sum + w, 0)).toBeCloseTo(12, 6);
+		// 段宽比例 = 字符数比例（API 不给分类 token，只摊比例、不报每类 token 数）
+		expect(segmentWidth(bar, "builtin") / segmentWidth(bar, "system")).toBeCloseTo(16400 / 10000, 6);
+		// 预留单独一段：16384 / 200000 = 8.192%
+		expect(segmentWidth(bar, "reserved")).toBeCloseTo(8.192, 6);
+		expect(bar.querySelector('[data-segment="compacted"]')).toBeNull();
+	});
+
+	it("有 API 输入时，已用那一截按真实输入铺，不用 SDK 估算", () => {
+		// 1000 + 10000 + 734 = 11734 tok → 5.867%（SDK 估算是 12%）
+		render(<ContextMeter percent={12} tokens={24000} contextWindow={200000} source={{ systemChars: 0, breakdown: WARM, messages: [...MESSAGES,
+			{ role: "assistant", content: [], usage: { input: 1000, cacheRead: 10000, cacheWrite: 734, output: 250 }, stopReason: "stop" },
+		] }} />);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		expect(typeWidths(screen.getByTestId("context-bar") as HTMLElement).reduce((sum, w) => sum + w, 0)).toBeCloseTo(11734 / 200000 * 100, 6);
 	});
 
 	it("API 用量取最近一次有效回复，错误回复和正在生成的回复不能覆盖它", () => {
@@ -132,7 +166,7 @@ describe("上下文圆环里改窗口", () => {
 		expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ action: "setContextWindow", providerId: "anthropic", modelId: "claude-haiku-4-5", contextWindow: 1000000 });
 		// 冷会话等不到用量事件：先用回来的新值重算（24000 / 1000000 = 2.40%）
 		expect(screen.getByText("1,000,000")).toBeTruthy();
-		expect(screen.getByText("2.40% 上下文估算")).toBeTruthy();
+		expect(screen.getByTitle("2.40% 上下文估算")).toBeTruthy();
 
 		// 快照 / 用量追上来后交还给 props
 		view.rerender(<ContextMeter percent={2.4} tokens={24000} contextWindow={1000000} model={MODEL} source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM }} />);
@@ -194,6 +228,6 @@ describe("上下文圆环里改窗口", () => {
 		fireEvent.keyDown(input(), { key: "Enter" });
 		expect((await screen.findByRole("alert")).textContent).toContain("models.json 已被修改");
 		expect(input().value).toBe("200K");
-		expect(screen.getByText("12.00% 上下文估算")).toBeTruthy();
+		expect(screen.getByTitle("12.00% 上下文估算")).toBeTruthy();
 	});
 });

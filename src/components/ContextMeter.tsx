@@ -55,13 +55,19 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source }: 
 	const window_ = override ?? contextWindow ?? 0;
 	const recomputed = override !== null && known;
 	const p = recomputed ? used / override * 100 : percent ?? 0;
+	/** 圆环与悬停提示仍用 SDK 估算（那是「占窗口多少」），弹窗正文只留 API 出来的真实数字 */
 	const usageLabel = percent === null && !recomputed ? t.contextUnknown : `${fmtPercent(p)} ${t.contextEstimated}`;
 	const r = 5.5;
 	const circumference = 2 * Math.PI * r;
 	const reserved = Math.max(0, source?.breakdown?.autoCompactBuffer ?? 0);
-	// 超过窗口时预留不再画到窗口外；未知用量不能将整扇窗口显示为 Free Space。
-	const visibleReserved = known && window_ > 0 ? Math.min(reserved, Math.max(0, window_ - used)) : 0;
-	const free = known && window_ > 0 ? Math.max(0, window_ - used - reserved) : null;
+	/**
+	 * 进度条与 Free Space 的「已用」基准：优先最近一次请求的真实输入（API 报的），
+	 * 没测到才退回 SDK 估算；两者都没有就不画（未知不能当空闲）。
+	 */
+	const anchor = window_ > 0 ? (measuredInput !== null ? Math.min(measuredInput, window_) : known ? Math.min(used, window_) : null) : null;
+	// 超过窗口时预留不再画到窗口外；用量未知不能将整扇窗口显示为 Free Space。
+	const visibleReserved = anchor === null ? 0 : Math.min(reserved, Math.max(0, window_ - anchor));
+	const free = anchor === null ? null : Math.max(0, window_ - anchor - reserved);
 	const b = source?.breakdown?.characters;
 	const rows = [
 		{ key: "system", label: t.contextSystemPrompt, value: b?.systemPrompt, color: "var(--dsw-accent)" },
@@ -76,6 +82,18 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source }: 
 		{ key: "output", label: t.contextToolOutput, value: chars.toolOutput, color: "var(--dsw-warn)" },
 		{ key: "compacted", label: t.contextCompacted, value: b?.compacted, color: "#A05A78" },
 	].filter((row) => row.value !== undefined && row.value > 0);
+	const charTotal = rows.reduce((sum, row) => sum + (row.value ?? 0), 0);
+	/**
+	 * 进度条整条 = 全部上下文窗口：已用那一截按各类**字符数比例**分段（API 不给分类 token，
+	 * 所以只摊比例、不报每类的 token 数），剩下的部分就是背景色的 Free Space。
+	 */
+	const segments = anchor === null || charTotal === 0 ? [] : rows.map((row) => ({
+		key: row.key,
+		label: row.label,
+		value: row.value as number,
+		color: row.color,
+		width: anchor / window_ * 100 * ((row.value as number) / charTotal),
+	}));
 
 	return (
 		<div ref={ref} className="relative">
@@ -88,24 +106,22 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source }: 
 			</button>
 			{open && (
 				<div className="popover absolute bottom-9 right-0 z-50 w-72 p-4" style={{ fontSize: "var(--dsh-content-font-size-secondary)" }}>
-					<div className="font-medium" style={{ color: "var(--dsw-label-primary)" }}>{usageLabel}</div>
-					<div className="mt-1" style={{ color: "var(--dsw-label-tertiary)" }}>
-						{known ? `~${fmtTokens(used)}` : "—"} / {window_ > 0 ? fmtTokens(window_) : "—"} tok
-					</div>
 					{measuredInput !== null && <div className="mt-2 flex items-center justify-between gap-2"><span>{t.contextApiInput}</span><span title={`${measuredInput} tok`}>{fmtTokens(measuredInput)} tok</span></div>}
-					{known && window_ > 0 && (
-						<div className="mt-3 flex h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} aria-hidden>
-							<span className="flex-none" style={{ width: `${Math.min(100, used / window_ * 100)}%`, background: "var(--dsw-accent)" }} />
-							{visibleReserved > 0 && <span className="flex-none" style={{ width: `${visibleReserved / window_ * 100}%`, background: "var(--dsw-border-l3)" }} />}
+					{window_ > 0 && (
+						<div className="mt-3 flex h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} data-testid="context-bar" aria-hidden>
+							{segments.map((segment) => (
+								<span key={segment.key} data-segment={segment.key} className="flex-none" title={`${segment.label}：${fmtTokens(segment.value)} ${t.contextChars}`}
+									style={{ width: `${segment.width}%`, background: segment.color }} />
+							))}
+							{visibleReserved > 0 && <span data-segment="reserved" className="flex-none" style={{ width: `${visibleReserved / window_ * 100}%`, background: "var(--dsw-border-l3)" }} />}
 						</div>
 					)}
 					<div className="mt-2 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
 						{reserved > 0 && <DataRow label={t.contextAutoCompactBuffer} value={`${fmtTokens(reserved)} tok`} exact={`${reserved} tok`} color="var(--dsw-border-l3)" />}
 						{window_ > 0 && <DataRow label={t.contextFreeSpace} value={free === null ? "—" : `~${fmtTokens(free)} tok`} color="var(--dsw-selector)" />}
 					</div>
-					<div className="mt-3 font-medium">{t.contextCharacterBreakdown}</div>
-					<div className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>{t.contextCharacterHint}</div>
-					<div className="mt-2 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
+					{/* 进度条的图例：颜色跟上面的分段一一对应，数字是真实字符数 */}
+					<div className="mt-3 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
 						{rows.map((row) => <DataRow key={row.key} label={row.label} value={`${fmtTokens(row.value!)} ${t.contextChars}`} exact={`${row.value} ${t.contextChars}`} color={row.color} />)}
 					</div>
 					{cold && source?.loadFull && (
