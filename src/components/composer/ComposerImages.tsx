@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/i18n";
 import type { ImageAttachment } from "@/lib/types";
+import { ImageViewer } from "@/components/ImageViewer";
 
 /** 超过这个数量就折叠（引用 chip 用同一个阈值） */
 export const COLLAPSE_AT = 4;
@@ -243,84 +244,5 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 				)
 				: null}
 		</>
-	);
-}
-
-/** 放大预览：手机上没法用本机程序打开图片，应用内看最实在 */
-function ImageViewer({
-	images,
-	index,
-	disabled,
-	onIndex,
-	onRemove,
-	onClose,
-}: {
-	images: ImageAttachment[];
-	index: number;
-	disabled?: boolean;
-	onIndex: (index: number) => void;
-	onRemove: (index: number) => void;
-	onClose: () => void;
-}) {
-	const { t } = useI18n();
-	const dialogRef = useRef<HTMLDivElement>(null);
-	const closeRef = useRef<HTMLButtonElement>(null);
-	const count = images.length;
-	const go = (delta: number) => onIndex((index + delta + count) % count);
-
-	// 打开时把焦点移进来，关掉时还给原来那个元素（还在页面上的话）
-	useEffect(() => {
-		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-		closeRef.current?.focus();
-		return () => {
-			if (opener?.isConnected) opener.focus();
-		};
-	}, []);
-
-	// 捕获阶段处理：Esc / 方向键不再传给页面上其它监听 document 的面板；Tab 只在预览里转
-	useEffect(() => {
-		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") onClose();
-			else if (event.key === "ArrowLeft" && count > 1) go(-1);
-			else if (event.key === "ArrowRight" && count > 1) go(1);
-			else if (event.key === "Tab") {
-				const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? [])];
-				if (!focusable.length) return;
-				const at = focusable.indexOf(document.activeElement as HTMLElement);
-				const next = event.shiftKey ? (at <= 0 ? focusable.length - 1 : at - 1) : at === focusable.length - 1 ? 0 : at + 1;
-				focusable[next].focus();
-			} else return;
-			event.preventDefault();
-			event.stopPropagation();
-		};
-		document.addEventListener("keydown", onKey, true);
-		return () => document.removeEventListener("keydown", onKey, true);
-		// onClose / onIndex 来自父组件的 setState 包装，语义不变；只随张数和当前张重绑
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [count, index]);
-
-	return (
-		<div ref={dialogRef} className="pw-lightbox" role="dialog" aria-modal="true" aria-label={t.imageViewer} onClick={onClose}>
-			<div className="pw-lightbox-bar" onClick={(event) => event.stopPropagation()}>
-				<span className="pw-lightbox-count">{count > 1 ? `${index + 1} / ${count}` : ""}</span>
-				<button type="button" className="pw-lightbox-btn" disabled={disabled} onClick={() => onRemove(index)}>
-					{t.delete}
-				</button>
-				<button ref={closeRef} type="button" className="pw-lightbox-btn" aria-label={t.close} onClick={onClose}>
-					✕
-				</button>
-			</div>
-			<img src={srcOf(images[index])} alt="" className="pw-lightbox-image" onClick={(event) => event.stopPropagation()} />
-			{count > 1 ? (
-				<>
-					<button type="button" className="pw-lightbox-nav" data-side="prev" aria-label={t.imagePrev} onClick={(event) => { event.stopPropagation(); go(-1); }}>
-						‹
-					</button>
-					<button type="button" className="pw-lightbox-nav" data-side="next" aria-label={t.imageNext} onClick={(event) => { event.stopPropagation(); go(1); }}>
-						›
-					</button>
-				</>
-			) : null}
-		</div>
 	);
 }
