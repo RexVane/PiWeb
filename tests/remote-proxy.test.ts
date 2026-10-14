@@ -1,6 +1,6 @@
 import http from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { createMobileProxy, injectAssets, isLoopbackHost } from "../src/lib/remote/mobile-proxy";
+import { createMobileProxy, injectAssets, isLoopbackHost, MOBILE_FIT_CSS } from "../src/lib/remote/mobile-proxy";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn(); });
@@ -70,6 +70,14 @@ describe("injectAssets", () => {
 		const out = injectAssets(page, { js: "b()" });
 		expect(out).not.toContain("<style");
 		expect(out).toContain("<script");
+	});
+
+	it("keeps the scoped rule that stops the context popover from leaving the screen", () => {
+		// 注入的 .popover 兜底是 100vw-16px + !important，比 Tailwind 的类靠后，所以
+		// ContextMeter 自己的 max-w 在手机上会被盖掉；真正生效的是这份针对性的规则。
+		// 它必须一直跟着 .popover.pw-context-popover，否则窄屏(≤360px)左缘又会被顶出屏幕。
+		expect(MOBILE_FIT_CSS).toContain(".popover.pw-context-popover");
+		expect(MOBILE_FIT_CSS).toMatch(/\.popover\.pw-context-popover\s*\{[^}]*max-width:\s*calc\(100vw\s*-\s*96px\)\s*!important/);
 	});
 });
 

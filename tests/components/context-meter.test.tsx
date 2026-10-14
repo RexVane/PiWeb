@@ -64,22 +64,36 @@ describe("上下文圆环弹窗", () => {
 		expect(screen.queryByRole("button", { name: "现在统计" })).toBeNull();
 	});
 
-	it("Free Space 使用上下文估算与配置预留；分类保持实际字符数", () => {
+	it("Free Space 使用上下文估算与配置预留;分类保持实际字符数", () => {
 		// tokens 24000 / window 200000 / Auto-Compact Buffer 预留 16384
 		// → Free = 200000 − 24000 − 16384 = 159616 = 159.62K
-		// （头部 + 预留 + Free 精确等于窗口）
+		// (头部 + 预留 + Free 精确等于窗口)
 		render(meter(WARM));
 		fireEvent.click(screen.getByTitle(USAGE_LABEL));
 		expect(screen.getByText("~159.62K tok")).toBeTruthy();
 		expect(screen.getByText("10.00K 字符")).toBeTruthy();
 		expect(screen.getByText("4.80K 字符")).toBeTruthy();
-		// #087：说明文字与「估算占比」两行都去掉了，分项列表改当进度条的图例
+		// #087:说明文字与「估算占比」两行都去掉了,分项列表改当进度条的图例
 
-		// 弹窗正文不再有估算那两行，也没有说明段落
+		// 弹窗正文不再有估算那两行,也没有说明段落
 		const popover = screen.getByTestId("context-bar").parentElement as HTMLElement;
 		expect(popover.textContent).not.toContain("上下文估算");
 		expect(popover.textContent).not.toContain("内容分类");
 		expect(popover.textContent).not.toContain("按当前文本统计");
+	});
+
+	/**
+	 * 手机(390px)上弹窗右下角对齐圆环,而圆环离右边缘只有约 24px:
+	 * 固定 w-72(288px)会往左顶出屏幕(实测 390px 下 left=31、344px 下 left=-15)。
+	 * 屏幕窄于「弹窗宽 + 两侧留白」时必须自己收缩,否则左侧内容既看不到也滑不到。
+	 */
+	it("弹窗自己限制宽度,屏幕再窄也不会顶出左边", () => {
+		render(meter(WARM));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		const popover = screen.getByTestId("context-bar").parentElement as HTMLElement;
+		expect(popover.className).toContain("w-72");
+		expect(popover.className).toContain("max-w-[calc(100vw-96px)]");
+		expect(popover.className).toContain("pw-context-popover");
 	});
 
 	/** 进度条 = 整扇窗口：已用那一截按各类字符比例分段（你问的「什么类型占多少」就在条上） */

@@ -1,6 +1,6 @@
 "use client";
 
-import { isSideChatId, isSideChatModel, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest, type SideChatUsage } from "@/lib/side-chat/types";
+import { isSideChatId, isSideChatModel, sideChatId, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest, type SideChatUsage } from "@/lib/side-chat/types";
 
 import { requestHistory } from "./request-history";
 
@@ -56,7 +56,7 @@ export class SideChatStore {
 	private requests = new Map<string, AbortController>();
 	private saves = new Map<string, ReturnType<typeof setTimeout>>();
 	constructor(private options: { fetch: typeof fetch; storage: () => Storage; id: () => string } = {
-		fetch: (...args) => fetch(...args), storage: () => localStorage, id: () => crypto.randomUUID(),
+		fetch: (...args) => fetch(...args), storage: () => localStorage, id: sideChatId,
 	}) {}
 
 	get = (sessionId: string | null): SideChatState => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TrajLedger, buildTrajectoryFromEntries } from "../src/lib/trajectory";
+import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview } from "../src/lib/trajectory";
+import type { TrajEntry } from "../src/lib/types";
 
 describe("trajectory timing", () => {
 	it("continues sequence numbers after restored history", () => {
@@ -106,5 +107,31 @@ describe("trajectory timing", () => {
 		expect(tool?.detail).toContain("FullyQualifiedErrorId: Example");
 		expect(tool?.detail).toContain("Command exited with code 1");
 		expect(tool?.detail).not.toContain("�");
+	});
+});
+
+describe("侧栏最后一步正文", () => {
+	const tool = (over: Partial<TrajEntry>) => ({
+		seq: 1, kind: "tool" as const, ts: 0, toolName: "bash", title: "bash", detail: JSON.stringify({ command: "npm run test" }, null, 2), ...over,
+	});
+
+	it("没有输出时用工具参数摘要,不重复工具名", () => {
+		// 工具刚 start、还没 update:preview 为空,title 就是工具名 —— 以前会拼出「bash · bash」
+		expect(toolStepPreview(tool({}))).toBe("npm run test");
+		expect(toolStepPreview(tool({ toolName: "read", title: "read", detail: JSON.stringify({ path: "src/lib/trajectory.ts" }) }))).toBe("src/lib/trajectory.ts");
+	});
+
+	it("有真实输出时优先用输出的第一行", () => {
+		expect(toolStepPreview(tool({ preview: "line one\nline two" }))).toBe("line one");
+	});
+
+	it("参数里没有可读字段时只留工具名(返回空串)", () => {
+		expect(toolStepPreview(tool({ detail: JSON.stringify({ ok: true }) }))).toBe("");
+		expect(toolStepPreview(tool({ detail: "" }))).toBe("");
+	});
+
+	it("输出拼接后的 detail 解析不了也不报错,宁可只留工具名", () => {
+		// tool_execution_end 会把输出追加到 args JSON 后面,整个 detail 不再是合法 JSON
+		expect(toolStepPreview(tool({ detail: `${JSON.stringify({ command: "ls" })}\n\n---\n\noutput` }))).toBe("");
 	});
 });

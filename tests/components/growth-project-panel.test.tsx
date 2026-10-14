@@ -103,6 +103,25 @@ describe("ProjectPanel rounds", () => {
 		expect(select).not.toHaveBeenCalled();
 	});
 
+	it("exposes every round bar and the prev/next buttons to screen readers", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		const round2: GrowthEntry = { ...piRound, commit: h("d"), parent: h("c"), tree: h("4"), parentTree: h("3"), n: 2, title: "第二轮" };
+		render(
+			<ProjectPanel
+				growth={{ ...growth, rounds: [piRound, round2, userEdit], selected: round2, changes: piRound.changes }}
+				workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()}
+			/>,
+		);
+		// 柱子:可访问名称跟着选中轮的标题走(title 不参与可访问名称计算,必须另给 aria-label)
+		const bars = [...screen.getByTestId("growth-timeline").querySelectorAll<HTMLElement>(".pw-tl-bar")];
+		expect(bars.length).toBeGreaterThanOrEqual(3);
+		expect(bars[0].getAttribute("aria-label")).toContain("把保存按钮改成红色");
+		expect(bars[2].getAttribute("aria-label")).toMatch(/你的修改|Your change/);
+		// 前后轮按钮也要能读出来
+		expect(screen.getByRole("button", { name: /上一轮|Previous round/ })).toBeTruthy();
+		expect(screen.getByRole("button", { name: /下一轮|Next round/ })).toBeTruthy();
+	});
+
 	it("closes the round picker on Escape", () => {
 		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
 		render(

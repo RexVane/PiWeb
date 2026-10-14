@@ -413,6 +413,7 @@ export function ProjectPanel({
 										data-active={selected?.commit === round.commit || undefined}
 										style={{ height: h, background: roundColor(round) }}
 										title={`${roundTitle(round, tt)} · ${fmtTime(round.ts)} · ${t.growthRoundFiles.replace("{n}", String(round.stats.added + round.stats.modified + round.stats.deleted + round.stats.renamed))} +${round.stats.add} −${round.stats.del}`}
+										aria-label={`${roundTitle(round, tt)} · ${t.growthRoundFiles.replace("{n}", String(round.stats.added + round.stats.modified + round.stats.deleted + round.stats.renamed))} +${round.stats.add} −${round.stats.del}`}
 										onClick={() => growth.select(round.commit)}
 									/>
 								);
@@ -421,10 +422,10 @@ export function ProjectPanel({
 						</div>
 					)}
 					<div className="flex items-center gap-1 px-2 pb-2 pt-1" style={{ fontSize: 11.5 }}>
-						<button className="icon-btn" style={{ width: 20, height: 20 }} title={t.growthPrev} onClick={growth.prev} disabled={selectedIdx <= 0}>
+						<button className="icon-btn" style={{ width: 20, height: 20 }} title={t.growthPrev} aria-label={t.growthPrev} onClick={growth.prev} disabled={selectedIdx <= 0}>
 							<IconChevronLeft14 size={12} />
 						</button>
-						<button className="icon-btn" style={{ width: 20, height: 20 }} title={t.growthNext} onClick={growth.next} disabled={selectedIdx < 0 || selectedIdx >= rounds.length - 1}>
+						<button className="icon-btn" style={{ width: 20, height: 20 }} title={t.growthNext} aria-label={t.growthNext} onClick={growth.next} disabled={selectedIdx < 0 || selectedIdx >= rounds.length - 1}>
 							<IconChevronRight14 size={12} />
 						</button>
 						{/* 计数可点开轮数列表:单击直接弹列表(不做双击变输入框,避免 250ms 单双击

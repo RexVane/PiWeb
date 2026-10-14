@@ -33,6 +33,36 @@ function textOf(content: any): string {
 	return "";
 }
 
+/** 工具参数里最像“这一行在干什么”的那个字段,给侧栏“最后一步”用 */
+const SUMMARY_KEYS = ["command", "cmd", "script", "file_path", "path", "pattern", "query", "url"];
+
+/**
+ * 侧栏「最后一步」的正文:优先真实输出(preview),没有就退回工具参数摘要(detail 是 args JSON),
+ * 最后才是这行本来就有的 title。
+ * 不能回落到 title —— 工具条目的 title 就是工具名(`trajectory.ts` 里 `title` / `tool_execution_start`),
+ * 而 preview 只在工具返回文本时才写,于是 `bash · bash` 这种重复会一直显示到结果回来。
+ */
+export function toolStepPreview(entry: TrajEntry): string {
+	const firstLine = (value: string | undefined) => (value ?? "").split("\n")[0].trim();
+	const fromResult = firstLine(entry.preview);
+	if (fromResult) return fromResult.slice(0, 80);
+	let args: Record<string, unknown> | undefined;
+	try {
+		const parsed = JSON.parse(entry.detail ?? "");
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed as Record<string, unknown>;
+	} catch {
+		/* detail 可能是「args JSON + --- + 输出」的拼接,解析不了就当没有 */
+	}
+	if (args) {
+		for (const key of SUMMARY_KEYS) {
+			const value = args[key];
+			if (typeof value === "string" && value.trim()) return value.trim().replace(/\s+/g, " ").slice(0, 80);
+		}
+	}
+	// 参数里没有可读字段:保持只有工具名,不重复拼一遍
+	return "";
+}
+
 /** 活跃会话的账本：消费 pi 事件流，维护 cell 列表与计时 */
 export class TrajLedger {
 	entries: TrajEntry[];

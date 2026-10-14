@@ -378,7 +378,8 @@ SSE 首个快照帧 **6,376,665 字节(6.38 MB)**,gzip 后 1.82 MB(29.2%)。
 
 ## 8. 功能与显示走查发现(2026-10-12)
 
-> 状态:**只记录、未修**。用无头 Chromium 走查了 13 个区域(设置 6 个分区、模型/工具/插件/技能/远程、
+> 状态:**8.2、8.3 已于 2026-10-14 修复(#120)**;本节其余内容仍是当时的观测,未逐条重测。
+> 用无头 Chromium 走查了 13 个区域(设置 6 个分区、模型/工具/插件/技能/远程、
 > 对话视图、工具卡、上下文计量、提示词、Git、项目 + 成长树、文件查看器、轨迹详情、导入会话)。
 > **全程 0 条 console 错误、0 条 JS 错误。**
 
@@ -401,6 +402,10 @@ SSE 首个快照帧 **6,376,665 字节(6.38 MB)**,gzip 后 1.82 MB(29.2%)。
 
 ### 8.2 Bug A:侧栏会话预览显示 `bash · bash`(工具名重复)
 
+> 2026-10-14 修复:摘要改由 `toolStepPreview()`(`src/lib/trajectory.ts`)统一给出——
+> 优先工具输出的第一行,其次从 `detail`(args JSON)里取 `command` / `path` / `pattern` 等字段,
+> 都取不到就只留工具名,不再回落到 `title`。`activeStatus()` 改用它。
+
 `src/lib/agent-manager.ts:1763`(`activeStatus()`):
 
 ```ts
@@ -414,6 +419,8 @@ lastStep = [e.toolName, (e.preview ?? e.title ?? "").split("\n")[0].slice(0, 80)
 或该情况下不拼第二段。
 
 ### 8.3 Bug B:轮次条 8 个按钮缺 `aria-label`
+
+> 2026-10-14 修复:轮次柱与「上一轮 / 下一轮」按钮都补上 `aria-label`(文案与 `title` 一致),见 `src/components/ProjectPanel.tsx`。
 
 成长树底部的轮次圆点(「你的修改」/「第 1 轮」…「第 3 轮」)和「上一轮 / 下一轮」按钮,
 可访问名称只挂在 `title` 上,没有 `aria-label`;`title` 不参与可访问名称计算时屏幕阅读器读不到。
@@ -674,3 +681,46 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 - Next.js 16.4.0 生产构建通过，输出位于独立验证目录，未切换 active release。
 - Chrome 在 1600×1000 与 390×844 视口通过实际页面检查：打开、发送、调宽、关闭保持阅读位置；默认跟随主会话、换成旁聊自己的模型后请求带显式模型；旧记录、刷新恢复与手机输入框可见。测试使用固定 API 响应，不调用线上模型或真实用户会话。截图在 `docs/assets/side-chat-desktop.png`、`docs/assets/side-chat-mobile.png`。
 - 浏览器脚本：启动本地服务与带 debugging port 的独立 Chrome 后，运行 `node tests/end-to-end/side-chat-browser.mjs http://127.0.0.1:3217 9337 docs/assets`。
+
+## 15. 手机端（远程连接）实测发现与修复（2026-10-14）
+
+用无头 Chromium 走手机链路：局域网入口 `http://192.168.x.x:<LAN 端口>`（**非回环 Host 才会注入 mobile-fit**），
+390×844、dev 用生产构建。发现两个只在手机上出现的问题，都已修复并复验。
+
+### 15.1 旁聊面板整块打不开：非安全上下文没有 `crypto.randomUUID`
+
+现场：手机上点旁聊图标，面板不出现，也没有任何提示。
+
+实测：局域网 http 是**非安全上下文**，`isSecureContext === false`，`crypto.randomUUID` 是 `undefined`
+（`crypto.getRandomValues` 仍在）。`SideChatStore` 的默认 id 生成函数直接调 `crypto.randomUUID()`，
+`get()` 建线程时抛 `crypto.randomUUID is not a function`，旁聊面板在渲染阶段整体崩掉。
+本机 `127.0.0.1` 是安全上下文，所以桌面直连完全复现不了。
+
+修复：`src/lib/side-chat/types.ts` 新增 `sideChatId()`——有 `randomUUID` 就用它；否则用 `getRandomValues`
+按 UUID v4 规则拼（两样都没有才退到时间戳 + 随机串）。生成结果仍满足 `isSideChatId` 的
+`^[a-zA-Z0-9_-]{8,80}$`，刷新恢复历史不受影响。`store.ts` 的默认 id 改用它。
+
+验证：同一台机器经 `http://192.168.5.44:30172`（注入生效、`randomUUID` 为 `undefined`）打开旁聊——
+面板正常渲染、能输入草稿、`pageerror` 0 条；修复前同一路径面板数量为 0 且报错。
+
+### 15.2 上下文弹窗顶出屏幕左边
+
+现场：手机上点右下角的上下文圆环，弹窗左缘跑到屏幕外。
+
+实测：弹窗是 `w-72`(288px) + `right-0`，定位父级是圆环自己那个 28px 容器，而圆环离屏幕右缘还有约 71px
+（旁聊面板里约 63px）。左缘 = 视口宽 − 圆环右缘偏移 − 288：
+
+| 视口宽 | 修复前 left | 修复后 left |
+| --- | --- | --- |
+| 390 | 31 | 31 |
+| 360 | 1 | 25 |
+| 344 | −15 | 25 |
+| 320 | −39 | 25 |
+
+修复分两层，两层都要：
+- `ContextMeter` 弹窗加 `max-w-[calc(100vw-96px)]` 与钩子类 `pw-context-popover`（本机直连时生效）；
+- 「远程连接」注入的 `mobile-fit.css` 补一条 `.popover.pw-context-popover { max-width: calc(100vw - 96px) !important }`——
+  注入的兜底是 `.popover { max-width: calc(100vw - 16px) !important }`，比 Tailwind 的类靠后，不补这条手机上仍会被盖掉。
+
+验证：经注入页面在 390 / 360 / 344 / 320 四个宽度实测，主输入框与旁聊面板的弹窗 left 均 ≥ 25px，
+且不越出旁聊面板左缘；`tests/remote-proxy.test.ts` 加了一例盯住注入 CSS 里这条规则。

@@ -32,7 +32,7 @@ import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui"
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
 import { projectedContextUsage } from "./session/metrics";
-import { TrajLedger, buildTrajectoryFromEntries, toTrajTokens } from "./trajectory";
+import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview, toTrajTokens } from "./trajectory";
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { BoundaryError } from "./path-security";
@@ -1784,7 +1784,7 @@ export function activeStatus(): Record<string, { streaming: boolean; lastStep?: 
 		for (let i = m.ledger.entries.length - 1; i >= 0; i -= 1) {
 			const e = m.ledger.entries[i];
 			if (e.kind === "tool") {
-				lastStep = [e.toolName, (e.preview ?? e.title ?? "").split("\n")[0].slice(0, 80)].filter(Boolean).join(" · ");
+				lastStep = [e.toolName, toolStepPreview(e)].filter(Boolean).join(" · ");
 				break;
 			}
 		}

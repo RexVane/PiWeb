@@ -108,7 +108,12 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 				</svg>
 			</button>
 			{open && (
-				<div className="popover absolute bottom-9 right-0 z-50 w-72 p-4" style={{ fontSize: "var(--dsh-content-font-size-secondary)" }}>
+				/* 弹窗右下角对齐在直径 28px 的圆环上，而圆环离屏幕右缘还有 60-70px：固定
+				   w-72(288px) 在 ≤360px 的手机会往左顶出屏幕（实测 344px 下 left=-15）。
+				   .pw-context-popover 不是给本仓 CSS 用的，是「远程连接」注入的 mobile-fit.css
+				   认的钩子 —— 它用 calc(100vw-96px) + !important 压过那里的 .popover 兜底，重命名
+				   或删掉这个类会让手机端重新冒出溢出。 */
+				<div className="pw-context-popover popover absolute bottom-9 right-0 z-50 w-72 max-w-[calc(100vw-96px)] p-4" style={{ fontSize: "var(--dsh-content-font-size-secondary)" }}>
 					{measuredInput !== null && <div className="mt-2 flex items-center justify-between gap-2"><span>{t.contextApiInput}</span><span title={`${measuredInput} tok`}>{fmtTokens(measuredInput)} tok</span></div>}
 					{window_ > 0 && (
 						<div className="mt-3 flex h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} data-testid="context-bar" aria-hidden>
