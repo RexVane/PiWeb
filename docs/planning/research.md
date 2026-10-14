@@ -140,3 +140,6 @@ Next.js 16.4.0 生产构建通过，使用独立目录 .next-releases/full-agent
 
 
 提交 PR #36 后发现 GitHub runner 缺少 fd，离线模式会阻止 SDK 自动下载安装，导致真实 find/grep 回归失败（本机 PATH 已有 fd/rg）。check 工作流新增 SDK 搜索工具准备步骤：使用正式 createFindTool/createGrepTool 执行 package.json 探针，让 SDK 在联网阶段准备工具；随后原检查仍使用 PI_OFFLINE=1。搜索断言保留，并补充实际工具结果以便诊断。此次只调整 CI 前置条件与测试诊断，应用构建和测试版进程无需更新。
+
+
+准备 SDK 搜索工具后，Linux 与 Windows Node 22 CI 通过；Windows Node 24 的既有导入面板用例暴露来源选择竞态。选择器渲染后用户点击 ZCode 时，捕获旧 activeSource 的默认选择 effect 可能延后执行并覆盖回 Claude。改为按执行时的最新选择进行函数式更新，只在来源分组变化时判断回退。保留既有来源切换断言；本地类型检查与 9 项导入面板测试连续三次通过。

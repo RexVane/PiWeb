@@ -130,9 +130,9 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	 */
 	const [activeSource, setActiveSource] = useState("");
 	useEffect(() => {
-		if (activeSource && groups.some((group) => group.source === activeSource)) return;
-		setActiveSource(groups[0]?.source ?? "");
-	}, [groups, activeSource]);
+		// 扫描完成的 effect 可能晚于用户点击；按执行时的最新选择决定是否回退。
+		setActiveSource((current) => groups.some((group) => group.source === current) ? current : groups[0]?.source ?? "");
+	}, [groups]);
 	const activeGroup = groups.find((group) => group.source === activeSource);
 
 	const toggle = (summary: Summary) => {
