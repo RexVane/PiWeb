@@ -70,3 +70,11 @@
 - 2026-10-13 21:26:33 | tests/end-to-end/side-chat-backup-browser.mjs | backups/files/side-chat-backup-browser-20261013-212633.mjs | 用户取消旁聊导入导出，新增文件移入备份
 - 2026-10-13 21:26:33 | docs/assets/side-chat-backup-desktop.png | backups/images/side-chat-backup-desktop-20261013-212633.png | 用户取消旁聊导入导出，新增文件移入备份
 - 2026-10-13 21:26:33 | docs/assets/side-chat-backup-mobile.png | backups/images/side-chat-backup-mobile-20261013-212633.png | 用户取消旁聊导入导出，新增文件移入备份
+20261014-180435 | src/components/ChatInput.tsx | backups/files/ChatInput-20261014-180435.tsx | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/components/ChatWindow.tsx | backups/files/ChatWindow-20261014-180435.tsx | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/components/AppShell.tsx | backups/files/AppShell-20261014-180435.tsx | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/hooks/usePiWeb.ts | backups/files/usePiWeb-20261014-180435.ts | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/components/side-chat/SideChatPanel.tsx | backups/files/SideChatPanel-20261014-180435.tsx | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/components/side-chat/store.ts | backups/files/store-20261014-180435.ts | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/components/side-chat/SideChatPanel.module.css | backups/files/SideChatPanel.module-20261014-180435.css | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
+20261014-180435 | src/lib/chat/state.ts | backups/files/state-20261014-180435.ts | 撤回仅为完整界面引入的共享状态模块

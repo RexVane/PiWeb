@@ -1,3 +1,6 @@
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import type { AgentCommand, ImageAttachment, ToolPreset, WebEvent, WebSnapshot } from "../types";
+
 /** Shared side-chat data. Main session messages never contain these records. */
 export interface SideChatHistoryMessage {
 	role: "user" | "assistant";
@@ -37,8 +40,16 @@ export function isSideChatModel(value: unknown): value is SideChatModel {
 export interface SideChatRequest {
 	requestId: string;
 	threadId: string;
+	kind?: "prepare";
+	retry?: boolean;
 	text: string;
 	history: SideChatHistoryMessage[];
+	images?: ImageAttachment[];
+	entries?: FileEntry[];
+	leafId?: string;
+	thinkingLevel?: string;
+	toolPreset?: ToolPreset;
+	activeTools?: string[];
 	/** Omitted means follow the main conversation's current model. */
 	model?: SideChatModel;
 }
@@ -69,14 +80,25 @@ export interface SideChatProgress {
 	usage?: SideChatUsage;
 	/** 拼这次上下文时的真实字符数（分项用；系统提示词 + 引用的主会话背景） */
 	characters?: { systemPrompt: number; background: number; systemTools?: number };
-	/** The currently executing read-only tool; null clears a prior tool status. */
+	/** The currently executing tool; null clears a prior tool status. */
 	activeTool?: string | null;
+	/** Ordered events use the same protocol as the main conversation. */
+	events?: WebEvent[];
+	snapshot?: WebSnapshot;
+	extensionUiRequests?: WebSnapshot["extensionUiRequests"];
+	entries?: FileEntry[];
+	leafId?: string;
 	contextTruncated?: boolean;
 	lengthLimited?: boolean;
 }
 
-export const SIDE_CHAT_BODY_LIMIT = 2 * 1024 * 1024;
+export const SIDE_CHAT_BODY_LIMIT = 272 * 1024 * 1024;
+export const SIDE_CHAT_HISTORY_BODY_LIMIT = 2 * 1024 * 1024;
+export const SIDE_CHAT_ENTRIES_LIMIT = 16 * 1024 * 1024;
 export const SIDE_CHAT_TEXT_LIMIT = 100_000;
 export const SIDE_CHAT_HISTORY_LIMIT = 1000;
 export const isSideChatId = (value: unknown): value is string =>
 	typeof value === "string" && /^[a-zA-Z0-9_-]{8,80}$/.test(value);
+
+export interface SideChatControl extends Omit<SideChatRequest, "requestId" | "text" | "history"> { history?: SideChatHistoryMessage[]; command: AgentCommand; }
+export interface SideChatControlResult { snapshot: WebSnapshot; entries: FileEntry[]; leafId?: string; commandData?: Record<string, unknown>; }

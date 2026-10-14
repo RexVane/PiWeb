@@ -3,6 +3,10 @@
 import { isSideChatId, isSideChatModel, sideChatId, type SideChatModel, type SideChatHistoryMessage, type SideChatProgress, type SideChatRequest, type SideChatUsage } from "@/lib/side-chat/types";
 
 import { requestHistory } from "./request-history";
+import type { FileEntry } from "@earendil-works/pi-coding-agent";
+import { SIDE_CHAT_ENTRIES_LIMIT } from "@/lib/side-chat/types";
+import { extensionDialogsFromSnapshot, type ExtensionDialog } from "@/hooks/usePiWeb";
+import type { WebSnapshot } from "@/lib/types";
 
 export interface SideChatMessage {
 	id: string;
@@ -18,6 +22,10 @@ export interface SideChatThread {
 	title: string;
 	messages: SideChatMessage[];
 	draft: string;
+	/** Full Agent history is browser-owned; only answer text is shown in the simple panel. */
+	entries?: FileEntry[];
+	leafId?: string;
+	extensionDialogs?: ExtensionDialog[];
 	model?: SideChatModel;
 	request?: { id: string; revision: number };
 	/** 最近一次回答的真实用量与窗口：面板右下角的上下文环用它 */
@@ -159,18 +167,25 @@ export class SideChatStore {
 			? [...thread.messages.slice(0, -1), { id: previous!.id, role: "assistant", text: "", status: "pending", contextTruncated: truncated }]
 			: [...thread.messages, { id: this.options.id(), role: "user", text }, { id: this.options.id(), role: "assistant", text: "", status: "pending", contextTruncated: truncated }];
 		this.updateThread(sessionId, thread.id, (item) => ({ ...item, title: item.title || text.slice(0, 80), messages, draft: retrying ? item.draft : "", request: { id: requestId, revision: -1 }, connectionLost: false }), true);
-		void this.run(sessionId, thread.id, requestId, { requestId, threadId: thread.id, text, history, ...(thread.model ? { model: { ...thread.model } } : {}) });
+		const entries = thread.entries && new TextEncoder().encode(JSON.stringify(thread.entries)).length <= SIDE_CHAT_ENTRIES_LIMIT ? thread.entries : undefined;
+		void this.run(sessionId, thread.id, requestId, { requestId, threadId: thread.id, text, history, ...(entries ? { entries, leafId: thread.leafId } : {}), ...(retrying ? { retry: true } : {}), ...(thread.model ? { model: { ...thread.model } } : {}) });
 	}
 
 	private apply(sessionId: string, threadId: string, requestId: string, progress: SideChatProgress): void {
 		this.updateThread(sessionId, threadId, (thread) => {
 			if (thread.request?.id !== requestId) return thread;
+			const pending = progress.extensionUiRequests ?? progress.snapshot?.extensionUiRequests;
+			let dialogs = pending !== undefined ? extensionDialogsFromSnapshot({ extensionUiRequests: pending } as WebSnapshot) : thread.extensionDialogs ?? [];
+			for (const event of progress.events ?? []) {
+				if (event.type === "extension_ui" && (event.method === "select" || event.method === "confirm" || event.method === "input") && !dialogs.some((dialog) => dialog.id === event.id)) dialogs = [...dialogs, { ...event, method: event.method, title: event.title ?? "" }];
+				else if (event.type === "extension_ui_resolved") dialogs = dialogs.filter((dialog) => dialog.id !== event.id);
+			}
 			const previousText = thread.messages.at(-1)?.text ?? "";
 			if (progress.textOffset !== undefined && progress.textOffset > previousText.length) throw new Error("side-chat answer cursor is out of sync");
 			const text = progress.textOffset === undefined ? progress.text : previousText.slice(0, progress.textOffset) + progress.text;
 			const status = !progress.done ? "pending" : progress.error ? "error" : progress.aborted ? "aborted" : "done";
 			return {
-				...thread, activeTool: progress.done ? null : progress.activeTool, connectionLost: false, request: progress.done ? undefined : { id: requestId, revision: progress.revision },
+				...thread, ...(progress.entries ? { entries: progress.entries, leafId: progress.leafId } : {}), extensionDialogs: dialogs, activeTool: progress.done ? null : progress.activeTool, connectionLost: false, request: progress.done ? undefined : { id: requestId, revision: progress.revision },
 				// 只在这次响应真的报了就更新；没报就保持上一次的值（不回落成 0）
 				...(progress.usage ? { usage: progress.usage } : {}),
 				...(progress.contextWindow ? { contextWindow: progress.contextWindow } : {}),
@@ -233,16 +248,23 @@ export class SideChatStore {
 		}
 	}
 
+	async respond(sessionId: string, threadId: string, requestId: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }): Promise<void> {
+		try {
+			const result = await this.options.fetch(`/api/agent/${sessionId}/side-chat/control`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ threadId, command: { cmd: "extensionUiResponse", requestId, ...response } }) });
+			const json = await result.json(); if (!result.ok || !json.success) throw new Error(json.error || "extension response failed");
+			this.updateThread(sessionId, threadId, (thread) => ({ ...thread, extensionDialogs: (thread.extensionDialogs ?? []).filter((dialog) => dialog.id !== requestId) }));
+		} catch (error) { this.updateThread(sessionId, threadId, (thread) => ({ ...thread, messages: thread.messages.map((message, index) => index === thread.messages.length - 1 ? { ...message, error: error instanceof Error ? error.message : "extension response failed" } : message) }), true); }
+	}
 	stop(sessionId: string): void {
 		const thread = this.get(sessionId).threads.find((item) => item.id === this.get(sessionId).currentThreadId);
-		const requestId = thread?.request?.id;
-		if (!thread || !requestId) return;
+		const requestId = thread?.request?.id; if (!thread || !requestId) return;
 		this.requests.get(requestId)?.abort();
-		this.apply(sessionId, thread.id, requestId, { requestId, revision: 0, text: thread.messages.at(-1)?.text ?? "", done: true, aborted: true });
+		this.apply(sessionId, thread.id, requestId, { requestId, revision: 0, text: thread.messages.at(-1)?.text ?? "", done: true, aborted: true, extensionUiRequests: [] });
 		void this.options.fetch(`/api/agent/${sessionId}/side-chat?requestId=${encodeURIComponent(requestId)}`, { method: "DELETE" })
-			.then(async (response) => { if (!response.ok) throw new Error((await response.json()).error || "failed to stop side-chat answer"); })
+			.then(async (response) => { const json = await response.json(); if (!response.ok || !json.success) throw new Error(json.error || "failed to stop side-chat answer"); const data = json.data; if (data?.entries) this.updateThread(sessionId, thread.id, (item) => ({ ...item, entries: data.entries, leafId: data.leafId }), true); })
 			.catch((error) => this.updateThread(sessionId, thread.id, (current) => ({ ...current, messages: current.messages.map((message) => message.id === thread.messages.at(-1)?.id ? { ...message, error: error instanceof Error ? error.message : "failed to stop side-chat answer" } : message) }), true));
 	}
+
 }
 
 export const sideChatStore = new SideChatStore();

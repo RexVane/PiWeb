@@ -251,6 +251,13 @@ export function getSettingsManager(cwd: string): SettingsManager {
 	return sm;
 }
 
+/** Preserve global/project discovery roots while keeping side-session preference changes in memory. */
+export function createDetachedSettingsManager(cwd: string): SettingsManager {
+	const source = getSettingsManager(cwd);
+	const values = new Map<string, string>([["global", JSON.stringify(source.getGlobalSettings())], ["project", JSON.stringify(source.getProjectSettings())]]);
+	return SettingsManagerClass.fromStorage({ withLock(scope, update) { const next = update(values.get(scope)); if (next !== undefined) values.set(scope, next); } }, { projectTrusted: source.isProjectTrusted() });
+}
+
 interface LoaderEntry {
 	/** 原始目录（缓存键在 Windows 上是小写的） */
 	cwd: string;
@@ -292,8 +299,8 @@ function loaderKey(cwd: string): string {
 }
 
 /** 每个热会话必须拥有自己的扩展 runtime；这里只创建，不加入发现缓存。 */
-export async function createSessionResourceLoader(cwd: string): Promise<DefaultResourceLoader> {
-	const settingsManager = getSettingsManager(cwd);
+export async function createSessionResourceLoader(cwd: string, settingsOverride?: SettingsManager): Promise<DefaultResourceLoader> {
+	const settingsManager = settingsOverride ?? getSettingsManager(cwd);
 	settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
 	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: BUILTIN_EXTENSIONS });
 	const reload = loader.reload.bind(loader);

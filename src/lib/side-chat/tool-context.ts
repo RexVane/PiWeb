@@ -3,7 +3,8 @@ import { BoundaryError } from "../path-security";
 import { byteSlice } from "./context";
 
 const OMITTED = "\n[Read-only tool output omitted to fit the model's context window; request a narrower range if needed.]";
-const sizeOf = (messages: Message[]) => Buffer.byteLength(JSON.stringify(messages), "utf8");
+export const sideContextBytes = (messages: Message[]) => Buffer.byteLength(JSON.stringify(messages, (_key, value) => value?.type === "image" && typeof value.data === "string" ? { ...value, data: "x".repeat(4096) } : value), "utf8");
+const sizeOf = sideContextBytes;
 const hasCalls = (message: Message) => message.role === "assistant" && message.content.some((part) => part.type === "toolCall");
 
 /** Trim complete older tool exchanges first, keeping tool-call/result pairs and the latest question. */
@@ -15,7 +16,7 @@ export function boundSideChatToolContext(source: Message[], budget: number): { m
 		const first = messages.findIndex(hasCalls);
 		const next = first < 0 ? -1 : messages.findIndex((message, index) => index > first && hasCalls(message));
 		if (next < 0) break;
-		messages.splice(first, next - first);
+		messages.splice(first, next - first, ...messages.slice(first, next).filter((message) => message.role === "system"));
 		size = sizeOf(messages);
 	}
 	while (size > budget) {

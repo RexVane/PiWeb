@@ -124,3 +124,16 @@ piweb
 使用独立临时项目、临时 Pi 配置和本地 OpenAI 兼容模拟模型，通过真实生产页面发送「读取 README.md」：第一次模型请求只声明四个只读工具，第二次收到实际文件中的 RO-SENTINEL-14 标记后回答。追加「尝试写入 README.md」，模型的 write 调用收到 Tool write not found，随后给出只读说明。两个请求前后 README 与主会话 JSONL 逐字节一致。
 
 Chrome 1440×960 与 390×844 检查通过：连续提问、回答后刷新恢复、草稿输入正常，模型入口可见；手机 document.scrollWidth=390，输入框底部 787px，位于 844px 视口内；无页面异常。截图：docs/assets/side-chat-readonly-desktop.png、docs/assets/side-chat-readonly-mobile.png。上下文环记录实际最后一轮 usage，工具声明字符已计入分项。测试模型为本地模拟服务，未验证付费远端模型的实际回答质量。
+
+
+## 完整 Agent 旁聊验收（2026-10-14）
+
+用户最终要求是「页面差不多保持现在的样子，只要 Agent 能力跟主对话一样」。保留现有标题、历史、问答、输入框、模型选择与上下文环，没有添加工具菜单、附件区或工具过程面板。撤回的完整对话界面代码已实体备份并记录于 backups/INDEX.md。
+
+底层改用完整 Pi AgentSession，使用同一套模型认证、技能、提示模板、插件、MCP 和工具实现，默认允许 Full access 的可用工具并启用注册的 codemode/tool_search。每份旁聊使用独立内存 SessionManager、扩展 runtime 和内存设置副本；完整树条目保存到浏览器并可恢复，旁聊自身记录不写入主 Session。工具操作仍可按用户要求修改同一工作区。停止、重试与插件确认均归属于该旁聊。
+
+类型检查通过；全量测试 988 项通过、2 项跳过（120 个文件通过、1 个文件跳过）。真实 SDK 回归覆盖读取/搜索/编辑/写入/命令执行、工具结果恢复、技能和模板展开、插件与本地 MCP 实际调用、启动确认和设置隔离。修复了启动中的快照将未落定资源版本标记为待重载、从而重复触发 session_start 确认的问题。
+
+Next.js 16.4.0 生产构建通过，使用独立目录 .next-releases/full-agent-audit-1791974562299/app；保留原有 release.mjs 动态导入 webpack 警告。实际 Chrome 页面使用本地模拟模型：确认插件请求一次后，调用 write 创建 sidebar-result.txt，并由 bash 调用 Node 读取它打印 SIDE-FULL-4309d63e，再返回答案。主会话 JSONL 前后逐字节一致，页面无异常。已保存 12 个 Agent 树条目，刷新恢复成功。
+
+页面保持原控件：侧栏 header 中 2 个按钮、1 个输入框，未出现 full composer 或工具菜单。桌面 1440×960、手机 390×844 和窄屏 320×640 均无横向溢出；手机输入框底部 787px，窄屏底部 583px，均在视口内。截图位于 docs/assets/side-chat/full-agent-desktop.png、full-agent-mobile.png。模型输出来自本地模拟服务；真实 SDK 工具和本地 MCP 均实际执行，未调用付费远端模型。

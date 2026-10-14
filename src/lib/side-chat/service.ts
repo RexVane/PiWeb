@@ -1,34 +1,33 @@
-import { runAgentLoopContinue } from "@earendil-works/pi-agent-core";
-import { createReadOnlyTools } from "@earendil-works/pi-coding-agent";
-import { clampThinkingLevel, normalizeContext, type AssistantMessage, type Message, type ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { getManaged } from "../agent-manager";
+import { buildSnapshot } from "../agent-manager";
 import { BoundaryError } from "../path-security";
-import { getModelRuntime, presetAllowsTool } from "../pi";
-import { buildSideChatContext, mainConversationText } from "./context";
-import { boundSideChatToolContext } from "./tool-context";
-import type { SideChatProgress, SideChatRequest, SideChatUsage } from "./types";
+import type { WebEvent, WebMessage, WebSnapshot } from "../types";
+import { configureSideRuntime, disposeSideRuntime, getSideRuntime, refreshSideBackground, sideEntries, type SideRuntime } from "./runtime";
+import type { SideChatProgress, SideChatRequest } from "./types";
 
 const IDLE_MS = 10 * 60_000;
-const RUN_MS = 15 * 60_000;
+const RUN_MS = 60 * 60_000;
 const MAX_RUNNING = 8;
-const MAX_MODEL_CALLS = 32;
-
 interface SideChatJob {
 	progress: SideChatProgress;
 	controller: AbortController;
 	listeners: Set<() => void>;
 	lastSeen: number;
-	versions: Map<number, string>;
+	versions: Map<number, { text: string; seq: number }>;
+	frames: { seq: number; event: WebEvent }[];
+	runtime?: SideRuntime;
+	threadId: string;
+	snapshot?: WebSnapshot;
+	snapshotRevision: number;
+	publishedSeq: number;
 	publishTimer?: ReturnType<typeof setTimeout>;
+	finished: Promise<void>;
+	finish: () => void;
 }
-
-const globalJobs = globalThis as typeof globalThis & {
-	__piWebSideChatJobs?: Map<string, SideChatJob>;
-	__piWebSideChatStops?: Map<string, number>;
-};
-const jobs = globalJobs.__piWebSideChatJobs ??= new Map();
-const stopped = globalJobs.__piWebSideChatStops ??= new Map();
-const keyOf = (sessionPath: string, requestId: string) => `${sessionPath}\0${requestId}`;
+const globalJobs = globalThis as typeof globalThis & { __piWebFullSideChatJobs?: Map<string, SideChatJob>; __piWebFullSideChatStops?: Map<string, number>; __piWebFullSideChatRuns?: Map<string, string> };
+const jobs = globalJobs.__piWebFullSideChatJobs ??= new Map();
+const stopped = globalJobs.__piWebFullSideChatStops ??= new Map();
+const running = globalJobs.__piWebFullSideChatRuns ??= new Map();
+const keyOf = (path: string, id: string) => path + "\0" + id;
 
 function reapJobs(): void {
 	const now = Date.now();
@@ -41,130 +40,107 @@ function reapJobs(): void {
 	}
 	for (const [key, until] of stopped) if (until < now) stopped.delete(key);
 }
-
 function publish(job: SideChatJob, terminal = false): void {
-	if (job.publishTimer) {
-		if (!terminal) return;
-		clearTimeout(job.publishTimer);
-	}
+	if (job.publishTimer) { if (!terminal) return; clearTimeout(job.publishTimer); }
 	const flush = () => {
 		job.publishTimer = undefined;
-		job.progress = { ...job.progress, revision: job.progress.revision + 1 };
-		job.versions.set(job.progress.revision, job.progress.text);
+		job.publishedSeq = job.runtime?.managed.seq ?? 0;
+		job.progress = { ...job.progress, revision: job.progress.revision + 1, contextTruncated: job.runtime?.contextTruncated || job.progress.contextTruncated };
+		job.versions.set(job.progress.revision, { text: job.progress.text, seq: job.publishedSeq });
 		while (job.versions.size > 8) job.versions.delete(job.versions.keys().next().value!);
 		for (const notify of job.listeners) notify();
 	};
-	if (terminal) flush();
-	else job.publishTimer = setTimeout(flush, 80);
+	if (terminal) flush(); else job.publishTimer = setTimeout(flush, 80);
 }
-
 function settle(job: SideChatJob, update: Partial<SideChatProgress>): void {
 	if (job.progress.done) return;
 	job.progress = { ...job.progress, ...update, activeTool: null, done: true };
 	publish(job, true);
 }
+const messageText = (message: WebMessage) => message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n\n");
 
-/** 模型响应里的真实用量；拿不到就返回 undefined（不编数字） */
-function usageOf(message: AssistantMessage): SideChatUsage | undefined {
-	const usage = message.usage;
-	if (!usage) return undefined;
-	return { input: usage.input ?? 0, output: usage.output ?? 0, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0 };
-}
-
-function assistantText(message: AssistantMessage): string {
-	return message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n\n");
-}
-
-/** Runs an independent read-only agent. Never prompts, branches, aborts or saves the main AgentSession. */
+/** All execution and events belong to an independent, browser-owned in-memory AgentSession. */
 export function startSideChat(sessionPath: string, request: SideChatRequest): SideChatProgress {
 	reapJobs();
 	const key = keyOf(sessionPath, request.requestId);
 	const previous = jobs.get(key);
 	if (previous) return { ...previous.progress };
+	const threadKey = keyOf(sessionPath, request.threadId);
+	if (running.has(threadKey)) throw new BoundaryError("this side conversation is still running");
 	if ([...jobs.values()].filter((job) => !job.progress.done).length >= MAX_RUNNING) throw new BoundaryError("too many side-chat answers are running");
-	const managed = getManaged(sessionPath);
-	const source = managed.sm.buildSessionContext();
-	const selected = managed.session?.model;
-	const provider = request.model?.provider ?? selected?.provider ?? source.model?.provider;
-	const modelId = request.model?.id ?? selected?.id ?? source.model?.modelId;
-	if (!provider || !modelId) throw new BoundaryError("select a model for the side chat first");
-	const thinking = managed.session?.thinkingLevel ?? source.thinkingLevel;
-	const messages: unknown[] = [...source.messages];
-	// A question may refer to the answer currently streaming in the main pane.
-	if (managed.inflight && !source.messages.includes(managed.inflight as typeof source.messages[number])) messages.push(managed.inflight);
-	const background = mainConversationText(messages);
-	const job: SideChatJob = {
-		progress: { requestId: request.requestId, revision: 0, text: "", done: false, aborted: false },
-		controller: new AbortController(), listeners: new Set(), lastSeen: Date.now(), versions: new Map([[0, ""]]),
-	};
+	let finish!: () => void;
+	const finished = new Promise<void>((resolve) => { finish = resolve; });
+	const job: SideChatJob = { progress: { requestId: request.requestId, revision: 0, text: "", done: false, aborted: false }, controller: new AbortController(), listeners: new Set(), lastSeen: Date.now(), versions: new Map([[0, { text: "", seq: 0 }]]), frames: [], threadId: request.threadId, snapshotRevision: -1, publishedSeq: 0, finished, finish };
 	jobs.set(key, job);
-	if (stopped.has(key)) {
-		settle(job, { aborted: true });
-		return { ...job.progress };
-	}
+	if (stopped.has(key)) { settle(job, { aborted: true }); finish(); return { ...job.progress }; }
+	running.set(threadKey, request.requestId);
 	void generate();
 	return { ...job.progress };
 
 	async function generate(): Promise<void> {
-		const timeout = setTimeout(() => {
-			job.controller.abort();
-			settle(job, { error: "side-chat request timed out" });
-		}, RUN_MS);
+		const timeout = setTimeout(() => { job.controller.abort(); settle(job, { error: "side-chat request timed out" }); }, RUN_MS);
 		timeout.unref();
+		const texts = new Map<string, { order: number; blocks: Map<number, string> }>();
+		const updateText = () => { job.progress = { ...job.progress, text: [...texts.values()].sort((a, b) => a.order - b.order).map((message) => [...message.blocks.entries()].sort(([a], [b]) => a - b).map(([, value]) => value).join("\n\n")).filter(Boolean).join("\n\n") }; };
 		try {
-			const runtime = await getModelRuntime();
 			if (job.controller.signal.aborted) return;
-			const model = runtime.getModel(provider!, modelId!);
-			if (!model) throw new BoundaryError("the selected side-chat model is unavailable");
-			const tools = createReadOnlyTools(managed.cwd).filter((tool) => presetAllowsTool("readonly", tool.name));
-			const built = buildSideChatContext(background, request, model, { tools, cwd: managed.cwd });
-			const level = clampThinkingLevel(model, (thinking || "off") as ModelThinkingLevel);
-			job.progress = { ...job.progress, model: model.name, contextWindow: model.contextWindow, characters: built.characters, contextTruncated: built.contextTruncated };
-			publish(job);
-			let completedText = "";
-			let calls = 0;
-			await runAgentLoopContinue({ messages: normalizeContext(built.context).messages, tools }, {
-				model,
-				convertToLlm: (messages) => messages as Message[],
-				reasoning: level === "off" ? undefined : level,
-				maxTokens: built.maxTokens,
-				sessionId: `piweb-sidechat-${request.threadId}`,
-				transport: "sse",
-				prepareRequest: () => {
-					if (job.progress.done || job.controller.signal.aborted) throw new BoundaryError("side-chat answer stopped");
-					if (++calls > MAX_MODEL_CALLS) throw new BoundaryError("side-chat tool-call limit reached; narrow the question and try again");
-				},
-				transformContext: async (messages) => {
-					const bounded = boundSideChatToolContext(messages as Message[], model.contextWindow - built.maxTokens - 1024);
-					if (bounded.truncated) { job.progress = { ...job.progress, contextTruncated: true }; publish(job); }
-					return bounded.messages;
-				},
-				beforeToolCall: async (_, signal) => signal?.aborted || job.progress.done ? { block: true, terminate: true, reason: "Side-chat answer stopped" } : undefined,
-			}, (event) => {
+			const runtime = getSideRuntime(sessionPath, request);
+			job.runtime = runtime;
+			runtime.publish = (event, seq) => {
 				if (job.progress.done) return;
-				if (event.type === "message_update" && event.message.role === "assistant") {
-					job.progress = { ...job.progress, text: [completedText, assistantText(event.message)].filter(Boolean).join("\n\n") };
-					publish(job);
-				} else if (event.type === "message_end" && event.message.role === "assistant") {
-					const message = event.message;
-					completedText = [completedText, assistantText(message)].filter(Boolean).join("\n\n");
-					const usage = usageOf(message);
-					job.progress = { ...job.progress, text: completedText, ...(usage ? { usage } : {}), lengthLimited: message.stopReason === "length" };
-					publish(job);
-					if (message.stopReason === "error" || message.stopReason === "aborted") settle(job, { aborted: message.stopReason === "aborted", error: message.stopReason === "aborted" ? undefined : message.errorMessage || "model request failed" });
-				} else if (event.type === "tool_execution_start") {
-					job.progress = { ...job.progress, activeTool: event.toolName };
-					publish(job);
-				} else if (event.type === "tool_execution_end") {
-					job.progress = { ...job.progress, activeTool: null };
-					publish(job);
+				job.frames.push({ seq, event });
+				while (job.frames.length > 400) job.frames.shift();
+				if (event.type === "delta" && event.kind === "text") {
+					const id = event.messageId ?? "current";
+					const message = texts.get(id) ?? { order: texts.size, blocks: new Map<number, string>() };
+					message.blocks.set(event.contentIndex, (message.blocks.get(event.contentIndex) ?? "") + event.delta); texts.set(id, message); updateText();
+				} else if (event.type === "message" && event.phase === "end" && event.message.role === "assistant") {
+					const id = event.message.streamId ?? event.message.id ?? "current";
+					const message = texts.get(id) ?? { order: texts.size, blocks: new Map<number, string>() };
+					message.blocks = new Map([[0, messageText(event.message)]]); texts.set(id, message); updateText();
+					const usage = event.message.usage;
+					job.progress = { ...job.progress, ...(usage ? { usage: { input: usage.input ?? 0, output: usage.output ?? 0, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0 } } : {}), lengthLimited: event.message.stopReason === "length" };
+					if (event.message.stopReason === "error") job.progress = { ...job.progress, error: event.message.errorMessage ?? "model request failed" };
+				} else if (event.type === "tool") job.progress = { ...job.progress, activeTool: event.state === "running" ? event.name : null };
+				else if (event.type === "error") job.progress = { ...job.progress, error: event.message };
+				publish(job);
+			};
+			const abort = () => { runtime.managed.ui?.dispose(); runtime.managed.session?.abortCompaction(); void runtime.managed.session?.abort().catch(() => undefined); if (request.kind === "prepare") disposeSideRuntime(sessionPath, request.threadId); };
+			job.controller.signal.addEventListener("abort", abort, { once: true });
+			try {
+				await configureSideRuntime(runtime, request, sessionPath);
+				if (job.controller.signal.aborted) return;
+				refreshSideBackground(runtime, sessionPath);
+				job.snapshot = await buildSnapshot(runtime.managed);
+				job.snapshotRevision = job.progress.revision + 1;
+				const session = runtime.managed.session!;
+				const characters = job.snapshot.contextBreakdown?.characters;
+				job.progress = { ...job.progress, model: session.model?.name, contextWindow: session.model?.contextWindow, characters: { systemPrompt: characters?.systemPrompt ?? session.systemPrompt.length, systemTools: (characters?.systemTools ?? 0) + (characters?.customTools ?? 0), background: runtime.background.length } };
+				publish(job);
+				if (request.kind !== "prepare") {
+					if (request.retry) {
+						const previousUser = runtime.managed.sm.getBranch().findLast((entry) => entry.type === "message" && entry.message.role === "user");
+						if (previousUser) await session.navigateTree(previousUser.id);
+					}
+					await session.prompt(request.text, { images: request.images, source: "rpc" });
 				}
-			}, job.controller.signal, (currentModel, context, options) => runtime.streamSimple(currentModel, context, options));
-			if (!job.progress.done) settle(job, { aborted: job.controller.signal.aborted });
+				job.snapshot = await buildSnapshot(runtime.managed);
+				job.snapshotRevision = job.progress.revision + 1;
+				job.progress = { ...job.progress, entries: sideEntries(runtime), leafId: runtime.managed.sm.getLeafId() ?? undefined };
+				settle(job, { aborted: job.controller.signal.aborted });
+			} finally { job.controller.signal.removeEventListener("abort", abort); }
 		} catch (error) {
 			settle(job, { aborted: job.controller.signal.aborted, error: job.controller.signal.aborted ? undefined : error instanceof Error ? error.message : "side-chat request failed" });
 		} finally {
 			clearTimeout(timeout);
+			if (job.runtime) {
+				job.runtime.publish = undefined;
+				job.runtime.lastSeen = Date.now();
+				if (job.controller.signal.aborted && request.kind === "prepare") disposeSideRuntime(sessionPath, request.threadId);
+			}
+			if (running.get(threadKey) === request.requestId) running.delete(threadKey);
+			if (!job.progress.done) settle(job, { aborted: job.controller.signal.aborted });
+			finish();
 		}
 	}
 }
@@ -174,39 +150,41 @@ function getJob(sessionPath: string, requestId: string): SideChatJob {
 	const job = jobs.get(keyOf(sessionPath, requestId));
 	if (!job) throw new BoundaryError("side-chat answer expired; send the question again");
 	job.lastSeen = Date.now();
+	if (job.runtime) job.runtime.lastSeen = Date.now();
 	return job;
 }
 
-/** Finite JSON responses also work through Cloudflare's buffering quick tunnels. */
+/** Batches main-conversation events into finite JSON responses for buffered mobile tunnels. */
 export async function pollSideChat(sessionPath: string, requestId: string, after: number, signal: AbortSignal): Promise<SideChatProgress> {
 	const job = getJob(sessionPath, requestId);
 	if (!job.progress.done && job.progress.revision <= after && !signal.aborted) {
 		await new Promise<void>((resolve) => {
-			const finish = () => {
-				clearTimeout(timer);
-				job.listeners.delete(finish);
-				signal.removeEventListener("abort", finish);
-				resolve();
-			};
+			const finish = () => { clearTimeout(timer); job.listeners.delete(finish); signal.removeEventListener("abort", finish); resolve(); };
 			const timer = setTimeout(finish, 20_000);
-			job.listeners.add(finish);
-			signal.addEventListener("abort", finish, { once: true });
+			job.listeners.add(finish); signal.addEventListener("abort", finish, { once: true });
 			if (signal.aborted || job.progress.done || job.progress.revision > after) finish();
 		});
 	}
 	const previous = job.versions.get(after);
-	if (previous !== undefined && job.progress.text.startsWith(previous)) {
-		return { ...job.progress, text: job.progress.text.slice(previous.length), textOffset: previous.length };
-	}
-	return { ...job.progress, textOffset: 0 };
+	let snapshot = job.snapshot && (after < job.snapshotRevision || job.progress.done) ? job.snapshot : undefined;
+	let from = previous?.seq ?? -1;
+	if ((!previous || (job.frames[0] && from < job.frames[0].seq - 1)) && job.runtime?.managed.session && !job.runtime.managed.disposed) snapshot = await buildSnapshot(job.runtime.managed);
+	if (snapshot) from = Math.max(from, snapshot.seq);
+	const events = job.frames.filter((frame) => frame.seq > from && frame.seq <= job.publishedSeq && (frame.event.type === "extension_ui" || frame.event.type === "extension_ui_resolved")).map((frame) => frame.event);
+	const delta = previous !== undefined && job.progress.text.startsWith(previous.text);
+	return { ...job.progress, text: delta ? job.progress.text.slice(previous.text.length) : job.progress.text, textOffset: delta ? previous.text.length : 0, events, ...(snapshot ? { extensionUiRequests: snapshot.extensionUiRequests } : {}) };
 }
 
-export function stopSideChat(sessionPath: string, requestId: string): void {
+export async function stopSideChat(sessionPath: string, requestId: string): Promise<{ steering: string[]; followUp: string[]; snapshot?: WebSnapshot; entries?: SideChatProgress["entries"]; leafId?: string }> {
 	const key = keyOf(sessionPath, requestId);
-	// Remember an early stop so cancelling while POST is in transit cannot start a late model call.
 	stopped.set(key, Date.now() + 60_000);
 	const job = jobs.get(key);
-	if (!job) return;
+	if (!job) return { steering: [], followUp: [] };
+	const cleared = job.runtime?.managed.session?.clearQueue() ?? { steering: [], followUp: [] };
 	job.controller.abort();
 	settle(job, { aborted: true });
+	await job.runtime?.managed.session?.abort().catch(() => undefined);
+	await job.finished;
+	if (job.runtime && !job.runtime.managed.disposed) return { ...cleared, snapshot: await buildSnapshot(job.runtime.managed), entries: sideEntries(job.runtime), leafId: job.runtime.managed.sm.getLeafId() ?? undefined };
+	return cleared;
 }

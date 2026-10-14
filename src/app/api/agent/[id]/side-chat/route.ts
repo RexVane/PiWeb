@@ -69,8 +69,8 @@ export async function DELETE(req: Request, { params }: RouteParams) {
 		const sessionPath = await resolveSessionPath(id, { allowPending: true });
 		const requestId = new URL(req.url).searchParams.get("requestId");
 		if (!isSideChatId(requestId)) throw new BoundaryError("invalid side-chat id");
-		stopSideChat(sessionPath, requestId);
-		return NextResponse.json({ success: true }, { headers });
+		const data = await stopSideChat(sessionPath, requestId);
+		return NextResponse.json({ success: true, data }, { headers });
 	} catch (error) {
 		return failure(error);
 	}

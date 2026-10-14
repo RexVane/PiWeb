@@ -13,6 +13,7 @@ import {
 	resourceLoaderVersion,
 	resourceLoaderIsStale,
 	getSettingsManager,
+	createDetachedSettingsManager,
 	getAgentDir,
 	loadProjectContextFiles,
 	peekResourceLoader,
@@ -58,6 +59,10 @@ const BUFFER_CAP = 400;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 interface Managed {
+	/** Browser-owned side conversations never join the main session pool or growth history. */
+	detached?: boolean;
+	additionalSystemPrompt?: string;
+	viewerAvailable?: () => boolean;
 	sessionPath: string;
 	cwd: string;
 	sm: SessionManager;
@@ -349,7 +354,7 @@ function publishModelState(m: Managed, session: AgentSession): void {
 function reapplyDesiredLevel(m: Managed, session: AgentSession): void {
 	if (!m.desiredThinkingLevel) return;
 	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel as any);
-	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never);
+	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never, { persist: !m.detached });
 }
 
 /**
@@ -476,7 +481,7 @@ function publishUsage(m: Managed): void {
 
 function translate(m: Managed, evt: AgentSessionEvent): void {
 	m.ledger.onEvent(evt);
-	growthOf(m).onEvent(evt);
+	if (!m.detached) growthOf(m).onEvent(evt);
 	const now = Date.now();
 	switch (evt.type) {
 		case "message_start": {
@@ -723,7 +728,14 @@ export function getManaged(sessionPath: string): Managed {
 	return m;
 }
 
-function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): Managed {
+export function createDetachedSession(cwd: string, sm: SessionManager, additionalSystemPrompt: string): Managed {
+	const managed = registerManaged(`side-chat:${sm.getSessionId()}`, cwd, sm, true);
+	managed.additionalSystemPrompt = additionalSystemPrompt;
+	managed.toolPreset = "full";
+	return managed;
+}
+
+function registerManaged(sessionPath: string, cwd: string, sm: SessionManager, detached = false): Managed {
 	let initialTrajectory: TrajEntry[] = [];
 	try {
 		initialTrajectory = buildTrajectoryFromEntries(sm.getEntries() as unknown as any[]);
@@ -734,6 +746,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		sessionPath,
 		cwd,
 		sm,
+		detached,
 		session: null,
 		creating: null,
 		subscribers: new Set(),
@@ -755,7 +768,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		disposed: false,
 		messageIds: new WeakMap(),
 	};
-	sessions.set(sessionPath, m);
+	if (!detached) sessions.set(sessionPath, m);
 	return m;
 }
 
@@ -913,7 +926,12 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 	if (m.session) return m.session;
 	m.creating = (async () => {
 		await resourceLoaderReady(m.cwd);
-		const loader = await createSessionResourceLoader(m.cwd);
+		const settingsManager = m.detached ? createDetachedSettingsManager(m.cwd) : getSettingsManager(m.cwd);
+		const loader = m.detached ? await createSessionResourceLoader(m.cwd, settingsManager) : await createSessionResourceLoader(m.cwd);
+		if (m.additionalSystemPrompt) {
+			const append = loader.getAppendSystemPrompt.bind(loader);
+			loader.getAppendSystemPrompt = () => [...append(), m.additionalSystemPrompt!];
+		}
 		let created: AgentSession | undefined;
 		try {
 			if (m.disposed) throw new Error("session is disposed");
@@ -923,7 +941,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				sessionManager: m.sm,
 				modelRuntime: await getModelRuntime(),
 				resourceLoader: loader,
-				settingsManager: getSettingsManager(m.cwd),
+				settingsManager,
 			});
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");
@@ -1300,8 +1318,10 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	// 用户刚在 prompts/skills/extensions 目录新建了文件的话顺手重载一次（只 stat 几个目录）
 	await resourceLoaderReady(m.cwd);
 	try {
-		// 运行中只标记变更，不让 snapshot 请求重新执行扩展工厂/切换绑定。
-		if (m.session && isManagedBusy(m)) {
+		// 创建还未完成时，资源版本尚未落定；快照不能把它误标成需要再次 session_start。
+		if (m.creating) {
+			// 当前创建流程会发布最终资源状态。
+		} else if (m.session && isManagedBusy(m)) {
 			if (resourceLoaderIsStale(m.cwd) || m.resourceVersion !== resourceLoaderVersion(m.cwd)) m.resourceReloadPending = true;
 		} else {
 			await refreshResourceLoaderIfStale(m.cwd);
@@ -1506,6 +1526,7 @@ export function holdViewer(m: Managed, ms: number): void {
 }
 
 function hasViewers(m: Managed): boolean {
+	if (m.viewerAvailable) return m.viewerAvailable();
 	return m.subscribers.size > 0 || (m.viewerGraceUntil ?? 0) > Date.now();
 }
 
@@ -1522,6 +1543,7 @@ export interface CommandResult {
  * 5s 内没完成就放行，快照后台补拍（工具结束后照常记步，外部修改兜底）。
  */
 async function prepareGrowthBriefly(m: Managed): Promise<void> {
+	if (m.detached) return;
 	await Promise.race([
 		growthOf(m).prepare().catch(() => undefined),
 		new Promise<void>((resolve) => setTimeout(resolve, 5000)),
@@ -1631,7 +1653,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
 				const effective = clampThinkingLevel(session.model as any, requested as any);
 				m.desiredThinkingLevel = requested;
-				session.setThinkingLevel(effective as never);
+				session.setThinkingLevel(effective as never, { persist: !m.detached });
 				publishModelState(m, session);
 				return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
 			}

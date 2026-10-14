@@ -20,6 +20,7 @@ function setup(initialExtra: Record<string, unknown> = {}) {
 	const fetchImpl = vi.fn<typeof fetch>();
 	const answers = new Map<string, ReturnType<typeof deferred<Response>>>();
 	fetchImpl.mockImplementation(async (_url, init) => {
+		if (String(_url).endsWith("/side-chat/control")) return new Response(JSON.stringify({ success: true, data: {} }));
 		if (init?.method === "DELETE") return new Response(JSON.stringify({ success: true }));
 		if (init?.method === "POST") {
 			const body = JSON.parse(String(init.body));
@@ -56,15 +57,29 @@ beforeEach(() => localStorage.clear());
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("persistent, simple side-chat panel", () => {
-	it("shows an active read-only tool beside streamed text and clears it after completion", async () => {
+	it("keeps the existing simple controls and routes only the side extension confirmation", async () => {
+		const { store, reply, fetchImpl } = setup({ events: [{ type: "extension_ui", id: "side-dialog-1", method: "confirm", title: "Side confirmation", message: "Continue?", ts: 1 }] });
+		render(panel(store));
+		expect(screen.queryByText("Full access")).toBeNull();
+		expect(screen.queryByTestId("side-chat-composer")).toBeNull();
+		fireEvent.change(questionInput(), { target: { value: "运行旁聊任务" } }); fireEvent.keyDown(questionInput(), { key: "Enter" });
+		await waitFor(() => expect(screen.getByRole("dialog", { name: "Side confirmation" })).toBeTruthy());
+		fireEvent.click(screen.getByRole("button", { name: "确认" }));
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Side confirmation" })).toBeNull());
+		const call = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/side-chat/control"));
+		expect(JSON.parse(String(call![1]!.body))).toMatchObject({ threadId: current(store).id, command: { cmd: "extensionUiResponse", requestId: "side-dialog-1", confirmed: true } });
+		await reply("旁聊任务完成。", -1, { extensionUiRequests: [] });
+	});
+
+	it("shows an active tool beside streamed text and clears it after completion", async () => {
 		const { store, reply } = setup({ activeTool: "read", text: "我正在核对文件。" });
 		render(panel(store));
 		fireEvent.change(questionInput(), { target: { value: "看看 README" } });
 		fireEvent.keyDown(questionInput(), { key: "Enter" });
-		await waitFor(() => expect(screen.getByRole("status").textContent).toBe("正在使用只读工具: read"));
+		await waitFor(() => expect(screen.getByRole("status").textContent).toBe("正在使用工具: read"));
 		expect(screen.getByText("我正在核对文件。")).toBeTruthy();
 		await reply("已读取 README。");
-		expect(screen.queryByText("正在使用只读工具: read")).toBeNull();
+		expect(screen.queryByText("正在使用工具: read")).toBeNull();
 		expect(current(store).activeTool).toBeNull();
 		expect(screen.getByText("已读取 README。")).toBeTruthy();
 	});

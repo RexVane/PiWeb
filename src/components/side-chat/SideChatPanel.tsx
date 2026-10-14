@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { IconChevronDown14, IconCloseOutline14, IconNewChatOutline16, IconSendArrowUp14, IconStopFill16 } from "@/components/icons";
+import { ExtensionDialogHost } from "@/components/ExtensionUI";
 import { ContextMeter } from "@/components/ContextMeter";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
@@ -185,6 +186,7 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 						: <button type="submit" className={styles.send} title={t.send} aria-label={t.send} disabled={!canSend || !thread?.draft.trim()}><IconSendArrowUp14 size={16} /></button>}
 				</div>
 			</form>
+			<ExtensionDialogHost dialog={thread?.extensionDialogs?.[0] ?? null} onAnswer={(requestId, response) => { if (sessionId && threadId) void store.respond(sessionId, threadId, requestId, response); }} />
 		</section>
 	);
 }
