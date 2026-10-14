@@ -143,7 +143,7 @@ describe("side-chat isolation through the real Pi SDK", () => {
 			(context) => {
 				const results = context.messages.filter((message) => message.role === "toolResult");
 				expect(results).toHaveLength(3);
-				for (const result of results) { expect(result.isError).toBe(false); expect(JSON.stringify(result)).toContain("notes.txt"); }
+				for (const result of results) { expect(result.isError, JSON.stringify(result)).toBe(false); expect(JSON.stringify(result)).toContain("notes.txt"); }
 				return fauxAssistantMessage(fauxText("找到 notes.txt 中的标记。"));
 			},
 		]);

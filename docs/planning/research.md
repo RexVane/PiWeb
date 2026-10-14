@@ -137,3 +137,6 @@ Chrome 1440×960 与 390×844 检查通过：连续提问、回答后刷新恢�
 Next.js 16.4.0 生产构建通过，使用独立目录 .next-releases/full-agent-audit-1791974562299/app；保留原有 release.mjs 动态导入 webpack 警告。实际 Chrome 页面使用本地模拟模型：确认插件请求一次后，调用 write 创建 sidebar-result.txt，并由 bash 调用 Node 读取它打印 SIDE-FULL-4309d63e，再返回答案。主会话 JSONL 前后逐字节一致，页面无异常。已保存 12 个 Agent 树条目，刷新恢复成功。
 
 页面保持原控件：侧栏 header 中 2 个按钮、1 个输入框，未出现 full composer 或工具菜单。桌面 1440×960、手机 390×844 和窄屏 320×640 均无横向溢出；手机输入框底部 787px，窄屏底部 583px，均在视口内。截图位于 docs/assets/side-chat/full-agent-desktop.png、full-agent-mobile.png。模型输出来自本地模拟服务；真实 SDK 工具和本地 MCP 均实际执行，未调用付费远端模型。
+
+
+提交 PR #36 后发现 GitHub runner 缺少 fd，离线模式会阻止 SDK 自动下载安装，导致真实 find/grep 回归失败（本机 PATH 已有 fd/rg）。check 工作流新增 SDK 搜索工具准备步骤：使用正式 createFindTool/createGrepTool 执行 package.json 探针，让 SDK 在联网阶段准备工具；随后原检查仍使用 PI_OFFLINE=1。搜索断言保留，并补充实际工具结果以便诊断。此次只调整 CI 前置条件与测试诊断，应用构建和测试版进程无需更新。
