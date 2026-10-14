@@ -111,3 +111,16 @@ piweb
 - npm 更新时丢失的两个未变更 WASM 内置 @emnapi 条目已从原锁文件恢复；Windows/Linux x64 的 npm ci 安装预检查均通过。
 - 按新规则在 rexvane-piweb 分支工作，main 跟踪 fork/main；版本变更随 PR 合入，发布工作流只推送标签、发布 npm 和 GitHub Release，不直接提交或推送 main。同步更新维护者发布说明。
 - 本机全局 PiWeb 使用已验证成品包更新，避免只更新仓库而 piweb 命令仍运行旧安装；会话和浏览器旁聊数据不迁移。
+
+
+## 旁聊 Read only 工具验收（2026-10-14）
+
+按用户要求将 #105 的无工具旁聊升级为独立的只读工具会话。复用 Pi 1.2.0 的 createReadOnlyTools，并使用现有 readonly 档位过滤，只开放 read、grep、find、ls。工具工作目录取主会话 managed.cwd；服务端独立工具循环不写入主 Session，不加载可写工具或主会话扩展。系统提示词允许检查项目文件，要求区分现场证据与推断。
+
+类型检查通过，全量测试 973 项通过、2 项跳过（118 个文件通过、1 个文件跳过）。旁聊相关 35 项回归覆盖四个真实只读工具、相对路径、写入与命令工具拒绝、主会话文件/分支/上下文不变、停止隔离、32 次模型调用上限、工具结果窗口裁剪、Unicode、增量回答和界面状态。
+
+独立 Next.js 16.4.0 生产构建通过，保留已有 release.mjs 的动态导入 webpack 警告。新增 pi-agent-core 运行时外置，保持工具循环与安装的 Pi 运行时一致。构建目录位于 .next-releases/readonly-audit-1791956648613/app，未覆盖运行中的输出。
+
+使用独立临时项目、临时 Pi 配置和本地 OpenAI 兼容模拟模型，通过真实生产页面发送「读取 README.md」：第一次模型请求只声明四个只读工具，第二次收到实际文件中的 RO-SENTINEL-14 标记后回答。追加「尝试写入 README.md」，模型的 write 调用收到 Tool write not found，随后给出只读说明。两个请求前后 README 与主会话 JSONL 逐字节一致。
+
+Chrome 1440×960 与 390×844 检查通过：连续提问、回答后刷新恢复、草稿输入正常，模型入口可见；手机 document.scrollWidth=390，输入框底部 787px，位于 844px 视口内；无页面异常。截图：docs/assets/side-chat-readonly-desktop.png、docs/assets/side-chat-readonly-mobile.png。上下文环记录实际最后一轮 usage，工具声明字符已计入分项。测试模型为本地模拟服务，未验证付费远端模型的实际回答质量。

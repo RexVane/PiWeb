@@ -15,7 +15,7 @@ function deferred<T>() {
 	const promise = new Promise<T>((yes) => { resolve = yes; });
 	return { promise, resolve };
 }
-function setup() {
+function setup(initialExtra: Record<string, unknown> = {}) {
 	let sequence = 0;
 	const fetchImpl = vi.fn<typeof fetch>();
 	const answers = new Map<string, ReturnType<typeof deferred<Response>>>();
@@ -24,7 +24,7 @@ function setup() {
 		if (init?.method === "POST") {
 			const body = JSON.parse(String(init.body));
 			answers.set(body.requestId, deferred<Response>());
-			return response(initial(body.requestId));
+			return response({ ...initial(body.requestId), ...initialExtra });
 		}
 		const id = new URL(String(_url), "http://localhost").searchParams.get("requestId")!;
 		return answers.get(id)!.promise;
@@ -56,6 +56,18 @@ beforeEach(() => localStorage.clear());
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("persistent, simple side-chat panel", () => {
+	it("shows an active read-only tool beside streamed text and clears it after completion", async () => {
+		const { store, reply } = setup({ activeTool: "read", text: "我正在核对文件。" });
+		render(panel(store));
+		fireEvent.change(questionInput(), { target: { value: "看看 README" } });
+		fireEvent.keyDown(questionInput(), { key: "Enter" });
+		await waitFor(() => expect(screen.getByRole("status").textContent).toBe("正在使用只读工具: read"));
+		expect(screen.getByText("我正在核对文件。")).toBeTruthy();
+		await reply("已读取 README。");
+		expect(screen.queryByText("正在使用只读工具: read")).toBeNull();
+		expect(current(store).activeTool).toBeNull();
+		expect(screen.getByText("已读取 README。")).toBeTruthy();
+	});
 	it("keeps the main reading position and messages while sending several independent questions", async () => {
 		const { store, reply, fetchImpl } = setup();
 		const messages: WebMessage[] = [

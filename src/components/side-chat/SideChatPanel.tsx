@@ -140,7 +140,8 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 							{message.role === "user" ? message.text : <>
 								{message.contextTruncated && <p className={styles.notice}>{t.sideChatContextTruncated}</p>}
 								{message.text && (message.status === "pending" ? <StreamingMarkdown text={message.text} /> : <Markdown text={message.text} />)}
-								{message.status === "pending" && !message.text && <span className={styles.waiting} role="status">{thread.connectionLost ? t.reconnecting : t.sideChatAnswering}</span>}
+								{message.status === "pending" && message === thread.messages.at(-1) && thread.activeTool && <span className={styles.waiting} role="status">{t.sideChatUsingTool}: {thread.activeTool}</span>}
+								{message.status === "pending" && !message.text && !thread.activeTool && <span className={styles.waiting} role="status">{thread.connectionLost ? t.reconnecting : t.sideChatAnswering}</span>}
 								{message.error && <div className={styles.error} role="alert">{message.error}{message.status === "error" && message === thread.messages.at(-1) && <button type="button" disabled={busy} onClick={() => sessionId && store.send(sessionId, true)}>{t.retry}</button>}</div>}
 								{message.status === "aborted" && <p className={styles.notice}>{t.turnAborted}</p>}
 								{message.lengthLimited && <p className={styles.notice}>{t.sideChatLengthLimited}</p>}
@@ -173,7 +174,7 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 								systemChars: 0,
 								messages: thread.messages.map((message) => ({ role: message.role, content: [{ type: "text", text: message.text }] })),
 								breakdown: {
-									characters: { systemPrompt: thread.characters.systemPrompt, background: thread.characters.background, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0 },
+									characters: { systemPrompt: thread.characters.systemPrompt, background: thread.characters.background, systemTools: thread.characters.systemTools ?? 0, customTools: 0, memory: 0, skills: 0, compacted: 0 },
 									systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0, autoCompactBuffer: 0,
 								},
 							} : undefined}

@@ -4,12 +4,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
-import { fauxAssistantMessage, fauxProvider, fauxText, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, getCurrentTools, getSystemMessageText, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 
 const mocks = vi.hoisted(() => ({ root: "", runtime: null as ModelRuntime | null, managed: new Map<string, any>() }));
 vi.mock("@/lib/pi", () => ({
 	getAgentDir: () => mocks.root,
 	getModelRuntime: async () => mocks.runtime!,
+	presetAllowsTool: (_: string, name: string) => ["read", "grep", "find", "ls"].includes(name),
 	decodeSessionId: (id: string) => Buffer.from(id, "base64url").toString("utf8"),
 	isSessionId: (id: string) => /^[A-Za-z0-9_-]{9,}$/.test(id),
 }));
@@ -55,7 +56,8 @@ beforeEach(async () => {
 	sm.appendMessage({ role: "user", content: "介绍 PiWeb 的实现", timestamp: 1 });
 	sm.appendMessage({ ...fauxAssistantMessage([fauxText("复用 Session 存储：Web 与 CLI 读取同一份 JSONL。")]), provider: model.provider, model: model.id, api: model.api });
 	file = sm.getSessionFile()!;
-	managed = { sm, session: null, inflight: null };
+	await fs.mkdir(path.join(mocks.root, "workspace"), { recursive: true });
+	managed = { sm, cwd: path.join(mocks.root, "workspace"), session: null, inflight: null };
 	mocks.managed.set(file, managed);
 	faux.setResponses([fauxAssistantMessage([fauxText("Session 存储就是主会话的 JSONL 文件。")])]);
 	spy.mockClear();
@@ -85,7 +87,7 @@ describe("side-chat isolation through the real Pi SDK", () => {
 		const payload = JSON.stringify(spy.mock.calls.at(-1)![1]);
 		expect(payload).toContain(firstAnswer.text);
 		expect(payload).toContain("Web 与 CLI 读取同一份 JSONL");
-		expect(spy.mock.calls.at(-1)![1].tools).toEqual([]);
+		expect(getCurrentTools(spy.mock.calls.at(-1)![1].messages).map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
 		expect(spy.mock.calls.at(-1)![2].sessionId).toBe(`piweb-sidechat-${second.threadId}`);
 		// 旁聊单独选的模型覆盖主会话当前模型
 		expect(spy.mock.calls.at(-1)![0]).toMatchObject({ provider: quick.provider, id: quick.id });
@@ -94,6 +96,108 @@ describe("side-chat isolation through the real Pi SDK", () => {
 		expect(JSON.stringify(sm.buildSessionContext())).toBe(context);
 		expect(managed.session).toBeNull();
 	});
+
+
+	it("reads a real relative file, then answers from the tool result without modifying the main session", async () => {
+		const readme = path.join(managed.cwd, "README.md");
+		await fs.writeFile(readme, "# Project\nRead-only file sentinel: 旁聊可以读取项目。\n");
+		const before = await fs.readFile(file);
+		const source = JSON.stringify(sm.buildSessionContext());
+		const leaf = sm.getLeafId();
+		faux.setResponses([
+			fauxAssistantMessage([fauxText("我先查看 README。"), fauxToolCall("read", { path: "README.md" })], { stopReason: "toolUse" }),
+			(context) => {
+				const result = context.messages.findLast((message) => message.role === "toolResult");
+				expect(result).toMatchObject({ toolName: "read", isError: false });
+				expect(JSON.stringify(result)).toContain("Read-only file sentinel");
+				expect(getSystemMessageText(context.messages[0] as any)).toContain(JSON.stringify(managed.cwd));
+				return fauxAssistantMessage(fauxText("文件确认：旁聊可以读取项目。"));
+			},
+		]);
+		const question = request("读取这个项目的 README 并解释。");
+		startSideChat(file, question);
+		const answer = await finish(question.requestId);
+		expect(answer.error, answer.error).toBeUndefined();
+		expect(answer).toMatchObject({ done: true, aborted: false, text: "我先查看 README。\n\n文件确认：旁聊可以读取项目。", activeTool: null });
+		expect(answer.error).toBeUndefined();
+		expect(answer.characters!.systemTools).toBeGreaterThan(0);
+		expect(spy).toHaveBeenCalledTimes(2);
+		expect(await fs.readFile(file)).toEqual(before);
+		expect(await fs.readFile(readme, "utf8")).toContain("Read-only file sentinel");
+		expect(sm.getLeafId()).toBe(leaf);
+		expect(JSON.stringify(sm.buildSessionContext())).toBe(source);
+		expect(managed.session).toBeNull();
+	});
+
+	it("provides ls, find and grep from the main project's working directory", async () => {
+		await fs.writeFile(path.join(managed.cwd, "notes.txt"), "side-chat-search-sentinel\n");
+		faux.setResponses([
+			fauxAssistantMessage([
+				fauxToolCall("ls", { path: "." }),
+				fauxToolCall("find", { pattern: "*.txt", path: "." }),
+				fauxToolCall("grep", { pattern: "side-chat-search-sentinel", path: "." }),
+			], { stopReason: "toolUse" }),
+			(context) => {
+				const results = context.messages.filter((message) => message.role === "toolResult");
+				expect(results).toHaveLength(3);
+				for (const result of results) { expect(result.isError).toBe(false); expect(JSON.stringify(result)).toContain("notes.txt"); }
+				return fauxAssistantMessage(fauxText("找到 notes.txt 中的标记。"));
+			},
+		]);
+		const question = request("列出并搜索这个项目。");
+		startSideChat(file, question);
+		const answer = await finish(question.requestId);
+		expect(answer.error).toBeUndefined();
+		expect(answer.text).toBe("找到 notes.txt 中的标记。");
+	});
+
+	it("rejects writes, commands, codemode and MCP calls even when the model requests them", async () => {
+		const target = path.join(managed.cwd, "protected.txt");
+		await fs.writeFile(target, "keep this content");
+		const before = await fs.readFile(file);
+		const blocked = ["write", "edit", "bash", "powershell", "codemode", "tool_search", "mcp__server__write"];
+		faux.setResponses([
+			fauxAssistantMessage(blocked.map((name) => fauxToolCall(name, { path: target, content: "overwrite", command: "exit 1" })), { stopReason: "toolUse" }),
+			(context) => {
+				const results = context.messages.filter((message) => message.role === "toolResult");
+				expect(results).toHaveLength(blocked.length);
+				for (const result of results) expect(result.isError).toBe(true);
+				expect(getCurrentTools(context.messages).map((tool) => tool.name).sort()).toEqual(["find", "grep", "ls", "read"]);
+				return fauxAssistantMessage(fauxText("当前旁聊只允许读取。"));
+			},
+		]);
+		const question = request("尝试修改文件。");
+		startSideChat(file, question);
+		expect((await finish(question.requestId)).error).toBeUndefined();
+		expect(await fs.readFile(target, "utf8")).toBe("keep this content");
+		expect(await fs.readFile(file)).toEqual(before);
+	});
+
+	it("stopping after a tool result prevents the next request from generating or executing more tools", async () => {
+		const before = await fs.readFile(file);
+		const question = request("检查后停止。");
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall("ls", { path: "." }), { stopReason: "toolUse" }),
+			() => {
+				stopSideChat(file, question.requestId);
+				return fauxAssistantMessage(fauxToolCall("read", { path: "should-not-read.txt" }), { stopReason: "toolUse" });
+			},
+		]);
+		startSideChat(file, question);
+		expect(await finish(question.requestId)).toMatchObject({ done: true, aborted: true, activeTool: null });
+		expect(spy).toHaveBeenCalledTimes(2);
+		expect(await fs.readFile(file)).toEqual(before);
+	});
+
+	it("ends a repeated tool loop with a recoverable error", async () => {
+		const before = await fs.readFile(file);
+		faux.setResponses(Array.from({ length: 33 }, () => fauxAssistantMessage(fauxToolCall("ls", { path: "." }), { stopReason: "toolUse" })));
+		const question = request("一直检查。");
+		startSideChat(file, question);
+		expect((await finish(question.requestId)).error).toContain("tool-call limit");
+		expect(spy).toHaveBeenCalledTimes(32);
+		expect(await fs.readFile(file)).toEqual(before);
+	}, 15_000);
 
 	it("uses only the active branch, applies context edits and includes the currently streaming answer", async () => {
 		const leaf = sm.getLeafId()!;

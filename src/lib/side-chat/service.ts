@@ -1,13 +1,17 @@
-import { clampThinkingLevel, type AssistantMessage, type ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { runAgentLoopContinue } from "@earendil-works/pi-agent-core";
+import { createReadOnlyTools } from "@earendil-works/pi-coding-agent";
+import { clampThinkingLevel, normalizeContext, type AssistantMessage, type Message, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { getManaged } from "../agent-manager";
 import { BoundaryError } from "../path-security";
-import { getModelRuntime } from "../pi";
+import { getModelRuntime, presetAllowsTool } from "../pi";
 import { buildSideChatContext, mainConversationText } from "./context";
+import { boundSideChatToolContext } from "./tool-context";
 import type { SideChatProgress, SideChatRequest, SideChatUsage } from "./types";
 
 const IDLE_MS = 10 * 60_000;
 const RUN_MS = 15 * 60_000;
 const MAX_RUNNING = 8;
+const MAX_MODEL_CALLS = 32;
 
 interface SideChatJob {
 	progress: SideChatProgress;
@@ -56,7 +60,7 @@ function publish(job: SideChatJob, terminal = false): void {
 
 function settle(job: SideChatJob, update: Partial<SideChatProgress>): void {
 	if (job.progress.done) return;
-	job.progress = { ...job.progress, ...update, done: true };
+	job.progress = { ...job.progress, ...update, activeTool: null, done: true };
 	publish(job, true);
 }
 
@@ -71,7 +75,7 @@ function assistantText(message: AssistantMessage): string {
 	return message.content.flatMap((block) => block.type === "text" ? [block.text] : []).join("\n\n");
 }
 
-/** Creates a separate model call. It never prompts, branches, aborts or saves the main AgentSession. */
+/** Runs an independent read-only agent. Never prompts, branches, aborts or saves the main AgentSession. */
 export function startSideChat(sessionPath: string, request: SideChatRequest): SideChatProgress {
 	reapJobs();
 	const key = keyOf(sessionPath, request.requestId);
@@ -112,34 +116,51 @@ export function startSideChat(sessionPath: string, request: SideChatRequest): Si
 			if (job.controller.signal.aborted) return;
 			const model = runtime.getModel(provider!, modelId!);
 			if (!model) throw new BoundaryError("the selected side-chat model is unavailable");
-			const built = buildSideChatContext(background, request, model);
+			const tools = createReadOnlyTools(managed.cwd).filter((tool) => presetAllowsTool("readonly", tool.name));
+			const built = buildSideChatContext(background, request, model, { tools, cwd: managed.cwd });
 			const level = clampThinkingLevel(model, (thinking || "off") as ModelThinkingLevel);
 			job.progress = { ...job.progress, model: model.name, contextWindow: model.contextWindow, characters: built.characters, contextTruncated: built.contextTruncated };
 			publish(job);
-			const stream = runtime.streamSimple(model, built.context, {
-				signal: job.controller.signal,
+			let completedText = "";
+			let calls = 0;
+			await runAgentLoopContinue({ messages: normalizeContext(built.context).messages, tools }, {
+				model,
+				convertToLlm: (messages) => messages as Message[],
 				reasoning: level === "off" ? undefined : level,
 				maxTokens: built.maxTokens,
 				sessionId: `piweb-sidechat-${request.threadId}`,
 				transport: "sse",
-			});
-			const blocks = new Map<number, string>();
-			for await (const event of stream) {
-				if (job.progress.done) break;
-				if (event.type === "text_delta") {
-					blocks.set(event.contentIndex, (blocks.get(event.contentIndex) ?? "") + event.delta);
-					job.progress = { ...job.progress, text: [...blocks.entries()].sort(([a], [b]) => a - b).map(([, text]) => text).join("\n\n") };
+				prepareRequest: () => {
+					if (job.progress.done || job.controller.signal.aborted) throw new BoundaryError("side-chat answer stopped");
+					if (++calls > MAX_MODEL_CALLS) throw new BoundaryError("side-chat tool-call limit reached; narrow the question and try again");
+				},
+				transformContext: async (messages) => {
+					const bounded = boundSideChatToolContext(messages as Message[], model.contextWindow - built.maxTokens - 1024);
+					if (bounded.truncated) { job.progress = { ...job.progress, contextTruncated: true }; publish(job); }
+					return bounded.messages;
+				},
+				beforeToolCall: async (_, signal) => signal?.aborted || job.progress.done ? { block: true, terminate: true, reason: "Side-chat answer stopped" } : undefined,
+			}, (event) => {
+				if (job.progress.done) return;
+				if (event.type === "message_update" && event.message.role === "assistant") {
+					job.progress = { ...job.progress, text: [completedText, assistantText(event.message)].filter(Boolean).join("\n\n") };
 					publish(job);
-				} else if (event.type === "done") {
-					const usage = usageOf(event.message);
-					settle(job, { text: assistantText(event.message), lengthLimited: event.reason === "length", ...(usage ? { usage } : {}) });
-				} else if (event.type === "error") {
-					// 出错时的响应里也可能有 usage（比如跑一半被截断），有就记下来
-					const usage = usageOf(event.error);
-					settle(job, { text: assistantText(event.error), aborted: event.reason === "aborted", error: event.reason === "aborted" ? undefined : event.error.errorMessage || "model request failed", ...(usage ? { usage } : {}) });
+				} else if (event.type === "message_end" && event.message.role === "assistant") {
+					const message = event.message;
+					completedText = [completedText, assistantText(message)].filter(Boolean).join("\n\n");
+					const usage = usageOf(message);
+					job.progress = { ...job.progress, text: completedText, ...(usage ? { usage } : {}), lengthLimited: message.stopReason === "length" };
+					publish(job);
+					if (message.stopReason === "error" || message.stopReason === "aborted") settle(job, { aborted: message.stopReason === "aborted", error: message.stopReason === "aborted" ? undefined : message.errorMessage || "model request failed" });
+				} else if (event.type === "tool_execution_start") {
+					job.progress = { ...job.progress, activeTool: event.toolName };
+					publish(job);
+				} else if (event.type === "tool_execution_end") {
+					job.progress = { ...job.progress, activeTool: null };
+					publish(job);
 				}
-			}
-			if (!job.progress.done) settle(job, { aborted: job.controller.signal.aborted, error: job.controller.signal.aborted ? undefined : "model stream ended before completion" });
+			}, job.controller.signal, (currentModel, context, options) => runtime.streamSimple(currentModel, context, options));
+			if (!job.progress.done) settle(job, { aborted: job.controller.signal.aborted });
 		} catch (error) {
 			settle(job, { aborted: job.controller.signal.aborted, error: job.controller.signal.aborted ? undefined : error instanceof Error ? error.message : "side-chat request failed" });
 		} finally {

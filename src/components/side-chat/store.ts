@@ -24,7 +24,8 @@ export interface SideChatThread {
 	usage?: SideChatUsage;
 	contextWindow?: number;
 	/** 这次上下文的真实字符分项（系统提示词 / 引用的主会话背景） */
-	characters?: { systemPrompt: number; background: number };
+	characters?: { systemPrompt: number; background: number; systemTools?: number };
+	activeTool?: string | null;
 	connectionLost?: boolean;
 }
 export interface SideChatState {
@@ -169,7 +170,7 @@ export class SideChatStore {
 			const text = progress.textOffset === undefined ? progress.text : previousText.slice(0, progress.textOffset) + progress.text;
 			const status = !progress.done ? "pending" : progress.error ? "error" : progress.aborted ? "aborted" : "done";
 			return {
-				...thread, connectionLost: false, request: progress.done ? undefined : { id: requestId, revision: progress.revision },
+				...thread, activeTool: progress.done ? null : progress.activeTool, connectionLost: false, request: progress.done ? undefined : { id: requestId, revision: progress.revision },
 				// 只在这次响应真的报了就更新；没报就保持上一次的值（不回落成 0）
 				...(progress.usage ? { usage: progress.usage } : {}),
 				...(progress.contextWindow ? { contextWindow: progress.contextWindow } : {}),

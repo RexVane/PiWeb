@@ -25,7 +25,7 @@ export interface SideChatRequest {
 }
 
 /**
- * 一次旁聊回答的真实用量，直接来自模型响应（不是估算）。
+ * 一次旁聊回答的最后一轮模型请求的真实用量（不是估算）。
  * 它同时就是「这次问出去多少上下文」——input + 缓存读写就是发出去的 prompt 大小。
  */
 export interface SideChatUsage {
@@ -49,7 +49,9 @@ export interface SideChatProgress {
 	contextWindow?: number;
 	usage?: SideChatUsage;
 	/** 拼这次上下文时的真实字符数（分项用；系统提示词 + 引用的主会话背景） */
-	characters?: { systemPrompt: number; background: number };
+	characters?: { systemPrompt: number; background: number; systemTools?: number };
+	/** The currently executing read-only tool; null clears a prior tool status. */
+	activeTool?: string | null;
 	contextTruncated?: boolean;
 	lengthLimited?: boolean;
 }

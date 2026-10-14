@@ -642,17 +642,17 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 
 ## 14. 右侧旁聊
 
-需求见 `docs/planning/requirements.md`。旁聊在右侧抽屉中常驻，主会话顶栏提供直达入口；沿用现有调宽与手机抽屉布局。面板独立渲染问答和输入框，没有轮数、耗时、token 或缓存统计。
+需求见 `docs/planning/requirements.md`。旁聊在右侧抽屉中常驻，主会话顶栏提供直达入口；沿用现有调宽与手机抽屉布局。面板独立渲染问答、输入框和上下文环；工具执行时显示简短的只读工具状态。
 
 ### 14.1 主会话只提供背景
 
 `POST /api/agent/[id]/side-chat` 验证会话路径后，只读取主会话管理器的 `buildSessionContext()` 与当时已生成的正文。这尊重有效分支、上下文编辑及已有压缩摘要，正在流出的文字也可作为背景。不会调用主 AgentSession 的 prompt、abort、compact 或分支方法，不追加 Session 条目，也不推送主会话事件。
 
-通过已有 `ModelRuntime.streamSimple()` 发起独立模型调用，沿用主会话选中的模型、思考档位和 SDK 认证；使用独立的旁聊 affinity ID。工具集合为空，系统指令和思考内容不从主会话转发。旁聊用于解释现有背景，不能自行读取或修改文件。图片背景只保留附件标记，不转发图像数据。
+通过 Pi SDK 的 `createReadOnlyTools(cwd)` 创建工具，并按现有 `readonly` preset 再过滤，仅开放 `read`、`grep`、`find`、`ls`。工作目录来自当前主会话的 `managed.cwd`；不加载主会话的可写工具、MCP、Codemode 或插件扩展。`pi-agent-core.runAgentLoopContinue()` 驱动独立的内存工具循环，每轮沿用共享 `ModelRuntime.streamSimple()` 的模型、思考档位和 SDK 认证，使用独立的旁聊 affinity ID。主会话系统指令和思考内容不作为旁聊指令转发，文件内容和主会话均作为参考材料。图片背景只保留附件标记，不转发主会话图像数据。
 
 模型默认为「跟随主会话」，也可以在输入框左下角单独选一个（面板里保留跟随主会话选项）；发送时把选择作为 `model` 字段随请求下发，服务端从共享目录取该模型并沿用同一套认证。选择随那份旁聊一起保存，新旁聊继承上一份的选择，只影响之后的问题；选中的模型不在目录里时报「模型不可用」，不静默回退到主会话模型。
 
-背景和旁聊历史按模型窗口保守限制 UTF-8 字节数，预留输出和协议开销。发生截断时向界面返回标记；不为旁聊触发主会话压缩，也不把字节预算显示成 token 统计。
+背景和旁聊历史按模型窗口保守限制 UTF-8 字节数，计入工具声明，预留输出、协议及工具结果空间。工具结果过长时先移除完整的较旧工具调用与结果，再裁剪当前工具文本并附省略说明；保持工具调用与结果配对。发生截断时向界面返回标记；不为旁聊触发主会话压缩，也不把字节预算显示成 token 统计。一问最多请求模型 32 次，超限给出可重试的错误。界面显示正在使用的只读工具，停止只取消旁聊工具和模型请求。上下文环使用最后一轮模型请求的实际 usage，避免累计多轮输入后误报窗口占用。
 
 ### 14.2 持久化与请求生命周期
 
@@ -668,8 +668,8 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 
 ### 14.4 验证
 
-- TypeScript 检查通过；全量测试 113 个文件通过、1 个文件跳过，932 项通过、2 项跳过。
-- `tests/integration/side-chat.test.ts` 使用真实 SessionManager 与 ModelRuntime，加 SDK 的离线 faux provider：多轮旁聊前后主会话文件逐字节一致，分支与上下文一致，冷会话不启动；停止旁聊不调用主会话的停止方法。
+- TypeScript 检查与独立生产构建通过；本次全量测试 118 个文件通过、1 个文件跳过，973 项通过、2 项跳过。
+- `tests/integration/side-chat.test.ts` 使用真实 SessionManager、ModelRuntime 和只读工具，加 SDK 的离线 faux provider：实际读取相对路径文件、列目录、查找与搜索；拒绝 write/edit/bash/powershell/codemode/tool_search/MCP；多轮工具旁聊前后主会话文件逐字节一致，分支与上下文一致，冷会话不启动；停止和循环超限只影响旁聊。`side-chat/tool-context.test.ts` 覆盖完整工具交换裁剪、Unicode 和图像超限。
 - 组件验证多轮历史、关闭后完成、跨主会话迟到回答、历史恢复、新旁聊、单独选模型（默认跟随主会话、选后随问题下发、随旁聊保存、可改回跟随）、停止与错误重试、输入法、增量回答修正、存储失败和阅读锚点。
 - Next.js 16.4.0 生产构建通过，输出位于独立验证目录，未切换 active release。
 - Chrome 在 1600×1000 与 390×844 视口通过实际页面检查：打开、发送、调宽、关闭保持阅读位置；默认跟随主会话、换成旁聊自己的模型后请求带显式模型；旧记录、刷新恢复与手机输入框可见。测试使用固定 API 响应，不调用线上模型或真实用户会话。截图在 `docs/assets/side-chat-desktop.png`、`docs/assets/side-chat-mobile.png`。
