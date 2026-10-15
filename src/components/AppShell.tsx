@@ -184,7 +184,10 @@ export function AppShell() {
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	/** 当前工作区的新会话默认值（pi 的初始模型规则 + 设置里的思考档位），切换工作区时重新取 */
 	const [heroDefaults, setHeroDefaults] = useState<NewSessionDefaults | null>(null);
-	const [heroResources, setHeroResources] = useState<{ cwd: string; data: WorkspaceCommands } | null>(null);
+	const [workspaceResources, setWorkspaceResources] = useState<Record<string, WorkspaceCommands>>({});
+	const resourceCwd = currentId
+		? sessions.find((session) => session.path === currentPath)?.cwd ?? (state.snapshot?.sessionPath === currentPath ? state.snapshot?.cwd : "") ?? ""
+		: heroCwd;
 	const [heroResourcesVersion, setHeroResourcesVersion] = useState(0);
 	const [heroThinking, setHeroThinking] = useState("");
 	const [isNarrow, setIsNarrow] = useState(false);
@@ -220,22 +223,22 @@ export function AppShell() {
 			stale = true;
 		};
 	}, [heroCwd]);
-	// Hero has no session snapshot yet. Discover resources for its workspace independently;
-	// never reuse another session/workspace's commands, or create a session just for completion.
+	// Completion must not wait for a history snapshot or session_start/MCP. Keep a
+	// workspace-scoped cache while revalidating on session switches and settings changes.
 	useEffect(() => {
-		setHeroResources(null);
-		if (currentId || !heroCwd) return;
+		if (!resourceCwd) return;
 		let stale = false;
-		fetch(`/api/agent/resources?cwd=${encodeURIComponent(heroCwd)}`, { cache: "no-store" })
+		fetch(`/api/agent/resources?cwd=${encodeURIComponent(resourceCwd)}`, { cache: "no-store" })
 			.then((r) => r.json() as Promise<{ success?: boolean; data?: WorkspaceCommands; error?: string }>)
 			.then((json) => {
 				if (stale) return;
 				if (!json.success || !json.data) throw new Error(json.error || "Failed to load workspace resources");
-				setHeroResources({ cwd: heroCwd, data: json.data });
+				const data = json.data;
+				setWorkspaceResources((previous) => ({ ...previous, [resourceCwd]: data }));
 			})
 			.catch((error) => { if (!stale) setError(error instanceof Error ? error.message : String(error)); });
 		return () => { stale = true; };
-	}, [currentId, heroCwd, settingsOpen, heroResourcesVersion, setError]);
+	}, [currentId, resourceCwd, settingsOpen, heroResourcesVersion, setError]);
 
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
@@ -583,7 +586,9 @@ export function AppShell() {
 		[sendCommand, openSession, resync],
 	);
 
-	const commandResources = currentId ? snapshot : heroResources?.cwd === heroCwd ? heroResources.data : null;
+	const commandResources = currentId && snapshot?.sessionPath === currentPath
+		? snapshot
+		: workspaceResources[resourceCwd];
 	// 斜杠命令：Web 内置 + pi 的技能 / 提示模板 / 扩展命令（后三类原样交给 SDK 展开或执行）
 	const slashCommands = useMemo(() => {
 		const list: { name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }[] = [

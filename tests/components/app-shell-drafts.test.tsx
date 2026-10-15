@@ -66,6 +66,26 @@ describe("AppShell session-owned composer drafts", () => {
 		expect(mocks.sendCommand).not.toHaveBeenCalled();
 	});
 
+	it("keeps cached commands available when switching between new and existing sessions during revalidation", async () => {
+		const resources = { skills: [{ name: "shared-skill", description: "Shared" }], promptTemplates: [], extensionCommands: [{ name: "fast", description: "Toggle fast" }] };
+		const pending = deferred<ReturnType<typeof response>>();
+		let requests = 0;
+		vi.stubGlobal("fetch", vi.fn((url: string) => {
+			if (url.startsWith("/api/agent/resources")) return ++requests === 1 ? Promise.resolve(response(resources)) : pending.promise;
+			return Promise.resolve(response({ modelThinkingLevels: {} }));
+		}));
+		render(<AppShell />);
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(await screen.findByText("skill:shared-skill")).toBeTruthy();
+		go("New hero");
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(screen.getByText("fast")).toBeTruthy();
+		go("Open B");
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(screen.getByText("skill:shared-skill")).toBeTruthy();
+		expect(screen.getByText("fast")).toBeTruthy();
+	});
+
 	it("ignores late resource responses from a previously selected workspace", async () => {
 		const old = deferred<ReturnType<typeof response>>();
 		vi.stubGlobal("fetch", vi.fn((url: string) => url === "/api/agent/resources?cwd=%2Fworkspace" ? old.promise : Promise.resolve(response({ modelThinkingLevels: {}, skills: [{ name: "other-skill", description: "Other workspace" }], promptTemplates: [], extensionCommands: [] }))));

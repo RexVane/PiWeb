@@ -72,6 +72,18 @@ describe("real SDK session resource isolation", () => {
 	});
 
 
+	it("includes extension commands in a cold existing-session snapshot before starting its runtime", async () => {
+		const { sessionPath } = await manager.createNewSession(cwd);
+		const m = manager.getManaged(sessionPath);
+		managed.push(m);
+		const snapshot = await manager.buildSnapshot(m);
+		expect(m.session).toBeNull();
+		expect(snapshot.extensionCommands).toEqual(expect.arrayContaining([
+			expect.objectContaining({ name: "probe" }),
+			expect.objectContaining({ name: "ask" }),
+		]));
+	});
+
 	it("isolates same-cwd A/B runtimes and keeps discovery and B alive after disposing A", async () => {
 		const a = await create();
 		const b = await create();

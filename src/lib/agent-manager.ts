@@ -1428,7 +1428,9 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	}
 
 	// 斜杠命令数据源：技能 / 提示模板 / 扩展命令，加上项目信任与资源诊断
-	const resources = collectResources(m);
+	// Cold sessions have no extensionRunner yet, but their command catalog is already
+	// available from discovery. Do not publish an empty list until the first prompt.
+	const resources = session && !m.creating ? collectResources(m) : await loadWorkspaceResources(m.cwd);
 
 	const baseTrajectory = m.ledger.entries.length ? m.ledger.entries : coldTrajectory(m);
 	const trajectory = [...environmentTrajectory(m, session, contextResourcesLoaded ? contextResources : undefined), ...baseTrajectory];
