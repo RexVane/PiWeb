@@ -26,6 +26,7 @@ beforeAll(async () => {
 		pi.registerTool({ name: "probe_tool", label: "Probe", description: "Offline probe", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }] }) });
 		pi.registerCommand("probe", { handler: async (args) => { pi.setSessionName(args); } });
 		pi.registerCommand("ask", { handler: async (_args, ctx) => { const accepted = await ctx.ui.confirm("Confirm probe", "Continue?"); pi.setSessionName(accepted ? "confirmed" : "cancelled"); } });
+		pi.on("session_start", () => { globalThis.__piwebProbeStarts = (globalThis.__piwebProbeStarts ?? 0) + 1; });
 		pi.on("session_shutdown", (event) => { (globalThis.__piwebProbeShutdowns ??= []).push(event.reason); });
 	}`);
 	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
@@ -52,6 +53,25 @@ async function create() {
 }
 
 describe("real SDK session resource isolation", () => {
+	it("discovers Hero resources without creating a session or starting extension services", async () => {
+		const skillDir = path.join(root, "agent", "skills", "hero-skill");
+		const promptDir = path.join(root, "agent", "prompts");
+		await fs.mkdir(skillDir, { recursive: true });
+		await fs.mkdir(promptDir, { recursive: true });
+		await fs.writeFile(path.join(skillDir, "SKILL.md"), "---\nname: hero-skill\ndescription: Hero skill discovery\n---\nOffline skill");
+		await fs.writeFile(path.join(promptDir, "hero-template.md"), "---\ndescription: Hero template discovery\n---\nHello $1");
+		const starts = () => (globalThis as { __piwebProbeStarts?: number }).__piwebProbeStarts ?? 0;
+		const before = starts();
+		const resources = await manager.loadWorkspaceResources(cwd);
+		expect(resources.skills).toContainEqual({ name: "hero-skill", description: "Hero skill discovery" });
+		expect(resources.promptTemplates).toEqual(expect.arrayContaining([expect.objectContaining({ name: "hero-template" })]));
+		expect(resources.extensionCommands).toEqual(expect.arrayContaining([expect.objectContaining({ name: "probe" }), expect.objectContaining({ name: "ask" })]));
+		expect(starts()).toBe(before);
+		expect(await fs.stat(path.join(root, "agent", "sessions")).catch(() => null)).toBeNull();
+		expect(() => pi.getResourceLoader(cwd).getExtensions().runtime.assertActive()).not.toThrow();
+	});
+
+
 	it("isolates same-cwd A/B runtimes and keeps discovery and B alive after disposing A", async () => {
 		const a = await create();
 		const b = await create();

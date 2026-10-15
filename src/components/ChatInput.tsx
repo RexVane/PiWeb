@@ -69,6 +69,7 @@ export function ChatInput({
 	authByProvider,
 	queue,
 	commands,
+	attachmentLayout = "overlay",
 	onCommand,
 	onSend,
 	onSteer,
@@ -111,6 +112,8 @@ export function ChatInput({
 	authByProvider: Record<string, boolean>;
 	queue: { steering: string[]; followUp: string[] };
 	commands?: SlashCommand[];
+	/** Hero reserves space above the card; active chats keep the floating attachment rail. */
+	attachmentLayout?: "overlay" | "flow";
 	onCommand?: (name: string, args: string) => void;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
 	onSteer: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
@@ -627,11 +630,11 @@ export function ChatInput({
 			)}
 
 			{/*
-			 * 附件轨（图片 / 引用 / 上传文件）：绝对定位浮在输入卡上方，**不占布局高度** ——
-			 * 输入框位置不动，多出来的附件直接盖住后面的聊天记录（用户要的就是这个）。
+			 * 附件轨（图片 / 引用 / 上传文件）：聊天中悬浮于输入卡上方，不占布局高度；
+			 * 新对话页使用 flow 占位，避免覆盖工作区选择器和品牌行。
 			 * 外层 pointer-events-none，只有附件本身接收点击，免得挡住聊天区的交互。
 			 */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-full z-20 flex flex-col gap-1.5 pb-2" data-testid="composer-attachments">
+			{(images.length > 0 || references.length > 0 || uploads.length > 0) && <div className={`pointer-events-none z-20 flex flex-col gap-1.5 pb-2 ${attachmentLayout === "flow" ? "relative" : "absolute inset-x-0 bottom-full"}`} data-testid="composer-attachments">
 			{/* 附件轨：图片（超过 4 张折叠成牌堆，展开沿弧线扇开；点开可放大、切换、删除） */}
 			{images.length > 0 && (
 				<ComposerImages
@@ -708,7 +711,7 @@ export function ChatInput({
 				</div>
 			)}
 
-			</div>
+			</div>}
 
 			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
 			<div
