@@ -877,18 +877,19 @@ const FinalAnswer = memo(function FinalAnswer({
 				return null;
 			})}
 			{showActions && (
-				<MessageActions
-					text={textAll.trim()}
-					onFork={message.id && onFork ? () => onFork(message.id!) : undefined}
-					durationMs={(message.endedAt ?? message.timestamp) != null && turnStartMs != null ? Math.max(0, (message.endedAt ?? message.timestamp)! - turnStartMs) : undefined}
-					usage={message.usage}
-					time={message.timestamp}
-				/>
+				<div>
+					<MessageActions
+						text={textAll.trim()}
+						onFork={message.id && onFork ? () => onFork(message.id!) : undefined}
+						durationMs={(message.endedAt ?? message.timestamp) != null && turnStartMs != null ? Math.max(0, (message.endedAt ?? message.timestamp)! - turnStartMs) : undefined}
+						usage={message.usage}
+						time={message.timestamp}
+					/>
+				</div>
 			)}
-			{/* 本轮改了 N 个文件：跟在耗时 / 时间戳那一行后面。原先是挂在用户消息下面，
-			    放在这里才读得通——先看到答案，再看到这一轮动了什么。 */}
+			{/* 本轮改了 N 个文件：独立换行，与上方复制按钮左边对齐 */}
 			{showActions && roundBadge && (
-				<div className="msg-actions">
+				<div className="mt-1.5 flex items-center">
 					<button
 						type="button"
 						className="pw-chip"
