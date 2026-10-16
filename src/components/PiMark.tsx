@@ -1,10 +1,10 @@
 /**
- * 官方 π mark（取自 pi.dev favicon，currentColor 化）+ dsh BrandWordmark 式品牌簇。
+ * Iconsax 风格 PiMark（微曲圆角矢量 π 徽标）+ 现代品牌簇（PiWeb）
  */
 "use client";
 
 export function PiMark({
-	size = 18,
+	size = 20,
 	className,
 	style,
 }: {
@@ -16,64 +16,99 @@ export function PiMark({
 		<svg
 			width={size}
 			height={size}
-			viewBox="165.29 165.29 469.43 469.43"
+			viewBox="0 0 24 24"
+			fill="none"
 			aria-hidden
 			className={className}
-			style={{ color: "var(--dsw-label-primary)", display: "block", flex: "none", ...style }}
+			style={{ display: "block", flex: "none", ...style }}
 		>
+			<defs>
+				<linearGradient id="isx-pi-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+					<stop offset="0%" stopColor="#02defc" />
+					<stop offset="50%" stopColor="#7ffe00" />
+					<stop offset="100%" stopColor="#fc0197" />
+				</linearGradient>
+			</defs>
+			{/* 现代圆角 π 字符造型：水平顶梁与双流线支腿 */}
 			<path
+				d="M3.75 6.75C3.75 5.92 4.42 5.25 5.25 5.25H18.75C19.58 5.25 20.25 5.92 20.25 6.75C20.25 7.58 19.58 8.25 18.75 8.25H5.25C4.42 8.25 3.75 7.58 3.75 6.75Z"
 				fill="currentColor"
-				fillRule="evenodd"
-				d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"
 			/>
-			<path fill="currentColor" d="M517.36 400 H634.72 V634.72 H517.36 Z" />
+			<path
+				d="M8.25 7.5V15.5C8.25 17.16 6.91 18.5 5.25 18.5C4.42 18.5 3.75 17.83 3.75 17C3.75 16.17 4.42 15.5 5.25 15.5C5.66 15.5 6 15.16 6 14.75V7.5H8.25Z"
+				fill="currentColor"
+			/>
+			<path
+				d="M15 7.5V14.5C15 15.88 16.12 17 17.5 17C18.33 17 19 17.67 19 18.5C19 19.33 18.33 20 17.5 20C14.46 20 12.75 17.54 12.75 14.5V7.5H15Z"
+				fill="currentColor"
+			/>
 		</svg>
 	);
 }
 
-/** 品牌簇：对齐 dsh 品牌模板 [Logo] [Name] [BADGE] */
+/** 品牌簇：Iconsax 风格 Squircle 徽标 + 渐变品牌字 */
 export function BrandPi({ compact = false }: { compact?: boolean }) {
 	if (compact) {
-		return <PiMark size={18} />;
+		return (
+			<div
+				className="flex items-center justify-center rounded-[10px] border border-white/10 transition-transform duration-200 hover:scale-105"
+				style={{
+					width: 32,
+					height: 32,
+					background: "var(--dsw-bg-elevated)",
+					boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+				}}
+			>
+				<PiMark size={18} style={{ color: "var(--dsw-label-primary)" }} />
+			</div>
+		);
 	}
 	return (
 		<div
-			className="inline-flex items-center select-none"
-			style={{
-				color: "var(--dsw-label-primary)",
-				gap: 6,
-			}}
+			className="group inline-flex cursor-pointer select-none items-center gap-2.5 transition-transform duration-200"
+			style={{ color: "var(--dsw-label-primary)" }}
 		>
-			<PiMark size={17} />
-			<span
-				className="inline-flex items-center"
+			{/* Iconsax 风格圆角微光徽标盒 */}
+			<div
+				className="relative flex items-center justify-center rounded-[9px] border transition-all duration-300 group-hover:scale-105"
 				style={{
-					fontSize: 16.5,
-					fontWeight: 600,
-					letterSpacing: "-0.02em",
-					color: "var(--dsw-label-primary)",
-					lineHeight: 1,
+					width: 28,
+					height: 28,
+					background: "var(--dsw-bg-elevated)",
+					borderColor: "var(--dsw-border-l3)",
+					boxShadow: "0 2px 10px rgba(0,0,0,0.12)",
 				}}
 			>
-				pi
-			</span>
-			<span
-				className="inline-flex items-center justify-center font-bold"
-				style={{
-					fontSize: 9.5,
-					letterSpacing: "0.06em",
-					height: 15,
-					paddingLeft: 4.5,
-					paddingRight: 4.5,
-					borderRadius: 4,
-					background: "var(--dsw-label-primary)",
-					color: "var(--dsw-bg-base)",
-					lineHeight: 1,
-					textTransform: "uppercase",
-				}}
-			>
-				HARNESS
-			</span>
+				<PiMark size={16} style={{ color: "var(--dsw-label-primary)" }} />
+			</div>
+
+			{/* 品牌名称：Pi (高反差主色) + Web (Iconsax 彩虹渐变字) */}
+			<div className="flex items-baseline gap-0.5">
+				<span
+					style={{
+						fontSize: 16.5,
+						fontWeight: 700,
+						letterSpacing: "-0.03em",
+						color: "var(--dsw-label-primary)",
+						lineHeight: 1,
+					}}
+				>
+					Pi
+				</span>
+				<span
+					style={{
+						fontSize: 16.5,
+						fontWeight: 600,
+						letterSpacing: "-0.02em",
+						background: "var(--isx-line-gradient)",
+						WebkitBackgroundClip: "text",
+						WebkitTextFillColor: "transparent",
+						lineHeight: 1,
+					}}
+				>
+					Web
+				</span>
+			</div>
 		</div>
 	);
 }

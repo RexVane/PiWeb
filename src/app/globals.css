@@ -110,36 +110,36 @@
 @media (prefers-color-scheme: dark) {
 	:root:not([data-ds-light-theme]),
 	body:not([data-ds-light-theme]) {
-		/* Iconsax 曜石黑（--bg: 0,0,0 / --border: 37,37,37 / --color: 255,255,255） */
-		--dsw-bg-base: #040405;
-		--dsw-bg-elevated: #0c0c0f;
-		--dsw-sidebar-fill: #070709;
-		--dsw-input-major: #0e0e12;
-		--dsw-bubble: #141418;
-		--dsw-hover: rgba(255, 255, 255, 0.06);
-		--dsw-active: rgba(255, 255, 255, 0.11);
-		--dsw-label-primary: #ffffff;
-		--dsw-label-secondary: rgba(255, 255, 255, 0.78);
-		--dsw-label-tertiary: rgba(255, 255, 255, 0.52);
-		--dsw-label-caption: rgba(255, 255, 255, 0.36);
-		--dsw-border-l1: rgba(255, 255, 255, 0.06);
-		--dsw-border-l2: rgb(37, 37, 37);
-		--dsw-border-l3: rgb(52, 52, 56);
-		--dsw-border-l4: rgb(74, 74, 80);
+		/* Iconsax 柔和曜石黑与护眼银灰（告别刺眼纯白，WCAG AAA 护眼高对比） */
+		--dsw-bg-base: #09090c;
+		--dsw-bg-elevated: #111116;
+		--dsw-sidebar-fill: #0c0c10;
+		--dsw-input-major: #131318;
+		--dsw-bubble: #17181e;
+		--dsw-hover: rgba(255, 255, 255, 0.05);
+		--dsw-active: rgba(255, 255, 255, 0.09);
+		--dsw-label-primary: #e3e4e8;
+		--dsw-label-secondary: #9da1ad;
+		--dsw-label-tertiary: #6b707e;
+		--dsw-label-caption: #4d515e;
+		--dsw-border-l1: rgba(255, 255, 255, 0.05);
+		--dsw-border-l2: rgba(255, 255, 255, 0.08);
+		--dsw-border-l3: rgba(255, 255, 255, 0.12);
+		--dsw-border-l4: rgba(255, 255, 255, 0.18);
 		--dsw-accent: var(--dsw-deepseek-400);
 		--dsw-accent-soft: rgba(103, 158, 254, 0.15);
 		--dsw-danger: rgb(226, 22, 42);
-		--dsw-selector: rgba(255, 255, 255, 0.08);
-		--dsw-layer-2: #111115;
-		--dsw-layer-3: #18181d;
-		--dsw-btn-elevated: #121216;
-		--dsw-btn-floating-hover: #1c1c22;
-		--dsw-module-platform: #141419;
-		--dsw-border-strong: #ffffff;
-		--dsw-glass-popover: rgba(14, 14, 18, 0.92);
-		--dsw-glass-input: #0c0c10;
-		--dsw-glass-modal: rgba(11, 11, 14, 0.95);
-		--dsw-mask: rgba(0, 0, 0, 0.68);
+		--dsw-selector: rgba(255, 255, 255, 0.07);
+		--dsw-layer-2: #14141a;
+		--dsw-layer-3: #1b1c23;
+		--dsw-btn-elevated: #15161c;
+		--dsw-btn-floating-hover: #1f2028;
+		--dsw-module-platform: #15161c;
+		--dsw-border-strong: #e3e4e8;
+		--dsw-glass-popover: rgba(17, 17, 22, 0.94);
+		--dsw-glass-input: #111116;
+		--dsw-glass-modal: rgba(15, 15, 20, 0.96);
+		--dsw-mask: rgba(0, 0, 0, 0.65);
 		--dsw-elevation-stroke: var(--dsw-border-l2);
 		--dsw-elevation-soft: 0 0 0 1px var(--dsw-elevation-stroke), 0 4px 18px rgba(0, 0, 0, 0.35),
 			0 0 24px rgba(0, 0, 0, 0.25);
@@ -150,36 +150,36 @@
 
 html[data-ds-dark-theme],
 body[data-ds-dark-theme] {
-	/* Iconsax 曜石黑（--bg: 0,0,0 / --border: 37,37,37 / --color: 255,255,255） */
-	--dsw-bg-base: #040405;
-	--dsw-bg-elevated: #0c0c0f;
-	--dsw-sidebar-fill: #070709;
-	--dsw-input-major: #0e0e12;
-	--dsw-bubble: #141418;
-	--dsw-hover: rgba(255, 255, 255, 0.06);
-	--dsw-active: rgba(255, 255, 255, 0.11);
-	--dsw-label-primary: #ffffff;
-	--dsw-label-secondary: rgba(255, 255, 255, 0.78);
-	--dsw-label-tertiary: rgba(255, 255, 255, 0.52);
-	--dsw-label-caption: rgba(255, 255, 255, 0.36);
-	--dsw-border-l1: rgba(255, 255, 255, 0.06);
-	--dsw-border-l2: rgb(37, 37, 37);
-	--dsw-border-l3: rgb(52, 52, 56);
-	--dsw-border-l4: rgb(74, 74, 80);
+	/* Iconsax 柔和曜石黑与护眼银灰（告别刺眼纯白，WCAG AAA 护眼高对比） */
+	--dsw-bg-base: #09090c;
+	--dsw-bg-elevated: #111116;
+	--dsw-sidebar-fill: #0c0c10;
+	--dsw-input-major: #131318;
+	--dsw-bubble: #17181e;
+	--dsw-hover: rgba(255, 255, 255, 0.05);
+	--dsw-active: rgba(255, 255, 255, 0.09);
+	--dsw-label-primary: #e3e4e8;
+	--dsw-label-secondary: #9da1ad;
+	--dsw-label-tertiary: #6b707e;
+	--dsw-label-caption: #4d515e;
+	--dsw-border-l1: rgba(255, 255, 255, 0.05);
+	--dsw-border-l2: rgba(255, 255, 255, 0.08);
+	--dsw-border-l3: rgba(255, 255, 255, 0.12);
+	--dsw-border-l4: rgba(255, 255, 255, 0.18);
 	--dsw-accent: var(--dsw-deepseek-400);
 	--dsw-accent-soft: rgba(103, 158, 254, 0.15);
 	--dsw-danger: rgb(226, 22, 42);
-	--dsw-selector: rgba(255, 255, 255, 0.08);
-	--dsw-layer-2: #111115;
-	--dsw-layer-3: #18181d;
-	--dsw-btn-elevated: #121216;
-	--dsw-btn-floating-hover: #1c1c22;
-	--dsw-module-platform: #141419;
-	--dsw-border-strong: #ffffff;
-	--dsw-glass-popover: rgba(14, 14, 18, 0.92);
-	--dsw-glass-input: #0c0c10;
-	--dsw-glass-modal: rgba(11, 11, 14, 0.95);
-	--dsw-mask: rgba(0, 0, 0, 0.68);
+	--dsw-selector: rgba(255, 255, 255, 0.07);
+	--dsw-layer-2: #14141a;
+	--dsw-layer-3: #1b1c23;
+	--dsw-btn-elevated: #15161c;
+	--dsw-btn-floating-hover: #1f2028;
+	--dsw-module-platform: #15161c;
+	--dsw-border-strong: #e3e4e8;
+	--dsw-glass-popover: rgba(17, 17, 22, 0.94);
+	--dsw-glass-input: #111116;
+	--dsw-glass-modal: rgba(15, 15, 20, 0.96);
+	--dsw-mask: rgba(0, 0, 0, 0.65);
 	--dsw-elevation-stroke: var(--dsw-border-l2);
 	--dsw-elevation-soft: 0 0 0 1px var(--dsw-elevation-stroke), 0 4px 18px rgba(0, 0, 0, 0.35),
 		0 0 24px rgba(0, 0, 0, 0.25);
