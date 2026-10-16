@@ -955,7 +955,7 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 						type="button"
 						className="btn-primary-white"
 						style={{ height: 26, padding: "0 12px", fontSize: 12 }}
-						disabled={!draft.trim() || draft.trim() === text.trim()}
+						disabled={!draft.trim()}
 						onClick={submit}
 					>
 						{t.sendEdit}
@@ -966,7 +966,9 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	}
 	function submit() {
 		const next = draft.trim();
-		if (!next || next === text.trim() || !onEditMessage || !message.id) return;
+		// 内容没改也允许重发：这个入口叫「取回编辑」，用户往往是想在同一位置重跑一遍，
+		// 「内容没变」不等于「意图没变」。空内容仍然拦住（发空消息没有意义）。
+		if (!next || !onEditMessage || !message.id) return;
 		setEditing(false);
 		onEditMessage(message.id, next);
 	}

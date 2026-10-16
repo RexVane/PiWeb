@@ -45,10 +45,24 @@ describe("user message edit affordance", () => {
 		expect(onEdit).toHaveBeenCalledWith("entry-1", "hello edited");
 	});
 
-	it("keeps the edit button disabled while the draft is unchanged", () => {
+	it("allows resending the unchanged text from the taken-back editor", () => {
+		// 「取回编辑」的语义是把消息收回来重发：内容没变也可能是想在同一位置重跑一遍，
+		// 所以未修改不再禁用按钮，点下去照常把原文交回上层。
 		const onEdit = vi.fn();
 		renderWindow(onEdit);
 		fireEvent.click(screen.getByRole("button", { name: "编辑这条消息" }));
+
+		const resend = screen.getByRole("button", { name: "重新发送" }) as HTMLButtonElement;
+		expect(resend.disabled).toBe(false);
+		fireEvent.click(resend);
+		expect(onEdit).toHaveBeenCalledWith("entry-1", "hello world");
+	});
+
+	it("keeps the resend button disabled while the draft is empty", () => {
+		const onEdit = vi.fn();
+		renderWindow(onEdit);
+		fireEvent.click(screen.getByRole("button", { name: "编辑这条消息" }));
+		fireEvent.change(screen.getByRole("textbox", { name: "编辑这条消息" }), { target: { value: "   " } });
 		expect((screen.getByRole("button", { name: "重新发送" }) as HTMLButtonElement).disabled).toBe(true);
 		expect(onEdit).not.toHaveBeenCalled();
 	});
