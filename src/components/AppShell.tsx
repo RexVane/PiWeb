@@ -47,7 +47,9 @@ import type { ModelChoice } from "@/components/ModelSelector";
 import type { NewSessionDefaults } from "@/lib/model-defaults";
 import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
-import type { ImageAttachment, TrajEntry } from "@/lib/types";
+import type { ImageAttachment, TrajEntry, WebSnapshot } from "@/lib/types";
+
+type WorkspaceCommands = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensionCommands">;
 
 // dsh ui-layout columns.ts 几何常量
 const SIDEBAR_MIN = 264;
@@ -182,6 +184,11 @@ export function AppShell() {
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	/** 当前工作区的新会话默认值（pi 的初始模型规则 + 设置里的思考档位），切换工作区时重新取 */
 	const [heroDefaults, setHeroDefaults] = useState<NewSessionDefaults | null>(null);
+	const [workspaceResources, setWorkspaceResources] = useState<Record<string, WorkspaceCommands>>({});
+	const resourceCwd = currentId
+		? sessions.find((session) => session.path === currentPath)?.cwd ?? (state.snapshot?.sessionPath === currentPath ? state.snapshot?.cwd : "") ?? ""
+		: heroCwd;
+	const [heroResourcesVersion, setHeroResourcesVersion] = useState(0);
 	const [heroThinking, setHeroThinking] = useState("");
 	const [isNarrow, setIsNarrow] = useState(false);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -216,6 +223,23 @@ export function AppShell() {
 			stale = true;
 		};
 	}, [heroCwd]);
+	// Completion must not wait for a history snapshot or session_start/MCP. Keep a
+	// workspace-scoped cache while revalidating on session switches and settings changes.
+	useEffect(() => {
+		if (!resourceCwd) return;
+		let stale = false;
+		fetch(`/api/agent/resources?cwd=${encodeURIComponent(resourceCwd)}`, { cache: "no-store" })
+			.then((r) => r.json() as Promise<{ success?: boolean; data?: WorkspaceCommands; error?: string }>)
+			.then((json) => {
+				if (stale) return;
+				if (!json.success || !json.data) throw new Error(json.error || "Failed to load workspace resources");
+				const data = json.data;
+				setWorkspaceResources((previous) => ({ ...previous, [resourceCwd]: data }));
+			})
+			.catch((error) => { if (!stale) setError(error instanceof Error ? error.message : String(error)); });
+		return () => { stale = true; };
+	}, [currentId, resourceCwd, settingsOpen, heroResourcesVersion, setError]);
+
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
 		preserveChatReadingPosition();
@@ -562,6 +586,9 @@ export function AppShell() {
 		[sendCommand, openSession, resync],
 	);
 
+	const commandResources = currentId && snapshot?.sessionPath === currentPath
+		? snapshot
+		: workspaceResources[resourceCwd];
 	// 斜杠命令：Web 内置 + pi 的技能 / 提示模板 / 扩展命令（后三类原样交给 SDK 展开或执行）
 	const slashCommands = useMemo(() => {
 		const list: { name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }[] = [
@@ -571,12 +598,12 @@ export function AppShell() {
 			{ name: "new", desc: t.cmdNew, kind: "builtin" },
 			{ name: "fork", desc: t.cmdFork, kind: "builtin" },
 			{ name: "reload", desc: t.cmdReload, kind: "builtin" },
-			...(snapshot?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const, argumentHint: p.argumentHint })),
-			...(snapshot?.extensionCommands ?? []).map((c) => ({ name: c.name, desc: c.description || c.source, kind: "extension" as const })),
-			...(snapshot?.skills ?? []).map((s) => ({ name: `skill:${s.name}`, desc: s.description, kind: "skill" as const })),
+			...(commandResources?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const, argumentHint: p.argumentHint })),
+			...(commandResources?.extensionCommands ?? []).map((c) => ({ name: c.name, desc: c.description || c.source, kind: "extension" as const })),
+			...(commandResources?.skills ?? []).map((s) => ({ name: `skill:${s.name}`, desc: s.description, kind: "skill" as const })),
 		];
 		return list.sort((a, b) => a.name.localeCompare(b.name));
-	}, [snapshot, t]);
+	}, [commandResources, t]);
 
 	const runSlashCommand = useCallback(
 		(name: string, args: string) => {
@@ -588,10 +615,15 @@ export function AppShell() {
 				void sendCommand({ cmd: "fork" }).then((r) => {
 					if (r.success && r.data?.sessionPath) openSession(r.data.sessionPath);
 				});
-			} else if (name === "reload") void sendCommand({ cmd: "reload" }).then(() => refreshModels());
-			else setError(t.cmdUnknown.replace("{name}", name));
+			} else if (name === "reload") {
+				if (currentId) void sendCommand({ cmd: "reload" }).then(() => refreshModels());
+				else {
+					setHeroResourcesVersion((version) => version + 1);
+					void refreshModels();
+				}
+			} else setError(t.cmdUnknown.replace("{name}", name));
 		},
-		[sendCommand, currentId, closeSession, openSession, setError, t],
+		[sendCommand, currentId, closeSession, openSession, refreshModels, setError, t],
 	);
 
 	const projectTrust = snapshot?.projectTrust;
@@ -1031,6 +1063,7 @@ export function AppShell() {
 									cwd={panelCwd}
 									onOpenTrajectory={openToolTrajectory}
 									onOpenFile={openInEditor}
+									onOpenFileContent={viewer.openStatic}
 									onFork={handleFork}
 									onEditMessage={doEditMessage}
 									roundBadges={roundBadges}
@@ -1345,6 +1378,8 @@ function Hero({
 					pendingUploadCount={pendingUploadCount}
 					pendingSend={pendingSend}
 					onSendPendingChange={onSendPendingChange}
+					// Hero 附件占位，避免 @ 引用和图片盖住上方工作区选择器。
+					attachmentLayout="flow"
 					// 新会话也能 @ 引用：候选来自上面选中的工作区
 					cwd={cwd}
 					commands={commands}

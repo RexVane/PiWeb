@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	IconAtOutline16,
+	IconCloseOutline14,
 	IconFileOutline16,
 	IconFolderClose16,
 	IconSendArrowUp14,
@@ -23,6 +24,7 @@ import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { fmtBytes } from "@/lib/format";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/workspace-index";
+import { slashCommandToken } from "@/lib/slash-command-token";
 import type { ImageAttachment } from "@/lib/types";
 
 export interface SlashCommand {
@@ -69,6 +71,7 @@ export function ChatInput({
 	authByProvider,
 	queue,
 	commands,
+	attachmentLayout = "overlay",
 	onCommand,
 	onSend,
 	onSteer,
@@ -111,6 +114,8 @@ export function ChatInput({
 	authByProvider: Record<string, boolean>;
 	queue: { steering: string[]; followUp: string[] };
 	commands?: SlashCommand[];
+	/** Hero reserves space above the card; active chats keep the floating attachment rail. */
+	attachmentLayout?: "overlay" | "flow";
 	onCommand?: (name: string, args: string) => void;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
 	onSteer: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
@@ -165,6 +170,7 @@ export function ChatInput({
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
 	const [cmdDismissed, setCmdDismissed] = useState(false);
+	const [commandCaret, setCommandCaret] = useState<number | null>(currentDraft.text.length);
 	// @ 引用：打字触发候选，选中后落成引用 chip（发送时统一拼成 `@路径` 行）
 	const [mention, setMention] = useState<{ query: string; start: number; tokenEnd: number } | null>(null);
 	const [mentionIdx, setMentionIdx] = useState(0);
@@ -190,11 +196,11 @@ export function ChatInput({
 		autoSize();
 	}, [text]);
 
-	// 斜杠命令模式：文本以 / 开头且未输入参数空格
-	const slash = text.startsWith("/") ? text.slice(1) : "";
-	const hasArgs = slash.includes(" ");
-	const typedCommandMode = !!commands?.length && text.startsWith("/") && !cmdDismissed && !hasArgs;
-	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.split(" ")[0].toLowerCase()));
+	// Complete the token at the caret, not just the first character of the draft.
+	const commandToken = slashCommandToken(text, commandCaret);
+	const slash = commandToken?.query ?? "";
+	const typedCommandMode = !adopted && !!commands?.length && !!commandToken && !cmdDismissed;
+	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.toLowerCase()));
 	const visibleCommands = filteredCommands;
 	const commandMode = typedCommandMode;
 
@@ -278,7 +284,67 @@ export function ChatInput({
 	}, [cmdIdx, visibleCommands.length]);
 	const effectiveIdx = Math.min(cmdIdx, Math.max(0, visibleCommands.length - 1));
 
+	const withoutCommandToken = () => commandToken ? text.slice(0, commandToken.start) + text.slice(commandToken.tokenEnd) : text;
+	const adoptCommand = (entry: SlashCommand) => {
+		// The SDK expands one leading command only. Never overwrite an adopted skill.
+		if (draftRef.current.adopted) return;
+		const remaining = withoutCommandToken();
+		setAdopted(entry);
+		setText(remaining);
+		setCommandCaret(commandToken?.start ?? remaining.length);
+		setCmdDismissed(true);
+		setCmdIdx(0);
+		const caret = commandToken?.start ?? remaining.length;
+		requestAnimationFrame(() => {
+			autoSize();
+			taRef.current?.focus();
+			taRef.current?.setSelectionRange(caret, caret);
+		});
+	};
+
+	// Inline extension commands (e.g. /fast) run on their own. Never send or clear
+	// the surrounding draft, images or references just to toggle an extension.
+	const runInlineExtension = async (entry: SlashCommand) => {
+		if (disabled || isBlocked || sendingRef.current || pendingSend || uploadBusy) return;
+		const original = text;
+		const remaining = withoutCommandToken();
+		sendingRef.current = true;
+		setSending(true);
+		onSendPendingChange?.(true);
+		setText(remaining);
+		setCommandCaret(remaining.length);
+		setCmdDismissed(true);
+		try {
+			const result = await onSend(`/${entry.name}`, []);
+			if (!result?.success) throw new Error(result?.error || "Command failed");
+		} catch (error) {
+			setText((previous) => previous === remaining ? original : previous);
+			if (mountedRef.current) {
+				setCommandCaret(commandToken?.tokenEnd ?? original.length);
+				setCmdDismissed(false);
+				setAttachmentError(error instanceof Error ? error.message : String(error));
+			}
+		} finally {
+			sendingRef.current = false;
+			if (mountedRef.current) setSending(false);
+			onSendPendingChange?.(false);
+		}
+	};
+
 	const runEntry = (entry: SlashCommand) => {
+		if (draftRef.current.adopted) return;
+		if (commandToken && (commandToken.start > 0 || commandToken.tokenEnd < text.length)) {
+			if (entry.kind === "builtin") {
+				if (entry.name === "model") setModelOpen(true);
+				else onCommand?.(entry.name, "");
+				const remaining = withoutCommandToken();
+				setText(remaining);
+				setCommandCaret(remaining.length);
+				setCmdDismissed(true);
+			} else if (entry.kind === "extension") void runInlineExtension(entry);
+			else adoptCommand(entry);
+			return;
+		}
 		const args = slash.slice(entry.name.length).trim();
 		if (entry.kind === "builtin" && entry.name === "model") {
 			setModelOpen(true);
@@ -506,7 +572,7 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
+	const hasDraft = adopted !== null || text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
@@ -627,11 +693,11 @@ export function ChatInput({
 			)}
 
 			{/*
-			 * 附件轨（图片 / 引用 / 上传文件）：绝对定位浮在输入卡上方，**不占布局高度** ——
-			 * 输入框位置不动，多出来的附件直接盖住后面的聊天记录（用户要的就是这个）。
+			 * 附件轨（图片 / 引用 / 上传文件）：聊天中悬浮于输入卡上方，不占布局高度；
+			 * 新对话页使用 flow 占位，避免覆盖工作区选择器和品牌行。
 			 * 外层 pointer-events-none，只有附件本身接收点击，免得挡住聊天区的交互。
 			 */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-full z-20 flex flex-col gap-1.5 pb-2" data-testid="composer-attachments">
+			{(images.length > 0 || references.length > 0 || uploads.length > 0) && <div className={`pointer-events-none z-20 flex flex-col gap-1.5 pb-2 ${attachmentLayout === "flow" ? "relative" : "absolute inset-x-0 bottom-full"}`} data-testid="composer-attachments">
 			{/* 附件轨：图片（超过 4 张折叠成牌堆，展开沿弧线扇开；点开可放大、切换、删除） */}
 			{images.length > 0 && (
 				<ComposerImages
@@ -708,7 +774,7 @@ export function ChatInput({
 				</div>
 			)}
 
-			</div>
+			</div>}
 
 			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
 			<div
@@ -720,12 +786,15 @@ export function ChatInput({
 					border: "0.5px solid var(--dsw-border-l1)",
 				}}
 			>
-				<div className="px-4 pt-3 flex items-start gap-1.5">
+				{/* The selected command owns a row; multiline prose always gets the full width. */}
+				<div className="px-4 pt-3 flex flex-col items-stretch gap-1.5">
 					{adopted && (
 						<button
 							type="button"
-							className="flex-none flex items-center gap-1 self-start"
-							title={`${t.delete} (Backspace)`}
+							className="flex-none flex max-w-full items-center gap-1 self-start"
+							disabled={disabled || sendBusy}
+							aria-label={`${t.delete} /${adopted.name}`}
+							title={`${t.delete} /${adopted.name} (Backspace)`}
 							style={{
 								fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))",
 								lineHeight: "var(--piweb-chat-line-height, 1.55)",
@@ -740,7 +809,8 @@ export function ChatInput({
 							}}
 						>
 							<IconTerminalOutline14 size={14} style={{ color: "var(--dsw-accent)", flex: "none" }} />
-							<span style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
+							<span className="min-w-0 truncate" style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
+							<IconCloseOutline14 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
 						</button>
 					)}
 					<textarea
@@ -750,11 +820,12 @@ export function ChatInput({
 						rows={1}
 						placeholder={adopted ? (adopted.argumentHint ?? t.inputPlaceholder) : !disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						suppressHydrationWarning
-						className="min-w-0 flex-1 resize-none"
+						className="min-w-0 w-full resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
 						onChange={(e) => {
 							const value = e.target.value;
 							setText(value);
+							setCommandCaret(e.target.selectionStart);
 							setCmdDismissed(false);
 							setCmdIdx(0);
 							syncMention(value, e.target.selectionStart);
@@ -763,7 +834,10 @@ export function ChatInput({
 						onSelect={(e) => {
 							// 选中了一段文字时不弹：那时 Enter / Tab 应该照常工作
 							const ta = e.target as HTMLTextAreaElement;
-							syncMention(ta.value, ta.selectionStart === ta.selectionEnd ? ta.selectionStart : null);
+							const caret = ta.selectionStart === ta.selectionEnd ? ta.selectionStart : null;
+							setCommandCaret(caret);
+							if (slashCommandToken(ta.value, caret)?.start !== commandToken?.start) setCmdDismissed(false);
+							syncMention(ta.value, caret);
 						}}
 						onPaste={(e) => {
 							const files = Array.from(e.clipboardData.files);
@@ -801,13 +875,16 @@ export function ChatInput({
 									}
 								}
 							}
-							if (adopted && text === "" && (e.key === "Backspace" || e.key === "Escape")) {
-								// 空参数时退格/Esc：摘掉命令胶囊
+							if (adopted && !e.nativeEvent.isComposing && (
+								(e.key === "Backspace" && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) ||
+								(e.key === "Escape" && text === "")
+							)) {
+								// Backspace at the start removes the marker without erasing any prose.
 								e.preventDefault();
 								setAdopted(null);
 								return;
 							}
-							if (commandMode && visibleCommands.length > 0) {
+							if (commandMode && visibleCommands.length > 0 && !e.nativeEvent.isComposing) {
 								if (e.key === "ArrowDown") {
 									e.preventDefault();
 									setCmdIdx((i) => Math.min(i + 1, visibleCommands.length - 1));
@@ -820,7 +897,7 @@ export function ChatInput({
 								}
 								if (e.key === "Escape") {
 									e.preventDefault();
-										setCmdDismissed(true);
+									setCmdDismissed(true);
 									return;
 								}
 								if (e.key === "Enter" && !e.nativeEvent.isComposing) {
@@ -833,13 +910,7 @@ export function ChatInput({
 									e.preventDefault();
 									const entry = visibleCommands[effectiveIdx];
 									if (!entry) return;
-									setAdopted(entry);
-									setText("");
-									setCmdIdx(0);
-									requestAnimationFrame(() => {
-										autoSize();
-										taRef.current?.focus();
-									});
+									adoptCommand(entry);
 									return;
 								}
 							}

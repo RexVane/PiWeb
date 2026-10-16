@@ -8,16 +8,19 @@ import { writeRememberedHeroModel } from "@/lib/hero-model-memory";
 const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn() }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const noop = () => {};
-vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
+vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.state?.open
+	? <div role="dialog" aria-label="File viewer">{props.state.tabs[0]?.staticContent}</div>
+	: props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {}, selectLatest: () => {} }) }));
-vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
+vi.mock("@/components/ChatWindow", () => ({ ChatWindow: (props: any) => <button onClick={() => props.onOpenFileContent?.("/old/skills/probe/SKILL.md", "Historical skill instructions")}>Preview sent skill</button>, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>
 	<button onClick={() => props.onOpen("/session-a")}>Open A</button>
 	<button onClick={() => props.onOpen("/session-b")}>Open B</button>
 	<button onClick={() => props.onOpen("/created")}>Open created</button>
 	<button onClick={() => props.onNewInWorkspace("/workspace")}>New hero</button>
+	<button onClick={() => props.onNewInWorkspace("/other")}>New other hero</button>
 </> }));
 vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 	const [currentPath, setCurrentPath] = useState<string | null>("/session-a");
@@ -50,6 +53,75 @@ beforeEach(() => { localStorage.clear(); writeRememberedHeroModel(localStorage, 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
+	it("opens sent skill content in the existing file viewer using the historical snapshot", () => {
+		render(<AppShell />);
+		go("Preview sent skill");
+		expect(screen.getByRole("dialog", { name: "File viewer" }).textContent).toBe("Historical skill instructions");
+	});
+
+	it("loads skills, templates and extension commands before sending the first Hero message", async () => {
+		const resources = { skills: [{ name: "workspace-skill", description: "A skill" }], promptTemplates: [{ name: "workspace-template", description: "A template" }], extensionCommands: [{ name: "workspace-command", description: "A command" }] };
+		const fetcher = vi.fn((url: string) => Promise.resolve(response(url.startsWith("/api/agent/resources") ? resources : { modelThinkingLevels: {} })));
+		vi.stubGlobal("fetch", fetcher);
+		render(<AppShell />);
+		go("New hero");
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(await screen.findByText("skill:workspace-skill")).toBeTruthy();
+		expect(screen.getByText("workspace-template")).toBeTruthy();
+		expect(screen.getByText("workspace-command")).toBeTruthy();
+		expect(fetcher).toHaveBeenCalledWith("/api/agent/resources?cwd=%2Fworkspace", expect.any(Object));
+		expect(mocks.newSession).not.toHaveBeenCalled();
+		expect(mocks.sendCommand).not.toHaveBeenCalled();
+	});
+
+	it("keeps cached commands available when switching between new and existing sessions during revalidation", async () => {
+		const resources = { skills: [{ name: "shared-skill", description: "Shared" }], promptTemplates: [], extensionCommands: [{ name: "fast", description: "Toggle fast" }] };
+		const pending = deferred<ReturnType<typeof response>>();
+		let requests = 0;
+		vi.stubGlobal("fetch", vi.fn((url: string) => {
+			if (url.startsWith("/api/agent/resources")) return ++requests === 1 ? Promise.resolve(response(resources)) : pending.promise;
+			return Promise.resolve(response({ modelThinkingLevels: {} }));
+		}));
+		render(<AppShell />);
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(await screen.findByText("skill:shared-skill")).toBeTruthy();
+		go("New hero");
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(screen.getByText("fast")).toBeTruthy();
+		go("Open B");
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(screen.getByText("skill:shared-skill")).toBeTruthy();
+		expect(screen.getByText("fast")).toBeTruthy();
+	});
+
+	it("ignores late resource responses from a previously selected workspace", async () => {
+		const old = deferred<ReturnType<typeof response>>();
+		vi.stubGlobal("fetch", vi.fn((url: string) => url === "/api/agent/resources?cwd=%2Fworkspace" ? old.promise : Promise.resolve(response({ modelThinkingLevels: {}, skills: [{ name: "other-skill", description: "Other workspace" }], promptTemplates: [], extensionCommands: [] }))));
+		writeRememberedHeroModel(localStorage, "/other", { provider: model.provider, id: model.id });
+		render(<AppShell />);
+		go("New hero");
+		go("New other hero");
+		fireEvent.change(textarea(), { target: { value: "/" } });
+		expect(await screen.findByText("skill:other-skill")).toBeTruthy();
+		await act(async () => old.resolve(response({ skills: [{ name: "stale-skill", description: "Old workspace" }], promptTemplates: [], extensionCommands: [] })));
+		expect(screen.queryByText("skill:stale-skill")).toBeNull();
+		expect(screen.getByText("skill:other-skill")).toBeTruthy();
+	});
+
+	it("reserves layout space for Hero references and images instead of covering the workspace selector", async () => {
+		vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response({ modelThinkingLevels: {}, skills: [], promptTemplates: [], extensionCommands: [] }))));
+		render(<AppShell />);
+		fireEvent.click(screen.getByTestId("drawer-toggle"));
+		go("New hero");
+		go("Reference file");
+		fireEvent.paste(textarea(), { clipboardData: { files: [new File(["image"], "shot.png", { type: "image/png" })] } });
+		await screen.findByLabelText("点击放大预览");
+		const attachments = screen.getByTestId("composer-attachments");
+		expect(attachments.classList.contains("absolute")).toBe(false);
+		expect(attachments.classList.contains("relative")).toBe(true);
+		expect(screen.getByTestId("composer-references").textContent).toContain("ref.txt");
+	});
+
 	it("consumes file references as chips in the target draft without remount/session replay", async () => {
 		render(<AppShell />);
 		// 项目栏已降级成抽屉的入口：这里只要把抽屉打开即可 ——
