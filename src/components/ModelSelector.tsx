@@ -226,8 +226,9 @@ export function ModelSelector({
 									<section key={g.provider} role="group" aria-label={g.label}>
 										{/* 提供商名不吸顶：吸顶会在滚动时钉住并被下一组顶出成半截文字（"卡住"观感） */}
 										<div
-											className="px-3 pb-1 pt-2"
+											className="truncate px-3 pb-1 pt-2"
 											style={{ fontSize: 12, fontWeight: 500, color: "var(--dsw-label-caption)" }}
+											title={g.label}
 										>
 											{g.label}
 										</div>
@@ -242,6 +243,7 @@ export function ModelSelector({
 													data-selected={selected}
 													data-active={selected ? "true" : undefined}
 													className="isx-menu-item flex min-h-10 w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
+													title={m.name || m.id}
 													onClick={() => {
 														onSelectModel(m.provider, m.id);
 														setOpen(false);
