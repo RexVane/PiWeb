@@ -321,8 +321,12 @@ describe("real SDK session resource isolation", () => {
 			await vi.waitFor(() => expect(m.buffer.some((frame) => { const e = JSON.parse(frame.json); return e.type === "retry" && e.maxAttempts > 0; })).toBe(true));
 			expect((await manager.buildSnapshot(m)).isStreaming).toBe(true);
 			expect(m.buffer.map((frame) => JSON.parse(frame.json)).filter((event) => event.type === "status").every((event) => event.isStreaming)).toBe(true);
-			for (const command of [{ cmd: "reload" }, { cmd: "setActiveTools", names: ["bash"] }, { cmd: "setToolPreset", preset: "full" }] as const) {
+			for (const command of [{ cmd: "reload" }] as const) {
 				expect(await manager.execute(m, command as any)).toMatchObject({ ok: false });
+			}
+			// 工具变更在运行中改为接受：SDK 会重建系统提示词，下一轮生效（用户要求立即生效）
+			for (const command of [{ cmd: "setActiveTools", names: ["bash"] }, { cmd: "setToolPreset", preset: "full" }] as const) {
+				expect(await manager.execute(m, command as any)).toMatchObject({ ok: true });
 			}
 			const runtime = session.resourceLoader.getExtensions().runtime;
 			await pi.reloadLoader(cwd);

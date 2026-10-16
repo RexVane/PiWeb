@@ -158,12 +158,24 @@ describe("prompt acceptance boundary", () => {
 		expect(parseLastEventId(m, null)).toBeUndefined();
 	});
 
-	it("blocks tool changes and reload while accepting or awaiting settled", async () => {
+	it("blocks reload while accepting or reloading resources", async () => {
+		const { m } = fixture(async () => {});
+		// 提交中 / 正在重载资源都属于危险的中途状态，reload 仍然要拦。
+		for (const field of ["promptSubmitting", "resourceReloading"] as const) {
+			m[field] = true;
+			expect(await execute(m, { cmd: "reload" } as any)).toMatchObject({ ok: false });
+			m[field] = false;
+		}
+	});
+
+	it("allows tool changes while the agent is running so they apply to the next turn", async () => {
+		// 用户要求工具启用能立即生效（含模型运行过程中）：SDK 的 setActiveToolsByName 不做 busy
+		// 检查、改完重建系统提示词，下一轮生效，所以 PiWeb 不再自行拦一层。
 		const { m } = fixture(async () => {});
 		for (const field of ["promptSubmitting", "runActive", "resourceReloading"] as const) {
 			m[field] = true;
-			for (const command of [{ cmd: "setActiveTools", names: ["read"] }, { cmd: "setToolPreset", preset: "full" }, { cmd: "reload" }] as const) {
-				expect(await execute(m, command as any)).toMatchObject({ ok: false });
+			for (const command of [{ cmd: "setActiveTools", names: ["read"] }, { cmd: "setToolPreset", preset: "full" }] as const) {
+				expect(await execute(m, command as any)).toMatchObject({ ok: true });
 			}
 			m[field] = false;
 		}

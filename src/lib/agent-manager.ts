@@ -1660,7 +1660,8 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 			case "setToolPreset": {
 				const preset = cmd.preset as ToolPreset;
 				if (!Object.hasOwn(TOOL_PRESETS, preset)) return { ok: false, error: "invalid tool preset" };
-				if (isManagedBusy(m)) return { ok: false, error: "cannot change tools while the agent is running" };
+				// 运行中也能改：SDK 的 setActiveToolsByName 不做 busy 检查，改完重建系统提示词，
+				// 在下一轮生效（本轮的请求已经发出去了，改不了）。这里不再自行拦一层。
 				if (!m.session && !m.creating) {
 					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
 					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复本地档位，
@@ -1671,7 +1672,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					return { ok: true };
 				}
 				const session = await ensureSession(m);
-				if (isManagedBusy(m)) return { ok: false, error: "cannot change tools while the agent is running" };
+				if (m.disposed) return { ok: false, error: "session is disposed" };
 				m.toolPreset = preset;
 				m.customActiveTools = undefined;
 				applyToolPolicy(m, session);
@@ -1680,9 +1681,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				return { ok: true };
 			}
 			case "setActiveTools": {
-				if (isManagedBusy(m)) return { ok: false, error: "cannot change tools while the agent is running" };
+				// 同上：运行中允许改，下一轮生效。
 				const session = await ensureSession(m);
-				if (isManagedBusy(m)) return { ok: false, error: "cannot change tools while the agent is running" };
+				if (m.disposed) return { ok: false, error: "session is disposed" };
 				const wanted = Array.isArray(cmd.names) ? cmd.names.map(String) : [];
 				const all = listAllToolNames(session);
 				const next = [...new Set(wanted)].filter((n) => all.includes(n));
