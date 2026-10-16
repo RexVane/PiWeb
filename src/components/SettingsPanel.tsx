@@ -409,10 +409,7 @@ function GeneralSection({
 				<FontSizeStepper value={chatFontSize} onChange={pickChatFont} max={20} />
 			</Row>
 			<Row title={t.fontUiFamily} desc={t.fontUiFamilyDesc}>
-				<FontFamilyPicker scope="ui" />
-			</Row>
-			<Row title={t.fontMonoFamily} desc={t.fontMonoFamilyDesc}>
-				<FontFamilyPicker scope="mono" />
+				<FontFamilyPicker />
 			</Row>
 			<Row title={t.enterBehavior} desc={t.enterBehaviorDesc}>
 				<SelectOption
@@ -698,8 +695,9 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 	);
 }
 
-/** 字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。 */
-function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
+/** 界面字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。
+ *  代码字体已固定为系统等宽、不再可配（见 lib/font.ts）。 */
+function FontFamilyPicker() {
 	const { t, lang } = useI18n();
 	const [stored, setStored] = useState<string | null>(null);
 	const [custom, setCustom] = useState("");
@@ -708,18 +706,18 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 	const [customMode, setCustomMode] = useState(false);
 
 	useEffect(() => {
-		const saved = loadFontChoice(scope);
+		const saved = loadFontChoice();
 		const savedCustom = saved?.startsWith(CUSTOM_PREFIX) ? saved.slice(CUSTOM_PREFIX.length) : null;
 		setStored(saved);
 		setCustomMode(savedCustom !== null);
 		setCustom(savedCustom ?? "");
-	}, [scope]);
+	}, []);
 
 	const applyCustom = (v: string) => {
 		setCustom(v);
 		const next = v.trim() ? CUSTOM_PREFIX + v.trim() : null;
 		setStored(next);
-		applyFontChoice(scope, next);
+		applyFontChoice(next);
 	};
 
 	const pick = (v: string) => {
@@ -731,10 +729,10 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 		}
 		setCustomMode(false);
 		setStored(v);
-		applyFontChoice(scope, v);
+		applyFontChoice(v);
 	};
 
-	const selectValue = customMode ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[scope][0].id;
+	const selectValue = customMode ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[0].id;
 
 	return (
 		<div className="flex flex-col items-end gap-2">
@@ -742,7 +740,7 @@ function FontFamilyPicker({ scope }: { scope: "ui" | "mono" }) {
 				value={selectValue}
 				width={220}
 				options={[
-					...FONT_PRESETS[scope].map((p) => ({
+					...FONT_PRESETS.map((p) => ({
 						value: p.id,
 						label: lang === "zh" ? p.label.zh : p.label.en,
 					})),

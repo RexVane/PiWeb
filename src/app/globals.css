@@ -100,7 +100,8 @@
 	--piweb-chat-font-xs: calc(var(--piweb-chat-font-size) * 0.82);
 	--font-ui: "Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC",
 		"Microsoft YaHei", monospace;
-	--font-mono: "Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	/* 代码字体固定系统等宽，不再提供设置项（见 lib/font.ts） */
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
 	/* 内容宽轴（缩短 1/5 保持舒适比例） */
 	--dsh-chat-content-width: clamp(544px, 51.2%, 736px);
