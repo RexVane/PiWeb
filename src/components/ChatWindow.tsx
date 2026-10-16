@@ -30,6 +30,7 @@ import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
+import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
@@ -1452,6 +1453,8 @@ export function ChatWindow({
 		},
 	}), []);
 	useChatReadingAnchor(rootRef, scrollRef, chatScroll.shouldPin);
+	// 正文里可点击的文件路径（见 chat/markdown-actions）：只用查看器打开当前工作区内的相对路径
+	const markdownActions = useMemo<MarkdownActions>(() => ({ openFile: onOpenFile }), [onOpenFile]);
 	const { t } = useI18n();
 	useEffect(() => {
 		const root = rootRef.current;
@@ -1663,6 +1666,7 @@ export function ChatWindow({
 				/>
 			))}
 			<ChatScrollContext.Provider value={chatScroll}>
+				<MarkdownActionsProvider value={markdownActions}>
 				<div
 					ref={scrollRef}
 					className="min-h-0 flex-1 overflow-y-auto"
@@ -1753,6 +1757,7 @@ export function ChatWindow({
 						)}
 					</div>
 				</div>
+				</MarkdownActionsProvider>
 			</ChatScrollContext.Provider>
 			{/* 右侧大纲导航：从助手回答的标题和用户消息生成，随滚动高亮，悬停展开 */}
 			<OutlineRail scrollRef={scrollRef} revision={`${messages.length}:${nearTurns.size}:${isStreaming ? 1 : 0}`} />

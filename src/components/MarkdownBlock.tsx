@@ -22,6 +22,8 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
+import { useMarkdownActions } from "@/components/chat/markdown-actions";
+import { looksLikeFilePath } from "@/lib/chat/file-path";
 import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
@@ -99,13 +101,39 @@ function SafeImage({ src, alt, title }: { src?: unknown; alt?: string; title?: s
  * 流式分块时，多个块共用同一个 .md 容器（外边距规则因此照旧生效），
  * 每块各自记忆化：只要 text 没变就不会重新解析。
  */
+/**
+ * 链接：外部链接加一个 ↗ 标记，让「点了会离开本站」一眼可见。
+ * 站内链接（同源）不加标记，避免到处都是符号。
+ */
+function MarkdownLink({ href, children, ...props }: { href?: string; children?: React.ReactNode } & Record<string, unknown>) {
+	let external = false;
+	if (typeof href === "string" && href) {
+		if (/^https?:\/\//i.test(href)) {
+			external = true;
+			try {
+				external = typeof window === "undefined" || new URL(href).origin !== window.location.origin;
+			} catch {
+				/* 解析不了就当外链 */
+			}
+		}
+	}
+	if (!external) return <a href={href} {...props}>{children}</a>;
+	return (
+		<a href={href} target="_blank" rel="noopener noreferrer" className="md-external" {...props}>
+			{children}
+			<span className="md-external-mark" aria-hidden="true">↗</span>
+		</a>
+	);
+}
+
 const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
+	const actions = useMarkdownActions();
 	return (
 		<ReactMarkdown
 			remarkPlugins={[remarkGfm]}
 			rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
 			components={{
-				a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+				a: ({ node: _node, ...props }) => <MarkdownLink {...props} />,
 				img: ({ src, alt, title }) => <SafeImage src={src} alt={alt} title={title} />,
 				pre: ({ node, children, ...props }) => (
 					<div className="md-code-block">
@@ -113,6 +141,20 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 						<pre {...props}>{children}</pre>
 					</div>
 				),
+				// 行内代码里常是文件路径：能认出来且能打开时，变成可点（只变色，不加下划线）
+				code: ({ node: _node, className, children }) => {
+					const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";
+					const path = raw.trim();
+					// 带 className 的是代码块里的 code（交给 highlight.js），不参与路径识别
+					if (actions.openFile && !className && looksLikeFilePath(path)) {
+						return (
+							<button type="button" className="md-file-path" title={path} onClick={() => actions.openFile!(path)}>
+								{children}
+							</button>
+						);
+					}
+					return <code className={className}>{children}</code>;
+				},
 			}}
 		>
 			{text}

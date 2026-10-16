@@ -1304,11 +1304,45 @@ textarea::placeholder {
 .md a:hover {
 	text-decoration: underline;
 }
+/* 外部链接标记：一眼看出「点了会离开本站」。站内链接不加，免得正文到处是符号 */
+.md-external-mark {
+	display: inline-block;
+	margin-left: 1px;
+	font-size: 0.85em;
+	opacity: 0.6;
+	vertical-align: 0.06em;
+}
+.md-external:hover .md-external-mark {
+	opacity: 1;
+}
+/* 行内代码里的文件路径：可点击时用主题色标出（只变色，不加下划线，保持版面安静） */
+.md .md-file-path {
+	font-family: inherit;
+	font-size: inherit;
+	color: var(--dsw-accent);
+	background: inherit;
+	border: none;
+	border-radius: 5px;
+	padding: inherit;
+	cursor: pointer;
+	text-align: left;
+}
+.md .md-file-path:hover {
+	color: var(--dsw-accent-hover, var(--dsw-accent));
+	background: var(--dsw-accent-soft);
+}
 .md blockquote {
 	margin: 0.6em 0;
 	padding: 0.1em 0 0.1em 0.9em;
 	border-left: 3px solid var(--dsw-border-l3);
 	color: var(--dsw-label-secondary);
+}
+/* 引用块的左侧竖线用主题强调色，与普通缩进正文区分开 */
+.md blockquote {
+	border-left-color: var(--dsw-accent);
+	background: var(--dsw-accent-soft);
+	border-radius: 0 8px 8px 0;
+	padding: 0.5em 0.9em;
 }
 .md code {
 	font-family: var(--font-mono);
