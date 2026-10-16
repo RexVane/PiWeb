@@ -40,16 +40,6 @@ import { fmtTokens } from "@/lib/format";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import { applyFontChoice, CUSTOM_PREFIX, FONT_PRESETS, loadFontChoice } from "@/lib/font";
 import {
-	DEFAULT_STREAM_SETTINGS,
-	getStreamSettings,
-	setStreamSettings,
-	STREAM_SPEED_MAX,
-	STREAM_SPEED_MIN,
-	STREAM_STYLES,
-	type StreamSettings,
-	type StreamStyle,
-} from "@/lib/chat/stream-settings";
-import {
 	customModelGaps,
 	fillModelFields,
 	formatCapacity,
@@ -197,7 +187,6 @@ function GeneralSection({
 	const [themeMode, setThemeMode] = useState<ThemeMode>("system");
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
-	const [stream, setStream] = useState<StreamSettings>(DEFAULT_STREAM_SETTINGS);
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
 	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
@@ -246,8 +235,6 @@ function GeneralSection({
 		if (!Number.isNaN(fs)) setFontSize(fs);
 		const chatFs = parseInt(localStorage.getItem("piweb.chatFontSize") ?? "14", 10);
 		if (!Number.isNaN(chatFs)) setChatFontSize(chatFs);
-		// 流式输出偏好与主题/字体同源（localStorage），同样等挂载后再读，避免水合不一致
-		setStream(getStreamSettings());
 		setEnterBehavior(getEnterBehavior());
 		void loadRemoteSettings();
 	}, []);
@@ -279,9 +266,6 @@ function GeneralSection({
 		localStorage.setItem("piweb.chatFontSize", String(v));
 		document.documentElement.style.setProperty("--piweb-chat-font-size", `${v}px`);
 	};
-
-	/** 流式输出：样式 / 速度 / 光标。改完即持久化，正在流出的回答下一帧就换（订阅在 MarkdownBlock 里） */
-	const pickStream = (patch: Partial<StreamSettings>) => setStream(setStreamSettings(patch));
 
 	const pickEnter = (v: EnterBehavior) => {
 		setEnterBehavior(v);
@@ -344,20 +328,6 @@ function GeneralSection({
 		{ id: "nord-paper", label: t.themeNordPaper, light: "#FCFBF9", dark: "#2E3440", accent: "#88C0D0" },
 		{ id: "pebrel", label: t.themePebrel, light: "#F3F4F6", dark: "#0F111A", accent: "#52A8FF" },
 	];
-
-	const streamStyleText: Record<StreamStyle, { label: string; desc: string }> = {
-		smooth: { label: t.streamStyleSmooth, desc: t.streamStyleSmoothDesc },
-		typewriter: { label: t.streamStyleTypewriter, desc: t.streamStyleTypewriterDesc },
-		fade: { label: t.streamStyleFade, desc: t.streamStyleFadeDesc },
-		instant: { label: t.streamStyleInstant, desc: t.streamStyleInstantDesc },
-	};
-	const streamSpeedText: Record<number, string> = {
-		1: t.streamSpeed1,
-		2: t.streamSpeed2,
-		3: t.streamSpeed3,
-		4: t.streamSpeed4,
-		5: t.streamSpeed5,
-	};
 
 	return (
 		<div className="flex flex-col gap-6">
@@ -445,77 +415,6 @@ function GeneralSection({
 			</Row>
 			<Row title={t.fontMonoFamily} desc={t.fontMonoFamilyDesc}>
 				<FontFamilyPicker scope="mono" />
-			</Row>
-			<RowColumn title={t.streamStyleTitle} desc={t.streamStyleDesc}>
-				<div className="flex w-full flex-wrap gap-2">
-					{STREAM_STYLES.map((id) => {
-						const active = stream.style === id;
-						return (
-							<button
-								key={id}
-								type="button"
-								className="isx-card flex flex-col items-start gap-1 text-left"
-								style={{
-									flex: "1 1 150px",
-									padding: "12px 16px",
-									borderRadius: 16,
-									background: active ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
-									color: "var(--dsw-label-primary)",
-									lineHeight: "18px",
-								}}
-								aria-pressed={active}
-								onClick={() => pickStream({ style: id })}
-							>
-								<span className="flex items-center gap-1.5" style={{ fontSize: 14 }}>
-									{active ? <IconCheckOutline14 size={13} /> : null}
-									{streamStyleText[id].label}
-								</span>
-								<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{streamStyleText[id].desc}</span>
-							</button>
-						);
-					})}
-				</div>
-			</RowColumn>
-			<RowColumn title={t.streamSpeedTitle} desc={t.streamSpeedDesc}>
-				<div className="flex w-full flex-wrap gap-2">
-					{Array.from({ length: STREAM_SPEED_MAX - STREAM_SPEED_MIN + 1 }, (_, i) => STREAM_SPEED_MIN + i).map((level) => {
-						const active = stream.speed === level;
-						return (
-							<button
-								key={level}
-								type="button"
-								className="isx-card disabled:opacity-50"
-								// 即时样式不排队，速度对它没有意义：置灰，免得以为调了没反应
-								disabled={stream.style === "instant"}
-								style={{
-									flex: "1 1 84px",
-									padding: "10px 8px",
-									borderRadius: 14,
-									background: active ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
-									color: active ? "var(--dsw-label-primary)" : "var(--dsw-label-secondary)",
-									fontSize: 13,
-								}}
-								aria-pressed={active}
-								onClick={() => pickStream({ speed: level })}
-							>
-								{streamSpeedText[level]}
-							</button>
-						);
-					})}
-				</div>
-			</RowColumn>
-			<Row title={t.streamCaretTitle} desc={t.streamCaretDesc}>
-				<button
-					type="button"
-					className="relative h-5 w-9 flex-none rounded-full transition-colors"
-					style={{ background: stream.caret ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }}
-					role="switch"
-					aria-checked={stream.caret}
-					aria-label={t.streamCaretTitle}
-					onClick={() => pickStream({ caret: !stream.caret })}
-				>
-					<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: stream.caret ? 18 : 2 }} />
-				</button>
 			</Row>
 			<Row title={t.enterBehavior} desc={t.enterBehaviorDesc}>
 				<SelectOption

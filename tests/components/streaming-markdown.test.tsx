@@ -1,18 +1,16 @@
 // @vitest-environment jsdom
 /**
- * 流式平滑渲染：块切分 + 逐帧推进。
+ * 流式渲染：块切分（保留）+ 文本到达即整段显示。
  * - 切分只在围栏外空行处发生，围栏内 / 松散列表内部不切，保证流式期间 Markdown 结构正确；
- * - 推进保证「显示内容始终是目标前缀、单调增长、最终追平」，即文字是平滑长出来的，不会倒退或卡住。
+ * - 显示不再做逐帧平滑：文本一到就整段渲染，只保留「结束时换成整段渲染」与「贴底」这两条行为。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { StreamingMarkdownBlock, createStreamingSplitter, splitOpenFence, splitStreamingMarkdown } from "@/components/MarkdownBlock";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
-import { DEFAULT_STREAM_SETTINGS, setStreamSettings } from "@/lib/chat/stream-settings";
 
 afterEach(() => {
 	cleanup();
-	setStreamSettings(DEFAULT_STREAM_SETTINGS);
 	vi.useRealTimers();
 });
 
@@ -123,29 +121,17 @@ describe("createStreamingSplitter 增量切分", () => {
 	});
 });
 
-describe("StreamingMarkdownBlock 平滑推进", () => {
-	it("显示内容是目标前缀、单调增长、最终追平", () => {
-		vi.useFakeTimers();
-		try {
-			const target = "abcdefghij".repeat(20); // 200 字符
-			const { container, rerender } = render(<StreamingMarkdownBlock text={target.slice(0, 20)} />);
-			rerender(<StreamingMarkdownBlock text={target} />);
-			let prev = container.textContent ?? "";
-			for (let i = 0; i < 60; i += 1) {
-				act(() => { vi.advanceTimersByTime(16); });
-				const now = container.textContent ?? "";
-				expect(target.startsWith(now)).toBe(true);
-				expect(now.length).toBeGreaterThanOrEqual(prev.length);
-				prev = now;
-			}
-			expect(prev).toBe(target);
-		} finally {
-			vi.useRealTimers();
-		}
+describe("StreamingMarkdownBlock 即时渲染", () => {
+	// 文本到达即整段显示：不再做逐帧平滑（模型吐字速度由上游与网络决定，
+	// 本地再加一层追赶节奏只会让显示落后于实际到达的内容）。
+	it("文本到达即整段显示", () => {
+		const target = "abcdefghij".repeat(20); // 200 字符
+		const { container, rerender } = render(<StreamingMarkdownBlock text={target.slice(0, 20)} />);
+		rerender(<StreamingMarkdownBlock text={target} />);
+		expect(container.textContent).toBe(target);
 	});
 
 	it("未闭合的代码块：开头的 ``` 行不显示，结构和最终渲染一样是 pre > code（不折行）", () => {
-		setStreamSettings({ style: "instant" });
 		const { container } = render(<StreamingMarkdownBlock text={"说明：\n\n```python\ndef f():\n"} />);
 		const code = container.querySelector(".md-code-block > pre > code");
 		expect(code?.textContent).toBe("def f():\n");
@@ -153,26 +139,20 @@ describe("StreamingMarkdownBlock 平滑推进", () => {
 		expect(container.textContent).not.toContain("```");
 	});
 
-	it("回答结束后先按原节奏把积压放完，再换成整段渲染", () => {
-		setStreamSettings({ style: "typewriter", speed: 1 });
-		vi.useFakeTimers();
+	it("回答结束后换成整段渲染（与历史消息同一种渲染）", () => {
 		const target = "a".repeat(30);
 		const { container, rerender } = render(<StreamingMarkdownBlock text="" />);
 		rerender(<StreamingMarkdownBlock text={target} />);
-		act(() => { vi.advanceTimersByTime(24); });
-		rerender(<StreamingMarkdownBlock text={target} live={false} />);
-		// 不会一口吐完
-		expect(container.textContent).toBe("a");
-		expect(container.querySelector(".pw-stream")).not.toBeNull();
-		for (let i = 0; i < 40; i += 1) act(() => { vi.advanceTimersByTime(24); });
 		expect(container.textContent).toBe(target);
-		// 追平后和历史消息同一种渲染
+		expect(container.querySelector(".pw-stream")).not.toBeNull();
+		rerender(<StreamingMarkdownBlock text={target} live={false} />);
+		// 结束后交给整段渲染：脚注、引用式链接这类跨块语法才对
 		expect(container.querySelector(".pw-stream")).toBeNull();
 		expect(container.querySelector(".md")).not.toBeNull();
+		expect(container.textContent).toBe(target);
 	});
 
 	it("贴底听对话区的：对话区说不贴就不贴，说贴才贴", () => {
-		vi.useFakeTimers();
 		const pin = vi.fn();
 		let stuck = false;
 		const scroll = { shouldPin: () => stuck, pin };
@@ -183,10 +163,9 @@ describe("StreamingMarkdownBlock 平滑推进", () => {
 		);
 		const { rerender } = render(ui(""));
 		rerender(ui("abcdefghij".repeat(10)));
-		act(() => { vi.advanceTimersByTime(16 * 5); });
 		expect(pin).not.toHaveBeenCalled();
 		stuck = true;
-		act(() => { vi.advanceTimersByTime(16 * 5); });
+		rerender(ui("abcdefghij".repeat(10) + "k"));
 		expect(pin).toHaveBeenCalled();
 	});
 });

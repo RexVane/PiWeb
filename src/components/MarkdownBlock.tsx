@@ -8,32 +8,22 @@
  * 而 Hero 页（还没开会话）根本用不到它。ChatWindow 用 next/dynamic 引用本模块，
  * 首屏不再下载这 472KB；AppShell 在空闲时预取，真正打开会话时通常已经就绪。
  *
- * 流式输出版（v7）：
- * - 显示样式可配（见 lib/chat/stream-settings）：平滑 / 打字机 / 渐显 / 即时，速度五档、可选打字光标；
- *   设置里改完下一帧生效，正在流的那条回答不用重开。
- * - 逐帧推进：把「已到达的完整文本」和「已显示的文本」分开，每帧只把显示进度往前推一小步，
- *   服务端 token 再来得快、再成串到达，界面也是匀速长出来的，不再一跳一跳。
+ * 流式输出版（v8）：
+ * - 文本到达即整段显示：模型吐字速度由上游与网络决定，本地不再加一层追赶节奏（原先的
+ *   平滑 / 打字机 / 渐显 / 即时四样式与五档速度、打字光标已随设置项一并移除）。
  * - 增量切分 + 分块记忆化：「已稳定的完整块」按 key 记忆化，扫描进度也复用上一帧，
- *   每帧代价只与「新增的那几个字」成正比（旧版每帧重扫全文才是长回答的卡顿来源）。
+ *   每次更新代价只与「新增的那几个字」成正比（旧版每帧重扫全文才是长回答的卡顿来源）。
  * - 代码围栏内的 tail 用纯文本渲染，等闭合后再交给 highlight.js 高亮一次，
  *   避免流式代码块每帧重新高亮。
- * - 贴底听对话区的（见 chat/chat-scroll）；回答结束后先把还没放出来的字放完，再换成整段渲染。
+ * - 贴底听对话区的（见 chat/chat-scroll）；回答结束后换成整段渲染。
  */
-import { memo, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
 import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
-import {
-	getServerStreamSettings,
-	getStreamSettings,
-	nextRevealEnd,
-	streamStepMs,
-	subscribeStreamSettings,
-	type StreamSettings,
-} from "@/lib/chat/stream-settings";
 import { useI18n } from "@/i18n";
 
 type MarkdownTextNode = { value?: unknown; children?: MarkdownTextNode[] };
@@ -298,103 +288,43 @@ export function splitStreamingMarkdown(text: string): StreamingSplit {
 	return createStreamingSplitter().update(text);
 }
 
-/** 流式偏好：设置面板一改，这里立刻换样式（正在流的那条回答不用重开） */
-function useStreamSettings(): StreamSettings {
-	return useSyncExternalStore(subscribeStreamSettings, getStreamSettings, getServerStreamSettings);
-}
-
 interface StreamView extends StreamingSplit {
 	/** 当前显示出来的部分（始终是目标文本的前缀） */
 	shown: string;
 }
 
 /**
- * live：回答还在流。结束后（live 变 false）组件不急着换掉——先按原节奏把还没放出来的字放完，
- * 追平后再渲染成整段 Markdown（和历史消息同一种渲染，脚注、引用式链接这类跨块语法也就对了）。
- * 一结束就整段替换的话，打字机这类慢样式积压的一两百字会一口吐出来。
+ * live：回答还在流。结束后（live 变 false）换成整段 Markdown 渲染（和历史消息同一种渲染，
+ * 脚注、引用式链接这类跨块语法也就对了）。
+ *
+ * 文本到达即整段显示，不做逐帧平滑：模型吐字的速度由上游与网络决定，本地再加一层追赶节奏
+ * 只会让显示落后于实际到达的内容。切分器仍然保留——它让「已稳定的完整块」按 key 记忆化，
+ * 每次新增只重解析变化的那一块，而不是整篇重扫。
  */
 export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ text, live = true }: { text: string; live?: boolean }) {
-	const settings = useStreamSettings();
 	const scroll = useContext(ChatScrollContext);
 	const splitterRef = useRef<{ update: (text: string) => StreamingSplit } | null>(null);
 	if (!splitterRef.current) splitterRef.current = createStreamingSplitter();
 	const [view, setView] = useState<StreamView>(() => ({ shown: text, ...splitterRef.current!.update(text) }));
-	const viewRef = useRef(view);
-	const targetRef = useRef(text);
-	const settingsRef = useRef(settings);
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	const commit = (shown: string) => {
-		const next: StreamView = { shown, ...splitterRef.current!.update(shown) };
-		viewRef.current = next;
+	// 目标变化：整段跟上，不再排队
+	useEffect(() => {
+		const next: StreamView = { shown: text, ...splitterRef.current!.update(text) };
 		setView(next);
-	};
-
-	const stopTimer = () => {
-		if (timerRef.current !== null) clearTimeout(timerRef.current);
-		timerRef.current = null;
-	};
-
-	/** 一帧：只把显示进度往前推一点。用 setTimeout 而非 rAF：后台标签页 / 测试环境同样确定。 */
-	const step = () => {
-		timerRef.current = null;
-		const target = targetRef.current;
-		const shown = viewRef.current.shown;
-		if (shown === target) return; // 追平，收工（下次文本变化再启动）
-		if (!target.startsWith(shown)) {
-			commit(target); // 目标被整体替换（编辑重发）：直接跟上，不再逐帧
-			return;
-		}
-		const current = settingsRef.current;
-		commit(target.slice(0, nextRevealEnd(target, shown.length, current)));
-		timerRef.current = setTimeout(step, streamStepMs(current.speed));
-	};
-
-	/** 起节拍（已经在跑就不动）；「即时」不排队，直接追平 */
-	const start = () => {
-		if (timerRef.current !== null) return;
-		const current = settingsRef.current;
-		if (current.style === "instant") {
-			if (viewRef.current.shown !== targetRef.current) commit(targetRef.current);
-			return;
-		}
-		timerRef.current = setTimeout(step, streamStepMs(current.speed));
-	};
-
-	// 目标变化：更新目标，节拍没在跑就起一个。已有节拍时不重置计时器（防抖会让正文冻住）
-	useEffect(() => {
-		targetRef.current = text;
-		if (text !== viewRef.current.shown) start();
 	}, [text]);
-
-	// 偏好变化即时生效：切成「即时」就停表追平，切回别的样式就继续起节拍
-	useEffect(() => {
-		settingsRef.current = settings;
-		if (viewRef.current.shown === targetRef.current) return;
-		if (settings.style === "instant") {
-			stopTimer();
-			commit(targetRef.current);
-			return;
-		}
-		start();
-	}, [settings]);
-
-	useEffect(() => () => stopTimer(), []);
 
 	const settled = !live && view.shown === text;
 
-	// 逐帧推进会让内容往下长：提交后（绘制前）跟着贴底，界面不再跳动。
-	// 贴不贴听对话区的（往上翻过、大纲正在跳转都会松开），这里不另量距离、不另设阈值；
-	// 追平那一帧和换成整段渲染那一帧同样会变高，也要贴。
+	// 内容变高会让正文往下长：提交后（绘制前）跟着贴底，界面不再跳动。
+	// 贴不贴听对话区的（往上翻过、大纲正在跳转都会松开），这里不另量距离、不另设阈值。
 	useLayoutEffect(() => {
 		if (scroll?.shouldPin()) scroll.pin();
 	}, [view, settled, scroll]);
 
 	if (settled) return <MarkdownBlock text={text} />;
 
-	const { shown, blocks, tail, tailInFence } = view;
-	// 尾巴常驻同一个 key 的容器：块升级时尾巴原地更新而不是整棵重挂——
-	// 重挂会让渐显动画在「已经显示过的内容」上重播一遍，正是输出时闪烁几下的来源。
+	const { blocks, tail, tailInFence } = view;
+	// 尾巴常驻同一个 key 的容器：块升级时尾巴原地更新而不是整棵重挂。
 	// 围栏未闭合时用与最终渲染相同的结构（md-code-block > pre > code，含复制按钮，同样不折行），
 	// 闭合升级只有语法着色的差别，没有布局跳变；开头的 ``` 行不进代码。
 	let tailNode: React.ReactNode;
@@ -414,11 +344,7 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 	}
 
 	return (
-		<div
-			className={settings.caret ? "md pw-stream pw-stream-caret" : "md pw-stream"}
-			data-stream-style={settings.style}
-			data-stream-pending={shown === text ? undefined : ""}
-		>
+		<div className="md pw-stream">
 			{blocks.map((block, i) => <MarkdownContent key={i} text={block} />)}
 			{tail
 				? <div className="pw-stream-tail" key="tail">{tailNode}</div>

@@ -742,26 +742,6 @@ const zh = {
 	viewerOpenFolder: "打开文件夹预览",
 	viewerDirHint: "文件夹：共 {n} 项（已按 .gitignore 过滤）",
 	viewerDirMore: "加载更多",
-	// 流式输出
-	streamStyleTitle: "流式输出样式",
-	streamStyleDesc: "回答逐字出现的方式；改完立刻生效，正在流出的回答也一并换",
-	streamStyleSmooth: "平滑",
-	streamStyleSmoothDesc: "匀速长出，不跳字",
-	streamStyleTypewriter: "打字机",
-	streamStyleTypewriterDesc: "固定节奏逐字敲出",
-	streamStyleFade: "渐显",
-	streamStyleFadeDesc: "整词推进，段落柔和淡入",
-	streamStyleInstant: "即时",
-	streamStyleInstantDesc: "立即显示，不做平滑",
-	streamSpeedTitle: "推进速度",
-	streamSpeedDesc: "平滑 / 打字机 / 渐显的节奏快慢；即时样式不受影响",
-	streamSpeed1: "慢",
-	streamSpeed2: "较慢",
-	streamSpeed3: "标准",
-	streamSpeed4: "快",
-	streamSpeed5: "极快",
-	streamCaretTitle: "打字光标",
-	streamCaretDesc: "流式期间在文字末尾显示闪烁光标",
 } as const;
 
 type Dict = { [K in keyof typeof zh]: string };
@@ -1493,26 +1473,6 @@ const en: Dict = {
 	viewerOpenFolder: "Preview folder",
 	viewerDirHint: "Folder: {n} items (ignored files hidden)",
 	viewerDirMore: "Load more",
-	// Streaming text
-	streamStyleTitle: "Streaming text",
-	streamStyleDesc: "How the answer appears while it arrives; applies to the stream already running",
-	streamStyleSmooth: "Smooth",
-	streamStyleSmoothDesc: "Even pace, no jumps",
-	streamStyleTypewriter: "Typewriter",
-	streamStyleTypewriterDesc: "Fixed cadence, character by character",
-	streamStyleFade: "Fade in",
-	streamStyleFadeDesc: "Whole words, paragraphs fade in",
-	streamStyleInstant: "Instant",
-	streamStyleInstantDesc: "Show immediately, no smoothing",
-	streamSpeedTitle: "Streaming speed",
-	streamSpeedDesc: "Cadence for Smooth / Typewriter / Fade in; Instant ignores it",
-	streamSpeed1: "Slow",
-	streamSpeed2: "Relaxed",
-	streamSpeed3: "Standard",
-	streamSpeed4: "Fast",
-	streamSpeed5: "Fastest",
-	streamCaretTitle: "Typing caret",
-	streamCaretDesc: "Blinking caret at the end of the text while streaming",
 };
 
 const dicts: Record<string, Dict> = { zh, en };

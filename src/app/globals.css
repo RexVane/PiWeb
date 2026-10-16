@@ -1413,70 +1413,13 @@ textarea::placeholder {
 .pw-stream {
 	display: flow-root;
 }
-/* 打字光标模式下尾巴外面包了一层：包层不能改变原有排版，
+/* 尾巴外面包了一层 .pw-stream-tail：包层不能改变原有排版，
    .md > *:first-child/:last-child 的边距归零要透传到最后那个内容元素上 */
 .pw-stream > .pw-stream-tail:first-child > :first-child {
 	margin-top: 0;
 }
 .pw-stream > .pw-stream-tail:last-child > :last-child {
 	margin-bottom: 0;
-}
-/* 渐显样式：只让尾巴里新出现的元素柔和淡入。
-   动画若挂在容器全部直接子级上，块升级（段落从尾巴进入稳定块）会重建 DOM，
-   已经显示过的内容就把入场动画重播一遍——那正是输出时「闪烁几下」的来源；
-   收窄到 .pw-stream-tail 内部后，升级进来的块不再带动画，视觉无缝。 */
-.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
-	animation: pw-stream-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@keyframes pw-stream-enter {
-	from {
-		opacity: 0;
-		transform: translateY(3px);
-		filter: blur(1.5px);
-	}
-	to {
-		opacity: 1;
-		transform: none;
-		filter: blur(0);
-	}
-}
-
-/* 打字光标（Iconsax 发光信标光标：柔和霓虹渐变 + 弹性呼吸脉冲） */
-.pw-stream-caret .pw-stream-tail > :last-child:not(.md-code-block, ul, ol)::after,
-.pw-stream-caret .pw-stream-tail > .md-code-block:last-child code::after,
-.pw-stream-caret .pw-stream-tail > :is(ul, ol):last-child > li:last-child::after {
-	content: "";
-	display: inline-block;
-	width: 2.5px;
-	height: 1.05em;
-	margin-left: 3px;
-	vertical-align: -0.16em;
-	border-radius: 2px;
-	background: linear-gradient(180deg, #02defc, #fc0197);
-	box-shadow: 0 0 8px rgba(2, 222, 252, 0.65);
-	animation: isx-stream-caret 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-@keyframes isx-stream-caret {
-	0%, 100% {
-		opacity: 1;
-		transform: scaleY(1);
-	}
-	50% {
-		opacity: 0.18;
-		transform: scaleY(0.9);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
-		animation: none;
-		filter: none;
-	}
-	.pw-stream-caret .pw-stream-tail > :last-child:not(.md-code-block, ul, ol)::after,
-	.pw-stream-caret .pw-stream-tail > .md-code-block:last-child code::after,
-	.pw-stream-caret .pw-stream-tail > :is(ul, ol):last-child > li:last-child::after {
-		animation: none;
-	}
 }
 
 /* ---------- 代码高亮（highlight.js）：VS Code 式的分类着色，配色跟 Pi 自己的主题走 ---------- */
