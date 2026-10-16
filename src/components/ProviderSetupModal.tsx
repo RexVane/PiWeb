@@ -10,6 +10,7 @@ import {
 	IconTrashOutline16,
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
+import { CustomSelect } from "@/components/CustomSelect";
 import { useI18n } from "@/i18n";
 import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
@@ -238,10 +239,15 @@ export function ProviderSetupModal({
 							{selected?.authTypes.includes("oauth") && onOAuthLogin ? (
 								<div className={styles.field}>
 									<label className={styles.label}>{t.authMethod}</label>
-									<select className={styles.select} value={authMethod} onChange={(event) => setAuthMethod(event.target.value as "api_key" | "oauth")}>
-										<option value="api_key">{t.authMethodApiKey}</option>
-										<option value="oauth">{t.oauthLogin}</option>
-									</select>
+									<CustomSelect
+										value={authMethod}
+										onChange={(val) => setAuthMethod(val as "api_key" | "oauth")}
+										options={[
+											{ value: "api_key", label: t.authMethodApiKey },
+											{ value: "oauth", label: t.oauthLogin },
+										]}
+										aria-label={t.authMethod}
+									/>
 								</div>
 							) : null}
 
@@ -287,9 +293,12 @@ export function ProviderSetupModal({
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.apiProtocol}</label>
-								<select className={styles.select} value={api} onChange={(event) => { setApi(event.target.value); requestAutoDiscover(); }}>
-									{allApis.map((value) => <option key={value} value={value}>{value}</option>)}
-								</select>
+								<CustomSelect
+									value={api}
+									onChange={(val) => { setApi(val); requestAutoDiscover(); }}
+									options={allApis.map((value) => ({ value, label: value }))}
+									aria-label={t.apiProtocol}
+								/>
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.apiKey}</label>
@@ -592,22 +601,24 @@ export function ModelCatalog({
 												placeholder="16K"
 											/>
 										</label>
-										<label className={styles.capacityField} title={t.visionHint}>
+										<div className={styles.capacityField} title={t.visionHint}>
 											<span>{t.visionLabel}</span>
-											<select
-												className={styles.input}
+											<CustomSelect
+												size="sm"
+												style={{ width: 104 }}
 												value={model.vision === undefined ? "unset" : model.vision ? "image" : "text"}
-												onChange={(event) => {
-													const choice = event.target.value;
+												onChange={(choice) => {
 													// 未声明 = 不写 input：pi 按纯文本处理，体检卡片会列出来提醒
 													updateModel(index, { vision: choice === "unset" ? undefined : choice === "image" });
 												}}
-											>
-												<option value="unset">{t.visionUnset}</option>
-												<option value="image">{t.visionOn}</option>
-												<option value="text">{t.visionOff}</option>
-											</select>
-										</label>
+												options={[
+													{ value: "unset", label: t.visionUnset },
+													{ value: "image", label: t.visionOn },
+													{ value: "text", label: t.visionOff },
+												]}
+												aria-label={t.visionLabel}
+											/>
+										</div>
 										<span className={styles.capacityHint}>{t.capacityHint}</span>
 									</div>
 								) : null}

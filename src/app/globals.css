@@ -1612,23 +1612,17 @@ body[data-ds-dark-theme] {
 	border-color: var(--dsw-border-l3);
 }
 
-/* 消息操作图标行：浮动微胶囊 dock 风格 */
+/* 消息操作图标行：常显低透明度，悬停变亮，纯净无框 */
 .msg-actions {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
 	margin-top: 6px;
-	padding: 2px 6px;
-	border-radius: 999px;
-	background: var(--dsw-bg-elevated);
-	border: 1px solid var(--dsw-border-l1);
 	opacity: 0.45;
-	transition: opacity 0.22s var(--isx-ease), border-color 0.22s var(--isx-ease), box-shadow 0.22s var(--isx-ease);
+	transition: opacity 0.2s var(--isx-ease);
 }
 .msg-actions:hover {
 	opacity: 1;
-	border-color: var(--dsw-border-l3);
-	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
 }
 
 /* 操作行时钟（dsh MessageIconActions timeStart/timeEnd）：
