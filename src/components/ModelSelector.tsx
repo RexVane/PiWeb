@@ -198,7 +198,10 @@ export function ModelSelector({
 
 					{pane === "model" && (
 						<div className="flex min-h-0 flex-col">
-							<div ref={listRef} className="max-h-[340px] overflow-y-auto py-1">
+							{/* overflow-y-auto 会把 overflow-x 一并提升成 auto：Iconsax 悬停位移（.isx-menu-shift
+							    translateX(4px)）加上全局 10px 高的横向滚动条，会在列表底部露出一条横杠。
+							   显式锁掉横向，去掉那条横条。 */}
+							<div ref={listRef} className="max-h-[340px] overflow-x-hidden overflow-y-auto py-1">
 								{defaultOption && (
 									<button
 										type="button"
