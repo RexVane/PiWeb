@@ -768,47 +768,142 @@ textarea::placeholder {
 	box-shadow: 0 0 16px rgba(226, 22, 42, 0.55);
 }
 
-/* 排队中的消息：输入卡上方一列（Claude Code 的 queued messages 位置） */
+/* 排队中的消息：高质感浮动拟态胶囊 dock（Iconsax 拟态卡片 + 呼吸入场） */
 .pw-queue {
 	display: flex;
-	flex-direction: column;
-	gap: 3px;
-	margin: 0 14px 8px;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin: 0 14px 10px;
+	padding: 8px 14px;
+	border-radius: 16px;
+	background: var(--dsw-bg-elevated);
+	border: 1px solid var(--dsw-border-l2);
+	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.09);
+	backdrop-filter: blur(12px);
 	font-size: 12.5px;
+	animation: pw-queue-in 0.22s var(--isx-ease);
+}
+@keyframes pw-queue-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+.pw-queue-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	flex: 1;
 }
 .pw-queue-row {
 	display: flex;
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
-	color: var(--dsw-label-secondary);
+	color: var(--dsw-label-primary);
 }
 .pw-queue-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4.5px;
 	flex: none;
-	font-size: 10.5px;
-	line-height: 16px;
-	padding: 0 6px;
-	border-radius: 6px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 18px;
+	padding: 1px 8px;
+	border-radius: 999px;
 	text-transform: capitalize;
-	color: var(--dsw-label-tertiary);
 	border: 1px solid var(--dsw-border-l2);
+	background: var(--dsw-selector);
+	color: var(--dsw-label-secondary);
+}
+.pw-queue-tag-steer {
+	background: rgba(245, 158, 11, 0.12);
+	color: var(--dsw-warn);
+	border-color: rgba(245, 158, 11, 0.28);
+}
+.pw-queue-tag-queue {
+	background: var(--dsw-accent-soft);
+	color: var(--dsw-accent);
+	border-color: rgba(65, 118, 230, 0.25);
+}
+.pw-queue-dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 999px;
+	background: currentColor;
 }
 .pw-queue-text {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--dsw-label-primary);
 }
 .pw-queue-foot {
 	display: flex;
-	gap: 12px;
-	margin-top: 1px;
-	padding-left: 2px;
-	font-size: 11.5px;
-	color: var(--dsw-label-caption);
+	align-items: center;
+	gap: 6px;
+	flex: none;
 }
-.pw-queue-foot button:hover {
-	color: var(--dsw-label-secondary);
+.pw-queue-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 28px;
+	padding: 0 11px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 0.2s var(--isx-ease);
+}
+.pw-queue-btn-pull {
+	background: var(--dsw-hover);
+	border: 1px solid var(--dsw-border-l2);
+	color: var(--dsw-label-primary);
+}
+.pw-queue-btn-pull:hover {
+	background: var(--dsw-label-primary);
+	color: var(--dsw-bg-base);
+	border-color: var(--dsw-label-primary);
+	transform: translateY(-1px);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.pw-queue-kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 4px;
+	background: var(--dsw-selector);
+	font-size: 11px;
+	font-weight: 700;
+	font-family: var(--font-mono);
+	line-height: 1;
+}
+.pw-queue-btn-pull:hover .pw-queue-kbd {
+	background: rgba(255, 255, 255, 0.2);
+	color: inherit;
+}
+.pw-queue-btn-drop {
+	background: transparent;
+	border: 1px solid transparent;
+	color: var(--dsw-label-tertiary);
+}
+.pw-queue-btn-drop:hover {
+	background: rgba(239, 68, 68, 0.1);
+	color: var(--dsw-danger);
+	border-color: rgba(239, 68, 68, 0.2);
 }
 /* 运行中输入卡下方的按键提示 */
 .pw-busy-hint {
@@ -2339,6 +2434,31 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	.pw-ref-chip {
 		animation: none;
 	}
+}
+
+/* 文件牌堆与扇形卡片（多文件折叠与竖直向上弧度展开） */
+.pw-file-fan-container {
+	position: relative;
+	flex: none;
+}
+.pw-file-card {
+	background: var(--dsw-bg-elevated) !important;
+	border: 1px solid var(--dsw-border-l2) !important;
+	border-radius: 10px !important;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+	transition: transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s var(--isx-ease), border-color 0.2s var(--isx-ease);
+}
+.pw-file-card:hover,
+.pw-file-card[data-lifted="true"] {
+	border-color: var(--dsw-border-l3) !important;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16) !important;
+}
+.pw-file-card .pw-ref-close {
+	opacity: 0.6;
+}
+.pw-file-card:hover .pw-ref-close,
+.pw-file-card:focus-within .pw-ref-close {
+	opacity: 1;
 }
 
 /* 输入卡待发送图片:平铺缩略图 / 牌堆 / 扇形(src/components/composer/ComposerImages.tsx) */

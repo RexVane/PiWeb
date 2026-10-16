@@ -61,27 +61,39 @@ export function deckLayout(count: number): Layout {
 }
 
 /**
- * 扇形：卡片中心落在一段圆弧上（中间最高、两侧顺着弧下垂），每张转到切线方向；
- * 间距按可用宽度均分、不超过 FAN_GAP_MAX，从左边开始铺（离牌堆原来的位置最近）。
+ * 扇形：沿竖直向上呈优美弧度展开（中间明显向上拱起呈饱满圆弧，左右对称）。
+ * 紧凑排布不横向拉爆宽度，卡片中间最高、两侧自然下垂，每张保持切线倾角。
  */
 export function fanLayout(count: number, width: number): Layout {
-	const gap = count > 1 ? Math.min(FAN_GAP_MAX, Math.max(8, (width - CARD - FAN_SIDE * 2) / (count - 1))) : 0;
-	const step = gap / FAN_RADIUS;
+	if (count <= 1) {
+		return { cards: [{ x: FAN_SIDE, y: 0, angle: 0 }], width: CARD + FAN_SIDE * 2, height: CARD, gap: 0 };
+	}
+	// 间距紧凑收敛：宽屏不超过 52px（告别横跨全屏），窄屏挤一挤但不溢出
+	const maxFanW = Math.min(width, Math.max(340, CARD + (count - 1) * 52 + FAN_SIDE * 2));
+	const gap = Math.min(52, Math.max(12, (maxFanW - CARD - FAN_SIDE * 2) / (count - 1)));
 	const mid = (count - 1) / 2;
-	const edge = -mid * step;
-	// 正方形转过 θ 后比原来高出（也宽出）的那一截，最外侧两张最大
-	const corner = (CARD / 2) * (Math.abs(Math.sin(edge)) + Math.cos(edge) - 1);
-	const top = FAN_LIFT + corner;
+	// 竖直向上拱起的弧度高度（中间最高点比两侧高出 42~56px，形成明显的竖直向上弧形）
+	const archHeight = Math.min(56, Math.max(32, (count - 1) * 8.5));
+	const angleStep = Math.min(6.5, 34 / Math.max(count - 1, 1));
+	const top = FAN_LIFT + 4;
 	const cards = Array.from({ length: count }, (_, i) => {
-		const theta = (i - mid) * step;
-		return {
-			x: round(FAN_SIDE + FAN_RADIUS * (Math.sin(theta) - Math.sin(edge))),
-			y: round(top + FAN_RADIUS * (1 - Math.cos(theta))),
-			angle: round((theta * 180) / Math.PI),
-		};
+		const offset = i - mid;
+		const normOffset = mid > 0 ? Math.abs(offset) / mid : 0;
+		// y 轴：offset 为 0（中间）时 y 最小（最靠上），两侧 y 增大（向下垂），严格左右对称
+		const y = round(top + Math.pow(normOffset, 1.5) * archHeight);
+		// x 轴：从左到右单调递增
+		const x = round(FAN_SIDE + i * gap);
+		// 角度：中间为 0°，两侧对称倾斜
+		const angle = round(offset * angleStep);
+		return { x, y, angle };
 	});
 	const span = cards.length ? cards[cards.length - 1].x + CARD + FAN_SIDE : 0;
-	return { cards, width: Math.ceil(span), height: Math.ceil(top + FAN_RADIUS * (1 - Math.cos(edge)) + CARD + corner), gap: round(gap) };
+	return {
+		cards,
+		width: Math.min(width, Math.ceil(span)),
+		height: Math.ceil(top + archHeight + CARD + 10),
+		gap: round(gap),
+	};
 }
 
 /** 每张图一个稳定的 key：前几位 base64 对同格式的图几乎都一样（PNG 都是 iVBORw0KGgo…），不能拿来当 key */
@@ -169,7 +181,7 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 									data-lifted={up || undefined}
 									style={{
 										zIndex: up ? images.length + 1 : images.length - i,
-										transform: `translate(${pose.x}px, ${pose.y - (up ? FAN_LIFT : 0)}px) rotate(${pose.angle}deg)`,
+										transform: `translate(${pose.x}px, ${pose.y - (up ? FAN_LIFT : 0)}px) rotate(${pose.angle}deg) ${up ? "scale(1.05)" : ""}`,
 										transitionDelay: up || lifted !== null ? "0ms" : `${delay}ms`,
 									}}
 									onMouseEnter={() => fanned && setLifted(i)}

@@ -17,6 +17,7 @@ import {
 } from "@/components/icons";
 import { ContextMeter } from "@/components/ContextMeter";
 import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
+import { ComposerFiles } from "@/components/composer/ComposerFiles";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
@@ -159,8 +160,6 @@ export function ChatInput({
 	const [dragActive, setDragActive] = useState(false);
 	/** 引用 chip 超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉（图片的折叠在 ComposerImages 里） */
 	const [refsExpanded, setRefsExpanded] = useState(false);
-	/** 上传文件超过 4 个时的展开状态（与引用同一套折叠规则） */
-	const [uploadsExpanded, setUploadsExpanded] = useState(false);
 	const dragDepth = useRef(0);
 	const [modelOpen, setModelOpen] = useState(false);
 	const [cmdIdx, setCmdIdx] = useState(0);
@@ -510,24 +509,46 @@ export function ChatInput({
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
-			{/* 排队中的消息（Claude Code 同款：列在输入卡上方；↑ 取回编辑，或直接丢弃） */}
+			{/* 排队中的消息（高质感浮动拟态胶囊 dock：左侧消息与彩色药丸徽标，右侧快捷键微胶囊按钮） */}
 			{queuedCount > 0 && (
-				<div className="pw-queue">
-					{queue.steering.map((q, i) => (
-						<div key={`s${i}`} className="pw-queue-row" title={q}>
-							<span className="pw-queue-tag">{t.modeSteer}</span>
-							<span className="pw-queue-text">{q}</span>
-						</div>
-					))}
-					{queue.followUp.map((q, i) => (
-						<div key={`f${i}`} className="pw-queue-row" title={q}>
-							<span className="pw-queue-tag">{t.modeQueue}</span>
-							<span className="pw-queue-text">{q}</span>
-						</div>
-					))}
+				<div className="pw-queue" role="status" aria-live="polite">
+					<div className="pw-queue-list">
+						{queue.steering.map((q, i) => (
+							<div key={`s${i}`} className="pw-queue-row" title={q}>
+								<span className="pw-queue-tag pw-queue-tag-steer">
+									<span className="pw-queue-dot" />
+									{t.modeSteer}
+								</span>
+								<span className="pw-queue-text">{q}</span>
+							</div>
+						))}
+						{queue.followUp.map((q, i) => (
+							<div key={`f${i}`} className="pw-queue-row" title={q}>
+								<span className="pw-queue-tag pw-queue-tag-queue">
+									<span className="pw-queue-dot" />
+									{t.modeQueue}
+								</span>
+								<span className="pw-queue-text">{q}</span>
+							</div>
+						))}
+					</div>
 					<div className="pw-queue-foot">
-						<button type="button" onClick={() => void pullQueue()}>{t.queueEdit}</button>
-						<button type="button" onClick={() => void onClearQueue?.()}>{t.queueDrop}</button>
+						<button
+							type="button"
+							className="pw-queue-btn pw-queue-btn-pull"
+							onClick={() => void pullQueue()}
+							title="↑"
+						>
+							<span className="pw-queue-kbd">↑</span>
+							<span>{t.queueEdit.replace(/^[↑\s]+/, "") || t.queueEdit}</span>
+						</button>
+						<button
+							type="button"
+							className="pw-queue-btn pw-queue-btn-drop"
+							onClick={() => void onClearQueue?.()}
+						>
+							{t.queueDrop}
+						</button>
 					</div>
 				</div>
 			)}
@@ -683,31 +704,14 @@ export function ChatInput({
 				</div>
 			)}
 
-			{/* 附件轨：上传的普通文件（压缩包/文档等，路径引用）；超过 4 个折叠 */}
+			{/* 附件轨：上传的普通文件（超过 4 个折叠成牌堆，展开沿竖直向上弧度展开） */}
 			{uploads.length > 0 && (
-				<div className="pointer-events-auto flex flex-wrap items-center gap-1 px-1" data-testid="composer-uploads">
-					{(uploadsExpanded ? uploads : uploads.slice(0, COLLAPSE_AT)).map((f, i) => (
-						<span key={f.path} className="pw-ref-chip group/ref" title={f.path}>
-							<IconFileOutline16 size={12} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
-							<span className="max-w-[180px] truncate">{f.name}</span>
-							<span style={{ flex: "none", fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtUploadSize(f.size)}</span>
-							<button
-								type="button"
-								className="pw-ref-close"
-								disabled={sendBusy}
-								onClick={() => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, index) => index !== i) }))}
-								aria-label={`${t.delete} ${f.name}`}
-							>
-								✕
-							</button>
-						</span>
-					))}
-					{uploads.length > COLLAPSE_AT ? (
-						<button type="button" className="pw-chip" data-testid="uploads-toggle" onClick={() => setUploadsExpanded((open) => !open)}>
-							{uploadsExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(uploads.length - COLLAPSE_AT))}
-						</button>
-					) : null}
-				</div>
+				<ComposerFiles
+					files={uploads}
+					disabled={sendBusy}
+					onRemove={(index) => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, at) => at !== index) }))}
+					onClear={() => changeDraft((previous) => ({ ...previous, uploads: [] }))}
+				/>
 			)}
 
 			</div>
