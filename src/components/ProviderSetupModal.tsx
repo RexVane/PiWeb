@@ -311,7 +311,7 @@ export function ProviderSetupModal({
 								updateModel={updateModel}
 								discover={discoverAvailableModels}
 								discoverDisabled={!baseUrl.trim()}
-								autoDiscover={autoReady ? { signature: `${baseUrl.trim()}|${api}|${apiKey.trim()}`, privateHost: looksPrivateEndpoint(baseUrl), trigger: autoTrigger } : undefined}
+								autoDiscover={autoReady ? { signature: `${baseUrl.trim()}|${api}|${apiKey.trim()}`, trigger: autoTrigger } : undefined}
 							/>
 						</>
 					)}
@@ -354,21 +354,19 @@ export function ModelCatalog({
 	inheritedCount?: number;
 	/** 内置 provider 的目录模型 ID：候选里已在目录中的不能勾选（本来就能选），同 ID 的行只覆盖填写的字段 */
 	catalogIds?: ReadonlySet<string>;
-	/** 用表单当前值探测远端目录（allowPrivate：用户勾选了允许访问本机/私网地址）；抛错时错误显示在目录内 */
+	/** 用表单当前值探测远端目录；本机 / 私网地址一律放行（服务端仍会自己再判一次）；抛错时错误显示在目录内 */
 	discover?: (allowPrivate: boolean) => Promise<ModelDraft[]>;
 	discoverDisabled?: boolean;
 	/**
 	 * 自动识别：trigger 变了（地址 / 密钥失焦、换协议）就按当前签名（URL + 协议 + 密钥）拉一次模型目录。
 	 * 只在「还没有任何模型行」时给出；同一签名只跑一次，清空模型行后不会自己又加回来。
 	 */
-	autoDiscover?: { signature: string; privateHost: boolean; trigger: number };
+	autoDiscover?: { signature: string; trigger: number };
 }) {
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
 	const [discovering, setDiscovering] = useState(false);
 	const [discoverError, setDiscoverError] = useState("");
-	// 本地网关（Ollama 等）在私网/回环地址上，探测需要用户显式授权
-	const [allowPrivate, setAllowPrivate] = useState(false);
 	// 候选对话框：null = 关闭
 	const [candidates, setCandidates] = useState<ModelDraft[] | null>(null);
 	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
@@ -443,8 +441,8 @@ export function ModelCatalog({
 			setAutoStatus(status);
 			return true;
 		};
-		// 本机/私网地址自动允许（服务端仍会自己再判一次）
-		discover(allowPrivate || auto.privateHost).then(
+		// 本机/私网地址一并放行：探测模型目录本来就是本机使用，服务端仍会自己再判一次
+		discover(true).then(
 			(found) => {
 				if (!settle(found.length ? "done" : "empty")) return;
 				setAutoFound(found.length);
@@ -469,7 +467,7 @@ export function ModelCatalog({
 		setDiscovering(true);
 		setDiscoverError("");
 		try {
-			const found = await discover(allowPrivate);
+			const found = await discover(true);
 			if (!found.length) {
 				setDiscoverError(t.discoverEmpty);
 				return;
@@ -536,14 +534,6 @@ export function ModelCatalog({
 				</div>
 				{discover ? (
 					<div className={styles.discoverControls}>
-						<label className={styles.allowPrivate} title={t.allowPrivateHint}>
-							<input
-								type="checkbox"
-								checked={allowPrivate}
-								onChange={(event) => setAllowPrivate(event.target.checked)}
-							/>
-							{t.allowPrivateDiscovery}
-						</label>
 						<button className={styles.discoverButton} disabled={discoverDisabled || discovering} onClick={() => void startDiscover()}>
 							{discovering ? t.discoveringModels : t.discoverModels}
 						</button>
