@@ -31,6 +31,17 @@ describe("session stats measurement scope", () => {
 		expect(text).not.toContain("实时测量");
 		expect(text).toContain("100.00 tok/s");
 	});
+	it("hides the cache-hit rate when the upstream never reports cache fields", () => {
+		// 很多中转 / 自建网关只返回 prompt_tokens 与 completion_tokens，cacheRead/cacheWrite 恒为 0。
+		// 那不是「一次都没命中」而是「没有这个数据」，显示 0.00% 会误导用户以为缓存失效。
+		const { container } = render(<SessionStatsBar stats={{
+			...measuredStats,
+			tokens: { input: 1000, cacheRead: 0, cacheWrite: 0, output: 20, total: 1020 },
+		}} />);
+		expect(container.textContent).not.toContain("缓存命中");
+		// 输入 / 输出仍然照常显示
+		expect(container.textContent).toContain("输入 1.00K tok · 输出 20 tok");
+	});
 	it("does not fabricate historical TTFT or speed when only durations are stored", () => {
 		const { container } = render(<SessionStatsBar stats={{ ...measuredStats, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0, decodeSteps: 0 }} />);
 		expect(container.textContent).toContain("LLM 1.25s");

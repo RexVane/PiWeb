@@ -1268,9 +1268,13 @@ export function SessionStatsBar({
 	if (stats.ttftSteps > 0) speeds.push(`${t.ttftAverage} ${fmtDuration(stats.ttftMs / stats.ttftSteps)}`);
 	if (stats.decodeMs > 0) speeds.push(`${fmtThroughput(stats.decodeTokens / (stats.decodeMs / 1000))} tok/s`);
 	if (speeds.length) groups.push(speeds.join(" · "));
+	// 计费输入 = 新输入 + 命中缓存 + 写缓存。上游不返回 cacheRead/cacheWrite 时（很多中转与
+	// 自建网关只给 prompt_tokens / completion_tokens），缓存命中率恒为 0——那不是「没命中」而是
+	// 「没这个数据」，显示 0.00% 会误导，所以整项不显示。
 	const billedInput = stats.tokens.input + stats.tokens.cacheRead + stats.tokens.cacheWrite;
+	const cacheReported = stats.tokens.cacheRead > 0 || stats.tokens.cacheWrite > 0;
 	if (billedInput > 0 || stats.tokens.output > 0) {
-		if (billedInput > 0) groups.push(`${t.cacheHits} ${fmtPercent((stats.tokens.cacheRead / billedInput) * 100)}`);
+		if (billedInput > 0 && cacheReported) groups.push(`${t.cacheHits} ${fmtPercent((stats.tokens.cacheRead / billedInput) * 100)}`);
 		groups.push(`${t.inputTokens} ${fmtTokens(billedInput)} tok · ${t.outputTokens} ${fmtTokens(stats.tokens.output)} tok`);
 	}
 	const line = groups.join(" | ");
