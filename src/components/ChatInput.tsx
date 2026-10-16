@@ -568,23 +568,25 @@ export function ChatInput({
 							type="button"
 							role="option"
 							aria-selected={i === effectiveMentionIdx}
-							className="flex w-full items-center gap-2 px-4 py-1.5 text-left transition-colors"
-							style={{ background: i === effectiveMentionIdx ? "var(--dsw-hover)" : "transparent" }}
+							data-active={i === effectiveMentionIdx ? "true" : undefined}
+							className="isx-menu-item mx-1.5 flex w-[calc(100%-12px)] items-center gap-2 px-3 py-1.5 text-left"
 							onMouseEnter={() => setMentionIdx(i)}
 							onClick={() => applyMention(candidate)}
 							title={candidateText(candidate)}
 						>
-							{candidate.dir ? (
-								<IconFolderClose16 size={13} style={{ flex: "none", color: "var(--dsw-warn)" }} />
-							) : (
-								<IconFileOutline16 size={13} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
-							)}
+							<span className="isx-menu-icon" style={{ display: "inline-flex", flex: "none" }}>
+								{candidate.dir ? (
+									<IconFolderClose16 size={13} style={{ flex: "none", color: "var(--dsw-warn)" }} />
+								) : (
+									<IconFileOutline16 size={13} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
+								)}
+							</span>
 							{/* 和 pi 终端一样：名字在前，路径在后；根目录下的条目两者相同，不重复显示 */}
-							<span className="flex-none truncate" style={{ maxWidth: "55%", fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-primary)" }}>
+							<span className="isx-menu-shift flex-none truncate" style={{ maxWidth: "55%", fontSize: 12.5, fontFamily: "var(--font-mono)" }}>
 								{label}
 							</span>
 							{description.replace(/\/$/, "") !== label.replace(/\/$/, "") && (
-								<span className="min-w-0 flex-1 truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+								<span className="isx-menu-sub min-w-0 flex-1 truncate pr-2" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
 									{description}
 								</span>
 							)}
@@ -604,21 +606,21 @@ export function ChatInput({
 							key={`${c.kind}:${c.name}`}
 							role="option"
 							aria-selected={i === effectiveIdx}
-							className="flex w-full items-baseline gap-3 px-4 py-2 text-left transition-colors"
-							style={{ background: i === effectiveIdx ? "var(--dsw-hover)" : "transparent" }}
+							data-active={i === effectiveIdx ? "true" : undefined}
+							className="isx-menu-item mx-1.5 flex w-[calc(100%-12px)] items-baseline gap-3 px-3 py-2 text-left"
 							onMouseEnter={() => setCmdIdx(i)}
 							onClick={() => runEntry(c)}
 						>
-							<span style={{ fontSize: 14, fontWeight: 500, color: "var(--dsw-label-primary)", flex: "none" }}>{c.name}</span>
+							<span className="isx-menu-shift" style={{ fontSize: 14, fontWeight: 500, flex: "none" }}>{c.name}</span>
 							{c.kind !== "builtin" && (
-								<span className="rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)", background: "var(--dsw-selector)", flex: "none" }}>
+								<span className="isx-menu-sub rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)", background: "var(--dsw-selector)", flex: "none" }}>
 									{c.kind === "skill" ? t.skillType : c.kind === "template" ? t.promptType : t.extensionCmdType}
 								</span>
 							)}
 							{c.argumentHint && (
-								<span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", flex: "none" }}>{c.argumentHint}</span>
+								<span className="isx-menu-sub" style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", flex: "none" }}>{c.argumentHint}</span>
 							)}
-							<span className="truncate" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
+							<span className="isx-menu-sub truncate pr-2" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
 								{c.desc}
 							</span>
 						</button>
@@ -710,16 +712,8 @@ export function ChatInput({
 
 			</div>
 
-			{/* 卡片（玻璃态）—— 拖放由 document 级监听统一接管 */}
-			<div
-				className="relative w-full"
-				style={{
-					borderRadius: 22,
-					background: "var(--dsw-input-major)",
-					boxShadow: "var(--dsw-elevation-soft)",
-					border: "0.5px solid var(--dsw-border-l1)",
-				}}
-			>
+			{/* 卡片（Iconsax .isx-composer：24px 圆角 + 聚焦高对比描边 + 底部流光短横条）—— 拖放由 document 级监听统一接管 */}
+			<div className="isx-composer relative w-full">
 				<div className="px-4 pt-3 flex items-start gap-1.5">
 					{adopted && (
 						<button

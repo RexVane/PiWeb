@@ -134,32 +134,26 @@ export function SettingsPanel({
 					boxShadow: "var(--dsw-elevation-prominent)",
 				}}
 			>
-				{/* 左导航（dsh trigger：h42 r12，active 填充） */}
-				<div className="settings-nav flex w-52 flex-none flex-col gap-0.5 py-4 pl-4 pr-3">
+				{/* 左导航（Iconsax .isx-menu-item：h42 r12，悬停/激活高对比反转 + 文字右移 + 右侧短竖条） */}
+				<div className="settings-nav flex w-52 flex-none flex-col gap-1 py-4 pl-4 pr-3">
 					<div className="settings-title px-2 pb-3" style={{ fontSize: 16, fontWeight: 500 }}>
 						{t.settings}
 					</div>
 					{navItems.map((n) => (
 						<button
 							key={n.id}
-							className="flex h-[42px] items-center gap-2 rounded-xl px-3 text-left transition-colors"
+							data-active={section === n.id ? "true" : undefined}
+							className="isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"
 							style={{
-								paddingLeft: 8,
-								paddingRight: 10,
+								paddingLeft: 10,
+								paddingRight: 14,
 								fontSize: 14,
-								background: section === n.id ? "var(--dsw-active)" : "transparent",
-								color: section === n.id ? "var(--dsw-label-primary)" : "var(--dsw-label-secondary)",
-							}}
-							onMouseEnter={(e) => {
-								if (section !== n.id) e.currentTarget.style.background = "var(--dsw-hover)";
-							}}
-							onMouseLeave={(e) => {
-								if (section !== n.id) e.currentTarget.style.background = "transparent";
+								color: section === n.id ? "var(--dsw-bg-base)" : "var(--dsw-label-secondary)",
 							}}
 							onClick={() => setSection(n.id)}
 						>
-							{section === n.id ? <span style={{ color: "var(--dsw-accent)" }}>{n.icon}</span> : n.icon}
-							{n.label}
+							<span className="isx-menu-icon" style={{ display: "inline-flex" }}>{n.icon}</span>
+							<span className="isx-menu-shift">{n.label}</span>
 						</button>
 					))}
 				</div>
@@ -343,7 +337,7 @@ function GeneralSection({
 	);
 
 	const themes: { id: PebrelTheme; label: string; light: string; dark: string; accent: string }[] = [
-		{ id: "dsh", label: t.themeDsh, light: "#F9FAFB", dark: "#151517", accent: "#4176E6" },
+		{ id: "dsh", label: t.themeDsh, light: "#FFFFFF", dark: "#040405", accent: "#02DEFC" },
 		{ id: "silver-steel", label: t.themeSilverSteel, light: "#F3F4F6", dark: "#1A1C24", accent: "#94A3B8" },
 		{ id: "limestone-coal", label: t.themeLimestoneCoal, light: "#F0EFEB", dark: "#171717", accent: "#CEB27E" },
 		{ id: "linen-moss", label: t.themeLinenMoss, light: "#F2F2EC", dark: "#1E211E", accent: "#A3B3A3" },
@@ -388,13 +382,12 @@ function GeneralSection({
 					{themes.map((th) => (
 						<button
 							key={th.id}
-							className="flex flex-col items-center justify-center gap-1 transition-colors"
+							className="isx-card flex flex-col items-center justify-center gap-1"
 							style={{
 								flex: "1 1 150px",
 								padding: "20px 32px",
 								borderRadius: 20,
-								border: `0.5px solid ${theme === th.id ? "var(--dsw-border-strong)" : "var(--dsw-border-l4)"}`,
-								background: theme === th.id ? "var(--dsw-module-platform)" : "transparent",
+								background: theme === th.id ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
 								color: "var(--dsw-label-primary)",
 								fontSize: 14,
 								lineHeight: "22px",
@@ -402,7 +395,7 @@ function GeneralSection({
 							aria-pressed={theme === th.id}
 							onClick={() => pickTheme(th.id)}
 						>
-							<span className="flex items-center overflow-hidden rounded-md" style={{ border: "0.5px solid var(--dsw-border-l3)", width: 42, height: 20 }}>
+							<span className="flex items-center overflow-hidden rounded-md" style={{ border: "1px solid var(--dsw-border-l3)", width: 42, height: 20 }}>
 								<span style={{ background: th.light, flex: 1, height: "100%" }} />
 								<span style={{ background: th.dark, flex: 1, height: "100%" }} />
 							</span>
@@ -423,13 +416,12 @@ function GeneralSection({
 					] as { id: ThemeMode; label: string }[]).map((mode) => (
 						<button
 							key={mode.id}
-							className="flex flex-col items-center justify-center gap-1 transition-colors"
+							className="isx-card flex flex-col items-center justify-center gap-1"
 							style={{
 								flex: "1 1 120px",
 								padding: "16px 24px",
 								borderRadius: 20,
-								border: `0.5px solid ${themeMode === mode.id ? "var(--dsw-border-strong)" : "var(--dsw-border-l4)"}`,
-								background: themeMode === mode.id ? "var(--dsw-module-platform)" : "transparent",
+								background: themeMode === mode.id ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
 								color: "var(--dsw-label-primary)",
 								fontSize: 14,
 								lineHeight: "22px",
@@ -462,13 +454,12 @@ function GeneralSection({
 							<button
 								key={id}
 								type="button"
-								className="flex flex-col items-start gap-1 text-left transition-colors"
+								className="isx-card flex flex-col items-start gap-1 text-left"
 								style={{
 									flex: "1 1 150px",
 									padding: "12px 16px",
-									borderRadius: 14,
-									border: `0.5px solid ${active ? "var(--dsw-border-strong)" : "var(--dsw-border-l4)"}`,
-									background: active ? "var(--dsw-module-platform)" : "transparent",
+									borderRadius: 16,
+									background: active ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
 									color: "var(--dsw-label-primary)",
 									lineHeight: "18px",
 								}}
@@ -493,15 +484,14 @@ function GeneralSection({
 							<button
 								key={level}
 								type="button"
-								className="transition-colors disabled:opacity-50"
+								className="isx-card disabled:opacity-50"
 								// 即时样式不排队，速度对它没有意义：置灰，免得以为调了没反应
 								disabled={stream.style === "instant"}
 								style={{
 									flex: "1 1 84px",
 									padding: "10px 8px",
-									borderRadius: 12,
-									border: `0.5px solid ${active ? "var(--dsw-border-strong)" : "var(--dsw-border-l4)"}`,
-									background: active ? "var(--dsw-module-platform)" : "transparent",
+									borderRadius: 14,
+									background: active ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
 									color: active ? "var(--dsw-label-primary)" : "var(--dsw-label-secondary)",
 									fontSize: 13,
 								}}

@@ -406,40 +406,34 @@ export function SessionSidebar({
 		return (
 			<div
 				key={s.path}
-				className="group relative flex items-center rounded-xl transition-colors"
+				data-active={selected ? "true" : undefined}
+				className="isx-menu-item group relative flex items-center rounded-xl"
 				style={{
-					background: selected ? "var(--dsw-active)" : "transparent",
 					paddingLeft: indented ? 38 : 10,
-					paddingRight: 8,
+					paddingRight: 14,
 					paddingTop: 6,
 					paddingBottom: 6,
 					// 选中/悬停框之间留缝，不互相粘连
 					marginTop: 2,
 					marginBottom: 2,
 				}}
-				onMouseEnter={(e) => {
-					if (!selected) e.currentTarget.style.background = "var(--dsw-hover)";
-				}}
-				onMouseLeave={(e) => {
-					if (!selected) e.currentTarget.style.background = "transparent";
-				}}
 			>
 				{s.streaming && <span className="state-dot running" style={{ position: "absolute", left: indented ? 26 : 6, width: 6, height: 6 }} />}
 				<button className="flex min-w-0 flex-1 flex-col items-start text-left" onClick={() => onOpen(s.path)}>
 					<span
-						className="w-full truncate"
-						style={{ fontSize: 13, color: selected ? "var(--dsw-accent)" : "var(--dsw-label-primary)" }}
+						className="isx-menu-shift w-full truncate"
+						style={{ fontSize: 13, fontWeight: selected ? 500 : 400 }}
 					>
 						{s.name || s.firstMessage || "(untitled)"}
 					</span>
 					{s.streaming && s.lastStep && (
-						<span className="w-full truncate" style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", lineHeight: "16px" }} title={s.lastStep}>
+						<span className="isx-menu-sub w-full truncate" style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", lineHeight: "16px" }} title={s.lastStep}>
 							{s.lastStep}
 						</span>
 					)}
 				</button>
 				<span
-					className={`flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
+					className={`isx-menu-sub flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
 					style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}
 				>
 					{relTime(s.modified, lang)}
@@ -525,42 +519,37 @@ export function SessionSidebar({
 		return (
 			<div key={g.cwd}>
 				<div
-					className="group relative flex items-center rounded-xl transition-colors"
+					className="isx-menu-item group relative flex items-center rounded-xl"
 					style={{
 						background: open || isCurrent ? "var(--dsw-hover)" : "transparent",
 						paddingLeft: 10,
-						paddingRight: 6,
+						paddingRight: 12,
 						paddingTop: 7,
 						paddingBottom: 7,
 						// 悬停/展开框之间留缝，不互相粘连（与会话行一致）
 						marginTop: 2,
 						marginBottom: 2,
 					}}
-					onMouseEnter={(e) => {
-						if (!(open || isCurrent)) e.currentTarget.style.background = "var(--dsw-hover)";
-					}}
-					onMouseLeave={(e) => {
-						if (!(open || isCurrent)) e.currentTarget.style.background = "transparent";
-					}}
 				>
 					<button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => toggleOpen(g.cwd)} title={displayName}>
 						<span
+							className="isx-menu-sub"
 							style={{
 								color: "var(--dsw-label-tertiary)",
 								display: "inline-flex",
 								transform: open ? "rotate(90deg)" : "none",
-								transition: "transform 120ms var(--ds-ease-in-out)",
+								transition: "transform 180ms var(--isx-ease)",
 								flex: "none",
 							}}
 						>
 							<IconTriangleRightFill14 size={11} />
 						</span>
-						<span style={{ color: isCurrent ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)", display: "inline-flex", flex: "none" }}>
+						<span className="isx-menu-icon" style={{ color: isCurrent ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)", display: "inline-flex", flex: "none" }}>
 							{open ? <IconFolderOpenOutline16 size={15} /> : <IconFolderClose16 size={15} />}
 						</span>
 						<span
-							className="truncate"
-							style={{ fontSize: 13, color: isCurrent ? "var(--dsw-accent)" : "var(--dsw-label-primary)" }}
+							className="isx-menu-shift truncate"
+							style={{ fontSize: 13, fontWeight: isCurrent ? 500 : 400 }}
 						>
 							{displayName}
 						</span>
@@ -661,7 +650,7 @@ export function SessionSidebar({
 				</button>
 			</div>
 
-			{/* 新会话（dsh .newSession） */}
+			{/* 新会话（Iconsax .button-gradient 光晕胶囊） */}
 			<div className="px-3 pt-1">
 				<button className="btn-new-session w-full" onClick={onNew}>
 					<IconNewChatOutline16 size={14} />
@@ -669,11 +658,11 @@ export function SessionSidebar({
 				</button>
 			</div>
 
-			{/* 工作区标题行 / 搜索框（互替，照 dsh） */}
+			{/* 工作区标题行 / 搜索框（互替，照 Iconsax .con-search） */}
 			{searchOpen ? (
 				<div className="px-3 pb-1 pt-3">
-					<div className="flex items-center gap-2 rounded-xl px-2.5 py-2" style={{ background: "var(--dsw-hover)" }}>
-						<IconSearchOutline16 size={14} style={{ color: "var(--dsw-label-caption)" }} />
+					<div className="isx-search flex items-center gap-2 px-3 py-2">
+						<IconSearchOutline16 size={14} className="isx-search-icon" style={{ color: "var(--dsw-label-caption)", flex: "none" }} />
 						<input
 							autoFocus
 							value={q}
@@ -717,7 +706,7 @@ export function SessionSidebar({
 								</div>
 								<MenuCheck label={t.byWorkspace} checked={groupBy === "workspace"} onClick={() => { setGroupBy("workspace"); setViewMenu(false); }} />
 								<MenuCheck label={t.flatList} checked={groupBy === "flat"} onClick={() => { setGroupBy("flat"); setViewMenu(false); }} />
-								<div className="my-1.5" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }} />
+								<div className="my-1.5" style={{ borderTop: "1px solid var(--dsw-border-l2)" }} />
 								<div className="px-3 pb-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 									{t.sortBy}
 								</div>
@@ -766,19 +755,17 @@ export function SessionSidebar({
 					[...workspaceGroups, ...(ungroupedGroup ? [ungroupedGroup] : [])].map((g) => (
 						<div
 							key={g.cwd}
-							className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 transition-colors"
-							onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-							onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+							className="isx-menu-item flex cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-2"
 							onClick={() => {
 								setSearchOpen(false);
 								toggleOpen(g.cwd);
 							}}
 							title={g.cwd === "__ungrouped__" ? (t.ungrouped || "未分组") : g.cwd}
 						>
-							<span style={{ color: "var(--dsw-label-tertiary)", display: "inline-flex" }}>
+							<span className="isx-menu-icon" style={{ color: "var(--dsw-label-tertiary)", display: "inline-flex" }}>
 								<IconFolderClose16 size={15} />
 							</span>
-							<span className="truncate" style={{ fontSize: 13 }}>
+							<span className="isx-menu-shift truncate" style={{ fontSize: 13 }}>
 								{g.cwd === "__ungrouped__"
 									? (t.ungrouped || "未分组")
 									: (getWorkspaceName ? getWorkspaceName(g.cwd) : basename(g.cwd))}
@@ -839,25 +826,26 @@ export function SessionSidebar({
 					<div className="mt-2 border-t pt-2" style={{ borderColor: "var(--dsw-border-l2)" }}>
 						<button
 							type="button"
-							className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors"
+							className="isx-menu-item flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left"
 							aria-expanded={archiveOpen}
 							onClick={() => setArchiveOpen((open) => !open)}
-							onMouseEnter={(event) => (event.currentTarget.style.background = "var(--dsw-hover)")}
-							onMouseLeave={(event) => (event.currentTarget.style.background = "transparent")}
 						>
 							<span
+								className="isx-menu-sub"
 								style={{
 									display: "inline-flex",
 									transform: archiveOpen ? "rotate(90deg)" : "none",
-									transition: "transform 120ms var(--ds-ease-in-out)",
+									transition: "transform 180ms var(--isx-ease)",
 									color: "var(--dsw-label-tertiary)",
 								}}
 							>
 								<IconTriangleRightFill14 size={11} />
 							</span>
-							<IconArchiveOutline20 size={15} style={{ color: "var(--dsw-label-tertiary)" }} />
-							<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13 }}>{t.archivedSessions}</span>
-							<span style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{archivedSessions.length}</span>
+							<span className="isx-menu-icon" style={{ display: "inline-flex", color: "var(--dsw-label-tertiary)" }}>
+								<IconArchiveOutline20 size={15} />
+							</span>
+							<span className="isx-menu-shift min-w-0 flex-1 truncate" style={{ fontSize: 13 }}>{t.archivedSessions}</span>
+							<span className="isx-menu-sub pr-2" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{archivedSessions.length}</span>
 						</button>
 						{archiveOpen && archivedSessions.map((session) => sessionRow(session, true, true))}
 					</div>
@@ -867,14 +855,14 @@ export function SessionSidebar({
 			{/* 设置固定左下角 */}
 			<div className="px-3 py-2.5">
 				<button
-					className="flex w-full items-center gap-2.5 rounded-xl px-4 py-2 text-left transition-colors"
+					className="isx-menu-item flex w-full items-center gap-2.5 rounded-xl px-4 py-2 text-left"
 					style={{ color: "var(--dsw-label-secondary)" }}
-					onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-					onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
 					onClick={onOpenSettings}
 				>
-					<IconSettingsOutline16 size={16} />
-					<span style={{ fontSize: "var(--dsh-content-font-size)" }}>{t.settings}</span>
+					<span className="isx-menu-icon" style={{ display: "inline-flex" }}>
+						<IconSettingsOutline16 size={16} />
+					</span>
+					<span className="isx-menu-shift" style={{ fontSize: "var(--dsh-content-font-size)" }}>{t.settings}</span>
 				</button>
 			</div>
 
@@ -1038,14 +1026,13 @@ function MenuItem({
 }) {
 	return (
 		<button
-			className="mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
+			data-danger={danger ? "true" : undefined}
+			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-lg px-3 py-2 text-left"
 			style={{ fontSize: 13, color: danger ? "var(--dsw-danger)" : "var(--dsw-label-primary)" }}
-			onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-			onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
 			onClick={onClick}
 		>
-			{icon}
-			{label}
+			<span className="isx-menu-icon" style={{ display: "inline-flex" }}>{icon}</span>
+			<span className="isx-menu-shift">{label}</span>
 		</button>
 	);
 }
@@ -1053,13 +1040,12 @@ function MenuItem({
 function MenuCheck({ label, checked, onClick }: { label: string; checked: boolean; onClick: () => void }) {
 	return (
 		<button
-			className="mx-1 flex w-[calc(100%-8px)] items-center justify-between rounded-lg pl-5 pr-3 py-2 text-left transition-colors"
+			data-active={checked ? "true" : undefined}
+			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center justify-between rounded-lg pl-4 pr-4 py-2 text-left"
 			style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}
-			onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-			onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
 			onClick={onClick}
 		>
-			{label}
+			<span className="isx-menu-shift">{label}</span>
 			{checked && <IconCheckOutline14 size={13} />}
 		</button>
 	);

@@ -100,10 +100,10 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 
 	return (
 		<div ref={ref} className="relative">
-			<button className="icon-btn" style={{ width: 28, height: 28 }} title={usageLabel} aria-label={usageLabel} onClick={() => setOpen((o) => !o)}>
+			<button className="icon-btn isx-ring-btn" style={{ width: 28, height: 28 }} title={usageLabel} aria-label={usageLabel} onClick={() => setOpen((o) => !o)}>
 				<svg width="14" height="14" viewBox="0 0 14 14">
 					<circle cx="7" cy="7" r={r} fill="none" stroke="var(--dsw-border-l3)" strokeWidth="2" />
-					<circle cx="7" cy="7" r={r} fill="none" stroke={p > 85 ? "var(--dsw-warn)" : "var(--dsw-accent)"} strokeWidth="2"
+					<circle cx="7" cy="7" r={r} fill="none" stroke={p > 85 ? "var(--dsw-warn)" : "var(--dsw-label-primary)"} strokeWidth="2"
 						strokeDasharray={`${circumference * Math.max(0, Math.min(100, p)) / 100} ${circumference}`} transform="rotate(-90 7 7)" strokeLinecap="round" />
 				</svg>
 			</button>

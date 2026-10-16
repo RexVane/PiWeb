@@ -158,13 +158,11 @@ export function ModelSelector({
 						<div className="py-1">
 							<button
 								type="button"
-								className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors"
+								className="isx-menu-item flex w-full items-center gap-2 px-3 py-2 text-left"
 								style={{ color: "var(--dsw-label-secondary)" }}
-								onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-								onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
 								onClick={() => setPane("model")}
 							>
-								<IconChevronLeft14 size={14} /> {t.thinking}
+								<IconChevronLeft14 size={14} /> <span className="isx-menu-shift">{t.thinking}</span>
 							</button>
 							{thinkingLevels.length === 0 && (
 								<div className="px-4 py-3" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
@@ -179,21 +177,16 @@ export function ModelSelector({
 										type="button"
 										role="menuitemradio"
 										aria-checked={selected}
-										className="flex w-full items-center justify-between px-4 py-2 text-left transition-colors"
-										onMouseEnter={(e) => {
-											if (!selected) e.currentTarget.style.background = "var(--dsw-hover)";
-										}}
-										onMouseLeave={(e) => {
-											if (!selected) e.currentTarget.style.background = "transparent";
-										}}
+										data-active={selected ? "true" : undefined}
+										className="isx-menu-item flex w-full items-center justify-between px-4 py-2 text-left"
 										onClick={() => {
 											onSelectLevel(lv);
 											setOpen(false);
 										}}
 									>
-										<span style={{ fontSize: 14, color: "var(--dsw-label-primary)" }}>{lv}</span>
+										<span className="isx-menu-shift" style={{ fontSize: 14 }}>{lv}</span>
 										{selected && (
-											<span style={{ display: "inline-flex", color: "var(--dsw-label-primary)" }}>
+											<span className="pr-2" style={{ display: "inline-flex" }}>
 												<IconCheckOutline14 size={14} />
 											</span>
 										)}
@@ -207,11 +200,18 @@ export function ModelSelector({
 						<div className="flex min-h-0 flex-col">
 							<div ref={listRef} className="max-h-[340px] overflow-y-auto py-1">
 								{defaultOption && (
-									<button type="button" role="menuitemradio" aria-checked={defaultOption.selected} data-selected={defaultOption.selected}
-										className="flex min-h-10 w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left"
-										style={{ fontSize: 13, background: defaultOption.selected ? "var(--dsw-active)" : undefined }}
-										onClick={() => { defaultOption.onSelect(); setOpen(false); }}>
-										{defaultOption.label}{defaultOption.selected && <IconCheckOutline14 size={14} />}
+									<button
+										type="button"
+										role="menuitemradio"
+										aria-checked={defaultOption.selected}
+										data-selected={defaultOption.selected}
+										data-active={defaultOption.selected ? "true" : undefined}
+										className="isx-menu-item flex min-h-10 w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
+										style={{ fontSize: 13 }}
+										onClick={() => { defaultOption.onSelect(); setOpen(false); }}
+									>
+										<span className="isx-menu-shift">{defaultOption.label}</span>
+										{defaultOption.selected && <span className="pr-2" style={{ display: "inline-flex" }}><IconCheckOutline14 size={14} /></span>}
 									</button>
 								)}
 								{groups.length === 0 && (
@@ -235,26 +235,20 @@ export function ModelSelector({
 													key={`${m.provider}/${m.id}`}
 													type="button"
 													role="menuitemradio"
-											aria-checked={selected}
-											data-selected={selected}
-											className="flex min-h-10 w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left transition-colors"
-											style={{ background: selected ? "var(--dsw-active)" : "transparent" }}
-											onMouseEnter={(e) => {
-												if (!selected) e.currentTarget.style.background = "var(--dsw-hover)";
-											}}
-											onMouseLeave={(e) => {
-												if (!selected) e.currentTarget.style.background = "transparent";
-											}}
+													aria-checked={selected}
+													data-selected={selected}
+													data-active={selected ? "true" : undefined}
+													className="isx-menu-item flex min-h-10 w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
 													onClick={() => {
 														onSelectModel(m.provider, m.id);
 														setOpen(false);
 													}}
 												>
-													<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
+													<span className="isx-menu-shift min-w-0 flex-1 truncate" style={{ fontSize: 14, fontWeight: 500 }}>
 														{m.name}
 													</span>
 													{selected && (
-														<span style={{ display: "inline-flex", color: "var(--dsw-label-primary)", flex: "none" }}>
+														<span className="pr-2" style={{ display: "inline-flex", flex: "none" }}>
 															<IconCheckOutline14 size={16} />
 														</span>
 													)}
@@ -269,18 +263,16 @@ export function ModelSelector({
 							{hasModel && !modelOnly && (thinkingLevels.length > 1 ? (
 								<button
 									type="button"
-									className="mt-1 flex w-full items-center justify-between gap-3 border-t px-3 pb-1 pt-2 text-left transition-colors"
-									style={{ borderColor: "var(--dsw-border-l1)" }}
-									onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-									onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+									className="isx-menu-item mt-1 flex w-full items-center justify-between gap-3 border-t px-3 pb-1.5 pt-2 text-left"
+									style={{ borderColor: "var(--dsw-border-l2)" }}
 									onClick={() => setPane("effort")}
 								>
-									<span style={{ fontSize: 13.5, color: "var(--dsw-label-secondary)" }}>{t.thinking}</span>
-									<span className="flex min-w-0 items-center gap-1">
+									<span className="isx-menu-shift" style={{ fontSize: 13.5 }}>{t.thinking}</span>
+									<span className="isx-menu-sub flex min-w-0 items-center gap-1 pr-2">
 										<span className="truncate" style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>
 											{thinkingLevel ?? t.thinkingOff}
 										</span>
-										<IconChevronRight14 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+										<IconChevronRight14 size={14} style={{ flex: "none" }} />
 									</span>
 								</button>
 							) : (
