@@ -26,6 +26,7 @@ import {
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
 import { languageForPath } from "@/lib/highlight";
+import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
@@ -927,6 +928,8 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 		.map((c) => c.text)
 		.join("\n");
 	const images = message.content.filter((content) => content.type === "image");
+	// /skill:name 会被 pi 展开成一整段 SKILL.md 正文；只显示技能名，不铺开正文（也不显示参数）
+	const skill = useMemo(() => parseExpandedSkill(text), [text]);
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(text);
 	const canEdit = Boolean(onEditMessage && message.id && text);
@@ -988,10 +991,20 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 					))}
 				</div>
 			)}
-			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
-			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
+			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本。
+			    /skill:name 展开后的整段 SKILL.md 正文不铺开显示，只留一个技能名标签。 */}
+			{text && (skill ? (
+				<div className="msg-user-bubble">
+					<span className="pw-skill-chip" title={skill.name}>
+						<span className="pw-skill-chip-mark" aria-hidden="true">/</span>
+						{skill.name}
+					</span>
+				</div>
+			) : (
+				<div className="msg-user-bubble"><Markdown text={text} /></div>
+			))}
 			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
-			{text && (
+			{text && !skill && (
 				<MessageActions
 					text={text}
 					clockStart={message.timestamp !== undefined}

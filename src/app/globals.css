@@ -1556,6 +1556,28 @@ body[data-ds-dark-theme] {
 	border-color: var(--dsw-border-l3);
 }
 
+/* /skill:name 展开后的技能标签：不铺开 SKILL.md 正文，只留一枚带色的技能名。
+   颜色取主题强调色，与普通用户消息气泡（中性底色）区分开。 */
+.pw-skill-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-family: var(--font-mono);
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.5;
+	color: var(--dsw-accent);
+	background: var(--dsw-accent-soft);
+	border: 1px solid var(--dsw-accent);
+	border-radius: 8px;
+	padding: 1px 9px;
+	white-space: nowrap;
+}
+.pw-skill-chip-mark {
+	opacity: 0.55;
+	font-weight: 400;
+}
+
 /* 消息操作图标行：常显低透明度，悬停变亮，纯净无框 */
 .msg-actions {
 	display: inline-flex;
