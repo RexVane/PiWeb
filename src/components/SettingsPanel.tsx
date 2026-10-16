@@ -188,13 +188,13 @@ function GeneralSection({
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
-	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number; keepRecentTokens: number }; retry: { enabled: boolean; maxRetries: number; baseDelayMs: number } } | null>(null);
+	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number }; retry: { enabled: boolean; maxRetries: number } } | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
 	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
 	const [settingsLoading, setSettingsLoading] = useState(true);
 	const [settingsSaving, setSettingsSaving] = useState(false);
 	const [settingsError, setSettingsError] = useState<"load" | "save" | null>(null);
-	const [numberDrafts, setNumberDrafts] = useState({ reserveTokens: "", keepRecentTokens: "", maxRetries: "", baseDelayMs: "" });
+	const [numberDrafts, setNumberDrafts] = useState({ reserveTokens: "", maxRetries: "" });
 
 	const loadRemoteSettings = async () => {
 		setSettingsLoading(true);
@@ -215,9 +215,7 @@ function GeneralSection({
 			setPiSettings(ps.value);
 			setNumberDrafts({
 				reserveTokens: String(ps.value.compaction.reserveTokens),
-				keepRecentTokens: String(ps.value.compaction.keepRecentTokens),
 				maxRetries: String(ps.value.retry.maxRetries),
-				baseDelayMs: String(ps.value.retry.baseDelayMs),
 			});
 		} else setPiSettings(null);
 		if (health.status === "fulfilled" && health.value?.piWeb) setVersions({ piWeb: health.value.piWeb, piEngine: health.value.piEngine });
@@ -294,7 +292,7 @@ function GeneralSection({
 		}
 	};
 
-	const commitNumber = async (section: "compaction" | "retry", field: "reserveTokens" | "keepRecentTokens" | "maxRetries" | "baseDelayMs") => {
+	const commitNumber = async (section: "compaction" | "retry", field: "reserveTokens" | "maxRetries") => {
 		if (!piSettings) return;
 		const raw = numberDrafts[field].trim();
 		const value = Number(raw);
@@ -305,7 +303,7 @@ function GeneralSection({
 		if (value === (piSettings[section] as unknown as Record<string, number>)[field]) return;
 		await patchPiSettings({ [section]: { [field]: value } });
 	};
-	const numberInput = (section: "compaction" | "retry", field: "reserveTokens" | "keepRecentTokens" | "maxRetries" | "baseDelayMs", title: string) => (
+	const numberInput = (section: "compaction" | "retry", field: "reserveTokens" | "maxRetries", title: string) => (
 		<input
 			type="number"
 			min={0}
@@ -432,7 +430,6 @@ function GeneralSection({
 						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.compaction.enabled ? 18 : 2 }} />
 					</button>
 					{numberInput("compaction", "reserveTokens", t.reserveTokens)}
-					{numberInput("compaction", "keepRecentTokens", t.keepRecentTokens)}
 				</div>
 			</Row>
 			<Row title={t.autoRetry} desc={t.autoRetryDesc}>
@@ -441,7 +438,6 @@ function GeneralSection({
 						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.retry.enabled ? 18 : 2 }} />
 					</button>
 					{numberInput("retry", "maxRetries", t.maxRetries)}
-					{numberInput("retry", "baseDelayMs", t.baseDelayMs)}
 				</div>
 			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
