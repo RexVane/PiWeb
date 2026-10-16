@@ -94,8 +94,27 @@
 .answer { min-width: 0; font-size: var(--piweb-chat-font-size, var(--dsh-content-font-size)); line-height: 1.75; overflow-wrap: anywhere; }
 .answer :global(.md) { font-size: inherit; }
 .answer :global(.md pre), .answer :global(.md table) { max-width: 100%; }
-.notice, .waiting { font-size: 12px; line-height: 1.7; color: var(--dsw-label-tertiary); }
-.notice { margin: 4px 0 10px; }
+.notice { font-size: 12px; line-height: 1.7; color: var(--dsw-label-tertiary); margin: 4px 0 10px; }
+.waiting {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	line-height: 1.7;
+	color: var(--dsw-label-secondary);
+	animation: isx-waiting-pulse 1.8s var(--isx-ease) infinite;
+}
+@keyframes isx-waiting-pulse {
+	0%, 100% {
+		opacity: 0.65;
+		transform: scale(0.99);
+	}
+	50% {
+		opacity: 1;
+		transform: scale(1.01);
+		color: var(--dsw-label-primary);
+	}
+}
 .error, .storageError { font-size: 12px; line-height: 1.7; color: var(--dsw-danger); overflow-wrap: anywhere; }
 .error button { margin-left: 10px; text-decoration: underline; }
 .storageError { margin: 0; padding: 4px 14px; }
@@ -170,5 +189,16 @@
 }
 .send:active:not(:disabled) {
 	transform: scale(0.9);
+}
+.send[data-busy="true"] {
+	background: rgb(226, 22, 42);
+	color: #ffffff;
+	box-shadow: 0 0 14px rgba(226, 22, 42, 0.45);
+	animation: isx-stop-breathe 2s ease-in-out infinite;
+}
+.send[data-busy="true"]:hover:not(:disabled) {
+	background: rgb(240, 30, 52);
+	transform: scale(1.1);
+	box-shadow: 0 0 22px rgba(226, 22, 42, 0.75);
 }
 .send:disabled { opacity: 0.3; cursor: default; }

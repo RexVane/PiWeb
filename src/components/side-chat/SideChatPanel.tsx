@@ -182,7 +182,7 @@ export function SideChatPanel({ sessionId, ready = true, mainModel, models = [],
 							model={selectedModel ? { provider: selectedModel.provider, id: selectedModel.id } : null}
 						/>
 					</div>
-					{busy ? <button type="button" className={styles.send} title={t.stop} aria-label={t.stop} onClick={() => sessionId && store.stop(sessionId)}><IconStopFill16 size={15} /></button>
+					{busy ? <button type="button" className={styles.send} data-busy="true" title={t.stop} aria-label={t.stop} onClick={() => sessionId && store.stop(sessionId)}><IconStopFill16 size={15} /></button>
 						: <button type="submit" className={styles.send} title={t.send} aria-label={t.send} disabled={!canSend || !thread?.draft.trim()}><IconSendArrowUp14 size={16} /></button>}
 				</div>
 			</form>

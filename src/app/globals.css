@@ -716,6 +716,43 @@ textarea::placeholder {
 	transform: translateY(-2px) scale(0.9);
 }
 
+/* 运行中停止按钮（Iconsax 红色高反差呼吸光晕） */
+.btn-primary-circle.isx-btn-stop,
+.btn-primary-circle[data-streaming="true"] {
+	background: rgb(226, 22, 42);
+	color: #ffffff;
+	box-shadow: 0 0 16px rgba(226, 22, 42, 0.45), 0 0 28px rgba(226, 22, 42, 0.25);
+	animation: isx-stop-breathe 2s ease-in-out infinite;
+}
+@keyframes isx-stop-breathe {
+	0%, 100% {
+		transform: translateY(-2px) scale(1);
+		box-shadow: 0 0 14px rgba(226, 22, 42, 0.4);
+	}
+	50% {
+		transform: translateY(-2px) scale(1.06);
+		box-shadow: 0 0 22px rgba(226, 22, 42, 0.65), 0 0 32px rgba(226, 22, 42, 0.35);
+	}
+}
+.btn-primary-circle.isx-btn-stop:hover:not(:disabled),
+.btn-primary-circle[data-streaming="true"]:hover:not(:disabled) {
+	background: rgb(240, 30, 52);
+	transform: translateY(-2px) scale(1.1);
+	box-shadow: 0 0 24px rgba(226, 22, 42, 0.75);
+}
+.btn-ghost-circle.isx-btn-stop {
+	color: rgb(226, 22, 42);
+	border-color: rgba(226, 22, 42, 0.4);
+	background: rgba(226, 22, 42, 0.08);
+	transition: all 0.24s var(--isx-ease);
+}
+.btn-ghost-circle.isx-btn-stop:hover {
+	color: #ffffff;
+	background: rgb(226, 22, 42);
+	border-color: rgb(226, 22, 42);
+	box-shadow: 0 0 16px rgba(226, 22, 42, 0.55);
+}
+
 /* 排队中的消息：输入卡上方一列（Claude Code 的 queued messages 位置） */
 .pw-queue {
 	display: flex;
@@ -1035,8 +1072,9 @@ textarea::placeholder {
 	flex: none;
 }
 .state-dot.running {
-	background: var(--dsw-deepseek-450);
-	animation: dot-breathe 1s ease-in-out infinite;
+	background: #02defc;
+	box-shadow: 0 0 8px rgba(2, 222, 252, 0.7);
+	animation: isx-dot-ripple 1.6s var(--isx-ease) infinite;
 }
 .state-dot.pending {
 	background: var(--dsw-warn);
@@ -1044,6 +1082,20 @@ textarea::placeholder {
 }
 .state-dot.done {
 	background: var(--dsw-success);
+}
+@keyframes isx-dot-ripple {
+	0% {
+		transform: scale(0.9);
+		box-shadow: 0 0 4px rgba(2, 222, 252, 0.6), 0 0 0 0 rgba(2, 222, 252, 0.4);
+	}
+	50% {
+		transform: scale(1.15);
+		box-shadow: 0 0 10px rgba(2, 222, 252, 0.9), 0 0 0 4px rgba(2, 222, 252, 0);
+	}
+	100% {
+		transform: scale(0.9);
+		box-shadow: 0 0 4px rgba(2, 222, 252, 0.6), 0 0 0 0 rgba(2, 222, 252, 0);
+	}
 }
 @keyframes dot-breathe {
 	0%,
@@ -1218,43 +1270,51 @@ textarea::placeholder {
    已经显示过的内容就把入场动画重播一遍——那正是输出时「闪烁几下」的来源；
    收窄到 .pw-stream-tail 内部后，升级进来的块不再带动画，视觉无缝。 */
 .pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
-	animation: pw-stream-enter 240ms ease-out both;
+	animation: pw-stream-enter 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes pw-stream-enter {
 	from {
 		opacity: 0;
-		transform: translateY(2px);
+		transform: translateY(3px);
+		filter: blur(1.5px);
 	}
 	to {
 		opacity: 1;
 		transform: none;
+		filter: blur(0);
 	}
 }
 
-/* 打字光标：挂在尾巴最后一个元素的行内末尾（不会另起一行）。
-   代码块和列表是块级容器，挂在外层会落到下一行，改挂到代码文字 / 最后一项的末尾 */
+/* 打字光标（Iconsax 发光信标光标：柔和霓虹渐变 + 弹性呼吸脉冲） */
 .pw-stream-caret .pw-stream-tail > :last-child:not(.md-code-block, ul, ol)::after,
 .pw-stream-caret .pw-stream-tail > .md-code-block:last-child code::after,
 .pw-stream-caret .pw-stream-tail > :is(ul, ol):last-child > li:last-child::after {
 	content: "";
 	display: inline-block;
-	width: 2px;
+	width: 2.5px;
 	height: 1.05em;
-	margin-left: 2px;
-	vertical-align: -0.18em;
-	border-radius: 1px;
-	background: var(--dsw-accent);
-	animation: pw-stream-caret 1.1s steps(2, start) infinite;
+	margin-left: 3px;
+	vertical-align: -0.16em;
+	border-radius: 2px;
+	background: linear-gradient(180deg, #02defc, #fc0197);
+	box-shadow: 0 0 8px rgba(2, 222, 252, 0.65);
+	animation: isx-stream-caret 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
-@keyframes pw-stream-caret {
+@keyframes isx-stream-caret {
+	0%, 100% {
+		opacity: 1;
+		transform: scaleY(1);
+	}
 	50% {
-		opacity: 0;
+		opacity: 0.18;
+		transform: scaleY(0.9);
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
 	.pw-stream[data-stream-style="fade"] .pw-stream-tail > * {
 		animation: none;
+		filter: none;
 	}
 	.pw-stream-caret .pw-stream-tail > :last-child:not(.md-code-block, ul, ol)::after,
 	.pw-stream-caret .pw-stream-tail > .md-code-block:last-child code::after,
@@ -1482,11 +1542,22 @@ body[data-ds-dark-theme] {
 	transform: scale(1.14);
 }
 .pw-step[data-tone="live"] .pw-icon {
-	color: var(--dsw-accent);
-	animation: dot-breathe 1.4s ease-in-out infinite;
+	color: var(--dsw-label-primary);
+	animation: isx-icon-pulse 1.8s var(--isx-ease) infinite;
+}
+@keyframes isx-icon-pulse {
+	0%, 100% {
+		transform: scale(1);
+		filter: drop-shadow(0 0 4px rgba(2, 222, 252, 0.4)) drop-shadow(0 0 8px rgba(252, 1, 151, 0.2));
+	}
+	50% {
+		transform: scale(1.18);
+		filter: drop-shadow(0 0 8px rgba(2, 222, 252, 0.75)) drop-shadow(0 0 16px rgba(252, 1, 151, 0.5));
+	}
 }
 .pw-step[data-tone="fail"] .pw-icon {
 	color: var(--dsw-danger);
+	filter: drop-shadow(0 0 6px rgba(226, 22, 42, 0.45));
 }
 .pw-step[data-tone="warn"] .pw-icon {
 	color: var(--dsw-warn);
@@ -1499,14 +1570,26 @@ body[data-ds-dark-theme] {
 		transform: rotate(360deg);
 	}
 }
-/* π 记号：工作指示的图标 */
+/* π 记号：工作指示的图标（Iconsax 天体律动脉冲） */
 .pw-pi {
+	display: inline-block;
 	font-family: var(--font-mono);
 	font-size: 15px;
 	font-weight: 600;
 	line-height: 1;
 	transform: translateY(-1px);
-	color: var(--dsw-accent);
+	color: var(--dsw-label-primary);
+	animation: isx-pi-glow 2.2s ease-in-out infinite;
+}
+@keyframes isx-pi-glow {
+	0%, 100% {
+		filter: drop-shadow(0 0 2px rgba(2, 222, 252, 0.25));
+		transform: translateY(-1px) scale(1);
+	}
+	50% {
+		filter: drop-shadow(0 0 8px rgba(2, 222, 252, 0.7)) drop-shadow(0 0 14px rgba(252, 1, 151, 0.4));
+		transform: translateY(-1px) scale(1.12);
+	}
 }
 .pw-body {
 	min-width: 0;
@@ -1591,37 +1674,85 @@ button.pw-line:hover .pw-chev {
 	margin-left: 4px;
 }
 
-/* 闪光渐变（进行中的思考 / 命令 / 状态词） */
+/* 进行中的步骤高亮容器（Iconsax 胶囊光环微动效） */
+.pw-step[data-tone="live"] .pw-line {
+	background: var(--dsw-hover);
+	padding: 0 10px;
+	margin: 0 -10px;
+	border-radius: 999px;
+	box-shadow: inset 0 0 0 1px var(--dsw-border-l1);
+	animation: isx-live-row-aura 3s ease-in-out infinite;
+}
+@keyframes isx-live-row-aura {
+	0%, 100% {
+		box-shadow: inset 0 0 0 1px var(--dsw-border-l2);
+	}
+	50% {
+		box-shadow: inset 0 0 0 1px var(--dsw-label-tertiary), 0 0 14px rgba(2, 222, 252, 0.12);
+	}
+}
+.pw-step[data-tone="live"] .pw-arg {
+	color: var(--dsw-label-primary);
+	font-weight: 500;
+}
+
+/* 闪光渐变（进行中的思考 / 命令 / 状态词：Iconsax 6 色高反差金属流光） */
 .pw-shimmer {
 	flex: none;
-	/* DeepSeek 式的蓝色渐变闪光：强调色为底，高光扫过 */
-	background: linear-gradient(90deg, var(--dsw-accent) 0%, var(--pw-shimmer-hi) 35%, var(--dsw-accent) 70%);
-	background-size: 220% 100%;
+	background: linear-gradient(
+		90deg,
+		var(--dsw-label-secondary) 0%,
+		var(--dsw-label-primary) 18%,
+		#02defc 38%,
+		#ffffff 50%,
+		#fc0197 62%,
+		var(--dsw-label-primary) 82%,
+		var(--dsw-label-secondary) 100%
+	);
+	background-size: 260% 100%;
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
-	animation: pw-shimmer 2.2s linear infinite;
+	font-weight: 500;
+	animation: pw-shimmer 2s linear infinite;
 }
 @keyframes pw-shimmer {
 	from {
-		background-position: 120% 0;
+		background-position: 130% 0;
 	}
 	to {
-		background-position: -100% 0;
+		background-position: -130% 0;
 	}
 }
 
-/* 进行中的思考尾巴：两行截断 */
+/* 进行中的思考尾巴：两行截断 + Iconsax 神经流光左侧指示线 */
 .pw-tail {
-	margin: -4px 0 5px;
+	position: relative;
+	margin: 2px 0 6px;
+	padding: 4px 10px 4px 12px;
 	font-size: var(--piweb-chat-font-s);
-	line-height: 1.5;
-	color: var(--dsw-label-caption);
+	line-height: 1.55;
+	color: var(--dsw-label-secondary);
 	word-break: break-word;
 	display: -webkit-box;
 	-webkit-line-clamp: 2;
 	-webkit-box-orient: vertical;
 	overflow: hidden;
+	border-left: 2px solid;
+	border-image: linear-gradient(to bottom, #02defc, #fc0197, transparent) 1;
+	background: linear-gradient(90deg, var(--dsw-hover) 0%, transparent 80%);
+	border-radius: 0 8px 8px 0;
+	animation: isx-tail-stream 2.4s ease-in-out infinite alternate;
+}
+@keyframes isx-tail-stream {
+	0% {
+		border-image: linear-gradient(to bottom, #02defc, #fc0197, transparent) 1;
+		color: var(--dsw-label-tertiary);
+	}
+	100% {
+		border-image: linear-gradient(to bottom, #7ffe00, #02defc, transparent) 1;
+		color: var(--dsw-label-secondary);
+	}
 }
 
 /* ⎿ 结果预览 */

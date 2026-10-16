@@ -894,13 +894,23 @@ export function ChatInput({
 
 					{/* 停止 / 发送圆钮：运行中没草稿 → 停止；运行中有草稿 → 幽灵停止钮 + 发送（发送即按设置插话 / 排队） */}
 					{isStreaming && !hasDraft ? (
-						<button className="btn-primary-circle" title={t.stop} onClick={() => void stopAndRestore()}>
+						<button
+							className="btn-primary-circle isx-btn-stop"
+							data-streaming="true"
+							title={t.stop}
+							onClick={() => void stopAndRestore()}
+						>
 							<IconStopFill16 size={16} />
 						</button>
 					) : (
 						<>
 							{isStreaming && (
-								<button className="btn-ghost-circle" title={t.stop} onClick={() => void stopAndRestore()}>
+								<button
+									className="btn-ghost-circle isx-btn-stop"
+									data-streaming="true"
+									title={t.stop}
+									onClick={() => void stopAndRestore()}
+								>
 									<IconStopFill16 size={14} />
 								</button>
 							)}
