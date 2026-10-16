@@ -140,13 +140,12 @@ describe("图片 chip", () => {
 		// 同一批 DOM 节点：transform 才能过渡出扇开的动画
 		expect(cards).toEqual(before);
 		const poses = cards.map((card) => poseOf(card)!);
-		expect(poses[3].angle).toBe(0);
-		for (let i = 0; i < 3; i += 1) {
-			expect(poses[i].angle).toBe(-poses[6 - i].angle);
-			expect(poses[i].y).toBe(poses[6 - i].y);
+		// 竖直向上逐级延伸：每张卡片垂直往上抬升（y 越来越小，在容器中越来越高）
+		for (let i = 0; i < 6; i += 1) {
 			expect(poses[i].y).toBeGreaterThan(poses[i + 1].y);
 		}
-		expect(poses.every((pose, i) => i === 0 || pose.x > poses[i - 1].x)).toBe(true);
+		// 弧度展开：x 轴存在轻微弧度位移
+		expect(poses.some((p) => p.x !== poses[0].x)).toBe(true);
 		expect(Number(fan.style.height.replace("px", ""))).toBeGreaterThan(96);
 		expect(cards.every((card) => !card.dataset.hidden)).toBe(true);
 		// 层级顺序不变（左压右），每张露出来的右侧条带里都有自己的删除按钮

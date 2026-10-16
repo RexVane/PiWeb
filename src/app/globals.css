@@ -2461,6 +2461,45 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	opacity: 1;
 }
 
+/* 牌堆与扇形操作按钮（收起/清空：不透明高对比实体胶囊，彻底避免被聊天背景文字穿透） */
+.pw-deck-action-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	height: 28px;
+	padding: 0 12px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--dsw-label-primary);
+	background: var(--dsw-bg-elevated);
+	border: 1px solid var(--dsw-border-l2);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+	backdrop-filter: blur(16px);
+	cursor: pointer;
+	white-space: nowrap;
+	transition: all 0.2s var(--isx-ease);
+}
+.pw-deck-action-btn:hover:not(:disabled) {
+	background: var(--dsw-label-primary);
+	color: var(--dsw-bg-base);
+	border-color: var(--dsw-label-primary);
+	transform: translateY(-1px);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+.pw-deck-action-btn:active:not(:disabled) {
+	transform: scale(0.94);
+}
+.pw-deck-action-btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+.pw-deck-action-btn.pw-deck-action-clear:hover:not(:disabled) {
+	background: rgba(239, 68, 68, 0.15);
+	color: var(--dsw-danger);
+	border-color: rgba(239, 68, 68, 0.35);
+}
+
 /* 输入卡待发送图片:平铺缩略图 / 牌堆 / 扇形(src/components/composer/ComposerImages.tsx) */
 .pw-image-thumb {
 	position: relative;

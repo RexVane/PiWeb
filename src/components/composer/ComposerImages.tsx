@@ -61,38 +61,34 @@ export function deckLayout(count: number): Layout {
 }
 
 /**
- * 扇形：沿竖直向上呈优美弧度展开（中间明显向上拱起呈饱满圆弧，左右对称）。
- * 紧凑排布不横向拉爆宽度，卡片中间最高、两侧自然下垂，每张保持切线倾角。
+ * 扇形：沿竖直向上逐级延伸呈弧度展开（与多文件完全同一套竖直向上延展体验）。
+ * 卡片从底部逐级向上攀升，每张卡片竖直排布并沿轻微弧线微幅偏转，悬停上浮高亮。
  */
 export function fanLayout(count: number, width: number): Layout {
 	if (count <= 1) {
 		return { cards: [{ x: FAN_SIDE, y: 0, angle: 0 }], width: CARD + FAN_SIDE * 2, height: CARD, gap: 0 };
 	}
-	// 间距紧凑收敛：宽屏不超过 52px（告别横跨全屏），窄屏挤一挤但不溢出
-	const maxFanW = Math.min(width, Math.max(340, CARD + (count - 1) * 52 + FAN_SIDE * 2));
-	const gap = Math.min(52, Math.max(12, (maxFanW - CARD - FAN_SIDE * 2) / (count - 1)));
-	const mid = (count - 1) / 2;
-	// 竖直向上拱起的弧度高度（中间最高点比两侧高出 42~56px，形成明显的竖直向上弧形）
-	const archHeight = Math.min(56, Math.max(32, (count - 1) * 8.5));
-	const angleStep = Math.min(6.5, 34 / Math.max(count - 1, 1));
-	const top = FAN_LIFT + 4;
+	// 竖直向上延伸：每张卡片向上抬升 stepY
+	const stepY = Math.min(36, Math.max(16, 210 / (count - 1)));
+	const spanY = (count - 1) * stepY;
+	const totalH = CARD + spanY + 14;
 	const cards = Array.from({ length: count }, (_, i) => {
-		const offset = i - mid;
-		const normOffset = mid > 0 ? Math.abs(offset) / mid : 0;
-		// y 轴：offset 为 0（中间）时 y 最小（最靠上），两侧 y 增大（向下垂），严格左右对称
-		const y = round(top + Math.pow(normOffset, 1.5) * archHeight);
-		// x 轴：从左到右单调递增
-		const x = round(FAN_SIDE + i * gap);
-		// 角度：中间为 0°，两侧对称倾斜
-		const angle = round(offset * angleStep);
+		const progress = i / (count - 1);
+		// y 轴：Card 0 在底部，Card count-1 在最上方（竖直向上延伸）
+		const y = round((totalH - CARD - 6) - i * stepY);
+		// x 轴：向上延伸的同时呈柔和弧线向右微弯再回收（优雅的 C 弧）
+		const arcX = 22 * Math.sin(progress * Math.PI);
+		const x = round(FAN_SIDE + arcX + progress * 8);
+		// 角度：从下方的 -4° 顺滑过渡到上方的 +6°
+		const angle = round(-4 + progress * 10);
 		return { x, y, angle };
 	});
-	const span = cards.length ? cards[cards.length - 1].x + CARD + FAN_SIDE : 0;
+	const maxX = Math.max(...cards.map((c) => c.x)) + CARD + FAN_SIDE;
 	return {
 		cards,
-		width: Math.min(width, Math.ceil(span)),
-		height: Math.ceil(top + archHeight + CARD + 10),
-		gap: round(gap),
+		width: Math.min(width, Math.max(CARD + 32, Math.ceil(maxX))),
+		height: Math.ceil(totalH),
+		gap: round(stepY),
 	};
 }
 
@@ -152,7 +148,7 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 
 	return (
 		<>
-			<div ref={railRef} className="pointer-events-auto flex flex-wrap items-center gap-2 px-1" data-testid="composer-images">
+			<div ref={railRef} className="pointer-events-auto flex flex-wrap items-end gap-2 px-1 pb-1" data-testid="composer-images">
 				{collapsible ? (
 					<div
 						className="pw-image-fan"
@@ -218,35 +214,37 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 						</div>
 					))
 				)}
-				{images.length > 1 && onClear ? (
-					<button
-						type="button"
-						className="pw-chip"
-						data-testid="images-clear"
-						disabled={disabled}
-						onClick={() => {
-							onClear();
-							setLifted(null);
-							setPreview(null);
-						}}
-					>
-						{t.imageClearAll}
-					</button>
-				) : null}
-				{collapsible ? (
-					<button
-						type="button"
-						className="pw-chip"
-						data-testid="images-toggle"
-						aria-expanded={fanned}
-						onClick={() => {
-							setExpanded((open) => !open);
-							setLifted(null);
-						}}
-					>
-						{fanned ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(images.length - 1))}
-					</button>
-				) : null}
+				<div className="flex items-center gap-1.5 self-end pb-0.5">
+					{collapsible ? (
+						<button
+							type="button"
+							className="pw-deck-action-btn"
+							data-testid="images-toggle"
+							aria-expanded={fanned}
+							onClick={() => {
+								setExpanded((open) => !open);
+								setLifted(null);
+							}}
+						>
+							{fanned ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(images.length - 1))}
+						</button>
+					) : null}
+					{images.length > 1 && onClear ? (
+						<button
+							type="button"
+							className="pw-deck-action-btn pw-deck-action-clear"
+							data-testid="images-clear"
+							disabled={disabled}
+							onClick={() => {
+								onClear();
+								setLifted(null);
+								setPreview(null);
+							}}
+						>
+							{t.imageClearAll}
+						</button>
+					) : null}
+				</div>
 			</div>
 			{shown !== null
 				? createPortal(

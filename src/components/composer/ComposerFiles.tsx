@@ -171,7 +171,7 @@ export function ComposerFiles({
 	};
 
 	return (
-		<div ref={railRef} className="pointer-events-auto flex flex-wrap items-center gap-1.5 px-1" data-testid="composer-uploads">
+		<div ref={railRef} className="pointer-events-auto flex flex-wrap items-end gap-2 px-1 pb-1" data-testid="composer-uploads">
 			{collapsible ? (
 				<div
 					className="pw-file-fan-container relative flex items-center gap-2"
@@ -188,34 +188,37 @@ export function ComposerFiles({
 				files.map((f, i) => renderFileCard(f, i))
 			)}
 
-			{collapsible && (
-				<button
-					type="button"
-					className="pw-chip"
-					data-testid="uploads-toggle"
-					onClick={() => {
-						setExpanded((open) => !open);
-						setLifted(null);
-					}}
-				>
-					{expanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(files.length - COLLAPSE_AT))}
-				</button>
-			)}
+			<div className="flex items-center gap-1.5 self-end pb-0.5">
+				{collapsible && (
+					<button
+						type="button"
+						className="pw-deck-action-btn"
+						data-testid="uploads-toggle"
+						aria-expanded={expanded}
+						onClick={() => {
+							setExpanded((open) => !open);
+							setLifted(null);
+						}}
+					>
+						{expanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(files.length - COLLAPSE_AT))}
+					</button>
+				)}
 
-			{files.length > 1 && onClear && (
-				<button
-					type="button"
-					className="pw-chip"
-					data-testid="uploads-clear"
-					disabled={disabled}
-					onClick={() => {
-						onClear();
-						setLifted(null);
-					}}
-				>
-					{t.filesClearAll}
-				</button>
-			)}
+				{files.length > 1 && onClear && (
+					<button
+						type="button"
+						className="pw-deck-action-btn pw-deck-action-clear"
+						data-testid="uploads-clear"
+						disabled={disabled}
+						onClick={() => {
+							onClear();
+							setLifted(null);
+						}}
+					>
+						{t.filesClearAll}
+					</button>
+				)}
+			</div>
 		</div>
 	);
 }
