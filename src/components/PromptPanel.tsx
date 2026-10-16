@@ -165,19 +165,33 @@ export function PromptPanel({
 				{groups.map((group) => (
 					<section key={group.kind} className="mb-3">
 						<div className="mb-1 px-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{kindLabel(group.kind)}</div>
-						<div className="flex flex-col gap-1">
+						<div className="flex flex-col gap-1.5">
 							{group.items.map((source) => (
 								<button
 									key={`${source.kind}:${source.path ?? source.name}`}
 									type="button"
-									className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
-									style={{ background: opening === source.path ? "var(--dsw-active)" : "transparent", border: "0.5px solid var(--dsw-border-l2)" }}
+									className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-all"
+									style={{
+										background: opening === source.path ? "var(--dsw-active)" : "var(--dsw-bg-elevated)",
+										border: "1px solid var(--dsw-border-l2)",
+										transition: "all 0.2s var(--isx-ease)",
+									}}
 									title={source.path ?? source.name}
+									onMouseEnter={(e) => {
+										e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
+										e.currentTarget.style.background = "var(--dsw-hover)";
+										e.currentTarget.style.transform = "translateY(-1px)";
+									}}
+									onMouseLeave={(e) => {
+										e.currentTarget.style.borderColor = "var(--dsw-border-l2)";
+										e.currentTarget.style.background = opening === source.path ? "var(--dsw-active)" : "var(--dsw-bg-elevated)";
+										e.currentTarget.style.transform = "none";
+									}}
 									onClick={() => void openFile(source)}
 								>
-									<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-primary)" }}>{source.name}</span>
-									<span className="flex-none" style={{ fontSize: 10.5, color: "var(--dsw-label-tertiary)" }}>{formatBytes(source.bytes)}</span>
-									<span className="flex-none rounded-md px-1.5 py-0.5" style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}>
+									<span className="min-w-0 flex-1 truncate font-medium" style={{ color: "var(--dsw-label-primary)" }}>{source.name}</span>
+									<span className="flex-none font-mono" style={{ fontSize: 10.5, color: "var(--dsw-label-tertiary)" }}>{formatBytes(source.bytes)}</span>
+									<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10.5, border: "1px solid var(--dsw-border-l2)", color: "var(--dsw-label-tertiary)", background: "var(--dsw-bg-base)" }}>
 										{originLabel(source.origin)}
 									</span>
 								</button>
@@ -189,14 +203,28 @@ export function PromptPanel({
 				{hasTools && (
 					<section className="mb-3">
 						<div className="mb-1 px-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.promptKindTool}</div>
-						<div className="flex flex-col gap-1">
+						<div className="flex flex-col gap-1.5">
 							{data!.tools!.map((tool) => (
 								<button
 									key={`tool:${tool.name}`}
 									type="button"
-									className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left"
-									style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+									className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-all"
+									style={{
+										border: "1px solid var(--dsw-border-l2)",
+										background: "var(--dsw-bg-elevated)",
+										transition: "all 0.2s var(--isx-ease)",
+									}}
 									title={tool.name}
+									onMouseEnter={(e) => {
+										e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
+										e.currentTarget.style.background = "var(--dsw-hover)";
+										e.currentTarget.style.transform = "translateY(-1px)";
+									}}
+									onMouseLeave={(e) => {
+										e.currentTarget.style.borderColor = "var(--dsw-border-l2)";
+										e.currentTarget.style.background = "var(--dsw-bg-elevated)";
+										e.currentTarget.style.transform = "none";
+									}}
 									onClick={() =>
 										onOpenContent?.(
 											`tool-${tool.name}.md`,
@@ -212,8 +240,8 @@ export function PromptPanel({
 										)
 									}
 								>
-									<span className="min-w-0 flex-1 truncate" style={{ color: "var(--dsw-label-primary)" }}>{tool.name}</span>
-									<span className="flex-none rounded-md px-1.5 py-0.5" style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}>
+									<span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold" style={{ color: "var(--dsw-label-primary)" }}>{tool.name}</span>
+									<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10.5, border: "1px solid var(--dsw-border-l2)", color: "var(--dsw-label-tertiary)", background: "var(--dsw-bg-base)" }}>
 										{tool.source === "builtin" ? t.promptToolBuiltin : t.promptToolExtension}
 									</span>
 								</button>
@@ -227,12 +255,26 @@ export function PromptPanel({
 						<div className="mb-1 px-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.promptKindAssembled}</div>
 						<button
 							type="button"
-							className="w-full rounded-lg px-2 py-1.5 text-left"
-							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+							className="w-full rounded-xl px-2.5 py-2 text-left transition-all"
+							style={{
+								border: "1px solid var(--dsw-border-l2)",
+								background: "var(--dsw-bg-elevated)",
+								transition: "all 0.2s var(--isx-ease)",
+							}}
 							title={t.promptAssembledKey}
+							onMouseEnter={(e) => {
+								e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
+								e.currentTarget.style.background = "var(--dsw-hover)";
+								e.currentTarget.style.transform = "translateY(-1px)";
+							}}
+							onMouseLeave={(e) => {
+								e.currentTarget.style.borderColor = "var(--dsw-border-l2)";
+								e.currentTarget.style.background = "var(--dsw-bg-elevated)";
+								e.currentTarget.style.transform = "none";
+							}}
 							onClick={() => onOpenContent?.("system-prompt.md", data.assembledSystemPrompt ?? "")}
 						>
-							<span className="truncate" style={{ color: "var(--dsw-label-primary)" }}>{t.promptAssembledKey}</span>
+							<span className="truncate font-medium" style={{ color: "var(--dsw-label-primary)" }}>{t.promptAssembledKey}</span>
 						</button>
 					</section>
 				)}
@@ -242,12 +284,26 @@ export function PromptPanel({
 						<div className="mb-1 px-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.promptKindCompacted}</div>
 						<button
 							type="button"
-							className="w-full rounded-lg px-2 py-1.5 text-left"
-							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+							className="w-full rounded-xl px-2.5 py-2 text-left transition-all"
+							style={{
+								border: "1px solid var(--dsw-border-l2)",
+								background: "var(--dsw-bg-elevated)",
+								transition: "all 0.2s var(--isx-ease)",
+							}}
 							title={t.promptCompactedKey}
+							onMouseEnter={(e) => {
+								e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
+								e.currentTarget.style.background = "var(--dsw-hover)";
+								e.currentTarget.style.transform = "translateY(-1px)";
+							}}
+							onMouseLeave={(e) => {
+								e.currentTarget.style.borderColor = "var(--dsw-border-l2)";
+								e.currentTarget.style.background = "var(--dsw-bg-elevated)";
+								e.currentTarget.style.transform = "none";
+							}}
 							onClick={() => onOpenContent?.("compacted-summary.md", data.compactedSummary ?? "")}
 						>
-							<span className="truncate" style={{ color: "var(--dsw-label-primary)" }}>{t.promptCompactedKey}</span>
+							<span className="truncate font-medium" style={{ color: "var(--dsw-label-primary)" }}>{t.promptCompactedKey}</span>
 						</button>
 					</section>
 				)}

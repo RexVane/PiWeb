@@ -35,28 +35,28 @@
 	--isx-ease: cubic-bezier(0.22, 1, 0.36, 1);
 	--isx-spring: cubic-bezier(0.16, 1, 0.3, 1);
 
-	/* 别名（Iconsax 浅色：纯净明快、高对比描边） */
+	/* 别名（Iconsax 浅色：纯净明快、层次分明的加深描边） */
 	--dsw-bg-base: #ffffff;
 	--dsw-bg-elevated: #ffffff;
-	--dsw-sidebar-fill: #f8f8fa;
+	--dsw-sidebar-fill: #f4f4f6;
 	--dsw-input-major: #ffffff;
-	--dsw-bubble: #f4f4f6;
-	--dsw-hover: rgba(0, 0, 0, 0.045);
-	--dsw-active: rgba(0, 0, 0, 0.08);
+	--dsw-bubble: #f1f2f5;
+	--dsw-hover: rgba(0, 0, 0, 0.05);
+	--dsw-active: rgba(0, 0, 0, 0.09);
 	--dsw-label-primary: #09090b;
 	--dsw-label-secondary: #3f3f46;
 	--dsw-label-tertiary: #71717a;
 	--dsw-label-caption: #a1a1aa;
-	--dsw-border-l1: rgba(0, 0, 0, 0.05);
-	--dsw-border-l2: #e4e4e7;
-	--dsw-border-l3: #d4d4d8;
-	--dsw-border-l4: #a1a1aa;
+	--dsw-border-l1: rgba(0, 0, 0, 0.08);
+	--dsw-border-l2: #d1d5db;
+	--dsw-border-l3: #9ca3af;
+	--dsw-border-l4: #6b7280;
 	--dsw-accent: var(--dsw-deepseek-500);
 	--dsw-accent-soft: rgba(65, 118, 230, 0.1);
 	--dsw-warn: var(--dsw-amber-500);
 	--dsw-success: var(--dsw-green-500);
 	--dsw-danger: var(--dsw-red-600);
-	--dsw-selector: rgba(0, 0, 0, 0.055);
+	--dsw-selector: rgba(0, 0, 0, 0.06);
 
 	/* 层级表面 */
 	--dsw-layer-2: #ffffff;
@@ -654,9 +654,24 @@ textarea::placeholder {
 		height: 100dvh;
 	}
 }
-/* 右侧抽屉的入口条：未选中项悬停给底色（设置页的同款下划线 tab 没有底色） */
+/* 右侧抽屉的入口条：未选中项悬停给底色，选中项下划线渐变点亮 */
+.drawer-tab {
+	transition: background 0.22s var(--isx-ease), color 0.22s var(--isx-ease);
+}
+.drawer-tab svg {
+	transition: transform 0.22s var(--isx-ease), color 0.22s var(--isx-ease);
+}
 .drawer-tab:hover:not([data-active="true"]) {
 	background: var(--dsw-hover);
+}
+.drawer-tab:hover svg,
+.drawer-tab[data-active="true"] svg {
+	transform: scale(1.16);
+	color: var(--dsw-label-primary);
+}
+.drawer-tab[data-active="true"]::after {
+	background: var(--isx-line-gradient) !important;
+	width: 28px !important;
 }
 .drawer-tab:active {
 	transform: scale(0.95);
@@ -1209,42 +1224,88 @@ textarea::placeholder {
 .md pre {
 	margin: 0.7em 0;
 	padding: 12px 14px;
-	border-radius: 12px;
-	background: var(--dsw-selector);
+	border-radius: 14px;
+	background: var(--dsw-bg-elevated);
 	overflow-x: auto;
-	border: 0.5px solid var(--dsw-border-l1);
+	border: 1px solid var(--dsw-border-l2);
 }
 .md pre code {
 	background: none;
 	padding: 0;
 	font-size: 13px;
-	line-height: 1.55;
+	line-height: 1.6;
 }
 .md-code-block {
 	position: relative;
+	margin: 0.85em 0;
+	border-radius: 16px;
+	border: 1px solid var(--dsw-border-l2);
+	background: var(--dsw-bg-elevated);
+	overflow: hidden;
+	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.1);
+	transition: border-color 0.25s var(--isx-ease), box-shadow 0.25s var(--isx-ease);
+}
+.md-code-block:hover {
+	border-color: var(--dsw-border-l3);
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
 }
 .md-code-copy {
 	position: absolute;
-	top: 12px;
-	right: 12px;
-	z-index: 1;
+	top: 8px;
+	right: 10px;
+	z-index: 2;
+}
+.md-code-copy .icon-btn {
+	width: 26px;
+	height: 26px;
+	border-radius: 8px;
+	background: var(--dsw-hover);
+	border: 1px solid var(--dsw-border-l1);
+	backdrop-filter: blur(8px);
+}
+.md-code-copy .icon-btn:hover {
+	background: var(--dsw-label-primary);
+	color: var(--dsw-bg-base);
+	border-color: var(--dsw-label-primary);
 }
 .md-code-block pre {
-	padding-top: 40px;
+	margin: 0;
+	padding: 14px 16px;
+	padding-top: 38px;
+	background: transparent;
+	border: 0;
+	border-radius: 0;
 }
 .md table {
-	border-collapse: collapse;
-	margin: 0.7em 0;
+	border-collapse: separate;
+	border-spacing: 0;
+	margin: 0.8em 0;
 	width: 100%;
 	font-size: 0.95em;
+	border-radius: 14px;
+	border: 1px solid var(--dsw-border-l2);
+	overflow: hidden;
 }
 .md th,
 .md td {
-	border: 0.5px solid var(--dsw-border-l2);
-	padding: 5px 10px;
+	border-bottom: 1px solid var(--dsw-border-l1);
+	border-right: 1px solid var(--dsw-border-l1);
+	padding: 7px 12px;
 	text-align: left;
 }
+.md tr:last-child td {
+	border-bottom: 0;
+}
+.md th:last-child,
+.md td:last-child {
+	border-right: 0;
+}
 .md th {
+	background: var(--dsw-hover);
+	font-weight: 600;
+	color: var(--dsw-label-primary);
+}
+.md tr:hover td {
 	background: var(--dsw-hover);
 }
 .md hr {
@@ -1456,17 +1517,23 @@ body[data-ds-dark-theme] {
 	border-color: var(--dsw-border-l3);
 }
 
-/* 消息操作图标行：常显低透明度，悬停变亮（dsh 同款） */
+/* 消息操作图标行：浮动微胶囊 dock 风格 */
 .msg-actions {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	gap: 6px;
+	gap: 4px;
 	margin-top: 6px;
+	padding: 2px 6px;
+	border-radius: 999px;
+	background: var(--dsw-bg-elevated);
+	border: 1px solid var(--dsw-border-l1);
 	opacity: 0.45;
-	transition: opacity var(--ds-duration-fast) var(--ds-ease-in-out);
+	transition: opacity 0.22s var(--isx-ease), border-color 0.22s var(--isx-ease), box-shadow 0.22s var(--isx-ease);
 }
 .msg-actions:hover {
 	opacity: 1;
+	border-color: var(--dsw-border-l3);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
 }
 
 /* 操作行时钟（dsh MessageIconActions timeStart/timeEnd）：
@@ -2493,14 +2560,15 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	align-items: center;
 	gap: 4px;
 	padding-right: 8px;
-	border-radius: 6px;
+	border-radius: 8px;
 	cursor: pointer;
 	white-space: nowrap;
 	color: var(--dsw-label-primary);
-	transition: background var(--ds-duration-fast) var(--ds-ease-in-out);
+	transition: background 0.18s var(--isx-ease), transform 0.18s var(--isx-ease);
 }
 .pw-tree-row:hover {
 	background: var(--dsw-hover);
+	transform: translateX(2px);
 }
 .pw-tree-row[data-selected],
 .pw-tree-row[data-focused] {
@@ -2570,13 +2638,13 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	flex: none;
 	min-width: 14px;
 	height: 14px;
-	padding: 0 3px;
-	border-radius: 4px;
-	border: 0.5px solid;
+	padding: 0 4px;
+	border-radius: 999px;
+	border: 1px solid;
 	font-size: 10px;
-	line-height: 13px;
+	line-height: 12px;
 	text-align: center;
-	font-weight: 600;
+	font-weight: 700;
 	font-variant-numeric: tabular-nums;
 }
 .pw-tree-actions {
@@ -2669,12 +2737,13 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 	flex: none;
 	width: 8px;
 	min-height: 3px;
-	border-radius: 2px 2px 1px 1px;
-	opacity: 0.5;
-	transition: opacity var(--ds-duration-fast) var(--ds-ease-in-out);
+	border-radius: 4px 4px 1px 1px;
+	opacity: 0.55;
+	transition: opacity 0.2s var(--isx-ease), transform 0.2s var(--isx-ease), box-shadow 0.2s var(--isx-ease);
 }
 .pw-tl-bar:hover {
-	opacity: 0.85;
+	opacity: 0.95;
+	transform: scaleY(1.15);
 }
 .pw-tl-bar[data-active] {
 	opacity: 1;

@@ -348,36 +348,51 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							return (
 								<label
 									key={rowKey}
-									className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors"
+									className="flex cursor-pointer items-center gap-3 rounded-2xl px-3.5 py-2.5 transition-all"
 									style={{
-										border: `0.5px solid ${checked ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`,
-										background: checked ? "var(--dsw-accent-soft)" : "transparent",
-										opacity: done ? 0.5 : 1,
+										border: `1px solid ${checked ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`,
+										background: checked ? "var(--dsw-accent-soft)" : "var(--dsw-bg-elevated)",
+										opacity: done ? 0.45 : 1,
+										transition: "all 0.2s var(--isx-ease)",
+									}}
+									onMouseEnter={(e) => {
+										if (!checked && !done) {
+											e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
+											e.currentTarget.style.background = "var(--dsw-hover)";
+											e.currentTarget.style.transform = "translateY(-1px)";
+										}
+									}}
+									onMouseLeave={(e) => {
+										if (!checked && !done) {
+											e.currentTarget.style.borderColor = "var(--dsw-border-l2)";
+											e.currentTarget.style.background = "var(--dsw-bg-elevated)";
+											e.currentTarget.style.transform = "none";
+										}
 									}}
 								>
-									<input type="checkbox" checked={checked} disabled={done} onChange={() => toggle(row)} className="flex-none" />
+									<input type="checkbox" checked={checked} disabled={done} onChange={() => toggle(row)} className="flex-none accent-[var(--dsw-accent)]" />
 									<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-										<div className="truncate" style={{ fontSize: 12.5, color: done ? "var(--dsw-label-tertiary)" : "var(--dsw-label-primary)" }} title={row.title}>
+										<div className="truncate font-medium" style={{ fontSize: 12.5, color: done ? "var(--dsw-label-tertiary)" : "var(--dsw-label-primary)" }} title={row.title}>
 											{row.title || t.importUntitled}
 										</div>
 										<div className="flex min-w-0 items-center gap-1.5" title={row.projectPath}>
 											<span
-												className="flex-none rounded px-1 py-0.5"
-												style={{ fontSize: 10, background: "var(--dsw-selector)", color: "var(--dsw-label-tertiary)" }}
+												className="flex-none rounded-full px-2 py-0.5"
+												style={{ fontSize: 10, background: "var(--dsw-selector)", color: "var(--dsw-label-secondary)", border: "1px solid var(--dsw-border-l1)" }}
 											>
 												{goesOriginal ? t.importGoesOriginal : t.importGoesFallback}
 											</span>
-											<span className="truncate" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>
+											<span className="truncate font-mono" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>
 												{target || t.importNoProject}
 											</span>
 										</div>
 									</div>
-									<span className="flex-none" style={{ fontSize: 11, color: "var(--dsw-label-caption)", whiteSpace: "nowrap" }}>
+									<span className="flex-none font-mono" style={{ fontSize: 11, color: "var(--dsw-label-caption)", whiteSpace: "nowrap" }}>
 										{typeof row.messageCount === "number" ? t.importMessages.replace("{n}", String(row.messageCount)) : "—"}
 									</span>
-									<span className="flex-none" style={{ fontSize: 11, color: "var(--dsw-label-caption)", whiteSpace: "nowrap" }}>{dayOf(row.updatedAt ?? row.createdAt)}</span>
+									<span className="flex-none font-mono" style={{ fontSize: 11, color: "var(--dsw-label-caption)", whiteSpace: "nowrap" }}>{dayOf(row.updatedAt ?? row.createdAt)}</span>
 									{done && (
-										<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10, background: "var(--dsw-selector)", color: "var(--dsw-label-caption)" }}>
+										<span className="flex-none rounded-full px-2 py-0.5 font-medium" style={{ fontSize: 10, background: "var(--dsw-selector)", color: "var(--dsw-label-caption)", border: "1px solid var(--dsw-border-l1)" }}>
 											{t.importAlready}
 										</span>
 									)}

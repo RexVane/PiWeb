@@ -329,7 +329,7 @@ export function GitPanel({
 						<div className="flex flex-wrap items-center gap-2" style={{ fontSize: 12.5 }}>
 							<span
 								className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
-								style={{ background: "var(--dsw-accent-soft)", color: "var(--dsw-accent)", fontWeight: 500 }}
+								style={{ background: "var(--dsw-accent-soft)", color: "var(--dsw-accent)", fontWeight: 600, border: "1px solid var(--dsw-border-l2)" }}
 							>
 								<IconGitOutline16 size={12} />
 								{info.detached ? t.gitDetached : info.branch ?? "—"}
@@ -364,20 +364,35 @@ export function GitPanel({
 										<span style={{ fontWeight: 600 }}>{area.label}</span>
 										<span>{area.entries.length}</span>
 									</div>
-									<div className="flex flex-col">
+									<div className="flex flex-col gap-0.5">
 										{area.entries.map(({ file: f, mode }) => (
 											<button
 												key={`${area.key}:${f.path}`}
 												type="button"
-												className="flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors"
+												className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition-all"
 												title={f.path}
-												onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-												onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+												style={{ transition: "all 0.18s var(--isx-ease)" }}
+												onMouseEnter={(e) => {
+													e.currentTarget.style.background = "var(--dsw-hover)";
+													e.currentTarget.style.transform = "translateX(2px)";
+												}}
+												onMouseLeave={(e) => {
+													e.currentTarget.style.background = "transparent";
+													e.currentTarget.style.transform = "none";
+												}}
 												onClick={() => openFile(f, mode, mode === "staged" ? t.gitStagedDiff : mode === "untracked" ? t.gitUntracked : t.gitWorktreeDiff)}
 											>
 												<span
-													className="flex-none rounded px-1 text-center"
-													style={{ minWidth: 16, fontSize: 10.5, fontFamily: "var(--font-mono)", fontWeight: 600, color: KIND_COLOR[f.kind], background: "var(--dsw-hover)" }}
+													className="flex-none rounded-full px-1.5 text-center"
+													style={{
+														minWidth: 18,
+														fontSize: 10,
+														fontFamily: "var(--font-mono)",
+														fontWeight: 700,
+														color: KIND_COLOR[f.kind],
+														background: "var(--dsw-hover)",
+														border: "1px solid currentColor",
+													}}
 												>
 													{f.kind === "untracked" ? "?" : f.kind === "conflict" ? "!" : mode === "staged" ? f.indexStatus : f.workStatus !== " " ? f.workStatus : f.indexStatus}
 												</span>
@@ -397,21 +412,28 @@ export function GitPanel({
 							{info.commits.length === 0 ? (
 								<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "4px 2px" }}>{t.gitNoCommits}</div>
 							) : (
-								<div className="flex flex-col">
+								<div className="flex flex-col gap-0.5">
 									{info.commits.map((c) => (
 										<button
 											key={c.hash}
 											type="button"
-											className="flex w-full flex-col items-stretch rounded-lg px-2 py-1 text-left transition-colors"
-											onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-											onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+											className="flex w-full flex-col items-stretch rounded-xl px-2.5 py-1.5 text-left transition-all"
+											style={{ transition: "all 0.18s var(--isx-ease)" }}
+											onMouseEnter={(e) => {
+												e.currentTarget.style.background = "var(--dsw-hover)";
+												e.currentTarget.style.transform = "translateX(2px)";
+											}}
+											onMouseLeave={(e) => {
+												e.currentTarget.style.background = "transparent";
+												e.currentTarget.style.transform = "none";
+											}}
 											onClick={() => changeView({ kind: "commit", hash: c.hash })}
 										>
 											<span className="flex items-baseline gap-2">
-												<span className="flex-none" style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--dsw-accent)" }}>{c.hash}</span>
+												<span className="flex-none rounded-md px-1.5 py-0.5" style={{ fontSize: 10.5, fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--dsw-accent)", background: "var(--dsw-accent-soft)" }}>{c.hash}</span>
 												<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }} title={c.subject}>{c.subject}</span>
 											</span>
-											<span className="truncate" style={{ fontSize: 11, color: "var(--dsw-label-caption)", paddingLeft: 0 }}>
+											<span className="truncate" style={{ fontSize: 11, color: "var(--dsw-label-caption)", paddingLeft: 0, marginTop: 2 }}>
 												{c.author} · {c.relative}
 											</span>
 										</button>
