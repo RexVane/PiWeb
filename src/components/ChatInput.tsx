@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
 	IconAtOutline16,
+	IconCloseOutline14,
 	IconFileOutline16,
 	IconFolderClose16,
 	IconSendArrowUp14,
@@ -198,7 +199,7 @@ export function ChatInput({
 	// Complete the token at the caret, not just the first character of the draft.
 	const commandToken = slashCommandToken(text, commandCaret);
 	const slash = commandToken?.query ?? "";
-	const typedCommandMode = !!commands?.length && !!commandToken && !cmdDismissed;
+	const typedCommandMode = !adopted && !!commands?.length && !!commandToken && !cmdDismissed;
 	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.toLowerCase()));
 	const visibleCommands = filteredCommands;
 	const commandMode = typedCommandMode;
@@ -285,6 +286,8 @@ export function ChatInput({
 
 	const withoutCommandToken = () => commandToken ? text.slice(0, commandToken.start) + text.slice(commandToken.tokenEnd) : text;
 	const adoptCommand = (entry: SlashCommand) => {
+		// The SDK expands one leading command only. Never overwrite an adopted skill.
+		if (draftRef.current.adopted) return;
 		const remaining = withoutCommandToken();
 		setAdopted(entry);
 		setText(remaining);
@@ -329,6 +332,7 @@ export function ChatInput({
 	};
 
 	const runEntry = (entry: SlashCommand) => {
+		if (draftRef.current.adopted) return;
 		if (commandToken && (commandToken.start > 0 || commandToken.tokenEnd < text.length)) {
 			if (entry.kind === "builtin") {
 				if (entry.name === "model") setModelOpen(true);
@@ -568,7 +572,7 @@ export function ChatInput({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const hasDraft = text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
+	const hasDraft = adopted !== null || text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
@@ -782,12 +786,15 @@ export function ChatInput({
 					border: "0.5px solid var(--dsw-border-l1)",
 				}}
 			>
-				<div className="px-4 pt-3 flex items-start gap-1.5">
+				{/* The selected command owns a row; multiline prose always gets the full width. */}
+				<div className="px-4 pt-3 flex flex-col items-stretch gap-1.5">
 					{adopted && (
 						<button
 							type="button"
-							className="flex-none flex items-center gap-1 self-start"
-							title={`${t.delete} (Backspace)`}
+							className="flex-none flex max-w-full items-center gap-1 self-start"
+							disabled={disabled || sendBusy}
+							aria-label={`${t.delete} /${adopted.name}`}
+							title={`${t.delete} /${adopted.name} (Backspace)`}
 							style={{
 								fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))",
 								lineHeight: "var(--piweb-chat-line-height, 1.55)",
@@ -802,7 +809,8 @@ export function ChatInput({
 							}}
 						>
 							<IconTerminalOutline14 size={14} style={{ color: "var(--dsw-accent)", flex: "none" }} />
-							<span style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
+							<span className="min-w-0 truncate" style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
+							<IconCloseOutline14 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
 						</button>
 					)}
 					<textarea
@@ -812,7 +820,7 @@ export function ChatInput({
 						rows={1}
 						placeholder={adopted ? (adopted.argumentHint ?? t.inputPlaceholder) : !disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						suppressHydrationWarning
-						className="min-w-0 flex-1 resize-none"
+						className="min-w-0 w-full resize-none"
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
 						onChange={(e) => {
 							const value = e.target.value;
@@ -867,8 +875,11 @@ export function ChatInput({
 									}
 								}
 							}
-							if (adopted && text === "" && (e.key === "Backspace" || e.key === "Escape")) {
-								// 空参数时退格/Esc：摘掉命令胶囊
+							if (adopted && !e.nativeEvent.isComposing && (
+								(e.key === "Backspace" && e.currentTarget.selectionStart === 0 && e.currentTarget.selectionEnd === 0) ||
+								(e.key === "Escape" && text === "")
+							)) {
+								// Backspace at the start removes the marker without erasing any prose.
 								e.preventDefault();
 								setAdopted(null);
 								return;

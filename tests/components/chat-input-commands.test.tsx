@@ -39,6 +39,50 @@ function renderInput() {
 }
 
 describe("ChatInput slash commands", () => {
+	it("keeps multiline prose full-width and exposes an explicit skill removal button", () => {
+		const { textarea, onSend } = renderInput();
+		fireEvent.change(textarea, { target: { value: "first line\nsecond line /skill" } });
+		fireEvent.keyDown(textarea, { key: "Tab" });
+		expect(textarea.value).toBe("first line\nsecond line ");
+		expect(textarea.parentElement?.classList.contains("flex-col")).toBe(true);
+		expect(textarea.classList.contains("w-full")).toBe(true);
+		fireEvent.click(screen.getByRole("button", { name: "删除 /skill:probe" }));
+		expect(screen.queryByRole("button", { name: "删除 /skill:probe" })).toBeNull();
+		expect(textarea.value).toBe("first line\nsecond line ");
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("removes a skill with Backspace at the start even when its arguments are nonempty", () => {
+		const { textarea } = renderInput();
+		fireEvent.change(textarea, { target: { value: "keep this /skill" } });
+		fireEvent.keyDown(textarea, { key: "Tab" });
+		textarea.setSelectionRange(0, 0);
+		fireEvent.keyDown(textarea, { key: "Backspace" });
+		expect(screen.queryByRole("button", { name: "删除 /skill:probe" })).toBeNull();
+		expect(textarea.value).toBe("keep this ");
+	});
+
+	it("does not offer another command or replace the first skill after spaces or newlines", () => {
+		const { textarea, onSend } = renderInput();
+		fireEvent.change(textarea, { target: { value: "/skill" } });
+		fireEvent.keyDown(textarea, { key: "Tab" });
+		for (const text of ["arguments /", "arguments\n/skill", "arguments\n/goal"]) {
+			fireEvent.change(textarea, { target: { value: text } });
+			expect(screen.queryByRole("listbox")).toBeNull();
+			expect(screen.getByRole("button", { name: "删除 /skill:probe" })).toBeTruthy();
+		}
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("enables sending a skill without arguments and ignores IME Backspace", () => {
+		const { textarea } = renderInput();
+		fireEvent.change(textarea, { target: { value: "/skill" } });
+		fireEvent.keyDown(textarea, { key: "Tab" });
+		expect((screen.getByTitle("发送") as HTMLButtonElement).disabled).toBe(false);
+		fireEvent.keyDown(textarea, { key: "Backspace", isComposing: true });
+		expect(screen.getByRole("button", { name: "删除 /skill:probe" })).toBeTruthy();
+	});
+
 	it.each(["existing draft /", "existing draft\n/", " /"])("opens completion after whitespace in %j", (text) => {
 		const { textarea } = renderInput();
 		fireEvent.change(textarea, { target: { value: text } });

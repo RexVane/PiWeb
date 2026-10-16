@@ -29,6 +29,7 @@ import { languageForPath } from "@/lib/highlight";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { PreviewImage } from "@/components/PreviewImage";
+import { parseSkillMessage } from "@/lib/skill-message";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
@@ -922,8 +923,33 @@ export interface RoundBadge {
 	del: number;
 }
 
+type OpenFileContent = (path: string, content: string) => void;
+
+/** Use the content embedded in the message, not today's file on disk: historical
+ * and moved/deleted skills remain previewable, without permitting arbitrary file reads. */
+function UserMessageBody({ text, plain = false, onOpenFileContent }: { text: string; plain?: boolean; onOpenFileContent?: OpenFileContent }) {
+	const skill = useMemo(() => parseSkillMessage(text), [text]);
+	const body = skill ? skill.userMessage : text;
+	return <>
+		{skill && <div className={body ? "mb-1" : undefined}>
+			<button
+				type="button"
+				className="inline-flex max-w-full items-center gap-1 text-left font-semibold hover:underline"
+				style={{ color: "var(--dsw-accent)", font: "inherit", fontWeight: 600 }}
+				title={skill.location}
+				disabled={!onOpenFileContent}
+				onClick={() => onOpenFileContent?.(skill.location, skill.content)}
+			>
+				<IconTerminalOutline14 size={14} style={{ flex: "none" }} />
+				<span className="min-w-0 break-all">/skill:{skill.name}</span>
+			</button>
+		</div>}
+		{body && (plain ? <div>{body}</div> : <Markdown text={body} />)}
+	</>;
+}
+
 /** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message, onEditMessage }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void }) {
+const UserMessage = memo(function UserMessage({ message, onEditMessage, onOpenFileContent }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void; onOpenFileContent?: OpenFileContent }) {
 	const { t } = useI18n();
 	const text = message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -991,7 +1017,7 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 				</div>
 			)}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本 */}
-			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
+			{text && <div className="msg-user-bubble"><UserMessageBody text={text} onOpenFileContent={onOpenFileContent} /></div>}
 			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
 			{text && (
 				<MessageActions
@@ -1055,6 +1081,7 @@ function TurnBlockView({
 	onShowRound,
 	onInspectTool,
 	onOpenFile,
+	onOpenFileContent,
 }: {
 	turn: Turn;
 	messages: WebMessage[];
@@ -1076,6 +1103,7 @@ function TurnBlockView({
 	onShowRound?: (commit: string) => void;
 	onInspectTool?: (toolCallId: string) => void;
 	onOpenFile?: (path: string) => void;
+	onOpenFileContent?: OpenFileContent;
 }) {
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
@@ -1125,7 +1153,7 @@ function TurnBlockView({
 
 	return (
 		<>
-			{user && <UserMessage message={user} onEditMessage={onEditMessage} />}
+			{user && <UserMessage message={user} onEditMessage={onEditMessage} onOpenFileContent={onOpenFileContent} />}
 			{showProcess && (
 				<div className="pw-turn">
 					{contextFiles?.map((resource, i) => (
@@ -1192,7 +1220,7 @@ function liteAnswerBlocks(text: string): ReactNode[] {
  * DOM 骨架和完整渲染对齐：用户消息带 data-role="user" / data-message-id（跳转定位），
  * 只有最终回答带 data-role="assistant"（大纲只从这里取标题），过程只出一行摘要。
  */
-function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
+function TurnLite({ turn, messages, onOpenFileContent }: { turn: Turn; messages: WebMessage[]; onOpenFileContent?: OpenFileContent }) {
 	const { t } = useI18n();
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
 	const lastIdx = turn.assistantIndexes[turn.assistantIndexes.length - 1];
@@ -1208,7 +1236,7 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 			{user && (
 				<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={user.id}>
 					<div className="msg-user-bubble pw-turn-lite">
-						<div>{plain(user)}</div>
+						<UserMessageBody text={plain(user)} plain onOpenFileContent={onOpenFileContent} />
 					</div>
 				</div>
 			)}
@@ -1324,7 +1352,8 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 		prev.roundBadge?.add !== next.roundBadge?.add ||
 		prev.roundBadge?.del !== next.roundBadge?.del ||
 		prev.onInspectTool !== next.onInspectTool ||
-		prev.onOpenFile !== next.onOpenFile
+		prev.onOpenFile !== next.onOpenFile ||
+		prev.onOpenFileContent !== next.onOpenFileContent
 	) return false;
 	// buildTurns 每次重建回合对象：比较内容而不是引用
 	if (prev.turn.key !== next.turn.key || prev.turn.userIndex !== next.turn.userIndex) return false;
@@ -1388,6 +1417,7 @@ export function ChatWindow({
 	stats,
 	onOpenTrajectory,
 	onOpenFile,
+	onOpenFileContent,
 	roundBadges,
 	onShowRound,
 }: {
@@ -1416,6 +1446,8 @@ export function ChatWindow({
 	/** 在本机编辑器打开工具行涉及的文件 */
 	onEditMessage?: (entryId: string, text: string) => void;
 	onOpenFile?: (path: string) => void;
+	/** Open the embedded skill document in the shared Markdown file viewer. */
+	onOpenFileContent?: OpenFileContent;
 	roundBadges?: ReadonlyMap<string, RoundBadge>;
 	onShowRound?: (commit: string) => void;
 }) {
@@ -1693,9 +1725,10 @@ export function ChatWindow({
 										onShowRound={onShowRound}
 										onInspectTool={onOpenTrajectory}
 										onOpenFile={onOpenFile}
+										onOpenFileContent={onOpenFileContent}
 									/>
 								) : (
-									<TurnLite turn={turn} messages={messages} />
+									<TurnLite turn={turn} messages={messages} onOpenFileContent={onOpenFileContent} />
 								)}
 							</div>
 						))}

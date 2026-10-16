@@ -1063,6 +1063,7 @@ export function AppShell() {
 									cwd={panelCwd}
 									onOpenTrajectory={openToolTrajectory}
 									onOpenFile={openInEditor}
+									onOpenFileContent={viewer.openStatic}
 									onFork={handleFork}
 									onEditMessage={doEditMessage}
 									roundBadges={roundBadges}

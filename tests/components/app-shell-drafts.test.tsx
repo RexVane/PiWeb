@@ -8,10 +8,12 @@ import { writeRememberedHeroModel } from "@/lib/hero-model-memory";
 const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn() }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const noop = () => {};
-vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
+vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.state?.open
+	? <div role="dialog" aria-label="File viewer">{props.state.tabs[0]?.staticContent}</div>
+	: props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {}, selectLatest: () => {} }) }));
-vi.mock("@/components/ChatWindow", () => ({ ChatWindow: () => null, SessionStatsBar: () => null }));
+vi.mock("@/components/ChatWindow", () => ({ ChatWindow: (props: any) => <button onClick={() => props.onOpenFileContent?.("/old/skills/probe/SKILL.md", "Historical skill instructions")}>Preview sent skill</button>, SessionStatsBar: () => null }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>
 	<button onClick={() => props.onOpen("/session-a")}>Open A</button>
@@ -51,6 +53,12 @@ beforeEach(() => { localStorage.clear(); writeRememberedHeroModel(localStorage, 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
+	it("opens sent skill content in the existing file viewer using the historical snapshot", () => {
+		render(<AppShell />);
+		go("Preview sent skill");
+		expect(screen.getByRole("dialog", { name: "File viewer" }).textContent).toBe("Historical skill instructions");
+	});
+
 	it("loads skills, templates and extension commands before sending the first Hero message", async () => {
 		const resources = { skills: [{ name: "workspace-skill", description: "A skill" }], promptTemplates: [{ name: "workspace-template", description: "A template" }], extensionCommands: [{ name: "workspace-command", description: "A command" }] };
 		const fetcher = vi.fn((url: string) => Promise.resolve(response(url.startsWith("/api/agent/resources") ? resources : { modelThinkingLevels: {} })));
