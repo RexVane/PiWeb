@@ -8,7 +8,7 @@
  * 搜索模式（输入框替身标题行，空查询=工作区平铺，输入=会话平铺），
  * 滑杆菜单（分组方式：按工作区/单列表；排序方式：手动排序/最近更新）。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BrandPi, PiMark } from "@/components/PiMark";
 import {
@@ -68,7 +68,7 @@ interface WorkspaceGroup {
 	lastModified: string;
 }
 
-export function SessionSidebar({
+function SessionSidebarImpl({
 	sessions,
 	sessionListError,
 	onRetrySessionList,
@@ -1012,6 +1012,12 @@ export function SessionSidebar({
 		</div>
 	);
 }
+
+/**
+ * memo：流式期间 AppShell 每 16ms 重渲染一次（state.messages 换引用），侧栏的 props
+ * （会话列表、回调）在此期间全部不变，几百行会话树的 reconciliation 是纯浪费。
+ */
+export const SessionSidebar = memo(SessionSidebarImpl);
 
 function MenuItem({
 	icon,

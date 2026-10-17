@@ -381,12 +381,12 @@ export function AppShell() {
 		[sidebarWidth, rightWidth],
 	);
 
-	const toggleSidebar = () => {
+	const toggleSidebar = useCallback(() => {
 		preserveChatReadingPosition();
 		const next = !sidebarCollapsed;
 		setSidebarCollapsed(next);
 		localStorage.setItem("piweb.sidebarCollapsed", next ? "1" : "0");
-	};
+	}, [sidebarCollapsed]);
 
 	// ---------- 会话操作 ----------
 	const snapshot = state.snapshot;
@@ -423,7 +423,7 @@ export function AppShell() {
 		return () => clearTimeout(timer);
 	}, [state.error, clearError]);
 
-	const doRename = async (path: string, newName: string) => {
+	const doRename = useCallback(async (path: string, newName: string) => {
 		if (!newName.trim()) return;
 		const result = path === currentPath
 			? await sendCommand({ cmd: "rename", text: newName.trim() })
@@ -436,7 +436,7 @@ export function AppShell() {
 			// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
 			resync();
 		}
-	};
+	}, [currentPath, sendCommand, patchSessionName, resync]);
 
 	const doForkSession = useCallback(
 		async (path: string, _cwd: string) => {
@@ -499,6 +499,33 @@ export function AppShell() {
 		},
 		[unarchiveSession, resync],
 	);
+
+	// ---------- 侧栏回调：全部 useCallback，配合 SessionSidebar 的 memo ——
+	// 流式期间 state.messages 每 16ms 换引用，AppShell 整树重渲染时侧栏不再跟着空转
+	const openSessionAndCloseMobileNav = useCallback((path: string) => {
+		openSession(path);
+		setMobileSidebarOpen(false);
+	}, [openSession]);
+	const closeMobileNav = useCallback(() => setMobileSidebarOpen(false), []);
+	const startNewSessionInCurrentWorkspace = useCallback(() => {
+		// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
+		const cur = sessions.find((s) => s.path === currentPath)?.cwd;
+		setHeroCwd(cur || heroCwd || knownCwds[0] || "");
+		closeSession();
+	}, [sessions, currentPath, heroCwd, knownCwds, closeSession]);
+	const startNewSessionInWorkspace = useCallback((cwd: string) => {
+		// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
+		setHeroCwd(cwd);
+		closeSession();
+	}, [closeSession]);
+	const exportSessionFile = useCallback((path: string) => {
+		window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank");
+	}, []);
+	const openSettingsFromSidebar = useCallback(() => {
+		setSettingsOpen(true);
+		setMobileSidebarOpen(false);
+	}, []);
+	const addWorkspaceFromSidebar = useCallback(() => void addWorkspaceByPicker(), [addWorkspaceByPicker]);
 
 	const doRenameWorkspace = useCallback(
 		async (cwd: string, newName: string) => {
@@ -832,35 +859,20 @@ export function AppShell() {
 					setGroupBy={setGroupBy}
 					setOrderBy={setOrderBy}
 					collapsed={isNarrow ? false : sidebarCollapsed}
-					onToggleCollapse={isNarrow ? () => setMobileSidebarOpen(false) : toggleSidebar}
-					onOpen={(path) => {
-						openSession(path);
-						setMobileSidebarOpen(false);
-					}}
-					onNew={() => {
-						// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
-						const cur = sessions.find((s) => s.path === currentPath)?.cwd;
-						setHeroCwd(cur || heroCwd || knownCwds[0] || "");
-						closeSession();
-					}}
-					onNewInWorkspace={(cwd) => {
-						// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
-						setHeroCwd(cwd);
-						closeSession();
-					}}
+					onToggleCollapse={isNarrow ? closeMobileNav : toggleSidebar}
+					onOpen={openSessionAndCloseMobileNav}
+					onNew={startNewSessionInCurrentWorkspace}
+					onNewInWorkspace={startNewSessionInWorkspace}
 					onRename={doRename}
 					onFork={doForkSession}
 					onArchive={doArchiveSession}
 					onUnarchive={doUnarchiveSession}
-					onExport={(path) => window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank")}
+					onExport={exportSessionFile}
 					getWorkspaceName={getWorkspaceName}
 					onRenameWorkspace={doRenameWorkspace}
 					onDeleteWorkspace={doDeleteWorkspace}
-					onOpenSettings={() => {
-						setSettingsOpen(true);
-						setMobileSidebarOpen(false);
-					}}
-					onAddWorkspace={() => void addWorkspaceByPicker()}
+					onOpenSettings={openSettingsFromSidebar}
+					onAddWorkspace={addWorkspaceFromSidebar}
 					draftCwd={!currentId ? heroCwd || null : null}
 				/>
 			</div>
