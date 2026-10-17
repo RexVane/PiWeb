@@ -163,3 +163,4 @@
 - 2026-10-17 10:09 | #151 | 会话用量 | usage 事件按条目数缓存、运行期间 500ms 节流，settle/压缩/换模型强制刷新；长会话每轮不再上百次全表扫描 | qoder-cn/gmodel
 - 2026-10-17 10:12 | #152 | 快照 | 轨迹 context 条目只带资源头部，全文由 contextResources 单独携带，inspector 按路径回查全文；快照不再双份序列化注入资源 | qoder-cn/gmodel
 - 2026-10-17 10:15 | #153 | 侧栏 | SessionSidebar 包 memo，AppShell 侧栏回调全部 useCallback；流式期间 16ms 一次的整树重渲染不再波及侧栏几百行会话树 | qoder-cn/gmodel
+- 2026-10-17 10:15 | #154 | 对话过程行 | 工具行标题的参数 JSON 改为先截字符串值再序列化并 memo；write 大文件不再每次渲染几 MB stringify | qoder-cn/gmodel

@@ -444,12 +444,20 @@ const ToolStep = memo(function ToolStep({
 	}, [args, isWriteTool, kind, output, state]);
 	const failed = Boolean(state?.isError) && !running;
 	const summary = toolSummary(name, args, cwd);
-	let argsTitle = summary.text;
-	try {
-		argsTitle = JSON.stringify(args, null, 2).slice(0, 2000);
-	} catch {
-		/* keep summary */
-	}
+	// 标题 JSON：先截断超长字符串值再序列化——write 的 content 几 MB，直接 stringify
+	// 每次渲染白算一遍再扔掉 99.9%；截后仍保 2000 字符上限的展示语义不变
+	const argsTitle = useMemo(() => {
+		const clip = (value: unknown): unknown =>
+			typeof value === "string" && value.length > 600 ? `${value.slice(0, 600)}…` : value;
+		try {
+			const shallow = args && typeof args === "object" && !Array.isArray(args)
+				? Object.fromEntries(Object.entries(args as Record<string, unknown>).map(([k, v]) => [k, clip(v)]))
+				: args;
+			return JSON.stringify(shallow, null, 2).slice(0, 2000);
+		} catch {
+			return summary.text;
+		}
+	}, [args, summary.text]);
 	const argPath = (() => {
 		if (kind !== "read" && kind !== "write") return "";
 		const a = args as { path?: unknown; file_path?: unknown } | undefined;
