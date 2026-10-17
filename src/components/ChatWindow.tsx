@@ -1001,13 +1001,11 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 				</div>
 			)}
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本。
-			    /skill:name 展开后的整段 SKILL.md 正文不铺开显示，只留一个技能名标签。 */}
+			    /skill:name 展开后的整段 SKILL.md 正文不铺开显示，也不做成一条「我发的消息」——
+			    选用技能不等于发了一条输入，所以这里没有气泡外框，只有一枚淡色技能标签。 */}
 			{text && (skill ? (
-				<div className="msg-user-bubble">
-					<span className="pw-skill-chip" title={skill.name}>
-						<span className="pw-skill-chip-mark" aria-hidden="true">/</span>
-						{skill.name}
-					</span>
+				<div className="msg-user-skill">
+					<span className="pw-skill-chip" title={skill.name}>{skill.name}</span>
 				</div>
 			) : (
 				<div className="msg-user-bubble"><Markdown text={text} /></div>
