@@ -99,6 +99,8 @@ export interface LanState {
 	running: boolean;
 	port: number | null;
 	urls: string[];
+	/** 这一个监听是否在注入手机排版。插件关掉时为 false（纯转发），端口与可达性不变 */
+	styled: boolean;
 	error: string | null;
 }
 
@@ -118,6 +120,8 @@ export type RemoteBlocked = "auth" | "dev";
 
 export interface RemoteStatus {
 	plugin: typeof PLUGIN_ID;
+	/** 内置插件是否启用。关掉后局域网入口仍在（纯转发），但没有手机排版与公网入口 */
+	pluginEnabled: boolean;
 	/** PiWeb 自己的端口（局域网入口的转发目标） */
 	targetPort: number;
 	/** 非空时两个入口都不许开，UI 应置灰按钮并说明原因 */
@@ -127,7 +131,7 @@ export interface RemoteStatus {
 }
 
 interface SupervisorState {
-	lan: { server: http.Server; port: number } | null;
+	lan: { server: http.Server; port: number; styled: boolean } | null;
 	tunnel: { child: ChildProcess; url: string | null; ready: boolean } | null;
 	/** 正在启动中的那一次：并发调用复用它，不能起两个监听 / 两个 cloudflared */
 	lanStarting?: Promise<LanState> | null;
@@ -250,12 +254,14 @@ export function remoteStatus(): RemoteStatus {
 	const lanPort = current.lan?.port ?? null;
 	return {
 		plugin: PLUGIN_ID,
+		pluginEnabled: remotePluginEnabled(),
 		targetPort: piwebPort(),
 		blocked: remoteBlocked(),
 		lan: {
 			running: Boolean(current.lan),
 			port: lanPort,
 			urls: lanPort ? lanAddresses().map((address) => `http://${address}:${lanPort}`) : [],
+			styled: Boolean(current.lan?.styled),
 			error: current.lanError,
 		},
 		public: {
@@ -308,7 +314,42 @@ export function markEngineMissing(): void {
 	current.enginePath = null;
 }
 
-/** 起局域网入口；已经在跑（或正在起）就复用。targetPort 默认转发回 PiWeb 自己，测试可改成别的上游。 */
+/**
+ * 内置插件是否启用。关闭后**局域网入口照旧可用**，只是不再注入手机排版、也不提供公网隧道——
+ * 这样用户可以用自己写的插件或自建反代接手远程访问，而手机在同一个 WiFi 下仍然连得上。
+ *
+ * 存 `<agentDir>/remote-plugin.json`，与 web-secret 同一目录。读不到就按启用处理（默认开）。
+ */
+function pluginFile(): string {
+	return path.join(agentDir(), "remote-plugin.json");
+}
+
+export function remotePluginEnabled(): boolean {
+	try {
+		const raw = JSON.parse(fs.readFileSync(pluginFile(), "utf8")) as { enabled?: unknown };
+		return raw?.enabled !== false;
+	} catch {
+		// 没写过、或文件坏了：按默认（启用）处理，不让一次读盘失败把功能关掉
+		return true;
+	}
+}
+
+export function setRemotePluginEnabled(enabled: boolean): void {
+	const file = pluginFile();
+	try {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, `${JSON.stringify({ enabled }, null, 2)}\n`, "utf8");
+	} catch (error) {
+		throw new Error(`无法保存远程连接插件开关：${error instanceof Error ? error.message : error}`);
+	}
+}
+
+/**
+ * 起局域网入口；已经在跑（或正在起）就复用。targetPort 默认转发回 PiWeb 自己，测试可改成别的上游。
+ *
+ * 插件启用时是「手机排版注入代理」；关闭时同一个端口退化成**纯转发**（不注入任何东西），
+ * 这样自建反代指向 30142 的部署不会因为关掉插件而失效——用户要的是「插件可关、局域网照旧」。
+ */
 export function startLan(port = remoteLanPort(), host = "0.0.0.0", targetPort = piwebPort()): Promise<LanState> {
 	const current = state();
 	if (current.lan) return Promise.resolve(remoteStatus().lan);
@@ -323,10 +364,12 @@ export function startLan(port = remoteLanPort(), host = "0.0.0.0", targetPort = 
 async function listenLan(port: number, host: string, targetPort: number): Promise<LanState> {
 	const current = state();
 	current.lanError = null;
+	const styled = remotePluginEnabled();
 	const server = createMobileProxy({
 		targetPort,
-		css: MOBILE_FIT_CSS,
-		js: MOBILE_FIT_JS,
+		// 关掉插件就不注入：仍是同一个端口、同一套转发，只是页面上不再有手机排版补丁
+		css: styled ? MOBILE_FIT_CSS : null,
+		js: styled ? MOBILE_FIT_JS : null,
 		log: (message) => console.warn(message),
 	});
 	try {
@@ -339,7 +382,7 @@ async function listenLan(port: number, host: string, targetPort: number): Promis
 		server.close();
 		return remoteStatus().lan;
 	}
-	current.lan = { server, port };
+	current.lan = { server, port, styled };
 	return remoteStatus().lan;
 }
 

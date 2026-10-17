@@ -1,15 +1,15 @@
 /**
  * 「远程连接」内置插件的控制接口。
  *
- * GET    当前状态（局域网入口 + 公网入口 + 拼登录链接用的启动令牌）
- * POST   { action: "start" | "stop" | "start-lan" | "stop-lan" }
+ * GET    当前状态（插件开关 + 局域网入口 + 公网入口 + 拼登录链接用的启动令牌）
+ * POST   { action: "start" | "stop" | "start-lan" | "stop-lan" | "set-plugin" }
  * DELETE 全停
  *
  * 「谁能调这个接口」由 proxy.ts 把关；但「现在能不能开入口」必须在这里再看一次：
  * 认证没开时 proxy 一律放行，这时开出去的局域网 / 公网入口就是一个免密 shell。
  */
 import { NextResponse } from "next/server";
-import { remoteBlocked, remoteStatus, startLan, startPublic, stopAll, stopPublic } from "@/lib/remote/supervisor";
+import { remoteBlocked, remoteStatus, setRemotePluginEnabled, startLan, startPublic, stopAll, stopLan, stopPublic } from "@/lib/remote/supervisor";
 import { authEnabled } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
@@ -63,9 +63,29 @@ export async function POST(request: Request) {
 		case "start-lan":
 			await startLan();
 			return respond();
+		// 只停局域网入口。原先这里调的是 stopAll()，会连公网隧道一起杀掉——
+		// 与动作名不符，也让「只关局域网」变得做不到。
 		case "stop-lan":
-			await stopAll();
+			await stopLan();
 			return respond();
+		case "set-plugin": {
+			// 内置插件总开关。关掉后：不再注入手机排版、公网入口也必须停（它依赖插件）；
+			// 局域网入口**保留**，退化成纯转发，自建反代指向同一个端口照旧可用。
+			const enabled = (body as { enabled?: unknown }).enabled;
+			if (typeof enabled !== "boolean") return bad("enabled must be a boolean");
+			const before = remoteStatus();
+			setRemotePluginEnabled(enabled);
+			if (!enabled) await stopPublic();
+			// 注入资源是在建监听时就烧进去的，所以必须重建监听，开关才真正生效；
+			// 重建只在「原监听需要换模式」时做，避免白断一次连接。
+			if (before.lan.running && before.lan.styled !== enabled) {
+				await stopLan();
+				await startLan();
+			} else {
+				await startLan();
+			}
+			return respond();
+		}
 		default:
 			return bad("unknown action");
 	}

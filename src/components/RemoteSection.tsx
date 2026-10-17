@@ -21,6 +21,8 @@ interface LanState {
 	running: boolean;
 	port: number | null;
 	urls: string[];
+	/** 是否在注入手机排版；插件关闭时为 false（纯转发） */
+	styled: boolean;
 	error: string | null;
 }
 
@@ -35,6 +37,8 @@ interface PublicState {
 
 interface RemoteStatus {
 	plugin: string;
+	/** 内置插件总开关；关闭后局域网入口仍在（纯转发），但没有手机排版与公网入口 */
+	pluginEnabled: boolean;
 	targetPort: number;
 	/** 非空时服务端拒绝开任何入口（没开认证 / 开发模式） */
 	blocked: "auth" | "dev" | null;
@@ -181,12 +185,35 @@ export function RemoteSection() {
 	const lan = status?.lan;
 	const pub = status?.public;
 	const blocked = status?.blocked ?? null;
+	// 开关未取到状态前按「已启用」显示，避免首帧闪一下「已关闭」
+	const pluginOn = status?.pluginEnabled ?? true;
 	const lanTone: "on" | "off" = lan?.running ? "on" : "off";
 	const pubTone: "on" | "pending" | "off" = pub?.running ? (pub.ready ? "on" : "pending") : "off";
 
+	/** 切换内置插件总开关；局域网入口照旧（关掉后退化成纯转发），公网入口会一并停掉 */
+	const togglePlugin = async () => {
+		if (busy) return;
+		setBusy(true);
+		setError("");
+		try {
+			const response = await fetch("/api/remote", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "set-plugin", enabled: !pluginOn }),
+			});
+			const result = await response.json();
+			if (result?.success) setStatus(result.data as RemoteStatus);
+			else setError(result?.error ?? t.remoteFailed);
+		} catch {
+			setError(t.remoteFailed);
+		} finally {
+			if (alive.current) setBusy(false);
+		}
+	};
+
 	return (
 		<div className="flex flex-col gap-6">
-			{/* 插件抬头 */}
+			{/* 插件抬头 + 总开关 */}
 			<div className="flex items-center gap-2.5">
 				<div style={{ fontSize: 15, fontWeight: 500 }}>{t.setRemote}</div>
 				<span
@@ -195,7 +222,23 @@ export function RemoteSection() {
 				>
 					{t.remoteBuiltin}
 				</span>
+				<div className="flex-1" />
+				<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{pluginOn ? t.remotePluginOn : t.remotePluginOff}</span>
+				<button
+					type="button"
+					className="relative h-5 w-9 flex-none rounded-full transition-colors"
+					style={{ background: pluginOn ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }}
+					role="switch"
+					aria-checked={pluginOn}
+					aria-label={t.remotePluginToggle}
+					title={t.remotePluginHint}
+					disabled={busy || !status}
+					onClick={() => void togglePlugin()}
+				>
+					<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: pluginOn ? 18 : 2 }} />
+				</button>
 			</div>
+			<div style={{ fontSize: 12, color: "var(--dsw-label-secondary)", lineHeight: 1.6, marginTop: -12 }}>{t.remotePluginHint}</div>
 
 			{/* 局域网入口 */}
 			<Row title={t.remoteLanTitle} hint={t.remoteLanHint}>
@@ -205,6 +248,9 @@ export function RemoteSection() {
 						<span style={{ color: lan?.running ? "var(--dsw-label-primary)" : "var(--dsw-label-caption)" }}>
 							{lan?.running ? t.remoteRunning : t.remoteStopped}
 						</span>
+						{lan?.running && !lan.styled ? (
+							<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>· {t.remoteLanPlain}</span>
+						) : null}
 					</div>
 					{(lan?.urls ?? []).map((url) => (
 						<EntryLink key={url} url={url} token={status?.loginToken} />
@@ -229,11 +275,12 @@ export function RemoteSection() {
 								{t.remoteStop}
 							</button>
 						) : (
-							<button className="btn-primary-white" style={{ height: 30, fontSize: 13 }} disabled={busy || blocked !== null} onClick={() => void act("start")}>
+							<button className="btn-primary-white" style={{ height: 30, fontSize: 13 }} disabled={busy || blocked !== null || !pluginOn} onClick={() => void act("start")}>
 								{busy ? t.remoteWorking : t.remoteStart}
 							</button>
 						)}
 					</div>
+					{!pluginOn ? <div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", textAlign: "right" }}>{t.remotePublicNeedsPlugin}</div> : null}
 				</div>
 			</Row>
 

@@ -1,8 +1,11 @@
 import net from "node:net";
-import type os from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type osTypes from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET, POST } from "../src/app/api/remote/route";
-import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remoteStatus, resetRemoteSupervisor, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
+import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remotePluginEnabled, remoteStatus, resetRemoteSupervisor, setRemotePluginEnabled, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
 const savedAuth = process.env.PI_WEB_AUTH;
@@ -136,7 +139,7 @@ describe("remote plugin config", () => {
 	});
 
 	it("lists real adapters first and drops proxy TUN addresses the phone can never reach", () => {
-		const v4 = (address: string, internal = false) => ({ address, netmask: "255.255.255.0", family: "IPv4", mac: "00:00:00:00:00:00", internal, cidr: null }) as os.NetworkInterfaceInfo;
+		const v4 = (address: string, internal = false) => ({ address, netmask: "255.255.255.0", family: "IPv4", mac: "00:00:00:00:00:00", internal, cidr: null }) as osTypes.NetworkInterfaceInfo;
 		// 照抄一台装了 Mihomo、VMware、WSL 的 Windows：只有 WLAN 那个是同一 WiFi 下手机能用的
 		const addresses = lanAddresses({
 			"vEthernet (WSL (Hyper-V firewall))": [v4("172.31.208.1")],
@@ -162,5 +165,39 @@ describe("remote plugin config", () => {
 	it("finds the PiWeb-managed engine under the agent directory", () => {
 		expect(managedEnginePath()).toMatch(/web-bin[\\/]cloudflared(\.exe)?$/);
 		expect(tunnelEngine()).toBeTruthy();
+	});
+
+	/**
+	 * 插件总开关落在 agent 目录下的一个小文件里。
+	 * 这里用 PI_CODING_AGENT_DIR 指向临时目录，避免碰用户真实的 remote-plugin.json。
+	 */
+	describe("plugin switch", () => {
+		let dir: string;
+		beforeEach(() => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-remote-plugin-"));
+			process.env.PI_CODING_AGENT_DIR = dir;
+		});
+		afterEach(() => {
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it("defaults to enabled when nothing was ever written", () => {
+			expect(remotePluginEnabled()).toBe(true);
+			expect(remoteStatus().pluginEnabled).toBe(true);
+		});
+
+		it("persists an explicit off switch and reads it back", () => {
+			setRemotePluginEnabled(false);
+			expect(remotePluginEnabled()).toBe(false);
+			expect(remoteStatus().pluginEnabled).toBe(false);
+			setRemotePluginEnabled(true);
+			expect(remotePluginEnabled()).toBe(true);
+		});
+
+		it("treats a corrupt file as enabled instead of throwing", () => {
+			// 一次读盘失败不该把功能关掉，也不该让设置页整块报错
+			fs.writeFileSync(path.join(dir, "remote-plugin.json"), "{ not json", "utf8");
+			expect(remotePluginEnabled()).toBe(true);
+		});
 	});
 });
