@@ -562,7 +562,7 @@ export function ChatInput({
 				<div
 					ref={mentionMenuRef}
 					data-testid="mention-menu"
-					className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5"
+					className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-x-hidden overflow-y-auto py-1.5"
 					role="listbox"
 					aria-label={t.mentionFiles}
 					style={{ overflowY: "auto" }}
@@ -618,7 +618,7 @@ export function ChatInput({
 
 			{/* 斜杠命令菜单（dsh：悬浮于输入卡上方，同宽） */}
 			{commandMode && visibleCommands.length > 0 && (
-				<div ref={cmdMenuRef} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog} style={{ overflowY: "auto" }}>
+				<div ref={cmdMenuRef} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-x-hidden overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog} style={{ overflowY: "auto" }}>
 					<div className="px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 						{t.slashCatalog}
 					</div>

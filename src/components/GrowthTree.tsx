@@ -160,7 +160,9 @@ export const GrowthTree = memo(function GrowthTree({
 	return (
 		<div
 			ref={scrollRef}
-			className="pw-tree min-h-0 flex-1 overflow-auto outline-none"
+			// overflow-x-hidden 是必须的：.pw-tree-row:hover 会 translateX(2px)，
+			// 单写 overflow-auto 时这 2px 会撑出横向滚动区，底部冒出一条滑块。
+			className="pw-tree min-h-0 flex-1 overflow-x-hidden overflow-y-auto outline-none"
 			tabIndex={0}
 			role="tree"
 			onKeyDown={onKeyDown}
