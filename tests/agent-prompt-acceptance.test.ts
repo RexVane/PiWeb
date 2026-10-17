@@ -14,11 +14,27 @@ function deferred<T = void>() {
 	return { promise, resolve, reject };
 }
 function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string, unknown> = {}) {
-	const session = { prompt: vi.fn(prompt), isStreaming: false, isIdle: true, ...extra };
+	// 假会话也要带工具 API：applyToolPolicy 会读 getAllTools / getActiveToolNames 并写回激活集，
+	// 缺了就会抛「session.getAllTools is not a function」或误判「cannot disable all tools」
+	const tools = [{ name: "read" }, { name: "bash" }, { name: "edit" }];
+	const session = {
+		prompt: vi.fn(prompt),
+		isStreaming: false,
+		isIdle: true,
+		getAllTools: () => tools,
+		getActiveToolNames: () => tools.map((tool) => tool.name),
+		setActiveToolsByName: vi.fn(),
+		...extra,
+	};
 	const m = {
 		session, creating: null, disposed: false, promptSubmitting: false, runActive: false,
 		resourceReloading: false, resourceReloadPending: false, cwd: "test", sessionPath: "test",
 		seq: 0, buffer: [], subscribers: new Set(), lastActive: 0,
+		// 真实会话在 ensureSession 里一定初始化这几项；applyToolPolicy 会读它们，
+		// 缺了就抛 TypeError，execute 会把「改工具」误报成 ok:false
+		requestedTools: new Set<string>(),
+		ledger: { entries: [] as unknown[], statsVersion: 0, onEvent: () => {}, drainDirty: () => [] },
+		messageIds: new WeakMap(),
 		growth: { version: 1, prepare: vi.fn(async () => {}), onEvent: () => {} },
 	} as unknown as Managed;
 	return { m, session };

@@ -59,25 +59,35 @@ describe("remote entry links", () => {
 		// 上面那份 status 就没有 styled / pluginEnabled，正是旧响应的形状
 		render(<RemoteSection />);
 		await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
-		expect(document.body.textContent).not.toContain("纯转发");
+		// 只看状态标注（形如「· 纯转发（未注入手机排版）」）：说明文案里本来就有「纯转发」三个字
+		expect(document.body.textContent).not.toContain("· 纯转发");
 		// 开关按「已启用」处理：断言开关本身（aria-checked），比匹配文字更稳
 		const toggle = screen.getByRole("switch", { name: "启用内置远程连接插件" });
 		expect(toggle.getAttribute("aria-checked")).toBe("true");
 		// 公网入口按钮不被插件开关拦住
-		expect((screen.getByRole("button", { name: "关闭" }) as HTMLButtonElement).disabled).toBe(false);
+		expect((screen.getByText("关闭").closest("button") as HTMLButtonElement).disabled).toBe(false);
 	});
 
 	it("marks the LAN entry as plain forwarding only when the server says so", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => ({
 			ok: true, status: 200,
-			json: async () => ({ success: true, data: { ...status, pluginEnabled: false, lan: { ...status.lan, styled: false } } }),
+			json: async () => ({
+				success: true,
+				data: {
+					...status,
+					pluginEnabled: false,
+					lan: { ...status.lan, styled: false },
+					// 公网入口没开，才渲染「开启远程连接」这个按钮
+					public: { ...status.public, running: false, ready: false, url: null },
+				},
+			}),
 		})));
 		render(<RemoteSection />);
 		await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
-		expect(document.body.textContent).toContain("纯转发");
+		expect(document.body.textContent).toContain("· 纯转发");
 		expect(document.body.textContent).toContain("已关闭");
 		// 插件关闭时公网入口不可开，按钮置灰并说明原因
-		expect((screen.getByRole("button", { name: "开启远程连接" }) as HTMLButtonElement).disabled).toBe(true);
+		expect((screen.getByText("开启远程连接").closest("button") as HTMLButtonElement).disabled).toBe(true);
 		expect(document.body.textContent).toContain("需要先启用内置插件");
 	});
 });

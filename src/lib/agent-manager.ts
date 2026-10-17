@@ -478,7 +478,14 @@ function usageEvent(m: Managed): WebEvent | null {
 		/* 缓存键拿不到就走原路径 */
 	}
 	const stats = sessionStats(m);
-	const usage = m.session.getContextUsage() ?? null;
+	// 用量统计是旁路信息：SDK 偶发取不到时不能让调用方失败，
+	// 否则一次统计异常就会把「切模型 / 刷新目录」这类命令打回 ok:false。
+	let usage: ReturnType<AgentSession["getContextUsage"]> | null = null;
+	try {
+		usage = m.session.getContextUsage() ?? null;
+	} catch {
+		usage = null;
+	}
 	const evt = {
 		type: "usage" as const,
 		stats,
@@ -1282,6 +1289,13 @@ async function reloadManagedResources(m: Managed): Promise<boolean> {
 	m.resourceReloadPending = false;
 	try {
 		await m.session.reload();
+		// pi 1.3.0 起 reload 会保留原来的活动工具集：被移除的扩展工具会继续留在活动集里。
+		// 这里按当前注册表重算一次；策略本身出错不能把重载判成失败。
+		try {
+			applyToolPolicy(m, m.session);
+		} catch {
+			/* 工具策略是附带动作，失败下次重载/切档位会再算 */
+		}
 		swapCurrentModelObject(m.session);
 		return true;
 	} catch (err) {
@@ -1799,6 +1813,12 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				}
 				const session = await ensureSession(m);
 				await session.reload();
+				// 同 reloadManagedResources：pi 1.3.0 保留活动工具集，重载后按当前注册表重算
+				try {
+					applyToolPolicy(m, session);
+				} catch {
+					/* 同上：策略失败不影响 /reload 本身 */
+				}
 				swapCurrentModelObject(session);
 				return { ok: true };
 			}

@@ -185,15 +185,25 @@ export function AppShell() {
 		const section = localStorage.getItem("piweb.drawerSection");
 		if (["project", "prompts", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
 	}, []);
-	/** 新会话时加载用户之前的选择，或使用系统建议（第一个认证的） */
+	/** 新会话时加载用户之前的选择；没有记住的，等 /api/models/defaults 回来用 pi 设置里的建议模型兜底 */
 	useEffect(() => {
 		if (!heroCwd) {
 			setHeroModel(null);
 			return;
 		}
-		// 只认这个工作区自己记住的模型；没有就不预选，输入框等用户在新会话页选
+		// 优先这个工作区自己记住的模型；没有就先留空，交给下面的建议模型兜底
 		setHeroModel(readRememberedHeroModel(localStorage, heroCwd));
 	}, [heroCwd]);
+	/**
+	 * 兜底：这个工作区没记住过选择时，用 pi 设置里的建议模型（defaults.model，服务端按
+	 * enabledModels + 认证状态挑出来的）。否则点「新会话」永远是「当前模型不可用，请先选择模型」，
+	 * 明明有可用模型却要先手动选一次。用户显式选过（记住的）就不覆盖。
+	 */
+	useEffect(() => {
+		const suggested = heroDefaults?.model;
+		if (!heroCwd || !suggested) return;
+		setHeroModel((current) => current ?? suggested);
+	}, [heroCwd, heroDefaults]);
 	useEffect(() => {
 		setHeroDefaults(null);
 		if (!heroCwd) return;

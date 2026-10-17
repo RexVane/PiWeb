@@ -172,3 +172,4 @@
 - 2026-10-17 11:25 | #159 | 构建环境 | 补做生产构建恢复 .next（BUILD_ID jPYkMuNJpjWL1twcbshCU）；清掉 2026-10-16 失败的 build:release 留下的 active.json state=failed 标记（备份在 backups/files/），否则任何生产启动都被拒绝 | deepseek-flash
 - 2026-10-17 11:33 | #160 | 对话 | 技能行带上用户参数（可展开看全文）：对齐 Claude Code 把 Skill 调用的 args 放在调用上，而不是另发一条用户消息；Codex 则无技能步骤、只读 SKILL.md | deepseek-flash
 - 2026-10-17 11:43 | #161 | 增长树 | 去掉底部横向滑块：滚动容器锁 overflow-x，行悬停的 translateX(2px) 不再撑出滚动区；顺带锁掉输入卡两个命令菜单的同类问题 | deepseek-flash
+- 2026-10-17 12:46 | #162 | 测试/对话 | 全套件转绿（953 通过）：Hero 新会话用 pi 设置里的建议模型兜底、usage 取值异常不再打挂命令、资源重载后按注册表重算工具策略；修 4 个测试文件的漂移断言 | deepseek-flash

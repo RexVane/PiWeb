@@ -17,9 +17,11 @@ const providers = (): Record<string, unknown> => ({
 
 describe("customModelGaps", () => {
 	it("只列 models[] 里缺字段的条目，带上位置和已写的值", () => {
+		// reasoning 也要算：没写时 pi 按 false 处理，推理模型的思考档位会整个消失
 		expect(customModelGaps(providers())).toEqual([
-			{ provider: "magpie", index: 1, id: "missing-all", name: "Missing All", missing: ["contextWindow", "maxTokens", "input"] },
-			{ provider: "magpie", index: 2, id: "missing-max", name: null, contextWindow: 200_000, vision: false, missing: ["maxTokens"] },
+			{ provider: "magpie", index: 0, id: "full", name: null, contextWindow: 1_000_000, maxTokens: 32_000, vision: true, missing: ["reasoning"] },
+			{ provider: "magpie", index: 1, id: "missing-all", name: "Missing All", missing: ["contextWindow", "maxTokens", "input", "reasoning"] },
+			{ provider: "magpie", index: 2, id: "missing-max", name: null, contextWindow: 200_000, vision: false, missing: ["maxTokens", "reasoning"] },
 		]);
 	});
 
@@ -64,8 +66,10 @@ describe("fillModelFields", () => {
 
 	it("补完再体检，缺口跟着消失", () => {
 		const { providers: next } = fillModelFields(providers(), [
-			{ provider: "magpie", index: 1, id: "missing-all", contextWindow: 256_000, maxTokens: 16_000, vision: false },
-			{ provider: "magpie", index: 2, id: "missing-max", maxTokens: 8_000 },
+			// reasoning 也要一起补：没写时 pi 按 false 处理，体检会继续提示
+			{ provider: "magpie", index: 0, id: "full", reasoning: true },
+			{ provider: "magpie", index: 1, id: "missing-all", contextWindow: 256_000, maxTokens: 16_000, vision: false, reasoning: false },
+			{ provider: "magpie", index: 2, id: "missing-max", maxTokens: 8_000, reasoning: true },
 		]);
 		expect(customModelGaps(next)).toEqual([]);
 	});
