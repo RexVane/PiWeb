@@ -252,23 +252,47 @@ describe("npm-installed PiWeb updates from the registry", () => {
 			return args[0] === "view" ? "2.0.0\n" : "";
 		});
 		const check = await createUpdateService({ root, run, versions }).checkForUpdate("piweb");
-		expect(check).toMatchObject({ current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: canSelfUpdateNpmInstall() });
+		// 判定要带上安装目录：Windows 上只有「工作目录在安装目录之外」才允许自更新
+		expect(check).toMatchObject({ current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: canSelfUpdateNpmInstall(process.platform, root) });
 		// 不能原地替换的平台上，界面改显示这条命令
-		expect(check.command).toBe(canSelfUpdateNpmInstall() ? undefined : "npm install -g @rexvane/piweb@latest");
+		expect(check.command).toBe(canSelfUpdateNpmInstall(process.platform, root) ? undefined : "npm install -g @rexvane/piweb@latest");
 		expect(run.mock.calls.map(([, args]) => args.join(" "))).toEqual(["view @rexvane/piweb version"]);
 	});
 
-	it("shows the install command instead of a button on Windows", async () => {
-		// Windows 下运行中的 piweb 锁着自己的安装目录，npm rename 会 EBUSY（已实测）；
-		// 所以这里必须给出命令，而不是一个注定失败的按钮。
+	it("falls back to the install command on Windows when serving from inside the installation", async () => {
+		// Windows 不允许改名任何进程的当前工作目录，而 npm 替换全局包要先挪走整个包目录。
+		// 若服务的工作目录落在安装目录里（旧行为），更新必然 EBUSY，所以必须给出命令而不是按钮。
 		const root = await npmInstallation();
 		const run = vi.fn(async (_command: string, args: string[]) => args[0] === "view" ? "2.0.0\n" : "");
-		const check = await createUpdateService({ root, run, versions, platform: "win32" }).checkForUpdate("piweb");
-		expect(check).toMatchObject({ canUpdate: true, selfUpdate: false, command: "npm install -g @rexvane/piweb@latest" });
+		const previous = process.cwd();
+		process.chdir(root);
+		try {
+			const check = await createUpdateService({ root, run, versions, platform: "win32" }).checkForUpdate("piweb");
+			expect(check).toMatchObject({ canUpdate: true, selfUpdate: false, command: "npm install -g @rexvane/piweb@latest" });
 
-		const service = createUpdateService({ root, run, versions, platform: "win32" });
-		await expect(service.runUpdate("piweb", { assertIdle: async () => {} })).rejects.toThrow(/npm install -g @rexvane\/piweb@latest/);
-		expect(run.mock.calls.some(([, args]) => args[0] === "install")).toBe(false);
+			const service = createUpdateService({ root, run, versions, platform: "win32" });
+			await expect(service.runUpdate("piweb", { assertIdle: async () => {} })).rejects.toThrow(/npm install -g @rexvane\/piweb@latest/);
+			expect(run.mock.calls.some(([, args]) => args[0] === "install")).toBe(false);
+		} finally {
+			process.chdir(previous);
+		}
+	});
+
+	it("offers the button on Windows once the server runs outside the installation", async () => {
+		// 启动器把服务的工作目录移出安装目录（scripts/launcher.mjs），这样 Windows 上 npm
+		// 也能替换运行中的包；此时界面应给出可点的按钮，而不是复制命令。
+		const root = await npmInstallation();
+		const run = vi.fn(async (_command: string, args: string[]) => args[0] === "view" ? "2.0.0\n" : "");
+		const previous = process.cwd();
+		// 测试进程的 cwd 本来就在安装目录之外（临时目录里的 npm 安装），这里显式确认这一点
+		process.chdir(os.tmpdir());
+		try {
+			const check = await createUpdateService({ root, run, versions, platform: "win32" }).checkForUpdate("piweb");
+			expect(check).toMatchObject({ canUpdate: true, selfUpdate: true });
+			expect(check.command).toBeUndefined();
+		} finally {
+			process.chdir(previous);
+		}
 	});
 
 	it("installs the published package itself where the platform allows it", async () => {

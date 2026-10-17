@@ -393,6 +393,27 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		log(`[piweb] 登录链接（令牌即凭据，别外传；它会进浏览器历史）：${loginUrl}`);
 	}
 	const next = path.join(plan.root, "node_modules", "next", "dist", "bin", "next");
+	/**
+	 * 服务进程的工作目录**必须是项目根目录**，不能用 `next [directory]` 传参代替。
+	 *
+	 * 曾试过把工作目录移到安装目录之外、改由 `next [directory]` 传入项目目录，
+	 * 目的是让 Windows 上 npm 能替换正在运行的包（进程 cwd 落在包目录内时改名为 EBUSY）。
+	 * 这条路在 Next 16.4.0 上不成立，原因在 Next 内部：
+	 *
+	 *   1. `build/define-env.js` 把 `path.relative(process.cwd(), projectPath)` 作为
+	 *      `__NEXT_RELATIVE_PROJECT_DIR` 烘焙进产物；
+	 *   2. 处理请求时 `server/route-modules/route-module.js` 用
+	 *      `join(process.cwd(), relativeProjectDir)` 还原项目目录。
+	 *
+	 * 于是 cwd 一旦不等于项目目录，还原结果就是错的：
+	 *   - 生产构建烘焙的是空串（构建时 cwd 就是项目根），`join(cwd, "")` 直接等于 cwd；
+	 *   - 跨盘符（cwd 在 C:、项目在 D:）时 `path.relative` 直接返回绝对路径，
+	 *     `join(cwd, "D:\\...")` 拼成 `C:\\...\\run\\D:\\...\\PiWeb` 这种双份路径，
+	 *     表现为 `ENOENT ... routes-manifest.json`。
+	 *
+	 * 所以 cwd 保持项目根；Windows 上「服务运行时就地自我更新」改为让用户先停服务再装
+	 * （update-service 会据此退回复制命令，见 canSelfUpdateNpmInstall）。
+	 */
 	const child = start(process.execPath, [next, plan.command, ...(plan.command === "dev" ? ["--webpack"] : []), "-p", String(port), "-H", options.hostname], {
 		cwd: plan.root, stdio: "inherit", env: plan.env,
 	});

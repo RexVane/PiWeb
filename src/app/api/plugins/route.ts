@@ -10,12 +10,13 @@ import {
 	updatePackages,
 } from "@/lib/plugins-service";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
+import { APP_ROOT } from "@/lib/app-root";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
 	try {
-		const cwd = await resolveWorkspacePath(new URL(req.url).searchParams.get("cwd") || process.cwd());
+		const cwd = await resolveWorkspacePath(new URL(req.url).searchParams.get("cwd") || APP_ROOT);
 		const [packages, extensions] = await Promise.all([listPackages(cwd), listLoadedExtensions(cwd)]);
 		return NextResponse.json({ success: true, data: { packages, extensions } });
 	} catch (err: any) {
@@ -35,7 +36,7 @@ export async function POST(req: Request) {
 			local?: boolean;
 			cwd?: string;
 		};
-		const cwd = await resolveWorkspacePath(body.cwd || process.cwd());
+		const cwd = await resolveWorkspacePath(body.cwd || APP_ROOT);
 		if (body.source && body.source.length > 4096) {
 			return NextResponse.json({ success: false, error: "package source is too long" }, { status: 400 });
 		}

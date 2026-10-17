@@ -78,3 +78,6 @@
 20261014-180435 | src/components/side-chat/store.ts | backups/files/store-20261014-180435.ts | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
 20261014-180435 | src/components/side-chat/SideChatPanel.module.css | backups/files/SideChatPanel.module-20261014-180435.css | 按用户要求保持原旁聊页面，保存撤回的完整对话界面改动
 20261014-180435 | src/lib/chat/state.ts | backups/files/state-20261014-180435.ts | 撤回仅为完整界面引入的共享状态模块
+20261017-0910 | .next/ | 未备份（构建产物，可重新 build 生成） | 验证 #5（Windows 自更新）时跑 next build，中途因沙箱 spawn EPERM 失败；Next 在构建开始时已清空 .next，失败后未重建，故生产构建缺失。源码、public、scripts、assets、node_modules 均完好。恢复方式：重新跑构建。同批的 .next-releases/mvb25gaz-* 本就是空目录（10-16 那次失败的发布留下）
+20261017-105429 | next.config.ts（未提交版） | backups/files/next.config-ts-20261017-105429.bak.ts | #5 回退：绝对 require 那套只为 next [目录] 传参而加，随方案废弃一并撤销，留实体备查
+20261017-105500 | docs/state/progress.md（含未提交的 #149 行） | backups/files/progress-20261017-pending149.md | 提交 #150 前临时摘下 #149 行以免混入提交，全部提交后已恢复

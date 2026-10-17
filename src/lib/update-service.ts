@@ -4,6 +4,7 @@
  * No serving process is stopped, and a build is selected only on a manual restart.
  */
 import fs from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { installPiUpdate, PI_PACKAGE, prepareRelease } from "../../scripts/release.mjs";
 import { installPiRuntime } from "../../scripts/runtime/pi-packages.mjs";
@@ -69,14 +70,33 @@ function isNpmInstall(root: string): boolean {
 }
 
 /**
- * Windows refuses to rename the installation directory while the server runs inside it
- * (`next start` is spawned with the installation as its working directory), so an npm
- * installation can only replace itself on POSIX. Verified: npm reports EBUSY while
- * serving and succeeds with the same command once the process is stopped.
+ * Whether an npm-installed PiWeb can replace itself while serving.
+ *
+ * Windows 不允许改名/删除任何进程的当前工作目录。已用隔离实验确认：同一个目录，
+ * 进程工作目录在里面时改名得 EBUSY，在外面时成功——**即使该进程已经加载过目录内的模块**。
+ * npm 替换全局包正是先挪走整个包目录，所以工作目录留在安装目录里就必然 EBUSY。
+ *
+ * 曾试图把服务的工作目录移出安装目录来绕开这一点，但 Next 16 会把 `process.cwd()` 当作
+ * 项目根（见 scripts/launcher.mjs 的注释），cwd 一挪，所有路由都报 ENOENT。
+ * 所以服务只能带着安装目录当 cwd 运行，Windows 上也就无法在服务运行期间替换自身：
+ * 这里据此判 false，界面显示复制命令而不是按钮。
+ *
+ * 判据是「实际工作目录是否在安装目录之外」，而不是平台写死：将来若有部署真的从别处
+ * 起服务，它会自动变回可自更新，不需要再改这里。
  * @param {NodeJS.Platform} [platform]
+ * @param {string} [installation] 安装目录；不传时无法核对，按平台保守判断
  */
-export function canSelfUpdateNpmInstall(platform: NodeJS.Platform = process.platform): boolean {
-	return platform !== "win32";
+export function canSelfUpdateNpmInstall(platform: NodeJS.Platform = process.platform, installation?: string): boolean {
+	if (platform !== "win32") return true;
+	if (!installation) return false;
+	try {
+		const cwd = realpathSync(process.cwd());
+		const root = realpathSync(installation);
+		const relative = path.relative(root, cwd);
+		return relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative));
+	} catch {
+		return false;
+	}
 }
 
 /** The one command every install path documents, with the build it should fetch. */
@@ -111,7 +131,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 			// npm 安装对着 registry（用户自己的 registry 配置）比版本，没有「落后几个提交」的概念。
 			const latest = (await command("npm", ["view", PIWEB_PACKAGE, "version"], 30_000)).trim().split(/\r?\n/)[0];
 			if (!latest) throw new Error(`cannot read the published version of ${PIWEB_PACKAGE}`);
-			const selfUpdate = canSelfUpdateNpmInstall(platform);
+			const selfUpdate = canSelfUpdateNpmInstall(platform, installation);
 			return { current: piWeb, latest, canUpdate: isNewer(latest, piWeb), selfUpdate, ...(selfUpdate ? {} : { command: PIWEB_INSTALL_COMMAND }) };
 		}
 		await command("git", ["fetch", "origin", "main", "--tags"], 30_000);
@@ -129,10 +149,10 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 	 * running process keeps its old code until the user restarts.
 	 */
 	async function installFromRegistry(installation: string, assertIdle: () => Promise<void>): Promise<UpdateResult> {
-		if (!canSelfUpdateNpmInstall(platform)) {
+		if (!canSelfUpdateNpmInstall(platform, installation)) {
 			// The UI shows this command instead of a button; keeping the check here means a
 			// stale page cannot start an install that is guaranteed to fail.
-			throw new Error(`Windows cannot replace a running PiWeb. Stop piweb, then run: ${PIWEB_INSTALL_COMMAND}`);
+			throw new Error(`This PiWeb cannot replace itself while serving. Stop piweb, then run: ${PIWEB_INSTALL_COMMAND}`);
 		}
 		await assertIdle();
 		const command = (args: string[], timeoutMs: number) => run("npm", args, { cwd: installation, env: commandEnv, timeoutMs });

@@ -8,6 +8,7 @@ import path from "node:path";
 import { getAgentDir, getResourceLoader, reloadAllLoaders, resourceLoaderReady } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
 import { resolveDiscoveredPath } from "./path-security";
+import { APP_ROOT } from "./app-root";
 
 export interface SkillView {
 	name: string;
@@ -67,7 +68,7 @@ async function classifyScope(filePath: string, context: ScopeContext): Promise<S
 export async function listSkills(cwd?: string): Promise<SkillView[]> {
 	const seen = new Set<string>();
 	const out: SkillView[] = [];
-	const targets: string[] = cwd ? [path.resolve(cwd)] : [process.cwd()];
+	const targets: string[] = cwd ? [path.resolve(cwd)] : [APP_ROOT];
 	for (const dir of targets) {
 		await resourceLoaderReady(dir);
 		const loader = getResourceLoader(dir);

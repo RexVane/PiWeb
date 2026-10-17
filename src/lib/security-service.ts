@@ -9,6 +9,7 @@ import { invalidateJsonFile, readJsonObject } from "./agent-config";
 import { getAgentDir, getSettingsManager, reloadAllLoaders, reloadSettingsManagers, syncProjectTrust } from "./pi";
 import { reloadSessionsForCwd } from "./agent-manager";
 import { flushSettingsOrThrow, withSettingsWriteLock } from "./settings-write-lock";
+import { APP_ROOT } from "./app-root";
 
 export type ProjectTrust = "ask" | "always" | "never";
 
@@ -23,7 +24,7 @@ export async function setProjectTrust(value: ProjectTrust): Promise<void> {
 	if (value !== "ask" && value !== "always" && value !== "never") throw new Error("invalid defaultProjectTrust");
 	await withSettingsWriteLock(path.join(getAgentDir(), "settings.json"), async () => {
 		await getSecurity(); // ENOENT only; malformed or unreadable settings must fail closed.
-		const manager = getSettingsManager(process.cwd());
+		const manager = getSettingsManager(APP_ROOT);
 		await flushSettingsOrThrow(manager);
 		await manager.reload();
 		await flushSettingsOrThrow(manager);

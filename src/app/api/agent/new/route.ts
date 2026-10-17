@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { createNewSession } from "@/lib/agent-manager";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
+import { APP_ROOT } from "@/lib/app-root";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
 	try {
 		const body = (await req.json()) as { cwd?: unknown };
-		const cwd = await resolveWorkspacePath(body.cwd ?? process.cwd());
+		const cwd = await resolveWorkspacePath(body.cwd ?? APP_ROOT);
 		const { sessionPath } = await createNewSession(cwd);
 		return NextResponse.json({ success: true, data: { sessionPath } });
 	} catch (error) {

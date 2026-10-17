@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { listPromptSources, readPromptSource } from "@/lib/prompt-sources";
 import { getManaged } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
+import { APP_ROOT } from "@/lib/app-root";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,7 @@ async function hotSession(cwd: string, sessionId: string | null) {
 export async function GET(req: Request) {
 	try {
 		const url = new URL(req.url);
-		const cwd = await resolveWorkspacePath(url.searchParams.get("cwd") || process.cwd());
+		const cwd = await resolveWorkspacePath(url.searchParams.get("cwd") || APP_ROOT);
 		const sessionId = url.searchParams.get("session");
 		const data = await listPromptSources({ cwd, session: await hotSession(cwd, sessionId) });
 		return NextResponse.json({ success: true, data });
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
 		const body = (await req.json()) as { action?: string; filePath?: string; cwd?: string };
 		if (body.action !== "read") return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 		if (!body.filePath) return NextResponse.json({ success: false, error: "missing filePath" }, { status: 400 });
-		const cwd = await resolveWorkspacePath(body.cwd || process.cwd());
+		const cwd = await resolveWorkspacePath(body.cwd || APP_ROOT);
 		return NextResponse.json({ success: true, data: { content: await readPromptSource(body.filePath, cwd) } });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : "request failed";
