@@ -714,20 +714,35 @@ function ContextStep({ resource, cwd }: { resource: ContextResource | string; cw
 
 // ---------- 技能调用：本轮用过哪个技能（不是一条用户发言）----------
 /**
- * pi 把 `/skill:name` 在输入端展开成一段用户消息（SKILL.md 正文 + 参数），模型必须收到它。
- * 但那不是「用户发了一条消息」——Claude Code 里技能是模型发起的一次 Skill 工具调用，
- * Codex 也在过程区里记这一步。所以这里不当用户气泡渲染，而是放进本轮的过程步骤中：
- * 一行「使用技能 computer-use」，与工具行同一套排版。
+ * pi 把 `/skill:name 参数` 在输入端展开成一段用户消息（SKILL.md 正文 + 参数接在 `</skill>` 后），
+ * 模型必须收到它。但那不是「用户发了一条消息」：
+ *   - Claude Code 里技能是模型发起的 Skill 工具调用，用户打的正文是它的 `args` 入参
+ *     （tool_result 只有 "Launching skill: name"，不含 args）；
+ *   - Codex 里没有技能步骤，模型直接读 SKILL.md 文件。
+ * 所以这里不渲染用户气泡，而是放进本轮过程：一行「使用技能 name」，参数挂在这一行上、可展开看全文。
  */
-function SkillStep({ name }: { name: string }) {
+function SkillStep({ name, args }: { name: string; args: string }) {
 	const { t } = useI18n();
 	const tt = t as unknown as Dict;
+	const [open, setOpen] = useState(false);
+	const oneLine = args.replace(/\s+/g, " ").trim();
+	const line = (
+		<>
+			<span className="pw-verb">{tt.skillStep}</span>
+			<span className="pw-skill-name">{name}</span>
+			{oneLine && !open && <span className="pw-gist">{oneLine}</span>}
+		</>
+	);
 	return (
 		<Step kind="skill">
-			<div className="pw-line" title={`${tt.skillStepTitle} · ${name}`}>
-				<span className="pw-verb">{tt.skillStep}</span>
-				<span className="pw-skill-name">{name}</span>
-			</div>
+			{oneLine ? (
+				<button type="button" className="pw-line pw-clickable" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={args}>
+					{line}
+				</button>
+			) : (
+				<div className="pw-line" title={`${tt.skillStepTitle} · ${name}`}>{line}</div>
+			)}
+			{open && oneLine && <pre className="pw-output pw-think-full">{args}</pre>}
 		</Step>
 	);
 }
@@ -1173,7 +1188,7 @@ function TurnBlockView({
 			{skill && <UserImages images={user?.content.filter((c) => c.type === "image") ?? []} />}
 			{showProcess && (
 				<div className="pw-turn">
-					{skill && <SkillStep name={skill.name} />}
+					{skill && <SkillStep name={skill.name} args={skill.args} />}
 					{contextFiles?.map((resource, i) => (
 						<ContextStep key={`ctx-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${i}`} resource={resource} cwd={cwd} />
 					))}

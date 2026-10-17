@@ -20,9 +20,11 @@
 export interface ExpandedSkill {
 	/** 技能名（pi 展开时写入的 name 属性） */
 	name: string;
+	/** 用户在技能名后面打的正文（展开后追加在 `</skill>` 之后；没有则为空串） */
+	args: string;
 }
 
-/** 整条消息就是一个技能展开时返回技能名，否则返回 null */
+/** 整条消息就是一个技能展开时返回技能名与参数，否则返回 null */
 export function parseExpandedSkill(text: string): ExpandedSkill | null {
 	const trimmed = text.trimStart();
 	if (!trimmed.startsWith("<skill ")) return null;
@@ -32,6 +34,8 @@ export function parseExpandedSkill(text: string): ExpandedSkill | null {
 	const name = /\bname\s*=\s*"([^"]*)"/.exec(attrs)?.[1]?.trim();
 	if (!name) return null;
 	// 必须能找到对应的闭合标签，才认定这是一次完整的展开（半截内容不认）
-	if (!trimmed.includes("</skill>")) return null;
-	return { name };
+	const close = trimmed.lastIndexOf("</skill>");
+	if (close < 0) return null;
+	// 参数在闭合标签之后，与技能正文同属一条用户消息（pi 不单独发）
+	return { name, args: trimmed.slice(close + "</skill>".length).trim() };
 }

@@ -170,3 +170,4 @@
 - 2026-10-17 11:16 | #157 | 对话 | 技能改为过程步骤里的「使用技能 X」：不再当作用户发言渲染（对齐 Claude Code 的 Skill 工具调用形态，依据其本地会话记录 tool_use name=Skill） | deepseek-flash
 - 2026-10-17 11:19 | #158 | 对话 | 错误步骤不再在行尾显示模型名（只剩「模型返回错误：… · 提示」与连续次数） | deepseek-flash
 - 2026-10-17 11:25 | #159 | 构建环境 | 补做生产构建恢复 .next（BUILD_ID jPYkMuNJpjWL1twcbshCU）；清掉 2026-10-16 失败的 build:release 留下的 active.json state=failed 标记（备份在 backups/files/），否则任何生产启动都被拒绝 | deepseek-flash
+- 2026-10-17 11:33 | #160 | 对话 | 技能行带上用户参数（可展开看全文）：对齐 Claude Code 把 Skill 调用的 args 放在调用上，而不是另发一条用户消息；Codex 则无技能步骤、只读 SKILL.md | deepseek-flash
