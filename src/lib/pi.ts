@@ -251,13 +251,6 @@ export function getSettingsManager(cwd: string): SettingsManager {
 	return sm;
 }
 
-/** Preserve global/project discovery roots while keeping side-session preference changes in memory. */
-export function createDetachedSettingsManager(cwd: string): SettingsManager {
-	const source = getSettingsManager(cwd);
-	const values = new Map<string, string>([["global", JSON.stringify(source.getGlobalSettings())], ["project", JSON.stringify(source.getProjectSettings())]]);
-	return SettingsManagerClass.fromStorage({ withLock(scope, update) { const next = update(values.get(scope)); if (next !== undefined) values.set(scope, next); } }, { projectTrusted: source.isProjectTrusted() });
-}
-
 interface LoaderEntry {
 	/** 原始目录（缓存键在 Windows 上是小写的） */
 	cwd: string;

@@ -13,8 +13,6 @@ import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import type { DrawerSection } from "@/components/DrawerPanel";
-import { SideChatPanel } from "@/components/side-chat/SideChatPanel";
-import { SideChatIcon } from "@/components/side-chat/icons";
 import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
 import { DirectoryPicker } from "@/components/DirectoryPicker";
 
@@ -160,20 +158,14 @@ export function AppShell() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
-	/** 抽屉入口保存在浏览器；新用户先看到旁聊。 */
+	/** 抽屉入口保存在浏览器 */
 	const [drawerSection, setDrawerSection] = useState<DrawerSection>("project");
 	const chooseDrawerSection = useCallback((section: DrawerSection) => {
 		setDrawerSection(section);
 		localStorage.setItem("piweb.drawerSection", section);
-		setSideChatOpen(false);
 	}, []);
 	/** 右侧抽屉(最右一列):入口列表 + 内容 */
 	const [drawerOpen, setDrawerOpen] = useState(false);
-	/**
-	 * 右侧旁聊面板：和抽屉共用最右一列，所以两者互斥（开一个就关另一个）。
-	 * 旁聊不再作为抽屉的一个入口 —— 它是独立面板，入口是会话头部那个图标按钮。
-	 */
-	const [sideChatOpen, setSideChatOpen] = useState(false);
 	/** 打开抽屉时「落到最新轮」只跳过这一次(点 badge 指定轮次时用) */
 	const skipLatestOnce = useRef(false);
 	/** useGrowth 的"落到最新轮":它在 AppShell 里、不随抽屉卸载,所以必须显式调用 */
@@ -222,8 +214,6 @@ export function AppShell() {
 		setDrawerOpen((cur) => {
 			const v = next ?? !cur;
 			localStorage.setItem("piweb.drawerOpen", v ? "1" : "0");
-			// 最右一列只有一个：开抽屉就收起旁聊
-			if (v) setSideChatOpen(false);
 			return v;
 		});
 	}, []);
@@ -749,7 +739,7 @@ export function AppShell() {
 	// 抽屉里的一个入口,不再单独占一列,所以是 3 列而不是 4 列。
 	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
 	// 最右一列只有一条宽度(rightWidth):详情栏与抽屉合并后不再各占一列。
-	const rightColumnVisible = Boolean(selected) || drawerOpen || sideChatOpen;
+	const rightColumnVisible = Boolean(selected) || drawerOpen;
 	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px minmax(0,1fr) ${
 		rightColumnVisible ? `${rightWidth}px` : "0px"}`;
 
@@ -770,16 +760,6 @@ export function AppShell() {
 		>
 			{selected ? (
 				<TrajInspector entry={selected} onClose={() => setSelected(null)} />
-			) : sideChatOpen ? (
-				<SideChatPanel
-					sessionId={currentId}
-					ready={Boolean(snapshot)}
-					mainModel={snapshot?.model}
-					models={modelChoices}
-					providerNames={providerNames}
-					authByProvider={authByProvider}
-					onClose={() => setSideChatOpen(false)}
-				/>
 			) : (
 				<DrawerPanel
 					cwd={panelCwd}
@@ -939,27 +919,6 @@ export function AppShell() {
 									<span className="min-w-0 flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 600 }}>
 										{title}
 									</span>
-									{/* 旁聊直达按钮；旁聊与其他入口共用右侧抽屉。 */}
-									<button
-										type="button"
-										className="icon-btn"
-										style={{ width: 26, height: 26, color: sideChatOpen ? "var(--dsw-accent)" : "var(--dsw-label-secondary)" }}
-										aria-label={t.sideChat}
-										title={t.sideChat}
-										aria-pressed={sideChatOpen}
-										data-testid="side-chat-toggle"
-										onClick={() => {
-											preserveChatReadingPosition();
-											setSelected(null);
-											setSideChatOpen((open) => {
-												// 最右一列只有一个：开旁聊就收起抽屉
-												if (!open) toggleDrawer(false);
-												return !open;
-											});
-										}}
-									>
-										<SideChatIcon size={16} />
-									</button>
 									{/* 右侧抽屉的入口与开关 */}
 									<button
 										type="button"
@@ -1115,7 +1074,7 @@ export function AppShell() {
 			{/* 窄屏最右一列:贴右边滑出(轨迹详情与抽屉共用,遮罩关闭回到对话) */}
 			{isNarrow && rightColumnVisible && (
 				<>
-					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => (selected ? setSelected(null) : sideChatOpen ? setSideChatOpen(false) : toggleDrawer(false))} aria-label={t.close} />
+					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => (selected ? setSelected(null) : toggleDrawer(false))} aria-label={t.close} />
 					{rightColumn}
 				</>
 			)}

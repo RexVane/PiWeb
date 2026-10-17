@@ -14,7 +14,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	contextWindow: number | null;
 	/** 当前会话的模型：有它才能在弹窗里改上下文窗口 */
 	model?: { provider: string; id: string } | null;
-	/** 覆盖「上下文估算」这个措辞：真实用量（如旁聊）不该叫估算 */
+	/** 覆盖「上下文估算」这个措辞：拿到真实用量时不该叫估算 */
 	label?: string;
 	source?: {
 		systemChars: number;
@@ -75,7 +75,6 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 		{ key: "system", label: t.contextSystemPrompt, value: b?.systemPrompt, color: "var(--dsw-accent)" },
 		{ key: "builtin", label: t.contextSystemTools, value: b?.systemTools, color: "#8B7EC8" },
 		{ key: "custom", label: t.contextCustomTools, value: b?.customTools, color: "#B39DDB" },
-		{ key: "background", label: t.contextBackground, value: b?.background, color: "#5B8DEF" },
 		{ key: "memory", label: t.contextMemory, value: b?.memory, color: "#5FA8D3" },
 		{ key: "skills", label: t.contextSkills, value: b?.skills, color: "#4FB286" },
 		{ key: "user", label: t.contextUserMessages, value: chars.user, color: "var(--dsw-success)" },

@@ -18,7 +18,7 @@ import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { TreeNode } from "@/lib/growth-tree";
 
-/** 抽屉入口：项目 → 提示词 → Git 详情 → 会话导入（旁聊已独立成右侧面板，不再共用这一列）。 */
+/** 抽屉入口：项目 → 提示词 → Git 详情 → 会话导入。 */
 export type DrawerSection = "project" | "prompts" | "git" | "import";
 
 export function DrawerPanel({
