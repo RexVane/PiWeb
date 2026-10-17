@@ -655,7 +655,7 @@ const ERROR_HINT_KEY: Record<ModelErrorKind, string> = {
 	moderation: "modelErrorModeration",
 };
 
-function ErrorStep({ message, count, model }: { message: string; count: number; model?: string }) {
+function ErrorStep({ message, count }: { message: string; count: number }) {
 	const { t } = useI18n();
 	const tt = t as unknown as Dict;
 	const kind = classifyModelError(message);
@@ -668,7 +668,6 @@ function ErrorStep({ message, count, model }: { message: string; count: number; 
 					{hint ? ` · ${hint}` : ""}
 				</span>
 				{count > 1 && <span className="pw-meta">{t.modelErrorTimes.replace("{n}", String(count))}</span>}
-				{model && <span className="pw-meta">{model}</span>}
 			</div>
 		</Step>
 	);
@@ -758,7 +757,7 @@ type Item =
 	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
 	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string }
 	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState }
-	| { kind: "error"; key: string; msgIndex: number; message: string; count: number; model?: string }
+	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
 	| { kind: "abort"; key: string; msgIndex: number };
 
 type Run = { kind: "run"; key: string; items: Item[]; hasThink: boolean; cmds: number; reads: number; searches: number; durationMs?: number };
@@ -776,7 +775,7 @@ function buildItems(messages: WebMessage[], k: number, tools: Record<string, Too
 		else if (c.type === "text" && !omitText && c.text.trim()) items.push({ kind: "narr", key, msgIndex: k, text: c.text, live: live && i === lastIndex, error: isError });
 		else if (c.type === "image" && !omitText) items.push({ kind: "image", key, msgIndex: k, data: c.data, mimeType: c.mimeType });
 	});
-	if (isError && (errorCount ?? 1) > 0) items.push({ kind: "error", key: `${k}-err`, msgIndex: k, message: message.errorMessage || message.stopReason || "error", count: errorCount ?? 1, model: message.model });
+	if (isError && (errorCount ?? 1) > 0) items.push({ kind: "error", key: `${k}-err`, msgIndex: k, message: message.errorMessage || message.stopReason || "error", count: errorCount ?? 1 });
 	if (message.stopReason === "aborted") items.push({ kind: "abort", key: `${k}-abort`, msgIndex: k });
 	return items;
 }
@@ -871,7 +870,7 @@ function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: 
 		case "tool":
 			return <ToolStep id={item.call.id} name={item.call.name} args={item.call.arguments} state={item.state} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />;
 		case "error":
-			return <ErrorStep message={item.message} count={item.count} model={item.model} />;
+			return <ErrorStep message={item.message} count={item.count} />;
 		case "abort":
 			return <AbortStep />;
 		default:
