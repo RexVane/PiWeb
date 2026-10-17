@@ -81,3 +81,4 @@
 20261017-0910 | .next/ | 未备份（构建产物，可重新 build 生成） | 验证 #5（Windows 自更新）时跑 next build，中途因沙箱 spawn EPERM 失败；Next 在构建开始时已清空 .next，失败后未重建，故生产构建缺失。源码、public、scripts、assets、node_modules 均完好。恢复方式：重新跑构建。同批的 .next-releases/mvb25gaz-* 本就是空目录（10-16 那次失败的发布留下）
 20261017-105429 | next.config.ts（未提交版） | backups/files/next.config-ts-20261017-105429.bak.ts | #5 回退：绝对 require 那套只为 next [目录] 传参而加，随方案废弃一并撤销，留实体备查
 20261017-105500 | docs/state/progress.md（含未提交的 #149 行） | backups/files/progress-20261017-pending149.md | 提交 #150 前临时摘下 #149 行以免混入提交，全部提交后已恢复
+20261017-114500 | .next-releases/active.json | backups/files/release-active-20261017-112432.json | 2026-10-16 一次失败的 build:release 留下 state=failed 标记，它会阻止所有生产启动（selectProductionBuild 拒绝回退）。当前 .next 已由本轮构建修复并通过校验，故移除该标记让生产模式可用；下次要做正式发布请跑 npm run build:release
