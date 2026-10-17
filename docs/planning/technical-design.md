@@ -685,3 +685,23 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 
 验证：经注入页面在 390 / 360 / 344 / 320 四个宽度实测，主输入框与上下文弹窗的 left 均 ≥ 25px；
 `tests/remote-proxy.test.ts` 加了一例盯住注入 CSS 里这条规则。
+
+## 15. 构建产物与发布流程（2026-10-17）
+
+两种输出，用途不同：
+
+- `.next`：`npm run build` 的产物，本地验证与 dev 对照用。
+- `.next-releases/<id>` + `.next-releases/active.json`：`npm run build:release` 的产物，`piweb` / `npm start` 实际运行的就是它。
+
+选择顺序（`scripts/build-output.mjs` 的 `selectProductionBuild`）：`active.json` 存在且 `state=ready` → 用它指向的目录；`state` 不是 ready **直接拒绝启动**（失败的发布事务不能悄悄回退到旧产物）；没有 `active.json` → 用 `.next`；连 `.next` 也没有 → 退 dev 模式。
+
+因此一次失败的 `build:release` 会留下 `state=failed` 标记，之后**所有**生产启动都会被拒（2026-10-16 踩到过）。恢复：重跑 `npm run build:release`，或确认 `.next` 可用后把该标记移走（本次做法，实体留在 `backups/files/`）。
+
+清理策略：保留 `active.json` 指向的目录，其余 `.next-releases/*`、`.next`、`.next-dev-webpack*` 都可删（全部可重新生成）。2026-10-17 清掉 31 个旧 release（约 6.8 GB）+ `.next`（454 MB）+ 两个 dev 缓存（610 MB）。
+
+**硬约束：服务进程的工作目录必须是项目根目录**，不能用 `next [directory]` 传参替代。Next 把 `path.relative(process.cwd(), projectPath)` 烘焙成 `__NEXT_RELATIVE_PROJECT_DIR`（`build/define-env.js`），请求期再用 `join(process.cwd(), 相对值)` 还原项目目录（`server/route-modules/route-module.js`）。生产构建烘焙的是空串（构建时 cwd 就是项目根），跨盘符时 `path.relative` 又直接返回绝对路径——cwd 一旦不等于项目根，`join` 会拼出 `C:\...\run\D:\...\PiWeb` 这种双份路径，表现为每个请求 `ENOENT ... routes-manifest.json`。代价：Windows 上服务运行时无法替换自身安装目录（npm rename 报 EBUSY），只能先停服务再更新。
+
+## 16. pi 1.3.0 的两处行为差异（2026-10-17）
+
+- **reload 保留活动工具集**：`agent-session.d.ts` 明确写着 `Tools removed from it stay active`。所以卸载扩展后重载，该扩展的工具仍留在活动集里；PiWeb 在 `reloadManagedResources` 与 `/reload` 之后按当前注册表重算一次工具策略（`applyToolPolicy`），但要让已卸载的工具彻底消失仍需重开会话。
+- **恢复的会话保留其活动工具集**：PiWeb 自己也维护 `requestedTools`（`defaultTools` 的 `+name` / MCP 动态开启等），两边叠加后以「注册表 ∩ 策略」为准，见 `listAllowedTools`。

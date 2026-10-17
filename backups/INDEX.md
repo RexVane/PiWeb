@@ -82,3 +82,4 @@
 20261017-105429 | next.config.ts（未提交版） | backups/files/next.config-ts-20261017-105429.bak.ts | #5 回退：绝对 require 那套只为 next [目录] 传参而加，随方案废弃一并撤销，留实体备查
 20261017-105500 | docs/state/progress.md（含未提交的 #149 行） | backups/files/progress-20261017-pending149.md | 提交 #150 前临时摘下 #149 行以免混入提交，全部提交后已恢复
 20261017-114500 | .next-releases/active.json | backups/files/release-active-20261017-112432.json | 2026-10-16 一次失败的 build:release 留下 state=failed 标记，它会阻止所有生产启动（selectProductionBuild 拒绝回退）。当前 .next 已由本轮构建修复并通过校验，故移除该标记让生产模式可用；下次要做正式发布请跑 npm run build:release
+20261017-1310 | .next/、.next-dev-webpack/、.next-dev-webpack.broken-20261017-105502/、.next-releases/ 下 31 个旧构建 | 未备份（全部可重新生成） | 按用户确认清理旧构建与旧产物，保留 .next-releases/mvbx09xv-8a50bcae-3208-4069-9763-80681dc673f3（active 发布）；共释放约 7.9 GB

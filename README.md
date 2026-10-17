@@ -110,7 +110,7 @@ is npm's default tag, so `npm install -g @rexvane/piweb` behaves identically; if
 is a mirror that syncs with a delay, add `--registry=https://registry.npmjs.org` to get a
 release the moment it is published. Restart `piweb` afterwards to serve the new version.
 
-Or install a specific version: `npm install -g @rexvane/piweb@0.3.4`.
+Or install a specific version: `npm install -g @rexvane/piweb@0.3.25`.
 
 **Updating from the UI**: every time PiWeb starts it checks PiWeb and pi for new versions in the
 background. When one is available it prints `[更新] 有新版本：…` in the terminal and shows a notice
