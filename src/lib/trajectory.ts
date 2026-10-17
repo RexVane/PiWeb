@@ -36,8 +36,53 @@ function textOf(content: any): string {
 /** 工具参数里最像“这一行在干什么”的那个字段,给侧栏“最后一步”用 */
 const SUMMARY_KEYS = ["command", "cmd", "script", "file_path", "path", "pattern", "query", "url"];
 
+/** 工具参数 JSON 的上限：write 的 content 动辄整份文件，账本只保留可读的头部 */
+const TOOL_ARGS_MAX_CHARS = 8_000;
+/** 工具最终输出的上限：与 SSE 帧的 coercePartial 同量级，inspector 看内容也够用 */
+const TOOL_RESULT_MAX_CHARS = 8_000;
+/** assistant 正文 / 思考全文的上限：这些只是轨迹副本，会话 JSONL 里另有权威全文 */
+const MESSAGE_TEXT_MAX_CHARS = 100_000;
+
+function clipText(value: string, maxChars: number): string {
+	return value.length <= maxChars ? value : `${value.slice(0, maxChars)}…`;
+}
+
+/** 参数对象 → 侧栏摘要（先把每个字符串值截短再挑可读字段；预计算一次存进条目） */
+function summarizeArgs(args: unknown): string {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+	try {
+		const shallow = Object.fromEntries(
+			Object.entries(args as Record<string, unknown>).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 100) : v]),
+		);
+		const parsed = JSON.parse(JSON.stringify(shallow));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+		for (const key of SUMMARY_KEYS) {
+			const value = (parsed as Record<string, unknown>)[key];
+			if (typeof value === "string" && value.trim()) return value.trim().replace(/\s+/g, " ").slice(0, 80);
+		}
+	} catch {
+		/* 序列化失败（超大/循环引用）就当没有摘要 */
+	}
+	return "";
+}
+
+/** 参数对象 → 供 inspector 展示的 JSON 文本；超长的字符串值先截断再序列化 */
+function argsToDetail(args: unknown): string {
+	const clip = (value: unknown): unknown =>
+		typeof value === "string" && value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value;
+	const shallow =
+		args && typeof args === "object" && !Array.isArray(args)
+			? Object.fromEntries(Object.entries(args as Record<string, unknown>).map(([k, v]) => [k, clip(v)]))
+			: args;
+	try {
+		return clipText(JSON.stringify(shallow ?? {}, null, 2), TOOL_ARGS_MAX_CHARS);
+	} catch {
+		return "";
+	}
+}
+
 /**
- * 侧栏「最后一步」的正文:优先真实输出(preview),没有就退回工具参数摘要(detail 是 args JSON),
+ * 侧栏「最后一步」的正文:优先真实输出(preview),没有就用事件到达时预计算的参数摘要,
  * 最后才是这行本来就有的 title。
  * 不能回落到 title —— 工具条目的 title 就是工具名(`trajectory.ts` 里 `title` / `tool_execution_start`),
  * 而 preview 只在工具返回文本时才写,于是 `bash · bash` 这种重复会一直显示到结果回来。
@@ -46,6 +91,8 @@ export function toolStepPreview(entry: TrajEntry): string {
 	const firstLine = (value: string | undefined) => (value ?? "").split("\n")[0].trim();
 	const fromResult = firstLine(entry.preview);
 	if (fromResult) return fromResult.slice(0, 80);
+	// 新条目带 argSummary(事件到达时预计算);旧快照没有则退回解析 detail 的老路径
+	if (entry.argSummary) return entry.argSummary.slice(0, 80);
 	let args: Record<string, unknown> | undefined;
 	try {
 		const parsed = JSON.parse(entry.detail ?? "");
@@ -167,10 +214,11 @@ export class TrajLedger {
 					const durationMs = storedDuration(m.durationMs);
 					if (durationMs !== undefined) e.timing = { ...e.timing, durationMs };
 					e.tokens = toTrajTokens(m.usage);
-					e.thinking = textOf(
-						(m.content ?? []).filter((c: any) => c.type === "thinking").map((c: any) => c.thinking),
-					);
-					e.detail = textOf((m.content ?? []).filter((c: any) => c.type === "text"));
+					e.thinking = clipText(
+						textOf((m.content ?? []).filter((c: any) => c.type === "thinking").map((c: any) => c.thinking)),
+						MESSAGE_TEXT_MAX_CHARS,
+					) || undefined;
+					e.detail = clipText(textOf((m.content ?? []).filter((c: any) => c.type === "text")), MESSAGE_TEXT_MAX_CHARS) || undefined;
 					e.isError = m.stopReason === "error";
 					if (m.stopReason === "error") e.title = "error";
 					this.touch(e);
@@ -185,7 +233,8 @@ export class TrajLedger {
 								toolName: c.name,
 								toolCallId: c.id,
 								title: c.name,
-								detail: JSON.stringify(c.arguments ?? {}, null, 2),
+								detail: argsToDetail(c.arguments),
+								argSummary: summarizeArgs(c.arguments),
 							});
 						}
 					}
@@ -204,11 +253,13 @@ export class TrajLedger {
 						toolName: evt.toolName,
 						toolCallId: evt.toolCallId,
 						title: evt.toolName,
-						detail: JSON.stringify(evt.args ?? {}, null, 2),
+						detail: argsToDetail(evt.args),
+						argSummary: summarizeArgs(evt.args),
 					});
 				} else {
 					const e = this.entries[idx];
-					e.detail = JSON.stringify(evt.args ?? {}, null, 2);
+					e.detail = argsToDetail(evt.args);
+					e.argSummary = summarizeArgs(evt.args);
 					this.touch(e);
 				}
 				break;
@@ -229,7 +280,10 @@ export class TrajLedger {
 				if (idx !== undefined) {
 					const e = this.entries[idx];
 					const result = sanitizeToolOutput(textOf(evt.result));
-					e.detail = [e.detail, result.text].filter(Boolean).join("\n\n---\n\n");
+					// 输出截尾保留（新内容在尾部）；args 部分已在 start 时截过，两段加起来不会超限太多
+					const keptArgs = e.detail?.includes("\n\n---\n\n") ? e.detail.slice(0, e.detail.indexOf("\n\n---\n\n")) : e.detail;
+					const tailText = clipText(result.text, TOOL_RESULT_MAX_CHARS);
+					e.detail = [keptArgs, tailText].filter(Boolean).join("\n\n---\n\n") || undefined;
 					e.encodingLoss = result.encodingLoss || e.encodingLoss;
 					e.isError = evt.isError === true;
 					const startedAt = this.toolStart.get(evt.toolCallId);
@@ -297,7 +351,8 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 							toolName: c.name,
 							toolCallId: c.id,
 							title: c.name,
-							detail: JSON.stringify(c.arguments ?? {}, null, 2),
+							detail: argsToDetail(c.arguments),
+							argSummary: summarizeArgs(c.arguments),
 						});
 					}
 				}

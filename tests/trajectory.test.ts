@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview } from "../src/lib/trajectory";
-import type { TrajEntry } from "../src/lib/types";
-
-describe("trajectory timing", () => {
+import type { TrajEntry } from "../src/lib/types";describe("trajectory timing", () => {
 	it("continues sequence numbers after restored history", () => {
 		const ledger = new TrajLedger([
 			{ seq: 7, kind: "user", ts: 1_000, detail: "restored" },
@@ -133,5 +131,25 @@ describe("侧栏最后一步正文", () => {
 	it("输出拼接后的 detail 解析不了也不报错,宁可只留工具名", () => {
 		// tool_execution_end 会把输出追加到 args JSON 后面,整个 detail 不再是合法 JSON
 		expect(toolStepPreview(tool({ detail: `${JSON.stringify({ command: "ls" })}\n\n---\n\noutput` }))).toBe("");
+	});
+
+	it("有预计算摘要(argSummary)时不再解析 detail,超大 detail 也不吃 CPU", () => {
+		// 侧栏每 3 秒对每个活跃会话取最后一步:detail 可能是几 MB 的拼接串
+		const huge = `${JSON.stringify({ command: "npm run build" })}\n\n---\n\n${"x".repeat(2_000_000)}`;
+		expect(toolStepPreview(tool({ detail: huge, argSummary: "npm run build" }))).toBe("npm run build");
+	});
+
+	it("账本记录的工具参数与输出都截断,内存不随输出长度无上限增长", () => {
+		const ledger = new TrajLedger();
+		const bigContent = "x".repeat(300_000);
+		ledger.onEvent({ type: "tool_execution_start", toolCallId: "w1", toolName: "write", args: { path: "a.txt", content: bigContent } } as any, 1_000);
+		const startEntry = ledger.entries[0] as { detail?: string; argSummary?: string };
+		expect(startEntry.detail?.length).toBeLessThan(10_000);
+		expect(startEntry.detail).toContain("a.txt");
+		expect(startEntry.detail?.length).toBeLessThan(bigContent.length);
+		expect(startEntry.argSummary).toBe("a.txt");
+
+		ledger.onEvent({ type: "tool_execution_end", toolCallId: "w1", result: bigContent.repeat(3), isError: false } as any, 2_000);
+		expect(ledger.entries[0].detail?.length).toBeLessThan(20_000);
 	});
 });

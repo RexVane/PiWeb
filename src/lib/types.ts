@@ -44,6 +44,9 @@ export interface TrajEntry {
 	encodingLoss?: boolean;
 	toolName?: string;
 	toolCallId?: string;
+	/** 侧栏「最后一步」用的参数摘要：事件到达时从参数对象直接预计算，
+	 * 避免轮询路径（activeStatus 每 3 秒）反复 JSON.parse 可能很大的 detail */
+	argSummary?: string;
 	timing?: { ttftMs?: number; decodeMs?: number; durationMs?: number };
 	/** UI-derived turn number; omitted in the persisted event ledger. */
 	turn?: number;
