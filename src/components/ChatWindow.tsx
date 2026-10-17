@@ -20,6 +20,7 @@ import {
 	IconFileOutline16,
 	IconRefreshOutline14,
 	IconSearchOutline16,
+	IconSkillOutline16,
 	IconTerminalOutline14,
 	IconThinkOutline14,
 	IconWarningOutline16,
@@ -273,7 +274,7 @@ function fmtSpan(ms: number): string {
 }
 
 type StepTone = "dim" | "live" | "fail" | "warn";
-type StepKind = ToolKind | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work";
+type StepKind = ToolKind | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill";
 
 function KindIcon({ kind }: { kind: StepKind }) {
 	const p = { size: 14, style: { flex: "none" as const } };
@@ -299,6 +300,8 @@ function KindIcon({ kind }: { kind: StepKind }) {
 			return <IconRefreshOutline14 {...p} />;
 		case "work":
 			return <span className="pw-pi" aria-hidden>π</span>;
+		case "skill":
+			return <IconSkillOutline16 size={14} style={{ flex: "none" }} />;
 		default:
 			return <IconDataOutline16 {...p} />;
 	}
@@ -710,6 +713,26 @@ function ContextStep({ resource, cwd }: { resource: ContextResource | string; cw
 	);
 }
 
+// ---------- 技能调用：本轮用过哪个技能（不是一条用户发言）----------
+/**
+ * pi 把 `/skill:name` 在输入端展开成一段用户消息（SKILL.md 正文 + 参数），模型必须收到它。
+ * 但那不是「用户发了一条消息」——Claude Code 里技能是模型发起的一次 Skill 工具调用，
+ * Codex 也在过程区里记这一步。所以这里不当用户气泡渲染，而是放进本轮的过程步骤中：
+ * 一行「使用技能 computer-use」，与工具行同一套排版。
+ */
+function SkillStep({ name }: { name: string }) {
+	const { t } = useI18n();
+	const tt = t as unknown as Dict;
+	return (
+		<Step kind="skill">
+			<div className="pw-line" title={`${tt.skillStepTitle} · ${name}`}>
+				<span className="pw-verb">{tt.skillStep}</span>
+				<span className="pw-skill-name">{name}</span>
+			</div>
+		</Step>
+	);
+}
+
 // ---------- 工作指示：π 记号 + 英文状态词闪光（没有正在进行的步骤时）或「Working for 12s」；整行固定英文 ----------
 
 function WorkingStep({ startedAt, outputTokens, workingMessage, hasLiveStep }: { startedAt: number; outputTokens?: number; workingMessage?: string | null; hasLiveStep: boolean }) {
@@ -929,16 +952,37 @@ export interface RoundBadge {
 	del: number;
 }
 
-/** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
-const UserMessage = memo(function UserMessage({ message, onEditMessage }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void }) {
-	const { t } = useI18n();
-	const text = message.content
+/** 用户消息里的纯文本（多个 text 块拼起来）；技能识别与正常渲染都用它 */
+function userTextOf(message: WebMessage): string {
+	return message.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("\n");
+}
+
+/** 用户附带的图片；正常消息与技能消息共用一套排版（靠右、圆角、细描边） */
+function UserImages({ images }: { images: Array<{ type: "image"; data: string; mimeType: string }> }) {
+	if (!images.length) return null;
+	return (
+		<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2 self-end">
+			{images.map((image, index) => (
+				<img
+					key={index}
+					src={`data:${image.mimeType};base64,${image.data}`}
+					alt=""
+					className="max-h-72 max-w-full rounded-2xl object-contain"
+					style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+				/>
+			))}
+		</div>
+	);
+}
+
+/** 行级 memo：流式期间只有最后一条消息变化，历史行全部跳过重渲染 */
+const UserMessage = memo(function UserMessage({ message, onEditMessage }: { message: WebMessage; onEditMessage?: (entryId: string, text: string) => void }) {
+	const { t } = useI18n();
+	const text = userTextOf(message);
 	const images = message.content.filter((content) => content.type === "image");
-	// /skill:name 会被 pi 展开成一整段 SKILL.md 正文；只显示技能名，不铺开正文（也不显示参数）
-	const skill = useMemo(() => parseExpandedSkill(text), [text]);
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(text);
 	const canEdit = Boolean(onEditMessage && message.id && text);
@@ -987,31 +1031,12 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	return (
 		// 回合边界：用户消息前留 28px（比回合内 8px 大得多），长对话里一眼找到“这一轮从哪开始”
 		<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={message.id}>
-			{images.length > 0 && (
-				<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2">
-					{images.map((image, index) => (
-						<img
-							key={index}
-							src={`data:${image.mimeType};base64,${image.data}`}
-							alt=""
-							className="max-h-72 max-w-full rounded-2xl object-contain"
-							style={{ border: "0.5px solid var(--dsw-border-l2)" }}
-						/>
-					))}
-				</div>
-			)}
+			<UserImages images={images} />
 			{/* 用户消息也走 Markdown：贴进来的代码块/列表不再是一坨纯文本。
-			    /skill:name 展开后的整段 SKILL.md 正文不铺开显示，也不做成一条「我发的消息」——
-			    选用技能不等于发了一条输入，所以这里没有气泡外框，只有一枚淡色技能标签。 */}
-			{text && (skill ? (
-				<div className="msg-user-skill">
-					<span className="pw-skill-chip" title={skill.name}>{skill.name}</span>
-				</div>
-			) : (
-				<div className="msg-user-bubble"><Markdown text={text} /></div>
-			))}
+			    技能展开的消息不会走到这里（在回合层被识别成技能步骤，见 TurnBlockView）。 */}
+			{text && <div className="msg-user-bubble"><Markdown text={text} /></div>}
 			{/* 用户消息：复制 + 原地编辑重发（编辑后模型从这条消息重新回答）；时钟在图标左侧（dsh clock=start） */}
-			{text && !skill && (
+			{text && (
 				<MessageActions
 					text={text}
 					clockStart={message.timestamp !== undefined}
@@ -1097,6 +1122,8 @@ function TurnBlockView({
 }) {
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
+	// 技能展开的用户消息不在这一层当「发言」渲染，改成本轮过程里的一个技能步骤
+	const skill = useMemo(() => (user ? parseExpandedSkill(userTextOf(user)) : null), [user]);
 	const assistants = turn.assistantIndexes;
 	const lastIdx = assistants[assistants.length - 1];
 	const turnLive = isStreaming && isLast;
@@ -1139,13 +1166,15 @@ function TurnBlockView({
 	const blocks: Block[] = turnLive ? items.map((item) => ({ kind: "item", item })) : collapseRuns(items, finalIdx, spanOf);
 	const last = items[items.length - 1];
 	const hasLiveStep = Boolean(runningTool) || (last?.kind === "think" && last.live) || (last?.kind === "narr" && last.live);
-	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || (isLast && Boolean(retryNotice));
+	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
 
 	return (
 		<>
-			{user && <UserMessage message={user} onEditMessage={onEditMessage} />}
+			{user && !skill && <UserMessage message={user} onEditMessage={onEditMessage} />}
+			{skill && <UserImages images={user?.content.filter((c) => c.type === "image") ?? []} />}
 			{showProcess && (
 				<div className="pw-turn">
+					{skill && <SkillStep name={skill.name} />}
 					{contextFiles?.map((resource, i) => (
 						<ContextStep key={`ctx-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${i}`} resource={resource} cwd={cwd} />
 					))}

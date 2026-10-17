@@ -1590,26 +1590,17 @@ body[data-ds-dark-theme] {
 	border-color: var(--dsw-border-l3);
 }
 
-/* /skill:name 展开后的技能标签。
-   选用一个技能不等于「发了一条消息」，所以这里既没有气泡外框、也不铺开 SKILL.md 正文：
-   整条用户消息只剩一枚靠右的淡色药丸，只说明「这一轮用的是什么技能」。
-   早先的写法是气泡里再套一个带描边的胶囊，两层框 + 大内边距，视觉上非常重。 */
-.msg-user-skill {
-	display: flex;
-	justify-content: flex-end;
+/* 技能调用行：与「上下文注入」同款小字次级色，技能名用强调色区分。
+   pi 把 /skill:name 展开成用户消息，但界面上它是本轮的一次技能调用（不是用户发言），
+   所以放在过程步骤里，与工具行同一套排版。 */
+.pw-step[data-kind="skill"] .pw-line {
+	font-size: var(--piweb-chat-font-s);
 }
-
-.pw-skill-chip {
-	display: inline-flex;
-	align-items: center;
+.pw-skill-name {
 	font-family: var(--font-mono);
-	font-size: 12.5px;
-	font-weight: 500;
-	line-height: 1.6;
 	color: var(--dsw-accent);
-	background: var(--dsw-accent-soft);
-	border-radius: 999px;
-	padding: 2px 11px;
+	overflow: hidden;
+	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
