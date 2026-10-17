@@ -21,8 +21,8 @@ interface LanState {
 	running: boolean;
 	port: number | null;
 	urls: string[];
-	/** 是否在注入手机排版；插件关闭时为 false（纯转发） */
-	styled: boolean;
+	/** 是否在注入手机排版；插件关闭时为 false。旧服务端的响应里可能没有这个字段 */
+	styled?: boolean;
 	error: string | null;
 }
 
@@ -37,8 +37,9 @@ interface PublicState {
 
 interface RemoteStatus {
 	plugin: string;
-	/** 内置插件总开关；关闭后局域网入口仍在（纯转发），但没有手机排版与公网入口 */
-	pluginEnabled: boolean;
+	/** 内置插件总开关；关闭后局域网入口仍在（纯转发），但没有手机排版与公网入口。
+	 *  旧服务端的响应里可能没有这个字段，界面按「已启用」处理 */
+	pluginEnabled?: boolean;
 	targetPort: number;
 	/** 非空时服务端拒绝开任何入口（没开认证 / 开发模式） */
 	blocked: "auth" | "dev" | null;
@@ -248,7 +249,9 @@ export function RemoteSection() {
 						<span style={{ color: lan?.running ? "var(--dsw-label-primary)" : "var(--dsw-label-caption)" }}>
 							{lan?.running ? t.remoteRunning : t.remoteStopped}
 						</span>
-						{lan?.running && !lan.styled ? (
+						{/* 只在服务端明确回了 styled:false 时才说「纯转发」：
+						    字段缺失（旧服务端、缓存的响应）不能当成关闭，否则会误报 */}
+						{lan?.running && lan.styled === false ? (
 							<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>· {t.remoteLanPlain}</span>
 						) : null}
 					</div>

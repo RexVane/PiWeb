@@ -50,4 +50,34 @@ describe("remote entry links", () => {
 		await waitFor(() => expect(writeText).toHaveBeenCalledWith(`http://192.168.5.44:30142/?token=${TOKEN}`));
 		expect(await screen.findByRole("button", { name: "已复制（含令牌）" })).toBeTruthy();
 	});
+
+	/**
+	 * 插件开关与「纯转发」标注。
+	 * 关键：字段缺失（旧服务端、缓存的响应）不能被当成「插件已关闭」——那会在界面上误报纯转发。
+	 */
+	it("does not claim plain forwarding when the response has no styled flag", async () => {
+		// 上面那份 status 就没有 styled / pluginEnabled，正是旧响应的形状
+		render(<RemoteSection />);
+		await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
+		expect(document.body.textContent).not.toContain("纯转发");
+		// 开关按「已启用」处理：断言开关本身（aria-checked），比匹配文字更稳
+		const toggle = screen.getByRole("switch", { name: "启用内置远程连接插件" });
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		// 公网入口按钮不被插件开关拦住
+		expect((screen.getByRole("button", { name: "关闭" }) as HTMLButtonElement).disabled).toBe(false);
+	});
+
+	it("marks the LAN entry as plain forwarding only when the server says so", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true, status: 200,
+			json: async () => ({ success: true, data: { ...status, pluginEnabled: false, lan: { ...status.lan, styled: false } } }),
+		})));
+		render(<RemoteSection />);
+		await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
+		expect(document.body.textContent).toContain("纯转发");
+		expect(document.body.textContent).toContain("已关闭");
+		// 插件关闭时公网入口不可开，按钮置灰并说明原因
+		expect((screen.getByRole("button", { name: "开启远程连接" }) as HTMLButtonElement).disabled).toBe(true);
+		expect(document.body.textContent).toContain("需要先启用内置插件");
+	});
 });
