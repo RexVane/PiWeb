@@ -402,6 +402,13 @@ export function AppShell() {
 		setSelected(entry);
 	}, []);
 
+	// 轨迹 context 条目的全文回查：快照只在轨迹里带资源头部（全文在 contextResources 一处）
+	const contextResourcesRef = useRef(snapshot?.contextResources ?? []);
+	useEffect(() => {
+		contextResourcesRef.current = snapshot?.contextResources ?? [];
+	}, [snapshot?.contextResources]);
+	const contextLookup = useCallback((path: string) => contextResourcesRef.current.find((r) => r.path === path)?.content, []);
+
 	// 上下文分段的数据源：系统提示词按注入资源字符数（很便宜）；
 	// 消息字符统计交给 ContextMeter 弹窗打开时再算，避免每次 token 增量全量扫描
 	const contextSystemChars = useMemo(
@@ -759,7 +766,7 @@ export function AppShell() {
 			} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
 		>
 			{selected ? (
-				<TrajInspector entry={selected} onClose={() => setSelected(null)} />
+				<TrajInspector entry={selected} onClose={() => setSelected(null)} contextLookup={contextLookup} />
 			) : (
 				<DrawerPanel
 					cwd={panelCwd}

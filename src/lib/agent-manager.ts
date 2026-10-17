@@ -911,6 +911,10 @@ function publishContextBreakdown(m: Managed): void {
 	});
 }
 
+/** 资源加载器注入文件的展示上限：同一份全文已经随快照的 contextResources 下发过一次，
+ *  轨迹条目的 detail 只留头部供列表预览与搜索——两处不再各带一份全文 */
+const TRAJ_CONTEXT_DETAIL_MAX_CHARS = 4_000;
+
 /** resources 已经算过（快照）就传进来，免得资源发现结果再读一遍 */
 function environmentTrajectory(m: Managed, session: AgentSession | null, known?: ContextResource[]): TrajEntry[] {
 	const ts = m.ledger.entries[0]?.ts ?? Date.now();
@@ -932,7 +936,10 @@ function environmentTrajectory(m: Managed, session: AgentSession | null, known?:
 			kind: "context",
 			ts,
 			title: resource.path,
-			detail: resource.content,
+			// 全文在快照 contextResources 里；这里只留头部，快照不再双份序列化
+			detail: resource.content.length > TRAJ_CONTEXT_DETAIL_MAX_CHARS
+				? `${resource.content.slice(0, TRAJ_CONTEXT_DETAIL_MAX_CHARS)}…`
+				: resource.content,
 		}));
 	} catch {
 		/* Resource discovery diagnostics are already surfaced by Pi. */

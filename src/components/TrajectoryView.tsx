@@ -236,12 +236,20 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 	);
 }
 
-export function TrajInspector({ entry, onClose }: { entry: TrajEntry; onClose: () => void }) {
+/**
+ * context 条目的全文回退：轨迹里的 detail 只有头部（快照不再与 contextResources 双份带全文），
+ * inspector 展开时按路径回快照资源表里取。
+ */
+type ContextLookup = (path: string) => string | undefined;
+
+export function TrajInspector({ entry, onClose, contextLookup }: { entry: TrajEntry; onClose: () => void; contextLookup?: ContextLookup }) {
 	const { t } = useI18n();
 	const [tab, setTab] = useState<DetailTab>("summary");
 	const kind = entry.toolName || KIND_NAME[entry.kind];
 	const position = entry.kind === "system" ? t.trajSystem : entry.turn ? `${t.trajTurn} ${entry.turn}` : t.trajSession;
-	const preview = entry.detail || entry.preview || entry.thinking || "";
+	const fullText = entry.kind === "context" && entry.title ? contextLookup?.(entry.title) : undefined;
+	const body = fullText ?? entry.detail;
+	const preview = body || entry.preview || entry.thinking || "";
 	const tabs: Array<{ id: DetailTab; label: string }> = [
 		{ id: "summary", label: t.trajSummary },
 		{ id: "preview", label: t.trajPreview },
@@ -274,7 +282,7 @@ export function TrajInspector({ entry, onClose }: { entry: TrajEntry; onClose: (
 					</dl>
 					{preview && <InspectorPayload title={t.trajPreview} value={preview} />}
 				</>}
-				{tab === "preview" && <InspectorPayload title={entry.thinking ? t.trajThink : t.trajPreview} value={[entry.thinking, entry.detail || entry.preview].filter(Boolean).join("\n\n")} empty={t.trajNoContent} />}
+				{tab === "preview" && <InspectorPayload title={entry.thinking ? t.trajThink : t.trajPreview} value={[entry.thinking, body || entry.preview].filter(Boolean).join("\n\n")} empty={t.trajNoContent} />}
 				{tab === "raw" && <InspectorPayload title="JSON" value={JSON.stringify(entry, null, 2)} mono />}
 				{tab === "source" && <InspectorPayload title={t.trajSource} value={`${sourceOf(entry)}\n\nseq: ${entry.seq}\ntimestamp: ${new Date(entry.ts).toISOString()}`} mono />}
 			</div>
