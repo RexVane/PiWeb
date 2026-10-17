@@ -68,6 +68,12 @@ export interface DiscoveredModel {
 	maxTokens?: number;
 	/** 端点自报的输入模态里有 image */
 	vision?: boolean;
+	/**
+	 * 端点自报「这是推理模型」。对应 models.json 的 `reasoning`。
+	 * 不写时 pi 按 false 处理（provider-composer 的 `definition.reasoning ?? false`），
+	 * 思考档位就整个消失，所以能读到就带上。
+	 */
+	reasoning?: boolean;
 }
 
 function positiveInt(value: unknown): number | undefined {
@@ -75,12 +81,39 @@ function positiveInt(value: unknown): number | undefined {
 }
 
 /**
+ * 从模型目录条目里挑出「是否推理模型」。
+ *
+ * 各家命名不同，能读到就带上、读不到留空（不猜——猜错会让非推理模型多出思考档位，
+ * 选中后上游直接 400）。已知的几种形状：
+ * - `reasoning: true` / `supports_reasoning: true`：部分网关直接给布尔；
+ * - `capabilities.reasoning` / `capabilities.thinking.supported`：Anthropic Messages 系的 /models；
+ * - `supported_parameters` 数组里出现 reasoning 相关项：OpenRouter 系。
+ */
+function catalogReasoning(value: Record<string, unknown>): boolean | undefined {
+	const direct = value.reasoning ?? value.supports_reasoning;
+	if (typeof direct === "boolean") return direct;
+	const capabilities = isRecord(value.capabilities) ? value.capabilities : undefined;
+	const fromCapabilities = capabilities?.reasoning;
+	if (typeof fromCapabilities === "boolean") return fromCapabilities;
+	const thinking = isRecord(capabilities?.thinking) ? capabilities.thinking : undefined;
+	if (typeof thinking?.supported === "boolean") return thinking.supported;
+	if (Array.isArray(value.supported_parameters)) {
+		const hit = value.supported_parameters.some(
+			(item) => typeof item === "string" && /^(include_)?reasoning/i.test(item.trim()),
+		);
+		if (hit) return true;
+	}
+	return undefined;
+}
+
+/**
  * 从模型目录条目里挑出能力字段。各家命名不同，能给就读、读不到就留空（不猜，缺的由体检卡片提醒用户填）：
  * - 上下文：`context_window`（本机中转）/ `context_length`（OpenRouter）/ `max_input_tokens`；
  * - 输出上限：`max_output_tokens` / `max_completion_tokens` / `top_provider.max_completion_tokens`；
- * - 视觉：`modalities.input`（本机中转）/ `architecture.input_modalities`（OpenRouter / llama.cpp）。
+ * - 视觉：`modalities.input`（本机中转）/ `architecture.input_modalities`（OpenRouter / llama.cpp）；
+ * - 推理：见 catalogReasoning。
  */
-export function catalogCapabilities(value: Record<string, unknown>): Pick<DiscoveredModel, "contextWindow" | "maxTokens" | "vision"> {
+export function catalogCapabilities(value: Record<string, unknown>): Pick<DiscoveredModel, "contextWindow" | "maxTokens" | "vision" | "reasoning"> {
 	const architecture = isRecord(value.architecture) ? value.architecture : undefined;
 	const modalities = value.modalities ?? architecture?.input_modalities ?? value.input_modalities;
 	const inputList = Array.isArray(modalities)
@@ -99,10 +132,12 @@ export function catalogCapabilities(value: Record<string, unknown>): Pick<Discov
 	const vision = inputList
 		? inputList.some((item) => typeof item === "string" && item.toLowerCase() === "image")
 		: undefined;
+	const reasoning = catalogReasoning(value);
 	return {
 		...(contextWindow === undefined ? {} : { contextWindow }),
 		...(maxTokens === undefined ? {} : { maxTokens }),
 		...(vision === undefined ? {} : { vision }),
+		...(reasoning === undefined ? {} : { reasoning }),
 	};
 }
 
@@ -517,7 +552,7 @@ async function readModelCatalog(response: Response): Promise<unknown> {
 }
 
 /** Fetch a provider's conventional /models catalog without persisting credentials. */
-export async function discoverModels(input: { baseUrl: string; api?: string; apiKey?: string; providerId?: string; allowPrivate?: boolean }): Promise<DiscoveredModel[]> {
+export async function discoverModels(input: { baseUrl: string; api?: string; apiKey?: string; providerId?: string; allowPrivate?: boolean; headers?: Record<string, string> }): Promise<DiscoveredModel[]> {
 	const rawBaseUrl = input.baseUrl.trim();
 	if (!rawBaseUrl) throw new Error("缺少 API 地址");
 	const base = new URL(rawBaseUrl);
@@ -537,6 +572,21 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 		const configuredUrls = [provider?.baseUrl, credential.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
 		if (!isTrustedCredentialEndpoint(endpoint, configuredUrls)) {
 			throw new Error("已配置的凭证只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
+		}
+	}
+	// 自定义请求头可能带密钥，所以与凭证同一条规矩：只发往显式填了密钥的新地址，
+	// 或该 provider 已配置过的地址。否则一个新主机名就能把用户存好的头骗走。
+	if (input.headers && Object.keys(input.headers).length) {
+		if (!input.apiKey?.trim()) {
+			const rt = await getModelRuntime();
+			const provider = rt.getProviders().find((p) => p.id === input.providerId);
+			const configuredUrls = [provider?.baseUrl, credential?.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
+			if (!isTrustedCredentialEndpoint(endpoint, configuredUrls)) {
+				throw new Error("自定义请求头只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
+			}
+		}
+		for (const [name, value] of Object.entries(input.headers)) {
+			if (typeof value === "string" && value) headers[name] = value;
 		}
 	}
 	const apiKey = credential?.key;

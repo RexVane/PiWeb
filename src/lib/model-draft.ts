@@ -7,9 +7,24 @@ export interface ModelDraft {
 	maxTokens?: number;
 	/** 输入模态里有 image（models.json 的 `input`）。undefined = 源里没写：pi 会当成只文本、把贴图换成占位文字 */
 	vision?: boolean;
+	/**
+	 * 是否推理模型（models.json 的 `reasoning`）。undefined = 源里没写：
+	 * pi 按 false 处理（`definition.reasoning ?? false`），思考档位会整个消失。
+	 */
+	reasoning?: boolean;
 	source?: Readonly<Record<string, unknown>>;
 	/** 来自 modelOverrides：只覆盖内置模型的部分字段。缺省 = models[] 里的定义或新加的行 */
 	origin?: "override";
+}
+
+/** models.json 里 provider 级的自定义请求头：名字 → 值 */
+export function providerHeadersFromConfig(value: unknown): Record<string, string> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const out: Record<string, string> = {};
+	for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof raw === "string") out[name] = raw;
+	}
+	return out;
 }
 
 /**
@@ -46,6 +61,8 @@ export function modelDraftFromConfig(value: unknown): ModelDraft {
 		maxTokens: typeof source.maxTokens === "number" ? source.maxTokens : undefined,
 		// 只有源里写了 input 才算「声明过」：没写 ≠ 只文本，而是「会被 pi 当只文本」
 		vision: input ? input.includes("image") : undefined,
+		// 同理：没写 reasoning 不是 false，而是「没声明」——pi 会按 false 处理，体检卡片据此提醒
+		reasoning: typeof source.reasoning === "boolean" ? source.reasoning : undefined,
 		source,
 	};
 }
@@ -55,7 +72,7 @@ function positiveInt(value: unknown): number | undefined {
 }
 
 /** 「获取可用模型」返回的一条 → 表单行：端点报了容量与视觉就带上，没报的留空（不猜） */
-export function modelDraftFromCatalog(entry: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean }): ModelDraft {
+export function modelDraftFromCatalog(entry: { id: string; name?: string; contextWindow?: number; maxTokens?: number; vision?: boolean; reasoning?: boolean }): ModelDraft {
 	const contextWindow = positiveInt(entry.contextWindow);
 	const maxTokens = positiveInt(entry.maxTokens);
 	return {
@@ -64,6 +81,8 @@ export function modelDraftFromCatalog(entry: { id: string; name?: string; contex
 		...(contextWindow === undefined ? {} : { contextWindow }),
 		...(maxTokens === undefined ? {} : { maxTokens }),
 		...(typeof entry.vision === "boolean" ? { vision: entry.vision } : {}),
+		// 端点报了推理能力就带上：不写的话 pi 按 false 处理，思考档位会整个消失
+		...(typeof entry.reasoning === "boolean" ? { reasoning: entry.reasoning } : {}),
 	};
 }
 
@@ -97,6 +116,24 @@ export function formatCapacity(value: number | undefined): string {
 	if (value >= 1_000_000 && value % 1_000_000 === 0) return `${value / 1_000_000}M`;
 	if (value >= 1000 && value % 1000 === 0) return `${value / 1000}K`;
 	return String(value);
+}
+
+/**
+ * 请求头名字的合法字符集与长度上限（HTTP 令牌字符）。
+ * 前端与 API 路由共用同一套规则，避免一边放行、一边 400。
+ */
+export const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
+/** 请求头条数上限：表单里手填的头不会很多，超过基本是异常输入 */
+export const HEADER_MAX_COUNT = 32;
+
+/** 校验一组自定义请求头；返回错误文案（中文，直接给用户看），没问题返回 null */
+export function validateHeaderEntries(entries: Array<[string, string]>): string | null {
+	if (entries.length > HEADER_MAX_COUNT) return `请求头最多 ${HEADER_MAX_COUNT} 条`;
+	for (const [name, value] of entries) {
+		if (!HEADER_NAME_RE.test(name)) return `请求头名字不合法：${name}`;
+		if (value.length > 4096 || /[\r\n]/.test(value)) return `请求头内容不合法：${name}`;
+	}
+	return null;
 }
 
 export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" } | undefined {
@@ -139,6 +176,12 @@ export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: s
 	} else if (!Object.is(vision, original?.vision)) {
 		result.input = modelInputFor(vision);
 	}
+	// reasoning 是三态：true/false 是用户或端点明确表态，undefined 表示不表态（沿用源值）。
+	// pi 缺省 false，所以只有显式 true 才有意义，但 false 也要能写下去（推翻源里的 true）。
+	const reasoning = model.reasoning;
+	if (reasoning !== undefined && !Object.is(reasoning, original?.reasoning)) {
+		result.reasoning = reasoning;
+	}
 	return result;
 }
 
@@ -149,6 +192,8 @@ export interface ProviderDraft {
 	api?: string;
 	/** Blank means unchanged. Redacted secrets are restored by the server, never invented here. */
 	apiKey?: string;
+	/** 自定义请求头（models.json 的 `headers`）。undefined = 未加载/不表态，{} = 明确清空 */
+	headers?: Record<string, string>;
 }
 
 export function serializeProviderDraft(
@@ -166,6 +211,19 @@ export function serializeProviderDraft(
 		else delete result[field];
 	}
 	if (draft.apiKey?.trim()) result.apiKey = draft.apiKey.trim();
+	// 请求头：只在表单确实载入过（headers !== undefined）时按整体替换写回。
+	// 空对象 = 用户删光了，要把键去掉；否则保留原文件里没在表单里呈现的头（不认得的字段一律不动）。
+	if (draft.headers !== undefined) {
+		const cleaned: Record<string, string> = {};
+		for (const [name, value] of Object.entries(draft.headers)) {
+			if (typeof value === "string" && value) cleaned[name] = value;
+		}
+		const existing = isRecord(source.headers) ? source.headers : {};
+		const unknown = Object.fromEntries(Object.entries(existing).filter(([, v]) => typeof v !== "string"));
+		const merged = { ...cleaned, ...unknown };
+		if (Object.keys(merged).length) result.headers = merged;
+		else delete result.headers;
+	}
 	const { definitions, overrides } = catalogIds
 		? splitBuiltinModels(draft.models, catalogIds)
 		: { definitions: draft.models.map((model) => serializeModelDraft(model)), overrides: undefined };
@@ -234,7 +292,7 @@ export function isInertProviderConfig(config: Readonly<Record<string, unknown>>)
 	return Object.keys(config).every((field) => INERT_PROVIDER_FIELDS.has(field));
 }
 
-export type CustomModelField = "contextWindow" | "maxTokens" | "input";
+export type CustomModelField = "contextWindow" | "maxTokens" | "input" | "reasoning";
 
 /** 体检的一条：models[] 里有字段没写的模型（已写的值一并带上，界面要显示） */
 export interface CustomModelGap {
@@ -246,6 +304,7 @@ export interface CustomModelGap {
 	contextWindow?: number;
 	maxTokens?: number;
 	vision?: boolean;
+	reasoning?: boolean;
 	missing: CustomModelField[];
 }
 
@@ -266,6 +325,8 @@ export function customModelGaps(providers: Readonly<Record<string, unknown>>): C
 			if (model.contextWindow === undefined) missing.push("contextWindow");
 			if (model.maxTokens === undefined) missing.push("maxTokens");
 			if (!Array.isArray(model.input)) missing.push("input");
+			// reasoning 没写时 pi 按 false 处理，推理模型的思考档位会整个消失，所以也要提醒
+			if (typeof model.reasoning !== "boolean") missing.push("reasoning");
 			if (!missing.length) return;
 			const declared = modelDraftFromConfig(model);
 			gaps.push({
@@ -276,6 +337,7 @@ export function customModelGaps(providers: Readonly<Record<string, unknown>>): C
 				...(declared.contextWindow === undefined ? {} : { contextWindow: declared.contextWindow }),
 				...(declared.maxTokens === undefined ? {} : { maxTokens: declared.maxTokens }),
 				...(declared.vision === undefined ? {} : { vision: declared.vision }),
+				...(declared.reasoning === undefined ? {} : { reasoning: declared.reasoning }),
 				missing,
 			});
 		});
@@ -291,6 +353,7 @@ export interface ModelFieldFill {
 	contextWindow?: number;
 	maxTokens?: number;
 	vision?: boolean;
+	reasoning?: boolean;
 }
 
 /**
@@ -314,6 +377,10 @@ export function fillModelFields(providers: Readonly<Record<string, unknown>>, fi
 		}
 		if (typeof fill.vision === "boolean" && !Array.isArray(model.input)) {
 			model.input = modelInputFor(fill.vision);
+			touched = true;
+		}
+		if (typeof fill.reasoning === "boolean" && typeof model.reasoning !== "boolean") {
+			model.reasoning = fill.reasoning;
 			touched = true;
 		}
 		if (touched) filled += 1;

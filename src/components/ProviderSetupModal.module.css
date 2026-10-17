@@ -296,6 +296,18 @@
 	margin-top: 13px;
 }
 
+/* 自定义请求头：名字 | 值 | 删除 */
+.headerRow {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 34px;
+	gap: 8px;
+	align-items: center;
+}
+
+.headerRow + .headerRow {
+	margin-top: 8px;
+}
+
 .modelRow {
 	display: grid;
 	/* 折叠箭头 | 模型 ID | 名称 | 删除 */

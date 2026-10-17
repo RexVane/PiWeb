@@ -14,7 +14,7 @@ import { CustomSelect } from "@/components/CustomSelect";
 import { useI18n } from "@/i18n";
 import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
-import { formatCapacity, modelDraftFromCatalog, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { formatCapacity, modelDraftFromCatalog, parseCapacity, serializeModelDraft, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
 import styles from "./ProviderSetupModal.module.css";
 
@@ -67,6 +67,10 @@ export function ProviderSetupModal({
 	const allApis = customApiOptions(providers.flatMap((provider) => provider.apis));
 	const [api, setApi] = useState(allApis.includes("openai-completions") ? "openai-completions" : (allApis[0] ?? "openai-completions"));
 	const [models, setModels] = useState<ModelDraft[]>([]);
+	// 自定义请求头（models.json 的 headers）：只对自定义 provider 开放。
+	// null = 尚未载入（不表态，保存时不碰原文件里的 headers）；对象 = 用户编辑中。
+	// 载入时把源里的头读进表单，保存时整体替换。
+	const [headers, setHeaders] = useState<Array<{ name: string; value: string }> | null>(null);
 	// 自定义 provider 的自动识别只在地址 / 密钥输入完（失焦）或换协议时触发：
 	// 还没有任何模型行，且 URL（+ 密钥，本机网关可省）都填了，这次失焦才算数
 	const autoReady = models.length === 0 && Boolean(baseUrl.trim()) && Boolean(apiKey.trim() || looksPrivateEndpoint(baseUrl));
@@ -132,6 +136,8 @@ export function ProviderSetupModal({
 					result = await onSaveBuiltin({ providerId: selected.id, apiKey: apiKey.trim(), config });
 				}
 			} else {
+				// 表单里非空的头才写下去；一条都没有就不带这个键，免得留个空对象在文件里
+				const headerEntries = (headers ?? []).map(({ name, value }) => [name.trim(), value.trim()] as [string, string]).filter(([name, value]) => name && value);
 				result = await onSaveCustom({
 					providerId: normalizedId,
 					config: {
@@ -139,6 +145,7 @@ export function ProviderSetupModal({
 						baseUrl: baseUrl.trim(),
 						api,
 						...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+						...(headerEntries.length ? { headers: Object.fromEntries(headerEntries) } : {}),
 						models: models.map((model) => serializeModelDraft(model)),
 					},
 				});
@@ -156,11 +163,23 @@ export function ProviderSetupModal({
 	/** 供 ModelCatalog 的候选对话框调用：用表单当前值（含未保存的 key）探测远端目录 */
 	const discoverAvailableModels = async (allowPrivate: boolean): Promise<ModelDraft[]> => {
 		if (!baseUrl.trim()) throw new Error(t.apiAddress);
+		// 自定义头要跟着发现请求一起发：网关要求自定义头时，不带就永远拿不到模型目录
+		const headerEntries = (headers ?? []).map(({ name, value }) => [name.trim(), value.trim()] as [string, string]).filter(([name, value]) => name && value);
+		const headerError = validateHeaderEntries(headerEntries);
+		if (headerError) throw new Error(headerError);
 		const response = await fetch("/api/models", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			// builtin 模式带 providerId：表单 key 为空时后端回退到已存密钥 / OAuth 令牌
-			body: JSON.stringify({ action: "discoverModels", baseUrl: baseUrl.trim(), api: mode === "builtin" ? selected?.apis[0] : api, apiKey: apiKey.trim(), providerId: mode === "builtin" ? selected?.id : undefined, allowPrivate }),
+			body: JSON.stringify({
+				action: "discoverModels",
+				baseUrl: baseUrl.trim(),
+				api: mode === "builtin" ? selected?.apis[0] : api,
+				apiKey: apiKey.trim(),
+				providerId: mode === "builtin" ? selected?.id : undefined,
+				allowPrivate,
+				...(headerEntries.length && mode !== "builtin" ? { headers: Object.fromEntries(headerEntries) } : {}),
+			}),
 		});
 		const result = await response.json();
 		if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
@@ -304,6 +323,39 @@ export function ProviderSetupModal({
 								<label className={styles.label}>{t.apiKey}</label>
 								<input className={styles.input} type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} onBlur={requestAutoDiscover} placeholder={t.apiKeyOptional} />
 								<div className={styles.hint}>{t.customApiKeyHint}</div>
+							</div>
+							{/* 自定义请求头：网关常要求额外认证头，探测模型目录与发消息都会带上 */}
+							<div className={styles.field}>
+								<label className={styles.label}>{t.customHeaders}</label>
+								{(headers ?? []).map((entry, index) => (
+									<div key={index} className={styles.headerRow}>
+										<input
+											className={styles.input}
+											value={entry.name}
+											placeholder={t.customHeaderName}
+											onChange={(event) => setHeaders((current) => (current ?? []).map((item, i) => (i === index ? { ...item, name: event.target.value } : item)))}
+										/>
+										<input
+											className={styles.input}
+											value={entry.value}
+											placeholder={t.customHeaderValue}
+											onChange={(event) => setHeaders((current) => (current ?? []).map((item, i) => (i === index ? { ...item, value: event.target.value } : item)))}
+										/>
+										<button
+											type="button"
+											className={styles.removeModel}
+											title={t.delete}
+											aria-label={`${t.delete} ${entry.name || index + 1}`}
+											onClick={() => setHeaders((current) => (current ?? []).filter((_, i) => i !== index))}
+										>
+											<IconTrashOutline16 size={15} />
+										</button>
+									</div>
+								))}
+								<button type="button" className={styles.addModel} onClick={() => setHeaders((current) => [...(current ?? []), { name: "", value: "" }])}>
+									<IconPlusOutline16 size={14} /> {t.customHeaderAdd}
+								</button>
+								<div className={styles.hint}>{t.customHeadersHint}</div>
 							</div>
 							<ModelCatalog
 								models={models}
@@ -607,6 +659,24 @@ export function ModelCatalog({
 													{ value: "text", label: t.visionOff },
 												]}
 												aria-label={t.visionLabel}
+											/>
+										</div>
+										<div className={styles.capacityField} title={t.reasoningHint}>
+											<span>{t.reasoningLabel}</span>
+											<CustomSelect
+												size="sm"
+												style={{ width: 104 }}
+												value={model.reasoning === undefined ? "unset" : model.reasoning ? "on" : "off"}
+												onChange={(choice) => {
+													// 未声明 = 不写 reasoning：pi 按 false 处理，思考档位会消失，体检卡片会提醒
+													updateModel(index, { reasoning: choice === "unset" ? undefined : choice === "on" });
+												}}
+												options={[
+													{ value: "unset", label: t.reasoningUnset },
+													{ value: "on", label: t.reasoningOn },
+													{ value: "off", label: t.reasoningOff },
+												]}
+												aria-label={t.reasoningLabel}
 											/>
 										</div>
 										<span className={styles.capacityHint}>{t.capacityHint}</span>

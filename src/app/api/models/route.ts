@@ -99,6 +99,7 @@ export async function POST(req: Request) {
 			text?: string;
 			force?: boolean;
 			allowPrivate?: boolean;
+			headers?: unknown;
 		};
 		if (body.action === "setKey") {
 			if (!body.providerId || !body.apiKey) return NextResponse.json({ success: false, error: "missing fields" }, { status: 400 });
@@ -120,7 +121,27 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "discoverModels") {
 			if (!body.baseUrl) return NextResponse.json({ success: false, error: "missing baseUrl" }, { status: 400 });
-			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId, allowPrivate: body.allowPrivate === true });
+			// 自定义请求头来自表单：只接受「名字与值都是字符串」的键值对，条数与长度都要设上限，
+			// 否则一个超大对象会原样发给上游。名字按 HTTP 令牌字符集收窄，避免注入换行等非法字符。
+			let headers: Record<string, string> | undefined;
+			if (body.headers !== undefined) {
+				if (!body.headers || typeof body.headers !== "object" || Array.isArray(body.headers)) {
+					return NextResponse.json({ success: false, error: "invalid headers" }, { status: 400 });
+				}
+				const entries = Object.entries(body.headers as Record<string, unknown>);
+				if (entries.length > 32) return NextResponse.json({ success: false, error: "too many headers" }, { status: 400 });
+				headers = {};
+				for (const [name, value] of entries) {
+					if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(name)) {
+						return NextResponse.json({ success: false, error: `invalid header name: ${name}` }, { status: 400 });
+					}
+					if (typeof value !== "string" || value.length > 4096 || /[\r\n]/.test(value)) {
+						return NextResponse.json({ success: false, error: `invalid header value: ${name}` }, { status: 400 });
+					}
+					if (value) headers[name] = value;
+				}
+			}
+			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId, allowPrivate: body.allowPrivate === true, headers });
 			return NextResponse.json({ success: true, data: { models } });
 		}
 		if (body.action === "providerUsage") {
