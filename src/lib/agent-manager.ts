@@ -407,6 +407,14 @@ function timingStats(m: Managed): Pick<WebStats, "llmMs" | "toolMs" | "ttftMs" |
 	return { llmMs, toolMs, ttftMs, ttftSteps, decodeMs, decodeTokens, llmTimedSteps, toolTimedCalls, decodeSteps };
 }
 
+/**
+ * 会话级用量缓存。SDK 的 getSessionStats() 每次都全表遍历 getEntries()（浅拷贝整个会话）、
+ * getContextUsage() 再 buildSessionProjection()（又一次全表拷贝 + 逐消息估算 token）——
+ * 一轮 agent 里 publishUsage 会在每个工具结束/每条消息结束各触发一次，长会话下这是
+ * 服务端最大的重复开销。条目数与 leaf 指针没变时结果必然相同，直接复用。
+ */
+const usageCache = new WeakMap<Managed, { entryCount: number; leafId: string | null; evt: Extract<WebEvent, { type: "usage" }> }>();
+
 function sessionStats(m: Managed): WebStats | null {
 	if (!m.session) return null;
 	try {
@@ -460,17 +468,47 @@ function coldSessionStats(m: Managed): WebStats {
 
 function usageEvent(m: Managed): WebEvent | null {
 	if (!m.session) return null;
+	// 条目数与 leaf 没变（还停在同一轮事件循环的同一状态）→ 复用上次的完整 usage 事件
+	try {
+		const entryCount = (m.sm as unknown as { getEntryCount?: () => number }).getEntryCount?.() ?? m.sm.getEntries().length;
+		const leafId = m.sm.getLeafId();
+		const cached = usageCache.get(m);
+		if (cached && cached.entryCount === entryCount && cached.leafId === leafId) return { ...cached.evt, ts: Date.now() };
+	} catch {
+		/* 缓存键拿不到就走原路径 */
+	}
 	const stats = sessionStats(m);
 	const usage = m.session.getContextUsage() ?? null;
-	return {
-		type: "usage",
+	const evt = {
+		type: "usage" as const,
 		stats,
 		contextUsage: usage ? { tokens: usage.tokens, contextWindow: usage.contextWindow, percent: usage.percent } : null,
 		ts: Date.now(),
 	};
+	try {
+		const entryCount = (m.sm as unknown as { getEntryCount?: () => number }).getEntryCount?.() ?? m.sm.getEntries().length;
+		usageCache.set(m, { entryCount, leafId: m.sm.getLeafId(), evt });
+	} catch {
+		/* ignore */
+	}
+	return evt;
 }
 
-function publishUsage(m: Managed): void {
+/**
+ * 忙时节流：一轮 agent 期间 publishUsage 的调用点密（每个工具结束 + 每条消息结束），
+ * 而 usage 在条目数没变时本来就不会动。500ms 内的重复请求直接跳过；
+ * settle/compaction 等关键节点用 flush 参数强制发一次，收尾数字不缺席。
+ */
+const USAGE_MIN_INTERVAL_MS = 500;
+const usageThrottle = new WeakMap<Managed, number>();
+
+function publishUsage(m: Managed, flush = false): void {
+	const now = Date.now();
+	if (!flush) {
+		const last = usageThrottle.get(m) ?? 0;
+		if (now - last < USAGE_MIN_INTERVAL_MS) return;
+	}
+	usageThrottle.set(m, now);
 	const evt = usageEvent(m);
 	if (evt) publish(m, evt);
 }
@@ -592,7 +630,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 		case "agent_settled":
 			m.runActive = false;
 			publish(m, { type: "status", isStreaming: false, state: "idle", ts: now });
-			publishUsage(m);
+			publishUsage(m, true);
 			if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
 			break;
 		case "queue_update":
@@ -615,7 +653,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				errorMessage: (evt as any).errorMessage,
 				ts: now,
 			});
-			publishUsage(m);
+			publishUsage(m, true);
 			publishContextBreakdown(m);
 			if ((evt as any).reason === "manual") {
 				publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: now });
@@ -1267,7 +1305,9 @@ export function refreshSessionModels(provider: string, id: string): number {
 		const current = m.session?.model;
 		if (!m.session || current?.provider !== provider || current.id !== id) continue;
 		swapCurrentModelObject(m.session);
-		publishUsage(m);
+		// 换了模型对象（contextWindow 可能变了）：条目数没变也会命中旧缓存，先失效再发
+		usageCache.delete(m);
+		publishUsage(m, true);
 		n += 1;
 	}
 	return n;
@@ -1627,7 +1667,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				reapplyDesiredLevel(m, session);
 				// 新会话页选的模型（fresh）：思考档位按新会话的规则定；之后显式选的档位仍会覆盖
 				if (cmd.fresh === true && !m.desiredThinkingLevel) applyNewSessionThinking(m, session);
+				usageCache.delete(m); // 换模型 = contextWindow 变了，旧 usage 缓存作废
 				publishModelState(m, session);
+				publishUsage(m, true);
 				return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: session.getAvailableThinkingLevels() } };
 			}
 			case "setThinkingLevel": {
