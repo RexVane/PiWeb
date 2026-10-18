@@ -346,11 +346,15 @@ function publishModelState(m: Managed, session: AgentSession): void {
 	});
 }
 
-/** 切模型后恢复用户显式选过的级别（按新模型钳制） */
+/**
+ * 切模型后恢复用户显式选过的级别（按新模型钳制）。
+ * 只记进本会话（SDK 会写 thinking_level_change 条目），不写全局默认：
+ * ~/.pi/agent/settings.json 与终端 pi 共用，在 PiWeb 里切一下档位不该改掉终端 pi 的默认值。
+ */
 function reapplyDesiredLevel(m: Managed, session: AgentSession): void {
 	if (!m.desiredThinkingLevel) return;
 	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel as any);
-	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never, { persist: true });
+	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never);
 }
 
 /**
@@ -1710,7 +1714,8 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
 				const effective = clampThinkingLevel(session.model as any, requested as any);
 				m.desiredThinkingLevel = requested;
-				session.setThinkingLevel(effective as never, { persist: true });
+				// 不传 persist：与终端 pi 一样，聊天里切档位只影响本会话；全局默认仍以 settings.json 为准（见 reapplyDesiredLevel）
+				session.setThinkingLevel(effective as never);
 				publishModelState(m, session);
 				return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
 			}

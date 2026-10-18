@@ -117,6 +117,26 @@ describe("new-session model pick (setModel with fresh)", () => {
 	});
 });
 
+describe("thinking level stays inside the session", () => {
+	// 回归：setThinkingLevel 传了 persist: true，在 PiWeb 里切一下档位就改写 ~/.pi/agent/settings.json 的
+	// defaultThinkingLevel，连终端 pi 的默认档位也跟着变
+	it("does not write the picked level to the shared global settings", async () => {
+		const session = fakeSession(fresh, "medium");
+		const result = await execute(managed(session), { cmd: "setThinkingLevel", level: "high" });
+		expect(result).toMatchObject({ ok: true, data: { thinkingLevel: "high" } });
+		expect(session.setThinkingLevel).toHaveBeenCalledTimes(1);
+		expect(session.setThinkingLevel.mock.calls[0][1]?.persist).not.toBe(true);
+	});
+
+	it("does not write the re-applied level after a model switch either", async () => {
+		vi.mocked(getModelRuntime).mockResolvedValue(runtimeWith([previous, fresh]) as never);
+		const session = fakeSession(fresh, "medium");
+		await execute(managed(session, { desiredThinkingLevel: "high" }), { cmd: "setModel", provider: "b", modelId: "new" });
+		expect(session.thinkingLevel).toBe("high");
+		for (const call of session.setThinkingLevel.mock.calls) expect(call[1]?.persist).not.toBe(true);
+	});
+});
+
 describe("/reload", () => {
 	it("refreshes the shared model catalog and swaps the session's model object for the fresh one", async () => {
 		const oldModel: Model = { provider: "a", id: "m", name: "old" };
