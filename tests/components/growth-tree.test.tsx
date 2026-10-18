@@ -33,3 +33,25 @@ describe("GrowthTree type replacements", () => {
 		expect(error.mock.calls.some((args) => args.some((value) => String(value).includes("same key")))).toBe(false);
 	});
 });
+
+describe("GrowthTree row actions", () => {
+	/**
+	 * 回归：根目录总会被列出，快照里的目录只要磁盘上也有就被 graftLazy 标 lazy；
+	 * 按钮原先按 lazy 隐藏，顶层目录的「打开文件夹 / @ 引用」就全没了。只有磁盘独有的节点不给按钮。
+	 */
+	it("keeps actions on snapshot dirs that the disk listing also contains, and hides them on disk-only rows", () => {
+		const tree = graftLazy(
+			buildTree([{ path: "src/a.ts" }], [{ path: "src/a.ts", status: "M" }]),
+			new Map([["", [
+				{ path: "src", name: "src", kind: "dir", lazy: true, children: [] },
+				{ path: "docs", name: "docs", kind: "dir", lazy: true, children: [] },
+				{ path: "README.md", name: "README.md", kind: "file", lazy: true },
+			]]]),
+		);
+		render(<GrowthTree tree={tree} expanded={new Set()} onToggleDir={vi.fn()} onOpenFile={vi.fn()} onReference={vi.fn()} onOpenEditor={vi.fn()} />);
+		const row = (name: string) => screen.getAllByRole("treeitem").find((item) => item.textContent?.startsWith(name))!;
+		expect(row("src/").querySelector(".pw-tree-actions")).not.toBeNull();
+		expect(row("docs/").querySelector(".pw-tree-actions")).toBeNull();
+		expect(row("README.md").querySelector(".pw-tree-actions")).toBeNull();
+	});
+});

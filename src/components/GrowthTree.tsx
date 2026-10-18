@@ -276,7 +276,9 @@ const TreeRow = memo(function TreeRow({
 				{node.status === "R" && node.from && <span className="pw-tree-from">← {node.from.split("/").pop()}</span>}
 			</span>
 			{node.pending && <span className="pw-tree-pulse" aria-label={pendingLabel} />}
-			{!node.lazy && (onReference || (!isDir && onOpenEditor) || isDir) && (
+			{/* 只有「磁盘上才有、快照里没有」的节点不给按钮。不能按 lazy 判断：快照里的目录只要磁盘上也有，
+			    graftLazy 就会给它标 lazy（为了能展开读磁盘），根目录又总会被列出，顶层目录的按钮就全没了 */}
+			{!diskOnly && (onReference || (!isDir && onOpenEditor) || isDir) && (
 				<span className="pw-tree-actions">
 					{isDir && (
 						<button
