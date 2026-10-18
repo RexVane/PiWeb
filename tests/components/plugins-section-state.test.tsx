@@ -45,6 +45,40 @@ describe("插件卡片的状态显示", () => {
 		expect(within(card).getAllByText(/已停用|已启用/)).toHaveLength(1);
 	});
 
+	it("停用的包不能点「更新」，并提示先启用；启用的包照常可点", async () => {
+		// 回归：停用的包挪到了 disabledPackages，SDK 的 update 只查 packages，点「更新」只会报找不到包
+		const resources = { extensions: 1, skills: 0, prompts: 0, themes: 0 };
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true,
+			json: async () => ({ success: true, data: {
+				packages: [
+					{ source: "npm:pi-off", scope: "user", resources, disabled: true },
+					{ source: "npm:pi-on", scope: "user", resources, disabled: false },
+				],
+				extensions: [],
+			} }),
+		})));
+		render(<PluginsSection cwd="/workspace" />);
+		fireEvent.click(screen.getByRole("button", { name: "插件列表" }));
+		await screen.findByText("pi-off");
+
+		// 列表页的行：从名字往上找到带状态菜单按钮的那一层
+		const menuTriggerOf = (name: string) => {
+			let node: HTMLElement | null = screen.getByText(name);
+			while (node && !node.querySelector('[aria-haspopup="menu"]')) node = node.parentElement;
+			if (!node) throw new Error(`找不到 ${name} 的菜单按钮`);
+			return node.querySelector('[aria-haspopup="menu"]') as HTMLElement;
+		};
+		fireEvent.click(menuTriggerOf("pi-off"));
+		const offUpdate = screen.getByRole("menuitem", { name: "更新" }) as HTMLButtonElement;
+		expect(offUpdate.disabled).toBe(true);
+		expect(offUpdate.title).toBe("已停用的插件要先启用才能更新");
+
+		fireEvent.click(menuTriggerOf("pi-on"));
+		const onUpdate = screen.getByRole("menuitem", { name: "更新" }) as HTMLButtonElement;
+		expect(onUpdate.disabled).toBe(false);
+	});
+
 	it("启用的扩展显示「已启用」，与停用项各说各的", async () => {
 		stubPlugins();
 		render(<PluginsSection cwd="/workspace" />);

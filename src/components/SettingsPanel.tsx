@@ -544,7 +544,7 @@ function UpdateControl({ target }: { target: UpdateTarget }) {
 }
 
 /** 通用下选芯片：自定义深色圆角浮层，替代原生 select */
-function SelectOption({
+export function SelectOption({
 	value,
 	options,
 	onChange,
@@ -576,6 +576,18 @@ function SelectOption({
 		if (disabled) setOpen(false);
 	}, [disabled]);
 	const current = options.find((o) => o.value === value);
+	// 下方放不下（按每项约 37px 估高，封顶 280）且上方更宽裕时向上翻转，并把高度限制在可用空间内。
+	// 以前只把 top 钳到窗口底部上方 40px，靠近底部时只露出第一项，其余落到屏幕外
+	const placement = (() => {
+		if (!rect || typeof window === "undefined") return null;
+		const margin = 8;
+		const wanted = Math.min(280, options.length * 37 + 12);
+		const below = window.innerHeight - rect.top - margin;
+		const above = rect.bottom - margin;
+		return below < wanted && above > below
+			? { bottom: window.innerHeight - rect.bottom, maxHeight: Math.min(280, above) }
+			: { top: rect.top, maxHeight: Math.min(280, Math.max(below, 80)) };
+	})();
 	return (
 		<div className="relative">
 			<button ref={anchorRef} className="select-chip" data-open={open} disabled={disabled} onClick={() => setOpen((o) => !o)}>
@@ -584,12 +596,13 @@ function SelectOption({
 					<IconChevronDown14 size={14} />
 				</span>
 			</button>
-			{open && !disabled && rect && createPortal(
+			{open && !disabled && rect && placement && createPortal(
 				<div
 					ref={popRef}
 					className="popover fixed z-[130] p-1.5 shadow-xl"
-					// 下方空间不足时向上翻转；左右都对齐 chip 左缘
-					style={{ left: rect.left, top: Math.min(rect.top, window.innerHeight - 40), minWidth: width ?? 140, width: "max-content", maxHeight: 280, overflowY: "auto" }}
+					data-placement={"bottom" in placement ? "top" : "bottom"}
+					// 左右都对齐 chip 左缘
+					style={{ left: rect.left, ...placement, minWidth: width ?? 140, width: "max-content", overflowY: "auto" }}
 				>
 					{options.map((o) => {
 						const selected = o.value === value;
@@ -2511,7 +2524,9 @@ export function PluginsSection({ cwd }: { cwd: string }) {
 																	role="menuitem"
 																	className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors hover:bg-[var(--dsw-hover)] cursor-pointer disabled:opacity-50"
 																	style={{ color: "var(--dsw-label-secondary)" }}
-																	disabled={busy}
+																	// 停用的包挪到了 PiWeb 私有的 disabledPackages，SDK 的 update 只认 packages，点了只会报「找不到包」
+																	disabled={busy || isDisabled}
+																	title={isDisabled ? t.updateNeedsEnable : undefined}
 																	onClick={() => {
 																		setMenuKey(null);
 																		void act(
