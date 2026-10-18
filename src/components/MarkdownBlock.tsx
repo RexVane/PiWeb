@@ -145,8 +145,10 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 				code: ({ node: _node, className, children }) => {
 					const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";
 					const path = raw.trim();
-					// 带 className 的是代码块里的 code（交给 highlight.js），不参与路径识别
-					if (actions.openFile && !className && looksLikeFilePath(path)) {
+					// 代码块里的 code 不参与路径识别。只看 className 不够：不写语言的围栏和缩进代码块也没有 className，
+					// 只有一行路径时整个代码块会变成按钮。代码块的文本总以换行结尾，行内代码不会
+					const block = Boolean(className) || raw.endsWith("\n");
+					if (actions.openFile && !block && looksLikeFilePath(path)) {
 						return (
 							<button type="button" className="md-file-path" title={path} onClick={() => actions.openFile!(path)}>
 								{children}
