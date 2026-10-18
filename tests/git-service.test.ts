@@ -81,6 +81,35 @@ describe("complete Git line counts", () => {
 	}, 30_000);
 });
 
+describe("truncated patches with multi-byte text", () => {
+	it("cuts on a character boundary instead of leaving a U+FFFD at the end", async () => {
+		// 回归：按 400KB 直接 subarray，边界落在汉字中间时末尾多出一个替换字符（预览里的乱码方块）
+		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-utf8-"));
+		try {
+			const git = (...args: string[]) => execFileSync("git", ["-C", temporary, "-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+			git("init", "-q");
+			// 400 * 1024 不是 3 的倍数：整文件都是 3 字节汉字时，未跟踪文件的截断点必然落在字符中间
+			await fs.writeFile(path.join(temporary, "untracked.txt"), "汉".repeat(140_000));
+			const untracked = await gitDiff(temporary, "untracked.txt", "untracked");
+			expect(untracked.truncated).toBe(true);
+			expect(untracked.patch).not.toContain("�");
+			// 工作区 diff 前面有 diff 头，对齐位置不定：错开 0/1/2 字节各试一次，至少两次会切在字符中间
+			for (const pad of ["", "a", "ab"]) {
+				const name = `tracked${pad.length}.txt`;
+				await fs.writeFile(path.join(temporary, name), "base\n");
+				git("add", name);
+				git("commit", "-q", "-m", `base ${name}`);
+				await fs.writeFile(path.join(temporary, name), `${pad}${"汉".repeat(140_000)}\n`);
+				const worktree = await gitDiff(temporary, name, "worktree");
+				expect(worktree.truncated).toBe(true);
+				expect(worktree.patch).not.toContain("�");
+			}
+		} finally {
+			await fs.rm(temporary, { recursive: true, force: true });
+		}
+	}, 30_000);
+});
+
 describe("untracked Git diffs", () => {
 	it("bounds large reads and rejects directory links outside the repository", async () => {
 		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-diff-"));

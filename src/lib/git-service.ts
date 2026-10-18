@@ -9,6 +9,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { parseNumstat, resolveGitBin } from "./growth-service";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
+import { utf8Prefix } from "./text-sanitize";
 
 const exec = promisify(execFile);
 
@@ -213,9 +214,10 @@ async function fullDiffStats(root: string, args: string[], noIndex = false): Pro
 	return { stats: { add, del }, binary };
 }
 
+/** 按字节截断时退到字符边界：直接 subarray 会把多字节字符切成半个，patch 末尾多出一个 U+FFFD */
 function truncate(patch: string, stats: GitDiffResult["stats"]): GitDiffResult {
 	if (Buffer.byteLength(patch) <= MAX_DIFF_BYTES) return { patch, truncated: false, binary: false, stats };
-	return { patch: Buffer.from(patch).subarray(0, MAX_DIFF_BYTES).toString("utf8"), truncated: true, binary: false, stats };
+	return { patch: utf8Prefix(Buffer.from(patch), MAX_DIFF_BYTES).toString("utf8"), truncated: true, binary: false, stats };
 }
 
 function assertRepoRelative(root: string, relPath: unknown): string {
@@ -254,7 +256,7 @@ export async function gitDiff(cwdValue: unknown, relPath: unknown, mode: unknown
 			await handle.close();
 		}
 		const head = buffer.subarray(0, bytesRead);
-		const text = head.subarray(0, MAX_DIFF_BYTES).toString("utf8").replace(/\r\n/g, "\n");
+		const text = utf8Prefix(head, MAX_DIFF_BYTES).toString("utf8").replace(/\r\n/g, "\n");
 		const lines = text.split("\n");
 		if (lines[lines.length - 1] === "") lines.pop();
 		const body = lines.map((l) => `+${l}`).join("\n");
