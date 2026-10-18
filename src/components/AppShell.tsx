@@ -437,18 +437,17 @@ export function AppShell() {
 
 	const doRename = useCallback(async (path: string, newName: string) => {
 		if (!newName.trim()) return;
-		const result = path === currentPath
+		// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
+		const result = currentPath && samePath(path, currentPath)
 			? await sendCommand({ cmd: "rename", text: newName.trim() })
 			: await sendCommand({ cmd: "rename", text: newName.trim() }, encodeURIComponent(b64url(path)));
 		if (!result?.success) {
 			throw new Error(result?.error || "failed to rename session");
 		}
+		// 侧栏就地改名即可。不要 resync：它重连的是「当前」会话的事件流，与被改名的冷会话无关，
+		// 正在流式输出时还会把眼前的对话整页重载一遍
 		patchSessionName(path, newName.trim());
-		if (path !== currentPath) {
-			// 冷会话：临时走命令路由（会按需打开，不启动 agent 的 rename 走 appendSessionInfo）
-			resync();
-		}
-	}, [currentPath, sendCommand, patchSessionName, resync]);
+	}, [currentPath, sendCommand, patchSessionName]);
 
 	const doForkSession = useCallback(
 		async (path: string, _cwd: string) => {
@@ -503,13 +502,13 @@ export function AppShell() {
 	const doUnarchiveSession = useCallback(
 		async (path: string) => {
 			try {
+				// 归档列表由 unarchiveSession 按服务端返回更新；不 resync 当前会话（同 doRename）
 				await unarchiveSession(path);
-				resync();
 			} catch {
 				// usePiWeb exposes the request failure in the shared error banner.
 			}
 		},
-		[unarchiveSession, resync],
+		[unarchiveSession],
 	);
 
 	// ---------- 侧栏回调：全部 useCallback，配合 SessionSidebar 的 memo ——
@@ -548,13 +547,13 @@ export function AppShell() {
 
 	const doDeleteWorkspace = useCallback(
 		async (cwd: string) => {
+			// 工作区列表由 removeWorkspace 按服务端返回更新；不 resync 当前会话（同 doRename）
 			await removeWorkspace(cwd);
-			if (heroCwd === cwd) {
+			if (heroCwd && samePath(heroCwd, cwd)) {
 				setHeroCwd("");
 			}
-			resync();
 		},
-		[removeWorkspace, heroCwd, resync],
+		[removeWorkspace, heroCwd],
 	);
 
 	// Hero 发送：先完整应用新会话预设，再发第一条消息。
