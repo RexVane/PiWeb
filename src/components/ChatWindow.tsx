@@ -1455,6 +1455,7 @@ export function ChatWindow({
 	stats,
 	onOpenTrajectory,
 	onOpenFile,
+	onOpenPath,
 	roundBadges,
 	onShowRound,
 }: {
@@ -1483,6 +1484,8 @@ export function ChatWindow({
 	/** 在本机编辑器打开工具行涉及的文件 */
 	onEditMessage?: (entryId: string, text: string) => void;
 	onOpenFile?: (path: string) => void;
+	/** 正文行内代码里的路径：用页内文件查看器打开；没给就退回 onOpenFile（本机编辑器） */
+	onOpenPath?: (path: string) => void;
 	roundBadges?: ReadonlyMap<string, RoundBadge>;
 	onShowRound?: (commit: string) => void;
 }) {
@@ -1502,8 +1505,9 @@ export function ChatWindow({
 		},
 	}), []);
 	useChatReadingAnchor(rootRef, scrollRef, chatScroll.shouldPin);
-	// 正文里可点击的文件路径（见 chat/markdown-actions）：只用查看器打开当前工作区内的相对路径
-	const markdownActions = useMemo<MarkdownActions>(() => ({ openFile: onOpenFile }), [onOpenFile]);
+	// 正文里可点击的文件路径（见 chat/markdown-actions）：只认当前工作区内的相对路径，
+	// 点开走页内文件查看器（不离开页面，路径不存在时查看器自己会报「文件不存在」）。
+	const markdownActions = useMemo<MarkdownActions>(() => ({ openFile: onOpenPath ?? onOpenFile }), [onOpenPath, onOpenFile]);
 	const { t } = useI18n();
 	useEffect(() => {
 		const root = rootRef.current;

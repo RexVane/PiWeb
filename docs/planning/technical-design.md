@@ -705,3 +705,25 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 
 - **reload 保留活动工具集**：`agent-session.d.ts` 明确写着 `Tools removed from it stay active`。所以卸载扩展后重载，该扩展的工具仍留在活动集里；PiWeb 在 `reloadManagedResources` 与 `/reload` 之后按当前注册表重算一次工具策略（`applyToolPolicy`），但要让已卸载的工具彻底消失仍需重开会话。
 - **恢复的会话保留其活动工具集**：PiWeb 自己也维护 `requestedTools`（`defaultTools` 的 `+name` / MCP 动态开启等），两边叠加后以「注册表 ∩ 策略」为准，见 `listAllowedTools`。
+
+## 17. 正文里的文件路径点击走页内查看器（2026-10-18）
+
+`#144` 引入「行内代码里的项目内相对路径可点击」时，实现复用了工具行那个按钮的回调
+（`onOpenFile` → `openInEditor` → `spawn code`），于是点正文里的 `src/lib/pi.ts` 会跳到本机编辑器；
+而该功能的提交说明与 `progress.md` 写的都是「用文件查看器直接打开」，还专门论证过
+「查看器对不存在的路径会体面报错」——文档与行为对不上。现在拆成两个入口：
+
+| 入口 | 回调 | 落到哪 |
+| --- | --- | --- |
+| 正文行内代码里的路径（`button.md-file-path`） | `onOpenPath` → `viewer.open`（`AppShell`） | 页内文件查看器 |
+| 工具行上的「在编辑器中打开」按钮 | `onOpenFile` → `openInEditor` | 本机编辑器（默认 `code`） |
+
+- 判定与解析不变，仍见 `src/lib/chat/file-path.ts`：只认工作区内的相对路径，
+  只识别不校验存在性；路径不存在时由查看器给出「此文件已不在当前快照或磁盘中」，
+  路径其实是目录时查看器按目录列出内容（`FileViewer` 的 400 兜底）。
+- `onOpenPath` 是可选的：没给就退回 `onOpenFile`，单独用 `ChatWindow` 的场景不会变成点不动。
+- `tests/components/chatwindow-markdown-paths.test.tsx` 锁住三条：正文路径走查看器、不接查看器时退回编辑器、
+  工具行按钮仍走编辑器（防止将来又把两个入口合回一个 prop）。
+- `tests/components/app-shell-markdown-paths.test.tsx` 用真实的 ChatWindow + FileViewer 走一遍点击，
+  盯的是**接线**：ChatWindow 自己的用例证明不了 AppShell 把 `onOpenPath` 接到了 `viewer.open` 上
+  （接错成 `openInEditor` 也照样绿）。已核对：把它改回 `openInEditor` 时这条会红。
