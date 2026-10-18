@@ -121,6 +121,23 @@ describe("prompt acceptance boundary", () => {
 		expect(session.prompt).toHaveBeenCalledWith("新内容", expect.objectContaining({ source: "rpc" }));
 	});
 
+	it("editAndResend keeps the images of the message being edited", async () => {
+		// 回归：客户端只发改过的文字，服务端原先直接 submitPrompt(text)，带图的消息一编辑图就没了
+		const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+		const entries: Record<string, unknown> = {
+			"entry-img": { type: "message", id: "entry-img", message: { role: "user", content: [{ type: "text", text: "看图" }, image] } },
+			"entry-plain": { type: "message", id: "entry-plain", message: { role: "user", content: [{ type: "text", text: "没图" }] } },
+		};
+		const { m, session } = fixture(async (_text, opts) => { opts.preflightResult(true); }, {
+			navigateTree: vi.fn(async () => ({ cancelled: false })),
+			sessionManager: { getEntry: (id: string) => entries[id] },
+		});
+		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-img", text: "改过的看图" })).toEqual({ ok: true, data: { accepted: true } });
+		expect(session.prompt).toHaveBeenLastCalledWith("改过的看图", expect.objectContaining({ images: [image] }));
+		expect(await execute(m, { cmd: "editAndResend", entryId: "entry-plain", text: "还是没图" })).toEqual({ ok: true, data: { accepted: true } });
+		expect(session.prompt.mock.calls.at(-1)?.[1]).not.toHaveProperty("images");
+	});
+
 	it("editAndResend returns once the new prompt is accepted, so steering works during the re-answer", async () => {
 		// 回归：旧实现 await 整轮 prompt，这期间 promptSubmitting 一直为真，插话/排队全被拒
 		const running = deferred();

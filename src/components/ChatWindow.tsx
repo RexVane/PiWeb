@@ -1003,6 +1003,8 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	if (editing) {
 		return (
 			<div className="group mt-7 flex w-full flex-col items-end first:mt-0" data-role="user" data-message-id={message.id}>
+				{/* 编辑只改文字，图片由服务端从原消息里带进重发；照样显示，免得以为图被丢了 */}
+				<UserImages images={images} />
 				<div className="msg-user-bubble w-full">
 					<textarea
 						className="w-full resize-none bg-transparent outline-none"

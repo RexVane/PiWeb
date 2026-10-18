@@ -1594,6 +1594,17 @@ async function prepareGrowthBriefly(m: Managed): Promise<void> {
 	]);
 }
 
+type PromptImages = NonNullable<NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"]>;
+
+/** 被编辑的那条用户消息里的图片：编辑只改文字，图片原样带进重发（编辑框里也照样显示它们） */
+function userMessageImages(session: AgentSession, entryId: string): PromptImages {
+	const entry = session.sessionManager?.getEntry?.(entryId) as { type?: string; message?: { role?: string; content?: unknown } } | undefined;
+	if (entry?.type !== "message" || entry.message?.role !== "user" || !Array.isArray(entry.message.content)) return [];
+	return entry.message.content.filter(
+		(c): c is PromptImages[number] => c?.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string",
+	);
+}
+
 /** 交给 SDK，并在「受理」那一刻返回，而不是等整轮跑完；受理之后的错误经 SSE 可见 */
 function submitPrompt(
 	m: Managed,
@@ -1777,13 +1788,15 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 						}
 					}
 					if (m.disposed) throw new Error("session is disposed");
+					// 回到消息之前先取它带的图片：客户端只发改过的文字，不取的话重发出去图就没了
+					const images = userMessageImages(session, entryId);
 					const moved = await session.navigateTree(entryId);
 					if (moved?.cancelled) return { ok: false, error: "edit cancelled" };
 					await prepareGrowthBriefly(m);
 					if (m.disposed) throw new Error("session is disposed");
 					// 与普通 prompt 一样在受理时就返回：等整轮跑完的话，这期间 promptSubmitting 一直为真，
 					// 插话 / 排队 / 新消息全被拒，HTTP 请求也一直挂着
-					return await submitPrompt(m, session, text);
+					return await submitPrompt(m, session, text, images.length ? { images } : {});
 				} finally {
 					m.promptSubmitting = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });

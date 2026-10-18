@@ -77,6 +77,20 @@ describe("user message edit affordance", () => {
 		expect(onEdit).not.toHaveBeenCalled();
 	});
 
+	it("keeps showing the attached images while editing", () => {
+		// 编辑只改文字，图片由服务端从原消息带进重发；编辑框里图不能消失，否则看着像被丢了
+		const withImage = {
+			...userMessage,
+			content: [{ type: "text", text: "看图" }, { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" }],
+		} as unknown as WebMessage;
+		const { container } = render(<ChatWindow messages={[withImage]} tools={{}} isStreaming={false} onEditMessage={vi.fn()} />);
+		const imageCount = () => container.querySelectorAll('[data-role="user"] img[src^="data:image/png"]').length;
+		expect(imageCount()).toBe(1);
+		fireEvent.click(screen.getByRole("button", { name: "编辑这条消息" }));
+		expect(screen.getByRole("textbox", { name: "编辑这条消息" })).toBeTruthy();
+		expect(imageCount()).toBe(1);
+	});
+
 	it("does not offer editing when the host has no handler", () => {
 		renderWindow(undefined);
 		expect(screen.queryByRole("button", { name: "编辑这条消息" })).toBeNull();
