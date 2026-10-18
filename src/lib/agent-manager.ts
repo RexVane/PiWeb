@@ -1630,7 +1630,10 @@ function submitPrompt(
 		});
 		// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
 		void run.then(() => {
-			if (!accepted) resolve({ ok: false, error: "prompt completed without acceptance" });
+			// 上一轮的 agent_settled 还没发完时，SDK 不拒绝提问，而是把它挂进 deferredSettledActions，
+			// 立即返回并在稍后用同一份 options 重发；这条路径不会调用 preflightResult。
+			// 消息确实会发出去，不能报「未受理」——否则界面报错，消息随后照样出现。真正的拒绝只会是 rejection。
+			if (!accepted) resolve({ ok: true, data: { accepted: true } });
 		}, (error) => {
 			const message = String(error?.message ?? error);
 			if (accepted) publish(m, { type: "error", message, ts: Date.now() });

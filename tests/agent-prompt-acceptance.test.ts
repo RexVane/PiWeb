@@ -68,6 +68,22 @@ describe("prompt acceptance boundary", () => {
 		expect(await execute(m, { cmd: "prompt", text: "try again" })).toMatchObject({ ok: false, error: "missing credentials" });
 	});
 
+	it("accepts a prompt the SDK deferred while the previous run was settling", async () => {
+		// 回归：上一轮还在发 agent_settled 时，SDK 把提问挂进 deferredSettledActions 并立即返回，不调用 preflightResult；
+		// 旧代码把「没等到受理」当成失败，界面报 prompt completed without acceptance，但消息稍后照样发出。
+		const seen: Array<Record<string, any>> = [];
+		const { m } = fixture(async (_text, opts) => {
+			seen.push(opts);
+			// SDK 冲刷 deferredSettledActions 时用同一份 options 再走一次，这次才真正受理
+			if (seen.length === 2) opts.preflightResult("started");
+		});
+		expect(await execute(m, { cmd: "prompt", text: "收尾时发的" })).toEqual({ ok: true, data: { accepted: true } });
+		expect(seen).toHaveLength(1);
+
+		await (m.session as any).prompt("收尾时发的", seen[0]);
+		expect(seen).toHaveLength(2);
+	});
+
 	it("does not convert concurrent ordinary submits into steering messages", async () => {
 		const gate = deferred();
 		const { m, session } = fixture(async (_text, opts) => {
