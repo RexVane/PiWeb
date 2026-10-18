@@ -249,7 +249,8 @@ export function AppShell() {
 		};
 		document.addEventListener("keydown", h);
 		return () => document.removeEventListener("keydown", h);
-	}, [drawerOpen, drawerSection, toggleDrawer, openDrawerSection]);
+		// selected 必须在依赖里：漏了它，打开轨迹详情后闭包里仍是旧的 null，第一下被当成「收起」，要按两次
+	}, [drawerOpen, drawerSection, selected, toggleDrawer, openDrawerSection]);
 
 	useEffect(() => {
 		const query = window.matchMedia("(max-width: 840px)");
