@@ -31,6 +31,28 @@ export interface ExtensionUiBridge {
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 
+const plainText = (text: unknown): string => (typeof text === "string" ? text : String(text ?? ""));
+/**
+ * 扩展常写 `ctx.ui.theme.fg("accent", text)` 给状态文字上色；pi 的 noOp 上下文也带 theme。
+ * 缺了它扩展一调就抛 TypeError。Web 不渲染 ANSI，所以给一个原样返回文字、不加任何转义序列的主题。
+ */
+const PLAIN_THEME = {
+	name: "piweb-plain",
+	style: (text: string) => plainText(text),
+	fg: (_color: string, text: string) => plainText(text),
+	bg: (_color: string, text: string) => plainText(text),
+	bold: plainText,
+	italic: plainText,
+	underline: plainText,
+	inverse: plainText,
+	strikethrough: plainText,
+	getFgAnsi: () => "",
+	getBgAnsi: () => "",
+	getColorMode: () => "truecolor",
+	getThinkingBorderColor: () => plainText,
+	getBashModeBorderColor: () => plainText,
+};
+
 export function createExtensionUiBridge(opts: {
 	publish: (evt: WebEvent) => void;
 	hasViewers: () => boolean;
@@ -106,9 +128,11 @@ export function createExtensionUiBridge(opts: {
 		addAutocompleteProvider: () => {},
 		setEditorComponent: () => {},
 		getEditorComponent: () => undefined,
+		theme: PLAIN_THEME,
 		getAllThemes: () => [],
 		getTheme: () => undefined,
-		setTheme: () => {},
+		// 与 pi 的 noOp 同一返回形状：扩展会读 result.success，返回 undefined 会让它们解构时出错
+		setTheme: () => ({ success: false, error: "UI not available" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: () => {},
 	};
