@@ -45,6 +45,7 @@ import type { ModelChoice } from "@/components/ModelSelector";
 import type { NewSessionDefaults } from "@/lib/model-defaults";
 import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
+import { promptTitleText } from "@/lib/chat/skill-expansion";
 import type { ImageAttachment, TrajEntry } from "@/lib/types";
 
 // dsh ui-layout columns.ts 几何常量
@@ -646,11 +647,13 @@ export function AppShell() {
 
 	// 当前会话名 / 工作区标题
 	const currentSession = sessions.find((s) => s.path === currentPath);
-	const firstUserMsgText = (
+	const firstUserText = (
 		state.messages
 			.find((m) => m.role === "user")
 			?.content?.find((c: any) => c.type === "text" && c.text?.trim()) as any
 	)?.text?.trim();
+	// 技能展开的消息不能原样当标题（会露出 <skill name=…> 和 SKILL.md 正文）
+	const firstUserMsgText = firstUserText ? promptTitleText(firstUserText) : firstUserText;
 	const title =
 		snapshot?.name ||
 		currentSession?.name ||

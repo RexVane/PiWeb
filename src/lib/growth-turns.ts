@@ -1,3 +1,5 @@
+import { promptTitleText } from "./chat/skill-expansion";
+
 export interface SessionTurn {
 	id: string;
 	ts: number;
@@ -47,7 +49,7 @@ export function promptsFromEntries(entries: readonly SessionEntry[], fromIndex =
 	for (const entry of entries.slice(Math.max(0, fromIndex))) {
 		if (entry.type !== "message" || entry.message?.role !== "user" || !entry.id) continue;
 		ids.push(entry.id);
-		if (!title) title = textOf(entry.message.content).split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+		if (!title) title = promptTitleText(textOf(entry.message.content)).split("\n").map((line) => line.trim()).find(Boolean) ?? "";
 	}
 	return { ids, title };
 }

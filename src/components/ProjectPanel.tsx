@@ -71,7 +71,9 @@ export function GrowthConsentDialog({ request, onAnswer }: { request: GrowthCons
 export function roundTitle(round: GrowthEntry, t: Record<string, string>): string {
 	if (round.kind !== "round") return t.growthKindUser;
 	const label = t.growthRoundLabel.replace("{n}", String(round.n ?? ""));
-	return round.title ? `${label} · ${round.title}` : label;
+	// 修好之前记下的轮次，标题是技能展开的首行 `<skill name="x" location="…">`：显示成 /skill:x
+	const title = round.title?.replace(/^<skill\s[^>]*?\bname="([^"]+)"[^>]*>$/, "/skill:$1");
+	return title ? `${label} · ${title}` : label;
 }
 
 /** 柱的颜色：你的修改为灰；pi 的一轮按主要改动类型（删除为主红、新增为主绿、否则黄） */

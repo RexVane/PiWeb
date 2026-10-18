@@ -94,6 +94,22 @@ describe("session-reader listSessions parity", () => {
 		expect(summary.firstMessage).toBe(`${"x".repeat(FIRST_MESSAGE_MAX_CHARS - 1)}…`);
 	}, 15_000);
 
+	it("titles a session that starts with /skill by the command, not the expanded SKILL.md", async () => {
+		// 与截断一样是有意偏离 SDK 的地方：SDK 的 firstMessage 是 `<skill name=…>` 加整段技能正文
+		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
+		await fs.mkdir(dir, { recursive: true });
+		const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+		vi.resetModules();
+		const { listSessions } = await import("../src/lib/session-reader");
+		const skill = '<skill name="pdf-tools" location="/x/pdf-tools/SKILL.md">\nReferences are relative to /x.\n\n很长的技能正文\n</skill>\n\nextract report.pdf';
+		await fs.writeFile(path.join(dir, "skill.jsonl"), [
+			line({ type: "session", version: 3, id: "s-s", timestamp: "2026-09-10T01:00:00.000Z", cwd: "D:\\Proj" }),
+			line({ type: "message", id: "u1", parentId: null, timestamp: "2026-09-10T01:00:01.000Z", message: { role: "user", content: [{ type: "text", text: skill }], timestamp: 1789000000000 } }),
+		].join(""));
+		const [summary] = await listSessions();
+		expect(summary.firstMessage).toBe("/skill:pdf-tools extract report.pdf");
+	}, 15_000);
+
 	it("reuses the persisted summary index after a restart, and still re-reads changed files", async () => {
 		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
 		await fs.mkdir(dir, { recursive: true });

@@ -10,6 +10,7 @@ import type { SessionSummary, WebMessage } from "./types";
 import { toWebMessage } from "./agent-manager";
 import { getAgentDir } from "./pi";
 import { BoundaryError, isPathInside } from "./path-security";
+import { promptTitleText } from "./chat/skill-expansion";
 
 function toSummary(info: {
 	path: string;
@@ -79,9 +80,9 @@ async function summarize(filePath: string, stat: { mtime: Date }): Promise<Sessi
 			if (Number.isFinite(at)) lastActivity = Math.max(lastActivity ?? 0, at);
 			if (!firstMessage && message.role === "user") {
 				const content = message.content;
-				firstMessage = typeof content === "string"
+				firstMessage = promptTitleText(typeof content === "string"
 					? content
-					: Array.isArray(content) ? content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join(" ") : "";
+					: Array.isArray(content) ? content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join(" ") : "");
 			}
 		}
 		if (!header) return null;
@@ -118,8 +119,11 @@ interface CachedSummary {
  * 按 mtime + 大小校验，命中就沿用摘要——侧栏首次渲染从"全量解析"变成"读一个小 JSON"。
  * 索引只是加速：读不到、版本不符、写不进去都退化成全量扫描，绝不影响正确性。
  */
-/** 2：firstMessage 开始截断，旧索引里的整段原文要重新摘要 */
-const INDEX_VERSION = 2;
+/**
+ * 2：firstMessage 开始截断，旧索引里的整段原文要重新摘要
+ * 3：技能展开的首条消息还原成 `/skill:name 参数`，旧索引里存的是 `<skill name=…>` 加 SKILL.md 正文
+ */
+const INDEX_VERSION = 3;
 const INDEX_FILENAME = "piweb-session-index.json";
 const INDEX_MAX_ENTRIES = 5000;
 const INDEX_SAVE_DELAY_MS = 1500;

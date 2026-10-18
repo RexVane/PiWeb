@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProjectPanel } from "@/components/ProjectPanel";
+import { ProjectPanel, roundTitle } from "@/components/ProjectPanel";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { buildTree } from "@/lib/growth-tree";
 
@@ -49,6 +49,12 @@ describe("ProjectPanel rounds", () => {
 		expect(screen.getByTestId("growth-timeline").textContent).toMatch(/第 1\/1 轮|Round 1\/1/);
 		// 底部不再有「跟随 / 跟随中」开关
 		expect(screen.queryByRole("button", { name: /跟随|Follow/ })).toBeNull();
+	});
+
+	it("shows rounds recorded before the skill-title fix as /skill:name", () => {
+		const t = { growthRoundLabel: "第 {n} 轮", growthKindUser: "你的修改" };
+		expect(roundTitle({ ...piRound, title: '<skill name="pdf-tools" location="/x/pdf-tools/SKILL.md">' }, t)).toBe("第 1 轮 · /skill:pdf-tools");
+		expect(roundTitle(piRound, t)).toBe("第 1 轮 · 把保存按钮改成红色");
 	});
 
 	it("uses complete round stats while the changed-file list is truncated or loading", () => {

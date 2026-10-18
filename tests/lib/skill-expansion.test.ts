@@ -6,7 +6,7 @@
  *   - 普通消息不会被误判——正文里恰好提到 <skill 字样、半截内容（没有闭合标签）都要放过。
  */
 import { describe, expect, it } from "vitest";
-import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
+import { parseExpandedSkill, promptTitleText } from "@/lib/chat/skill-expansion";
 
 const expanded = (name: string, body = "正文内容", base = "/Users/x/.agents/skills") =>
 	`<skill name="${name}" location="${base}/${name}/SKILL.md">\nReferences are relative to ${base}/${name}.\n\n${body}\n</skill>`;
@@ -43,5 +43,18 @@ describe("parseExpandedSkill", () => {
 
 	it("requires a name attribute", () => {
 		expect(parseExpandedSkill('<skill location="/tmp/SKILL.md">\n正文\n</skill>')).toBeNull();
+	});
+});
+
+describe("promptTitleText", () => {
+	it("turns an expanded skill back into what the user typed", () => {
+		// 会话列表、窗口标题、增长树轮次标题都拿它：不能露出 <skill name=…> 和 SKILL.md 正文
+		expect(promptTitleText(expanded("pdf-tools"))).toBe("/skill:pdf-tools");
+		expect(promptTitleText(`${expanded("pdf-tools")}\n\nextract report.pdf`)).toBe("/skill:pdf-tools extract report.pdf");
+	});
+
+	it("returns ordinary text unchanged", () => {
+		expect(promptTitleText("普通提问")).toBe("普通提问");
+		expect(promptTitleText("帮我看看 <skill name=\"x\"> 这个标签")).toBe("帮我看看 <skill name=\"x\"> 这个标签");
 	});
 });

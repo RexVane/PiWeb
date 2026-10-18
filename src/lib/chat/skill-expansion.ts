@@ -39,3 +39,13 @@ export function parseExpandedSkill(text: string): ExpandedSkill | null {
 	// 参数在闭合标签之后，与技能正文同属一条用户消息（pi 不单独发）
 	return { name, args: trimmed.slice(close + "</skill>".length).trim() };
 }
+
+/**
+ * 拿用户消息当标题 / 摘要时用的文本：技能展开还原成用户当初打的 `/skill:name 参数`，
+ * 别的原样返回。会话列表、窗口标题、增长树的轮次标题都走它，不再露出 `<skill name=…>` 和 SKILL.md 正文。
+ */
+export function promptTitleText(text: string): string {
+	const skill = parseExpandedSkill(text);
+	if (!skill) return text;
+	return skill.args ? `/skill:${skill.name} ${skill.args}` : `/skill:${skill.name}`;
+}

@@ -30,6 +30,12 @@ describe("promptsFromEntries", () => {
 		expect(promptsFromEntries(entries, 2)).toEqual({ ids: ["a", "b"], title: "把保存按钮改成红色" });
 	});
 
+	it("titles a skill round by the command the user typed, not the SKILL.md envelope", () => {
+		const skill = '<skill name="pdf-tools" location="/x/pdf-tools/SKILL.md">\nReferences are relative to /x.\n\n正文\n</skill>\n\nextract report.pdf';
+		expect(promptsFromEntries([{ type: "message", id: "s", message: { role: "user", content: [{ type: "text", text: skill }] } }]))
+			.toEqual({ ids: ["s"], title: "/skill:pdf-tools extract report.pdf" });
+	});
+
 	it("leaves the title empty for an image-only prompt", () => {
 		const imageOnly = [{ type: "message", id: "img", message: { role: "user", content: [{ type: "image", data: "x", mimeType: "image/png" }] } }];
 		expect(promptsFromEntries(imageOnly)).toEqual({ ids: ["img"], title: "" });
