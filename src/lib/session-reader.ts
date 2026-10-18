@@ -32,6 +32,11 @@ function toSummary(info: {
 	};
 }
 
+/** Date 能表示的毫秒数（±8.64e15）：超出范围的 toISOString 会抛 RangeError */
+function isValidTime(ms: number): boolean {
+	return Number.isFinite(ms) && Math.abs(ms) <= 8.64e15;
+}
+
 /** firstMessage 只当侧栏标题与搜索用：整段贴进来的长提问不该随每 3 秒一次的列表轮询反复下发 */
 export const FIRST_MESSAGE_MAX_CHARS = 300;
 
@@ -77,7 +82,7 @@ async function summarize(filePath: string, stat: { mtime: Date }): Promise<Sessi
 			if (!message || typeof message.role !== "string" || !("content" in message)) continue;
 			if (message.role !== "user" && message.role !== "assistant") continue;
 			const at = typeof message.timestamp === "number" ? message.timestamp : new Date(entry.timestamp).getTime();
-			if (Number.isFinite(at)) lastActivity = Math.max(lastActivity ?? 0, at);
+			if (isValidTime(at)) lastActivity = Math.max(lastActivity ?? 0, at);
 			if (!firstMessage && message.role === "user") {
 				const content = message.content;
 				firstMessage = promptTitleText(typeof content === "string"
@@ -87,12 +92,15 @@ async function summarize(filePath: string, stat: { mtime: Date }): Promise<Sessi
 		}
 		if (!header) return null;
 		const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
-		const modified = lastActivity && lastActivity > 0 ? new Date(lastActivity) : !Number.isNaN(headerTime) ? new Date(headerTime) : stat.mtime;
+		const created = isValidTime(headerTime) ? new Date(headerTime) : stat.mtime;
+		const modified = lastActivity && lastActivity > 0 ? new Date(lastActivity) : created;
 		return toSummary({
 			path: filePath,
 			name,
 			cwd: typeof header.cwd === "string" ? header.cwd : "",
-			created: new Date(String(header.timestamp)),
+			// 头里缺 timestamp 或写坏了：回落 mtime。以前直接 new Date(String(...))，Invalid Date 的 toISOString 一抛，
+			// 整个会话就被 catch 吞成 null，从侧栏里悄悄消失
+			created,
 			modified,
 			messageCount,
 			firstMessage: clipFirstMessage(firstMessage) || "(no messages)",
@@ -122,8 +130,9 @@ interface CachedSummary {
 /**
  * 2：firstMessage 开始截断，旧索引里的整段原文要重新摘要
  * 3：技能展开的首条消息还原成 `/skill:name 参数`，旧索引里存的是 `<skill name=…>` 加 SKILL.md 正文
+ * 4：头时间戳坏掉的会话不再摘要成 null，旧索引里缓存的 null 要重读才能回到侧栏
  */
-const INDEX_VERSION = 3;
+const INDEX_VERSION = 4;
 const INDEX_FILENAME = "piweb-session-index.json";
 const INDEX_MAX_ENTRIES = 5000;
 const INDEX_SAVE_DELAY_MS = 1500;

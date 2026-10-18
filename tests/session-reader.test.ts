@@ -110,6 +110,30 @@ describe("session-reader listSessions parity", () => {
 		expect(summary.firstMessage).toBe("/skill:pdf-tools extract report.pdf");
 	}, 15_000);
 
+	it("keeps listing a session whose header timestamp is missing or malformed", async () => {
+		// 回归：created = new Date(String(undefined)) 是 Invalid Date，toISOString 一抛整个会话就从列表里消失
+		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
+		await fs.mkdir(dir, { recursive: true });
+		const line = (o: unknown) => `${JSON.stringify(o)}\n`;
+		vi.resetModules();
+		const { listSessions } = await import("../src/lib/session-reader");
+		await fs.writeFile(path.join(dir, "no-ts.jsonl"), [
+			line({ type: "session", version: 3, id: "s-n", cwd: "D:\\Proj" }),
+			line({ type: "message", id: "u1", parentId: null, timestamp: "2026-09-10T01:00:01.000Z", message: { role: "user", content: "kept", timestamp: 1789000000000 } }),
+		].join(""));
+		await fs.writeFile(path.join(dir, "bad-ts.jsonl"), [
+			line({ type: "session", version: 3, id: "s-b", timestamp: "not a date", cwd: "D:\\Proj" }),
+			line({ type: "message", id: "u1", parentId: null, timestamp: "x", message: { role: "user", content: "also kept", timestamp: 1e20 } }),
+		].join(""));
+		const list = await listSessions();
+		expect(list.map((s) => s.firstMessage).sort()).toEqual(["also kept", "kept"]);
+		for (const s of list) {
+			expect(Number.isNaN(Date.parse(s.created))).toBe(false);
+			expect(Number.isNaN(Date.parse(s.modified))).toBe(false);
+		}
+		expect(list.find((s) => s.firstMessage === "kept")?.modified).toBe(new Date(1789000000000).toISOString());
+	}, 15_000);
+
 	it("reuses the persisted summary index after a restart, and still re-reads changed files", async () => {
 		const dir = path.join(tempDir, "agent", "sessions", "--D--Proj--");
 		await fs.mkdir(dir, { recursive: true });
