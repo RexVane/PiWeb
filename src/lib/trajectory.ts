@@ -319,22 +319,33 @@ export class TrajLedger {
 export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 	const out: TrajEntry[] = [];
 	let seq = 1;
-	const tsOf = (e: any) => (typeof e?.timestamp === "number" ? e.timestamp : Date.now());
+	// 消息体的 timestamp 是毫秒数，会话条目（compaction / branch_summary 等）的是 ISO 字符串。
+	// 以前只认数字，压缩与分支摘要每次冷加载都被记成「现在」，在时间线上排到最后。
+	// 都取不到时沿用上一条的时间，保持顺序
+	let lastTs: number | undefined;
+	const tsOf = (...candidates: unknown[]): number => {
+		for (const value of candidates) {
+			const ms = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : NaN;
+			if (Number.isFinite(ms)) return (lastTs = ms);
+		}
+		return lastTs ?? Date.now();
+	};
 
 	for (const raw of entries) {
 		if (raw.type === "message") {
 			const m = raw.message;
 			if (!m) continue;
 			if (m.role === "user") {
-				out.push({ seq: seq++, kind: "user", ts: tsOf(m), detail: textOf(m.content) });
+				out.push({ seq: seq++, kind: "user", ts: tsOf(m.timestamp, raw.timestamp), detail: textOf(m.content) });
 			} else if (m.role === "assistant") {
 				const thinking = textOf((m.content ?? []).filter((c: any) => c.type === "thinking"));
 				const text = textOf((m.content ?? []).filter((c: any) => c.type === "text"));
 				const durationMs = storedDuration(m.durationMs);
+				const ts = tsOf(m.timestamp, raw.timestamp);
 				out.push({
 					seq: seq++,
 					kind: "message",
-					ts: tsOf(m),
+					ts,
 					title: m.stopReason === "error" ? "error" : "assistant",
 					detail: text,
 					thinking: thinking || undefined,
@@ -347,7 +358,7 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 						out.push({
 							seq: seq++,
 							kind: "tool",
-							ts: tsOf(m),
+							ts,
 							toolName: c.name,
 							toolCallId: c.id,
 							title: c.name,
@@ -374,7 +385,7 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 			out.push({
 				seq: seq++,
 				kind: "compacted",
-				ts: tsOf(raw),
+				ts: tsOf(raw.timestamp),
 				title: "compact",
 				tokens: raw.tokensBefore != null ? { input: raw.tokensBefore } : toTrajTokens(raw.usage),
 			});
@@ -382,7 +393,7 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 			out.push({
 				seq: seq++,
 				kind: "compacted",
-				ts: tsOf(raw),
+				ts: tsOf(raw.timestamp),
 				title: "branch summary",
 				tokens: toTrajTokens(raw.usage),
 				detail: raw.summary,

@@ -74,6 +74,26 @@ import type { TrajEntry } from "../src/lib/types";describe("trajectory timing", 
 		expect(buildTrajectoryFromEntries([{ type: "message", message }])[0].timing?.durationMs).toBe(ledger.entries[0].timing?.durationMs);
 	});
 
+	it("keeps the recorded time of compactions and branch summaries instead of stamping them now", () => {
+		// 回归：会话条目的 timestamp 是 ISO 字符串，tsOf 只认数字，压缩/分支摘要每次冷加载都成了 Date.now()
+		const entries = buildTrajectoryFromEntries([
+			{ type: "message", timestamp: "2026-09-10T01:00:00.000Z", message: { role: "user", content: "hi", timestamp: Date.parse("2026-09-10T01:00:00.000Z") } },
+			{ type: "compaction", timestamp: "2026-09-10T02:00:00.000Z", tokensBefore: 1000 },
+			{ type: "branch_summary", timestamp: "2026-09-10T03:00:00.000Z", summary: "s" },
+			// 没有消息体时间戳的老条目：用条目自己的 ISO 时间
+			{ type: "message", timestamp: "2026-09-10T04:00:00.000Z", message: { role: "assistant", content: [] } },
+			// 什么时间都没有：沿用上一条，顺序不乱
+			{ type: "compaction" },
+		]);
+		expect(entries.map((entry) => new Date(entry.ts).toISOString())).toEqual([
+			"2026-09-10T01:00:00.000Z",
+			"2026-09-10T02:00:00.000Z",
+			"2026-09-10T03:00:00.000Z",
+			"2026-09-10T04:00:00.000Z",
+			"2026-09-10T04:00:00.000Z",
+		]);
+	});
+
 	it.each([-1, NaN, Infinity, "100"])("does not accept invalid historical duration %s", (durationMs) => {
 		expect(buildTrajectoryFromEntries([{ type: "message", message: { role: "assistant", content: [], durationMs } }])[0].timing).toBeUndefined();
 	});
