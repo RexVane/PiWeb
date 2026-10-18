@@ -16,6 +16,8 @@ interface WorkspaceFile {
 	workspaces: string[];
 	aliases?: Record<string, string>;
 	archivedSessions?: string[];
+	/** 归档时间（毫秒）：pathKey → 时间戳；保留期从这里起算 */
+	archivedAt?: Record<string, number>;
 	removedWorkspaces?: string[];
 	/** 项目生长能否在该目录 `git init`（目录还不是仓库根目录时问过用户）：pathKey → 决定 */
 	growthInit?: Record<string, boolean>;
@@ -44,10 +46,15 @@ async function readFile(target = file()): Promise<WorkspaceFile> {
 			Object.entries(typeof parsed.growthInit === "object" && parsed.growthInit !== null ? parsed.growthInit : {})
 				.filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"),
 		);
+		const archivedAt = Object.fromEntries(
+			Object.entries(typeof parsed.archivedAt === "object" && parsed.archivedAt !== null ? parsed.archivedAt : {})
+				.filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])),
+		);
 		return {
 			workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter((w) => typeof w === "string") : [],
 			aliases,
 			archivedSessions: Array.isArray(parsed.archivedSessions) ? parsed.archivedSessions.filter((s) => typeof s === "string") : [],
+			...(Object.keys(archivedAt).length ? { archivedAt } : {}),
 			removedWorkspaces: Array.isArray(parsed.removedWorkspaces) ? parsed.removedWorkspaces.filter((s) => typeof s === "string") : [],
 			...(Object.keys(growthInit).length ? { growthInit } : {}),
 		};
@@ -195,6 +202,7 @@ export async function archiveSession(sessionPath: string): Promise<string[]> {
 		if (!data.archivedSessions) data.archivedSessions = [];
 		if (!data.archivedSessions.some((p) => pathKey(p) === key)) {
 			data.archivedSessions.push(norm);
+			data.archivedAt = { ...data.archivedAt, [key]: Date.now() };
 			await write(data, target);
 		}
 		return data.archivedSessions;
@@ -207,11 +215,38 @@ export async function forgetSession(sessionPath: string): Promise<string[]> {
 	return mutate(async (data, target) => {
 		const previous = data.archivedSessions ?? [];
 		const next = previous.filter((p) => pathKey(p) !== key);
-		if (next.length !== previous.length) {
+		const hadTime = !!data.archivedAt && key in data.archivedAt;
+		if (next.length !== previous.length || hadTime) {
 			data.archivedSessions = next;
+			if (data.archivedAt) delete data.archivedAt[key];
 			await write(data, target);
 		}
 		return next;
+	});
+}
+
+/**
+ * 归档列表连同各自的归档时间。没有归档时间的条目（这个字段出现之前就归档的、或注册表被外部改写过的）
+ * 一律按 now 补记并写回——保留期从这一刻起算，而不是拿旧文件的 mtime 一上来就删。
+ * persist=false 时只在返回值里补，不写盘（供 dry run 使用）。
+ */
+export async function getArchivedEntries({ now = Date.now(), persist = true }: { now?: number; persist?: boolean } = {}): Promise<{ path: string; archivedAt: number }[]> {
+	const current = await read();
+	const known = current.archivedAt ?? {};
+	const list = current.archivedSessions ?? [];
+	if (!persist || list.every((p) => typeof known[pathKey(p)] === "number")) {
+		return list.map((p) => ({ path: p, archivedAt: known[pathKey(p)] ?? now }));
+	}
+	return mutate(async (data, target) => {
+		const sessions = data.archivedSessions ?? [];
+		const times: Record<string, number> = {};
+		for (const p of sessions) {
+			const key = pathKey(p);
+			times[key] = data.archivedAt?.[key] ?? now;
+		}
+		data.archivedAt = times;
+		await write(data, target);
+		return sessions.map((p) => ({ path: p, archivedAt: times[pathKey(p)] }));
 	});
 }
 

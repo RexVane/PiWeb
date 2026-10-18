@@ -127,6 +127,22 @@ describe("PiWeb workspace registry", () => {
 		expect(await getArchivedSessions()).toEqual([]);
 	});
 
+	it("records when a session was archived and drops it on unarchive", async () => {
+		const archived = path.join(tempDir, "Session.jsonl");
+		const key = process.platform === "win32" ? path.resolve(archived).toLowerCase() : path.resolve(archived);
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		const stored = async () => JSON.parse(await fs.readFile(registryPath, "utf8")).archivedAt ?? {};
+		const before = Date.now();
+		await archiveSession(archived);
+		const first = (await stored())[key];
+		expect(first).toBeGreaterThanOrEqual(before);
+		// 重复归档不改时间：保留期不会因为多点一次而重新起算
+		await archiveSession(archived);
+		expect((await stored())[key]).toBe(first);
+		await forgetSession(archived);
+		expect(await stored()).toEqual({});
+	});
+
 	it("keeps the previous registry intact when atomic replacement fails", async () => {
 		const first = path.join(tempDir, "first");
 		await addWorkspace(first);

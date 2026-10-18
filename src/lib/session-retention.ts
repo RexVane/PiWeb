@@ -1,5 +1,6 @@
 /**
- * 归档会话保留期：归档后超过 N 天没有活动（以会话文件 mtime 为准）就自动删除。
+ * 归档会话保留期：从归档那一刻起算满 N 天就自动删除；归档后又用过的，从最后一次活动（文件 mtime）起算。
+ * 以前只看 mtime，于是把一个很久没动的旧会话归档，几小时内就会被直接删掉。
  *
  * 只会碰「在归档列表里」的会话：没归档的会话即使很久没动也不会被动。
  * 正在被本进程管理的会话（打开中/运行中）一律跳过——交给它自己空闲回收。
@@ -7,15 +8,16 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { forgetSession, getWorkspaceRegistry } from "./workspace-store";
+import { forgetSession, getArchivedEntries } from "./workspace-store";
 
-/** 归档会话多久没有活动就删除（天） */
+/** 归档会话保留多久（天）；侧栏「已归档」的提示文案（i18n archiveRetentionHint）写的是同一个数 */
 export const ARCHIVED_RETENTION_DAYS = 30;
 /** 两次清理之间的间隔 */
 export const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export interface RetentionReport {
 	scanned: number;
+	/** idleDays：距归档或最后一次活动（取较晚者）的天数 */
 	deleted: { path: string; idleDays: number }[];
 	/** 文件已不在磁盘上：只清掉归档列表里的记录 */
 	missing: string[];
@@ -44,9 +46,9 @@ export async function sweepArchivedSessions({
 	const report: RetentionReport = { scanned: 0, deleted: [], missing: [], skippedActive: [], kept: 0 };
 	if (!Number.isFinite(retentionDays) || retentionDays <= 0) return report;
 	const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
-	const { archivedSessions } = await getWorkspaceRegistry();
+	const entries = await getArchivedEntries({ now, persist: !dryRun });
 
-	for (const sessionPath of archivedSessions) {
+	for (const { path: sessionPath, archivedAt } of entries) {
 		report.scanned += 1;
 		const target = path.resolve(sessionPath);
 		if (isActive(target)) {
@@ -66,18 +68,19 @@ export async function sweepArchivedSessions({
 			if (!dryRun) await forgetSession(target);
 			continue;
 		}
-		if (mtimeMs > cutoff) {
+		const since = Math.max(archivedAt, mtimeMs);
+		if (since > cutoff) {
 			report.kept += 1;
 			continue;
 		}
-		const idleDays = Math.floor((now - mtimeMs) / (24 * 60 * 60 * 1000));
+		const idleDays = Math.floor((now - since) / (24 * 60 * 60 * 1000));
 		report.deleted.push({ path: target, idleDays });
 		if (dryRun) continue;
 		// 运行时再取：session-reader → agent-manager → 本模块 构成环，静态导入会在初始化期踩空
 		const { deleteSession } = await import("./session-reader");
 		await deleteSession(target);
 		await forgetSession(target);
-		log(`[piweb] 归档会话已超过 ${retentionDays} 天没有活动（${idleDays} 天），已删除：${target}`);
+		log(`[piweb] 归档会话已满 ${retentionDays} 天（归档后 ${idleDays} 天没有活动），已删除：${target}`);
 	}
 	return report;
 }

@@ -21,10 +21,12 @@ const session: SessionListItem = {
 	streaming: false,
 };
 
-function renderSidebar(groupBy: "workspace" | "flat") {
+function renderSidebar(groupBy: "workspace" | "flat", archivedSessions: SessionListItem[] = []) {
 	return render(
 		<SessionSidebar
 			sessions={[session]}
+			archivedSessions={archivedSessions}
+			archivedPaths={archivedSessions.map((s) => s.path)}
 			addedWorkspaces={["/work/proj"]}
 			currentPath={null}
 			groupBy={groupBy}
@@ -66,6 +68,20 @@ describe("sidebar row menus", () => {
 		expect(screen.getByText("删除工作区")).toBeTruthy();
 		press(trigger);
 		expect(screen.queryByText("删除工作区")).toBeNull();
+	});
+
+	it("tells the user archived sessions are deleted 30 days after archiving", () => {
+		const archived: SessionListItem = { ...session, path: "/sessions/old.jsonl", firstMessage: "old" };
+		renderSidebar("flat", [archived]);
+		press(screen.getByRole("button", { name: "session-actions" }));
+		expect(screen.getByText("归档会话").closest("button")?.getAttribute("title")).toBe("归档满 30 天自动删除");
+		fireEvent.mouseDown(document.body);
+
+		const group = screen.getByRole("button", { name: /已归档/ });
+		expect(group.getAttribute("title")).toContain("30 天");
+		expect(screen.queryByText("归档满 30 天自动删除")).toBeNull();
+		fireEvent.click(group);
+		expect(screen.getByText("归档满 30 天自动删除")).toBeTruthy();
 	});
 
 	it("still closes a menu when pressing outside", () => {

@@ -493,6 +493,7 @@ function SessionSidebarImpl({
 						<MenuItem
 							icon={<IconArchiveOutline20 size={14} />}
 							label={reallyArchived ? t.unarchiveSession : t.archiveSession}
+							title={reallyArchived ? undefined : t.archiveRetentionHint}
 							onClick={(e) => {
 								e.stopPropagation();
 								setSessionMenu(null);
@@ -833,6 +834,7 @@ function SessionSidebarImpl({
 							type="button"
 							className="isx-menu-item flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left"
 							aria-expanded={archiveOpen}
+							title={t.archiveRetentionDetail}
 							onClick={() => setArchiveOpen((open) => !open)}
 						>
 							<span
@@ -852,6 +854,11 @@ function SessionSidebarImpl({
 							<span className="isx-menu-shift min-w-0 flex-1 truncate" style={{ fontSize: 13 }}>{t.archivedSessions}</span>
 							<span className="isx-menu-sub pr-2" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{archivedSessions.length}</span>
 						</button>
+						{archiveOpen && (
+							<div className="px-2.5 pb-1" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }} title={t.archiveRetentionDetail}>
+								{t.archiveRetentionHint}
+							</div>
+						)}
 						{archiveOpen && archivedSessions.map((session) => sessionRow(session, true, true))}
 					</div>
 				)}
@@ -1027,16 +1034,19 @@ export const SessionSidebar = memo(SessionSidebarImpl);
 function MenuItem({
 	icon,
 	label,
+	title,
 	danger,
 	onClick,
 }: {
 	icon: React.ReactNode;
 	label: string;
+	title?: string;
 	danger?: boolean;
 	onClick: (e: React.MouseEvent) => void;
 }) {
 	return (
 		<button
+			title={title}
 			data-danger={danger ? "true" : undefined}
 			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-lg px-3 py-2 text-left"
 			style={{ fontSize: 13, color: danger ? "var(--dsw-danger)" : "var(--dsw-label-primary)" }}
