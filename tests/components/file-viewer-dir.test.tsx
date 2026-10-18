@@ -85,6 +85,58 @@ it("点条目进下一层:目录带 kind、文件不带;相对路径拼对", asy
 	expect(onOpen).toHaveBeenCalledWith("scripts/release.mjs", { lazy: true });
 });
 
+it("文件大小按 KB/MB 显示,而不是一串字节数", async () => {
+	renderViewer({ open: true, tabs: [{ path: "scripts", kind: "dir", lazy: true }], active: "scripts" });
+	expect(await screen.findByText("2.00 KB")).toBeTruthy();
+	expect(screen.queryByText("2048 B")).toBeNull();
+});
+
+it("切到另一个文件夹页签时,新目录回来之前不显示上一个目录的条目", async () => {
+	// 回归:上一个目录的条目一直挂着直到新请求返回,这时点上去会拼出 docs/release.mjs 这种不存在的路径
+	let releaseDocs: (() => void) | null = null;
+	const fetchMock = vi.fn((url: string) => {
+		const body = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ success: true, data }) });
+		if (String(url).includes("path=docs")) {
+			return new Promise((resolve) => {
+				releaseDocs = () => resolve(body({ dir: "docs", entries: [{ name: "guide.md", kind: "file", size: 10 }], nextOffset: null, truncated: false }));
+			});
+		}
+		return Promise.resolve(body(LISTING));
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	const onOpen = vi.fn();
+	const props = { growth: growthStub(), cwd: "D:/ws", onClose: vi.fn(), onSelectTab: vi.fn(), onCloseTab: vi.fn(), onOpen, onReference: vi.fn(), onOpenEditor: vi.fn() };
+	const tabs = [{ path: "scripts", kind: "dir" as const, lazy: true }, { path: "docs", kind: "dir" as const, lazy: true }];
+	const view = render(<FileViewer state={{ open: true, tabs, active: "scripts" }} {...props} />);
+	expect(await screen.findByText("release.mjs")).toBeTruthy();
+
+	view.rerender(<FileViewer state={{ open: true, tabs, active: "docs" }} {...props} />);
+	expect(screen.queryByText("release.mjs")).toBeNull();
+	expect(screen.getByTestId("viewer-dir").textContent).toContain("加载中");
+	releaseDocs!();
+	expect(await screen.findByText("guide.md")).toBeTruthy();
+	fireEvent.click(screen.getByText("guide.md"));
+	expect(onOpen).toHaveBeenCalledWith("docs/guide.md", { lazy: true });
+});
+
+it("目录列不出来时显示错误,而不是「0 项」", async () => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ success: false, error: "permission denied" }) })));
+	render(
+		<FileViewer
+			state={{ open: true, tabs: [{ path: "secret", kind: "dir", lazy: true }], active: "secret" }}
+			growth={growthStub()}
+			cwd="D:/ws"
+			onClose={vi.fn()}
+			onSelectTab={vi.fn()}
+			onCloseTab={vi.fn()}
+			onOpen={vi.fn()}
+			onReference={vi.fn()}
+			onOpenEditor={vi.fn()}
+		/>,
+	);
+	expect(await screen.findByText("permission denied")).toBeTruthy();
+});
+
 it("没带 kind 也认得出文件夹:读文件报 400 时探一下目录接口就当文件夹打开", async () => {
 	const fetchMock = vi.fn(async (url: string) => {
 		if (String(url).includes("read=1")) return { ok: false, status: 400, json: async () => ({ success: false, error: "not a file" }) };

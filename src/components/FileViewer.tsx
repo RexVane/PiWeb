@@ -17,6 +17,7 @@ import { IconAtOutline16, IconChevronDown14, IconChevronUp14, IconCloseOutline14
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import { fileIconSrc } from "@/lib/file-icons";
+import { fmtBytes } from "@/lib/format";
 import { fuzzyScore, type TreeNode } from "@/lib/growth-tree";
 import type { ViewerState } from "@/hooks/useFileViewer";
 import { highlightCode, languageForPath } from "@/lib/highlight";
@@ -113,8 +114,7 @@ export function FileViewer({
 	const [treeFilter, setTreeFilter] = useState("");
 	const [reveal, setReveal] = useState<{ path: string; key: number } | null>(null);
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
-	const [dirPage, setDirPage] = useState<(DirPage & { key: string }) | null>(null);
-	const [dirMore, setDirMore] = useState<DirEntry[]>([]);
+	const [dirPage, setDirPage] = useState<(DirPage & { key: string; error?: string }) | null>(null);
 	const diffRef = useRef<FullDiffHandle>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
 	const quickInputRef = useRef<HTMLInputElement>(null);
@@ -138,41 +138,44 @@ export function FileViewer({
 	const [dirFallback, setDirFallback] = useState<string | null>(null);
 	const dirPath = activeTab?.kind === "dir" ? activeTab.path : dirFallback;
 	const isDir = Boolean(dirPath);
+	// @src/ 这类带尾斜杠的引用：列目录时去掉
+	const dirRel = dirPath ? dirPath.replace(/\/+$/, "") : null;
+	const dirKey = dirRel !== null && cwd ? `dir|${cwd}|${dirRel}` : null;
+	// 只认当前目录的那一页：从一个文件夹页签切到另一个时，上一个目录的条目不能在新请求回来前冒充新目录
+	// （点上去会拼出不存在的路径），「加载更多」也不能接着上一个目录的偏移拉
+	const page = dirPage && dirPage.key === dirKey ? dirPage : null;
 	// 文件夹：列目录（分页，后端已按 .gitignore 过滤），不读文件内容
 	useEffect(() => {
-		if (!dirPath || !cwd || !activeTab) {
+		if (dirRel === null || !cwd || !dirKey) {
 			setDirPage(null);
-			setDirMore([]);
 			return;
 		}
-		// @src/ 这类带尾斜杠的引用：列目录时去掉
-		const path_ = dirPath.replace(/\/+$/, "");
-		const key = `dir|${path_}`;
 		let alive = true;
-		setDirMore([]);
 		void (async () => {
 			try {
-				const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path_)}&offset=0`);
-				if (alive) setDirPage({ key, ...data });
+				const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(dirRel)}&offset=0`);
+				if (alive) setDirPage({ key: dirKey, ...data });
 			} catch (error) {
-				if (alive) setDirPage({ key, dir: path_, entries: [], nextOffset: null, truncated: false, error: error instanceof Error ? error.message : t.viewerLoadFailed } as DirPage & { key: string; error?: string });
+				if (alive) setDirPage({ key: dirKey, dir: dirRel, entries: [], nextOffset: null, truncated: false, error: error instanceof Error ? error.message : t.viewerLoadFailed });
 			}
 		})();
 		return () => {
 			alive = false;
 		};
-	}, [activeTab, dirPath, cwd, t.viewerLoadFailed]);
+	}, [dirRel, dirKey, cwd, t.viewerLoadFailed]);
 
 	/** 目录还有下一页时接着拉（大目录：node_modules 这种已被忽略，剩下的也不会太多） */
 	const loadMore = useCallback(async () => {
-		if (!activeTab || !cwd || !dirPage?.nextOffset) return;
+		if (!page?.nextOffset || dirRel === null || !cwd) return;
+		const base = page;
 		try {
-			const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(activeTab.path)}&offset=${dirPage.nextOffset}`);
-			setDirPage({ key: `dir|${activeTab.path}`, ...data, entries: [...dirPage.entries, ...data.entries] });
+			const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(dirRel)}&offset=${base.nextOffset}`);
+			// 请求途中切走了（或别的请求先换了这一页）就丢掉结果
+			setDirPage((current) => (current === base ? { ...base, ...data, key: base.key, entries: [...base.entries, ...data.entries] } : current));
 		} catch {
 			// 下一页失败就留在当前这页，用户可以再点
 		}
-	}, [activeTab, cwd, dirPage]);
+	}, [page, dirRel, cwd]);
 
 	// 取数据
 	useEffect(() => {
@@ -497,10 +500,10 @@ export function FileViewer({
 						{loaded?.truncated && <div className="pw-viewer-notice" data-kind="warn">{mode === "diff" ? t.viewerPatchTruncated : t.filePreviewTruncated}</div>}
 						{isDir ? (
 							<div className="min-h-0 flex-1 overflow-auto" data-testid="viewer-dir">
-								<div className="px-3 py-2" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-									{t.viewerDirHint.replace("{n}", String(dirPage?.entries.length ?? 0))}
+								<div className="px-3 py-2" style={{ fontSize: 11.5, color: page?.error ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }}>
+									{!page ? t.panelLoading : page.error ? page.error : t.viewerDirHint.replace("{n}", String(page.entries.length))}
 								</div>
-								{dirPage?.entries.map((entry) => (
+								{page?.entries.map((entry) => (
 									<button
 										key={entry.name}
 										type="button"
@@ -512,11 +515,11 @@ export function FileViewer({
 										<img className="pw-tree-icon" src={entry.kind === "dir" ? "/file-icons/folder-close.svg" : fileIconSrc(entry.name)} alt="" />
 										<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: entry.kind === "dir" ? "inherit" : "var(--font-mono)" }}>{entry.name}</span>
 										{entry.kind === "file" && entry.size !== undefined && (
-											<span style={{ fontSize: 11, color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}>{entry.size} B</span>
+											<span style={{ fontSize: 11, color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}>{fmtBytes(entry.size)}</span>
 										)}
 									</button>
 								))}
-								{dirPage?.nextOffset ? (
+								{page?.nextOffset ? (
 									<button type="button" className="pw-chip mx-3 my-2" onClick={() => void loadMore()}>{t.viewerDirMore}</button>
 								) : null}
 							</div>
