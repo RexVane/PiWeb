@@ -84,6 +84,25 @@ describe("PromptPanel", () => {
 		expect(document.querySelector("pre.pw-output")).toBeNull();
 	});
 
+	it("keeps the latest session's sources when an earlier request answers last", async () => {
+		// 回归：快速切会话时，sess-1 的请求比 sess-2 晚回来，面板被盖回 sess-1 的内容
+		const pending = new Map<string, (value: unknown) => void>();
+		vi.stubGlobal("fetch", vi.fn((url: string) => new Promise((resolve) => {
+			pending.set(new URL(url, "http://x").searchParams.get("session") ?? "", resolve);
+		})));
+		const list = (name: string) => response({ sources: [{ kind: "agents", name, path: `/ws/${name}`, origin: { scope: "project" }, bytes: 1 }], sessionReady: false });
+		const view = render(<PromptPanel cwd="/ws" sessionId="sess-1" refreshKey="sess-1" onClose={vi.fn()} />);
+		view.rerender(<PromptPanel cwd="/ws" sessionId="sess-2" refreshKey="sess-2" onClose={vi.fn()} />);
+		await waitFor(() => expect(pending.size).toBe(2));
+
+		pending.get("sess-2")!(list("SECOND.md"));
+		await waitFor(() => expect(screen.getByText("SECOND.md")).toBeTruthy());
+		pending.get("sess-1")!(list("FIRST.md"));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(screen.queryByText("FIRST.md")).toBeNull();
+		expect(screen.getByText("SECOND.md")).toBeTruthy();
+	});
+
 	it("explains missing synthesized entries while the session is cold", async () => {
 		setup({ sessionReady: false, assembledSystemPrompt: undefined, tools: undefined });
 		await waitFor(() => expect(screen.getByText(/会话尚未启动/)).toBeTruthy());

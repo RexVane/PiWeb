@@ -6,7 +6,7 @@
  * 技能 / 提示模板，含扩展与 npm 包提供的那些）；热会话额外给出"组装后的系统提示词"
  * 与每个工具的定义，它们不是文件、没有路径，直接在本面板内展开查看。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
 import { fmtBytes } from "@/lib/format";
 import { IconRefreshOutline14, IconCloseOutline14 } from "@/components/icons";
@@ -69,8 +69,11 @@ export function PromptPanel({
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [opening, setOpening] = useState<string | null>(null);
+	/** 只认最后一次请求：快速切会话时，先发的请求后回来会把上一个会话的提示词盖到当前会话上 */
+	const latestRequest = useRef(0);
 
 	const load = useCallback(async () => {
+		const request = ++latestRequest.current;
 		setBusy(true);
 		setError(null);
 		try {
@@ -78,13 +81,19 @@ export function PromptPanel({
 			if (sessionId) query.set("session", sessionId);
 			const response = await fetch(`/api/prompts?${query.toString()}`);
 			const body = await response.json();
+			if (request !== latestRequest.current) return;
 			if (!response.ok || !body.success) throw new Error(body.error || `request failed (${response.status})`);
 			setData(body.data as PromptSourcesData);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
+			if (request === latestRequest.current) setError(err instanceof Error ? err.message : String(err));
 		} finally {
-			setBusy(false);
+			if (request === latestRequest.current) setBusy(false);
 		}
+	}, [cwd, sessionId]);
+
+	// 换了工作区/会话：先清掉上一个的内容，别在加载期间把旧会话的提示词当成当前的
+	useEffect(() => {
+		setData(null);
 	}, [cwd, sessionId]);
 
 	useEffect(() => {
