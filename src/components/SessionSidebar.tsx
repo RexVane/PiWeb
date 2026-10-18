@@ -221,7 +221,10 @@ function SessionSidebarImpl({
 		}
 	};
 
-	const currentCwd = sessions.find((s) => s.path === currentPath)?.cwd;
+	// 路径一律按 normPath 比：注册表里的工作区经过 path.resolve，会话头里的 cwd 是原样记下的，
+	// Windows 上盘符大小写、分隔符、尾斜杠都可能不同
+	const currentKey = currentPath ? normPath(currentPath) : "";
+	const currentCwd = currentKey ? sessions.find((s) => normPath(s.path) === currentKey)?.cwd : undefined;
 
 	useEffect(() => {
 		if (!viewMenu && !rowMenu && !sessionMenu) return;
@@ -328,7 +331,7 @@ function SessionSidebarImpl({
 		} catch {
 			/* ignore */
 		}
-		const s = sessions.find((item) => item.path === currentPath);
+		const s = sessions.find((item) => normPath(item.path) === normPath(currentPath));
 		if (!s) return; // 会话列表尚未加载，等轮询后重试
 		lastExpandedFor.current = currentPath;
 		const matchedGroup = workspaceGroups.find((g) => normPath(g.cwd) === normPath(s.cwd));
@@ -403,7 +406,7 @@ function SessionSidebarImpl({
 	}
 
 	const sessionRow = (s: SessionListItem, indented: boolean, archived = false) => {
-		const selected = s.path === currentPath;
+		const selected = !!currentKey && normPath(s.path) === currentKey;
 		// dsh 合同：被归档的当前会话仍显示在主列表，菜单按真实归档态切换
 		const reallyArchived = archived || archivedPaths.some((p) => normPath(p) === normPath(s.path));
 		return (
@@ -510,7 +513,7 @@ function SessionSidebarImpl({
 	const workspaceRow = (g: WorkspaceGroup) => {
 		const isUngrouped = g.cwd === "__ungrouped__";
 		const open = openSet.has(g.cwd);
-		const isCurrent = !isUngrouped && g.cwd === currentCwd;
+		const isCurrent = !isUngrouped && !!currentCwd && normPath(g.cwd) === normPath(currentCwd);
 		// 草稿新会话属于哪个分组：路径匹配的工作区，否则归未分组
 		const draftInThisGroup = draftCwd
 			? (isUngrouped
