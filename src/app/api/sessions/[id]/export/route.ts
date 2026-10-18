@@ -18,7 +18,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const { id } = await params;
 	const format = new URL(req.url).searchParams.get("format") === "html" ? "html" : "jsonl";
 	try {
-		const m = getManaged(await resolveSessionPath(id));
+		// 与 /api/agent/[id] 同一种解析（allowPending 返回原写法而不是 realpath）：会话表按路径字符串做键，
+		// ~/.pi 经过 junction / 符号链接时两种写法不同，导出 HTML 就会给同一个文件再起一个 agent
+		const m = getManaged(await resolveSessionPath(id, { allowPending: true }));
 		const { filename, content, contentType } = await exportSession(m, format);
 		return new Response(content, {
 			headers: {
