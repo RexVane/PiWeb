@@ -49,6 +49,60 @@ describe("remote entry guard", () => {
 		expect(remoteStatus().blocked).toBe("auth");
 	});
 
+	/**
+	 * 插件开关原先不管认证：没开认证时 start-lan 返回 409，set-plugin 却直接 startLan()，
+	 * 在 0.0.0.0 上开出一个免密入口。开关只存设置，起不起监听和 start-lan 走同一道闸。
+	 */
+	describe("set-plugin", () => {
+		let dir: string;
+		const savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+		const savedLan = process.env.PIWEB_REMOTE_LAN;
+		const savedLanPort = process.env.PIWEB_REMOTE_LAN_PORT;
+		beforeEach(async () => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-remote-set-plugin-"));
+			process.env.PI_CODING_AGENT_DIR = dir;
+			// 空闲端口：默认 30142 可能被本机正在跑的 PiWeb 占着，那样「没起来」是端口冲突造成的，测不出闸门
+			process.env.PIWEB_REMOTE_LAN_PORT = String(await freePort());
+		});
+		afterEach(() => {
+			if (savedAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+			if (savedLan === undefined) delete process.env.PIWEB_REMOTE_LAN;
+			else process.env.PIWEB_REMOTE_LAN = savedLan;
+			if (savedLanPort === undefined) delete process.env.PIWEB_REMOTE_LAN_PORT;
+			else process.env.PIWEB_REMOTE_LAN_PORT = savedLanPort;
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+		const setPlugin = (enabled: boolean) =>
+			POST(new Request("http://127.0.0.1/api/remote", { method: "POST", body: JSON.stringify({ action: "set-plugin", enabled }) }));
+
+		it("saves the switch but never opens the LAN entry while authentication is off", async () => {
+			delete process.env.PI_WEB_AUTH;
+			for (const enabled of [false, true]) {
+				const response = await setPlugin(enabled);
+				expect(response.status).toBe(200);
+				expect(remotePluginEnabled()).toBe(enabled);
+				expect(remoteStatus().lan.running, String(enabled)).toBe(false);
+			}
+		});
+
+		it("does not open the LAN entry when PIWEB_REMOTE_LAN turns it off", async () => {
+			process.env.PI_WEB_AUTH = "1";
+			process.env.PIWEB_REMOTE_LAN = "0";
+			expect((await setPlugin(true)).status).toBe(200);
+			expect(remoteStatus().lan.running).toBe(false);
+		});
+
+		it("still opens the LAN entry in the chosen mode once remote access is allowed", async () => {
+			process.env.PI_WEB_AUTH = "1";
+			delete process.env.PIWEB_REMOTE_LAN;
+			expect((await setPlugin(false)).status).toBe(200);
+			expect(remoteStatus().lan).toMatchObject({ running: true, styled: false });
+			expect((await setPlugin(true)).status).toBe(200);
+			expect(remoteStatus().lan).toMatchObject({ running: true, styled: true });
+		});
+	});
+
 	it("/api/remote hands the launch token to the settings page only while authentication is on", async () => {
 		process.env.PI_WEB_LAUNCH_TOKEN = "launch-tok";
 		process.env.PI_WEB_AUTH = "1";

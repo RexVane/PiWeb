@@ -68,6 +68,17 @@ describe("remote entry links", () => {
 		expect((screen.getByText("关闭").closest("button") as HTMLButtonElement).disabled).toBe(false);
 	});
 
+	it("locks the plugin switch while remote entries are blocked", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true, status: 200,
+			json: async () => ({ success: true, data: { ...status, blocked: "auth", loginToken: null, lan: { ...status.lan, running: false, urls: [] }, public: { ...status.public, running: false, ready: false, url: null } } }),
+		})));
+		render(<RemoteSection />);
+		const toggle = screen.getByRole("switch", { name: "启用内置远程连接插件" }) as HTMLButtonElement;
+		await waitFor(() => expect(screen.getByText("开启远程连接").closest("button")?.disabled).toBe(true));
+		expect(toggle.disabled).toBe(true);
+	});
+
 	it("marks the LAN entry as plain forwarding only when the server says so", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => ({
 			ok: true, status: 200,

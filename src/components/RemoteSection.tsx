@@ -233,7 +233,8 @@ export function RemoteSection() {
 					aria-checked={pluginOn}
 					aria-label={t.remotePluginToggle}
 					title={t.remotePluginHint}
-					disabled={busy || !status}
+					// 被拦住（没开认证 / 开发模式）时入口一律开不出来，开关拨了也没有意义
+					disabled={busy || !status || blocked !== null}
 					onClick={() => void togglePlugin()}
 				>
 					<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: pluginOn ? 18 : 2 }} />

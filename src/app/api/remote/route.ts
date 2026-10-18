@@ -9,7 +9,7 @@
  * 认证没开时 proxy 一律放行，这时开出去的局域网 / 公网入口就是一个免密 shell。
  */
 import { NextResponse } from "next/server";
-import { remoteBlocked, remoteStatus, setRemotePluginEnabled, startLan, startPublic, stopAll, stopLan, stopPublic } from "@/lib/remote/supervisor";
+import { remoteBlocked, remoteLanEnabled, remoteStatus, setRemotePluginEnabled, startLan, startPublic, stopAll, stopLan, stopPublic } from "@/lib/remote/supervisor";
 import { authEnabled } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
@@ -78,12 +78,10 @@ export async function POST(request: Request) {
 			if (!enabled) await stopPublic();
 			// 注入资源是在建监听时就烧进去的，所以必须重建监听，开关才真正生效；
 			// 重建只在「原监听需要换模式」时做，避免白断一次连接。
-			if (before.lan.running && before.lan.styled !== enabled) {
-				await stopLan();
-				await startLan();
-			} else {
-				await startLan();
-			}
+			if (before.lan.running && before.lan.styled !== enabled) await stopLan();
+			// 起监听与启动时（instrumentation-node）同一道闸：认证没开 / 开发模式 / PIWEB_REMOTE_LAN=0 时
+			// 只存开关，不开局域网入口——否则拨一下开关就绕过 start-lan 的检查开出一个免密入口。
+			if (remoteBlocked() === null && remoteLanEnabled()) await startLan();
 			return respond();
 		}
 		default:
