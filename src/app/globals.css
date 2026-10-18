@@ -2567,6 +2567,22 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 .pw-image-delete:disabled {
 	opacity: 0.4;
 }
+/* 聊天图片可点击，保持原图尺寸和排版；预览与输入附件共用同一套放大预览。 */
+.pw-chat-image-preview {
+	display: inline-block;
+	max-width: 100%;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	cursor: zoom-in;
+	vertical-align: top;
+}
+.pw-chat-image-preview > img { display: block; }
+.pw-chat-image-preview:focus-visible {
+	outline: 2px solid var(--dsw-accent);
+	outline-offset: 3px;
+	border-radius: 12px;
+}
 /* 放大预览 */
 .pw-lightbox {
 	position: fixed;

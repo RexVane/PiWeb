@@ -22,6 +22,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
+import { PreviewImage } from "@/components/PreviewImage";
 import { useMarkdownActions } from "@/components/chat/markdown-actions";
 import { looksLikeFilePath } from "@/lib/chat/file-path";
 import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
@@ -82,7 +83,7 @@ function SafeImage({ src, alt, title }: { src?: unknown; alt?: string; title?: s
 	const { t } = useI18n();
 	const source = typeof src === "string" ? src : "";
 	if (!source) return null;
-	if (allowed || isInlineImage(source)) return <img src={source} alt={alt ?? ""} title={title} />;
+	if (allowed || isInlineImage(source)) return <PreviewImage image={source} alt={alt ?? ""} title={title} />;
 	let host = source;
 	try {
 		host = new URL(source).host || source;

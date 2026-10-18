@@ -30,6 +30,7 @@ import { languageForPath } from "@/lib/highlight";
 import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
+import { PreviewImage } from "@/components/PreviewImage";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
@@ -879,7 +880,7 @@ function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: 
 		case "image":
 			return (
 				<div className="pw-narr">
-					<img src={`data:${item.mimeType};base64,${item.data}`} alt="" className="my-1 max-h-96 max-w-full rounded-2xl object-contain" />
+					<PreviewImage image={{ type: "image", mimeType: item.mimeType, data: item.data }} className="my-1 max-h-96 max-w-full rounded-2xl object-contain" />
 				</div>
 			);
 		case "tool":
@@ -916,11 +917,12 @@ const FinalAnswer = memo(function FinalAnswer({
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("");
+	const images = message.content.filter((c) => c.type === "image");
 	return (
 		<div className="group w-full" style={{ marginTop: 14 }} data-role="assistant">
 			{message.content.map((c, i) => {
 				if (c.type === "text" && c.text.trim()) return <Markdown key={i} text={c.text} />;
-				if (c.type === "image") return <img key={i} src={`data:${c.mimeType};base64,${c.data}`} alt="" className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
+				if (c.type === "image") return <PreviewImage key={i} image={c} images={images} index={images.indexOf(c)} className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
 				return null;
 			})}
 			{showActions && (
@@ -980,10 +982,11 @@ function UserImages({ images }: { images: Array<{ type: "image"; data: string; m
 	return (
 		<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2 self-end">
 			{images.map((image, index) => (
-				<img
+				<PreviewImage
 					key={index}
-					src={`data:${image.mimeType};base64,${image.data}`}
-					alt=""
+					image={image}
+					images={images}
+					index={index}
 					className="max-h-72 max-w-full rounded-2xl object-contain"
 					style={{ border: "0.5px solid var(--dsw-border-l2)" }}
 				/>

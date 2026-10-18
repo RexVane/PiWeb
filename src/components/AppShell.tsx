@@ -46,7 +46,10 @@ import type { NewSessionDefaults } from "@/lib/model-defaults";
 import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import { promptTitleText } from "@/lib/chat/skill-expansion";
-import type { ImageAttachment, TrajEntry } from "@/lib/types";
+import type { ImageAttachment, TrajEntry, WebSnapshot } from "@/lib/types";
+
+/** 补全需要的资源清单；新会话页与冷会话都能从服务端单独发现，不必等快照 */
+type WorkspaceCommands = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensionCommands">;
 
 // dsh ui-layout columns.ts 几何常量
 const SIDEBAR_MIN = 264;
@@ -175,6 +178,9 @@ export function AppShell() {
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	/** 当前工作区的新会话默认值（pi 的初始模型规则 + 设置里的思考档位），切换工作区时重新取 */
 	const [heroDefaults, setHeroDefaults] = useState<NewSessionDefaults | null>(null);
+	/** 按工作区缓存的命令清单：切会话时先用着，再后台刷新 */
+	const [workspaceResources, setWorkspaceResources] = useState<Record<string, WorkspaceCommands>>({});
+	const [resourcesVersion, setResourcesVersion] = useState(0);
 	const [heroThinking, setHeroThinking] = useState("");
 	const [isNarrow, setIsNarrow] = useState(false);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -219,6 +225,30 @@ export function AppShell() {
 			stale = true;
 		};
 	}, [heroCwd]);
+	/** 补全数据归属的工作区：有会话看会话的 cwd，新会话看 Hero 选中的工作区 */
+	const resourceCwd = currentId
+		? sessions.find((session) => samePath(session.path, currentPath ?? ""))?.cwd ??
+			(state.snapshot?.sessionPath && samePath(state.snapshot.sessionPath, currentPath ?? "") ? state.snapshot.cwd : "")
+		: heroCwd;
+	// 补全不能等历史快照或 session_start/MCP：按工作区单独发现并缓存，切会话/改设置时后台刷新。
+	useEffect(() => {
+		if (!resourceCwd) return;
+		let stale = false;
+		fetch(`/api/agent/resources?cwd=${encodeURIComponent(resourceCwd)}`, { cache: "no-store" })
+			.then((r) => r.json() as Promise<{ success?: boolean; data?: WorkspaceCommands; error?: string }>)
+			.then((json) => {
+				if (stale) return;
+				if (!json.success || !json.data) throw new Error(json.error || "Failed to load workspace resources");
+				const data = json.data;
+				setWorkspaceResources((previous) => ({ ...previous, [resourceCwd]: data }));
+			})
+			.catch((error) => {
+				if (!stale) setError(error instanceof Error ? error.message : String(error));
+			});
+		return () => {
+			stale = true;
+		};
+	}, [currentId, resourceCwd, settingsOpen, resourcesVersion, setError]);
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
 		preserveChatReadingPosition();
@@ -597,6 +627,9 @@ export function AppShell() {
 		[sendCommand, openSession, resync],
 	);
 
+	const commandResources = currentId && snapshot?.sessionPath && samePath(snapshot.sessionPath, currentPath ?? "")
+		? snapshot
+		: workspaceResources[resourceCwd];
 	// 斜杠命令：Web 内置 + pi 的技能 / 提示模板 / 扩展命令（后三类原样交给 SDK 展开或执行）
 	const slashCommands = useMemo(() => {
 		const list: { name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }[] = [
@@ -606,12 +639,12 @@ export function AppShell() {
 			{ name: "new", desc: t.cmdNew, kind: "builtin" },
 			{ name: "fork", desc: t.cmdFork, kind: "builtin" },
 			{ name: "reload", desc: t.cmdReload, kind: "builtin" },
-			...(snapshot?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const, argumentHint: p.argumentHint })),
-			...(snapshot?.extensionCommands ?? []).map((c) => ({ name: c.name, desc: c.description || c.source, kind: "extension" as const })),
-			...(snapshot?.skills ?? []).map((s) => ({ name: `skill:${s.name}`, desc: s.description, kind: "skill" as const })),
+			...(commandResources?.promptTemplates ?? []).map((p) => ({ name: p.name, desc: p.description, kind: "template" as const, argumentHint: p.argumentHint })),
+			...(commandResources?.extensionCommands ?? []).map((c) => ({ name: c.name, desc: c.description || c.source, kind: "extension" as const })),
+			...(commandResources?.skills ?? []).map((s) => ({ name: `skill:${s.name}`, desc: s.description, kind: "skill" as const })),
 		];
 		return list.sort((a, b) => a.name.localeCompare(b.name));
-	}, [snapshot, t]);
+	}, [commandResources, t]);
 
 	const runSlashCommand = useCallback(
 		(name: string, args: string) => {
@@ -623,10 +656,16 @@ export function AppShell() {
 				void sendCommand({ cmd: "fork" }).then((r) => {
 					if (r.success && r.data?.sessionPath) openSession(r.data.sessionPath);
 				});
-			} else if (name === "reload") void sendCommand({ cmd: "reload" }).then(() => refreshModels());
-			else setError(t.cmdUnknown.replace("{name}", name));
+			} else if (name === "reload") {
+				// 新会话页没有会话可重载：重新发现命令并刷模型目录即可
+				if (currentId) void sendCommand({ cmd: "reload" }).then(() => refreshModels());
+				else {
+					setResourcesVersion((version) => version + 1);
+					void refreshModels();
+				}
+			} else setError(t.cmdUnknown.replace("{name}", name));
 		},
-		[sendCommand, currentId, closeSession, openSession, setError, t],
+		[sendCommand, currentId, closeSession, openSession, refreshModels, setError, t],
 	);
 
 	const projectTrust = snapshot?.projectTrust;
@@ -1339,6 +1378,8 @@ function Hero({
 					pendingUploadCount={pendingUploadCount}
 					pendingSend={pendingSend}
 					onSendPendingChange={onSendPendingChange}
+					// Hero 的附件占位，避免 @ 引用和图片盖住上方工作区选择器
+					attachmentLayout="flow"
 					// 新会话也能 @ 引用：候选来自上面选中的工作区
 					cwd={cwd}
 					commands={commands}

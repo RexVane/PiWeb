@@ -6,7 +6,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { formatSkillsForPrompt, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { ExtensionRunner, ModelRegistry, formatSkillsForPrompt, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import {
 	getResourceLoader,
 	createSessionResourceLoader,
@@ -1236,7 +1236,22 @@ startArchivedSessionRetention({ isActive: isSessionInUse, log: (message) => cons
 
 type ResourceBundle = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensionCommands" | "projectTrust" | "resourceDiagnostics">;
 
-function collectResources(m: Managed): ResourceBundle {
+/**
+ * 会话还不存在时也能发现命令：不绑定运行时、不发 session_start、不启动 MCP。
+ * 新会话页和冷会话的斜杠补全都靠它，等第一次提问才建会话。
+ */
+export async function loadWorkspaceResources(cwd: string): Promise<ResourceBundle> {
+	await refreshResourceLoaderIfStale(cwd);
+	const modelRegistry = new ModelRegistry(await getModelRuntime());
+	return withResourceLock(async () => {
+		const loader = getResourceLoader(cwd);
+		const { extensions, runtime } = loader.getExtensions();
+		const runner = new ExtensionRunner(extensions, runtime, cwd, SessionManager.inMemory(cwd), modelRegistry);
+		return collectResources({ cwd, session: null }, runner);
+	});
+}
+
+function collectResources(m: Pick<Managed, "cwd" | "session">, commandRunner?: ExtensionRunner): ResourceBundle {
 	const loader = m.session?.resourceLoader ?? peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
 	const diagnostics: WebSnapshot["resourceDiagnostics"] = [];
 	let skills: WebSnapshot["skills"] = [];
@@ -1261,9 +1276,9 @@ function collectResources(m: Managed): ResourceBundle {
 		/* ignore */
 	}
 	let extensionCommands: WebSnapshot["extensionCommands"] = [];
-	if (m.session) {
+	if (m.session || commandRunner) {
 		try {
-			const runner = (m.session as unknown as { extensionRunner?: { getRegisteredCommands(): Array<{ invocationName: string; description?: string; sourceInfo?: { path?: string } }>; getCommandDiagnostics(): Array<{ path?: string; message: string }> } }).extensionRunner;
+			const runner = commandRunner ?? m.session?.extensionRunner;
 			if (runner) {
 				extensionCommands = runner.getRegisteredCommands().map((c) => ({
 					name: c.invocationName,
@@ -1485,7 +1500,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	}
 
 	// 斜杠命令数据源：技能 / 提示模板 / 扩展命令，加上项目信任与资源诊断
-	const resources = collectResources(m);
+	// 冷会话还没有 extensionRunner，但命令目录已经能发现；不要在第一次提问前推空列表。
+	const resources = session && !m.creating ? collectResources(m) : await loadWorkspaceResources(m.cwd);
 
 	const baseTrajectory = m.ledger.entries.length ? m.ledger.entries : coldTrajectory(m);
 	const trajectory = [...environmentTrajectory(m, session, contextResourcesLoaded ? contextResources : undefined), ...baseTrajectory];

@@ -71,6 +71,18 @@ describe("real SDK session resource isolation", () => {
 		expect(b.session.sessionName).toBe("B-after-discovery");
 	});
 
+	it("includes extension commands in a cold existing-session snapshot before starting its runtime", async () => {
+		const { sessionPath } = await manager.createNewSession(cwd);
+		const m = manager.getManaged(sessionPath);
+		managed.push(m);
+		const snapshot = await manager.buildSnapshot(m);
+		expect(m.session).toBeNull();
+		expect(snapshot.extensionCommands).toEqual(expect.arrayContaining([
+			expect.objectContaining({ name: "probe" }),
+			expect.objectContaining({ name: "ask" }),
+		]));
+	});
+
 	it("reapplies readonly and custom allowlists on direct, command and resource reload", async () => {
 		const { m, session } = await create();
 		expect(session.getAllTools().map((tool) => tool.name)).toContain("probe_tool");
