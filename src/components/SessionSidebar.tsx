@@ -226,6 +226,9 @@ function SessionSidebarImpl({
 	useEffect(() => {
 		if (!viewMenu && !rowMenu && !sessionMenu) return;
 		const h = (e: MouseEvent) => {
+			// 按在行菜单的「…」按钮上：交给按钮的 onClick 切换（它也会关掉另一种菜单）。
+			// 这里先关的话，紧跟着的 click 又把菜单打开，再点一下「…」永远关不掉
+			if ((e.target as Element | null)?.closest?.("[data-menu-trigger]")) return;
 			if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
 				setViewMenu(false);
 				setRowMenu(null);
@@ -444,6 +447,7 @@ function SessionSidebarImpl({
 						style={{ width: 22, height: 22 }}
 						title="..."
 						aria-label="session-actions"
+						data-menu-trigger="session"
 						onClick={(e) => {
 							e.stopPropagation();
 							setSessionMenu(sessionMenu === s.path ? null : s.path);
@@ -561,6 +565,7 @@ function SessionSidebarImpl({
 								style={{ width: 22, height: 22 }}
 								title="..."
 								aria-label="workspace-actions"
+								data-menu-trigger="workspace"
 								onClick={() => {
 									setRowMenu(rowMenu === g.cwd ? null : g.cwd);
 									setSessionMenu(null);

@@ -109,6 +109,21 @@ describe("ProjectPanel rounds", () => {
 		expect(select).not.toHaveBeenCalled();
 	});
 
+	it("closes the round list when the counter is pressed again", () => {
+		// 回归：ref 只包着列表，按计数按钮的 mousedown 先关掉列表，紧跟的 click 又打开，再点一下关不掉
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		render(<ProjectPanel growth={{ ...growth, rounds: [piRound], selected: piRound, changes: piRound.changes }} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		const picker = screen.getByTestId("growth-round-picker");
+		const press = () => { fireEvent.mouseDown(picker); fireEvent.click(picker); };
+		press();
+		expect(screen.getByTestId("growth-round-list")).toBeTruthy();
+		press();
+		expect(screen.queryByTestId("growth-round-list")).toBeNull();
+		press();
+		fireEvent.mouseDown(document.body);
+		expect(screen.queryByTestId("growth-round-list")).toBeNull();
+	});
+
 	it("exposes every round bar and the prev/next buttons to screen readers", () => {
 		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
 		const round2: GrowthEntry = { ...piRound, commit: h("d"), parent: h("c"), tree: h("4"), parentTree: h("3"), n: 2, title: "第二轮" };

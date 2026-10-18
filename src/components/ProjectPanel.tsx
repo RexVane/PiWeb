@@ -432,7 +432,8 @@ export function ProjectPanel({
 						</button>
 						{/* 计数可点开轮数列表:单击直接弹列表(不做双击变输入框,避免 250ms 单双击
 						    判定拖慢弹出);「输入轮号」是列表里一个固定入口,选中后当场变数字输入框 */}
-						<div className="relative min-w-0 flex-1">
+						{/* ref 包住按钮和列表：按在计数按钮上不算「点在外面」，否则 mousedown 先关、click 又打开，再点一下关不掉 */}
+						<div className="relative min-w-0 flex-1" ref={roundPickerRef}>
 							<button
 								type="button"
 								className="w-full truncate rounded px-1 text-left"
@@ -451,7 +452,6 @@ export function ProjectPanel({
 							</button>
 							{roundPickerOpen && (
 								<div
-									ref={roundPickerRef}
 									className="popover absolute bottom-7 left-0 z-50 flex w-[268px] max-w-[calc(100vw-24px)] flex-col"
 									role="listbox"
 									aria-label={t.growthPickRound}
