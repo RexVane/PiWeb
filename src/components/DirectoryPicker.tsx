@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * 应用内目录浏览器：给手机等远程设备用。
+ * 应用内目录浏览器：供远程设备和本机原生选择器不可用时使用。
  *
- * 本机回环上仍然走系统原生对话框（/api/workspaces 的 pick 动作），只有远程请求才落到这里
- * —— 原生对话框会弹在运行 PiWeb 的那台机器的屏幕上，手机这边等于没反应。
+ * 本机优先使用系统原生对话框（/api/workspaces 的 pick 动作），失败后回到这里。
+ * 远程请求直接使用这里，避免把对话框弹在主机屏幕上。
  * 只列目录；选出的路径仍由服务端的 resolveWorkspacePath 校验后才写进工作区。
  */
 import { useCallback, useEffect, useState, type CSSProperties } from "react";

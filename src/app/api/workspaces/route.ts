@@ -49,7 +49,13 @@ export async function POST(req: Request) {
 				// 远程设备：不弹主机上的对话框，让前端改用应用内目录浏览器。
 				return NextResponse.json({ success: true, data: { path: null, canceled: false, remote: true } });
 			}
-			const r = await pickFolderNative();
+			let r;
+			try {
+				r = await pickFolderNative();
+			} catch {
+				// 无可用原生对话框或超时：保留在页面里选目录的入口。
+				return NextResponse.json({ success: true, data: { path: null, canceled: false, browse: true } });
+			}
 			const registry = r.path ? await addWorkspace(await resolveWorkspacePath(r.path)) : null;
 			return NextResponse.json({ success: true, data: { ...r, ...(registry ?? {}) } });
 		}

@@ -390,7 +390,7 @@ function applePathToPosix(out: string): string {
  * - Windows：PowerShell 脚本（现代资源管理器风格，屏幕居中）
  * - macOS：osascript choose folder（原生选择框）
  * - Linux：zenity / kdialog（哪个可用用哪个）
- * 都不可用时抛错，前端有手动输入路径的兜底入口。
+ * 都不可用时抛错，由接口通知前端打开应用内目录浏览器。
  */
 export async function pickFolderNative(): Promise<{ path: string | null; canceled: boolean }> {
 	if (picking) return { path: null, canceled: true };
@@ -406,9 +406,15 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 		}
 		if (process.platform === "darwin") {
 			// 直接要 POSIX path 输出；老 osascript / 异常路径由 applePathToPosix 兜底转换
-			const out = await runDialog(["osascript", "-e", 'POSIX path of (choose folder with prompt "选择工作区文件夹")']);
-			const p = applePathToPosix(out);
-			return p ? { path: p, canceled: false } : { path: null, canceled: true };
+			try {
+				const out = await runDialog(["osascript", "-e", 'POSIX path of (choose folder with prompt "选择工作区文件夹")']);
+				const p = applePathToPosix(out);
+				return p ? { path: p, canceled: false } : { path: null, canceled: true };
+			} catch (error) {
+				// 用户取消是 AppleScript -128；错误文案随系统语言变化。
+				if (error instanceof Error && /\(-128\)\s*$/.test(error.message)) return { path: null, canceled: true };
+				throw error;
+			}
 		}
 		// Linux /其他：zenity → kdialog
 		for (const argv of [

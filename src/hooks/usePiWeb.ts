@@ -385,7 +385,7 @@ export function usePiWeb() {
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
 	const [addedWorkspaces, setAddedWorkspaces] = useState<string[]>([]);
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
-	/** 应用内目录浏览器（远程设备专用）：是否打开，以及等待用户选择的那次调用 */
+	/** 应用内目录浏览器：是否打开，以及等待用户选择的那次调用 */
 	const [dirPickerOpen, setDirPickerOpen] = useState(false);
 	const dirPickResolve = useRef<((path: string | null) => void) | null>(null);
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
@@ -536,7 +536,7 @@ export function usePiWeb() {
 
 
 
-	/** 弹出系统原生文件夹选择器并加入工作区列表；成功返回路径 */
+	/** 选择文件夹并加入工作区；远程设备或原生选择器不可用时在页面内选择。 */
 	const addWorkspaceByPicker = useCallback(async (): Promise<string | null> => {
 		try {
 			const r = await fetch("/api/workspaces", {
@@ -546,9 +546,8 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
-			// 远程设备（手机走 tailnet）：原生对话框会弹在主机屏幕上，等于没反应。
-			// 服务端据此回 remote:true，这里改用应用内目录浏览器，等选完再返回路径。
-			if (j.data?.remote) {
+			// 远程请求和原生选择器失败共用目录浏览器，等选完再返回路径。
+			if (j.data?.remote || j.data?.browse) {
 				setDirPickerOpen(true);
 				return await new Promise<string | null>((resolve) => {
 					dirPickResolve.current = resolve;
