@@ -7,7 +7,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionSummary, WebMessage } from "./types";
-import { sessionDisplayMessages } from "./agent-manager";
+import { sessionDisplayMessages, syncSessionsFromDisk } from "./agent-manager";
 import { getAgentDir } from "./pi";
 import { BoundaryError, isPathInside } from "./path-security";
 import { promptTitleText } from "./chat/skill-expansion";
@@ -259,6 +259,8 @@ export async function listSessions(query?: string): Promise<SessionSummary[]> {
 		scanning ??= scanSessions().finally(() => { scanning = null; });
 		list = await scanning;
 		listCache = { at: Date.now(), list };
+		// 顺带看看开着的会话有没有被终端 pi 写过（见 agent-manager syncWithDisk）
+		syncSessionsFromDisk();
 	}
 	if (query?.trim()) {
 		const q = query.trim().toLowerCase();

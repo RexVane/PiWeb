@@ -46,6 +46,20 @@ describe("ExtensionNotices", () => {
 		expect(onDismiss).toHaveBeenCalledWith("a");
 	});
 
+	it("PiWeb 自己的提示按 code 取当前语言的文案", () => {
+		render(
+			<ExtensionNotices
+				notices={[
+					{ id: "r", message: "", type: "info", ts: Date.now(), code: "external_reload", count: 3 },
+					{ id: "w", message: "", type: "warning", ts: Date.now(), code: "external_write", count: 1 },
+				]}
+				onDismiss={vi.fn()}
+			/>,
+		);
+		expect(screen.getByText("终端在这个会话里写了 3 条新内容，已重新载入")).toBeTruthy();
+		expect(screen.getByText(/^终端也在写这个会话（1 条）/)).toBeTruthy();
+	});
+
 	it("renders nothing without notices", () => {
 		const { container } = render(<ExtensionNotices notices={[]} onDismiss={vi.fn()} />);
 		expect(container.firstChild).toBeNull();

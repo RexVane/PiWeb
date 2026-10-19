@@ -83,6 +83,16 @@ describe("PiWeb SSE event folding", () => {
 		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [] } as unknown as WebSnapshot, dialogs)).toEqual([]);
 	});
 
+	it("终端在回合中途写会话：提示一条警告，重复发现只留最新一条", () => {
+		let state = { extensionNotices: [{ id: "ext", message: "扩展通知", type: "info", ts: 1 }] } as PiWebState;
+		state = foldPiWebEvent(state, { type: "external_write", entries: 1, ts: 2 });
+		state = foldPiWebEvent(state, { type: "external_write", entries: 3, ts: 3 });
+		expect(state.extensionNotices).toEqual([
+			{ id: "ext", message: "扩展通知", type: "info", ts: 1 },
+			{ id: "external-write-3", message: "", type: "warning", ts: 3, code: "external_write", count: 3 },
+		]);
+	});
+
 	it("retains retry notice while busy and clears it only on the settled idle status", () => {
 		const initial = { snapshot: { isStreaming: true }, retryNotice: "自动重试 1/3", workingMessage: "working" } as PiWebState;
 		const busy = foldPiWebEvent(initial, { type: "status", isStreaming: true, state: "compacting", ts: 2 });

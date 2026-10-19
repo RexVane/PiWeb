@@ -2,7 +2,7 @@
  * agent-manager：AgentSession 池 + pi 事件 → Web 事件翻译 + SSE 订阅管理。
  * 打开会话即惰性冷启动（createAgentSession），空闲回收，事件先快照后增量。
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -56,6 +56,8 @@ const IDLE_MS = 10 * 60 * 1000;
 const MAX_ACTIVE = 6;
 const BUFFER_CAP = 400;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
+/** 外来写入重载后，这么久之内连上的快照都带着提示 */
+const EXTERNAL_RELOAD_NOTICE_MS = 60_000;
 
 interface Managed {
 	viewerAvailable?: () => boolean;
@@ -106,6 +108,12 @@ interface Managed {
 	ui: ExtensionUiBridge | null;
 	/** 项目生长：影子仓库快照的触发器（首个会话事件时创建，dispose 时释放） */
 	growth: GrowthTracker | null;
+	/** JSONL 已核对到的字节位置（总在整行末尾）；之后多出来的行要看是不是别的进程写的（见 externalEntryCount） */
+	diskSize: number;
+	/** 已发现、还没重载进来的外来条目数（终端 pi 同时在写这个会话） */
+	externalEntries: number;
+	/** 这一份是因外来写入从磁盘重载出来的：快照带上，前端提示一次 */
+	externalReload?: { entries: number; at: number };
 }
 
 const globalForAgentManager = globalThis as typeof globalThis & {
@@ -850,13 +858,123 @@ export function warmSessionResources(cwds: string[]): void {
 
 export function getManaged(sessionPath: string): Managed {
 	let m = sessions.get(sessionPath);
-	if (!m) {
+	if (m) m = syncWithDisk(m);
+	else {
 		if (!existsSync(sessionPath)) throw new BoundaryError("session not found");
 		const sm = openSessionManager(sessionPath);
 		m = registerManaged(sessionPath, sm.getCwd() || process.cwd(), sm);
 	}
 	touch(m);
 	return m;
+}
+
+/**
+ * 数出 JSONL 里自上次核对以来、不是本进程写的新条目。
+ * 自己的条目在 SessionManager._appendEntry 里先进内存索引再落盘，所以索引里找不到 id 的行就是外来的
+ * （终端 pi 同时打开了这个会话）。只读新增的字节；文件变短（被整体重写）就从头核对；没写完的最后一行留到下次。
+ */
+function externalEntryCount(m: Managed): number {
+	let size: number;
+	try {
+		size = statSync(m.sessionPath).size;
+	} catch {
+		return 0; // 还没落盘
+	}
+	if (size === m.diskSize) return 0;
+	const from = size < m.diskSize ? 0 : m.diskSize;
+	let buf = Buffer.alloc(size - from);
+	let fd: number | undefined;
+	try {
+		fd = openSync(m.sessionPath, "r");
+		buf = buf.subarray(0, readSync(fd, buf, 0, buf.length, from));
+	} catch {
+		return 0;
+	} finally {
+		if (fd !== undefined) closeSync(fd);
+	}
+	const end = buf.lastIndexOf(0x0a);
+	m.diskSize = from + end + 1;
+	let count = 0;
+	for (const line of buf.subarray(0, Math.max(0, end)).toString("utf8").split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line);
+			if (entry?.type !== "session" && typeof entry?.id === "string" && !m.sm.getEntry(entry.id)) count += 1;
+		} catch {
+			/* 从行中间读起的半行、写坏的行都不算 */
+		}
+	}
+	return count;
+}
+
+/**
+ * pi 终端和 PiWeb 共用同一份 JSONL，但各自在内存里记着会话树：一边写了，另一边不知道，
+ * 接着写就从自己的旧叶子分叉。打开会话、发消息都经过 getManaged，这里先核对磁盘：
+ * 有外来条目且本会话空闲，就丢掉内存里的旧副本从磁盘重开；正在跑就只提醒，空闲后的下一次核对再重载。
+ */
+function syncWithDisk(m: Managed): Managed {
+	const found = externalEntryCount(m);
+	if (!found && !m.externalEntries) return m;
+	m.externalEntries += found;
+	if (m.creating || isManagedBusy(m)) {
+		if (found) publish(m, { type: "external_write", entries: m.externalEntries, ts: Date.now() });
+		return m;
+	}
+	return reopenManaged(m);
+}
+
+/** 等同空闲回收后再打开：会话级的选择（工具档位、思考级别）带过去，正在看的浏览器立刻重连拿新快照 */
+function reopenManaged(m: Managed): Managed {
+	let sm: SessionManager;
+	try {
+		sm = openSessionManager(m.sessionPath);
+	} catch {
+		return m; // 读不出来（正被写坏？）就先沿用旧副本，下次再试
+	}
+	const at = Date.now();
+	const reload = { entries: m.externalEntries, at };
+	// 直接写给订阅者：publish 可能排在队列里，晚于 dispose 就送不到了
+	const frame = JSON.stringify({ type: "external_reload", ...reload, ts: at });
+	for (const send of m.subscribers) {
+		try {
+			send(m.seq, frame);
+		} catch {
+			/* ignore */
+		}
+	}
+	disposeSession(m);
+	const fresh = registerManaged(m.sessionPath, sm.getCwd() || m.cwd, sm);
+	// 核对位置沿用旧的（整行末尾）：打开时恰好没写完的那行，写完后还会被认作外来的
+	fresh.diskSize = m.diskSize;
+	fresh.toolPreset = m.toolPreset;
+	fresh.customActiveTools = m.customActiveTools;
+	fresh.desiredThinkingLevel = m.desiredThinkingLevel;
+	fresh.viewerGraceUntil = m.viewerGraceUntil;
+	fresh.externalReload = reload;
+	return fresh;
+}
+
+/**
+ * 侧栏每 3 秒拉一次会话列表，顺带核对所有开着的会话：终端写入几秒内就能提示 / 重载，
+ * 回合中途发现的外来写入也在回合结束后的下一次拉取时重载（不在 agent_settled 里做：
+ * SDK 收尾时还可能有延后的提问要开跑，那一刻回收会把它丢掉）。每个会话一次 stat，没变就不读文件。
+ */
+export function syncSessionsFromDisk(): void {
+	for (const m of [...sessions.values()]) {
+		try {
+			syncWithDisk(m);
+		} catch {
+			/* 核对失败只是晚一点发现，打开 / 发送时还会再查 */
+		}
+	}
+}
+
+function fileSize(file: string): number {
+	try {
+		return statSync(file).size;
+	} catch {
+		return 0;
+	}
 }
 
 function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): Managed {
@@ -890,6 +1008,8 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		runActive: false,
 		disposed: false,
 		messageIds: new WeakMap(),
+		diskSize: fileSize(sessionPath),
+		externalEntries: 0,
 	};
 	sessions.set(sessionPath, m);
 	return m;
@@ -1631,6 +1751,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		queue,
 		trajectory,
 		isStreaming,
+		// 重载时没人在看（打开会话那一刻才发现）：靠快照把提示带给随后连上的浏览器，前端按 at 去重
+		...(m.externalReload && Date.now() - m.externalReload.at < EXTERNAL_RELOAD_NOTICE_MS ? { externalReload: m.externalReload } : {}),
 	};
 }
 

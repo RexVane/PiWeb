@@ -133,6 +133,10 @@ export type WebEvent =
 			ts: number;
 	  }
 	| { type: "traj"; entry: TrajEntry; ts: number }
+	/** 终端 pi 在本会话正在跑时也写了它（entries 为累计条数）：只提醒，空闲后自动重载 */
+	| { type: "external_write"; entries: number; ts: number }
+	/** 发现终端写入后从磁盘重载：这条之后流会关闭，前端立刻重连拿新快照 */
+	| { type: "external_reload"; entries: number; at: number; ts: number }
 	| { type: "name"; name: string; ts: number }
 	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; ts: number }
 	/** 上下文分项变了（会话启动、工具 / 资源重载、压缩之后）：替换快照里的 contextBreakdown */
@@ -329,6 +333,8 @@ export interface WebSnapshot {
 	queue: { steering: string[]; followUp: string[] };
 	trajectory: TrajEntry[];
 	isStreaming: boolean;
+	/** 这份会话刚因终端写入从磁盘重载过（at 为重载时间，前端据此只提示一次） */
+	externalReload?: { entries: number; at: number };
 }
 
 // ---------- 浏览器 → 服务器 命令 ----------

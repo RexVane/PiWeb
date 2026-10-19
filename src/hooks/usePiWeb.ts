@@ -44,6 +44,17 @@ export interface ExtensionDialog {
 	ts: number;
 }
 
+/** 右下角的短通知：扩展 notify，或 PiWeb 自己的提示（带 code，渲染时按语言取文案） */
+export interface PiWebNotice {
+	id: string;
+	message: string;
+	type: "info" | "warning" | "error";
+	ts: number;
+	/** external_reload：终端写了这个会话，已从磁盘重载；external_write：正在跑时终端也在写 */
+	code?: "external_reload" | "external_write";
+	count?: number;
+}
+
 export interface PiWebState {
 	snapshot: WebSnapshot | null;
 	messages: WebMessage[];
@@ -57,7 +68,7 @@ export interface PiWebState {
 	/** 扩展对话框队列（按到达顺序，一次显示一个） */
 	extensionDialogs: ExtensionDialog[];
 	/** 扩展通知（notify），显示几秒后消失 */
-	extensionNotices: { id: string; message: string; type: "info" | "warning" | "error"; ts: number }[];
+	extensionNotices: PiWebNotice[];
 	/** 扩展设的页脚状态文本（setStatus） */
 	extensionStatuses: Record<string, string>;
 	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
@@ -247,6 +258,12 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 		case "extension_ui_resolved":
 			s.extensionDialogs = s.extensionDialogs.filter((dialog) => dialog.id !== evt.id);
 			return s;
+		case "external_write":
+			s.extensionNotices = [
+				...s.extensionNotices.filter((notice) => notice.code !== "external_write").slice(-4),
+				{ id: `external-write-${evt.ts}`, message: "", type: "warning", ts: evt.ts, code: "external_write", count: evt.entries },
+			];
+			return s;
 		case "status":
 			if (s.snapshot) s.snapshot = { ...s.snapshot, isStreaming: evt.isStreaming };
 			if (!evt.isStreaming) {
@@ -377,6 +394,7 @@ export function usePiWeb() {
 	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
+	const shownReloadsRef = useRef(new Set<string>());
 	const presetRestoreAttemptRef = useRef<string | null>(null);
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
 	const activeSessionRef = useRef(currentId);
@@ -700,6 +718,14 @@ export function usePiWeb() {
 			: { ...emptyState(savedToolPreset()), connected: false });
 		let retryDelayMs = 2000;
 		const eventsUrl = `/api/agent/${currentId}/events`;
+		// 同一次重载既有 external_reload 事件、又会出现在随后若干快照里：按重载时间只提示一次
+		const reloadNotice = (reload?: { entries: number; at: number }): PiWebNotice | null => {
+			if (!reload) return null;
+			const key = `${currentId}:${reload.at}`;
+			if (shownReloadsRef.current.has(key)) return null;
+			shownReloadsRef.current.add(key);
+			return { id: `external-reload-${reload.at}`, message: "", type: "info", ts: Date.now(), code: "external_reload", count: reload.entries };
+		};
 		const connect = () => {
 			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
 			const batcher = createEventBatcher<WebEvent>({
@@ -718,11 +744,19 @@ export function usePiWeb() {
 					// 单帧损坏（代理截断等）只丢弃该帧，不能让 EventSource 回调抛异常
 					return;
 				}
+				if (parsed.type === "external_reload") {
+					// 服务端发现终端写过这个会话、已从磁盘重载，旧流随即关闭：不等 EventSource 2 秒后自己重连，马上换新连接拿快照
+					const notice = reloadNotice(parsed);
+					if (notice) setState((s) => ({ ...s, extensionNotices: [...s.extensionNotices.slice(-4), notice] }));
+					setResyncNonce((n) => n + 1);
+					return;
+				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
 					// 快照是权威状态：之前缓冲的增量已经过时，直接丢弃
 					batcher.cancel();
 					retryDelayMs = 2000;
 					const snap = parsed.snapshot as WebSnapshot;
+					const notice = reloadNotice(snap.externalReload);
 					setSnapshotEpoch((epoch) => epoch + 1);
 					setState((prev) => ({
 						snapshot: snap,
@@ -735,7 +769,7 @@ export function usePiWeb() {
 						retryNotice: null,
 						// 服务器当前 pending 集合是权威来源，刷新可恢复、已答请求不能复活。
 						extensionDialogs: extensionDialogsFromSnapshot(snap, prev.extensionDialogs),
-						extensionNotices: prev.extensionNotices,
+						extensionNotices: notice ? [...prev.extensionNotices.slice(-4), notice] : prev.extensionNotices,
 						extensionStatuses: snap.extensionStatuses ?? {},
 						workingMessage: null,
 						// 重连的快照不带生长账本；连接期间已收到的步保留，useGrowth 会按 seq 与拉取结果去重

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconShieldOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
-import type { ExtensionDialog } from "@/hooks/usePiWeb";
+import type { ExtensionDialog, PiWebNotice } from "@/hooks/usePiWeb";
 
 /** message 若全是 "key : value" 行（权限对话框的常见形态），解析成键值表渲染 */
 function parseKeyValueRows(message: string): { key: string; value: string }[] | null {
@@ -154,11 +154,17 @@ export function ExtensionNotices({
 	onDismiss,
 	children,
 }: {
-	notices: { id: string; message: string; type: "info" | "warning" | "error"; ts: number }[];
+	notices: PiWebNotice[];
 	onDismiss: (id: string) => void;
 	/** 同一摞里的其它常驻提示（如更新提示条），排在扩展通知上面，免得两处浮层叠在一起 */
 	children?: React.ReactNode;
 }) {
+	const { t } = useI18n();
+	const text = (n: PiWebNotice) => {
+		if (n.code === "external_reload") return t.externalSessionReloaded.replace("{n}", String(n.count ?? 0));
+		if (n.code === "external_write") return t.externalSessionWriting.replace("{n}", String(n.count ?? 0));
+		return n.message;
+	};
 	// 通知 6 秒后自动消失
 	useEffect(() => {
 		if (!notices.length) return;
@@ -179,7 +185,7 @@ export function ExtensionNotices({
 					style={{ fontSize: 12.5, background: "var(--dsw-glass-popover)", border: "0.5px solid var(--dsw-border-l2)", boxShadow: "var(--dsw-elevation-soft)", borderLeft: `3px solid ${color(n.type)}` }}
 					onClick={() => onDismiss(n.id)}
 				>
-					{n.message}
+					{text(n)}
 				</button>
 			))}
 		</div>
