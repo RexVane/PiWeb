@@ -784,8 +784,8 @@ function FontFamilyPicker() {
 
 // ---------- Models ----------
 
-type AuditRow = { contextWindow: string; maxTokens: string; vision: "" | "image" | "text" };
-const EMPTY_AUDIT_ROW: AuditRow = { contextWindow: "", maxTokens: "", vision: "" };
+type AuditRow = { contextWindow: string; maxTokens: string; vision: "" | "image" | "text"; reasoning: "" | "on" | "off" };
+const EMPTY_AUDIT_ROW: AuditRow = { contextWindow: "", maxTokens: "", vision: "", reasoning: "" };
 
 /**
  * 模型配置体检：models[] 里有字段没写的模型，pi 会按 PI_MODEL_FALLBACKS / 纯文本处理。
@@ -825,8 +825,9 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 			continue;
 		}
 		const vision = gap.missing.includes("input") && row.vision ? row.vision === "image" : undefined;
-		if (contextWindow === undefined && maxTokens === undefined && vision === undefined) continue;
-		fills.push({ provider: gap.provider, index: gap.index, id: gap.id, contextWindow, maxTokens, vision });
+		const reasoning = gap.missing.includes("reasoning") && row.reasoning ? row.reasoning === "on" : undefined;
+		if (contextWindow === undefined && maxTokens === undefined && vision === undefined && reasoning === undefined) continue;
+		fills.push({ provider: gap.provider, index: gap.index, id: gap.id, contextWindow, maxTokens, vision, reasoning });
 	}
 
 	const save = async () => {
@@ -872,21 +873,22 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 			</div>
 
 			<div style={{ fontSize: 12.5 }} role="table" aria-label={t.modelAuditTitle.replace("{n}", String(gaps.length))}>
-				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_92px_92px_108px]" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 					<span role="columnheader">{t.modelAuditColModel}</span>
 					<span role="columnheader">{t.modelAuditColContext}</span>
 					<span role="columnheader">{t.modelAuditColOutput}</span>
 					<span role="columnheader">{t.modelAuditColVision}</span>
+					<span role="columnheader">{t.reasoningLabel}</span>
 				</div>
 				<div className="max-h-[320px] overflow-y-auto" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }}>
 					{gaps.map((gap) => (
 						<div
 							key={keyOf(gap)}
 							role="row"
-							className="grid grid-cols-3 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_92px_92px_108px]"
+							className="grid grid-cols-2 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]"
 							style={{ borderBottom: "0.5px solid var(--dsw-border-l1)" }}
 						>
-							<div role="cell" className="col-span-3 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
+							<div role="cell" className="col-span-2 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
 								<div className="truncate" style={{ fontWeight: 500 }}>{gap.name ?? gap.id}</div>
 								<div className="truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
 									{providerLabel(gap.provider)} / {gap.id}
@@ -914,6 +916,16 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 										</label>
 									</div>
 								) : null}
+							</div>
+							<div role="cell" className="min-w-0" title={t.reasoningHint}>
+								{gap.missing.includes("reasoning") ? (
+									<select className="pw-audit-field" aria-label={`${gap.id} ${t.reasoningLabel}`} value={rowOf(gap).reasoning} disabled={busy}
+										onChange={(event) => edit(gap, { reasoning: event.target.value as AuditRow["reasoning"] })}>
+										<option value="">{t.reasoningUnset}</option>
+										<option value="on">{t.reasoningOn}</option>
+										<option value="off">{t.reasoningOff}</option>
+									</select>
+								) : <span style={{ color: "var(--dsw-label-secondary)" }}>{gap.reasoning ? t.reasoningOn : t.reasoningOff}</span>}
 							</div>
 						</div>
 					))}

@@ -730,14 +730,14 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 
 ## 18. computer-use 深度检查记录（2026-10-20）
 
-本轮按「直接启动 piweb，全面操作并深度找 bug」执行，先记录问题，未修改功能代码。
+初次按「直接启动 piweb，全面操作并深度找 bug」执行，仅记录问题；随后按「全部修复，然后提交」完成 #191 修复与回归。
 检查基线为 `d4f73cc` / v0.3.26，分支 `rexvane-piweb`；实际启动已安装的同版 `piweb`，
 已逐一核对下列问题涉及的 GitPanel、FileViewer、SettingsPanel、model-draft 源码与仓库完全一致。
 使用独立的 `PI_CODING_AGENT_DIR` 和测试会话；发送消息接本机模拟的 OpenAI 兼容服务，
 覆盖真实 UI、HTTP、SDK、SSE 和会话落盘，不代表已验证真实模型的输出质量或工具执行。
 测试模型不持有真实密钥。桌面视口及实际 CSS 约 389×843、582×1260 的窄屏均有操作。
 
-### 已确认的产品问题（全部待修复）
+### 已确认的产品问题（#191 已全部修复，以下定位为检查基线）
 
 | 编号 | 级别 | 问题 | 定位 |
 | --- | --- | --- | --- |
@@ -784,6 +784,32 @@ JSON 形状为 `{ "piweb-audit-fixture": { "filename": "piweb-audit-fixture-0.0.
 校验脚本只支持数组或顶层直接含 filename 的对象，因此误报并阻断该环境中的发布验收。
 建议兼容按包名为键的结果，同时校验候选条目，保留对旧版 npm 返回形状的支持。
 
+### 修复与回归（#191）
+
+| 问题 | 最终修改 | 验证 |
+| --- | --- | --- |
+| UI-01 | Git 列表外层增加 `overflow-x-hidden`，内部 diff 保留 `overflow-x-auto`；延续 #161 的处理 | 生产构建悬停提交行：`translateX(2px)`、`clientWidth=318`、`scrollWidth=320`，`overflowX=hidden`，底部无横条；打开提交差异仍为 `overflowX=auto` |
+| UI-02 | 快速打开复用 `useWorkspaceFiles` 全量工作区索引，合并历史快照文件；补加载、失败、截断提示与键盘选择边界 | 未展开 `src/components`，从提示词 AGENTS.md 入口搜索 GitPanel，能找到并按 Enter 打开真实源码；组件回归覆盖索引慢加载、失败与冷树 |
+| UI-03 | 体检表补推理三态和保存接线，支持显式保存 `true` / `false`，只补缺失字段，窄屏改两列 | 修复 #146 遗漏；真实 UI 保存「不支持」后提示消失，文件确认 `reasoning:false`，上下文/输出/图片能力原值保留；集成回归覆盖 true 和 false；CSS 389×843 实测可操作且页面宽度未溢出 |
+| UI-04 | 相对文件链接按当前文档路径解析，在查看器打开；来源文档保留原始 `sourcePath`，后续参考页沿用它读取；失败留在原文档提示 | 设置 → 技能 → agents-sdk → client-sdk.md，页签打开 `/Users/kaijimima/.agents/skills/agents-sdk/references/client-sdk.md`，正文显示 Client SDK，浏览器仍在应用根地址；组件回归覆盖连续两级链接、中文/Windows 路径、失败与关闭后迟到响应 |
+| BUILD-01 | npm pack JSON 兼容旧版数组、直接条目和 npm 12 按包名为键的对象，并校验 tarball 文件名 | npm 12 下现有真实打包/解包用例全部通过，继续能拦截缺失运行时清单和缓存误打包 |
+
+文档链接后端先验证原始来源确在 Pi 发现列表，再以 realpath 校验目标。
+仅允许当前工作区、原始技能目录或来源文件本身，避免把全局 AGENTS/模板的父目录当作任意文件读取权限；
+参考文件须为普通文件，最大 1 MB。真实资源加载器集成回归覆盖伪造来源、`..` 越界和符号链接越界。
+外部 HTTP/协议链接和页内 `#` 链接保留原 href。
+
+两处测试缺陷一并修复：launcher 夹具先取 realpath，避免 macOS `/var` 与 `/private/var` 的等价路径误报；
+AppShell 路径接线用例给文件读取返回完整合法数据，并等待内容真正渲染，消除异步未处理异常。
+
+最终验收：`npm run typecheck` 通过；`npm test` **1059 通过、4 跳过、0 失败、无未处理异常**（126 个测试文件通过，2 个跳过）；
+`npm run build` 通过，仍有原有 `scripts/release.mjs` 动态依赖的两条 webpack 警告。
+使用仓库当前源码的生产构建，在独立测试配置下启动 `http://127.0.0.1:30143/` 回归以上 UI，控制台未发现 warn/error。
+
+修复现场：[Git 悬停](../assets/ui-fix-git-scrollbar.jpg)、[冷树快速打开](../assets/ui-fix-file-search.jpg)、
+[推理补全可保存](../assets/ui-fix-model-audit.jpg)、[窄屏补全](../assets/ui-fix-model-mobile.jpg)、
+[相对文档页签](../assets/ui-fix-relative-link.jpg)。
+
 ### 已操作的覆盖范围
 
 | 模块 | 实际操作与结果 |
@@ -814,7 +840,7 @@ JSON 形状为 `{ "piweb-audit-fixture": { "filename": "piweb-audit-fixture-0.0.
 未完成选目录闭环；会话日志下载也未取得可靠的下载完成事件。这两项标记为未验证，不能算通过或已确认的产品 bug。
 真实 OAuth、模型账号密钥、插件安装/卸载、共享技能删除、软件实际更新及公网连接均未执行。
 
-### 自动检查与测试代码缺陷
+### 首次自动检查与测试代码缺陷（修复前）
 
 - `npm run typecheck`：通过。
 - `npm run build`：通过；有现存 `scripts/release.mjs` 动态依赖的 webpack 警告。

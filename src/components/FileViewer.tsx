@@ -20,6 +20,7 @@ import { fileIconSrc } from "@/lib/file-icons";
 import { fmtBytes } from "@/lib/format";
 import { fuzzyScore, type TreeNode } from "@/lib/growth-tree";
 import type { ViewerState } from "@/hooks/useFileViewer";
+import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { highlightCode, languageForPath } from "@/lib/highlight";
 
 type Mode = "diff" | "content" | "render";
@@ -90,6 +91,7 @@ export function FileViewer({
 	onSelectTab,
 	onCloseTab,
 	onOpen,
+	onOpenContent,
 	onReference,
 	onOpenEditor,
 }: {
@@ -100,6 +102,7 @@ export function FileViewer({
 	onSelectTab: (path: string | null) => void;
 	onCloseTab: (path: string) => void;
 	onOpen: (path: string, opts?: { from?: string; lazy?: boolean; kind?: "dir" | "file" }) => void;
+	onOpenContent?: (path: string, content: string, sourcePath?: string) => void;
 	onReference?: (path: string) => void;
 	onOpenEditor?: (path: string) => void;
 }) {
@@ -111,6 +114,8 @@ export function FileViewer({
 	const [quickOpen, setQuickOpen] = useState(false);
 	const [quickQuery, setQuickQuery] = useState("");
 	const [quickIndex, setQuickIndex] = useState(0);
+	const workspaceFiles = useWorkspaceFiles(cwd, state.open && quickOpen);
+	const [linkError, setLinkError] = useState<string | null>(null);
 	const [treeFilter, setTreeFilter] = useState("");
 	const [reveal, setReveal] = useState<{ path: string; key: number } | null>(null);
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -128,6 +133,7 @@ export function FileViewer({
 	useEffect(() => {
 		setModeTouched(false);
 		setDirFallback(null);
+		setLinkError(null);
 	}, [state.active]);
 	useEffect(() => {
 		if (modeTouched || !activeTab) return;
@@ -332,13 +338,49 @@ export function FileViewer({
 	const quickMatches = useMemo(() => {
 		if (!quickOpen) return [];
 		const q = quickQuery.trim();
-		const scored = growth.filePaths
+		// 树只加载已展开的节点；快速打开必须同时搜索完整索引，并保留快照里的历史文件。
+		const paths = new Set([...growth.filePaths, ...workspaceFiles.candidates.filter((candidate) => !candidate.dir).map((candidate) => candidate.path)]);
+		const scored = [...paths]
 			.map((p) => ({ p, s: fuzzyScore(q, p) }))
 			.filter((x) => x.s >= 0)
 			.sort((a, b) => b.s - a.s || a.p.length - b.p.length)
 			.slice(0, 50);
 		return scored.map((x) => x.p);
-	}, [quickOpen, quickQuery, growth.filePaths]);
+	}, [quickOpen, quickQuery, growth.filePaths, workspaceFiles.candidates]);
+	const selectedQuickIndex = Math.max(0, Math.min(quickIndex, quickMatches.length - 1));
+	const linkScope = useRef(activeTab);
+	useEffect(() => {
+		linkScope.current = state.open ? activeTab : null;
+		return () => { linkScope.current = null; };
+	}, [activeTab, state.open]);
+
+	const openDocumentLink = async (href: string) => {
+		if (!activeTab) return;
+		setLinkError(null);
+		try {
+			const current = activeTab.path.replaceAll("\\", "/");
+			const absolute = current.startsWith("/") || /^[a-z]:\//i.test(current);
+			const url = new URL(href, `file:///${current.replace(/^\//, "").split("/").map(encodeURIComponent).join("/")}`);
+			let target = decodeURIComponent(url.pathname);
+			if (!absolute || /^\/[a-z]:\//i.test(target)) target = target.slice(1);
+			if (activeTab.staticContent === undefined || !onOpenContent) {
+				onOpen(target, { lazy: true });
+				return;
+			}
+			// 技能等工作区外文档仍走发现来源校验，不把文档路径当成任意 cwd。
+			const sourcePath = activeTab.sourcePath ?? activeTab.path;
+			const response = await fetch("/api/prompts", {
+				method: "POST", headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "read", cwd, filePath: target, sourcePath }),
+			});
+			const payload = await response.json();
+			if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
+			// 请求回来时用户可能已经切到另一份文档或关闭查看器。
+			if (linkScope.current === activeTab) onOpenContent(target, payload.data.content, sourcePath);
+		} catch (error) {
+			if (linkScope.current === activeTab) setLinkError(error instanceof Error ? error.message : t.viewerLoadFailed);
+		}
+	};
 
 	if (!state.open) return null;
 
@@ -492,6 +534,7 @@ export function FileViewer({
 						</div>
 
 						{/* 正文 */}
+						{linkError && <div role="alert" className="px-4 py-2" style={{ color: "var(--dsw-danger)", fontSize: 12.5 }}>{linkError}</div>}
 						{noticeText && (
 							<div className="pw-viewer-notice" data-kind={loaded?.notice}>
 								{noticeText}
@@ -535,7 +578,14 @@ export function FileViewer({
 							<FullDiff lines={loaded.diff} language={languageForPath(activeTab.path)} folded={folded} handle={diffRef} initialChange />
 						) : mode === "render" && loaded.content !== null ? (
 							<div className="md min-h-0 flex-1 overflow-auto px-6 py-4" style={{ fontSize: 14 }}>
-								<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}>
+								<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+									components={{ a: ({ node: _node, href, children, ...props }) => (
+										<a {...props} href={href} onClick={(event) => {
+											if (!href || href.startsWith("#") || href.startsWith("//") || /^[a-z][a-z\d+.-]*:/i.test(href)) return;
+											event.preventDefault();
+											void openDocumentLink(href);
+										}}>{children}</a>
+									) }}>
 									{loaded.content}
 								</ReactMarkdown>
 							</div>
@@ -593,13 +643,13 @@ export function FileViewer({
 									onKeyDown={(e) => {
 										if (e.key === "ArrowDown") {
 											e.preventDefault();
-											setQuickIndex((i) => Math.min(quickMatches.length - 1, i + 1));
+											setQuickIndex(Math.min(Math.max(0, quickMatches.length - 1), selectedQuickIndex + 1));
 										} else if (e.key === "ArrowUp") {
 											e.preventDefault();
-											setQuickIndex((i) => Math.max(0, i - 1));
+											setQuickIndex(Math.max(0, selectedQuickIndex - 1));
 										} else if (e.key === "Enter") {
 											e.preventDefault();
-											const p = quickMatches[quickIndex];
+											const p = quickMatches[selectedQuickIndex];
 											if (p) {
 												onOpen(p);
 												setQuickOpen(false);
@@ -609,7 +659,10 @@ export function FileViewer({
 								/>
 							</div>
 							<div className="pw-quick-list">
-								{quickMatches.length === 0 ? (
+								{workspaceFiles.status === "loading" || workspaceFiles.status === "idle" ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.panelLoading}</div> : null}
+								{workspaceFiles.error ? <div role="alert" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{workspaceFiles.error}</div> : null}
+								{workspaceFiles.truncated ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.mentionTruncated}</div> : null}
+								{quickMatches.length === 0 && workspaceFiles.status === "ready" ? (
 									<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "8px 10px" }}>{t.viewerQuickOpenEmpty}</div>
 								) : (
 									quickMatches.map((p, i) => (
@@ -617,7 +670,7 @@ export function FileViewer({
 											key={p}
 											type="button"
 											className="pw-quick-item"
-											data-active={i === quickIndex}
+											data-active={i === selectedQuickIndex}
 											onMouseEnter={() => setQuickIndex(i)}
 											onClick={() => {
 												onOpen(p);

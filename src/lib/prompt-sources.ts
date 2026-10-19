@@ -11,7 +11,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getAgentDir, getResourceLoader, resourceLoaderReady } from "./pi";
-import { resolveDiscoveredPath } from "./path-security";
+import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./path-security";
 
 /** 提示词来源类别：界面按这个分组 */
 export type PromptSourceKind = "system" | "append" | "agents" | "skill" | "template" | "tool" | "assembled";
@@ -215,11 +215,29 @@ export async function listPromptSources({
 	};
 }
 
-/** 读取单个来源的内容：只允许读取"本次发现列表里出现过"的路径（与技能读取同一套校验） */
-export async function readPromptSource(filePath: string, cwd: string): Promise<string> {
+/** 来源正文只读发现列表；正文里的链接限于该技能目录或当前工作区，realpath 后再次验边界。 */
+export async function readPromptSource(filePath: string, cwd: string, sourcePath?: string): Promise<string> {
 	const { sources } = await listPromptSources({ cwd });
 	const allowed = sources.map((source) => source.path).filter((value): value is string => typeof value === "string");
-	const authorized = await resolveDiscoveredPath(filePath, allowed);
+	if (sourcePath === undefined) {
+		const authorized = await resolveDiscoveredPath(filePath, allowed);
+		return fs.readFile(authorized, "utf8");
+	}
+	const source = await resolveDiscoveredPath(sourcePath, allowed);
+	if (typeof filePath !== "string" || !path.isAbsolute(filePath) || filePath.length > 4096) throw new BoundaryError("invalid resource path");
+	const authorized = await fs.realpath(filePath).catch(() => { throw new BoundaryError("resource not found"); });
+	const roots = [await fs.realpath(cwd)];
+	for (const candidate of sources) {
+		if (candidate.kind !== "skill" || !candidate.path) continue;
+		const real = await fs.realpath(candidate.path).catch(() => null);
+		if (real && samePath(real, source)) roots.push(path.dirname(real));
+	}
+	if (!roots.some((root) => isPathInside(root, authorized)) && !samePath(source, authorized)) {
+		throw new BoundaryError("linked resource escapes the workspace or skill directory");
+	}
+	const stat = await fs.stat(authorized);
+	if (!stat.isFile()) throw new BoundaryError("resource is not a file");
+	if (stat.size > 1024 * 1024) throw new BoundaryError("linked resource exceeds 1 MB");
 	return fs.readFile(authorized, "utf8");
 }
 

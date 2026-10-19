@@ -16,6 +16,8 @@ export interface ViewerTab {
 	kind?: "dir" | "file";
 	/** 内容由调用方直接提供(如技能文档):不取 diff、不读磁盘 */
 	staticContent?: string;
+	/** 最初打开的已发现来源：后续相对链接沿用它的读取边界。 */
+	sourcePath?: string;
 }
 
 export interface ViewerState {
@@ -36,10 +38,10 @@ export function useFileViewer() {
 	}, []);
 	const openTree = useCallback(() => setState((s) => ({ ...s, open: true, active: null })), []);
 	/** 打开内容已就绪的文件（如技能文档）：无需 cwd / 磁盘读取 */
-	const openStatic = useCallback((path: string, content: string) => {
+	const openStatic = useCallback((path: string, content: string, sourcePath = path) => {
 		setState((s) => {
 			const exists = s.tabs.some((tab) => tab.path === path);
-			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, staticContent: content, lazy: true } : tab)) : [...s.tabs, { path, staticContent: content, lazy: true }];
+			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, staticContent: content, sourcePath, lazy: true } : tab)) : [...s.tabs, { path, staticContent: content, sourcePath, lazy: true }];
 			return { open: true, tabs, active: path };
 		});
 	}, []);

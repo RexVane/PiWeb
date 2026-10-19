@@ -4,10 +4,11 @@
  * 目录条目由 /api/files 列举,后端已按 .gitignore 过滤(#102),这里用桩数据验前端行为。
  */
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FileViewer } from "@/components/FileViewer";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import type { ViewerState } from "@/hooks/useFileViewer";
+import { useFileViewer } from "@/hooks/useFileViewer";
 
 afterEach(() => {
 	cleanup();
@@ -158,4 +159,88 @@ it("没带 kind 也认得出文件夹:读文件报 400 时探一下目录接口�
 	);
 	expect(await screen.findByText("release.mjs")).toBeTruthy();
 	await waitFor(() => expect(screen.queryByText("文件不存在")).toBeNull());
+});
+
+it("冷树也能快速打开索引中的深层文件，加载期间按下箭头不会丢失首项", async () => {
+	let complete!: () => void;
+	const fetchMock = vi.fn(() => new Promise((resolve) => {
+		complete = () => resolve({ ok: true, json: async () => ({ success: true, data: { files: ["src/components/GitPanel.tsx"], source: "git", truncated: false } }) });
+	}));
+	vi.stubGlobal("fetch", fetchMock);
+	const onOpen = vi.fn();
+	render(<FileViewer state={{ open: true, tabs: [], active: null }} growth={growthStub()} cwd="/cold-quick-open" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={onOpen} />);
+	fireEvent.click(screen.getByTitle(/Ctrl\/⌘\+P/));
+	const input = screen.getByPlaceholderText("输入文件名打开…");
+	fireEvent.change(input, { target: { value: "GitPanel" } });
+	fireEvent.keyDown(input, { key: "ArrowDown" });
+	expect(screen.queryByText("没有匹配的文件")).toBeNull();
+	complete();
+	await screen.findByText("GitPanel.tsx");
+	fireEvent.keyDown(input, { key: "Enter" });
+	expect(onOpen).toHaveBeenCalledWith("src/components/GitPanel.tsx");
+	expect(fetchMock).toHaveBeenCalledWith("/api/files?index=1&cwd=%2Fcold-quick-open", { cache: "no-store" });
+});
+
+it("快速打开索引失败时显示错误，不冒充无匹配", async () => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 403, json: async () => ({ success: false, error: "index denied" }) })));
+	render(<FileViewer state={{ open: true, tabs: [], active: null }} growth={growthStub()} cwd="/denied-quick-open" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={vi.fn()} />);
+	fireEvent.click(screen.getByTitle(/Ctrl\/⌘\+P/));
+	expect(await screen.findByRole("alert")).toHaveProperty("textContent", "index denied");
+	expect(screen.queryByText("没有匹配的文件")).toBeNull();
+});
+
+it.each(["docs/guide.md", "D:/ws/docs/guide.md"])("相对工作区链接按当前文件 %s 解析，外部链接和锚点保持 href", async (current) => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { content: "[文件](../src/%E4%B8%AD%E6%96%87.ts#L2) [外部](https://example.com) [锚点](#section)", binary: false, truncated: false } }) })));
+	const onOpen = vi.fn();
+	render(<FileViewer state={{ open: true, tabs: [{ path: current, lazy: true }], active: current }} growth={growthStub()} cwd="D:/ws" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={onOpen} />);
+	fireEvent.click(await screen.findByRole("link", { name: "文件" }));
+	expect(onOpen).toHaveBeenCalledWith(current.startsWith("D:") ? "D:/ws/src/中文.ts" : "src/中文.ts", { lazy: true });
+	expect(screen.getByRole("link", { name: "外部" }).getAttribute("href")).toBe("https://example.com");
+	expect(screen.getByRole("link", { name: "锚点" }).getAttribute("href")).toBe("#section");
+});
+
+it("技能参考文档在查看器新页签打开，第二级链接继续带原始来源", async () => {
+	const root = "/skills/demo/SKILL.md";
+	const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+		const body = JSON.parse(String(init?.body));
+		return { ok: true, json: async () => ({ success: true, data: { content: body.filePath.endsWith("client.md") ? "[继续](nested/next.md)" : "最终内容" } }) };
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	function Harness() {
+		const viewer = useFileViewer();
+		return <><button onClick={() => viewer.openStatic(root, "[客户端](references/client.md)")}>打开技能</button><FileViewer state={viewer.state} growth={growthStub()} cwd="/ws" onClose={viewer.close} onSelectTab={viewer.select} onCloseTab={viewer.closeTab} onOpen={viewer.open} onOpenContent={viewer.openStatic} /></>;
+	}
+	render(<Harness />);
+	fireEvent.click(screen.getByText("打开技能"));
+	fireEvent.click(await screen.findByRole("link", { name: "客户端" }));
+	fireEvent.click(await screen.findByRole("link", { name: "继续" }));
+	expect(await screen.findByText("最终内容")).toBeTruthy();
+	expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+		{ action: "read", cwd: "/ws", filePath: "/skills/demo/references/client.md", sourcePath: root },
+		{ action: "read", cwd: "/ws", filePath: "/skills/demo/references/nested/next.md", sourcePath: root },
+	]);
+});
+
+it("技能链接读取被拒时留在原文档内显示错误", async () => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({ success: false, error: "linked resource escapes" }) })));
+	const onOpenContent = vi.fn();
+	render(<FileViewer state={{ open: true, tabs: [{ path: "/skills/demo/SKILL.md", staticContent: "[越界](../../secret.md)" }], active: "/skills/demo/SKILL.md" }} growth={growthStub()} cwd="/ws" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={vi.fn()} onOpenContent={onOpenContent} />);
+	fireEvent.click(await screen.findByRole("link", { name: "越界" }));
+	expect(await screen.findByRole("alert")).toHaveProperty("textContent", "linked resource escapes");
+	expect(screen.getByRole("link", { name: "越界" })).toBeTruthy();
+	expect(onOpenContent).not.toHaveBeenCalled();
+});
+
+it("关闭查看器后才完成的技能链接请求不会重新打开文档", async () => {
+	let complete!: (response: unknown) => void;
+	vi.stubGlobal("fetch", vi.fn(() => new Promise((resolve) => { complete = resolve; })));
+	const onOpenContent = vi.fn();
+	const tabs = [{ path: "/skills/demo/SKILL.md", staticContent: "[参考](references/client.md)" }];
+	const props = { growth: growthStub(), cwd: "/ws", onClose: vi.fn(), onSelectTab: vi.fn(), onCloseTab: vi.fn(), onOpen: vi.fn(), onOpenContent };
+	const view = render(<FileViewer {...props} state={{ open: true, tabs, active: tabs[0].path }} />);
+	fireEvent.click(await screen.findByRole("link", { name: "参考" }));
+	view.rerender(<FileViewer {...props} state={{ open: false, tabs, active: tabs[0].path }} />);
+	await act(async () => { complete({ ok: true, json: async () => ({ success: true, data: { content: "迟到的内容" } }) }); });
+	expect(onOpenContent).not.toHaveBeenCalled();
+	expect(screen.queryByRole("dialog")).toBeNull();
 });

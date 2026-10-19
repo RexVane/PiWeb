@@ -1161,6 +1161,7 @@ export function AppShell() {
 					onSelectTab={viewer.select}
 					onCloseTab={viewer.closeTab}
 					onOpen={viewer.open}
+					onOpenContent={viewer.openStatic}
 					onReference={insertIntoComposer}
 					onOpenEditor={openInEditor}
 				/>

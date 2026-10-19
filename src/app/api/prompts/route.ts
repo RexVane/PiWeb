@@ -40,11 +40,11 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
 	try {
-		const body = (await req.json()) as { action?: string; filePath?: string; cwd?: string };
+		const body = (await req.json()) as { action?: string; filePath?: string; cwd?: string; sourcePath?: string };
 		if (body.action !== "read") return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 		if (!body.filePath) return NextResponse.json({ success: false, error: "missing filePath" }, { status: 400 });
 		const cwd = await resolveWorkspacePath(body.cwd || APP_ROOT);
-		return NextResponse.json({ success: true, data: { content: await readPromptSource(body.filePath, cwd) } });
+		return NextResponse.json({ success: true, data: { content: await readPromptSource(body.filePath, cwd, body.sourcePath) } });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : "request failed";
 		return NextResponse.json({ success: false, error: message }, { status: err instanceof BoundaryError ? 400 : 500 });

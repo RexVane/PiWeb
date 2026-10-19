@@ -12,7 +12,7 @@ const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 async function installation() {
-	const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-launcher-"));
+	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-launcher-")));
 	cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
 	await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "pi-web", version: "1.0.0" }));
 	// Mark it as a development checkout (test dev dependencies present) so the

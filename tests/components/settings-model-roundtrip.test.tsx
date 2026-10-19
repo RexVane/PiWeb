@@ -11,10 +11,15 @@ const originalModel = { id: "test-model", name: "Test model", reasoning: true, i
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false, catalog, extraProviders = [] }: {
-	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[];
+function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false }: {
+	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean;
 } = {}) {
 	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
+	if (auditOnly) {
+		const undeclared = structuredClone(originalModel);
+		Reflect.deleteProperty(undeclared, "reasoning");
+		saved.providers.gateway.models = [structuredClone(originalModel), { ...undeclared, id: "undeclared" }];
+	}
 	let revision = "rev-1";
 	const writes: Array<{ action: string; content: string; revision: string }> = [];
 	const keys: Array<{ providerId: string; apiKey: string }> = [];
@@ -53,6 +58,18 @@ function response(data: unknown) { return { ok: true, status: 200, json: async (
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "编辑" })); }
 
 describe("SettingsPanel model round trip and revision", () => {
+	it.each([["on", true], ["off", false]])("fills an otherwise complete model's missing reasoning with %s", async (choice, expected) => {
+		const { writes, saved } = setup({ auditOnly: true });
+		const select = await screen.findByRole("combobox", { name: "undeclared 推理" });
+		expect((screen.getByRole("button", { name: "填好后保存" }) as HTMLButtonElement).disabled).toBe(true);
+		fireEvent.change(select, { target: { value: choice } });
+		fireEvent.click(screen.getByRole("button", { name: /保存.*1|1.*保存/ }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+		expect(saved().providers.gateway.models).toEqual([originalModel, { ...originalModel, id: "undeclared", reasoning: expected }]);
+		expect(writes[0].revision).toBe("rev-1");
+	});
+
 	it("saves only edited fields, retains opaque model/provider options and refreshes revision", async () => {
 		const { writes, saved, fetchMock } = setup();
 		await edit();

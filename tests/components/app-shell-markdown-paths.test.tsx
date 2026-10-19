@@ -73,7 +73,9 @@ describe("正文里的文件路径点击（AppShell 接线）", () => {
 			const url = String(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 			const body = typeof init?.body === "string" ? init.body : "";
 			if (url.includes("/api/files") && body.includes('"open"')) throw new Error("不该走本机编辑器");
-			return { ok: true, status: 200, json: async () => ({ success: true, data: {} }), text: async () => "" } as unknown as Response;
+			const data = url.includes("/api/files") && url.includes("read=1")
+				? { content: "// FILE_VIEWER_READY", binary: false, truncated: false } : {};
+			return { ok: true, status: 200, json: async () => ({ success: true, data }), text: async () => "" } as unknown as Response;
 		});
 		vi.stubGlobal("fetch", fetchMock);
 
@@ -84,6 +86,7 @@ describe("正文里的文件路径点击（AppShell 接线）", () => {
 		// 查看器出现，并且落在被点的那条路径上
 		const viewer = await screen.findByRole("dialog");
 		await waitFor(() => expect(viewer.textContent).toContain(FILE_PATH));
+		await waitFor(() => expect(viewer.textContent).toContain("// FILE_VIEWER_READY"));
 		expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/api/files"), expect.objectContaining({ body: expect.stringContaining('"open"') }));
 	}, 30_000);
 });

@@ -117,6 +117,32 @@ describe("listPromptSources / readPromptSource（真实资源加载器）", () =
 		await expect(readPromptSource(path.resolve(outside), ws)).rejects.toThrow(/not part of the discovered/);
 		await fs.rm(path.resolve(outside), { force: true });
 	});
+
+	it("技能相对链接能读 references，并沿用原始技能来源继续打开下一页", async () => {
+		const skill = path.join(agentDir, "skills", "global-skill", "SKILL.md");
+		const reference = path.join(path.dirname(skill), "references", "client-sdk.md");
+		await write(reference, "[下一页](nested/next.md)");
+		const next = path.join(path.dirname(reference), "nested", "next.md");
+		await write(next, "第二层文档");
+		await expect(readPromptSource(reference, ws, skill)).resolves.toContain("下一页");
+		await expect(readPromptSource(next, ws, skill)).resolves.toBe("第二层文档");
+		await expect(readPromptSource(reference, ws)).rejects.toThrow(/not part of the discovered/);
+	});
+
+	it("链接校验拒绝伪造来源、目录穿越和指向技能目录外的符号链接", async () => {
+		const skill = path.join(agentDir, "skills", "global-skill", "SKILL.md");
+		const outside = path.join(agentDir, "private.txt");
+		await write(outside, "不应读到");
+		const forged = path.join(agentDir, "forged.md");
+		await write(forged, "伪造来源");
+		await expect(readPromptSource(outside, ws, forged)).rejects.toThrow(/not part of the discovered/);
+		await expect(readPromptSource(path.join(path.dirname(skill), "..", "..", "private.txt"), ws, skill)).rejects.toThrow(/escapes/);
+		const linked = path.join(path.dirname(skill), "escape.md");
+		await fs.symlink(outside, linked);
+		await expect(readPromptSource(linked, ws, skill)).rejects.toThrow(/escapes/);
+		// 全局 AGENTS / 模板也不能用来授权整个人目录。
+		await expect(readPromptSource(outside, ws, path.join(agentDir, "prompts", "personal.md"))).rejects.toThrow(/escapes/);
+	});
 });
 
 describe("上下文里会影响模型的内容都要如实列出", () => {

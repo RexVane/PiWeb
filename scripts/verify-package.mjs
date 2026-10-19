@@ -66,8 +66,12 @@ export function verifyPackedPackage(root, { log = console.log, runtime = false }
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-verify-"));
 	try {
 		const packed = JSON.parse(runNpm(["pack", "--json", "--pack-destination", tmp], { cwd: root }));
-		const entry = Array.isArray(packed) ? packed[0] : packed;
-		if (!entry?.filename) throw new Error("npm pack produced no tarball");
+		// npm 12 keys results by package name; earlier versions return an array
+		// (or a single entry). Keep all three forms compatible.
+		const entry = Array.isArray(packed) ? packed[0] : packed?.filename ? packed : packed?.[manifest.name];
+		if (typeof entry?.filename !== "string" || !entry.filename.endsWith(".tgz") || /[\\/]/.test(entry.filename)) {
+			throw new Error("npm pack produced no tarball");
+		}
 		const files = (entry.files ?? []).map((file) => String(file.path).replaceAll("\\", "/").replace(/^package\//, ""));
 		const cached = files.find((file) => file.startsWith(".next/cache/"));
 		if (cached) throw new Error(`the packaged .next must not include the build cache (${cached}); remove .next/cache before packing`);

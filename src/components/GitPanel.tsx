@@ -258,7 +258,8 @@ export function GitPanel({
 				</div>
 			)}
 
-			<div className="min-h-0 flex-1 overflow-y-auto">
+			{/* 行悬停会平移 2px；裁掉列表外溢，diff 自身仍可横向滚动。 */}
+			<div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
 				{/* ---------- 差异视图 ---------- */}
 				{view && (
 					<div>
