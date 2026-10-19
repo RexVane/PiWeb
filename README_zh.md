@@ -109,7 +109,7 @@ npm 会原地替换已安装的版本，不用先卸载。`latest` 是 npm 的�
 `npm install -g @rexvane/piweb` 效果完全一样。如果你用的镜像是国内源、同步有延迟，可以加
 `--registry=https://registry.npmjs.org` 当天就拿到新版本。装完重启 `piweb` 即可用上新版本。
 
-也可以装指定版本：`npm install -g @rexvane/piweb@0.3.25`。
+也可以装指定版本：`npm install -g @rexvane/piweb@0.3.26`。
 
 **在界面里更新**：每次启动 PiWeb 都会在后台检查 PiWeb 和 pi 有没有新版本，有的话终端打印一行
 `[更新] 有新版本：…`，页面右下角弹出提示条（同一次启动只提醒一次）。点提示条或 设置 → 通用 里的「更新」
