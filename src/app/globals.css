@@ -2694,6 +2694,29 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 .pw-audit-field:disabled {
 	opacity: 0.55;
 }
+.pw-audit-choice {
+	height: 26px;
+	padding: 0 8px;
+	border: 0.5px solid var(--dsw-border-l2);
+	border-radius: 8px;
+	background: var(--dsw-glass-input);
+	color: var(--dsw-label-secondary);
+	font-size: 12px;
+	white-space: nowrap;
+	transition: border-color var(--ds-duration-fast) var(--ds-ease-in-out), background var(--ds-duration-fast) var(--ds-ease-in-out);
+}
+.pw-audit-choice:hover:not(:disabled) {
+	border-color: var(--dsw-border-l3);
+	color: var(--dsw-label-primary);
+}
+.pw-audit-choice[aria-checked="true"] {
+	border-color: var(--dsw-accent);
+	background: var(--dsw-accent-soft);
+	color: var(--dsw-label-primary);
+}
+.pw-audit-choice:disabled {
+	opacity: 0.55;
+}
 
 /* 项目栏 */
 .pw-project {

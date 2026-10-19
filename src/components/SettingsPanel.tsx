@@ -784,8 +784,8 @@ function FontFamilyPicker() {
 
 // ---------- Models ----------
 
-type AuditRow = { contextWindow: string; maxTokens: string; vision: "" | "image" | "text" };
-const EMPTY_AUDIT_ROW: AuditRow = { contextWindow: "", maxTokens: "", vision: "" };
+type AuditRow = { contextWindow: string; maxTokens: string; vision: "" | "image" | "text"; reasoning: "" | "on" | "off" };
+const EMPTY_AUDIT_ROW: AuditRow = { contextWindow: "", maxTokens: "", vision: "", reasoning: "" };
 
 /**
  * 模型配置体检：models[] 里有字段没写的模型，pi 会按 PI_MODEL_FALLBACKS / 纯文本处理。
@@ -811,6 +811,13 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 			for (const gap of visionGaps) next[keyOf(gap)] = { ...(next[keyOf(gap)] ?? EMPTY_AUDIT_ROW), vision };
 			return next;
 		});
+	const reasoningGaps = gaps.filter((gap) => gap.missing.includes("reasoning"));
+	const markReasoning = (reasoning: "on" | "off") =>
+		setRows((current) => {
+			const next = { ...current };
+			for (const gap of reasoningGaps) next[keyOf(gap)] = { ...(next[keyOf(gap)] ?? EMPTY_AUDIT_ROW), reasoning };
+			return next;
+		});
 
 	// 每行填的文本 → 要写的值；有一格格式不对就不让保存（那一格标红）
 	let invalid = false;
@@ -825,8 +832,9 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 			continue;
 		}
 		const vision = gap.missing.includes("input") && row.vision ? row.vision === "image" : undefined;
-		if (contextWindow === undefined && maxTokens === undefined && vision === undefined) continue;
-		fills.push({ provider: gap.provider, index: gap.index, id: gap.id, contextWindow, maxTokens, vision });
+		const reasoning = gap.missing.includes("reasoning") && row.reasoning ? row.reasoning === "on" : undefined;
+		if (contextWindow === undefined && maxTokens === undefined && vision === undefined && reasoning === undefined) continue;
+		fills.push({ provider: gap.provider, index: gap.index, id: gap.id, contextWindow, maxTokens, vision, reasoning });
 	}
 
 	const save = async () => {
@@ -857,6 +865,37 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 		);
 	};
 
+	// 推理：没写时 pi 按不支持处理（思考档位消失）。两个按钮选一个，再点一下取消；不放下拉框——列表区会滚动，弹层会被裁掉
+	const reasoningCell = (gap: CustomModelGap) => {
+		if (!gap.missing.includes("reasoning")) {
+			return (
+				<span className="truncate" style={{ color: "var(--dsw-label-secondary)" }}>
+					<span className="sm:hidden" style={{ color: "var(--dsw-label-caption)" }}>{t.reasoningLabel} </span>
+					{gap.reasoning ? t.reasoningOn : t.reasoningOff}
+				</span>
+			);
+		}
+		const value = rowOf(gap).reasoning;
+		return (
+			<div className="flex items-center gap-1" role="radiogroup" aria-label={`${gap.id} ${t.reasoningLabel}`} title={t.reasoningHint}>
+				<span className="sm:hidden" style={{ color: "var(--dsw-label-caption)" }}>{t.reasoningLabel}</span>
+				{(["on", "off"] as const).map((choice) => (
+					<button
+						key={choice}
+						type="button"
+						role="radio"
+						className="pw-audit-choice"
+						aria-checked={value === choice}
+						disabled={busy}
+						onClick={() => edit(gap, { reasoning: value === choice ? "" : choice })}
+					>
+						{choice === "on" ? t.modelAuditReasoningYes : t.modelAuditReasoningNo}
+					</button>
+				))}
+			</div>
+		);
+	};
+
 	return (
 		<section className="flex flex-col gap-3 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-hover)" }} data-testid="model-audit">
 			<div className="flex items-start gap-2.5">
@@ -872,21 +911,22 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 			</div>
 
 			<div style={{ fontSize: 12.5 }} role="table" aria-label={t.modelAuditTitle.replace("{n}", String(gaps.length))}>
-				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_92px_92px_108px]" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_84px_84px_108px_112px]" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 					<span role="columnheader">{t.modelAuditColModel}</span>
 					<span role="columnheader">{t.modelAuditColContext}</span>
 					<span role="columnheader">{t.modelAuditColOutput}</span>
 					<span role="columnheader">{t.modelAuditColVision}</span>
+					<span role="columnheader">{t.reasoningLabel}</span>
 				</div>
 				<div className="max-h-[320px] overflow-y-auto" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }}>
 					{gaps.map((gap) => (
 						<div
 							key={keyOf(gap)}
 							role="row"
-							className="grid grid-cols-3 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_92px_92px_108px]"
+							className="grid grid-cols-2 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_84px_84px_108px_112px]"
 							style={{ borderBottom: "0.5px solid var(--dsw-border-l1)" }}
 						>
-							<div role="cell" className="col-span-3 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
+							<div role="cell" className="col-span-2 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
 								<div className="truncate" style={{ fontWeight: 500 }}>{gap.name ?? gap.id}</div>
 								<div className="truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
 									{providerLabel(gap.provider)} / {gap.id}
@@ -915,6 +955,7 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 									</div>
 								) : null}
 							</div>
+							<div role="cell" className="min-w-0">{reasoningCell(gap)}</div>
 						</div>
 					))}
 				</div>
@@ -926,6 +967,13 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 						<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.modelAuditVisionQuick}</span>
 						<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={busy} onClick={() => markVision("image")}>{t.modelAuditVisionOn}</button>
 						<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={busy} onClick={() => markVision("text")}>{t.modelAuditVisionOff}</button>
+					</>
+				) : null}
+				{reasoningGaps.length > 0 ? (
+					<>
+						<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.modelAuditReasoningQuick}</span>
+						<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={busy} onClick={() => markReasoning("on")}>{t.modelAuditReasoningAllOn}</button>
+						<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={busy} onClick={() => markReasoning("off")}>{t.modelAuditReasoningAllOff}</button>
 					</>
 				) : null}
 				<span className="flex-1" />

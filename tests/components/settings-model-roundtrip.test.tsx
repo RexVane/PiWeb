@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
 vi.mock("@/lib/theme", () => ({ applyPebrelTheme: () => {}, loadPebrelTheme: () => "dsh", loadThemeMode: () => "system" }));
@@ -11,10 +11,10 @@ const originalModel = { id: "test-model", name: "Test model", reasoning: true, i
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false, catalog, extraProviders = [] }: {
-	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[];
+function setup({ builtin = false, conflict = false, catalog, extraProviders = [], models }: {
+	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; models?: object[];
 } = {}) {
-	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
+	let saved = { schemaVersion: "future-1", providers: { gateway: { ...providerConfig(), ...(models ? { models } : {}) } } };
 	let revision = "rev-1";
 	const writes: Array<{ action: string; content: string; revision: string }> = [];
 	const keys: Array<{ providerId: string; apiKey: string }> = [];
@@ -113,6 +113,37 @@ describe("SettingsPanel model round trip and revision", () => {
 		delete overridden.id;
 		expect(saved().providers.gateway.models).toEqual([{ id: "delete-me", reasoning: false }]);
 		expect((saved().providers.gateway as Record<string, unknown>).modelOverrides).toEqual({ "test-model": { ...overridden, name: "Renamed" } });
+	});
+
+	it("体检卡片能补推理字段：只差 reasoning 的模型选「支持」后就能保存，卡片随即消失", async () => {
+		// 回归：以前卡片没有推理列，只差 reasoning 的模型三格都显示已填，保存按钮却一直灰着
+		const flash = { id: "flash", contextWindow: 1_000_000, maxTokens: 32_000, input: ["text", "image"] };
+		const { writes, saved } = setup({ models: [flash] });
+		const audit = await screen.findByTestId("model-audit");
+		expect(within(audit).getByText("1 个模型没写能力字段")).toBeTruthy();
+		expect((within(audit).getByRole("button", { name: "填好后保存" }) as HTMLButtonElement).disabled).toBe(true);
+		fireEvent.click(within(audit).getByRole("radio", { name: "支持" }));
+		expect(within(audit).getByRole("radio", { name: "支持" }).getAttribute("aria-checked")).toBe("true");
+		fireEvent.click(within(audit).getByRole("button", { name: "保存 1 个模型" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(saved().providers.gateway.models).toEqual([{ ...flash, reasoning: true }]);
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+	});
+
+	it("体检卡片的「推理一起设」把所有缺推理的模型设成不支持，再点一下单个按钮可以取消", async () => {
+		const { writes, saved } = setup({ models: [{ id: "a", contextWindow: 1000, maxTokens: 100, input: ["text"] }, { id: "b", contextWindow: 1000, maxTokens: 100, input: ["text"] }] });
+		const audit = await screen.findByTestId("model-audit");
+		fireEvent.click(within(audit).getByRole("button", { name: "都不支持推理" }));
+		const offs = within(audit).getAllByRole("radio", { name: "不支持" });
+		expect(offs.map((radio) => radio.getAttribute("aria-checked"))).toEqual(["true", "true"]);
+		fireEvent.click(offs[1]);
+		expect(offs[1].getAttribute("aria-checked")).toBe("false");
+		fireEvent.click(within(audit).getByRole("button", { name: "保存 1 个模型" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(saved().providers.gateway.models).toEqual([
+			{ id: "a", contextWindow: 1000, maxTokens: 100, input: ["text"], reasoning: false },
+			{ id: "b", contextWindow: 1000, maxTokens: 100, input: ["text"] },
+		]);
 	});
 
 	it("adds a built-in provider with only an API key without writing an empty models.json entry", async () => {
