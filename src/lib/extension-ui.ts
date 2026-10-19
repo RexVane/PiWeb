@@ -4,6 +4,7 @@
  * 没有页面在看时（无订阅者）select/input 返回 undefined、confirm 返回 false，与 pi 的 noOp 行为一致。
  */
 import { randomUUID } from "node:crypto";
+import { ASK_USER_TIMEOUT_MS, parseAnswers, type AskOutcome, type AskQuestion } from "./ask-user";
 import type { WebEvent } from "./types";
 
 type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
@@ -25,6 +26,11 @@ export interface ExtensionUiBridge {
 	getPendingRequests(): UiEvent[];
 	/** 会话销毁：把挂起的对话框全部按取消结束 */
 	dispose(): void;
+	/**
+	 * ask_user_question 的选择窗口。与扩展对话框不同：没有页面在看也挂着等（用户回来打开页面就能答），
+	 * 最多 30 分钟；超时 / 中止 → timeout，用户跳过或会话销毁 → skipped。
+	 */
+	askQuestions(questions: AskQuestion[], signal?: AbortSignal): Promise<AskOutcome>;
 	/** 扩展通过 setStatus 设的状态文本（页脚展示） */
 	statuses: Map<string, string>;
 }
@@ -63,12 +69,12 @@ export function createExtensionUiBridge(opts: {
 
 	const ask = <T,>(
 		request: Omit<UiEvent, "type" | "id" | "ts">,
-		dialogOpts: { signal?: AbortSignal; timeout?: number } | undefined,
+		dialogOpts: { signal?: AbortSignal; timeout?: number; waitForViewer?: boolean } | undefined,
 		fallback: T,
 		parse: (r: { value?: string; confirmed?: boolean; cancelled?: boolean }) => T,
 	): Promise<T> => {
-		// 没有浏览器在看：不能永远挂着扩展，按 pi 的 noOp 语义立即返回默认值
-		if (disposed || !opts.hasViewers() || dialogOpts?.signal?.aborted) return Promise.resolve(fallback);
+		// 没有浏览器在看：不能永远挂着扩展，按 pi 的 noOp 语义立即返回默认值（选择窗口例外，见 askQuestions）
+		if (disposed || (!dialogOpts?.waitForViewer && !opts.hasViewers()) || dialogOpts?.signal?.aborted) return Promise.resolve(fallback);
 		const id = randomUUID();
 		return new Promise<T>((resolve) => {
 			const finish = (r: { value?: string; confirmed?: boolean; cancelled?: boolean } | null) => {
@@ -140,7 +146,26 @@ export function createExtensionUiBridge(opts: {
 	return {
 		uiContext,
 		statuses,
-		getPendingRequests: () => [...pending.values()].map(({ request }) => ({ ...request, options: request.options ? [...request.options] : undefined })),
+		askQuestions: async (questions, signal) => {
+			if (disposed) return { status: "unavailable" };
+			const outcome = await ask<AskOutcome>(
+				{ method: "questions", title: "", questions },
+				{ signal, timeout: ASK_USER_TIMEOUT_MS, waitForViewer: true },
+				{ status: "timeout" },
+				(r) => {
+					if (r.cancelled) return { status: "skipped" };
+					const answers = parseAnswers(questions, r.value);
+					return answers ? { status: "answered", answers } : { status: "skipped" };
+				},
+			);
+			// 用户按了停止（signal 中止）不是超时
+			return outcome.status === "timeout" && signal?.aborted ? { status: "skipped" } : outcome;
+		},
+		getPendingRequests: () => [...pending.values()].map(({ request }) => ({
+			...request,
+			options: request.options ? [...request.options] : undefined,
+			...(request.questions ? { questions: structuredClone(request.questions) } : {}),
+		})),
 		respond(requestId, response) {
 			const entry = pending.get(requestId);
 			if (!entry) return false;

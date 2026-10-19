@@ -29,6 +29,7 @@ import {
 	openSessionManager,
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
+import { createAskUserTool } from "./ask-user-tool";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
 import { projectedContextUsage } from "./session/metrics";
@@ -1188,6 +1189,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				modelRuntime: await getModelRuntime(),
 				resourceLoader: loader,
 				settingsManager,
+				// 内置的选择窗口：问题经扩展界面桥推给浏览器（m.ui 在下面 bindExtensions 前建好，调用时再取）
+				customTools: [createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })))],
 			});
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");
