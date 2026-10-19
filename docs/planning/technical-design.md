@@ -727,3 +727,102 @@ models.json 里的模型条目不写 `input` / `contextWindow` / `maxTokens`，p
 - `tests/components/app-shell-markdown-paths.test.tsx` 用真实的 ChatWindow + FileViewer 走一遍点击，
   盯的是**接线**：ChatWindow 自己的用例证明不了 AppShell 把 `onOpenPath` 接到了 `viewer.open` 上
   （接错成 `openInEditor` 也照样绿）。已核对：把它改回 `openInEditor` 时这条会红。
+
+## 18. computer-use 深度检查记录（2026-10-20）
+
+本轮按「直接启动 piweb，全面操作并深度找 bug」执行，先记录问题，未修改功能代码。
+检查基线为 `d4f73cc` / v0.3.26，分支 `rexvane-piweb`；实际启动已安装的同版 `piweb`，
+已逐一核对下列问题涉及的 GitPanel、FileViewer、SettingsPanel、model-draft 源码与仓库完全一致。
+使用独立的 `PI_CODING_AGENT_DIR` 和测试会话；发送消息接本机模拟的 OpenAI 兼容服务，
+覆盖真实 UI、HTTP、SDK、SSE 和会话落盘，不代表已验证真实模型的输出质量或工具执行。
+测试模型不持有真实密钥。桌面视口及实际 CSS 约 389×843、582×1260 的窄屏均有操作。
+
+### 已确认的产品问题（全部待修复）
+
+| 编号 | 级别 | 问题 | 定位 |
+| --- | --- | --- | --- |
+| UI-01 | P3 | Git 提交行悬停产生底部横向滚动条 | `src/components/GitPanel.tsx:261`、`:424` |
+| UI-02 | P2 | 文件查看器快速打开漏掉尚未加载的子目录文件 | `src/components/FileViewer.tsx:332` |
+| UI-03 | P2 | 模型仅缺推理能力字段时，补全提示没有可编辑字段，无法保存 | `src/components/SettingsPanel.tsx:818`、`src/lib/model-draft.ts:329` |
+| UI-04 | P2 | Markdown 相对文件链接跳到网站路径，离开应用并进入 404 | `src/components/FileViewer.tsx:538` |
+| BUILD-01 | P2 | npm 12 成功打包后被发布校验误判为没有 tarball | `scripts/verify-package.mjs:68` |
+
+**UI-01：Git 详情底部滚动条。** 打开工作区 → 右侧抽屉 → Git 详情，将鼠标移到任一提交行。
+外层滚动容器实测 `clientWidth=327`、`scrollWidth=329`、`overflow-x:auto`；
+行上的 `translateX(2px)` 造成 2px 溢出。外层仅有 `overflow-y-auto`，浏览器会把另一轴也计算为 auto。
+这与用户给出的底部滑动杆现象一致。建议给列表外层增加 `overflow-x-hidden`，
+保留内部代码 diff 的横向滚动；修复时可参照 GrowthTree 的 `#161`（`c551bc6`）。
+[完整现场](../assets/ui-audit-git-overflow.jpg)、[底部局部](../assets/ui-audit-git-scrollbar.jpg)。
+
+**UI-02：快速打开漏文件。** 在尚未展开 `src/components` 的会话里，通过提示词面板打开 AGENTS.md，
+点查看器的「+」或 Ctrl/⌘+P，搜索 `GitPanel`，显示「没有匹配的文件」。
+实际 `src/components/GitPanel.tsx` 存在，正文路径按钮、输入框 `@GitPanel` 和项目树搜索均能找到并打开。
+快速打开只过滤 `growth.filePaths`，后者依赖已加载的懒加载树；此入口没有像项目树搜索那样补齐索引。
+建议复用完整工作区文件索引，并明确加载、失败和空结果状态。
+[现场截图](../assets/ui-audit-file-search.jpg)。
+
+**UI-03：模型能力补全死路。** 添加自定义提供方和模型，填写上下文 128K、输出 4K、支持图片，
+推理能力保留允许选择的「未声明」，保存成功。随后出现「1 个模型没写能力字段」，
+但面板仅列上下文、输出上限和视觉，全部已有值，保存按钮始终禁用。
+`customModelGaps` 将 `reasoning` 纳入缺失项，`ModelFieldAudit` 却没有该字段的输入和 fills 提交逻辑。
+用户可绕到提供方编辑表单声明推理能力，但提示面板自身无法完成它要求的补全。
+建议补齐推理能力选择和保存接线；不能只隐藏提示，否则会继续丢失推理模型的思考档位。
+相关引入记录 `#146`（`b63d269`）。[现场截图](../assets/ui-audit-model-audit.jpg)。
+
+**UI-04：文档相对链接导致 404。** 设置 → 技能 → 查看 agents-sdk 的 SKILL.md → 点击正文中的
+`client-sdk.md`（原始 href 为 `references/client-sdk.md`）。浏览器实际进入
+`http://127.0.0.1:30141/references/client-sdk.md` 并显示 404，整个聊天界面被替换；浏览器返回才能回去。
+目标文件位于技能文档的 references 目录，而非网站根目录。
+查看器直接使用 ReactMarkdown 的默认链接，没有根据当前文档路径解析并交给文件查看器。
+建议相对文件链接在页内查看器打开，保留外部 HTTP 链接和页内锚点各自的正常行为，
+同时沿用工作区/允许文档的路径边界校验。[404 截图](../assets/ui-audit-relative-link-404.jpg)。
+
+**BUILD-01：npm 12 打包结果解析不兼容。** 本机 Node v24.15.0 / npm v12，运行现有打包测试，
+3 条真实 tarball 校验用例失败，错误都是 `npm pack produced no tarball`。
+另建无脚本最小包执行 `npm pack --json --pack-destination <测试目录>`：退出码 0，tarball 实际存在，
+JSON 形状为 `{ "piweb-audit-fixture": { "filename": "piweb-audit-fixture-0.0.0.tgz", "files": [...] } }`。
+校验脚本只支持数组或顶层直接含 filename 的对象，因此误报并阻断该环境中的发布验收。
+建议兼容按包名为键的结果，同时校验候选条目，保留对旧版 npm 返回形状的支持。
+
+### 已操作的覆盖范围
+
+| 模块 | 实际操作与结果 |
+| --- | --- |
+| 启动与会话加载 | 已安装 piweb 启动、打开冷会话、新建会话、切换会话，正常 |
+| 消息与流式响应 | 本机服务返回 Markdown、代码、路径和用量；停止慢速生成后显示「已中止」，正常 |
+| 生成中消息 | 插话入队、取回编辑、重新入队和丢弃，正常 |
+| 编辑与分支 | 编辑用户消息后重新发送；菜单创建新会话分支，正常 |
+| 图片 | 粘贴有效 PNG、附件放大/关闭、发送、已发送图片只读预览，正常 |
+| 错误恢复 | 模拟模型 HTTP 400，页面显示错误；下一条消息成功，正常 |
+| 会话管理 | 重命名同步标题、空名称禁用保存、归档和取消归档，正常 |
+| 侧栏 | 会话搜索匹配与无结果、单列表/工作区分组入口，正常 |
+| 草稿 | 不同会话文字和文件引用隔离，切回保留，正常 |
+| 命令 | 新会话 `/` 发现命令，`/compact` 在短会话中给出 session too small 反馈；未验证长会话实际压缩 |
+| 上下文 | 弹窗统计及容量编辑；0 值被拦截、取消可返回，正常 |
+| 项目与 Git | 项目树深层搜索并打开、切换轮次入口；Git 刷新、提交差异、工作区删除文件差异、返回列表，正常；横向溢出见 UI-01 |
+| 文件查看器 | 多页签、内容/渲染、全屏/退出、引用到输入框和移除，正常；快速打开和相对链接见 UI-02/UI-04 |
+| 提示词 | 来源列表、刷新入口、AGENTS.md 查看，正常 |
+| 通用设置 | 六种主题切换、深色、英文/中文、字号调节/重置、自定义字体后还原，正常 |
+| 模型设置 | 内置提供方目录筛选和取消、自定义本地提供方添加和使用，正常；能力补全见 UI-03 |
+| 工具设置 | 只读预设选择；未让模拟模型执行真实工具 |
+| 插件与技能 | 内置插件详情、重载成功反馈、技能列表与文档查看；未安装或删除插件/共享技能 |
+| 导入 | 来源切换、全选计数、清空选择，正常；未复制用户真实历史做导入 |
+| 远程连接 | 未开启且无认证时，公网开启按钮正确禁用；未建立公网通道 |
+| 窄屏 | 手机侧栏开关、设置导航、模型/插件/远程面板均可访问，未发现页面级横向溢出 |
+
+工作区「添加」调用了 macOS 原生文件夹选择器，但当前 computer-use 环境无法取得该原生弹窗，
+未完成选目录闭环；会话日志下载也未取得可靠的下载完成事件。这两项标记为未验证，不能算通过或已确认的产品 bug。
+真实 OAuth、模型账号密钥、插件安装/卸载、共享技能删除、软件实际更新及公网连接均未执行。
+
+### 自动检查与测试代码缺陷
+
+- `npm run typecheck`：通过。
+- `npm run build`：通过；有现存 `scripts/release.mjs` 动态依赖的 webpack 警告。
+- `npm test`：1044 通过、4 失败、4 跳过，另有 1 个未处理异常；不能称为全套件通过。
+- 3 条打包用例失败归因于 BUILD-01。
+- `tests/launcher.test.ts:287`：期望未规范化的 `/var/folders/...`，启动器实际传入等价的
+  `/private/var/folders/...`，导致 macOS 测试失败。应统一 realpath 后断言；未见启动器因此启动失败。
+- `tests/components/app-shell-markdown-paths.test.tsx`：fetch mock 对全部接口返回成功 `{data:{}}`，
+  缺少文件 content；异步进入 CodeBlock 后在 `highlightCode` 访问 `undefined.length` 抛错。
+  单独运行该测试同样「断言通过但进程因未处理异常退出 1」。应为文件读取返回合法数据并等待异步渲染完成，
+  不能仅用 dialog 出现作为完整接线验收。本轮 UI 中正常文件读取没有复现该崩溃，因此不把它计入产品问题。
