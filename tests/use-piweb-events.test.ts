@@ -12,6 +12,31 @@ describe("PiWeb SSE event folding", () => {
 		expect(ended.compaction).toEqual({ phase: "end", errorMessage: "context limit", ts: 2 });
 	});
 
+	it("inserts the compaction divider before the first kept message and keeps everything above", () => {
+		// 压缩后被压缩的上下文不能消失：已显示的消息全保留，卡片插在保留的第一条前面，和刷新后的快照一致
+		const text = (value: string) => [{ type: "text" as const, text: value }];
+		const messages: WebMessage[] = [
+			{ role: "user", id: "u1", content: text("q1") },
+			{ role: "assistant", id: "a1", content: text("a1"), stopReason: "stop" },
+			{ role: "user", id: "u2", streamId: "stream-u2", content: text("q2") },
+			{ role: "assistant", id: "a2", content: text("a2"), stopReason: "stop" },
+		];
+		const marker: WebMessage = { role: "summary", id: "c1", summaryKind: "compaction", summary: "摘要", tokensBefore: 100, content: [] };
+		const initial = { messages, compaction: null } as unknown as PiWebState;
+		const ids = (state: PiWebState) => state.messages.map((message) => message.id);
+
+		const next = foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeId: "u2", ts: 5 });
+		expect(ids(next)).toEqual(["u1", "a1", "c1", "u2", "a2"]);
+		expect(next.compaction).toEqual({ phase: "end", errorMessage: undefined, ts: 5 });
+		expect(initial.messages).toBe(messages);
+		// 重复收到同一事件（重连补发）不重复插卡
+		expect(ids(foldPiWebEvent(next, { type: "compaction", phase: "end", marker, beforeId: "u2", ts: 6 }))).toEqual(["u1", "a1", "c1", "u2", "a2"]);
+		// 持久 ID 还没回来时按流 ID 定位
+		expect(ids(foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeStreamId: "stream-u2", ts: 5 }))).toEqual(["u1", "a1", "c1", "u2", "a2"]);
+		// 找不到保留消息就追加到末尾，不丢卡片
+		expect(ids(foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeId: "missing", ts: 5 }))).toEqual(["u1", "a1", "u2", "a2", "c1"]);
+	});
+
 	it("updates a final already in the snapshot without duplicating it or losing the delayed end", () => {
 		const before: WebMessage = { role: "assistant", streamId: "run-1", content: [{ type: "text", text: "before hook" }], stopReason: "stop" };
 		const initial = { messages: [before] } as PiWebState;

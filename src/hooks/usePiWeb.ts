@@ -176,6 +176,17 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 			return s;
 		case "compaction":
 			s.compaction = { phase: evt.phase, errorMessage: evt.errorMessage, ts: evt.ts };
+			if (evt.marker) {
+				// 已显示的消息全部保留；分隔卡插到保留下来的第一条前面，和刷新后的快照位置一致
+				const marker = evt.marker;
+				const msgs = s.messages.filter((message) => !(marker.id && message.id === marker.id));
+				const at = msgs.findIndex((message) =>
+					(!!evt.beforeId && message.id === evt.beforeId) ||
+					(!!evt.beforeStreamId && message.streamId === evt.beforeStreamId));
+				if (at >= 0) msgs.splice(at, 0, marker);
+				else msgs.push(marker);
+				s.messages = msgs;
+			}
 			return s;
 		case "traj": {
 			if (s.snapshot) {

@@ -8,6 +8,24 @@ import { formatCapacity, parseCapacity } from "@/lib/model-draft";
 import { classifyMessageChars } from "@/lib/process-format";
 import type { ContextBreakdown, TrajTokens } from "@/lib/types";
 
+type ContextMessage = {
+	role?: string;
+	content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>;
+	usage?: TrajTokens;
+	stopReason?: string;
+	timestamp?: number;
+	summaryKind?: string;
+};
+
+/**
+ * 消息列表会照常显示压缩前的历史，但模型上下文只从最近一张压缩卡往后算（卡片以上只剩摘要，已计入 compacted）。
+ * 保留下来的旧助手消息用量是压缩前那次请求的，也不能当「最近一次输入」。
+ */
+function inContext(messages: ContextMessage[]): { messages: ContextMessage[]; since?: number } {
+	const at = messages.findLastIndex((m) => m.role === "summary" && m.summaryKind === "compaction");
+	return at < 0 ? { messages } : { messages: messages.slice(at + 1), since: messages[at].timestamp };
+}
+
 export function ContextMeter({ percent, tokens, contextWindow, model, source, label }: {
 	percent: number | null;
 	tokens: number | null;
@@ -18,7 +36,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	label?: string;
 	source?: {
 		systemChars: number;
-		messages: Array<{ role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; usage?: TrajTokens; stopReason?: string }>;
+		messages: ContextMessage[];
 		breakdown?: ContextBreakdown;
 		loadFull?: () => Promise<unknown> | unknown;
 	};
@@ -38,9 +56,11 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	}, [open]);
 
 	// 流式期间只在打开弹窗后扫描，分类是实际文本字符数，不是假设的 token 数。
-	const chars = useMemo(() => classifyMessageChars(open ? source?.messages ?? [] : []), [open, source]);
-	const lastUsage = useMemo(() => open ? source?.messages.findLast((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted" && m.stopReason !== "pending" &&
-		(m.usage?.input ?? 0) + (m.usage?.cacheRead ?? 0) + (m.usage?.cacheWrite ?? 0) + (m.usage?.output ?? 0) > 0)?.usage : undefined, [open, source]);
+	const context = useMemo(() => inContext(open ? source?.messages ?? [] : []), [open, source]);
+	const chars = useMemo(() => classifyMessageChars(context.messages), [context]);
+	const lastUsage = useMemo(() => context.messages.findLast((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted" && m.stopReason !== "pending" &&
+		(context.since === undefined || (m.timestamp ?? 0) >= context.since) &&
+		(m.usage?.input ?? 0) + (m.usage?.cacheRead ?? 0) + (m.usage?.cacheWrite ?? 0) + (m.usage?.output ?? 0) > 0)?.usage, [context]);
 	const measuredInput = lastUsage ? (lastUsage.input ?? 0) + (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0) : null;
 
 	// 刚改过窗口：服务端已落盘，但页面上的 contextWindow 还是改之前的值（冷会话要等下一次快照）。

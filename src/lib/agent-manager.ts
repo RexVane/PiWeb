@@ -165,8 +165,93 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 			encodingLoss: result.encodingLoss || undefined,
 			patch: patchOf(m.details),
 		}];
+	} else if (m.role === "compactionSummary" || m.role === "branchSummary") {
+		out.role = "summary";
+		out.summaryKind = m.role === "branchSummary" ? "branch" : "compaction";
+		out.summary = typeof m.summary === "string" ? m.summary : "";
+		if (typeof m.tokensBefore === "number" && Number.isFinite(m.tokensBefore)) out.tokensBefore = m.tokensBefore;
 	}
 	return out;
+}
+
+/** 会话条目 → 显示消息：消息照常投影，压缩 / 分支摘要投影成摘要卡，其余条目（切模型、自定义状态等）不显示 */
+function entryToWebMessage(entry: any): WebMessage | null {
+	if (entry?.type === "message" && entry.message) return toWebMessage(entry.message, entry.id);
+	if (entry?.type !== "compaction" && !(entry?.type === "branch_summary" && entry.summary)) return null;
+	const timestamp = Date.parse(entry.timestamp);
+	return toWebMessage({
+		role: entry.type === "compaction" ? "compactionSummary" : "branchSummary",
+		summary: entry.summary,
+		tokensBefore: entry.tokensBefore,
+		timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
+	}, entry.id);
+}
+
+/**
+ * 被压缩掉的历史：当前分支上已不在模型上下文里的条目，按原顺序照常显示（可编辑、可分叉）。
+ * 每张压缩卡挪到它保留的第一条（firstKeptEntryId）前面，和上下文部分「摘要在前、保留消息在后」一致；
+ * 这样卡片以上就是模型只看得到摘要的内容。
+ */
+function compactedHistory(sm: Pick<SessionManager, "getBranch">, context: any[]): WebMessage[] {
+	if (context[0]?.type !== "compaction") return [];
+	const inContext = new Set(context.map((entry) => entry.id));
+	const entries = (sm.getBranch() as any[]).filter((entry) => !inContext.has(entry.id));
+	const position = new Map(entries.map((entry, index) => [entry.id, index]));
+	const markersBefore = new Map<string, WebMessage[]>();
+	const moved = new Set<string>();
+	entries.forEach((entry, index) => {
+		if (entry.type !== "compaction") return;
+		const at = position.get(entry.firstKeptEntryId);
+		if (at === undefined || at >= index) return;
+		const marker = entryToWebMessage(entry)!;
+		markersBefore.set(entry.firstKeptEntryId, [...(markersBefore.get(entry.firstKeptEntryId) ?? []), marker]);
+		moved.add(entry.id);
+	});
+	const out: WebMessage[] = [];
+	for (const entry of entries) {
+		out.push(...(markersBefore.get(entry.id) ?? []));
+		if (moved.has(entry.id)) continue;
+		const message = entryToWebMessage(entry);
+		if (message) out.push(message);
+	}
+	return out;
+}
+
+/** 冷会话 / 只读接口的消息列表：被压缩掉的历史 + 当前上下文（最新一次压缩投影成分隔卡） */
+export function sessionDisplayMessages(sm: Pick<SessionManager, "getBranch" | "buildContextEntries">): WebMessage[] {
+	const context = sm.buildContextEntries() as any[];
+	const current = context.flatMap((entry, index) => {
+		// 保留区里更早的压缩条目不进模型上下文（SDK 投影只取下标 0 的那次），这里同样跳过
+		if (entry.type === "compaction" && index > 0) return [];
+		const message = entryToWebMessage(entry);
+		return message ? [message] : [];
+	});
+	return [...compactedHistory(sm, context), ...current];
+}
+
+/**
+ * 压缩刚完成（SDK 先写条目再发 compaction_end）：分隔卡 + 它该插在哪条消息前。
+ * 取保留下来的第一条用户 / 助手消息，和快照里「卡片在保留消息之前」的位置一致；没有保留消息就追加。
+ */
+function compactionMarker(m: Managed): { marker?: WebMessage; beforeId?: string; beforeStreamId?: string } {
+	try {
+		const context = m.sm.buildContextEntries() as any[];
+		if (context[0]?.type !== "compaction") return {};
+		const kept = context.find((entry) => entry.type === "message" && (entry.message?.role === "user" || entry.message?.role === "assistant"));
+		return {
+			marker: entryToWebMessage(context[0]) ?? undefined,
+			beforeId: kept?.id,
+			beforeStreamId: kept ? m.messageIds?.get(kept.message) : undefined,
+		};
+	} catch {
+		return {};
+	}
+}
+
+/** 热会话里摘要消息（SDK 每次投影新建的对象）对应的条目 ID：压缩取上下文首条，分支摘要按 fromId + 时间匹配 */
+function summaryEntryId(context: any[], message: any): string | undefined {
+	if (message?.role === "compactionSummary") return context[0]?.type === "compaction" ? context[0].id : undefined;
+	return context.find((entry) => entry.type === "branch_summary" && entry.fromId === message?.fromId && Date.parse(entry.timestamp) === message?.timestamp)?.id;
 }
 
 /** 消息对象 → 持久化条目 ID 的索引；条目数一变就重建（会话只追加，改写分支时条目数也会变） */
@@ -662,6 +747,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				phase: "end",
 				reason: (evt as any).reason,
 				errorMessage: (evt as any).errorMessage,
+				...((evt as any).result && !(evt as any).errorMessage ? compactionMarker(m) : {}),
 				ts: now,
 			});
 			publishUsage(m, true);
@@ -1407,7 +1493,22 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 
 	if (session) {
 		const hasInflightFinal = linkInflightFinal(m, session);
-		messages = session.messages.map((message) => projectMessage(m, message));
+		// session.messages 只是压缩后的模型上下文；前面补上被压缩掉的历史，压缩摘要投影成分隔卡
+		let context: any[] = [];
+		let history: WebMessage[] = [];
+		try {
+			context = m.sm.buildContextEntries() as any[];
+			history = compactedHistory(m.sm, context);
+		} catch {
+			/* 条目读不到时只显示上下文 */
+		}
+		messages = [
+			...history,
+			...session.messages.map((message: any) =>
+				message?.role === "compactionSummary" || message?.role === "branchSummary"
+					? toWebMessage(message, summaryEntryId(context, message))
+					: projectMessage(m, message)),
+		];
 		// final 已被 SDK push 时只投影一次；延后的 end 使用相同 streamId 继续更新权威内容。
 		if (!hasInflightFinal && m.inflight) {
 			const partial = projectMessage(m, m.inflight);
@@ -1424,12 +1525,9 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		}
 		isStreaming = isManagedBusy(m);
 	} else {
-		// 冷渲染：从 JSONL 还原上下文消息（不启动 agent）
+		// 冷渲染：从 JSONL 还原消息（不启动 agent），压缩掉的历史也照常显示
 		try {
-			const entries = m.sm.buildContextEntries();
-			messages = entries
-				.filter((e: any) => e.type === "message" && e.message)
-				.map((e: any) => toWebMessage(e.message, e.id));
+			messages = sessionDisplayMessages(m.sm);
 		} catch {
 			messages = [];
 		}

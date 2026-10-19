@@ -7,7 +7,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionSummary, WebMessage } from "./types";
-import { toWebMessage } from "./agent-manager";
+import { sessionDisplayMessages } from "./agent-manager";
 import { getAgentDir } from "./pi";
 import { BoundaryError, isPathInside } from "./path-security";
 import { promptTitleText } from "./chat/skill-expansion";
@@ -294,7 +294,7 @@ export async function deleteSession(sessionPath: string): Promise<void> {
 	}
 }
 
-/** 冷读取：还原上下文消息 + 会话名（不启动 agent） */
+/** 冷读取：还原消息（含被压缩掉的历史）+ 会话名（不启动 agent） */
 export async function readSession(sessionPath: string): Promise<{
 	cwd: string;
 	name: string;
@@ -303,10 +303,7 @@ export async function readSession(sessionPath: string): Promise<{
 	const sm = SessionManager.open(sessionPath);
 	let messages: WebMessage[] = [];
 	try {
-		const entries = sm.buildContextEntries();
-		messages = entries
-			.filter((e: any) => e.type === "message" && e.message)
-			.map((e: any) => toWebMessage(e.message, e.id));
+		messages = sessionDisplayMessages(sm);
 	} catch {
 		messages = [];
 	}

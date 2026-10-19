@@ -130,6 +130,22 @@ describe("上下文圆环弹窗", () => {
 		expect(screen.getByTitle("11734 tok").textContent).toBe("11.73K tok");
 	});
 
+	it("压缩卡以上的历史只剩摘要：字符分类和最近输入都从卡片往后算", () => {
+		// 消息列表照常显示压缩前的历史；卡片前的用户消息、保留下来的旧回复用量都不能算进当前上下文
+		render(<ContextMeter percent={12} tokens={24000} contextWindow={200000} source={{ systemChars: 0, breakdown: WARM, messages: [
+			{ role: "user", content: [{ type: "text", text: "x".repeat(5000) }], timestamp: 1 },
+			{ role: "assistant", content: [], usage: { input: 150000 }, stopReason: "stop", timestamp: 2 },
+			{ role: "summary", summaryKind: "compaction", content: [], timestamp: 10 },
+			{ role: "user", content: [{ type: "text", text: "y".repeat(1200) }], timestamp: 3 },
+			{ role: "assistant", content: [], usage: { input: 90000 }, stopReason: "stop", timestamp: 4 },
+			{ role: "assistant", content: [], usage: { input: 2000 }, stopReason: "stop", timestamp: 11 },
+		] }} />);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		expect(screen.getByText("1.20K 字符")).toBeTruthy();
+		expect(screen.queryByText("6.20K 字符")).toBeNull();
+		expect(screen.getByTitle("2000 tok").textContent).toBe("2.00K tok");
+	});
+
 	it("压缩后用量未知，不将窗口全部显示成空闲", () => {
 		render(<ContextMeter percent={null} tokens={null} contextWindow={200000} source={{ systemChars: 0, messages: [], breakdown: WARM }} />);
 		fireEvent.click(screen.getByTitle("上下文用量未知"));

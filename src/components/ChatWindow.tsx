@@ -1069,7 +1069,8 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 
 // ---------- 回合：用户消息 → 过程步骤 → 最终回答 ----------
 
-type Turn = { key: string; userIndex: number; assistantIndexes: number[] };
+/** summaryIndex：压缩分隔卡 / 分支摘要卡单独占一格，没有用户消息和过程 */
+type Turn = { key: string; userIndex: number; assistantIndexes: number[]; summaryIndex?: number };
 
 function buildTurns(messages: WebMessage[]): Turn[] {
 	const out: Turn[] = [];
@@ -1078,6 +1079,10 @@ function buildTurns(messages: WebMessage[]): Turn[] {
 		if (m.role === "user") {
 			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [] };
 			out.push(cur);
+		} else if (m.role === "summary") {
+			// 压缩可能切在回合中间：卡片后面的助手消息另起一个回合，不并回卡片上方的用户消息
+			out.push({ key: `s${i}`, userIndex: -1, assistantIndexes: [], summaryIndex: i });
+			cur = null;
 		} else if (m.role === "assistant") {
 			if (!cur) {
 				cur = { key: `a${i}`, userIndex: -1, assistantIndexes: [] };
@@ -1316,6 +1321,45 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 	);
 }
 
+/**
+ * 压缩分隔卡：卡片以上的消息照常显示（可编辑、可分叉），但模型只看得到它们的摘要；摘要可展开。
+ * 分支摘要卡：切换分支时离开的那条分支被总结成摘要发给模型。
+ */
+function SummaryCard({ message }: { message: WebMessage }) {
+	const { t } = useI18n();
+	const [open, setOpen] = useState(false);
+	const branch = message.summaryKind === "branch";
+	const summary = message.summary?.trim();
+	const title = branch
+		? t.branchSummaryTitle
+		: message.tokensBefore
+			? t.compactedTitleTokens.replace("{tokens}", fmtTokens(message.tokensBefore))
+			: t.compactedTitle;
+	const rule = <span aria-hidden="true" style={{ flex: 1, borderTop: "1px dashed var(--dsw-border-l3)" }} />;
+	return (
+		<div className="w-full" data-role="summary" data-message-id={message.id} style={{ fontSize: "var(--piweb-chat-font-s)", color: "var(--dsw-label-caption)" }}>
+			<div className="flex items-center gap-3">
+				{rule}
+				<span style={{ flex: "none", color: "var(--dsw-label-secondary)" }}>{title}</span>
+				{rule}
+			</div>
+			<div className="mt-1 flex flex-wrap items-center justify-center gap-x-2 text-center">
+				<span>{branch ? t.branchSummaryHint : t.compactedHint}</span>
+				{summary && (
+					<button type="button" className="hover:underline" aria-expanded={open} onClick={() => setOpen((value) => !value)} style={{ color: "var(--dsw-label-secondary)" }}>
+						{open ? t.hideSummary : t.showSummary}
+					</button>
+				)}
+			</div>
+			{open && summary && (
+				<div className="mt-2 rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-label-primary)" }}>
+					<Markdown text={summary} />
+				</div>
+			)}
+		</div>
+	);
+}
+
 export function SessionStatsBar({
 	stats,
 }: {
@@ -1550,6 +1594,8 @@ export function ChatWindow({
 		return -1;
 	}, [messages]);
 	const turns = useMemo(() => buildTurns(messages), [messages]);
+	// 工作指示 / 重试行挂在最后一个真正的回合上，压缩卡追加在末尾时也不抢走
+	const lastContentTurn = useMemo(() => turns.findLastIndex((turn) => turn.summaryIndex === undefined), [turns]);
 	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
 
 	// ---------- 回合懒渲染 ----------
@@ -1751,14 +1797,16 @@ export function ChatWindow({
 						{turns.map((turn, ti) => (
 							// 回合间 28px 的分隔挂在槽上：用户消息现在总是槽里的第一个子元素，它自己的 mt-7 会被 first:mt-0 吃掉
 							<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className="mt-7 first:mt-0">
-								{isNear(ti) ? (
+								{turn.summaryIndex !== undefined ? (
+									<SummaryCard message={messages[turn.summaryIndex]} />
+								) : isNear(ti) ? (
 									<TurnBlock
 										turn={turn}
 										messages={messages}
 										tools={tools}
 										cwd={cwd}
 										isStreaming={isStreaming}
-										isLast={ti === turns.length - 1}
+										isLast={ti === lastContentTurn}
 										lastAssistantIndex={lastAssistantIndex}
 										contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
 										retryNotice={retryNotice}
@@ -1779,7 +1827,7 @@ export function ChatWindow({
 							</div>
 						))}
 						{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
-						{isStreaming && streamStartedAt && turns.length === 0 && (
+						{isStreaming && streamStartedAt && lastContentTurn < 0 && (
 							<div className="pw-turn">
 								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} hasLiveStep={Boolean(runningTool)} />
 							</div>

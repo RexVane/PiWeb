@@ -59,8 +59,14 @@ export interface WebMessage {
 	id?: string;
 	/** 热会话流的稳定身份；持久 entry id 尚未生成时也可关联 start/delta/end 与快照。 */
 	streamId?: string;
-	role: "user" | "assistant" | "toolResult" | "custom" | "other";
+	/** summary：压缩分隔卡 / 分支摘要卡（pi 的 compactionSummary / branchSummary），不参与回合 */
+	role: "user" | "assistant" | "toolResult" | "custom" | "summary" | "other";
 	content: WebContent[];
+	/** summary：compaction = 以上内容模型只看得到摘要；branch = 切换分支时离开的分支被总结成摘要 */
+	summaryKind?: "compaction" | "branch";
+	summary?: string;
+	/** summary(compaction)：压缩前的上下文估算 */
+	tokensBefore?: number;
 	timestamp?: number;
 	/** assistant：生成结束的时刻（热会话由 message_end 打点；冷会话没有，回落到 timestamp） */
 	endedAt?: number;
@@ -115,7 +121,17 @@ export type WebEvent =
 			contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | null;
 			ts: number;
 	  }
-	| { type: "compaction"; phase: "start" | "end"; reason?: string; errorMessage?: string; ts: number }
+	| {
+			type: "compaction";
+			phase: "start" | "end";
+			reason?: string;
+			errorMessage?: string;
+			/** end 成功时带分隔卡；插到保留下来的第一条消息（beforeId / beforeStreamId）前，找不到就追加 */
+			marker?: WebMessage;
+			beforeId?: string;
+			beforeStreamId?: string;
+			ts: number;
+	  }
 	| { type: "traj"; entry: TrajEntry; ts: number }
 	| { type: "name"; name: string; ts: number }
 	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; ts: number }
