@@ -83,6 +83,18 @@ describe("PiWeb SSE event folding", () => {
 		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [] } as unknown as WebSnapshot, dialogs)).toEqual([]);
 	});
 
+	it("keeps pi's question window from events and snapshots, questions included", () => {
+		// 选择窗口和扩展对话框走同一条桥：实时事件和刷新后的快照都要带出题目
+		const questions = [{ question: "Which DB?", header: "DB", options: [{ label: "Postgres", description: "solid" }, { label: "SQLite" }] }];
+		const request = { type: "extension_ui", id: "q1", method: "questions", title: "", questions, ts: 1 } as const;
+		let state = { extensionDialogs: [] } as unknown as PiWebState;
+		state = foldPiWebEvent(state, request);
+		expect(state.extensionDialogs).toEqual([expect.objectContaining({ id: "q1", method: "questions", questions })]);
+		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [request] } as unknown as WebSnapshot)).toEqual([expect.objectContaining({ id: "q1", method: "questions", questions })]);
+		state = foldPiWebEvent(state, { type: "extension_ui_resolved", id: "q1", ts: 2 });
+		expect(state.extensionDialogs).toEqual([]);
+	});
+
 	it("终端在回合中途写会话：提示一条警告，重复发现只留最新一条", () => {
 		let state = { extensionNotices: [{ id: "ext", message: "扩展通知", type: "info", ts: 1 }] } as PiWebState;
 		state = foldPiWebEvent(state, { type: "external_write", entries: 1, ts: 2 });
