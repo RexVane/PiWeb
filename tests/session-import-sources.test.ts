@@ -39,7 +39,7 @@ import type { ImportedEntry, ImportedMessage } from "../src/lib/session-import/t
 let root: string;
 const TS = Date.UTC(2026, 8, 13, 4, 10, 51);
 
-/** dsh 的真实文件是多帧 zstd 拼接，这里按同样方式合成（单帧解压只能拿到第一帧） */
+/** dsh 的真实文件是多帧 zstd 拼接，这里按同样方式合成。 */
 function multiFrame(lines: string[], perFrame = 2): Buffer {
 	const frames: Buffer[] = [];
 	for (let index = 0; index < lines.length; index += perFrame) {
@@ -282,12 +282,18 @@ describe("dsh", () => {
 		return dir;
 	}
 
-	it("多帧 zstd 能完整解出来（单帧解压只能拿到第一帧）", async () => {
+	it("多帧 zstd 完整保留每帧记录和末尾标题", async () => {
 		await fixture();
 		const file = path.join(roots.dsh, "--D-AIApp-PiWeb--", "session-9de5f238-e4e1-4b51-b557-cf77c60e7cee", "session.jsonl.zstd");
 		const decoded = decodeZstdFrames(await fs.readFile(file)).toString("utf8").trim().split("\n");
 		expect(decoded).toHaveLength(8);
-		expect(zlib.zstdDecompressSync(await fs.readFile(file)).toString("utf8").trim().split("\n").length).toBeLessThan(8);
+		const records = decoded.map((line) => JSON.parse(line));
+		expect(records.map((record) => record.type)).toEqual([
+			"session", "request/header", "user/message", "user/message",
+			"assistant/message", "tool/call", "tool/result", "session/title",
+		]);
+		expect(records.slice(1).map((record) => record.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+		expect(records[7].data.title).toBe("看看这个项目");
 	});
 
 	it("工具调用不重复、注入消息被跳过、标题与模型带出来", async () => {

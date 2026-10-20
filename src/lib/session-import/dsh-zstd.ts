@@ -1,6 +1,6 @@
 /**
- * dsh 的会话是 **多帧拼接的 zstd**（`session.jsonl.zstd`）：`zstdDecompressSync` 一次只解出第一帧，
- * 必须按 zstd magic（28 B5 2F FD）切帧后逐帧解压再拼起来，否则只能拿到第一行。
+ * dsh 的会话是 **多帧拼接的 zstd**（`session.jsonl.zstd`）：部分运行环境的原生解压只处理第一帧，
+ * 按 zstd magic（28 B5 2F FD）切帧后逐帧解压再拼起来，兼容这些环境并保留全部记录。
  */
 import fs from "node:fs/promises";
 import { zstdDecompressSync } from "node:zlib";
