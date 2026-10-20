@@ -131,11 +131,11 @@ export function RemoteSection() {
 		};
 	}, [load]);
 
-	// 地址已生成但还没生效时，短轮询到生效为止（实测这段要十几秒）
-	const waiting = Boolean(status?.public.running && !status.public.ready);
+	// 运行中持续检查：一次就绪不代表之后不会断线；等待超时后也能检测到恢复。
+	const waiting = Boolean(status?.public.running);
 	useEffect(() => {
 		if (!waiting) return;
-		const timer = setInterval(() => void load(), 2_500);
+		const timer = setInterval(() => void load(), 5_000);
 		return () => clearInterval(timer);
 	}, [waiting, load]);
 
@@ -269,7 +269,7 @@ export function RemoteSection() {
 					<div className="flex items-center gap-2" style={{ fontSize: 13 }}>
 						<Dot tone={pubTone} />
 						<span style={{ color: pub?.running ? "var(--dsw-label-primary)" : "var(--dsw-label-caption)" }}>
-							{pub?.running ? (pub.ready ? t.remoteRunning : t.remotePending) : t.remoteStopped}
+							{pub?.running ? (pub.ready ? t.remoteRunning : pub.error ? t.remoteUnavailable : t.remotePending) : t.remoteStopped}
 						</span>
 					</div>
 					{pub?.url ? <EntryLink url={pub.url} token={status?.loginToken} /> : null}

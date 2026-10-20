@@ -12,12 +12,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
-import https from "node:https";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { authEnabled } from "../web-auth";
 import { agentDir } from "../web-secret";
 import { createMobileProxy, MOBILE_FIT_CSS, MOBILE_FIT_JS } from "./mobile-proxy";
+import { probeTunnel } from "./tunnel-health";
 
 export const PLUGIN_ID = "builtin-remote";
 export const DEFAULT_LAN_PORT = 30142;
@@ -27,6 +28,7 @@ const TUNNEL_TIMEOUT_MS = 45_000;
 /** 拿到地址后等它就绪的上限：快速隧道的域名要十几秒才在全球 DNS 生效 */
 const TUNNEL_READY_TIMEOUT_MS = 60_000;
 const TUNNEL_READY_POLL_MS = 2_500;
+const TUNNEL_HEALTH_INTERVAL_MS = 5_000;
 
 /**
  * 从 cloudflared 的输出里抓公网地址，**只认第一个**。
@@ -61,35 +63,32 @@ export function createUrlCatcher(pattern: RegExp = PUBLIC_URL_PATTERN) {
 	};
 }
 
-/**
- * 探一次隧道是否真的可用。
- *
- * 只看 DNS 不够：域名解析出来之后边缘还可能要几秒才把请求转到这条隧道上。
- * 所以这里发一次 HEAD，把「能连上并拿到 HTTP 响应」当作就绪标准；
- * 4xx 也算就绪（说明请求已经打到我们的上游了）。5xx 不算：边缘还没接上这条隧道时 Cloudflare 自己回
- * 530（错误 1033），上游连不上时回 502——它们也是 HTTP 响应，当成就绪就会让界面显示「就绪」而手机打开是错误页。
- */
-function probeTunnel(url: string): Promise<boolean> {
-	return new Promise((resolve) => {
-		const target = new URL(url);
-		const request = https.request({ host: target.hostname, path: "/api/health", method: "HEAD", timeout: 8_000 }, (response) => {
-			response.resume();
-			resolve((response.statusCode ?? 0) < 500);
-		});
-		request.on("timeout", () => { request.destroy(); resolve(false); });
-		request.on("error", () => resolve(false));
-		request.end();
-	});
+/** 状态页持续探测；同一次探测复用，避免多个页面同时打开时重复请求公网。 */
+export async function refreshPublicStatus(force = false): Promise<void> {
+	const current = state();
+	const tunnel = current.tunnel;
+	if (!tunnel?.url) return;
+	if (tunnel.checking) return tunnel.checking;
+	if (!force && tunnel.checkedAt !== undefined && Date.now() - tunnel.checkedAt < TUNNEL_HEALTH_INTERVAL_MS) return;
+	const controller = tunnel.controller ??= new AbortController();
+	const checking = probeTunnel(tunnel.url, controller.signal).then((health) => {
+		if (current.tunnel !== tunnel || controller.signal.aborted) return;
+		tunnel.ready = health.ready;
+		tunnel.checkedAt = Date.now();
+		current.publicError = health.error;
+	}).finally(() => { if (tunnel.checking === checking) tunnel.checking = undefined; });
+	tunnel.checking = checking;
+	return checking;
 }
 
-/** 等隧道真的能连上；等不到也返回（地址已经拿到，用户至少能看到它） */
-async function waitForTunnelReady(url: string, keepGoing: () => boolean): Promise<boolean> {
+/** 启动时等一次；超时后由状态页继续检测，网络恢复时不必重启或换地址。 */
+async function waitForTunnelReady(tunnel: ManagedTunnel): Promise<void> {
 	const deadline = Date.now() + TUNNEL_READY_TIMEOUT_MS;
 	for (;;) {
-		if (!keepGoing()) return false;
-		if (await probeTunnel(url)) return true;
-		if (Date.now() >= deadline) return false;
-		await new Promise((resolve) => setTimeout(resolve, TUNNEL_READY_POLL_MS));
+		if (state().tunnel !== tunnel) return;
+		await refreshPublicStatus(true);
+		if (state().tunnel !== tunnel || tunnel.ready || Date.now() >= deadline) return;
+		await delay(TUNNEL_READY_POLL_MS, undefined, { signal: tunnel.controller?.signal }).catch(() => {});
 	}
 }
 
@@ -130,9 +129,20 @@ export interface RemoteStatus {
 	public: PublicState;
 }
 
+interface ManagedTunnel {
+	child: ChildProcess;
+	url: string | null;
+	ready: boolean;
+	/** 可选以兼容 Next 热重载之前创建的状态。 */
+	controller?: AbortController;
+	checkedAt?: number;
+	checking?: Promise<void>;
+}
+
 interface SupervisorState {
 	lan: { server: http.Server; port: number; styled: boolean } | null;
-	tunnel: { child: ChildProcess; url: string | null; ready: boolean } | null;
+	tunnel: ManagedTunnel | null;
+	generation?: number;
 	/** 正在启动中的那一次：并发调用复用它，不能起两个监听 / 两个 cloudflared */
 	lanStarting?: Promise<LanState> | null;
 	publicStarting?: Promise<PublicState> | null;
@@ -402,8 +412,8 @@ export async function stopLan(): Promise<void> {
  */
 export function startPublic(): Promise<PublicState> {
 	const current = state();
-	if (current.tunnel) return Promise.resolve(remoteStatus().public);
 	if (current.publicStarting) return current.publicStarting;
+	if (current.tunnel) return Promise.resolve(remoteStatus().public);
 	const starting = spawnTunnel().finally(() => {
 		if (current.publicStarting === starting) current.publicStarting = null;
 	});
@@ -416,6 +426,7 @@ function dropTunnel(child: ChildProcess): void {
 	const current = state();
 	const active = current.tunnel;
 	if (active?.child === child) {
+		active.controller?.abort();
 		disallowTunnelHost(active.url);
 		current.tunnel = null;
 	}
@@ -424,10 +435,12 @@ function dropTunnel(child: ChildProcess): void {
 
 async function spawnTunnel(): Promise<PublicState> {
 	const current = state();
+	const generation = current.generation;
 	current.publicError = null;
 
 	// 公网入口转发到局域网入口，所以局域网入口必须在跑
 	if (!current.lan) await startLan();
+	if (current.generation !== generation) return remoteStatus().public;
 	const lan = remoteStatus().lan;
 	if (!lan.running || lan.port === null) {
 		current.publicError = lan.error ?? "局域网入口没能启动，公网入口无从转发";
@@ -444,27 +457,31 @@ async function spawnTunnel(): Promise<PublicState> {
 		stdio: ["ignore", "pipe", "pipe"],
 		windowsHide: true,
 	});
-	current.tunnel = { child, url: null, ready: false };
+	const tunnel: ManagedTunnel = { child, url: null, ready: false, controller: new AbortController() };
+	current.tunnel = tunnel;
 
 	await new Promise<void>((resolve) => {
 		let settled = false;
-		const finish = (error?: string) => {
+		const finish = () => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
-			if (error) current.publicError = error;
+			tunnel.controller?.signal.removeEventListener("abort", canceled);
 			resolve();
 		};
+		const canceled = () => finish();
+		tunnel.controller!.signal.addEventListener("abort", canceled, { once: true });
 		const timer = setTimeout(() => {
 			// 不收掉的话进程还活着、状态一直是「运行中」却永远没有地址
+			current.publicError = "启动隧道超时：cloudflared 没有在 45 秒内给出地址";
 			dropTunnel(child);
-			finish("启动隧道超时：cloudflared 没有在 45 秒内给出地址");
+			finish();
 		}, TUNNEL_TIMEOUT_MS);
 		const catcher = createUrlCatcher();
 		const scan = (chunk: Buffer) => {
 			const url = catcher.feed(chunk.toString("utf8"));
-			if (!url || !current.tunnel) return;
-			current.tunnel.url = url;
+			if (!url || current.tunnel !== tunnel) return;
+			tunnel.url = url;
 			// 域名必须先放行再算启动成功，否则第一次访问必然被 Host 校验挡成 403
 			allowTunnelHost(url);
 			// 抓到就够了，摘掉监听：既避免后续输出改动已生效的地址，也不白占着流
@@ -476,20 +493,22 @@ async function spawnTunnel(): Promise<PublicState> {
 		child.stderr?.on("data", scan);
 		child.once("error", (error: NodeJS.ErrnoException) => {
 			// spawn 失败时不一定还有 exit 事件：这里不清状态，界面会永远显示「运行中」
-			dropTunnel(child);
+			if (current.tunnel !== tunnel) { finish(); return; }
 			if (error.code === "ENOENT") {
 				markEngineMissing();
-				finish("找不到 cloudflared：请先安装它（https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/）");
-				return;
+				current.publicError = "找不到 cloudflared：请先安装它（https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/）";
+			} else {
+				current.publicError = error.message;
 			}
-			finish(error.message);
+			dropTunnel(child);
+			finish();
 		});
 		child.once("exit", (code) => {
 			const active = current.tunnel;
 			if (active?.child === child) {
-				disallowTunnelHost(active.url);
-				current.tunnel = null;
-				finish(`cloudflared 退出了（code ${code ?? "?"}）`);
+				current.publicError = `cloudflared 退出了（code ${code ?? "?"}）。请重新开启远程连接，并使用新地址。`;
+				dropTunnel(child);
+				finish();
 			} else {
 				finish();
 			}
@@ -498,19 +517,19 @@ async function spawnTunnel(): Promise<PublicState> {
 
 	// 地址拿到了，但快速隧道的域名还要十几秒才在全球 DNS 生效。
 	// 不等它就直接报「就绪」，用户一复制地址打开就是打不开 —— 那才是真的像坏了。
-	const tunnel = current.tunnel;
-	if (tunnel?.url) {
-		const ready = await waitForTunnelReady(tunnel.url, () => current.tunnel === tunnel);
-		if (current.tunnel === tunnel) tunnel.ready = ready;
-	}
+	if (current.tunnel === tunnel && tunnel.url) await waitForTunnelReady(tunnel);
 	return remoteStatus().public;
 }
 
 export async function stopPublic(): Promise<void> {
 	const current = state();
+	current.generation = (current.generation ?? 0) + 1;
+	const starting = current.publicStarting;
 	const tunnel = current.tunnel;
 	current.tunnel = null;
-	if (!tunnel) return;
+	current.publicError = null;
+	if (!tunnel) { await starting; return; }
+	tunnel.controller?.abort();
 	// 先摘域名再杀进程：别给一个已经没人管的域名留后门
 	disallowTunnelHost(tunnel.url);
 	await new Promise<void>((resolve) => {
@@ -519,6 +538,7 @@ export async function stopPublic(): Promise<void> {
 		// 进程已经死了或杀不掉时不要卡住调用方
 		setTimeout(resolve, 3_000).unref();
 	});
+	await starting;
 }
 
 export async function stopAll(): Promise<void> {

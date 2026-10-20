@@ -5,7 +5,7 @@
  * 屏幕上仍只显示裸地址：截图、共享屏幕时令牌不能露出来。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { loginLink, RemoteSection } from "@/components/RemoteSection";
 
 const TOKEN = "tok-123_ABC";
@@ -14,7 +14,7 @@ const status = {
 	targetPort: 30141,
 	blocked: null,
 	lan: { running: true, port: 30142, urls: ["http://192.168.5.44:30142"], error: null },
-	public: { running: true, url: "https://abc-def.trycloudflare.com", ready: true, engine: "cloudflared", engineAvailable: true, error: null },
+	public: { running: true, url: "https://abc-def.trycloudflare.com", ready: true, engine: "cloudflared", engineAvailable: true, error: null as string | null },
 	loginToken: TOKEN,
 };
 
@@ -27,10 +27,29 @@ beforeEach(() => {
 });
 afterEach(() => {
 	cleanup();
+	vi.useRealTimers();
 	vi.unstubAllGlobals();
 });
 
 describe("remote entry links", () => {
+	it("keeps checking after readiness, shows 1033 and clears it when the tunnel recovers", async () => {
+		vi.useFakeTimers();
+		let current = status;
+		const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: current }) }));
+		vi.stubGlobal("fetch", fetcher);
+		await act(async () => { render(<RemoteSection />); });
+		expect(screen.getAllByText("运行中")).toHaveLength(2);
+		current = { ...status, public: { ...status.public, ready: false, error: "Cloudflare 1033：隧道未连接" } };
+		await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+		expect(screen.getByText("连接暂不可用，正在重试…")).toBeTruthy();
+		expect(screen.getByText(/1033/)).toBeTruthy();
+		current = status;
+		await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+		expect(screen.getAllByText("运行中")).toHaveLength(2);
+		expect(screen.queryByText(/1033/)).toBeNull();
+		expect(fetcher).toHaveBeenCalledTimes(3);
+	});
+
 	it("builds a root login link and leaves bare addresses alone without a token", () => {
 		expect(loginLink("http://192.168.5.44:30142", "a b")).toBe("http://192.168.5.44:30142/?token=a%20b");
 		expect(loginLink("https://abc.trycloudflare.com/", TOKEN)).toBe(`https://abc.trycloudflare.com/?token=${TOKEN}`);

@@ -9,7 +9,7 @@
  * 认证没开时 proxy 一律放行，这时开出去的局域网 / 公网入口就是一个免密 shell。
  */
 import { NextResponse } from "next/server";
-import { remoteBlocked, remoteLanEnabled, remoteStatus, setRemotePluginEnabled, startLan, startPublic, stopAll, stopLan, stopPublic } from "@/lib/remote/supervisor";
+import { refreshPublicStatus, remoteBlocked, remoteLanEnabled, remoteStatus, setRemotePluginEnabled, startLan, startPublic, stopAll, stopLan, stopPublic } from "@/lib/remote/supervisor";
 import { authEnabled } from "@/lib/web-auth";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,7 @@ function bad(error: string, status = 400) {
 }
 
 export async function GET() {
+	await refreshPublicStatus();
 	return respond();
 }
 

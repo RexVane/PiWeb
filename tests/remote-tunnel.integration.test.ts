@@ -51,9 +51,14 @@ function get(url: string, host?: string, timeoutMs = 25_000) {
 describe("real cloudflared tunnel", () => {
 	it.runIf(RUN)("serves the LAN entry through a public https URL with the mobile CSS injected", async () => {
 		resetRemoteSupervisor();
-		process.env.PIWEB_CLOUDFLARED = managedEnginePath();
+		process.env.PIWEB_CLOUDFLARED ||= managedEnginePath();
 
-		upstream = http.createServer((_request, response) => {
+		upstream = http.createServer((request, response) => {
+			if (request.url === "/api/health") {
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(JSON.stringify({ success: true, data: { ok: true, service: "piweb" } }));
+				return;
+			}
 			response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 			response.end(PAGE);
 		});
