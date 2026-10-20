@@ -88,7 +88,7 @@ describe("real SDK session resource isolation", () => {
 		expect(session.getAllTools().map((tool) => tool.name)).toContain("probe_tool");
 		expect(session.getActiveToolNames()).not.toContain("probe_tool");
 		await session.reload();
-		expect(session.getActiveToolNames()).toEqual(["read", "grep", "find", "ls"]);
+		expect(session.getActiveToolNames()).toEqual(["read", "grep", "find", "ls", "ask_user_question"]);
 		expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read", "probe_tool"] })).toMatchObject({ ok: true });
 		expect(await manager.execute(m, { cmd: "reload" })).toMatchObject({ ok: true });
 		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
@@ -161,6 +161,28 @@ describe("real SDK session resource isolation", () => {
 		expect(m.subscribers.has(replay)).toBe(false);
 		expect(await manager.execute(m, { cmd: "extensionUiResponse", requestId: id, confirmed: false })).toMatchObject({ ok: false });
 		manager.unsubscribe(m, send);
+	});
+
+	it("registers pi's question window in every preset and hands the browser's answer back to the model", async () => {
+		const { m, session } = await create();
+		// 新会话默认 readonly：选择窗口只是问用户、不碰文件，也要开着
+		expect(session.getActiveToolNames()).toContain("ask_user_question");
+		const tool = session.getToolDefinition("ask_user_question")!;
+		const questions = [{ question: "Which DB?", header: "DB", options: [{ label: "Postgres (Recommended)", description: "solid" }, { label: "SQLite" }] }];
+		// 没有页面订阅也挂着等：用户回来打开页面再答
+		const run = tool.execute("call-ask", { questions }, undefined, undefined, undefined as never);
+		await vi.waitFor(() => expect(m.ui?.getPendingRequests()).toHaveLength(1));
+		const request = (await manager.buildSnapshot(m)).extensionUiRequests![0];
+		expect(request).toMatchObject({ method: "questions", questions });
+		const value = JSON.stringify({ answers: [{ selected: ["SQLite"] }] });
+		expect(await manager.execute(m, { cmd: "extensionUiResponse", requestId: request.id, value })).toMatchObject({ ok: true });
+		const result = await run;
+		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("1. Which DB? → SQLite") });
+		expect((await manager.buildSnapshot(m)).extensionUiRequests).toEqual([]);
+		for (const preset of ["standard", "full"] as const) {
+			expect(await manager.execute(m, { cmd: "setToolPreset", preset })).toMatchObject({ ok: true });
+			expect(session.getActiveToolNames()).toContain("ask_user_question");
+		}
 	});
 
 	it("refreshes trust for every hot session without invalidating the discovery runtime", async () => {

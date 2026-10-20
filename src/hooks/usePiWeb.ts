@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
+import type { AskQuestion } from "@/lib/ask-user";
 import type {
 	GrowthConsentRequest,
 	GrowthRound,
@@ -32,13 +33,17 @@ export interface ToolCardState {
 	endedAt?: number;
 }
 
-/** 扩展发来的、需要浏览器应答的对话框（对应 pi RPC 的 extension_ui_request） */
+/**
+ * 需要浏览器应答的对话框：扩展发来的 select/confirm/input（对应 pi RPC 的 extension_ui_request），
+ * 以及内置 ask_user_question 的选择窗口（questions，显示在输入框上方）
+ */
 export interface ExtensionDialog {
 	id: string;
-	method: "select" | "confirm" | "input";
+	method: "select" | "confirm" | "input" | "questions";
 	title: string;
 	message?: string;
 	options?: string[];
+	questions?: AskQuestion[];
 	placeholder?: string;
 	timeout?: number;
 	ts: number;
@@ -237,11 +242,11 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 			}
 			return s;
 		case "extension_ui": {
-			if (evt.method === "select" || evt.method === "confirm" || evt.method === "input") {
+			if (isDialogMethod(evt.method)) {
 				if (s.extensionDialogs.some((dialog) => dialog.id === evt.id)) return s;
 				s.extensionDialogs = [
 					...s.extensionDialogs,
-					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, placeholder: evt.placeholder, timeout: evt.timeout, ts: evt.ts },
+					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, questions: evt.questions, placeholder: evt.placeholder, timeout: evt.timeout, ts: evt.ts },
 				];
 			} else if (evt.method === "notify") {
 				s.extensionNotices = [...s.extensionNotices.slice(-4), { id: evt.id, message: evt.message ?? "", type: evt.notifyType ?? "info", ts: evt.ts }];
@@ -304,12 +309,16 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 	}
 };
 
+function isDialogMethod(method: Extract<WebEvent, { type: "extension_ui" }>["method"]): method is ExtensionDialog["method"] {
+	return method === "select" || method === "confirm" || method === "input" || method === "questions";
+}
+
 export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: ExtensionDialog[] = []): ExtensionDialog[] {
 	// undefined 仅用于兼容旧服务端；新快照的空数组必须清除已答/取消的旧对话框。
 	if (snapshot.extensionUiRequests === undefined) return previous;
 	const dialogs = new Map<string, ExtensionDialog>();
 	for (const request of snapshot.extensionUiRequests) {
-		if (request.method === "select" || request.method === "confirm" || request.method === "input") {
+		if (isDialogMethod(request.method)) {
 			dialogs.set(request.id, { ...request, method: request.method, title: request.title ?? "" });
 		}
 	}
@@ -957,7 +966,7 @@ export function usePiWeb() {
 
 	/** 强制重连 SSE 拿新快照（navigate 等场景） */
 	const resync = useCallback(() => setResyncNonce((n) => n + 1), []);
-	/** 应答扩展对话框（select/confirm/input）；cancelled=true 表示用户关掉了 */
+	/** 应答扩展对话框（select/confirm/input）或选择窗口（questions）；cancelled=true 表示用户关掉了 / 跳过 */
 	const answerExtensionDialog = useCallback(
 		async (id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => {
 			setState((s) => ({ ...s, extensionDialogs: s.extensionDialogs.filter((d) => d.id !== id) }));

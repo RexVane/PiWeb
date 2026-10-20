@@ -55,6 +55,7 @@ import {
 	type ModelErrorKind,
 	type ToolKind,
 } from "@/lib/process-format";
+import { ASK_RESULT_PREFIX, ASK_USER_TOOL } from "@/lib/ask-user";
 
 type Dict = Record<string, string>;
 type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
@@ -354,6 +355,11 @@ function toolSummary(name: string, args: unknown, cwd?: string): { text: string;
 	}
 	if (n === "grep" || n === "glob" || n === "find") return { text: [str(a.pattern), rel(a.path)].filter(Boolean).join("  "), scriptLines: 0 };
 	if (kind === "read" || kind === "write" || n === "ls") return { text: rel(a.path ?? a.file_path), scriptLines: 0 };
+	if (n === ASK_USER_TOOL) {
+		const questions = Array.isArray(a.questions) ? a.questions : [];
+		const text = questions.map((q) => str((q as Record<string, unknown> | null)?.question)).filter(Boolean).join(" · ");
+		return { text: text.replace(/\s+/g, " ").slice(0, 160), scriptLines: 0 };
+	}
 	const first = Object.values(a).find((v) => typeof v === "string") as string | undefined;
 	return { text: (first ?? "").replace(/\s+/g, " ").slice(0, 160), scriptLines: 0 };
 }
@@ -381,6 +387,7 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 		const h = exitCode !== undefined && exitCode !== 0 ? `${t.toolFailed} · ${t.toolExit.replace("{code}", String(exitCode))}` : t.toolFailed;
 		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
 	}
+	if (state.name === ASK_USER_TOOL) return askPreview(body, t);
 	switch (kind) {
 		case "read": {
 			const lang = langOfPath(str(a?.path ?? a?.file_path) ?? "");
@@ -400,8 +407,19 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	}
 }
 
+/** 选择窗口的结果：跳过 / 超时给一句话，答了就列出每题「问题 → 答案」（结果文本由 ask-user.ts 的 formatOutcome 生成） */
+function askPreview(body: string[], t: Dict): Preview {
+	const first = body[0] ?? "";
+	if (first.startsWith(ASK_RESULT_PREFIX.skipped)) return { head: t.askStepSkipped, lines: [], hidden: 0 };
+	if (first.startsWith(ASK_RESULT_PREFIX.timeout)) return { head: t.askStepTimeout, lines: [], hidden: 0 };
+	if (!first.startsWith(ASK_RESULT_PREFIX.answered)) return body.length ? { lines: body.slice(0, 2), hidden: Math.max(0, body.length - 2) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
+	const lines = body.filter((line) => /^\d+\. /.test(line)).map((line) => line.replace(/\(their own words\) /g, ""));
+	return { lines, hidden: 0 };
+}
+
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
+	if (n === ASK_USER_TOOL) return t.stepAsked;
 	if (kind === "cmd") return t.stepRan;
 	if (kind === "read") return t.stepRead;
 	if (kind === "search") return t.stepSearched;
@@ -505,7 +523,7 @@ const ToolStep = memo(function ToolStep({
 				onClick={hasDiff ? toggle : undefined}
 				onKeyDown={hasDiff ? onKey : undefined}
 			>
-				{running ? <span className="pw-shimmer">{t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
+				{running ? <span className="pw-shimmer">{name === ASK_USER_TOOL ? t.stepAskWaiting : t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
 				{summary.text ? (
 					<span className="pw-arg" title={argsTitle}>{summary.text}</span>
 				) : (

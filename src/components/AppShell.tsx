@@ -9,6 +9,7 @@ import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
+import { AskUserCard } from "@/components/AskUserCard";
 import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
@@ -458,6 +459,9 @@ export function AppShell() {
 		[snapshot?.contextResources],
 	);
 	const isStreaming = snapshot?.isStreaming ?? false;
+	// pi 的选择窗口贴在输入框上方，扩展的 select/confirm/input 仍是居中弹窗
+	const askDialog = state.extensionDialogs.find((dialog) => dialog.method === "questions") ?? null;
+	const modalDialog = state.extensionDialogs.find((dialog) => dialog.method !== "questions") ?? null;
 
 	useEffect(() => {
 		if (!state.error) return;
@@ -1072,8 +1076,11 @@ export function AppShell() {
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
+										{askDialog && <AskUserCard key={askDialog.id} dialog={askDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />}
 										<ChatInput
 											key={draftKey}
+											// 问题卡占着输入框上方：附件预览改成随文档流排在输入框里，免得浮层盖住卡片
+											attachmentLayout={askDialog ? "flow" : undefined}
 												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
 												onDraftChange={saveSessionDraft}
 												onUploadError={(message) => failUpload(draftKey, message)}
@@ -1168,8 +1175,8 @@ export function AppShell() {
 				/>
 			)}
 
-			<ExtensionDialogHost dialog={state.extensionDialogs[0] ?? null} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
-			{/* 扩展对话框优先：它在阻塞 pi，建仓库的询问可以等 */}
+			<ExtensionDialogHost dialog={modalDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			{/* 扩展对话框和选择窗口优先：它们在阻塞 pi，建仓库的询问可以等（否则弹窗会盖住输入框上方的问题卡） */}
 			{state.growth.consent && !state.extensionDialogs.length && (
 				<GrowthConsentDialog request={state.growth.consent} onAnswer={(allow) => void answerGrowthConsent(allow)} />
 			)}

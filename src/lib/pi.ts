@@ -495,10 +495,10 @@ export function openSessionManager(sessionPath: string): SessionManager {
 	return SessionManager.open(sessionPath);
 }
 
-/** 工具预设 → pi 工具白名单 */
+/** 工具预设 → pi 工具白名单（ask_user_question 只是问用户、不碰文件，各档都放行） */
 export const TOOL_PRESETS: Record<"readonly" | "standard" | "full", string[]> = {
-	readonly: ["read", "grep", "find", "ls"],
-	standard: ["read", "grep", "find", "ls", "bash", "edit", "write", "codemode", "tool_search"],
+	readonly: ["read", "grep", "find", "ls", "ask_user_question"],
+	standard: ["read", "grep", "find", "ls", "bash", "edit", "write", "codemode", "tool_search", "ask_user_question"],
 	full: [], // 空 = 不限制（全部可用工具）
 };
 
