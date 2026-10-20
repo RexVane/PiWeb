@@ -2,6 +2,7 @@
  * 客户端 / 服务端共享类型：Web 事件协议、轨迹账本、会话视图模型。
  * 服务端把 pi 的 AgentSessionEvent 翻译成这里的渲染级事件，浏览器只消费这些。
  */
+import type { AskQuestion } from "./ask-user";
 
 // ---------- 会话元信息 ----------
 
@@ -152,13 +153,17 @@ export type WebEvent =
 			ts: number;
 	  }
 	| {
-			/** 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input 需要浏览器应答 */
+			/**
+			 * 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input 需要浏览器应答。
+			 * questions 是内置 ask_user_question 工具的选择窗口（输入框上方的卡片），应答 value 为 JSON 答案。
+			 */
 			type: "extension_ui";
 			id: string;
-			method: "select" | "confirm" | "input" | "notify" | "setStatus" | "setWorkingMessage";
+			method: "select" | "confirm" | "input" | "questions" | "notify" | "setStatus" | "setWorkingMessage";
 			title?: string;
 			message?: string;
 			options?: string[];
+			questions?: AskQuestion[];
 			placeholder?: string;
 			notifyType?: "info" | "warning" | "error";
 			statusKey?: string;
