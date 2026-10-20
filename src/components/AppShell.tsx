@@ -779,7 +779,7 @@ export function AppShell() {
 	// 正文行内代码里的路径走页内查看器；工具行上那个按钮仍然是本机编辑器（openInEditor）
 	const openPathInViewer = useCallback((filePath: string) => viewer.open(filePath), [viewer.open]);
 	// 打开面板时落在最新轮:useGrowth 活在 AppShell 里、不随抽屉卸载,state 不会自己回到最新,
-	// 所以每次从「关」变「开」(或换了工作区)都显式选一次最新轮。
+	// 所以每次进入项目入口(或换了工作区)都显式选一次最新轮，并重置目录展开。
 	// 新轮次出现时不再自动跳——用户打开面板后停在哪一轮就是哪一轮。
 	growthSelectLatest.current = growth.selectLatest;
 	useEffect(() => {
@@ -788,12 +788,13 @@ export function AppShell() {
 			skipLatestOnce.current = false;
 			return;
 		}
+		if (drawerSection !== "project") return;
 		if (skipLatestOnce.current) {
 			skipLatestOnce.current = false;
 			return;
 		}
 		growthSelectLatest.current();
-	}, [drawerOpen, panelCwd]);
+	}, [drawerOpen, drawerSection, panelCwd]);
 	const roundBadges = useMemo(() => {
 		const map = new Map<string, RoundBadge>();
 		for (const round of growth.rounds) {

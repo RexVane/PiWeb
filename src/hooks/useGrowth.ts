@@ -47,7 +47,7 @@ export interface GrowthApi {
 	expanded: Set<string>;
 	/** 最新一轮刚改动的路径（入场动画） */
 	fresh: Set<string>;
-	/** 显式选中最新一轮(打开面板时落在最新轮);没有轮次时不动 */
+	/** 打开项目时选中最新轮，并重置为只展开改动目录；没有轮次时全部收起。 */
 	selectLatest(): void;
 	/** 选中某一轮（时间轴柱）；选中最新一轮也只是普通选中,不再是「回到跟随」 */
 	select(commit: string): void;
@@ -196,6 +196,7 @@ export function useGrowth({
 	const [files, setFiles] = useState<{ key: string; tree: string; files: TreeFile[] } | null>(null);
 	const [rangeChanges, setRangeChanges] = useState<{ key: string; changes: GrowthChange[]; error?: string } | null>(null);
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+	const [expansionReset, setExpansionReset] = useState(0);
 	const [fresh, setFresh] = useState<Set<string>>(() => new Set());
 	const [lazyState, setLazyState] = useState(() => ({ scope: requestScope, children: new Map<string, TreeNode[]>() }));
 	const lazyChildren = useMemo(() => lazyState.scope === requestScope ? lazyState.children : new Map<string, TreeNode[]>(), [lazyState, requestScope]);
@@ -222,29 +223,6 @@ export function useGrowth({
 		setScopeState(s);
 		localStorage.setItem("piweb.growth.scope", s);
 	}, []);
-
-	// 展开集合按工作区持久化
-	useEffect(() => {
-		if (!cwd) return;
-		try {
-			const raw = localStorage.getItem(`piweb.growth.expanded:${cwdKey(cwd)}`);
-			setExpanded(new Set(raw ? (JSON.parse(raw) as string[]) : []));
-		} catch {
-			setExpanded(new Set());
-		}
-		collapsedByUser.current = new Set();
-	}, [cwd]);
-	const persistExpanded = useCallback(
-		(next: Set<string>) => {
-			if (!cwd) return;
-			try {
-				localStorage.setItem(`piweb.growth.expanded:${cwdKey(cwd)}`, JSON.stringify([...next].slice(0, 2000)));
-			} catch {
-				/* ignore */
-			}
-		},
-		[cwd],
-	);
 
 	// 切会话：清空选中(selected 会回落到新会话的最新一轮)、清实时相关状态
 	useEffect(() => {
@@ -455,7 +433,7 @@ export function useGrowth({
 		return [...paths];
 	}, [files, selected, lazyChildren, key]);
 
-	// 新的一轮到来（不再跟随）：用户正看着最新这轮时,自动展开改动路径上的目录（用户手动收起过的除外）+ 入场动画
+	// 新轮次只给当前所选轮播入场动画；目录展开由下面的范围状态统一处理。
 	useEffect(() => {
 		if (!latest || latest.commit === lastRevealed.current) return;
 		const first = lastRevealed.current === "";
@@ -466,53 +444,45 @@ export function useGrowth({
 		if (first && !liveRounds.some((round) => round.commit === latest.commit)) return;
 		const list = latest.changes;
 		if (!list.length) return;
-		const dirs = dirsToReveal(list.slice(0, REVEAL_LIMIT)).filter((d) => !collapsedByUser.current.has(d));
-		if (dirs.length) {
-			setExpanded((prev) => {
-				const next = new Set(prev);
-				for (const d of dirs) next.add(d);
-				persistExpanded(next);
-				return next;
-			});
-		}
 		setFresh(new Set(list.map((c) => c.path)));
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 		freshTimer.current = setTimeout(() => setFresh(new Set()), FRESH_MS);
-	}, [latest, selected, liveRounds, persistExpanded]);
-	/** 用户主动选中的那一轮(决定是否自动展开目录);打开面板落到最新轮不写它 */
-	const expandCommit = useRef<string | null>(null);
+	}, [latest, selected, liveRounds]);
 	useEffect(() => () => {
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 	}, []);
 
-	// 手动选轮（用户主动点选）：展开这一轮改动的目录
+	// 每次打开、切轮次 / 范围 / 会话时，从收起状态只展开当前改动的祖先目录。
+	// 同一范围的异步 diff 或刷新补齐改动时，保留用户刚刚手动收起的目录。
+	const expansionKey = JSON.stringify([key, selected?.commit ?? "", scope, expansionReset]);
+	const expansionContext = useRef("");
 	useEffect(() => {
-		if (!selected || expandCommit.current !== selected.commit) return;
-		const list = changes.slice(0, REVEAL_LIMIT);
-		if (!list.length) return;
-		const dirs = dirsToReveal(list);
+		const reset = expansionContext.current !== expansionKey;
+		expansionContext.current = expansionKey;
+		if (reset) collapsedByUser.current = new Set();
+		const dirs = dirsToReveal(changes.slice(0, REVEAL_LIMIT)).filter((dir) => !collapsedByUser.current.has(dir));
 		setExpanded((prev) => {
-			if (dirs.every((d) => prev.has(d))) return prev;
-			const next = new Set(prev);
+			const next = reset ? new Set<string>() : new Set(prev);
 			for (const d of dirs) next.add(d);
+			if (next.size === prev.size && [...next].every((dir) => prev.has(dir))) return prev;
 			return next;
 		});
-	}, [selected, changes]);
+	}, [expansionKey, changes]);
 
-	/** 显式选到最新一轮:打开面板时用,不触发上面的目录自动展开 */
+	/** 打开项目：落到最新轮，清掉上次浏览及查看器「全部展开」留下的状态。 */
 	const selectLatest = useCallback(() => {
 		const last = rounds[rounds.length - 1];
 		if (last) setSelectedCommit(last.commit);
+		setExpansionReset((value) => value + 1);
 	}, [rounds]);
 	const select = useCallback((commit: string) => {
-		expandCommit.current = commit;
 		setSelectedCommit(commit);
+		setExpansionReset((value) => value + 1);
 	}, []);
 	const prev = useCallback(() => {
 		if (!selected) return;
 		const idx = rounds.findIndex((round) => round.commit === selected.commit);
 		if (idx > 0) {
-			expandCommit.current = rounds[idx - 1].commit;
 			setSelectedCommit(rounds[idx - 1].commit);
 		}
 	}, [selected, rounds]);
@@ -520,7 +490,6 @@ export function useGrowth({
 		if (!selected) return;
 		const idx = rounds.findIndex((round) => round.commit === selected.commit);
 		if (idx < 0 || idx >= rounds.length - 1) return;
-		expandCommit.current = rounds[idx + 1].commit;
 		setSelectedCommit(rounds[idx + 1].commit);
 	}, [selected, rounds]);
 
@@ -535,11 +504,10 @@ export function useGrowth({
 					nextSet.add(path);
 					collapsedByUser.current.delete(path);
 				}
-				persistExpanded(nextSet);
 				return nextSet;
 			});
 		},
-		[persistExpanded],
+		[],
 	);
 	const revealPath = useCallback(
 		(path: string) => {
@@ -552,23 +520,20 @@ export function useGrowth({
 					nextSet.add(d);
 					collapsedByUser.current.delete(d);
 				}
-				persistExpanded(nextSet);
 				return nextSet;
 			});
 		},
-		[persistExpanded],
+		[],
 	);
 	const expandAll = useCallback(() => {
 		const all = new Set(allDirPaths(tree));
 		collapsedByUser.current = new Set();
 		setExpanded(all);
-		persistExpanded(all);
-	}, [tree, persistExpanded]);
+	}, [tree]);
 	const collapseAll = useCallback(() => {
-		const empty = new Set<string>();
-		setExpanded(empty);
-		persistExpanded(empty);
-	}, [persistExpanded]);
+		collapsedByUser.current = new Set(allDirPaths(tree));
+		setExpanded(new Set());
+	}, [tree]);
 
 	const expandLazy = useCallback(
 		async (path: string) => {
