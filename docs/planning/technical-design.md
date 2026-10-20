@@ -714,6 +714,12 @@ computer-use 在独立测试配置的生产服务中实际保存 256K / 32K，�
 
 ## 15. 构建产物与发布流程（2026-10-17）
 
+0.3.27 发布检查（#202）发现 #197 的锁文件缺失 sharp WASM 依赖的 `@emnapi/runtime`，以及
+Tailwind WASM 包内的 `@emnapi/core` / `@emnapi/runtime` 记录，导致 Linux、Windows 的 `npm ci`
+在安装前即报告锁文件不同步。使用与 CI 一致的 npm 11.19.1，在无 `node_modules` 的独立目录中
+按现有 manifest 和锁文件重新生成，补齐普通和 bundled 依赖记录并规范 peer 标记；未升级已有包版本。
+发布前以干净安装及跨平台 CI 为准，不能用已有 `node_modules` 上通过的测试替代安装校验。
+
 两种输出，用途不同：
 
 - `.next`：`npm run build` 的产物，本地验证与 dev 对照用。
