@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import lockfile from "proper-lockfile";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ refreshModelRuntime: vi.fn(), getModelRuntime: vi.fn() }));
@@ -18,6 +19,7 @@ import {
 	preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
 } from "../src/lib/models-service";
 import { GET, POST } from "../src/app/api/models/route";
+import { customModelGaps, fillModelFields } from "../src/lib/model-draft";
 
 let agentDir: string;
 let file: string;
@@ -51,6 +53,21 @@ async function expectOnlyConfig() {
 }
 
 describe("JSONC model configuration", () => {
+	it("persists audit capacities and false capabilities for a fresh SDK runtime after restart", async () => {
+		await fs.writeFile(file, JSON.stringify({ providers: { gateway: provider } }));
+		const snapshot = await readCustomProviders();
+		const config = JSON.parse(snapshot.content);
+		const filled = fillModelFields(config.providers, [{ provider: "gateway", index: 0, id: "model-a", contextWindow: 256000, maxTokens: 32000, vision: false, reasoning: false }]);
+		const result = await post(JSON.stringify({ ...config, providers: filled.providers }), snapshot.revision);
+		expect(result.status).toBe(200);
+		const persisted = JSON.parse((await readCustomProviders()).content);
+		expect(customModelGaps(persisted.providers)).toEqual([]);
+		const restarted = await ModelRuntime.create({ modelsPath: file, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+		expect(restarted.getError()).toBeUndefined();
+		expect(restarted.getModel("gateway", "model-a")).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: false });
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
 	it("round-trips BOM, comments, trailing commas, opaque fields, and inline keys without executing them", async () => {
 		const previous = '\uFEFF{\n// existing settings\n"opaque":{"keep":[1,2,]},\n"providers":{"gateway":{\n"baseUrl":"https://example.test/v1", "api":"openai-completions",\n"apiKey":"!must-not-execute", "headers":{"x-custom":"value"},\n"unknownProvider":{"keep":true}, "models":[{"id":"m","unknownModel":[1,2],"samplingParams":{"top_k":0},}],\n},},\n}';
 		await fs.writeFile(file, previous);

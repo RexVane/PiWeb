@@ -798,7 +798,8 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 	/** 保存成功返回 true（之后清空填写） */
 	onSave: (fills: ModelFieldFill[]) => Promise<boolean>;
 }) {
-	const { t } = useI18n();
+	const { t, lang } = useI18n();
+	const fieldLabels = { contextWindow: t.modelAuditColContext, maxTokens: t.modelAuditColOutput, input: t.modelAuditColVision, reasoning: t.reasoningLabel };
 	const [rows, setRows] = useState<Record<string, AuditRow>>({});
 	const keyOf = (gap: CustomModelGap) => `${gap.provider}\u0000${gap.index}`;
 	const rowOf = (gap: CustomModelGap) => rows[keyOf(gap)] ?? EMPTY_AUDIT_ROW;
@@ -884,48 +885,63 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 					{gaps.map((gap) => (
 						<div
 							key={keyOf(gap)}
-							role="row"
-							className="grid grid-cols-2 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]"
+							role="rowgroup"
 							style={{ borderBottom: "0.5px solid var(--dsw-border-l1)" }}
 						>
-							<div role="cell" className="col-span-2 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
-								<div className="truncate" style={{ fontWeight: 500 }}>{gap.name ?? gap.id}</div>
-								<div className="truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
-									{providerLabel(gap.provider)} / {gap.id}
+							<div role="row" className="grid grid-cols-2 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]">
+								<div role="cell" className="col-span-2 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
+									<div className="truncate" style={{ fontWeight: 500 }}>{gap.name ?? gap.id}</div>
+									<div className="truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+										{providerLabel(gap.provider)} / {gap.id}
+									</div>
+								</div>
+								<div role="cell" className="min-w-0">{capacityCell(gap, "contextWindow", t.modelAuditColContext)}</div>
+								<div role="cell" className="min-w-0">{capacityCell(gap, "maxTokens", t.modelAuditColOutput)}</div>
+								<div role="cell" className="min-w-0">
+									{/* 输入类型：文本 pi 总是接受（勾上不可点），图片这一勾就是 models.json 的 input 里加 image */}
+									<div className="flex flex-col gap-1">
+										<div className="flex items-center gap-3" role="group" aria-label={`${gap.id} ${t.modelAuditColVision}`}>
+											<label className="flex cursor-default items-center gap-1" style={{ color: "var(--dsw-label-tertiary)" }} title={t.visionInputTextHint}>
+												<input type="checkbox" checked disabled readOnly />
+												{t.visionInputText}
+											</label>
+											<label className="flex items-center gap-1" style={{ color: "var(--dsw-label-secondary)" }} title={t.visionInputImageHint}>
+												<input
+													type="checkbox"
+													checked={gap.missing.includes("input") ? rowOf(gap).vision === "image" : gap.vision === true}
+													disabled={busy || !gap.missing.includes("input")}
+													onChange={(event) => edit(gap, { vision: event.target.checked ? "image" : "text" })}
+													aria-label={`${gap.id} ${t.visionInputImage}`}
+												/>
+												{t.visionInputImage}
+											</label>
+										</div>
+										{gap.missing.includes("input") && rowOf(gap).vision === "" && (
+											<button type="button" className="text-left underline" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}
+												disabled={busy} aria-label={`${gap.id} ${t.modelAuditTextOnly}`} onClick={() => edit(gap, { vision: "text" })}>
+												{t.modelAuditTextOnly}
+											</button>
+										)}
+										{gap.missing.includes("input") && rowOf(gap).vision === "text" && (
+											<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.visionOff}</span>
+										)}
+									</div>
+								</div>
+								<div role="cell" className="min-w-0" title={t.reasoningHint}>
+									{gap.missing.includes("reasoning") ? (
+										<select className="pw-audit-field" aria-label={`${gap.id} ${t.reasoningLabel}`} value={rowOf(gap).reasoning} disabled={busy}
+											onChange={(event) => edit(gap, { reasoning: event.target.value as AuditRow["reasoning"] })}>
+											<option value="">{t.reasoningUnset}</option>
+											<option value="on">{t.reasoningOn}</option>
+											<option value="off">{t.reasoningOff}</option>
+										</select>
+									) : <span style={{ color: "var(--dsw-label-secondary)" }}>{gap.reasoning ? t.reasoningOn : t.reasoningOff}</span>}
 								</div>
 							</div>
-							<div role="cell" className="min-w-0">{capacityCell(gap, "contextWindow", t.modelAuditColContext)}</div>
-							<div role="cell" className="min-w-0">{capacityCell(gap, "maxTokens", t.modelAuditColOutput)}</div>
-							<div role="cell" className="min-w-0">
-								{/* 输入类型：文本 pi 总是接受（勾上不可点），图片这一勾就是 models.json 的 input 里加 image */}
-								{gap.missing.includes("input") || true ? (
-									<div className="flex items-center gap-3" role="group" aria-label={`${gap.id} ${t.modelAuditColVision}`}>
-										<label className="flex cursor-default items-center gap-1" style={{ color: "var(--dsw-label-tertiary)" }} title={t.visionInputTextHint}>
-											<input type="checkbox" checked disabled readOnly />
-											{t.visionInputText}
-										</label>
-										<label className="flex items-center gap-1" style={{ color: "var(--dsw-label-secondary)" }} title={t.visionInputImageHint}>
-											<input
-												type="checkbox"
-												checked={gap.missing.includes("input") ? rowOf(gap).vision === "image" : gap.vision === true}
-												disabled={busy || !gap.missing.includes("input")}
-												onChange={(event) => edit(gap, { vision: event.target.checked ? "image" : "text" })}
-												aria-label={`${gap.id} ${t.visionInputImage}`}
-											/>
-											{t.visionInputImage}
-										</label>
-									</div>
-								) : null}
-							</div>
-							<div role="cell" className="min-w-0" title={t.reasoningHint}>
-								{gap.missing.includes("reasoning") ? (
-									<select className="pw-audit-field" aria-label={`${gap.id} ${t.reasoningLabel}`} value={rowOf(gap).reasoning} disabled={busy}
-										onChange={(event) => edit(gap, { reasoning: event.target.value as AuditRow["reasoning"] })}>
-										<option value="">{t.reasoningUnset}</option>
-										<option value="on">{t.reasoningOn}</option>
-										<option value="off">{t.reasoningOff}</option>
-									</select>
-								) : <span style={{ color: "var(--dsw-label-secondary)" }}>{gap.reasoning ? t.reasoningOn : t.reasoningOff}</span>}
+							<div role="row">
+								<div role="cell" aria-colspan={5} className="px-1 pb-2" style={{ fontSize: 11.5, color: "var(--dsw-warn)" }}>
+									{t.modelAuditRemaining.replace("{fields}", gap.missing.map((field) => fieldLabels[field]).join(lang === "zh" ? "、" : ", "))}
+								</div>
 							</div>
 						</div>
 					))}
@@ -958,6 +974,7 @@ function ModelsSection() {
 	// 内置 provider → 目录里的模型 ID：编辑时同 ID 的行写 modelOverrides，「获取可用模型」里不再可选
 	const [catalogModelIds, setCatalogModelIds] = useState<Record<string, string[]>>({});
 	const [editing, setEditing] = useState<string | null>(null);
+	const editBaseRevision = useRef<string | null>(null);
 	const [keyDraft, setKeyDraft] = useState("");
 	const [adding, setAdding] = useState<"builtin" | "custom" | null>(null);
 	const [cId, setCId] = useState("");
@@ -1263,7 +1280,16 @@ function ModelsSection() {
 			notify(false, result.error);
 			return result;
 		}
-		return call({ action: "saveCustomProviders", revision: customRevision, content: JSON.stringify({ ...custom, providers: content }, null, 2) });
+		const next = { ...custom, providers: content };
+		const result = await request({ action: "saveCustomProviders", revision: customRevision, content: JSON.stringify(next, null, 2) });
+		notify(result.success, result.success && result.data?.requiresSessionReopen ? t.modelConfigReopen : result.error);
+		if (result.success) {
+			// 写入已确认，列表刷新失败也不能重新显示旧缺口、把已保存的容量变回空格。
+			setCustom(next);
+			setCustomRevision(null);
+			await load();
+		}
+		return result;
 	};
 
 	/** 体检卡片的保存：只补空字段，走与编辑 provider 同一条写入（revision 乐观锁、密钥由服务端从原文件恢复） */
@@ -1296,6 +1322,7 @@ function ModelsSection() {
 	};
 
 	const startEdit = (id: string) => {
+		editBaseRevision.current = customRevision;
 		setEditing(editing === id ? null : id);
 		setKeyDraft("");
 		setEditBusy(false);
@@ -1338,6 +1365,7 @@ function ModelsSection() {
 
 	const saveCustomEdit = async () => {
 		if (editBusy) return;
+		if (editBaseRevision.current !== customRevision) { notify(false, t.modelEditStale); return; }
 		const invalid = validateModelDrafts(cModels);
 		if (invalid || !cBaseUrl.trim()) return;
 		setEditBusy(true);
@@ -1363,6 +1391,7 @@ function ModelsSection() {
 	/** 内置 provider 的编辑保存：写 models.json 覆盖层 + 可选 setKey（多步认证走登录弹窗） */
 	const saveBuiltinEdit = async (provider: { id: string; apis: string[] }) => {
 		if (editBusy) return;
+		if (editBaseRevision.current !== customRevision) { notify(false, t.modelEditStale); return; }
 		const invalid = validateModelDrafts(bModels);
 		if (invalid) return;
 		setEditBusy(true);

@@ -11,24 +11,28 @@ const originalModel = { id: "test-model", name: "Test model", reasoning: true, i
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false }: {
-	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean;
+function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false, auditMissing = false, refreshFailure = false }: {
+	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean; auditMissing?: boolean; refreshFailure?: boolean;
 } = {}) {
 	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
-	if (auditOnly) {
+	if (auditOnly || auditMissing) {
 		const undeclared = structuredClone(originalModel);
 		Reflect.deleteProperty(undeclared, "reasoning");
+		if (auditMissing) for (const field of ["contextWindow", "maxTokens", "input"]) Reflect.deleteProperty(undeclared, field);
 		saved.providers.gateway.models = [structuredClone(originalModel), { ...undeclared, id: "undeclared" }];
 	}
 	let revision = "rev-1";
 	const writes: Array<{ action: string; content: string; revision: string }> = [];
 	const keys: Array<{ providerId: string; apiKey: string }> = [];
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-		if (url === "/api/models?custom=1") return response({
+		if (url === "/api/models?custom=1") {
+			if (refreshFailure && writes.length) return { ok: false, status: 503, json: async () => ({ success: false, error: "temporary refresh failure" }) };
+			return response({
 			providers: [{ id: "gateway", name: "Gateway", builtIn: builtin, authReady: true, authConfigured: true, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }, ...extraProviders],
 			customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: ["gateway"] },
 			...(catalog ? { catalogModelIds: catalog } : {}),
-		});
+			});
+		}
 		if (url === "/api/models") {
 			const body = JSON.parse(String(init?.body));
 			if (body.action === "setKey") {
@@ -58,6 +62,51 @@ function response(data: unknown) { return { ok: true, status: 200, json: async (
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "编辑" })); }
 
 describe("SettingsPanel model round trip and revision", () => {
+	it("shows the remaining fields after saving capacities, and explicit text-only completion survives reopening", async () => {
+		const { saved } = setup({ auditMissing: true });
+		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 上下文" }), { target: { value: "256K" } });
+		fireEvent.change(screen.getByRole("textbox", { name: "undeclared 输出上限" }), { target: { value: "32K" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
+		await waitFor(() => expect(screen.queryByRole("textbox", { name: "undeclared 上下文" })).toBeNull());
+		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000 });
+		expect(screen.getByText("仍需补充：视觉、推理")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "undeclared 确认纯文本" }));
+		fireEvent.change(screen.getByRole("combobox", { name: "undeclared 推理" }), { target: { value: "off" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: false });
+		cleanup();
+		render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
+		fireEvent.click(screen.getByRole("button", { name: "模型" }));
+		await screen.findByRole("button", { name: "编辑" });
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+	});
+
+	it("retains confirmed saved values when refreshing the model list fails", async () => {
+		const { saved } = setup({ auditMissing: true, refreshFailure: true });
+		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 上下文" }), { target: { value: "256K" } });
+		fireEvent.change(screen.getByRole("textbox", { name: "undeclared 输出上限" }), { target: { value: "32K" } });
+		fireEvent.click(screen.getByRole("checkbox", { name: "undeclared 图片" }));
+		fireEvent.change(screen.getByRole("combobox", { name: "undeclared 推理" }), { target: { value: "on" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
+		await screen.findByText("temporary refresh failure");
+		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text", "image"], reasoning: true });
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+	});
+
+	it.each([false, true])("prevents an older provider draft from deleting saved capabilities (builtin=%s)", async (builtin) => {
+		const { writes, saved } = setup({ auditOnly: true, builtin });
+		await edit();
+		if (builtin) fireEvent.click(screen.getByRole("button", { name: "自定义设置" }));
+		fireEvent.change(screen.getByRole("combobox", { name: "undeclared 推理" }), { target: { value: "off" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+		fireEvent.click(screen.getByRole("button", { name: /^保存$/ }));
+		await screen.findByText("模型配置已变更，请取消后重新编辑，避免覆盖已保存的参数。");
+		expect(writes).toHaveLength(1);
+		expect(saved().providers.gateway.models[1].reasoning).toBe(false);
+	});
+
 	it.each([["on", true], ["off", false]])("fills an otherwise complete model's missing reasoning with %s", async (choice, expected) => {
 		const { writes, saved } = setup({ auditOnly: true });
 		const select = await screen.findByRole("combobox", { name: "undeclared 推理" });
