@@ -112,12 +112,18 @@ export function AskUserCard({
 		event.stopPropagation();
 	};
 
+	/** 行尾的单选圈 / 多选框：一眼看出这题能选几个 */
+	const mark = (checked: boolean) => (
+		<span className="pw-ask-mark" data-kind={question.multiSelect ? "check" : "radio"} data-checked={checked || undefined} aria-hidden>
+			{checked && question.multiSelect && <IconCheckOutline14 size={11} />}
+		</span>
+	);
 	const title = many ? t.askTitleMany.replace("{n}", String(questions.length)) : t.askTitle;
 	const questionId = `pw-ask-${dialog.id}-q`;
 	return (
 		<section ref={cardRef} className="pw-ask" tabIndex={-1} aria-label={title} onKeyDown={onKeyDown} data-testid="ask-user-card">
 			<div className="pw-ask-head">
-				<span className="pw-ask-badge" aria-hidden>?</span>
+				<span className="pw-ask-dot" aria-hidden />
 				<span className="pw-ask-title">{title}</span>
 				{many && (
 					<div className="pw-ask-tabs" role="tablist">
@@ -155,17 +161,17 @@ export function AskUserCard({
 							className="pw-ask-option"
 							onClick={() => choose(option.label)}
 						>
-							<span className="pw-ask-key">{i + 1}</span>
+							<span className="pw-ask-num">{i + 1}</span>
 							<span className="pw-ask-text">
 								<span className="pw-ask-label">{option.label}</span>
 								{option.description && <span className="pw-ask-desc">{option.description}</span>}
 							</span>
-							{checked && <IconCheckOutline14 size={14} className="pw-ask-check" />}
+							{mark(checked)}
 						</button>
 					);
 				})}
 				<label className="pw-ask-option pw-ask-other" data-checked={draft.other.trim() ? true : undefined}>
-					<span className="pw-ask-key">{question.options.length + 1}</span>
+					<span className="pw-ask-num">{question.options.length + 1}</span>
 					<input
 						key={current}
 						ref={otherRef}
@@ -175,14 +181,15 @@ export function AskUserCard({
 						maxLength={4000}
 						onChange={(event) => setOther(event.target.value)}
 					/>
+					{mark(Boolean(draft.other.trim()))}
 				</label>
 			</div>
 			<div className="pw-ask-foot">
 				<span className="pw-ask-hint">{t.askWaitHint}</span>
-				<button type="button" className="btn-outline" style={{ height: 30, fontSize: 13 }} onClick={() => onAnswer(dialog.id, { cancelled: true })}>
+				<button type="button" className="pw-ask-skip" onClick={() => onAnswer(dialog.id, { cancelled: true })}>
 					{t.askSkip}
 				</button>
-				<button type="button" className="btn-primary-white" style={{ height: 30, fontSize: 13 }} disabled={primaryDisabled} onClick={primary}>
+				<button type="button" className="btn-primary-white" style={{ height: 30, padding: "0 16px", fontSize: 13 }} disabled={primaryDisabled} onClick={primary}>
 					{primaryLabel}
 				</button>
 			</div>
