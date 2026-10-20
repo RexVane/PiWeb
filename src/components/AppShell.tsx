@@ -1087,7 +1087,8 @@ export function AppShell() {
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
 											contextWindow={snapshot?.contextUsage?.contextWindow ?? null}
 											contextSource={{ systemChars: contextSystemChars, messages: state.messages, breakdown: snapshot?.contextBreakdown, loadFull: () => sendCommand({ cmd: "prepare" }) }}
-											contextVisible={(snapshot?.messages?.length ?? 0) > 0}
+											// 首条消息由增量事件写入 state.messages，初次快照可能一直为空。
+											contextVisible={state.messages.length > 0}
 											model={snapshot?.model}
 											thinkingLevel={snapshot?.thinkingLevel}
 											thinkingLevels={snapshot?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
