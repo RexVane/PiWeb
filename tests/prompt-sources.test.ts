@@ -138,8 +138,15 @@ describe("listPromptSources / readPromptSource（真实资源加载器）", () =
 		await expect(readPromptSource(outside, ws, forged)).rejects.toThrow(/not part of the discovered/);
 		await expect(readPromptSource(path.join(path.dirname(skill), "..", "..", "private.txt"), ws, skill)).rejects.toThrow(/escapes/);
 		const linked = path.join(path.dirname(skill), "escape.md");
-		await fs.symlink(outside, linked);
-		await expect(readPromptSource(linked, ws, skill)).rejects.toThrow(/escapes/);
+		let symlinked = true;
+		try {
+			await fs.symlink(outside, linked);
+		} catch (error) {
+			// Windows 没开开发者模式且非管理员时建不了符号链接（EPERM），跳过符号链接这一条，其余校验照旧
+			if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+			symlinked = false;
+		}
+		if (symlinked) await expect(readPromptSource(linked, ws, skill)).rejects.toThrow(/escapes/);
 		// 全局 AGENTS / 模板也不能用来授权整个人目录。
 		await expect(readPromptSource(outside, ws, path.join(agentDir, "prompts", "personal.md"))).rejects.toThrow(/escapes/);
 	});
