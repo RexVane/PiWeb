@@ -27,7 +27,7 @@ const session = (overrides: Record<string, unknown>) => ({
 	...overrides,
 });
 
-function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?: string; errors?: unknown[] } = {}) {
+function setup(options: { sessions?: unknown[]; imported?: string[]; archived?: string[]; workspace?: string; errors?: unknown[]; importResponse?: Promise<unknown> } = {}) {
 	const posts: Array<{ url: string; body: unknown }> = [];
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 		if (url === "/api/sessions/import" && (!init || init.method !== "POST")) {
@@ -39,11 +39,13 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?:
 				],
 				errors: options.errors ?? [],
 				imported: options.imported ?? ["zcode:z2"],
+				archived: options.archived ?? [],
 				sources: ["claude", "codex", "grok", "zcode", "dsh", "opencode"],
 			});
 		}
 		if (url === "/api/sessions/import" && init?.method === "POST") {
 			posts.push({ url, body: JSON.parse(String(init.body)) });
+			if (options.importResponse) return options.importResponse;
 			return response({
 				imported: 1,
 				skipped: 1,
@@ -65,6 +67,85 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?:
 }
 
 describe("导入会话面板", () => {
+	it("已归档的会话可选择恢复，普通已导入会话仍然禁用", async () => {
+		const options = { archived: ["zcode:z2"], importResponse: Promise.resolve(response({ imported: 0, restored: 1, skipped: 0, failed: 0, results: [{ source: "zcode", externalId: "z2", status: "restored", workspace: "/ws" }], workspaces: ["/ws"] })) };
+		const { posts } = setup(options);
+		fireEvent.click(await screen.findByTestId("import-source-zcode"));
+		const row = screen.getByText("已经导过的").closest("label")!;
+		expect(row.textContent).toContain("已归档");
+		expect(row.textContent).toContain("保留在 Pi 中新增的内容");
+		fireEvent.click(row.querySelector("input")!);
+		const run = screen.getByTestId("import-run");
+		expect(run.textContent).toContain("恢复所选 (1)");
+		options.archived = [];
+		fireEvent.click(run);
+		const report = await screen.findByTestId("import-report");
+		expect(report.textContent).toContain("已恢复 1 条归档会话");
+		expect(report.textContent).toContain("已经导过的");
+		await waitFor(() => expect((screen.getByText("已经导过的", { selector: "strong[title]" }).closest("label")!.querySelector("input") as HTMLInputElement).disabled).toBe(true));
+		expect(posts[0].body).toMatchObject({ sessions: [{ source: "zcode", externalId: "z2" }] });
+	});
+
+	it("搜索标题、项目和模型，只全选当前可见结果，隐藏的选择仍保留", async () => {
+		const { posts } = setup({ imported: [], sessions: [
+			session({ externalId: "login", title: "完成登录页", projectPath: "/work/web-app", model: "model-a" }),
+			session({ externalId: "api", title: "接口校验", projectPath: "/work/server", model: "model-b" }),
+		] });
+		fireEvent.click((await screen.findByText("接口校验")).closest("label")!.querySelector("input")!);
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "web-app" } });
+		expect(screen.queryByText("接口校验")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "全选结果" }));
+		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "model-b" } });
+		expect(screen.getByText("接口校验")).toBeTruthy();
+		expect(screen.queryByText("完成登录页")).toBeNull();
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no match" } });
+		expect(screen.getByText("没有匹配的会话")).toBeTruthy();
+		fireEvent.click(screen.getByText("清空搜索"));
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0].body).toMatchObject({ sessions: [{ source: "claude", externalId: "login" }, { source: "claude", externalId: "api" }] });
+	});
+
+	it("重新扫描会移除消失或已导入的选择，并保留仍可导入的选择", async () => {
+		const options = { imported: [] as string[], sessions: [session({ externalId: "a" }), session({ externalId: "b" }), session({ externalId: "c" })] };
+		const { posts } = setup(options);
+		await screen.findByTestId("import-group-claude");
+		fireEvent.click(screen.getByRole("button", { name: "全选本组" }));
+		expect(screen.getByTestId("import-run").textContent).toContain("(3)");
+		options.sessions = [session({ externalId: "a" }), session({ externalId: "b" })];
+		options.imported = ["claude:a"];
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await waitFor(() => expect(screen.getByTestId("import-run").textContent).toContain("(1)"));
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0].body).toMatchObject({ sessions: [{ source: "claude", externalId: "b" }] });
+	});
+
+	it("导入期间锁定选择与去向并防止重复导入", async () => {
+		let resolve!: (value: unknown) => void;
+		const importResponse = new Promise((yes) => { resolve = yes; });
+		const { posts } = setup({ importResponse });
+		fireEvent.click((await screen.findByText("Claude 的会话")).closest("label")!.querySelector("input")!);
+		fireEvent.click(screen.getByTestId("import-run"));
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(true);
+		expect((screen.getByTestId("import-fallback") as HTMLSelectElement).disabled).toBe(true);
+		expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+		expect((screen.getByRole("searchbox") as HTMLInputElement).disabled).toBe(true);
+		resolve(response({ imported: 1, skipped: 0, failed: 0, results: [], workspaces: [] }));
+		await screen.findByTestId("import-report");
+	});
+
+	it("来源页签支持方向键切换", async () => {
+		setup();
+		const claude = await screen.findByTestId("import-source-claude");
+		fireEvent.keyDown(claude, { key: "ArrowRight" });
+		expect(screen.getByTestId("import-source-zcode").getAttribute("aria-selected")).toBe("true");
+		expect(screen.getByTestId("import-group-zcode")).toBeTruthy();
+	});
+
 	it("一次只列一个来源，默认落在第一个有会话的来源上，且默认一条都不勾选", async () => {
 		setup();
 		const claudeGroup = await screen.findByTestId("import-group-claude");

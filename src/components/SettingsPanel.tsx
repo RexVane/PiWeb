@@ -70,6 +70,8 @@ export function SettingsPanel({
 	onToolPresetChange,
 	tools,
 	onSetTools,
+	sessionId,
+	onLoadTools,
 	onOpenFileContent,
 }: {
 	open: boolean;
@@ -81,6 +83,8 @@ export function SettingsPanel({
 	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
 	/** 逐个启停当前会话的工具（写回 setActiveTools） */
 	onSetTools?: (names: string[]) => void;
+	sessionId?: string | null;
+	onLoadTools?: () => Promise<{ success: boolean; error?: string }>;
 	/** 在大窗口查看器中打开内容已就绪的文件（技能文档等） */
 	onOpenFileContent?: (path: string, content: string) => void;
 }) {
@@ -163,7 +167,7 @@ export function SettingsPanel({
 						{section === "general" && <GeneralSection lang={lang} setLang={setLang} />}
 						{section === "models" && <ModelsSection />}
 						{section === "skills" && <SkillsSection cwd={cwd} onOpenFileContent={onOpenFileContent} />}
-						{section === "tools" && <ToolsSection toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} />}
+						{section === "tools" && <ToolsSection key={sessionId ?? "none"} toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} onLoadTools={onLoadTools} />}
 						{section === "plugins" && <PluginsSection cwd={cwd} />}
 						{section === "remote" && <RemoteSection />}
 					</div>
@@ -1934,15 +1938,37 @@ function ToolsSection({
 	onToolPresetChange,
 	tools,
 	onSetTools,
+	onLoadTools,
 }: {
 	toolPreset: ToolPreset;
 	onToolPresetChange: (preset: ToolPreset) => void;
 	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
 	onSetTools?: (names: string[]) => void;
+	onLoadTools?: () => Promise<{ success: boolean; error?: string }>;
 }) {
 	const { t, lang } = useI18n();
 	const active = new Set(tools?.active ?? []);
 	const all = tools?.all ?? [];
+	const hasSnapshot = tools != null;
+	const [loading, setLoading] = useState(!!onLoadTools && !all.length);
+	const [loadError, setLoadError] = useState("");
+	const [retry, setRetry] = useState(0);
+	useEffect(() => {
+		if (!onLoadTools || !hasSnapshot || all.length) return;
+		let cancelled = false;
+		setLoading(true);
+		setLoadError("");
+		void onLoadTools().then((result) => {
+			if (cancelled) return;
+			setLoading(false);
+			if (!result.success) setLoadError(result.error || t.toolsLoadFailed);
+		}, (error) => {
+			if (cancelled) return;
+			setLoading(false);
+			setLoadError(error instanceof Error ? error.message : t.toolsLoadFailed);
+		});
+		return () => { cancelled = true; };
+	}, [onLoadTools, hasSnapshot, all.length, retry, t.toolsLoadFailed]);
 
 	const toggle = (name: string) => {
 		if (!onSetTools) return;
@@ -1978,7 +2004,10 @@ function ToolsSection({
 
 			{all.length === 0 ? (
 				<div className="rounded-2xl p-4" style={{ border: "0.5px dashed var(--dsw-border-l3)", fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
-					{t.toolsNoSession}
+					{loadError ? <>
+						<div role="alert">{loadError}</div>
+						<button className="btn-outline mt-3" onClick={() => setRetry((n) => n + 1)}>{t.retry}</button>
+					</> : <div role="status">{!onLoadTools ? t.toolsNoSession : loading ? t.toolsLoading : t.toolsEmpty}</div>}
 				</div>
 			) : (
 				<div className="flex flex-col gap-2.5">

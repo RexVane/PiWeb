@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { PIWEB_EXECUTION_GUIDANCE } from "../src/lib/execution-guidance";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -22,6 +23,7 @@ beforeAll(async () => {
 	await fs.mkdir(path.join(cwd, ".pi", "extensions"), { recursive: true });
 	await fs.mkdir(agentDir, { recursive: true });
 	await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always", compaction: { enabled: false } }));
+	await fs.writeFile(path.join(agentDir, "APPEND_SYSTEM.md"), "User append instructions must be preserved.");
 	await fs.writeFile(path.join(cwd, ".pi", "extensions", "probe.js"), `export default function(pi) {
 		pi.registerTool({ name: "probe_tool", label: "Probe", description: "Offline probe", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }] }) });
 		pi.registerCommand("probe", { handler: async (args) => { pi.setSessionName(args); } });
@@ -52,6 +54,19 @@ async function create() {
 }
 
 describe("real SDK session resource isolation", () => {
+	it("keeps execution guidance and user append instructions in discovery, live sessions and reloads", async () => {
+		const { session } = await create();
+		const discovery = pi.getResourceLoader(cwd);
+		await pi.resourceLoaderReady(cwd);
+		for (const loader of [discovery, session.resourceLoader]) {
+			expect(loader.getAppendSystemPrompt()).toContain("User append instructions must be preserved.");
+			expect(loader.getAppendSystemPrompt().filter((prompt) => prompt === PIWEB_EXECUTION_GUIDANCE)).toHaveLength(1);
+		}
+		expect(session.systemPrompt).toContain(PIWEB_EXECUTION_GUIDANCE);
+		await session.reload();
+		expect(session.systemPrompt).toContain("User append instructions must be preserved.");
+		expect(session.systemPrompt.split(PIWEB_EXECUTION_GUIDANCE)).toHaveLength(2);
+	});
 	it("isolates same-cwd A/B runtimes and keeps discovery and B alive after disposing A", async () => {
 		const a = await create();
 		const b = await create();
@@ -81,6 +96,78 @@ describe("real SDK session resource isolation", () => {
 			expect.objectContaining({ name: "probe" }),
 			expect.objectContaining({ name: "ask" }),
 		]));
+	});
+
+	it("publishes the current tool list when preparing an already loaded session", async () => {
+		const { m, session } = await create();
+		m.buffer.length = 0;
+		expect(await manager.execute(m, { cmd: "prepare" })).toMatchObject({ ok: true });
+		const event = m.buffer.map((frame) => JSON.parse(frame.json)).find((event) => event.type === "tools");
+		expect(event).toMatchObject({ active: session.getActiveToolNames() });
+		expect(event.all).toContain("read");
+	});
+
+	it.each(["steer", "followUp"] as const)("removes a consumed image-only %s from the queue when the run settles", async (behavior) => {
+		const { m, session } = await create();
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
+		let calls = 0;
+		session.agent.streamFunction = () => streams[calls++] as never;
+		const message = {
+			role: "assistant" as const, content: [{ type: "text" as const, text: "done" }],
+			api: model.api, provider: model.provider, model: model.id, timestamp: 100, stopReason: "stop" as const,
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		};
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "first" })).toMatchObject({ ok: true });
+			await vi.waitFor(() => expect(calls).toBe(1));
+			expect(await manager.execute(m, { cmd: "prompt", text: "", images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }], behavior })).toMatchObject({ ok: true });
+			expect((await manager.buildSnapshot(m)).queue[behavior === "steer" ? "steering" : "followUp"]).toEqual([""]);
+			streams[0].push({ type: "done", reason: "stop", message });
+			await vi.waitFor(() => expect(calls).toBe(2));
+			streams[1].push({ type: "done", reason: "stop", message: { ...message, timestamp: 200 } });
+			await session.waitForIdle();
+			expect(session.agent.hasQueuedMessages()).toBe(false);
+			expect((await manager.buildSnapshot(m)).queue).toEqual({ steering: [], followUp: [] });
+			const events = m.buffer.map((frame) => JSON.parse(frame.json));
+			expect(events.filter((event) => event.type === "queue").at(-1)).toMatchObject({ steering: [], followUp: [] });
+			expect(events.filter((event) => event.type === "status").at(-1)).toMatchObject({ isStreaming: false });
+		} finally {
+			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...message, stopReason: "aborted" } });
+			auth.mockRestore();
+		}
+	});
+
+	it("keeps genuinely pending messages available after an SDK abort", async () => {
+		const { m, session } = await create();
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const stream = createAssistantMessageEventStream();
+		session.agent.streamFunction = () => stream as never;
+		const message = {
+			role: "assistant" as const, content: [], api: model.api, provider: model.provider, model: model.id,
+			timestamp: 100, stopReason: "aborted" as const,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		};
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "first" })).toMatchObject({ ok: true });
+			expect(await manager.execute(m, { cmd: "prompt", text: "keep my message", behavior: "followUp" })).toMatchObject({ ok: true });
+			const aborting = session.abort();
+			stream.push({ type: "error", reason: "aborted", error: message });
+			await aborting;
+			await session.waitForIdle();
+			expect(session.agent.hasQueuedMessages()).toBe(true);
+			expect((await manager.buildSnapshot(m)).queue).toEqual({ steering: [], followUp: ["keep my message"] });
+			expect((await manager.execute(m, { cmd: "clearQueue" })).data).toEqual({ steering: [], followUp: ["keep my message"] });
+		} finally {
+			stream.push({ type: "error", reason: "aborted", error: message });
+			auth.mockRestore();
+		}
 	});
 
 	it("reapplies readonly and custom allowlists on direct, command and resource reload", async () => {

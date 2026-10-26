@@ -75,13 +75,18 @@ export async function findImported(agentDir: string, source: ImportSource, exter
  * sessions 目录翻几百遍（每次 O(目录数)），这里聚合一次给界面标记"已导入"。
  */
 export async function listImportedKeys(agentDir: string): Promise<Set<string>> {
-	const keys = new Set<string>();
+	return new Set((await listImportedSessions(agentDir)).keys());
+}
+
+/** 同时保留文件位置，用于区分已导入与已归档的会话。 */
+export async function listImportedSessions(agentDir: string): Promise<Map<string, string>> {
+	const sessions = new Map<string, string>();
 	const root = path.join(agentDir, "sessions");
 	let dirs: string[] = [];
 	try {
 		dirs = await fs.readdir(root);
 	} catch {
-		return keys;
+		return sessions;
 	}
 	for (const dir of dirs) {
 		let files: string[] = [];
@@ -92,10 +97,10 @@ export async function listImportedKeys(agentDir: string): Promise<Set<string>> {
 		}
 		for (const name of files) {
 			const match = /_import-([A-Za-z0-9]+)-(.+)\.jsonl$/.exec(name);
-			if (match) keys.add(`${match[1]}:${match[2]}`);
+			if (match) sessions.set(`${match[1]}:${match[2]}`, path.join(root, dir, name));
 		}
 	}
-	return keys;
+	return sessions;
 }
 
 /** 与 findImported / importedFileName 共用同一个键（避免两边规则不一致导致重复导入） */
