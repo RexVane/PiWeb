@@ -4,14 +4,14 @@
  * 右下角的更新提示条：每次服务启动提醒一次（按启动标识记在 localStorage，刷新、多开标签页不重复）。
  *
  * 只列启动检查时就有新版本的那几项：
- * - 能直接更新的点「更新」，按 PiWeb → Pi 的顺序逐个装（同一时间只能有一个更新在跑）；
+ * - 能直接更新的点「更新」，只更新 PiWeb；内置 Pi 随发行版升级；
  * - Windows 上的 npm 安装 PiWeb 不能替换运行中的自己，给命令和复制按钮；
  * - 装好后提示手动重启，进程不自己重启。
  * 状态和设置里的版本行共用（update-store），在哪边点都一样。
  */
 import { useEffect, useState } from "react";
 import { CopyCommand } from "@/components/update/CopyCommand";
-import { loadUpdates, runUpdate, UPDATE_TARGETS, useUpdates, type TargetUpdate, type UpdateTarget } from "@/components/update/update-store";
+import { loadUpdates, runUpdate, useUpdates, type TargetUpdate, type UpdateTarget } from "@/components/update/update-store";
 import { useI18n } from "@/i18n";
 
 /** 已经关掉过的那次启动的标识 */
@@ -37,7 +37,7 @@ export function UpdateNotice() {
 	}, []);
 
 	useEffect(() => {
-		if (offered === null && updates.loaded) setOffered(UPDATE_TARGETS.filter((target) => updates.targets[target].phase === "available"));
+		if (offered === null && updates.loaded) setOffered(updates.targets.piweb.phase === "available" ? ["piweb"] : []);
 	}, [offered, updates]);
 
 	if (dismissed === undefined || !offered?.length || !updates.startId || dismissed === updates.startId) return null;

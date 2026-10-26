@@ -17,7 +17,9 @@ import { grokSource } from "./grok";
 import { dshSource } from "./dsh";
 import { zcodeSource } from "./zcode";
 import { opencodeSource } from "./opencode";
-import { importedKey, listImportedKeys, findImported, writeImportedSession } from "./writer";
+import { importedKey, listImportedSessions, findImported, writeImportedSession } from "./writer";
+import { getArchivedSessions, forgetSession } from "../workspace-store";
+import { readHead } from "./files";
 
 export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 	claude: claudeSource,
@@ -47,8 +49,10 @@ export interface SourceScanError {
 export interface ScanReport {
 	summaries: ExternalSessionSummary[];
 	errors: SourceScanError[];
-	/** 已导入过的 `source:externalId`，界面用来标"已导入"并禁止重复选 */
+	/** 已导入过的键，界面禁止重复导入；其中已归档的键可选择恢复。 */
 	imported: string[];
+	/** 已导入但被归档的会话，再次选择时恢复原会话。 */
+	archived: string[];
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -73,7 +77,9 @@ export async function scanAllSources(agentDir: string, options: { sources?: Impo
 	const limit = options.limit ?? SCAN_LIMIT_PER_SOURCE;
 	const summaries: ExternalSessionSummary[] = [];
 	const errors: SourceScanError[] = [];
-	const imported = await listImportedKeys(agentDir);
+	const imported = await listImportedSessions(agentDir);
+	const archivedPaths = new Set((await getArchivedSessions(agentDir)).map(pathKey));
+	const archived = [...imported].filter(([, file]) => archivedPaths.has(pathKey(file))).map(([key]) => key);
 
 	await Promise.all(sources.map(async (source) => {
 		const module = IMPORT_SOURCE_MODULES[source];
@@ -87,7 +93,7 @@ export async function scanAllSources(agentDir: string, options: { sources?: Impo
 	}));
 
 	summaries.sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
-	return { summaries, errors, imported: [...imported] };
+	return { summaries, errors, imported: [...imported.keys()], archived };
 }
 
 export interface ImportSelection {
@@ -99,7 +105,7 @@ export interface ImportOutcome {
 	source: ImportSource;
 	externalId: string;
 	title?: string;
-	status: "imported" | "skipped" | "failed";
+	status: "imported" | "restored" | "skipped" | "failed";
 	reason?: string;
 	messageCount?: number;
 	/** 导入到的 pi 会话文件（成功时） */
@@ -111,6 +117,7 @@ export interface ImportOutcome {
 
 export interface ImportReport {
 	imported: number;
+	restored: number;
 	skipped: number;
 	failed: number;
 	results: ImportOutcome[];
@@ -133,6 +140,11 @@ async function isDirectory(target: string | undefined): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+function pathKey(value: string): string {
+	const resolved = path.resolve(value);
+	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 /** 源文件大小闸门：`file|id` 形式的 SQLite 位置没有单文件概念，直接放行（读的是库里的行） */
@@ -171,14 +183,28 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 		const { source, externalId } = item;
 		const outcome: ImportOutcome = { source, externalId, status: "failed" };
 		try {
+			const identity = importedKey(source, externalId);
+			const existing = IMPORT_SOURCE_MODULES[source] && !seen.has(identity) ? await findImported(options.agentDir, source, externalId) : null;
 			if (!IMPORT_SOURCE_MODULES[source]) {
 				outcome.reason = "不支持的来源";
 			} else if (seen.has(importedKey(source, externalId))) {
 				outcome.status = "skipped";
 				outcome.reason = "同一次导入里重复选择";
-			} else if (await findImported(options.agentDir, source, externalId)) {
-				outcome.status = "skipped";
-				outcome.reason = "已经导入过";
+			} else if (existing) {
+				if ((await getArchivedSessions(options.agentDir)).some((file) => pathKey(file) === pathKey(existing))) {
+					// 恢复既有文件，保留导入后在 Pi 中追加的内容；不依赖源会话仍然存在。
+					const header = JSON.parse((await readHead(existing)).split("\n")[0]);
+					if (header.type !== "session" || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) throw new Error("归档会话的工作区信息无效");
+					await forgetSession(existing, options.agentDir);
+					outcome.status = "restored";
+					outcome.path = existing;
+					outcome.workspace = header.cwd;
+					workspaces.add(header.cwd);
+					seen.add(identity);
+				} else {
+					outcome.status = "skipped";
+					outcome.reason = "已经导入过";
+				}
 			} else {
 				const summary = await resolveSummary(source, externalId);
 				if (!summary) {
@@ -221,6 +247,7 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 
 	return {
 		imported: results.filter((result) => result.status === "imported").length,
+		restored: results.filter((result) => result.status === "restored").length,
 		skipped: results.filter((result) => result.status === "skipped").length,
 		failed: results.filter((result) => result.status === "failed").length,
 		results,

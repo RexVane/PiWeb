@@ -24,6 +24,8 @@ import { importSessions, scanAllSources } from "../src/lib/session-import";
 import { claudeSource } from "../src/lib/session-import/claude";
 import { codexSource } from "../src/lib/session-import/codex";
 import { readSession } from "../src/lib/session-reader";
+import { archiveSession, getArchivedSessions } from "../src/lib/workspace-store";
+import { sweepArchivedSessions } from "../src/lib/session-retention";
 
 let root: string;
 let agentDir: string;
@@ -34,6 +36,7 @@ const TS = Date.UTC(2026, 8, 13, 4, 10, 51);
 beforeEach(async () => {
 	root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-import-svc-")));
 	agentDir = path.join(root, "agent");
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 	project = path.join(root, "project");
 	fallback = path.join(root, "fallback");
 	for (const key of Object.keys(roots) as Array<keyof typeof roots>) roots[key] = path.join(root, key);
@@ -43,6 +46,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+	vi.unstubAllEnvs();
 	await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -137,6 +141,55 @@ describe("去向：源项目还在就导回原工作区，否则用兜底工作�
 });
 
 describe("幂等与失败报告", () => {
+	it("恢复已归档的导入会话，保留后续内容且不依赖源工具仍可读取", async () => {
+		await seedClaude("s1", project);
+		const selection = { source: "claude" as const, externalId: "s1" };
+		const first = await importSessions([selection], { agentDir });
+		const file = first.results[0].path!;
+		await fs.appendFile(file, JSON.stringify({ type: "session_info", id: "later", parentId: null, timestamp: new Date().toISOString(), name: "在 Pi 中继续的内容" }) + "\n");
+		const before = await fs.readFile(file, "utf8");
+		await archiveSession(file, agentDir);
+		expect((await scanAllSources(agentDir)).archived).toEqual(["claude:s1"]);
+		const unavailable = vi.spyOn(claudeSource, "scan").mockRejectedValue(new Error("source unavailable"));
+		try {
+			const restored = await importSessions([selection, selection], { agentDir });
+			expect(restored).toMatchObject({ imported: 0, restored: 1, skipped: 1, failed: 0 });
+			expect(restored.results[0]).toMatchObject({ status: "restored", path: file, workspace: project });
+			expect(unavailable).not.toHaveBeenCalled();
+			expect(await fs.readFile(file, "utf8")).toBe(before);
+			expect(await getArchivedSessions(agentDir)).toEqual([]);
+			expect(await fs.readdir(path.dirname(file))).toHaveLength(1);
+		} finally {
+			unavailable.mockRestore();
+		}
+	});
+
+	it("归档满 30 天自动清理后，同一源会话可以重新导入", async () => {
+		await seedClaude("s1", project);
+		const selection = { source: "claude" as const, externalId: "s1" };
+		const first = await importSessions([selection], { agentDir });
+		const file = first.results[0].path!;
+		await archiveSession(file, agentDir);
+		const cleanup = await sweepArchivedSessions({ now: Date.now() + 31 * 24 * 60 * 60 * 1000, log: () => {} });
+		expect(cleanup.deleted.map((entry) => entry.path)).toEqual([file]);
+		expect(await scanAllSources(agentDir)).toMatchObject({ imported: [], archived: [] });
+		const second = await importSessions([selection], { agentDir });
+		expect(second).toMatchObject({ imported: 1, restored: 0, skipped: 0, failed: 0 });
+		expect(await fs.stat(second.results[0].path!)).toBeTruthy();
+	});
+
+	it("API 使用原始外部 id 标记已导入与已归档，并可恢复该会话", async () => {
+		await seedClaude("session special", project);
+		const selection = { source: "claude" as const, externalId: "session special" };
+		const first = await importSessions([selection], { agentDir });
+		await archiveSession(first.results[0].path!, agentDir);
+		const { GET, POST } = await import("../src/app/api/sessions/import/route");
+		expect((await (await GET()).json()).data).toMatchObject({ imported: ["claude:session special"], archived: ["claude:session special"] });
+		const result = await POST(new Request("http://localhost/api/sessions/import", { method: "POST", body: JSON.stringify({ sessions: [selection] }) }));
+		expect((await result.json()).data).toMatchObject({ imported: 0, restored: 1, failed: 0 });
+		expect((await (await GET()).json()).data).toMatchObject({ imported: ["claude:session special"], archived: [] });
+	});
+
 	it("已导入过的会话再导入是 skipped（不会产生第二个文件）", async () => {
 		await seedClaude("s1", project);
 		const first = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });

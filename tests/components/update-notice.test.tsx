@@ -42,6 +42,12 @@ afterEach(() => {
 });
 
 describe("更新提示条", () => {
+	it("仅 Pi 有新版本时不显示提示", async () => {
+		stubFetch({ pi: PI });
+		render(<UpdateNotice />);
+		await act(async () => {});
+		expect(screen.queryByTestId("update-notice")).toBeNull();
+	});
 	it("没有新版本、检查失败或关了启动检查都不出现", async () => {
 		stubFetch({ piweb: { ...PIWEB, latest: PIWEB.current, canUpdate: false }, pi: { error: "offline" } });
 		const { unmount } = render(<UpdateNotice />);
@@ -84,15 +90,15 @@ describe("更新提示条", () => {
 		expect(await screen.findByTestId("update-notice")).toBeTruthy();
 	});
 
-	it("「更新」按 PiWeb → Pi 逐个装，装完提示手动重启", async () => {
+	it("「更新」只更新 PiWeb，不包含内置 Pi，装完提示手动重启", async () => {
 		const posts = stubFetch({ piweb: PIWEB, pi: PI });
 		render(<UpdateNotice />);
 		fireEvent.click(await screen.findByRole("button", { name: "更新" }));
 		await screen.findByText("更新完成");
-		expect(posts).toEqual(["update:piweb", "update:pi"]);
+		expect(posts).toEqual(["update:piweb"]);
 		const notice = screen.getByTestId("update-notice");
 		expect(notice.textContent).toContain("已更新到 0.3.20");
-		expect(notice.textContent).toContain("已更新到 1.2.0");
+		expect(notice.textContent).not.toContain("1.2.0");
 		expect(notice.textContent).toContain("重启 PiWeb 后生效");
 		expect(screen.queryByRole("button", { name: "更新" })).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "知道了" }));

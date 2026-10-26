@@ -161,6 +161,7 @@ export function AppShell() {
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const loadSessionTools = useCallback(() => sendCommand({ cmd: "prepare" }), [sendCommand]);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
 	/** 抽屉入口保存在浏览器 */
@@ -1200,6 +1201,8 @@ export function AppShell() {
 				toolPreset={state.toolPreset}
 				onToolPresetChange={setToolPreset}
 				tools={snapshot?.tools ?? null}
+				sessionId={currentId}
+				onLoadTools={currentId ? loadSessionTools : undefined}
 				onSetTools={(names) => {
 					void sendCommand({ cmd: "setActiveTools", names });
 				}}

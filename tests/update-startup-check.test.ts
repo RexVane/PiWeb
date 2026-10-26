@@ -17,16 +17,16 @@ const CHECKS: Record<UpdateTarget, UpdateCheck> = {
 beforeEach(() => resetStartupCheck());
 
 describe("ensureStartupCheck", () => {
-	it("两项各查一次，并发调用共用同一次检查", async () => {
+	it("只自动检查 PiWeb，并发调用共用同一次检查", async () => {
 		const check = vi.fn(async (target: UpdateTarget) => CHECKS[target]);
 		const log = vi.fn();
 		const [first, second] = await Promise.all([ensureStartupCheck({ check, log, env: {} }), ensureStartupCheck({ check, log, env: {} })]);
-		expect(check.mock.calls.map(([target]) => target).sort()).toEqual(["pi", "piweb"]);
+		expect(check.mock.calls.map(([target]) => target).sort()).toEqual(["piweb"]);
 		expect(first?.startId).toBeTruthy();
 		expect(second?.startId).toBe(first?.startId);
-		expect(first?.results).toEqual(CHECKS);
+		expect(first?.results).toEqual({ piweb: CHECKS.piweb });
 		await ensureStartupCheck({ check, log, env: {} });
-		expect(check).toHaveBeenCalledTimes(2);
+		expect(check).toHaveBeenCalledTimes(1);
 	});
 
 	it("有新版本才在终端打一行", async () => {
@@ -44,7 +44,7 @@ describe("ensureStartupCheck", () => {
 		const log = vi.fn();
 		const updates = await ensureStartupCheck({ check: async () => { throw new Error("getaddrinfo ENOTFOUND registry.npmjs.org"); }, log, env: {} });
 		expect(log).not.toHaveBeenCalled();
-		expect(updates?.results.pi).toEqual({ error: "getaddrinfo ENOTFOUND registry.npmjs.org" });
+		expect(updates?.results.piweb).toEqual({ error: "getaddrinfo ENOTFOUND registry.npmjs.org" });
 	});
 
 	it("PI_WEB_UPDATE_CHECK=0 时不联网", async () => {
@@ -68,11 +68,14 @@ describe("ensureStartupCheck", () => {
 });
 
 describe("updateNoticeLine", () => {
+	it("Pi 新版本不产生启动提醒", () => {
+		expect(updateNoticeLine({ pi: { current: "1.3.0", latest: "1.4.0", canUpdate: true, selfUpdate: true } })).toBeNull();
+	});
 	it("Windows 上的 npm 安装附上要手动执行的命令", () => {
 		expect(updateNoticeLine({
 			piweb: { current: "0.3.18", latest: "0.3.20", canUpdate: true, selfUpdate: false, command: "npm install -g @rexvane/piweb@latest" },
 			pi: { current: "1.1.0", latest: "1.2.0", canUpdate: true, selfUpdate: true },
-		})).toBe("[更新] 有新版本：PiWeb 0.3.18 → 0.3.20、Pi 1.1.0 → 1.2.0。打开 设置 → 通用 点「更新」；PiWeb 要先停掉 piweb 再运行：npm install -g @rexvane/piweb@latest");
+		})).toBe("[更新] 有新版本：PiWeb 0.3.18 → 0.3.20。打开 设置 → 通用 点「更新」；PiWeb 要先停掉 piweb 再运行：npm install -g @rexvane/piweb@latest");
 	});
 
 	it("Git 检出版本号没变、只有新提交时写提交数", () => {

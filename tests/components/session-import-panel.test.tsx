@@ -4,7 +4,7 @@
  * 已导入的行必须禁用，导入结果按成功/跳过/失败给出来源与原因。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SessionImportSection } from "@/components/SessionImportSection";
 
 afterEach(() => {
@@ -27,7 +27,7 @@ const session = (overrides: Record<string, unknown>) => ({
 	...overrides,
 });
 
-function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?: string; errors?: unknown[] } = {}) {
+function setup(options: { sessions?: unknown[]; imported?: string[]; archived?: string[]; workspace?: string; errors?: unknown[]; importResponse?: Promise<unknown> } = {}) {
 	const posts: Array<{ url: string; body: unknown }> = [];
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
 		if (url === "/api/sessions/import" && (!init || init.method !== "POST")) {
@@ -39,11 +39,13 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?:
 				],
 				errors: options.errors ?? [],
 				imported: options.imported ?? ["zcode:z2"],
+				archived: options.archived ?? [],
 				sources: ["claude", "codex", "grok", "zcode", "dsh", "opencode"],
 			});
 		}
 		if (url === "/api/sessions/import" && init?.method === "POST") {
 			posts.push({ url, body: JSON.parse(String(init.body)) });
+			if (options.importResponse) return options.importResponse;
 			return response({
 				imported: 1,
 				skipped: 1,
@@ -64,7 +66,109 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; workspace?:
 	return { fetchMock, posts };
 }
 
+async function openSources() {
+	const trigger = await screen.findByTestId("import-source-picker");
+	await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+	fireEvent.click(trigger);
+	return screen.getByRole("combobox", { name: "搜索来源名称或 ID" });
+}
+
+async function chooseSource(source: string) {
+	await openSources();
+	fireEvent.click(screen.getByTestId("import-source-" + source));
+}
+
 describe("导入会话面板", () => {
+	it("已归档的会话可选择恢复，普通已导入会话仍然禁用", async () => {
+		const options = { archived: ["zcode:z2"], importResponse: Promise.resolve(response({ imported: 0, restored: 1, skipped: 0, failed: 0, results: [{ source: "zcode", externalId: "z2", status: "restored", workspace: "/ws" }], workspaces: ["/ws"] })) };
+		const { posts } = setup(options);
+		await chooseSource("zcode");
+		const row = screen.getByText("已经导过的").closest("label")!;
+		expect(row.textContent).toContain("已归档");
+		expect(row.textContent).toContain("保留在 Pi 中新增的内容");
+		fireEvent.click(row.querySelector("input")!);
+		const run = screen.getByTestId("import-run");
+		expect(run.textContent).toContain("恢复所选 (1)");
+		options.archived = [];
+		fireEvent.click(run);
+		const report = await screen.findByTestId("import-report");
+		expect(report.textContent).toContain("已恢复 1 条归档会话");
+		expect(report.textContent).toContain("已经导过的");
+		await waitFor(() => expect((screen.getByText("已经导过的", { selector: "strong[title]" }).closest("label")!.querySelector("input") as HTMLInputElement).disabled).toBe(true));
+		expect(posts[0].body).toMatchObject({ sessions: [{ source: "zcode", externalId: "z2" }] });
+	});
+
+	it("搜索标题、项目和模型，只全选当前可见结果，隐藏的选择仍保留", async () => {
+		const { posts } = setup({ imported: [], sessions: [
+			session({ externalId: "login", title: "完成登录页", projectPath: "/work/web-app", model: "model-a" }),
+			session({ externalId: "api", title: "接口校验", projectPath: "/work/server", model: "model-b" }),
+		] });
+		fireEvent.click((await screen.findByText("接口校验")).closest("label")!.querySelector("input")!);
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "web-app" } });
+		expect(screen.queryByText("接口校验")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "全选结果" }));
+		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "model-b" } });
+		expect(screen.getByText("接口校验")).toBeTruthy();
+		expect(screen.queryByText("完成登录页")).toBeNull();
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no match" } });
+		expect(screen.getByText("没有匹配的会话")).toBeTruthy();
+		fireEvent.click(screen.getByText("清空搜索"));
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0].body).toMatchObject({ sessions: [{ source: "claude", externalId: "login" }, { source: "claude", externalId: "api" }] });
+	});
+
+	it("重新扫描会移除消失或已导入的选择，并保留仍可导入的选择", async () => {
+		const options = { imported: [] as string[], sessions: [session({ externalId: "a" }), session({ externalId: "b" }), session({ externalId: "c" })] };
+		const { posts } = setup(options);
+		await screen.findByTestId("import-group-claude");
+		fireEvent.click(screen.getByRole("button", { name: "全选本组" }));
+		expect(screen.getByTestId("import-run").textContent).toContain("(3)");
+		options.sessions = [session({ externalId: "a" }), session({ externalId: "b" })];
+		options.imported = ["claude:a"];
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await waitFor(() => expect(screen.getByTestId("import-run").textContent).toContain("(1)"));
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect(posts[0].body).toMatchObject({ sessions: [{ source: "claude", externalId: "b" }] });
+	});
+
+	it("导入期间锁定选择与去向并防止重复导入", async () => {
+		let resolve!: (value: unknown) => void;
+		const importResponse = new Promise((yes) => { resolve = yes; });
+		const { posts } = setup({ importResponse });
+		fireEvent.click((await screen.findByText("Claude 的会话")).closest("label")!.querySelector("input")!);
+		fireEvent.click(screen.getByTestId("import-run"));
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(true);
+		expect((screen.getByTestId("import-fallback") as HTMLSelectElement).disabled).toBe(true);
+		expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+		expect((screen.getByRole("searchbox") as HTMLInputElement).disabled).toBe(true);
+		resolve(response({ imported: 1, skipped: 0, failed: 0, results: [], workspaces: [] }));
+		await screen.findByTestId("import-report");
+	});
+
+	it("来源下拉支持搜索、键盘选择和 Escape 取消", async () => {
+		setup();
+		const input = await openSources();
+		fireEvent.change(input, { target: { value: "code" } });
+		expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Codex"), expect.stringContaining("ZCode"), expect.stringContaining("opencode")]));
+		fireEvent.keyDown(input, { key: "ArrowDown" });
+		fireEvent.keyDown(input, { key: "ArrowDown" });
+		fireEvent.keyDown(input, { key: "Enter" });
+		expect(screen.getByTestId("import-group-zcode")).toBeTruthy();
+		expect(screen.queryByRole("listbox")).toBeNull();
+		const again = await openSources();
+		fireEvent.change(again, { target: { value: "none" } });
+		expect(screen.getByText("没有匹配的来源")).toBeTruthy();
+		fireEvent.keyDown(again, { key: "Escape" });
+		expect(screen.queryByRole("listbox")).toBeNull();
+		expect(document.activeElement).toBe(screen.getByTestId("import-source-picker"));
+		expect(screen.getByTestId("import-group-zcode")).toBeTruthy();
+	});
+
 	it("一次只列一个来源，默认落在第一个有会话的来源上，且默认一条都不勾选", async () => {
 		setup();
 		const claudeGroup = await screen.findByTestId("import-group-claude");
@@ -80,25 +184,36 @@ describe("导入会话面板", () => {
 		expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true);
 	});
 
-	it("选择器列出所有有会话的来源并带条数，切换后只显示该来源", async () => {
+	it("下拉列出全部六个来源和条数，空来源可查看，再扫描不重置选择", async () => {
 		setup();
-		const tabs = await screen.findByTestId("import-source-tabs");
-		expect(tabs.textContent).toContain("Claude Code");
-		expect(tabs.textContent).toContain("ZCode");
-
-		fireEvent.click(screen.getByTestId("import-source-zcode"));
-		expect((await screen.findByTestId("import-group-zcode")).textContent).toContain("ZCode 的会话");
+		await openSources();
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(6);
+		expect(screen.getByTestId("import-source-zcode").textContent).toContain("2 条会话");
+		expect(screen.getByTestId("import-source-codex").textContent).toContain("0 条会话");
+		expect(screen.getByTestId("import-source-claude").getAttribute("aria-selected")).toBe("true");
+		fireEvent.click(screen.getByTestId("import-source-codex"));
+		expect(screen.getByTestId("import-group-codex").textContent).toContain("没有找到可导入的本地会话");
 		expect(screen.queryByText("Claude 的会话")).toBeNull();
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await waitFor(() => expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(false));
+		expect(screen.getByTestId("import-group-codex")).toBeTruthy();
+		await openSources();
+		fireEvent.mouseDown(document.body);
+		expect(screen.queryByRole("listbox")).toBeNull();
+	});
 
-		// 选中的来源高亮（aria-selected 供读屏与测试共用）
-		expect(screen.getByTestId("import-source-zcode").getAttribute("aria-selected")).toBe("true");
-		expect(screen.getByTestId("import-source-claude").getAttribute("aria-selected")).toBe("false");
+	it("没有会话时仍可查看全部支持来源", async () => {
+		setup({ sessions: [] });
+		await openSources();
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(6);
+		fireEvent.click(screen.getByTestId("import-source-opencode"));
+		expect(screen.getByTestId("import-group-opencode").textContent).toContain("没有找到可导入的本地会话");
 	});
 
 	it("切换来源不会丢掉另一个来源上已勾选的行", async () => {
 		const { posts } = setup();
 		fireEvent.click((await screen.findByText("Claude 的会话")).closest("label")?.querySelector("input") as HTMLInputElement);
-		fireEvent.click(screen.getByTestId("import-source-zcode"));
+		await chooseSource("zcode");
 		fireEvent.click((await screen.findByText("ZCode 的会话")).closest("label")?.querySelector("input") as HTMLInputElement);
 
 		// 两个来源各勾了一条，按钮计数是合计
@@ -110,7 +225,7 @@ describe("导入会话面板", () => {
 
 	it("已导入的行被禁用并标出来，来源统计里也计入", async () => {
 		setup();
-		fireEvent.click(await screen.findByTestId("import-source-zcode"));
+		await chooseSource("zcode");
 		const importedRow = await screen.findByText("已经导过的");
 		const checkbox = importedRow.closest("label")?.querySelector("input") as HTMLInputElement;
 		expect(checkbox.disabled).toBe(true);
@@ -147,7 +262,7 @@ describe("导入会话面板", () => {
 	it("全选只作用于当前来源，且跳过已导入的行", async () => {
 		const { posts } = setup();
 		fireEvent.click((await screen.findByText("Claude 的会话")).closest("label")?.querySelector("input") as HTMLInputElement); // 先勾一条别的来源的
-		fireEvent.click(await screen.findByTestId("import-source-zcode"));
+		await chooseSource("zcode");
 		const selectAll = await screen.findByText("全选本组");
 		fireEvent.click(selectAll);
 

@@ -1,15 +1,17 @@
 "use client";
 
 /**
- * 设置 → 导入会话：把本机其它 AI 编程工具的对话无损导成 pi 会话。
+ * 抽屉 → 导入会话：把本机其它 AI 编程工具的对话导成 pi 会话。
  *
- * 交互上刻意保守：**默认一条都不勾**（本机 ZCode 421 条、opencode 860 条，一键全选就是事故），
- * 已导过的行标出来并且不能再勾。写入去向由服务端决定（源项目还在就导回原工作区），
+ * 默认一条都不勾，支持按来源浏览、搜索与跨来源选择，
+ * 已导入的会话禁止重复选择，已归档的会话可恢复。写入去向由服务端决定（源项目还在就导回原工作区），
  * 这里只负责在源项目已不在本机时给一个兜底工作区——从已知工作区里选，不允许手输路径。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
-import { IconRefreshOutline14, IconDownloadOutline16 } from "@/components/icons";
+import { IconRefreshOutline14, IconDownloadOutline16, IconSearchOutline16, IconFolderOpenOutline16, IconCheckOutline14, IconCloseOutline14, IconChevronDown14 } from "@/components/icons";
+import { ProviderBrand } from "@/components/ProviderBrand";
+import styles from "./SessionImportSection.module.css";
 
 interface Summary {
 	source: string;
@@ -32,7 +34,7 @@ interface ImportOutcome {
 	source: string;
 	externalId: string;
 	title?: string;
-	status: "imported" | "skipped" | "failed";
+	status: "imported" | "restored" | "skipped" | "failed";
 	reason?: string;
 	messageCount?: number;
 	workspace?: string;
@@ -40,6 +42,7 @@ interface ImportOutcome {
 
 interface ImportReport {
 	imported: number;
+	restored?: number;
 	skipped: number;
 	failed: number;
 	results: ImportOutcome[];
@@ -60,35 +63,59 @@ function dayOf(ms?: number): string {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function folderName(value: string): string {
+	return value.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || value;
+}
+
 export function SessionImportSection({ cwd }: { cwd: string }) {
 	const { t } = useI18n();
 	const [summaries, setSummaries] = useState<Summary[]>([]);
 	const [errors, setErrors] = useState<SourceError[]>([]);
 	const [importedKeys, setImportedKeys] = useState<Set<string>>(new Set());
+	const [archivedKeys, setArchivedKeys] = useState<Set<string>>(new Set());
 	const [selected, setSelected] = useState<Set<string>>(new Set());
-	const [scanning, setScanning] = useState(false);
+	const [scanning, setScanning] = useState(true);
 	const [importing, setImporting] = useState(false);
 	const [report, setReport] = useState<ImportReport | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
 	const [workspaces, setWorkspaces] = useState<string[]>([]);
 	const [fallback, setFallback] = useState(cwd);
+	const [query, setQuery] = useState("");
+	const scanInFlight = useRef(false);
+	const importInFlight = useRef(false);
+	const scrollBody = useRef<HTMLDivElement>(null);
+	const pickerRef = useRef<HTMLDivElement>(null);
+	const pickerTrigger = useRef<HTMLButtonElement>(null);
+	const pickerId = useId();
+	const [pickerOpen, setPickerOpen] = useState(false);
+	const [sourceQuery, setSourceQuery] = useState("");
+	const [highlightedSource, setHighlightedSource] = useState("");
 
 	const scan = useCallback(async () => {
+		if (scanInFlight.current) return;
+		scanInFlight.current = true;
 		setScanning(true);
 		setFailure(null);
 		try {
 			const response = await fetch("/api/sessions/import");
 			const json = await response.json();
-			if (!json.success) {
+			if (!response.ok || !json.success) {
 				setFailure(json.error || t.toastError);
 				return;
 			}
-			setSummaries(json.data.sessions ?? []);
+			const nextSummaries: Summary[] = json.data.sessions ?? [];
+			const nextImported = new Set<string>(json.data.imported ?? []);
+			const nextArchived = new Set<string>(json.data.archived ?? []);
+			setSummaries(nextSummaries);
 			setErrors(json.data.errors ?? []);
-			setImportedKeys(new Set<string>(json.data.imported ?? []));
+			setImportedKeys(nextImported);
+			setArchivedKeys(nextArchived);
+			const available = new Set(nextSummaries.map((row) => `${row.source}:${row.externalId}`).filter((key) => !nextImported.has(key) || nextArchived.has(key)));
+			setSelected((previous) => new Set([...previous].filter((key) => available.has(key))));
 		} catch (error) {
 			setFailure(error instanceof Error ? error.message : String(error));
 		} finally {
+			scanInFlight.current = false;
 			setScanning(false);
 		}
 	}, [t]);
@@ -110,6 +137,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	}, [scan]);
 
 	const key = (summary: Summary) => `${summary.source}:${summary.externalId}`;
+	const isImported = (summary: Summary) => importedKeys.has(key(summary)) && !archivedKeys.has(key(summary));
 
 	const groups = useMemo(() => {
 		const bySource = new Map<string, Summary[]>();
@@ -118,8 +146,8 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			if (list) list.push(summary);
 			else bySource.set(summary.source, [summary]);
 		}
-		return SOURCE_ORDER.filter((source) => bySource.has(source)).map((source) => {
-			const rows = [...(bySource.get(source) as Summary[])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
+		return SOURCE_ORDER.map((source) => {
+			const rows = [...(bySource.get(source) ?? [])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
 			return { source, rows, imported: rows.filter((row) => importedKeys.has(key(row))).length };
 		});
 	}, [summaries, importedKeys]);
@@ -130,13 +158,33 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	 */
 	const [activeSource, setActiveSource] = useState("");
 	useEffect(() => {
+		if (scanning) return;
 		// 扫描完成的 effect 可能晚于用户点击；按执行时的最新选择决定是否回退。
-		setActiveSource((current) => groups.some((group) => group.source === current) ? current : groups[0]?.source ?? "");
-	}, [groups]);
+		setActiveSource((current) => groups.some((group) => group.source === current) ? current : (groups.find((group) => group.rows.length) ?? groups[0]).source);
+	}, [groups, scanning]);
+	useEffect(() => {
+		if (!pickerOpen) return;
+		const outside = (event: MouseEvent | TouchEvent) => {
+			if (!pickerRef.current?.contains(event.target as Node)) setPickerOpen(false);
+		};
+		document.addEventListener("mousedown", outside);
+		document.addEventListener("touchstart", outside);
+		return () => {
+			document.removeEventListener("mousedown", outside);
+			document.removeEventListener("touchstart", outside);
+		};
+	}, [pickerOpen]);
+	useEffect(() => {
+		if (pickerOpen) document.getElementById(`${pickerId}-${highlightedSource}`)?.scrollIntoView?.({ block: "nearest" });
+	}, [highlightedSource, pickerId, pickerOpen]);
 	const activeGroup = groups.find((group) => group.source === activeSource);
+	const search = query.trim().toLocaleLowerCase();
+	const visibleRows = (activeGroup?.rows ?? []).filter((row) => !search || [row.title, row.projectPath, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search)));
+	const availableRows = visibleRows.filter((row) => !isImported(row));
+	const selectedArchived = [...selected].filter((key) => archivedKeys.has(key)).length;
 
 	const toggle = (summary: Summary) => {
-		if (importedKeys.has(key(summary))) return;
+		if (isImported(summary) || importInFlight.current || scanInFlight.current) return;
 		setSelected((previous) => {
 			const next = new Set(previous);
 			if (next.has(key(summary))) next.delete(key(summary));
@@ -146,10 +194,11 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	};
 
 	const selectGroup = (rows: Summary[], checked: boolean) => {
+		if (importInFlight.current || scanInFlight.current) return;
 		setSelected((previous) => {
 			const next = new Set(previous);
 			for (const row of rows) {
-				if (importedKeys.has(key(row))) continue;
+				if (isImported(row)) continue;
 				if (checked) next.add(key(row));
 				else next.delete(key(row));
 			}
@@ -158,8 +207,10 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	};
 
 	const run = async () => {
-		if (!selected.size) return;
-		const items = summaries.filter((summary) => selected.has(key(summary))).map((summary) => ({ source: summary.source, externalId: summary.externalId }));
+		if (!selected.size || importInFlight.current || scanInFlight.current) return;
+		const items = summaries.filter((summary) => selected.has(key(summary)) && !isImported(summary)).map((summary) => ({ source: summary.source, externalId: summary.externalId }));
+		if (!items.length) return;
+		importInFlight.current = true;
 		setImporting(true);
 		setFailure(null);
 		setReport(null);
@@ -170,16 +221,18 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 				body: JSON.stringify({ sessions: items, fallbackCwd: fallback || undefined }),
 			});
 			const json = await response.json();
-			if (!json.success) {
+			if (!response.ok || !json.success) {
 				setFailure(json.error || t.toastError);
 				return;
 			}
 			setReport(json.data as ImportReport);
+			if (scrollBody.current) scrollBody.current.scrollTop = 0;
 			setSelected(new Set());
 			await scan(); // 重新扫描：已经导过的行马上变成"已导入"
 		} catch (error) {
 			setFailure(error instanceof Error ? error.message : String(error));
 		} finally {
+			importInFlight.current = false;
 			setImporting(false);
 		}
 	};
@@ -195,213 +248,189 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		};
 		return labels[source] ?? source;
 	};
-
-	const failures = report?.results.filter((result) => result.status === "failed") ?? [];
-	const skipped = report?.results.filter((result) => result.status === "skipped") ?? [];
-
+	const brandId = (source: string) => source === "claude" ? "anthropic" : source === "codex" ? "openai" : source === "grok" ? "xai" : source;
+	const sourceSearch = sourceQuery.trim().toLocaleLowerCase();
+	const filteredSources = groups.filter((group) => !sourceSearch || [sourceLabel(group.source), group.source].some((value) => value.toLocaleLowerCase().includes(sourceSearch)));
+	const highlighted = filteredSources.find((group) => group.source === highlightedSource) ?? filteredSources[0];
+	const chooseSource = (source: string) => {
+		setActiveSource(source);
+		setPickerOpen(false);
+		pickerTrigger.current?.focus();
+	};
+	const openPicker = () => {
+		setSourceQuery("");
+		setHighlightedSource(activeSource);
+		setPickerOpen(true);
+	};
 	return (
-		<div className="flex flex-col gap-3.5" data-testid="session-import">
-			{/* 说明区:主说明 + 扫描范围提示收进一个卡片,和下面的操作区分开 */}
-			<div className="flex flex-col gap-1.5 rounded-2xl px-4 py-3" style={{ background: "var(--dsw-hover)" }}>
-				<div style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)", lineHeight: 1.6 }}>{t.importDesc}</div>
-				<div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }} title={t.importLimitHintTooltip} data-testid="import-limit-hint">
-					{t.importLimitHint.replace("{n}", String(SCAN_LIMIT))}
-				</div>
-			</div>
-
-			{/* 操作行:扫描 / 清空 / 导入。去向是"设置",单独一行读起来更清楚 */}
-			<div className="flex flex-wrap items-center gap-2">
-				<button
-					className="btn-outline flex flex-none items-center gap-1.5 whitespace-nowrap"
-					style={{ height: 30, padding: "0 12px", fontSize: 12.5 }}
-					onClick={() => void scan()}
-					disabled={scanning}
-					data-testid="import-rescan"
-				>
-					<IconRefreshOutline14 size={13} /> {scanning ? t.importScanning : t.importRescan}
-				</button>
-				<div className="flex-1" />
-				<button
-					className="whitespace-nowrap rounded-lg px-2.5 py-1.5"
-					style={{ fontSize: 12, color: selected.size ? "var(--dsw-label-secondary)" : "var(--dsw-label-tertiary)" }}
-					onClick={() => setSelected(new Set())}
-					disabled={!selected.size}
-				>
-					{t.importClearSelection}
-				</button>
-				<button
-					className="flex flex-none items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5"
-					style={{ fontSize: 12.5, background: selected.size && !importing ? "var(--dsw-accent)" : "var(--dsw-hover)", color: selected.size && !importing ? "#fff" : "var(--dsw-label-caption)" }}
-					onClick={() => void run()}
-					disabled={!selected.size || importing}
-					data-testid="import-run"
-				>
-					<IconDownloadOutline16 size={13} /> {importing ? t.importRunning : t.importRun.replace("{n}", String(selected.size))}
-				</button>
-			</div>
-			<div className="flex min-w-0 flex-wrap items-center gap-2">
-				<span className="flex-none" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.importFallbackWorkspace}</span>
-				<select
-					className="min-w-0 rounded-lg px-2 py-1"
-					style={{ fontSize: 12, border: "0.5px solid var(--dsw-border-l2)", background: "transparent", maxWidth: 280 }}
-					value={fallback}
-					onChange={(event) => setFallback(event.target.value)}
-					aria-label={t.importFallbackWorkspace}
-					data-testid="import-fallback"
-				>
-					{(workspaces.includes(fallback) || !fallback ? workspaces : [fallback, ...workspaces]).map((workspace) => (
-						<option key={workspace} value={workspace}>
-							{workspace}
-						</option>
-					))}
-				</select>
-				<span className="min-w-0" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.importFallbackHint}</span>
-			</div>
-
-			{failure && (
-				<div role="alert" className="rounded-lg px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", color: "var(--dsw-danger)" }}>
-					{failure}
-				</div>
-			)}
-
-			{errors.map((error) => (
-				<div key={error.source} className="rounded-lg px-3 py-2" style={{ fontSize: 12, background: "var(--dsw-hover)", color: "var(--dsw-label-tertiary)" }}>
-					{t.importSourceError.replace("{source}", sourceLabel(error.source)).replace("{message}", error.message)}
-				</div>
-			))}
-
-			{report && (
-				<div className="rounded-2xl px-4 py-3" style={{ border: "0.5px solid var(--dsw-border-l2)" }} data-testid="import-report">
-					<div style={{ fontSize: 13 }}>
-						{t.importReportSummary
-							.replace("{imported}", String(report.imported))
-							.replace("{skipped}", String(report.skipped))
-							.replace("{failed}", String(report.failed))}
+		<section className={styles.panel} data-testid="session-import" aria-label={t.importSessions}>
+			<div className={styles.body} ref={scrollBody}>
+				<header className={styles.intro}>
+					<span className={styles.introIcon}><IconDownloadOutline16 size={20} /></span>
+					<div>
+						<h2>{t.importHeading}</h2>
+						<p>{t.importIntro}</p>
 					</div>
-					{skipped.map((result) => (
-						<div key={`skip-${result.source}-${result.externalId}`} className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-							{sourceLabel(result.source)} · {result.title || result.externalId} — {result.reason}
-						</div>
-					))}
-					{failures.map((result) => (
-						<div key={`fail-${result.source}-${result.externalId}`} className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}>
-							{sourceLabel(result.source)} · {result.title || result.externalId} — {result.reason}
-						</div>
-					))}
-				</div>
-			)}
+				</header>
 
-			{!scanning && !summaries.length && !errors.length && <div style={{ fontSize: 13, color: "var(--dsw-label-caption)" }}>{t.importEmpty}</div>}
-
-			{/* 来源选择器：选中哪个就只列哪个工具的会话 */}
-			{groups.length > 0 && (
-				<div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label={t.importPickSource} data-testid="import-source-tabs">
-					{groups.map((group) => {
-						const active = group.source === activeSource;
-						return (
-							<button
-								key={group.source}
-								type="button"
-								role="tab"
-								aria-selected={active}
-								className="rounded-full px-3 py-1 transition-colors"
-								style={{
-									fontSize: 12,
-									border: `0.5px solid ${active ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`,
-									background: active ? "var(--dsw-accent)" : "transparent",
-									color: active ? "#fff" : "var(--dsw-label-tertiary)",
-								}}
-								onClick={() => setActiveSource(group.source)}
-								data-testid={`import-source-${group.source}`}
-							>
-								{sourceLabel(group.source)}
-								<span style={{ marginLeft: 6, opacity: 0.75 }}>{group.rows.length}</span>
-							</button>
-						);
-					})}
-				</div>
-			)}
-
-			{activeGroup && (
-				<div className="flex flex-col gap-2" data-testid={`import-group-${activeGroup.source}`}>
-					<div className="flex items-center gap-2">
-						<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-							{t.importGroupCount.replace("{n}", String(activeGroup.rows.length)).replace("{imported}", String(activeGroup.imported))}
-						</span>
-						<div className="flex-1" />
-						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-tertiary)" }} onClick={() => selectGroup(activeGroup.rows, true)}>
-							{t.importSelectAll}
-						</button>
-						<button className="rounded-lg px-2 py-0.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }} onClick={() => selectGroup(activeGroup.rows, false)}>
-							{t.importSelectNone}
-						</button>
-					</div>
-					<div className="flex flex-col gap-1.5">
-						{activeGroup.rows.map((row) => {
-							const rowKey = key(row);
-							const done = importedKeys.has(rowKey);
-							const checked = selected.has(rowKey);
-							// 去向:源项目目录还在本机就回原工作区(服务端判定),否则用兜底工作区。
-							// 这里只按"有没有 projectPath"给出预期,不假装知道目录是否真的存在。
-							const target = row.projectPath || fallback;
-							const goesOriginal = Boolean(row.projectPath);
-							return (
-								<label
-									key={rowKey}
-									className="flex cursor-pointer items-center gap-3 rounded-2xl px-3.5 py-2.5 transition-all"
-									style={{
-										border: `1px solid ${checked ? "var(--dsw-accent)" : "var(--dsw-border-l2)"}`,
-										background: checked ? "var(--dsw-accent-soft)" : "var(--dsw-bg-elevated)",
-										opacity: done ? 0.45 : 1,
-										transition: "all 0.2s var(--isx-ease)",
-									}}
-									onMouseEnter={(e) => {
-										if (!checked && !done) {
-											e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
-											e.currentTarget.style.background = "var(--dsw-hover)";
-											e.currentTarget.style.transform = "translateY(-1px)";
-										}
-									}}
-									onMouseLeave={(e) => {
-										if (!checked && !done) {
-											e.currentTarget.style.borderColor = "var(--dsw-border-l2)";
-											e.currentTarget.style.background = "var(--dsw-bg-elevated)";
-											e.currentTarget.style.transform = "none";
-										}
-									}}
-								>
-									<input type="checkbox" checked={checked} disabled={done} onChange={() => toggle(row)} className="flex-none accent-[var(--dsw-accent)]" />
-									<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-										<div className="truncate font-medium" style={{ fontSize: 12.5, color: done ? "var(--dsw-label-tertiary)" : "var(--dsw-label-primary)" }} title={row.title}>
-											{row.title || t.importUntitled}
-										</div>
-										<div className="flex min-w-0 items-center gap-1.5" title={row.projectPath}>
-											<span
-												className="flex-none rounded-full px-2 py-0.5"
-												style={{ fontSize: 10, background: "var(--dsw-selector)", color: "var(--dsw-label-secondary)", border: "1px solid var(--dsw-border-l1)" }}
-											>
-												{goesOriginal ? t.importGoesOriginal : t.importGoesFallback}
-											</span>
-											<span className="truncate font-mono" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>
-												{target || t.importNoProject}
-											</span>
+				{report && (
+					<div className={styles.report} data-testid="import-report" role="status">
+						<div className={styles.reportTitle}><IconCheckOutline14 /> {t.importFinished}</div>
+						<p>{t.importReportSummary.replace("{imported}", String(report.imported + (report.restored ?? 0))).replace("{skipped}", String(report.skipped)).replace("{failed}", String(report.failed))}</p>
+						{!!report.restored && <p>{t.importRestoredSummary.replace("{n}", String(report.restored))}</p>}
+						<details open={report.failed > 0}>
+							<summary>{t.importViewResults}<IconChevronDown14 /></summary>
+							<div className={styles.outcomes}>
+								{report.results.map((result) => (
+									<div key={result.source + ":" + result.externalId} className={styles.outcome} data-status={result.status}>
+										<span className={styles.outcomeStatus}>{result.status === "imported" ? t.importAlready : result.status === "restored" ? t.importRestored : result.status === "failed" ? t.importFailed : t.importSkipped}</span>
+										<div>
+											<strong>{result.title || summaries.find((row) => key(row) === `${result.source}:${result.externalId}`)?.title || t.importUntitled}</strong>
+											<span>{sourceLabel(result.source)}{result.reason ? " · " + result.reason : ""}</span>
+											{result.workspace && <span title={result.workspace}>{folderName(result.workspace)}</span>}
 										</div>
 									</div>
-									<span className="flex-none font-mono" style={{ fontSize: 11, color: "var(--dsw-label-caption)", whiteSpace: "nowrap" }}>
-										{typeof row.messageCount === "number" ? t.importMessages.replace("{n}", String(row.messageCount)) : "—"}
-									</span>
-									<span className="flex-none font-mono" style={{ fontSize: 11, color: "var(--dsw-label-caption)", whiteSpace: "nowrap" }}>{dayOf(row.updatedAt ?? row.createdAt)}</span>
-									{done && (
-										<span className="flex-none rounded-full px-2 py-0.5 font-medium" style={{ fontSize: 10, background: "var(--dsw-selector)", color: "var(--dsw-label-caption)", border: "1px solid var(--dsw-border-l1)" }}>
-											{t.importAlready}
-										</span>
-									)}
-								</label>
-							);
-						})}
+								))}
+							</div>
+						</details>
 					</div>
+				)}
+
+				<div className={styles.sectionHeading}>
+					<h3><span>1</span>{t.importPickSource}</h3>
+					<button type="button" className={styles.rescan} onClick={() => void scan()} disabled={scanning || importing} data-testid="import-rescan" aria-label={t.importRescan} title={t.importRescan}>
+						<IconRefreshOutline14 className={scanning ? styles.spinning : undefined} />
+						<span>{scanning ? t.importScanning : t.importRescan}</span>
+					</button>
 				</div>
-			)}
-		</div>
+				<p className={styles.hint} data-testid="import-limit-hint">{t.importLimitHint.replace("{n}", String(SCAN_LIMIT))}</p>
+
+				{failure && <div role="alert" className={styles.error}>{failure}</div>}
+				{errors.map((error) => (
+					<div key={error.source} className={styles.sourceError}>{t.importSourceError.replace("{source}", sourceLabel(error.source)).replace("{message}", error.message)}</div>
+				))}
+
+				{scanning && !summaries.length ? (
+					<div className={styles.skeleton} role="status" aria-label={t.importScanning}><div /><div /><div /></div>
+				) : (
+					<>
+						<div className={styles.picker} ref={pickerRef} onKeyDownCapture={(event) => {
+							if (event.key === "Escape" && pickerOpen) {
+								event.preventDefault();
+								event.stopPropagation();
+								setPickerOpen(false);
+								pickerTrigger.current?.focus();
+							} else if (event.key === "Tab") setPickerOpen(false);
+						}}>
+							<button type="button" ref={pickerTrigger} className={styles.sourceTrigger} data-open={pickerOpen} data-testid="import-source-picker" aria-label={t.importPickSource} aria-haspopup="listbox" aria-expanded={pickerOpen} aria-controls={pickerOpen ? pickerId : undefined} disabled={importing || scanning} onClick={() => pickerOpen ? setPickerOpen(false) : openPicker()} onKeyDown={(event) => {
+								if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openPicker(); }
+							}}>
+								<ProviderBrand id={brandId(activeSource)} name={sourceLabel(activeSource)} size={30} />
+								<span className={styles.sourceText}><strong>{sourceLabel(activeSource)}</strong><span>{activeSource} · {t.importSourceCount.replace("{n}", String(activeGroup?.rows.length ?? 0))}</span></span>
+								<IconChevronDown14 size={15} />
+							</button>
+							{pickerOpen && <div className={styles.sourceMenu}>
+								<div className={styles.sourceSearch}><IconSearchOutline16 size={15} /><input autoFocus role="combobox" aria-label={t.importSourceSearch} aria-autocomplete="list" aria-expanded="true" aria-controls={pickerId} aria-activedescendant={highlighted ? `${pickerId}-${highlighted.source}` : undefined} placeholder={t.importSourceSearch} value={sourceQuery} onChange={(event) => { setSourceQuery(event.target.value); setHighlightedSource(""); }} onKeyDown={(event) => {
+									if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+										event.preventDefault();
+										const index = highlighted ? filteredSources.indexOf(highlighted) : -1;
+										const next = filteredSources[(index + (event.key === "ArrowDown" ? 1 : -1) + filteredSources.length) % filteredSources.length];
+										if (next) setHighlightedSource(next.source);
+									} else if (event.key === "Enter") {
+										event.preventDefault();
+										if (highlighted) chooseSource(highlighted.source);
+									}
+								}} /></div>
+								<div className={styles.sourceList} id={pickerId} role="listbox" aria-label={t.importPickSource}>
+									{filteredSources.map((group) => {
+										const count = group.rows.filter((row) => selected.has(key(row))).length;
+										return <button key={group.source} type="button" id={`${pickerId}-${group.source}`} role="option" aria-selected={group.source === activeSource} tabIndex={-1} className={styles.sourceOption} data-highlighted={group.source === highlighted?.source} data-testid={"import-source-" + group.source} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSource(group.source)}>
+											<ProviderBrand id={brandId(group.source)} name={sourceLabel(group.source)} size={28} />
+											<span className={styles.sourceText}><strong>{sourceLabel(group.source)}</strong><span>{group.source} · {errors.some((error) => error.source === group.source) ? t.importSourceScanFailed : t.importSourceCount.replace("{n}", String(group.rows.length))}</span></span>
+											{count > 0 && <span className={styles.sourceSelected}>{t.importSourceSelected.replace("{n}", String(count))}</span>}
+											{group.source === activeSource && <IconCheckOutline14 size={15} className={styles.sourceCheck} />}
+										</button>;
+									})}
+									{!filteredSources.length && <p className={styles.sourceNoMatches} role="status">{t.importSourceNoMatches}</p>}
+								</div>
+							</div>}
+						</div>
+
+						<div className={styles.sectionHeading}>
+							<h3><span>2</span>{t.importPickSessions}</h3>
+						</div>
+						<div className={styles.search}>
+							<IconSearchOutline16 size={15} />
+							<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.importSearch} aria-label={t.importSearch} disabled={importing} />
+							{query && <button type="button" aria-label={t.importClearSearch} title={t.importClearSearch} onClick={() => setQuery("")} disabled={importing}><IconCloseOutline14 size={12} /></button>}
+						</div>
+
+						{activeGroup && (
+							<div className={styles.group} data-testid={"import-group-" + activeGroup.source}>
+								<div className={styles.groupToolbar}>
+									<span>{t.importGroupCount.replace("{n}", String(activeGroup.rows.length)).replace("{imported}", String(activeGroup.imported))}</span>
+									<button type="button" onClick={() => selectGroup(visibleRows, true)} disabled={scanning || importing || !availableRows.some((row) => !selected.has(key(row)))}>
+										{search ? t.importSelectResults : t.importSelectAll}
+									</button>
+									<button type="button" onClick={() => selectGroup(visibleRows, false)} disabled={scanning || importing || !visibleRows.some((row) => selected.has(key(row)))}>{t.importSelectNone}</button>
+								</div>
+								{!activeGroup.rows.length ? (
+									<div className={styles.empty} role="status"><IconFolderOpenOutline16 size={24} /><strong>{errors.some((error) => error.source === activeSource) ? t.importSourceScanFailed : t.importEmpty}</strong><p>{t.importEmptyHint}</p></div>
+								) : !visibleRows.length ? (
+									<div className={styles.empty} role="status"><IconSearchOutline16 size={24} /><strong>{t.importNoMatches}</strong><button type="button" onClick={() => setQuery("")}>{t.importClearSearch}</button></div>
+								) : (
+									<div className={styles.rows}>
+										{visibleRows.map((row) => {
+											const done = isImported(row);
+											const archived = archivedKeys.has(key(row));
+											const checked = selected.has(key(row));
+											const date = dayOf(row.updatedAt ?? row.createdAt);
+											return (
+												<label key={key(row)} className={styles.row} data-selected={checked} data-imported={done}>
+													<input type="checkbox" checked={checked} disabled={done || scanning || importing} onChange={() => toggle(row)} />
+													<div className={styles.rowContent}>
+														<div className={styles.rowTitle}><strong title={row.title}>{row.title || t.importUntitled}</strong>{done && <span className={styles.imported}><IconCheckOutline14 size={11} />{t.importAlready}</span>}{archived && <span className={styles.imported} title={t.importRestoreHint}>{t.importArchived}</span>}</div>
+														{archived && <p className={styles.restoreHint}>{t.importRestoreHint}</p>}
+														<div className={styles.project} title={row.projectPath}><IconFolderOpenOutline16 size={12} /><span>{row.projectPath ? folderName(row.projectPath) : t.importNoProject}</span></div>
+														<div className={styles.metadata}>
+															{date && <time dateTime={new Date(row.updatedAt ?? row.createdAt!).toISOString()}>{date}</time>}
+															{typeof row.messageCount === "number" && <span>{t.importMessages.replace("{n}", String(row.messageCount))}</span>}
+															{row.model && <span title={row.model}>{row.model}</span>}
+														</div>
+													</div>
+												</label>
+											);
+										})}
+									</div>
+								)}
+							</div>
+						)}
+					</>
+				)}
+				<details className={styles.help}><summary>{t.importHowItWorks}<IconChevronDown14 size={12} /></summary><p>{t.importDesc}</p></details>
+			</div>
+
+			<footer className={styles.footer}>
+				<details className={styles.destination}>
+					<summary><IconFolderOpenOutline16 size={14} /><span>{t.importWhereGoes}<small>{t.importOriginalFirst}</small></span><IconChevronDown14 size={12} /></summary>
+					<div className={styles.destinationOptions}>
+						<label htmlFor="import-fallback-workspace">{t.importFallbackWorkspace}</label>
+						<select id="import-fallback-workspace" value={fallback} onChange={(event) => setFallback(event.target.value)} disabled={importing} aria-label={t.importFallbackWorkspace} data-testid="import-fallback" title={fallback}>
+							{!fallback && <option value="">{t.importChooseWorkspace}</option>}
+							{(workspaces.includes(fallback) || !fallback ? workspaces : [fallback, ...workspaces]).map((workspace) => <option key={workspace} value={workspace}>{workspace}</option>)}
+						</select>
+						<p>{t.importFallbackHint}</p>
+					</div>
+				</details>
+				<div className={styles.selection} aria-live="polite">
+					<span>{selected.size ? t.importSelectedCount.replace("{n}", String(selected.size)) : t.importSelectionHint}</span>
+					<button type="button" onClick={() => setSelected(new Set())} disabled={!selected.size || importing}>{t.importClearSelection}</button>
+				</div>
+				<button type="button" className={styles.run} onClick={() => void run()} disabled={!selected.size || importing || scanning} data-testid="import-run">
+					{importing ? <IconRefreshOutline14 className={styles.spinning} /> : <IconDownloadOutline16 size={16} />}
+					{importing ? t.importRunning : (selectedArchived ? selectedArchived === selected.size ? t.importRestoreRun : t.importMixedRun : t.importRun).replace("{n}", String(selected.size))}
+				</button>
+			</footer>
+		</section>
 	);
 }

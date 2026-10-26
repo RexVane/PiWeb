@@ -734,6 +734,9 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		case "agent_settled":
 			m.runActive = false;
+			// SDK 1.3 的显示队列按非空文字匹配消费记录，纯图片消息会残留 ""。
+			// 只在实际发送队列已空时清理；中断后仍待发送的消息必须保留供用户取回。
+			if (m.session && !m.session.agent.hasQueuedMessages() && m.session.pendingMessageCount > 0) m.session.clearQueue();
 			publish(m, { type: "status", isStreaming: false, state: "idle", ts: now });
 			publishUsage(m, true);
 			if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
@@ -1885,9 +1888,12 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 	touch(m);
 	try {
 		switch (cmd.cmd) {
-			case "prepare":
-				await ensureSession(m);
+			case "prepare": {
+				const session = await ensureSession(m);
+				// 已热启动的会话也重新推送，覆盖浏览器先收到冷快照或丢失工具增量的情况。
+				publishTools(m, session);
 				return { ok: true };
+			}
 			case "prompt": {
 				const text = (cmd.text ?? "").trim();
 				if (!text && !cmd.images?.length) return { ok: false, error: "empty prompt" };

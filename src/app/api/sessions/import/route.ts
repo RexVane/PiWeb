@@ -3,6 +3,7 @@ import { getAgentDir } from "@/lib/pi";
 import { registerCwds } from "@/lib/workspace-store";
 import { IMPORT_SOURCES, type ExternalSessionSummary, type ImportSource } from "@/lib/session-import/types";
 import { importSessions, scanAllSources, type ImportSelection } from "@/lib/session-import";
+import { importedKey } from "@/lib/session-import/writer";
 
 export const dynamic = "force-dynamic";
 
@@ -18,12 +19,16 @@ function publicSummary(summary: ExternalSessionSummary): Omit<ExternalSessionSum
 export async function GET() {
 	try {
 		const report = await scanAllSources(getAgentDir());
+		const imported = new Set(report.imported);
+		const archived = new Set(report.archived);
+		const publicKey = (summary: ExternalSessionSummary) => `${summary.source}:${summary.externalId}`;
 		return NextResponse.json({
 			success: true,
 			data: {
 				sessions: report.summaries.map(publicSummary),
 				errors: report.errors,
-				imported: report.imported,
+				imported: report.summaries.filter((summary) => imported.has(importedKey(summary.source, summary.externalId))).map(publicKey),
+				archived: report.summaries.filter((summary) => archived.has(importedKey(summary.source, summary.externalId))).map(publicKey),
 				sources: IMPORT_SOURCES,
 			},
 		});

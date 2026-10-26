@@ -30,8 +30,8 @@ export interface WorkspaceRegistrySnapshot {
 	removedWorkspaces: string[];
 }
 
-function file(): string {
-	return path.join(getAgentDir(), "web-workspaces.json");
+function file(agentDir = getAgentDir()): string {
+	return path.join(agentDir, "web-workspaces.json");
 }
 
 async function readFile(target = file()): Promise<WorkspaceFile> {
@@ -122,12 +122,12 @@ async function readCached(target: string): Promise<WorkspaceFile> {
 	return data;
 }
 
-async function read(): Promise<WorkspaceFile> {
-	return readCached(file());
+async function read(agentDir?: string): Promise<WorkspaceFile> {
+	return readCached(file(agentDir));
 }
 
-async function mutate<T>(change: (data: WorkspaceFile, target: string) => Promise<T> | T): Promise<T> {
-	const target = file();
+async function mutate<T>(change: (data: WorkspaceFile, target: string) => Promise<T> | T, agentDir?: string): Promise<T> {
+	const target = file(agentDir);
 	return withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
 		try {
 			return await change(await readFile(target), target);
@@ -181,8 +181,8 @@ export async function setGrowthInitConsent(dir: string, allow: boolean): Promise
 	});
 }
 
-export async function getArchivedSessions(): Promise<string[]> {
-	return (await read()).archivedSessions ?? [];
+export async function getArchivedSessions(agentDir?: string): Promise<string[]> {
+	return (await read(agentDir)).archivedSessions ?? [];
 }
 
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot> {
@@ -195,7 +195,7 @@ export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot>
 	};
 }
 
-export async function archiveSession(sessionPath: string): Promise<string[]> {
+export async function archiveSession(sessionPath: string, agentDir?: string): Promise<string[]> {
 	const norm = path.resolve(sessionPath);
 	const key = pathKey(norm);
 	return mutate(async (data, target) => {
@@ -206,10 +206,10 @@ export async function archiveSession(sessionPath: string): Promise<string[]> {
 			await write(data, target);
 		}
 		return data.archivedSessions;
-	});
+	}, agentDir);
 }
 
-export async function forgetSession(sessionPath: string): Promise<string[]> {
+export async function forgetSession(sessionPath: string, agentDir?: string): Promise<string[]> {
 	const norm = path.resolve(sessionPath);
 	const key = pathKey(norm);
 	return mutate(async (data, target) => {
@@ -222,7 +222,7 @@ export async function forgetSession(sessionPath: string): Promise<string[]> {
 			await write(data, target);
 		}
 		return next;
-	});
+	}, agentDir);
 }
 
 /**
