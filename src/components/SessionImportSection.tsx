@@ -7,7 +7,7 @@
  * 已导入的会话禁止重复选择，已归档的会话可恢复。写入去向由服务端决定（源项目还在就导回原工作区），
  * 这里只负责在源项目已不在本机时给一个兜底工作区——从已知工作区里选，不允许手输路径。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
 import { IconRefreshOutline14, IconDownloadOutline16, IconSearchOutline16, IconFolderOpenOutline16, IconCheckOutline14, IconCloseOutline14, IconChevronDown14 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
@@ -84,6 +84,12 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const scanInFlight = useRef(false);
 	const importInFlight = useRef(false);
 	const scrollBody = useRef<HTMLDivElement>(null);
+	const pickerRef = useRef<HTMLDivElement>(null);
+	const pickerTrigger = useRef<HTMLButtonElement>(null);
+	const pickerId = useId();
+	const [pickerOpen, setPickerOpen] = useState(false);
+	const [sourceQuery, setSourceQuery] = useState("");
+	const [highlightedSource, setHighlightedSource] = useState("");
 
 	const scan = useCallback(async () => {
 		if (scanInFlight.current) return;
@@ -140,8 +146,8 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			if (list) list.push(summary);
 			else bySource.set(summary.source, [summary]);
 		}
-		return SOURCE_ORDER.filter((source) => bySource.has(source)).map((source) => {
-			const rows = [...(bySource.get(source) as Summary[])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
+		return SOURCE_ORDER.map((source) => {
+			const rows = [...(bySource.get(source) ?? [])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
 			return { source, rows, imported: rows.filter((row) => importedKeys.has(key(row))).length };
 		});
 	}, [summaries, importedKeys]);
@@ -152,9 +158,25 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	 */
 	const [activeSource, setActiveSource] = useState("");
 	useEffect(() => {
+		if (scanning) return;
 		// 扫描完成的 effect 可能晚于用户点击；按执行时的最新选择决定是否回退。
-		setActiveSource((current) => groups.some((group) => group.source === current) ? current : groups[0]?.source ?? "");
-	}, [groups]);
+		setActiveSource((current) => groups.some((group) => group.source === current) ? current : (groups.find((group) => group.rows.length) ?? groups[0]).source);
+	}, [groups, scanning]);
+	useEffect(() => {
+		if (!pickerOpen) return;
+		const outside = (event: MouseEvent | TouchEvent) => {
+			if (!pickerRef.current?.contains(event.target as Node)) setPickerOpen(false);
+		};
+		document.addEventListener("mousedown", outside);
+		document.addEventListener("touchstart", outside);
+		return () => {
+			document.removeEventListener("mousedown", outside);
+			document.removeEventListener("touchstart", outside);
+		};
+	}, [pickerOpen]);
+	useEffect(() => {
+		if (pickerOpen) document.getElementById(`${pickerId}-${highlightedSource}`)?.scrollIntoView?.({ block: "nearest" });
+	}, [highlightedSource, pickerId, pickerOpen]);
 	const activeGroup = groups.find((group) => group.source === activeSource);
 	const search = query.trim().toLocaleLowerCase();
 	const visibleRows = (activeGroup?.rows ?? []).filter((row) => !search || [row.title, row.projectPath, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search)));
@@ -226,6 +248,20 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		};
 		return labels[source] ?? source;
 	};
+	const brandId = (source: string) => source === "claude" ? "anthropic" : source === "codex" ? "openai" : source === "grok" ? "xai" : source;
+	const sourceSearch = sourceQuery.trim().toLocaleLowerCase();
+	const filteredSources = groups.filter((group) => !sourceSearch || [sourceLabel(group.source), group.source].some((value) => value.toLocaleLowerCase().includes(sourceSearch)));
+	const highlighted = filteredSources.find((group) => group.source === highlightedSource) ?? filteredSources[0];
+	const chooseSource = (source: string) => {
+		setActiveSource(source);
+		setPickerOpen(false);
+		pickerTrigger.current?.focus();
+	};
+	const openPicker = () => {
+		setSourceQuery("");
+		setHighlightedSource(activeSource);
+		setPickerOpen(true);
+	};
 	return (
 		<section className={styles.panel} data-testid="session-import" aria-label={t.importSessions}>
 			<div className={styles.body} ref={scrollBody}>
@@ -276,38 +312,48 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 				{scanning && !summaries.length ? (
 					<div className={styles.skeleton} role="status" aria-label={t.importScanning}><div /><div /><div /></div>
-				) : !summaries.length ? (
-					<div className={styles.empty} role="status">
-						<IconFolderOpenOutline16 size={26} />
-						<strong>{t.importEmpty}</strong>
-						<p>{t.importEmptyHint}</p>
-					</div>
 				) : (
 					<>
-						<div className={styles.sources} role="tablist" aria-label={t.importPickSource} data-testid="import-source-tabs">
-							{groups.map((group) => {
-								const count = group.rows.filter((row) => selected.has(key(row))).length;
-								return (
-									<button
-										key={group.source} type="button" role="tab" aria-selected={group.source === activeSource}
-										tabIndex={group.source === activeSource ? 0 : -1}
-										className={styles.source} onClick={() => setActiveSource(group.source)}
-										data-testid={"import-source-" + group.source}
-										onKeyDown={(event) => {
-											const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-											if (!offset && event.key !== "Home" && event.key !== "End") return;
-											event.preventDefault();
-											const index = event.key === "Home" ? 0 : event.key === "End" ? groups.length - 1 : (groups.indexOf(group) + offset + groups.length) % groups.length;
-											setActiveSource(groups[index].source);
-											(event.currentTarget.parentElement?.children[index] as HTMLButtonElement)?.focus();
-										}}
-									>
-										<ProviderBrand id={group.source === "claude" ? "anthropic" : group.source === "codex" ? "openai" : group.source === "grok" ? "xai" : group.source} name={sourceLabel(group.source)} size={28} />
-										<span className={styles.sourceText}><strong>{sourceLabel(group.source)}</strong><span>{t.importSourceCount.replace("{n}", String(group.rows.length))}</span></span>
-										{count > 0 && <span className={styles.sourceSelected} aria-label={t.importSelectedCount.replace("{n}", String(count))}>{count}</span>}
-									</button>
-								);
-							})}
+						<div className={styles.picker} ref={pickerRef} onKeyDownCapture={(event) => {
+							if (event.key === "Escape" && pickerOpen) {
+								event.preventDefault();
+								event.stopPropagation();
+								setPickerOpen(false);
+								pickerTrigger.current?.focus();
+							} else if (event.key === "Tab") setPickerOpen(false);
+						}}>
+							<button type="button" ref={pickerTrigger} className={styles.sourceTrigger} data-open={pickerOpen} data-testid="import-source-picker" aria-label={t.importPickSource} aria-haspopup="listbox" aria-expanded={pickerOpen} aria-controls={pickerOpen ? pickerId : undefined} disabled={importing || scanning} onClick={() => pickerOpen ? setPickerOpen(false) : openPicker()} onKeyDown={(event) => {
+								if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openPicker(); }
+							}}>
+								<ProviderBrand id={brandId(activeSource)} name={sourceLabel(activeSource)} size={30} />
+								<span className={styles.sourceText}><strong>{sourceLabel(activeSource)}</strong><span>{activeSource} · {t.importSourceCount.replace("{n}", String(activeGroup?.rows.length ?? 0))}</span></span>
+								<IconChevronDown14 size={15} />
+							</button>
+							{pickerOpen && <div className={styles.sourceMenu}>
+								<div className={styles.sourceSearch}><IconSearchOutline16 size={15} /><input autoFocus role="combobox" aria-label={t.importSourceSearch} aria-autocomplete="list" aria-expanded="true" aria-controls={pickerId} aria-activedescendant={highlighted ? `${pickerId}-${highlighted.source}` : undefined} placeholder={t.importSourceSearch} value={sourceQuery} onChange={(event) => { setSourceQuery(event.target.value); setHighlightedSource(""); }} onKeyDown={(event) => {
+									if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+										event.preventDefault();
+										const index = highlighted ? filteredSources.indexOf(highlighted) : -1;
+										const next = filteredSources[(index + (event.key === "ArrowDown" ? 1 : -1) + filteredSources.length) % filteredSources.length];
+										if (next) setHighlightedSource(next.source);
+									} else if (event.key === "Enter") {
+										event.preventDefault();
+										if (highlighted) chooseSource(highlighted.source);
+									}
+								}} /></div>
+								<div className={styles.sourceList} id={pickerId} role="listbox" aria-label={t.importPickSource}>
+									{filteredSources.map((group) => {
+										const count = group.rows.filter((row) => selected.has(key(row))).length;
+										return <button key={group.source} type="button" id={`${pickerId}-${group.source}`} role="option" aria-selected={group.source === activeSource} tabIndex={-1} className={styles.sourceOption} data-highlighted={group.source === highlighted?.source} data-testid={"import-source-" + group.source} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSource(group.source)}>
+											<ProviderBrand id={brandId(group.source)} name={sourceLabel(group.source)} size={28} />
+											<span className={styles.sourceText}><strong>{sourceLabel(group.source)}</strong><span>{group.source} · {errors.some((error) => error.source === group.source) ? t.importSourceScanFailed : t.importSourceCount.replace("{n}", String(group.rows.length))}</span></span>
+											{count > 0 && <span className={styles.sourceSelected}>{t.importSourceSelected.replace("{n}", String(count))}</span>}
+											{group.source === activeSource && <IconCheckOutline14 size={15} className={styles.sourceCheck} />}
+										</button>;
+									})}
+									{!filteredSources.length && <p className={styles.sourceNoMatches} role="status">{t.importSourceNoMatches}</p>}
+								</div>
+							</div>}
 						</div>
 
 						<div className={styles.sectionHeading}>
@@ -328,7 +374,9 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 									</button>
 									<button type="button" onClick={() => selectGroup(visibleRows, false)} disabled={scanning || importing || !visibleRows.some((row) => selected.has(key(row)))}>{t.importSelectNone}</button>
 								</div>
-								{!visibleRows.length ? (
+								{!activeGroup.rows.length ? (
+									<div className={styles.empty} role="status"><IconFolderOpenOutline16 size={24} /><strong>{errors.some((error) => error.source === activeSource) ? t.importSourceScanFailed : t.importEmpty}</strong><p>{t.importEmptyHint}</p></div>
+								) : !visibleRows.length ? (
 									<div className={styles.empty} role="status"><IconSearchOutline16 size={24} /><strong>{t.importNoMatches}</strong><button type="button" onClick={() => setQuery("")}>{t.importClearSearch}</button></div>
 								) : (
 									<div className={styles.rows}>

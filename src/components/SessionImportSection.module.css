@@ -20,14 +20,24 @@
 .panel button:focus-visible, .panel summary:focus-visible, .row:has(input:focus-visible) { outline: 2px solid var(--dsw-accent); outline-offset: 3px; }
 .rescan { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 0 5px 6px; color: var(--dsw-label-tertiary); font-size: 11px; }
 .rescan:hover:enabled { color: var(--dsw-accent); }
-.sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 12px 0 24px; }
-.source { position: relative; display: flex; min-width: 0; align-items: center; gap: 8px; padding: 10px; text-align: left; border: 1px solid var(--dsw-border-l1); border-radius: 12px; background: var(--dsw-bg-elevated); transition: border-color .15s, background .15s; }
-.source:hover { border-color: var(--dsw-border-l3); }
-.source[aria-selected="true"] { border-color: var(--dsw-accent); background: var(--dsw-accent-soft); }
+.picker { position: relative; margin: 12px 0 24px; }
+.sourceTrigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 58px; padding: 10px 12px; text-align: left; border: 1px solid var(--dsw-border-l2); border-radius: 12px; background: var(--dsw-bg-elevated); transition: border-color .15s; }
+.sourceTrigger:hover, .sourceTrigger[data-open="true"] { border-color: var(--dsw-accent); }
+.sourceTrigger > svg { flex: none; color: var(--dsw-label-secondary); transition: transform .15s; }
+.sourceTrigger[data-open="true"] > svg { transform: rotate(180deg); }
 .sourceText { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }
-.sourceText strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 600; color: var(--dsw-label-primary); }
-.sourceText > span { font-size: 10px; color: var(--dsw-label-tertiary); }
-.sourceSelected { position: absolute; top: -4px; right: -4px; display: flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 3px; border: 2px solid var(--dsw-bg-elevated); border-radius: 7px; background: var(--dsw-accent); color: white; font-size: 10px; font-weight: 600; }
+.sourceText strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; color: var(--dsw-label-primary); }
+.sourceText > span { font-size: 10.5px; color: var(--dsw-label-tertiary); }
+.sourceMenu { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; right: 0; padding: 7px; border: 1px solid var(--dsw-border-l2); border-radius: 14px; background: var(--dsw-glass-popover); backdrop-filter: blur(20px); box-shadow: var(--dsw-elevation-soft); }
+.sourceSearch { display: flex; align-items: center; gap: 7px; margin: 2px 2px 7px; padding: 0 10px; min-height: 36px; border-radius: 8px; background: var(--dsw-hover); color: var(--dsw-label-tertiary); }
+.sourceSearch input { width: 100%; min-width: 0; outline: none; color: var(--dsw-label-primary); font-size: 12px; background: transparent; }
+.sourceList { max-height: min(288px, 36dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.sourceOption { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 51px; padding: 8px 10px; border-radius: 9px; text-align: left; }
+.sourceOption:hover, .sourceOption[data-highlighted="true"] { background: var(--dsw-hover); }
+.sourceOption[aria-selected="true"] { background: var(--dsw-accent-soft); }
+.sourceCheck { flex: none; color: var(--dsw-accent); }
+.sourceSelected { flex: none; font-size: 10px; color: var(--dsw-accent); }
+.sourceNoMatches { margin: 0; padding: 18px 10px; text-align: center; color: var(--dsw-label-tertiary); font-size: 11.5px; }
 .search { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 10px; border: 1px solid var(--dsw-border-l1); border-radius: 10px; background: var(--dsw-bg-elevated); color: var(--dsw-label-tertiary); }
 .search:focus-within { border-color: var(--dsw-accent); }
 .search input { flex: 1; min-width: 0; outline: none; background: transparent; font-size: 12px; color: var(--dsw-label-primary); }
@@ -94,4 +104,4 @@
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .spinning, .skeleton > div { animation: none; } .source, .row, .run { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .spinning, .skeleton > div { animation: none; } .sourceTrigger, .sourceTrigger > svg, .row, .run { transition: none; } }

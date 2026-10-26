@@ -1,5 +1,5 @@
 /**
- * 启动时检查一次更新：PiWeb 和 pi 各查一次，结果留在内存里给设置页和右下角提示条用，
+ * 启动时检查一次更新：只检查 PiWeb（内置 Pi 随 PiWeb 发版升级），结果留在内存里给设置页和右下角提示条用，
  * 有新版本时在终端打一行。离线、registry 不通都不吭声——设置里还能手动检查。
  *
  * 状态挂 globalThis：instrumentation 和路由是不同的 bundle，模块级变量不共享（同 remote/supervisor）。
@@ -33,7 +33,7 @@ interface StartupOptions {
 }
 
 const STATE_KEY = "piweb.update.startup";
-const TARGETS: readonly UpdateTarget[] = ["piweb", "pi"];
+const TARGETS: readonly UpdateTarget[] = ["piweb"];
 const LABEL: Record<UpdateTarget, string> = { piweb: "PiWeb", pi: "Pi" };
 
 function state(): StartupState {
