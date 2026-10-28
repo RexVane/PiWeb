@@ -9,12 +9,12 @@
 </p>
 
 <p align="center">
-  <img src="assets/main.jpg" alt="PiWeb UI Showcase" width="840" />
+  <img src="assets/readme-chat.jpg" alt="PiWeb on desktop: workspace, conversation and tool calls" width="840" />
 </p>
 
 ---
 
-**PiWeb** brings a sleek, feature-rich browser interface to the [pi coding agent](https://github.com/earendil-works/pi) with zero modifications to the core Pi engine. Install with one command, and all your existing pi configuration, sessions, models, skills, and plugins work out of the box.
+**PiWeb** brings the [pi coding agent](https://github.com/earendil-works/pi) to desktop and mobile browsers. Organize workspaces, review conversations and file changes, configure models, and import conversations from other coding tools. Your existing pi configuration and data are available after installation.
 
 ## Relationship to pi
 
@@ -22,71 +22,20 @@ PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it
 
 ## Features
 
-### Real-Time Streaming Chat
+- **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown.
+- **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
+- **Session import:** Browse and import local history from Claude Code, Codex, Grok, ZCode, dsh and opencode. Search and select across sources, restore archived imports, and leave the original data untouched.
+- **Review changes:** Explore tool trajectories, file diffs and the project growth tree. The file viewer supports content, changes and rendered Markdown, with selection quoting.
+- **Models and extensions:** Manage built-in and custom providers, models, pi packages and skills; inspect prompt sources and choose Read Only, Workspace Write or Full Access tool presets.
+- **Multiple devices:** Use PiWeb from desktop and mobile browsers, with built-in local-network access or a Cloudflare quick tunnel for remote access.
 
-Markdown renders as it streams — headings, lists and code blocks take shape before the answer is finished, not after. Code blocks can be copied. The conversation column can be dragged wider, and the width is remembered in this browser. Thinking and tool calls appear inline as cards. The layout stays restrained: sessions on the left, outline on the right, both collapsible, leaving the screen to the conversation. The model picker follows `enabledModels` in pi settings; the settings page still shows the full catalog.
+<p align="center"><img src="assets/readme-mobile.jpg" alt="PiWeb conversation on a phone" width="300" /></p>
 
-<p align="center"><img src="assets/main.jpg" alt="Main page: streaming chat with tool cards" width="840" /></p>
+### Archives and data
 
-### Chat Navigation
+Archived sessions can be viewed or restored from the sidebar. A background cleanup deletes archived sessions after 30 days, counting from the later of the archive time or subsequent activity; sessions currently in use are skipped. Deletion removes the session file, so export anything you need to keep beforehand.
 
-The outline on the right of the transcript: **bold entries are messages you sent**, the rest are headings inside the assistant's answers. Collapsed it reads as a column of bars — longer for your messages, shorter the deeper a heading sits; hover to expand the list. It highlights where you are as you scroll, and a click scrolls smoothly to that spot.
-
-<p align="center"><img src="assets/outline.jpg" alt="Chat navigation: bold entries are your own messages" width="840" /></p>
-
-### Trajectory and Files, In Place
-
-Tool cards carry both entry points: **View in trajectory** drops that step into the trajectory panel — a timeline with input / model / tool lanes, laid out by sequence, wall-clock time or duration, searchable, with per-row tokens and timings and detail tabs for summary, preview, raw and source. **Open in editor** jumps straight to the local file that step touched. A card that changed a file also carries the whole diff inline (additions green, deletions red, with +N −M counts), folded to a preview for long changes and expanded on click.
-
-<p align="center"><img src="assets/trace-1.jpg" alt="工具卡片上的两个入口与内联 diff" width="840" /></p>
-<p align="center"><img src="assets/trace-2.png" alt="轨迹入口按钮" /> <img src="assets/trace-3.png" alt="入口按钮细节" /> <img src="assets/trace-4.png" alt="入口按钮细节" /></p>
-
-### Workspaces & Sessions
-
-Sessions grouped by project folder, with a native folder picker (Windows / macOS / Linux), rename and archive. Archived conversations live together under "Archived" in the sidebar, ready to reopen or unarchive, and **an archived session is deleted automatically after 30 days of inactivity** — no manual cleanup. Session tree branches, draft recovery, and JSONL / HTML export are there too.
-
-<p align="center"><img src="assets/archive.jpg" alt="Archived: archived conversations in one place" width="400" /></p>
-
-### Project Growth Tree
-
-Every file operation pi makes is snapshotted, grouped one round per message you send. Each round shows what changed **relative to the previous one** — files added, modified and deleted, with line-level diffs one click away — so you can review the work round by round, or drill into single steps inside a round. A round with no file changes says so instead of being skipped. Each round is stored as a commit in the workspace's own git repository on a private ref (`refs/piweb/rounds/…`), never touching your branches or index; if the folder is not a git repository yet (or is only a subfolder of another one), PiWeb asks before creating one there, remembers the answer per workspace, and records nothing if you decline.
-
-<p align="center"><img src="assets/growth-1.jpg" alt="Project growth tree (1 of 2)" width="840" /></p>
-<p align="center"><img src="assets/growth-2.jpg" alt="Project growth tree (2 of 2)" width="840" /></p>
-
-### File Viewer
-
-Open project files in the page instead of switching to an editor: a centered window with tabs, and fuzzy search behind the "+". Each file has three views — **Changes** (whole-file diff, additions green and deletions red, with one-click jumps between changes), **Content** (line numbers and syntax highlighting; deleted files show their last content), and **Rendered** (Markdown as a document). Quote a selection into the composer, or open the file in your local editor.
-
-<p align="center"><img src="assets/viewer-1.jpg" alt="File viewer (1 of 2)" width="840" /></p>
-<p align="center"><img src="assets/viewer-2.jpg" alt="File viewer (2 of 2)" width="840" /></p>
-
-### Context Meter
-
-Click the ring next to the composer to see the context window broken down into 13 segments — System Prompt, System/Custom Tools, Memory (AGENTS.md), Skills, messages by type, Compacted Data, Auto-Compact Buffer, and Free Space.
-
-### Prompt Sources
-
-A header button opens a panel listing every prompt that reaches the model's context: the system prompt and its appended sections, project memory (`AGENTS.md`), each skill's `SKILL.md`, prompt templates, tool definitions, plus the assembled prompt actually sent and the compaction summary — each row labelled with where it came from (project / personal / package / extension). Click a row to read the original in the centre viewer. The list is enumerated live for the current workspace, so prompts that arrive with a plugin or package installed later show up on refresh.
-
-<p align="center"><img src="assets/prompts-1.jpg" alt="Prompt sources (1 of 2)" width="840" /></p>
-<p align="center"><img src="assets/prompts-2.jpg" alt="Prompt sources (2 of 2)" width="840" /></p>
-
-### Model & Provider Management
-
-40 built-in providers, signed in with an API key or OAuth — Anthropic, GitHub Copilot, OpenAI Codex, xAI, OpenRouter, Kimi and Radius support one-click OAuth. Anything else works just as well: give a custom provider its base URL, protocol and models, and it lands in `models.json`; local gateways such as Ollama get a placeholder key automatically. Pull the model catalog in one click, and quota or balance reads (Claude, Codex, xAI, DeepSeek and 7 more) sit right on the provider card.
-
-<p align="center"><img src="assets/providers-1.jpg" alt="Provider setup (1 of 3)" width="840" /></p>
-<p align="center"><img src="assets/providers-2.jpg" alt="Provider setup (2 of 3)" width="840" /></p>
-<p align="center"><img src="assets/providers-3.jpg" alt="Provider setup (3 of 3)" width="840" /></p>
-
-### Plugins & Skills
-
-Install, update, and uninstall pi packages directly from the UI. Enable/disable or delete skills; every change applies to running sessions immediately.
-
-### Security
-
-Launch-token login for anything reachable beyond this machine, origin validation on write actions, strict path boundary checks, and tool presets (Read Only / Workspace Write / Full Access).
+The project growth tree stores each round of file changes as a commit under `refs/piweb/rounds/…` in the workspace's Git repository, without changing branches or the index. If the workspace is not its own Git repository, PiWeb asks before initializing one; declining disables recording there.
 
 ## Usage
 
