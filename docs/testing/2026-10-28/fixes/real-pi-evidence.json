@@ -1,0 +1,89 @@
+[
+  {
+    "session": "2026-10-28T13-32-08-348Z_01a182b6-011c-7404-93c3-31b75667fc7f.jsonl",
+    "messages": [
+      {
+        "role": "assistant",
+        "timestamp": 1793194328615,
+        "model": "clinepass/cline-pass/deepseek-v4.1-flash-1017",
+        "provider": "magpie",
+        "durationMs": 3686,
+        "stopReason": "toolUse"
+      },
+      {
+        "role": "toolResult",
+        "toolName": "bash",
+        "durationMs": 31319,
+        "isError": true,
+        "started": true,
+        "finished": false,
+        "aborted": true,
+        "resumed": false,
+        "selected": false
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1793194363628,
+        "model": "clinepass/cline-pass/deepseek-v4.1-flash-1017",
+        "provider": "magpie",
+        "durationMs": 0,
+        "stopReason": "error",
+        "errorMessage": "This operation was aborted"
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1793194380980,
+        "model": "clinepass/cline-pass/deepseek-v4.1-flash-1017",
+        "provider": "magpie",
+        "durationMs": 1914,
+        "stopReason": "toolUse"
+      },
+      {
+        "role": "toolResult",
+        "toolName": "bash",
+        "durationMs": 9,
+        "isError": false,
+        "started": false,
+        "finished": false,
+        "aborted": false,
+        "resumed": true,
+        "selected": false
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1793194382907,
+        "model": "clinepass/cline-pass/deepseek-v4.1-flash-1017",
+        "provider": "magpie",
+        "durationMs": 2157,
+        "stopReason": "stop"
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1793194464459,
+        "model": "clinepass/cline-pass/deepseek-v4.1-flash-1017",
+        "provider": "magpie",
+        "durationMs": 2117,
+        "stopReason": "toolUse"
+      },
+      {
+        "role": "toolResult",
+        "toolName": "ask_user_question",
+        "durationMs": 53974,
+        "isError": false,
+        "started": false,
+        "finished": false,
+        "aborted": false,
+        "resumed": false,
+        "selected": true
+      },
+      {
+        "role": "assistant",
+        "timestamp": 1793194520553,
+        "model": "clinepass/cline-pass/deepseek-v4.1-flash-1017",
+        "provider": "magpie",
+        "durationMs": 1982,
+        "stopReason": "stop"
+      }
+    ]
+  }
+]

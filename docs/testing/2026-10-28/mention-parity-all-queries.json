@@ -1,0 +1,26 @@
+{
+  "queries": 33,
+  "passed": 32,
+  "mismatches": [
+    {
+      "query": "[slug]",
+      "passed": false,
+      "expected": [
+        {
+          "label": "[slug]/",
+          "description": "src/app/[slug]"
+        }
+      ],
+      "actual": [
+        {
+          "label": "[slug]/",
+          "description": "src/app/[slug]"
+        },
+        {
+          "label": "page.tsx",
+          "description": "src/app/[slug]/page.tsx"
+        }
+      ]
+    }
+  ]
+}

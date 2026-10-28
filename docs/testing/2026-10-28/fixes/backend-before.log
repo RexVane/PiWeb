@@ -1,0 +1,252 @@
+npm notice run @rexvane/piweb@0.3.28 npx
+npm notice run 'vitest' run tests/workspace-index.test.ts tests/mention-parity.test.ts tests/workspace-store.test.ts tests/api/session-workspaces.test.ts tests/packaging.test.ts tests/integration/remote/tunnel-status.test.ts --reporter=default --reporter=json --outputFile.json=/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-backend-fixes-20261028-GCWFdP/before-results.json
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/mention-parity.test.ts (5 tests | 1 failed) 419ms
+   ✓ @ token 识别与 pi 一致 (3)
+     ✓ 分隔符规则和 pi-tui 的正则是同一个 1ms
+     ✓ 固定用例 3ms
+     ✓ 随机用例 21ms
+   ✓ 评分与 pi 一致 (1)
+     ✓ scoreEntry 逐条相等（文件 / 目录、大小写、路径包含） 2ms
+   ❯ 端到端：同一批文件，pi（真 fd）与网页给出同样的候选 (1)
+     × 各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符 374ms
+ ❯ tests/workspace-index.test.ts (16 tests | 1 failed) 18ms
+   ✓ @ token 识别（pi 的 extractAtPrefix） (5)
+     ✓ 光标前的词首 @ 才触发 3ms
+     ✓ 邮箱、正文中间的 @、英文逗号后紧跟的 @ 都不触发（和 pi 一致） 0ms
+     ✓ 光标在 token 中间时替换整段，不留半截 0ms
+     ✓ 支持 @"带空格 的路径"，有右引号时一起替换 0ms
+     ✓ 只看光标所在的那一行 0ms
+   ✓ 候选集合 (2)
+     ✓ 文件夹由文件路径推导，且不含根目录 0ms
+     ✓ 显示文本给目录补尾斜杠，文件原样 0ms
+   ❯ 匹配与排序（pi 的 getFuzzyFileSuggestions） (9)
+     ✓ 空查询：先浅层，同层名字短的在前，再按字典序 8ms
+     ✓ 默认只匹配文件名：@lib 给出 lib 文件夹，不列里面名字不含 lib 的文件 1ms
+     ✓ 全等 > 前缀 > 包含，同分时浅的、短的在前 0ms
+     ✓ 带 / 且目录存在：只在该目录下找，路径按用户打的前缀显示 0ms
+     ✓ 带 / 但目录不存在：按整条路径匹配（只命中路径包含查询的条目） 0ms
+     ✓ smart case：查询里有大写才区分大小写 0ms
+     × 查询里的正则字符按字面匹配，与 Pi SDK 的 fd 转义一致 4ms
+     ✓ 工作区外的路径不支持 1ms
+     ✓ 最多 20 条，limit 只截断结果 0ms
+ ❯ tests/workspace-store.test.ts (12 tests | 2 failed) 236ms
+   ❯ PiWeb workspace registry (12)
+     ✓ serializes independent registry mutations without losing fields 8ms
+     ✓ normalizes alias keys case-insensitively on Windows 5ms
+     × treats a CLI symlink cwd and its real directory as one workspace through rename, removal and re-add 10ms
+     × reads a legacy symlink registry without duplicates or losing its alias and first-seen order 3ms
+     ✓ serves repeated polls from the in-memory snapshot without rewriting or taking the lock 3ms
+     ✓ picks up an external rewrite instead of serving a stale snapshot 2ms
+     ✓ removes only the workspace registration and keeps its sessions archived 4ms
+     ✓ forgets stale archive metadata after a session is permanently deleted 2ms
+     ✓ records when a session was archived and drops it on unarchive 3ms
+     ✓ keeps the previous registry intact when atomic replacement fails 5ms
+     ✓ reads the latest registry after another process releases its lock 188ms
+     ✓ does not overwrite a malformed workspace registry 2ms
+ ❯ tests/packaging.test.ts (13 tests | 1 failed) 1023ms
+   ✓ published package covers the whole production build (3)
+     ✓ whitelists .next as a directory instead of enumerating Next internals 2ms
+     ✓ treats a BUILD_ID without its runtime manifests as no usable build (self-heal path) 7ms
+     ✓ names the missing manifest and the fix instead of a bare ENOENT path 5ms
+   ❯ release gate on the real tarball (5)
+     ✓ passes for a package that ships a complete build 253ms
+     ✓ rejects an artifact whose Pi subpackages would float on a clean install 4ms
+     ✓ fails when the whitelist omits a runtime manifest (the 0.3.7 bug) 246ms
+     ✓ fails when the build cache sneaks into the tarball 241ms
+     × excludes local Next cache using the release files policy while keeping every runtime file and the local cache 238ms
+   ✓ bundled scripts must not depend on the build machine's paths (5)
+     ✓ imports the release scripts through src/ (fixture sanity) 2ms
+     ✓ never turns import.meta.url into a filesystem path unvalidated 2ms
+     ✓ resolves the installation root without the module URL when it is foreign 0ms
+     ✓ never throws on a drive-less POSIX file URL (the 0.3.8 Windows crash) 20ms
+     ✓ still resolves a real checkout from the module URL 1ms
+ ❯ tests/api/session-workspaces.test.ts (2 tests | 1 failed) 17ms
+   ❯ session workspace identity (2)
+     × groups historical CLI symlink sessions with the canonical workspace and its alias 13ms
+     ✓ keeps a missing historical cwd and an empty cwd readable 3ms
+ ❯ tests/integration/remote/tunnel-status.test.ts (11 tests | 1 failed) 7137ms
+   ❯ tunnel status through API, process and HTTP (11)
+     ✓ detects 1033 after readiness and recovers on the same URL without respawning 981ms
+     ✓ keeps checking after the initial readiness deadline instead of remaining pending forever 437ms
+     ✓ concurrent starts wait for the same completed readiness check 442ms
+     ✓ does not mark {"status":403,"body":"forbidden"} as a working tunnel 436ms
+     ✓ does not mark {"status":200,"body":"<html>error page</html>"} as a working tunnel 992ms
+     ✓ does not mark {"status":200,"body":"{\"success\":true,\"data\":{\"ok\":true,\"service\":\"other\"}}"} as a working tunnel 920ms
+     ✓ does not mark {"status":502,"body":"Bad Gateway"} as a working tunnel 499ms
+     ✓ does not mark {"status":403,"headers":{"cf-mitigated":"challenge"},"body":"challenge"} as a working tunnel 441ms
+     ✓ reports a crash after startup and removes the expired address 480ms
+     ✓ coalesces checks and discards an in-flight failure after stopping 493ms
+     × can stop while waiting for an address and start a fresh tunnel 1015ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/mention-parity.test.ts > 端到端：同一批文件，pi（真 fd）与网页给出同样的候选 > 各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符
+AssertionError: expected { query: '[slug]', …(1) } to deeply equal { Object (query, items) }
+
+- Expected
++ Received
+
+@@ -2,8 +2,12 @@
+    "items": [
+      {
+        "description": "src/app/[slug]",
+        "label": "[slug]/",
+      },
++     {
++       "description": "src/app/[slug]/page.tsx",
++       "label": "page.tsx",
++     },
+    ],
+    "query": "[slug]",
+  }
+
+ ❯ tests/mention-parity.test.ts:153:35
+    151|   for (const query of queries) {
+    152|    const mine = suggestPaths(candidates, query).map(({ label, descript…
+    153|    expect({ query, items: mine }).toEqual({ query, items: await piItem…
+       |                                   ^
+    154|    if (mine.length) nonEmpty += 1;
+    155|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  tests/packaging.test.ts > release gate on the real tarball > excludes local Next cache using the release files policy while keeping every runtime file and the local cache
+Error: the packaged .next must not include the build cache (.next/cache/.previewinfo); remove .next/cache before packing
+ ❯ verifyPackedPackage scripts/verify-package.mjs:77:21
+     75|   const files = (entry.files ?? []).map((file) => String(file.path).re…
+     76|   const cached = files.find((file) => file.startsWith(".next/cache/"));
+     77|   if (cached) throw new Error(`the packaged .next must not include the…
+       |                     ^
+     78|   if (!files.includes("package.json")) throw new Error("the tarball ha…
+     79|   const unpacked = path.join(tmp, "unpacked");
+ ❯ tests/packaging.test.ts:122:24
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  tests/workspace-index.test.ts > 匹配与排序（pi 的 getFuzzyFileSuggestions） > 查询里的正则字符按字面匹配，与 Pi SDK 的 fd 转义一致
+AssertionError: [slug]: expected [ 'src/app/[slug]', …(1) ] to deeply equal [ 'src/app/[slug]' ]
+
+- Expected
++ Received
+
+  [
+    "src/app/[slug]",
++   "src/app/[slug]/page.tsx",
+  ]
+
+ ❯ tests/workspace-index.test.ts:121:80
+    119|    ["(notes", "docs/(notes.md"],
+    120|   ]) {
+    121|    expect(suggestPaths(special, query).map((item) => item.description)…
+       |                                                                                ^
+    122|   }
+    123|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  tests/workspace-store.test.ts > PiWeb workspace registry > treats a CLI symlink cwd and its real directory as one workspace through rename, removal and re-add
+AssertionError: expected [ …(3) ] to deeply equal [ …(2) ]
+
+- Expected
++ Received
+
+  [
+-   "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-nEnCsf/other",
+-   "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-nEnCsf/real",
++   "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-nEnCsf/other",
++   "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-nEnCsf/cli-link",
++   "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-nEnCsf/real",
+  ]
+
+ ❯ tests/workspace-store.test.ts:87:44
+     85|   await addWorkspace(link);
+     86|   await setAlias(link, "CLI project");
+     87|   expect(await registerCwds([real, link])).toEqual([canonicalOther, ca…
+       |                                            ^
+     88|   expect(await getAliases()).toEqual({ [key]: "CLI project" });
+     89|   await setAlias(real, "Renamed project");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  tests/workspace-store.test.ts > PiWeb workspace registry > reads a legacy symlink registry without duplicates or losing its alias and first-seen order
+AssertionError: expected { workspaces: [ …(4) ], …(3) } to match object { workspaces: [ …(3) ], …(1) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "aliases": {
+-     "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/real": "Legacy name",
++     "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/cli-link": "Legacy name",
+    },
+    "workspaces": [
+      "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/first",
+-     "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/real",
++     "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/cli-link",
++     "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/real",
+      "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-workspaces-XVvOYh/last",
+    ],
+  }
+
+ ❯ tests/workspace-store.test.ts:113:40
+    111|   const original = JSON.stringify({ workspaces: [first, link, real, la…
+    112|   await fs.writeFile(target, original);
+    113|   expect(await getWorkspaceRegistry()).toMatchObject({
+       |                                        ^
+    114|    workspaces: [first, canonical, last], aliases: { [key]: "Legacy nam…
+    115|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  tests/api/session-workspaces.test.ts > session workspace identity > groups historical CLI symlink sessions with the canonical workspace and its alias
+AssertionError: expected [ { path: 'cli.jsonl', …(1) }, …(1) ] to deeply equal [ { path: 'cli.jsonl', …(1) }, …(1) ]
+
+- Expected
++ Received
+
+  [
+    {
+-     "cwd": "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-session-workspaces-xSaxOC/real",
++     "cwd": "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-session-workspaces-xSaxOC/cli-link",
+      "path": "cli.jsonl",
+    },
+    {
+-     "cwd": "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-session-workspaces-xSaxOC/real",
++     "cwd": "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-session-workspaces-xSaxOC/real",
+      "path": "web.jsonl",
+    },
+  ]
+
+ ❯ tests/api/session-workspaces.test.ts:38:30
+     36|   const first = await request();
+     37|   const body = await first.json();
+     38|   expect(body.data.sessions).toEqual([{ path: "cli.jsonl", cwd: canoni…
+       |                              ^
+     39|   expect(body.data.workspaceRegistry).toMatchObject({ workspaces: [can…
+     40|   expect(state.warm).toHaveBeenLastCalledWith([canonical]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  tests/integration/remote/tunnel-status.test.ts > tunnel status through API, process and HTTP > can stop while waiting for an address and start a fresh tunnel
+Error: ENOENT: no such file or directory, open '/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-tunnel-status-KBQQWN/pid'
+ ❯ tests/integration/remote/tunnel-status.test.ts:145:39
+    143|   await fs.writeFile(path.join(root, "startup-delay"), "1200");
+    144|   const starting = startPublic();
+    145|   await vi.waitFor(async () => expect(await fs.readFile(path.join(root…
+       |                                       ^
+    146|   await stopPublic();
+    147|   expect(await starting).toMatchObject({ running: false, ready: false,…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  6 failed (6)
+      Tests  7 failed | 52 passed (59)
+   Start at  21:11:23
+   Duration  7.33s (tests 89%, import 9%, transform 2%)
+
+JSON report written to /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-backend-fixes-20261028-GCWFdP/before-results.json

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useI18n } from "@/i18n";
 import type { ImageAttachment } from "@/lib/types";
+import { useDialog } from "@/hooks/useDialog";
 
 export type PreviewImageSource = ImageAttachment | string;
 export const imageSource = (image: PreviewImageSource) => typeof image === "string" ? image : `data:${image.mimeType};base64,${image.data}`;
@@ -19,44 +20,38 @@ export function ImageViewer({ images, index, disabled, onIndex, onRemove, onClos
 	const { t } = useI18n();
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const closeRef = useRef<HTMLButtonElement>(null);
+	useDialog({ open: Boolean(images[index]), onClose, ref: dialogRef });
 	const count = images.length;
 	const go = (delta: number) => onIndex((index + delta + count) % count);
 
 	// 打开时把焦点移进来、锁住页面滚动，关掉时把焦点还给原来那个元素（还在页面上的话）
 	useEffect(() => {
-		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		const overflow = document.body.style.overflow;
 		document.body.style.overflow = "hidden";
 		closeRef.current?.focus();
 		return () => {
 			document.body.style.overflow = overflow;
-			if (opener?.isConnected) opener.focus();
 		};
 	}, []);
 
-	// 捕获阶段处理：Esc / 方向键不再传给页面上其它监听 document 的面板；Tab 只在预览里转
+	// Escape / 焦点约束由公共弹窗堆栈处理；这里只处理当前光箱内的翻页键。
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent) => {
-			if (event.key === "Escape") onClose();
-			else if (event.key === "ArrowLeft" && count > 1) go(-1);
+			const target = event.target === document ? document.activeElement : event.target;
+			if (event.defaultPrevented || event.isComposing || !dialogRef.current?.contains(target as Node)) return;
+			if (event.key === "ArrowLeft" && count > 1) go(-1);
 			else if (event.key === "ArrowRight" && count > 1) go(1);
-			else if (event.key === "Tab") {
-				const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)") ?? [])];
-				if (!focusable.length) return;
-				const at = focusable.indexOf(document.activeElement as HTMLElement);
-				const next = event.shiftKey ? (at <= 0 ? focusable.length - 1 : at - 1) : at === focusable.length - 1 ? 0 : at + 1;
-				focusable[next].focus();
-			} else return;
+			else return;
 			event.preventDefault();
 			event.stopPropagation();
 		};
-		document.addEventListener("keydown", onKey, true);
-		return () => document.removeEventListener("keydown", onKey, true);
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
 	}, [count, index, onClose, onIndex]);
 
 	if (!images[index]) return null;
 	return (
-		<div ref={dialogRef} className="pw-lightbox" role="dialog" aria-modal="true" aria-label={t.imageViewer} onClick={onClose}>
+		<div ref={dialogRef} className="pw-lightbox" role="dialog" aria-modal="true" aria-label={t.imageViewer} tabIndex={-1} onClick={onClose}>
 			<div className="pw-lightbox-bar" onClick={(event) => event.stopPropagation()}>
 				<span className="pw-lightbox-count">{count > 1 ? `${index + 1} / ${count}` : ""}</span>
 				{onRemove && <button type="button" className="pw-lightbox-btn" disabled={disabled} onClick={() => onRemove(index)}>{t.delete}</button>}

@@ -1,0 +1,60 @@
+{
+  "diagrams": [
+    {
+      "border": "0px",
+      "childTags": [
+        "IMG"
+      ],
+      "controls": 0,
+      "image": {
+        "complete": true,
+        "height": 912.0918579101562,
+        "naturalHeight": 949,
+        "naturalWidth": 1184,
+        "width": 1137.9547119140625,
+        "x": 598.9971923828125,
+        "y": -1108.920166015625
+      },
+      "padding": "0px",
+      "text": ""
+    },
+    {
+      "border": "0px",
+      "childTags": [
+        "IMG"
+      ],
+      "controls": 0,
+      "image": {
+        "complete": true,
+        "height": 569.9859619140625,
+        "naturalHeight": 570,
+        "naturalWidth": 742,
+        "width": 741.9892578125,
+        "x": 796.9799194335938,
+        "y": 273.6357116699219
+      },
+      "padding": "0px",
+      "text": ""
+    },
+    {
+      "border": "0px",
+      "childTags": [
+        "IMG"
+      ],
+      "controls": 0,
+      "image": {
+        "complete": true,
+        "height": 554.4076538085938,
+        "naturalHeight": 609,
+        "naturalWidth": 1250,
+        "width": 1137.9547119140625,
+        "x": 598.9971923828125,
+        "y": 1083.8035888671875
+      },
+      "padding": "0px",
+      "text": ""
+    }
+  ],
+  "documentWidth": 2066,
+  "innerWidth": 2066
+}

@@ -1,0 +1,11 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run tests/message-cancellation.test.ts tests/components/chatwindow-cancellation-timing.test.tsx tests/trajectory.test.ts tests/agent-resource-isolation.test.ts tests/components/chatwindow-ask-step.test.tsx tests/components/chatwindow-round-badge.test.tsx
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  6 passed (6)
+      Tests  54 passed | 1 skipped (55)
+   Start at  21:10:59
+   Duration  1.78s (tests 45%, environment 26%, import 21%, transform 7%, setup 1%)
+

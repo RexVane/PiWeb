@@ -1,0 +1,1066 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run --reporter=default --reporter=json --outputFile.json=docs/testing/2026-10-28/fixes/vitest-results.json
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ✓ tests/api/workspace-picker.test.ts (5 tests) 3726ms
+   ✓ workspace picker API and native process (5)
+     ✓ falls back to page browsing when the native process fails 1063ms
+     ✓ treats native cancellation as cancellation without opening another picker 704ms
+     ✓ registers a directory returned by the native process 1233ms
+     ✓ keeps invalid chosen paths as validation errors 723ms
+ ✓ tests/session-reader.test.ts (6 tests) 4198ms
+   ✓ session-reader listSessions parity (6)
+     ✓ matches the SDK listing field by field and reuses cached summaries for unchanged files 1315ms
+     ✓ reuses the persisted summary index after a restart, and still re-reads changed files 2825ms
+ ✓ tests/components/app-shell-drafts.test.tsx (9 tests) 685ms
+ ✓ tests/components/settings-model-roundtrip.test.tsx (11 tests) 1296ms
+   ✓ SettingsPanel model round trip and revision (11)
+     ✓ shows the remaining fields after saving capacities, and explicit text-only completion survives reopening 374ms
+ ✓ tests/growth-service.test.ts (18 tests) 5915ms
+   ✓ growth-service rounds (real git) (12)
+     ✓ commits one round per call with trailers, records user edits separately and serves diffs 724ms
+     ✓ reads the same timeline back from git log in a fresh process 477ms
+     ✓ re-parents onto a head another process committed first 371ms
+     ✓ indexes a workspace across multiple bounded batches 554ms
+     ✓ preserves the workspace Git index across non-empty file/directory replacements 478ms
+     ✓ removes all type conflicts before adding paths across multiple batches 1775ms
+     ✓ force-removes tracked paths replaced by symbolic links 374ms
+     ✓ removes a file replaced by a linked directory without snapshotting its target 340ms
+     ✓ removes tracked content when a file becomes a directory 318ms
+stderr | tests/growth-tracker.test.ts > growth-tracker (real git) > retries a failed baseline and clears the visible error after recovery
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-tracker-aHNX5u/not-created-yet: workspace directory not found
+
+ ✓ tests/update-service.test.ts (25 tests) 468ms
+ ✓ tests/growth-tracker.test.ts (2 tests) 1077ms
+   ✓ growth-tracker (real git) (2)
+     ✓ commits the user's edits before a prompt and exactly one commit per round 885ms
+ ✓ tests/git-service.test.ts (5 tests) 1107ms
+   ✓ complete Git line counts (1)
+     ✓ keeps full numstat for truncated worktree/staged/commit/untracked patches and binary files 349ms
+   ✓ truncated patches with multi-byte text (1)
+     ✓ cuts on a character boundary instead of leaving a U+FFFD at the end 333ms
+ ✓ tests/components/session-import-panel.test.tsx (15 tests) 569ms
+ ✓ tests/compaction-display.test.ts (4 tests) 440ms
+ ✓ tests/integration/remote/tunnel-status.test.ts (11 tests) 8408ms
+   ✓ tunnel status through API, process and HTTP (11)
+     ✓ detects 1033 after readiness and recovers on the same URL without respawning 1012ms
+     ✓ keeps checking after the initial readiness deadline instead of remaining pending forever 754ms
+     ✓ concurrent starts wait for the same completed readiness check 1215ms
+     ✓ does not mark {"status":403,"body":"forbidden"} as a working tunnel 723ms
+     ✓ does not mark {"status":200,"body":"<html>error page</html>"} as a working tunnel 824ms
+     ✓ does not mark {"status":200,"body":"{\"success\":true,\"data\":{\"ok\":true,\"service\":\"other\"}}"} as a working tunnel 407ms
+     ✓ does not mark {"status":502,"body":"Bad Gateway"} as a working tunnel 426ms
+     ✓ does not mark {"status":403,"headers":{"cf-mitigated":"challenge"},"body":"challenge"} as a working tunnel 411ms
+     ✓ reports a crash after startup and removes the expired address 545ms
+     ✓ coalesces checks and discards an in-flight failure after stopping 453ms
+     ✓ can stop while waiting for an address and start a fresh tunnel 1636ms
+ ✓ tests/launcher.test.ts (31 tests) 388ms
+ ✓ tests/agent-resource-isolation.test.ts (20 tests | 1 skipped) 1571ms
+ ✓ tests/external-session-write.test.ts (4 tests) 525ms
+ ✓ tests/command-validation.test.ts (10 tests) 625ms
+   ✓ agent command validation (10)
+     ✓ rejects images totaling over 200MB (268MB base64, maxMessageImageBytes) 591ms
+ ✓ tests/packaging.test.ts (13 tests) 1283ms
+   ✓ release gate on the real tarball (5)
+     ✓ passes for a package that ships a complete build 384ms
+     ✓ fails when the whitelist omits a runtime manifest (the 0.3.7 bug) 302ms
+ ✓ tests/models-service-auth.test.ts (10 tests) 707ms
+ ✓ tests/context-breakdown-session.test.ts (3 tests) 499ms
+ ✓ tests/components/context-meter/session.test.tsx (2 tests) 422ms
+ ✓ tests/components/settings-tools-session.test.tsx (4 tests) 578ms
+ ✓ tests/integration/project/tree-expansion.test.tsx (5 tests) 605ms
+ ✓ tests/files-service.test.ts (11 tests) 674ms
+   ✓ paginates a large directory without dropping files 304ms
+ ✓ tests/components/context-meter.test.tsx (15 tests) 350ms
+ ✓ tests/components/file-viewer-dir.test.tsx (17 tests) 525ms
+ ✓ tests/components/app-shell-drawer-shortcut.test.tsx (1 test) 289ms
+ ✓ tests/models-service-config.test.ts (34 tests) 302ms
+ ✓ tests/components/outline-rail.test.tsx (1 test) 438ms
+   ✓ outline rail (1)
+     ✓ never lists bare timestamps and picks up content that loads later 437ms
+ ❯ tests/components/settings-font-family.test.tsx (2 tests | 2 failed) 402ms
+   ❯ font family picker (2)
+     × keeps the custom input when it is emptied 257ms
+     × leaves custom mode when a preset is picked even if the input still has text 144ms
+ ✓ tests/components/settings-usage-card.test.tsx (4 tests) 446ms
+ ✓ tests/prompt-sources.test.ts (11 tests) 440ms
+ ✓ tests/mention-parity.test.ts (5 tests) 774ms
+   ✓ 端到端：同一批文件，pi（真 fd）与网页给出同样的候选 (1)
+     ✓ 各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符 726ms
+ ✓ tests/components/app-shell-markdown-paths.test.tsx (1 test) 292ms
+ ✓ tests/components/chat-input-mentions.test.tsx (13 tests) 303ms
+ ✓ tests/components/provider-setup-modal.test.tsx (12 tests) 389ms
+ ✓ tests/components/growth-project-panel.test.tsx (13 tests) 238ms
+ ✓ tests/session-import-sources.test.ts (23 tests) 186ms
+ ✓ tests/pi-settings.test.ts (8 tests) 375ms
+ ✓ tests/components/chat-input-commands.test.tsx (14 tests) 237ms
+ ✓ tests/use-growth.test.ts (12 tests) 349ms
+ ✓ tests/components/chatwindow-compaction.test.tsx (3 tests) 261ms
+ ✓ tests/components/chatwindow-stream-markdown.test.tsx (4 tests) 224ms
+ ✓ tests/components/sidebar-menus.test.tsx (5 tests) 248ms
+ ✓ tests/session-import-service.test.ts (14 tests) 192ms
+ ✓ tests/components/chatwindow-markdown-paths.test.tsx (3 tests) 267ms
+ ✓ tests/components/settings-dialog-keyboard.test.tsx (2 tests) 322ms
+ ✓ tests/files-service-upload.test.ts (11 tests) 256ms
+ ✓ tests/components/ask-user-card.test.tsx (6 tests) 188ms
+ ✓ tests/components/chat-input-chips.test.tsx (15 tests) 284ms
+ ✓ tests/components/chatwindow-stick-bottom.test.tsx (1 test) 234ms
+ ✓ tests/components/git-panel-races.test.tsx (5 tests) 164ms
+ ✓ tests/components/chatwindow-edit-message.test.tsx (6 tests) 279ms
+ ✓ tests/api/workspace-image.test.ts (6 tests) 237ms
+ ✓ tests/source-encoding.test.ts (1 test) 83ms
+ ✓ tests/workspace-store.test.ts (13 tests) 234ms
+ ✓ tests/components/update-notice.test.tsx (6 tests) 173ms
+ ✓ tests/components/chat-image-preview.test.tsx (6 tests) 190ms
+ ✓ tests/components/remote-section.test.tsx (6 tests) 187ms
+ ✓ tests/components/chat-input-lifecycle.test.tsx (4 tests) 200ms
+ ✓ tests/components/workspace-picker/fallback.test.tsx (4 tests) 201ms
+ ✓ tests/components/prompt-panel.test.tsx (6 tests) 155ms
+ ✓ tests/components/plugins-section-state.test.tsx (3 tests) 177ms
+ ✓ tests/components/chatwindow-lazy-turns.test.tsx (2 tests) 180ms
+stderr | tests/growth-tracker-failures.test.ts > reports a terminal size error even after a recent transient failure and stops committing
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-failure-mcwZCJ: temporary failure
+
+stderr | tests/growth-tracker-failures.test.ts > reports a terminal size error even after a recent transient failure and stops committing
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-failure-mcwZCJ: workspace too large
+
+stderr | tests/growth-tracker-failures.test.ts > disables automatic tracking after a manual record hits a terminal error
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-manual-failure-9bI3VH: workspace too large
+
+stderr | tests/growth-tracker-failures.test.ts > clears a transient manual record error after a successful retry
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-manual-retry-tBMBEl: temporary failure
+
+ ✓ tests/growth-tracker-failures.test.ts (6 tests) 168ms
+ ✓ tests/plugins-service.test.ts (15 tests) 65ms
+ ✓ tests/components/login-page.test.tsx (3 tests) 153ms
+ ✓ tests/components/markdown-file-path.test.tsx (5 tests) 152ms
+ ✓ tests/upload-proxy.test.ts (2 tests) 88ms
+ ✓ tests/components/git-panel-areas.test.tsx (6 tests) 139ms
+ ✓ tests/components/extension-dialog.test.tsx (8 tests) 137ms
+ ✓ tests/github-identity.test.ts (6 tests) 102ms
+ ✓ tests/components/select-keyboard.test.tsx (4 tests) 163ms
+ ✓ tests/components/growth-tree.test.tsx (2 tests) 113ms
+ ✓ tests/components/dialog-stack.test.tsx (3 tests) 181ms
+ ✓ tests/components/drawer-panel.test.tsx (3 tests) 144ms
+ ✓ tests/components/directory-picker.test.tsx (3 tests) 167ms
+ ✓ tests/components/mermaid-diagram.test.tsx (3 tests) 138ms
+ ✓ tests/models-service-context-window.test.ts (8 tests) 83ms
+ ✓ tests/components/streaming-markdown.test.tsx (16 tests) 66ms
+ ✓ tests/proxy-auth.test.ts (34 tests) 55ms
+ ✓ tests/components/app-shell-sidebar-actions.test.tsx (2 tests) 74ms
+ ✓ tests/install-build.test.ts (4 tests) 67ms
+ ✓ tests/agent-prompt-acceptance.test.ts (14 tests) 81ms
+ ✓ tests/models-service-discovery.test.ts (16 tests) 56ms
+ ✓ tests/components/chatwindow-cancellation-timing.test.tsx (2 tests) 167ms
+ ✓ tests/session-import-writer.test.ts (7 tests) 32ms
+ ✓ tests/components/sidebar-current.test.tsx (1 test) 48ms
+ ✓ tests/components/select-option-placement.test.tsx (2 tests) 84ms
+ ✓ tests/remote-proxy.test.ts (14 tests) 51ms
+ ✓ tests/mermaid.test.ts (3 tests) 48ms
+ ✓ tests/models-service-credentials.test.ts (5 tests) 38ms
+ ✓ tests/security-service.test.ts (8 tests) 39ms
+ ✓ tests/skills-delete.test.ts (8 tests) 40ms
+ ✓ tests/components/markdown-mermaid.test.tsx (4 tests) 77ms
+ ✓ tests/components/chatwindow-round-badge.test.tsx (9 tests) 179ms
+ ✓ tests/update-service-process.test.ts (6 tests) 26ms
+ ✓ tests/components/extension-notices.test.tsx (5 tests) 36ms
+ ✓ tests/event-stream.test.ts (6 tests) 32ms
+ ✓ tests/remote-supervisor.test.ts (22 tests) 24ms
+ ✓ tests/auth.test.ts (6 tests) 22ms
+ ✓ tests/agent-events-route.test.ts (4 tests) 24ms
+ ✓ tests/components/chatwindow-ask-step.test.tsx (3 tests) 56ms
+ ✓ tests/session-retention.test.ts (9 tests) 73ms
+ ✓ tests/write-diff.test.ts (5 tests) 12ms
+ ✓ tests/fs-route.test.ts (4 tests) 10ms
+ ✓ tests/web-auth.test.ts (15 tests) 20ms
+ ✓ tests/use-workspace-files.test.ts (2 tests) 23ms
+ ✓ tests/web-secret.test.ts (11 tests) 18ms
+ ✓ tests/models-service-provider-usage.test.ts (34 tests) 9ms
+ ✓ tests/update-service-route.test.ts (16 tests) 12ms
+ ✓ tests/model-files.test.ts (4 tests) 16ms
+ ✓ tests/growth-tree.test.ts (8 tests) 13ms
+ ✓ tests/agent-resources-route.test.ts (5 tests) 20ms
+ ✓ tests/path-security.test.ts (3 tests) 7ms
+ ✓ tests/integration/session-boundaries.test.ts (1 test) 9ms
+ ✓ tests/workspace-index.test.ts (16 tests) 15ms
+ ✓ tests/ask-user.test.ts (8 tests) 9ms
+ ✓ tests/api/session-export.test.ts (2 tests) 5ms
+ ✓ tests/extension-ui-lifecycle.test.ts (4 tests) 8ms
+ ✓ tests/agent-hero-commands.test.ts (8 tests) 6ms
+ ✓ tests/file-icons.test.ts (1 test) 7ms
+ ✓ tests/api/session-workspaces.test.ts (2 tests) 38ms
+ ✓ tests/integration/files/ignore-process.test.ts (2 tests) 12ms
+ ✓ tests/integration/pi-runtime.test.ts (14 tests) 10ms
+ ✓ tests/process-format.test.ts (30 tests) 8ms
+ ✓ tests/event-batcher.test.ts (5 tests) 3ms
+ ✓ tests/diff-parser.test.ts (5 tests) 3ms
+ ✓ tests/use-piweb-events.test.ts (13 tests) 5ms
+ ✓ tests/update-startup-check.test.ts (8 tests) 4ms
+ ✓ tests/trajectory.test.ts (18 tests) 7ms
+ ✓ tests/model-draft.test.ts (17 tests) 5ms
+ ✓ tests/lib/file-path.test.ts (13 tests) 5ms
+ ✓ tests/provider-display.test.ts (4 tests) 4ms
+ ✓ tests/semver.test.ts (4 tests) 3ms
+ ✓ tests/context-breakdown.test.ts (7 tests) 6ms
+ ✓ tests/model-defaults.test.ts (7 tests) 4ms
+ ✓ tests/model-audit.test.ts (5 tests) 3ms
+ ✓ tests/format.test.ts (7 tests) 2ms
+ ✓ tests/lib/skill-expansion.test.ts (9 tests) 3ms
+ ✓ tests/growth-turns.test.ts (4 tests) 3ms
+ ✓ tests/thinking-level.test.ts (8 tests) 3ms
+ ✓ tests/model-endpoint.test.ts (2 tests) 2ms
+ ✓ tests/models-catalog-capabilities.test.ts (6 tests) 4ms
+ ✓ tests/slash-command-token.test.ts (12 tests) 3ms
+ ✓ tests/hero-model-memory.test.ts (4 tests) 4ms
+ ↓ tests/remote-tunnel.integration.test.ts (1 test | 1 skipped)
+ ✓ tests/lib/models/model-scope.test.ts (2 tests) 3ms
+ ✓ tests/message-cancellation.test.ts (3 tests) 3ms
+ ↓ tests/powershell-encoding.test.ts (1 test | 1 skipped)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/components/settings-font-family.test.tsx > font family picker > keeps the custom input when it is emptied
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "自定义…"
+
+Here are the accessible roles:
+
+  dialog:
+
+  Name "设置":
+  [36m<div[39m
+    [33maria-labelledby[39m=[32m"_r_0_"[39m
+    [33maria-modal[39m=[32m"true"[39m
+    [33mclass[39m=[32m"settings-dialog glass-modal flex overflow-hidden"[39m
+    [33mdata-dialog-root[39m=[32m"dialog-1"[39m
+    [33mrole[39m=[32m"dialog"[39m
+    [33mstyle[39m=[32m"width: 800px; max-width: calc(100vw - 48px); height: min(800px, -48px + 100vh); border-radius: 32px; box-shadow: var(--dsw-elevation-prominent);"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "通用设置":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mdata-active[39m=[32m"true"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-bg-base);"[39m
+  [36m/>[39m
+
+  Name "模型":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "工具启用情况":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "插件":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "技能":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "远程连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "打开配置文件":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn-outline"[39m
+    [33mstyle[39m=[32m"height: 32px; font-size: 13px;"[39m
+  [36m/>[39m
+
+  Name "关闭":
+  [36m<button[39m
+    [33maria-label[39m=[32m"关闭"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "中文":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-haspopup[39m=[32m"listbox"[39m
+    [33mclass[39m=[32m"select-chip"[39m
+    [33mdata-open[39m=[32m"false"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "海与墨":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"true"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-module-platform); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "银钢":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "石灰与煤炭":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "亚麻与苔绿":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "北欧纸墨":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "Pebrel":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "浅色":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 120px; padding: 16px 24px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "深色":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 120px; padding: 16px 24px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "跟随系统":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"true"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 120px; padding: 16px 24px; border-radius: 20px; background: var(--dsw-module-platform); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "decrease font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"decrease font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "14 px":
+  [36m<button[39m
+    [33mstyle[39m=[32m"min-width: 48px; text-align: center; font-size: 13px; color: var(--dsw-label-tertiary);"[39m
+    [33mtitle[39m=[32m"reset"[39m
+  [36m/>[39m
+
+  Name "increase font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"increase font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "decrease font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"decrease font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "14 px":
+  [36m<button[39m
+    [33mstyle[39m=[32m"min-width: 48px; text-align: center; font-size: 13px; color: var(--dsw-label-tertiary);"[39m
+    [33mtitle[39m=[32m"reset"[39m
+  [36m/>[39m
+
+  Name "increase font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"increase font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "Maple Mono CN（默认）":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"_r_2_"[39m
+    [33maria-expanded[39m=[32m"true"[39m
+    [33maria-haspopup[39m=[32m"listbox"[39m
+    [33mclass[39m=[32m"select-chip"[39m
+    [33mdata-open[39m=[32m"true"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "插话：当前工具跑完就送达":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-haspopup[39m=[32m"listbox"[39m
+    [33mclass[39m=[32m"select-chip"[39m
+    [33mdata-open[39m=[32m"false"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "检查更新":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn-outline"[39m
+    [33mstyle[39m=[32m"height: 26px; padding: 0px 10px; font-size: 12px; color: var(--dsw-label-primary);"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "检查更新":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn-outline"[39m
+    [33mstyle[39m=[32m"height: 26px; padding: 0px 10px; font-size: 12px; color: var(--dsw-label-primary);"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  switch:
+
+  Name "":
+  [36m<button[39m
+    [33maria-checked[39m=[32m"true"[39m
+    [33mclass[39m=[32m"relative h-5 w-9 flex-none rounded-full transition-colors"[39m
+    [33mrole[39m=[32m"switch"[39m
+    [33mstyle[39m=[32m"background: var(--dsw-accent);"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<button[39m
+    [33maria-checked[39m=[32m"true"[39m
+    [33mclass[39m=[32m"relative h-5 w-9 flex-none rounded-full transition-colors"[39m
+    [33mrole[39m=[32m"switch"[39m
+    [33mstyle[39m=[32m"background: var(--dsw-accent);"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  spinbutton:
+
+  Name "保留 Token":
+  [36m<input[39m
+    [33mclass[39m=[32m"rounded-lg px-2 py-1"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mstyle[39m=[32m"width: 90px; text-align: right; background: var(--dsw-hover);"[39m
+    [33mtitle[39m=[32m"保留 Token"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"100"[39m
+  [36m/>[39m
+
+  Name "最大重试次数":
+  [36m<input[39m
+    [33mclass[39m=[32m"rounded-lg px-2 py-1"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mstyle[39m=[32m"width: 90px; text-align: right; background: var(--dsw-hover);"[39m
+    [33mtitle[39m=[32m"最大重试次数"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "0.test":
+  [36m<a[39m
+    [33mhref[39m=[32m"https://github.com/RexVane/PiWeb"[39m
+    [33mrel[39m=[32m"noreferrer"[39m
+    [33mstyle[39m=[32m"font-family: var(--font-mono); font-size: 13px; color: var(--dsw-label-secondary); text-decoration: none;"[39m
+    [33mtarget[39m=[32m"_blank"[39m
+  [36m/>[39m
+
+  Name "0.test":
+  [36m<a[39m
+    [33mhref[39m=[32m"https://github.com/earendil-works/pi"[39m
+    [33mrel[39m=[32m"noreferrer"[39m
+    [33mstyle[39m=[32m"font-family: var(--font-mono); font-size: 13px; color: var(--dsw-label-secondary); text-decoration: none;"[39m
+    [33mtarget[39m=[32m"_blank"[39m
+  [36m/>[39m
+
+  --------------------------------------------------listbox:
+
+  Name "":
+  [36m<div[39m
+    [33mclass[39m=[32m"popover fixed z-[130] p-1.5 shadow-xl"[39m
+    [33mdata-dialog-owner[39m=[32m"dialog-1"[39m
+    [33mdata-placement[39m=[32m"bottom"[39m
+    [33mid[39m=[32m"_r_2_"[39m
+    [33mrole[39m=[32m"listbox"[39m
+    [33mstyle[39m=[32m"left: 0px; top: 6px; max-height: 280px; min-width: 220px; width: max-content; overflow-y: auto;"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  option:
+
+  Name "Maple Mono CN（默认）":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"true"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: var(--dsw-hover);"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "系统默认":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: transparent;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "思源黑体":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: transparent;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "自定义…":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: transparent;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"modal-mask fixed inset-0 z-[100] flex items-center justify-center"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33maria-labelledby[39m=[32m"_r_0_"[39m
+        [33maria-modal[39m=[32m"true"[39m
+        [33mclass[39m=[32m"settings-dialog glass-modal flex overflow-hidden"[39m
+        [33mdata-dialog-root[39m=[32m"dialog-1"[39m
+        [33mrole[39m=[32m"dialog"[39m
+        [33mstyle[39m=[32m"width: 800px; max-width: calc(100vw - 48px); height: min(800px, -48px + 100vh); border-radius: 32px; box-shadow: var(--dsw-elevation-prominent);"[39m
+        [33mtabindex[39m=[32m"-1"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"settings-nav flex w-52 flex-none flex-col gap-1 py-4 pl-4 pr-3"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"settings-title px-2 pb-3"[39m
+            [33mid[39m=[32m"_r_0_"[39m
+            [33mstyle[39m=[32m"font-size: 16px; font-weight: 500;"[39m
+          [36m>[39m
+            [0m设置[0m
+          [36m</div>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+            [33mdata-active[39m=[32m"true"[39m
+            [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-bg-base);"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"isx-menu-icon"[39m
+              [33mstyle[39m=[32m"display: inline-flex;"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mviewBox[39m=[32m"0 0 16 16"[39m
+                [33mwidth[39m=[32m"15"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M14.0861 5.51366C13.8717 5.0575 13.588 4.58542 13.2889 4.18108C13.208 4.07172 13.1596 4.04373 13.0243 4.03054C12.4277 3.97255 11.8245 4.05527 11.2269 3.9972C10.7224 3.94816 10.3133 3.71661 10.0115 3.30919C9.66986 2.84777 9.43973 2.31343 9.09824 1.85234C9.01771 1.74365 8.96805 1.71589 8.83354 1.70282C8.29432 1.65044 7.70402 1.65061 7.16656 1.70282C7.03205 1.71589 6.98239 1.74365 6.90186 1.85234C6.56067 2.31303 6.33025 2.84774 5.98855 3.30919C5.68681 3.71661 5.27774 3.94816 4.77317 3.9972C4.17564 4.05527 3.57239 3.97255 2.97585 4.03054C2.84046 4.04373 2.79208 4.07172 2.71115 4.18108C2.41212 4.58542 2.12835 5.0575 1.91403 5.51366C1.85299 5.64359 1.85286 5.7018 1.91403 5.8319C2.14865 6.33077 2.49748 6.76892 2.73237 7.26854C2.9594 7.7515 2.96041 8.24717 2.73338 8.73044C2.49837 9.23061 2.14891 9.66837 1.91403 10.1681C1.85291 10.2982 1.85299 10.3564 1.91403 10.4863C2.12856 10.9429 2.41185 11.4142 2.71115 11.8189C2.79208 11.9283 2.84046 11.9563 2.97585 11.9694C3.57239 12.0274 4.17564 11.9447 4.77317 12.0028C5.27774 12.0518 5.68681 12.2834 5.98855 12.6908C6.33024 13.1522 6.56037 13.6866 6.90186 14.1476C6.98239 14.2563 7.03205 14.2841 7.16656 14.2972C7.70402 14.3494 8.29432 14.3495 8.83354 14.2972C8.96805 14.2841 9.01771 14.2563 9.09824 14.1476C9.43944 13.687 9.66985 13.1522 10.0115 12.6908C10.3133 12.2834 10.7224 12.0518 11.2269 12.0028C11.8244 11.9447 12.4271 12.0275 13.0243 11.9694C13.1596 11.9563 13.208 11.9283 13.2889 11.8189C13.5891 11.4131 13.872 10.942 14.0861 10.4863C14.1471 10.3564 14.1472 10.2982 14.0861 10.1681C13.8513 9.66861 13.5017 9.23061 13.2667 8.73044C13.0397 8.24717 13.0407 7.7515 13.2677 7.26854C13.5026 6.7689 13.8513 6.33106 14.0861 5.8319C14.1472 5.7018 14.1471 5.64359 14.0861 5.51366ZM15.3035 6.40373C15.0685 6.90359 14.7188 7.34119 14.4841 7.84037C14.4231 7.97025 14.423 8.02855 14.4841 8.15861C14.7189 8.65833 15.0685 9.09611 15.3035 9.59626C15.5308 10.0801 15.5308 10.5744 15.3035 11.0582C15.052 11.5933 14.7225 12.1426 14.37 12.6191C14.0685 13.0265 13.6581 13.259 13.1536 13.3081C12.5566 13.366 11.9541 13.2835 11.3573 13.3414C11.2228 13.3545 11.1731 13.3823 11.0926 13.491C10.7511 13.9521 10.521 14.4864 10.1793 14.9478C9.87828 15.3542 9.46719 15.5869 8.96387 15.6358C8.34008 15.6964 7.66194 15.6966 7.03623 15.6358C6.53291 15.5869 6.12182 15.3542 5.82084 14.9478C5.47911 14.4863 5.24878 13.9517 4.90753 13.491C4.82701 13.3823 4.77734 13.3545 4.64284 13.3414C4.04647 13.2835 3.44373 13.366 2.84653 13.3081C2.34201 13.259 1.93164 13.0265 1.63013 12.6191C1.27867 12.144 0.948453 11.5941 0.696621 11.0582C0.469315 10.5744 0.469279 10.0801 0.696621 9.59626C0.931628 9.09613 1.2813 8.65807 1.51597 8.15861C1.57708 8.02855 1.57702 7.97025 1.51597 7.84037C1.28117 7.34095 0.931635 6.9036 0.696621 6.40373C0.469213 5.91992 0.469367 5.42562 0.696621 4.94183C0.948441 4.40587 1.27868 3.85598 1.63013 3.38092C1.93164 2.97349 2.34201 2.74095 2.84653 2.6919C3.44353 2.63397 4.04599 2.71649 4.64284 2.65856C4.77734 2.64549 4.82701 2.61774 4.90753 2.50904C5.24905 2.04792 5.47913 1.51362 5.82084 1.05219C6.12182 0.645806 6.53291 0.413119 7.03623 0.364178C7.66002 0.303556 8.33816 0.303369 8.96387 0.364178C9.46719 0.413119 9.87828 0.645806 10.1793 1.05219C10.521 1.51365 10.7513 2.04828 11.0926 2.50904C11.1731 2.61774 11.2228 2.64549 11.3573 2.65856C11.9541 2.71649 12.5566 2.63397 13.1536 2.6919C13.6581 2.74095 14.0685 2.97349 14.37 3.38092C14.7214 3.85598 15.0517 4.40587 15.3035 4.94183C15.5307 5.42562 15.5309 5.91992 15.3035 6.40373Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M9.13764 7.99999C9.13764 7.3715 8.62855 6.8624 8.00005 6.8624C7.37155 6.8624 6.86246 7.3715 6.86246 7.99999C6.86246 8.62849 7.37155 9.13759 8.00005 9.13759C8.62855 9.13759 9.13764 8.62849 9.13764 7.99999ZM10.4834 7.99999C10.4834 9.37126 9.37132 10.4833 8.00005 10.4833C6.62878 10.4833 5.51674 9.37126 5.51674 7.99999C5.51674 6.62873 6.62878 5.51669 8.00005 5.51669C9.37132 5.51669 10.4834 6.62873 10.4834 7.99999Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"isx-menu-shift"[39m
+            [36m>[39m
+              [0m通用设置[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+            [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"isx-menu-icon"[39m
+              [33mstyle[39m=[32m"display: inline-flex;"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mviewBox[39m=...
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ choose tests/components/settings-font-family.test.tsx:39:25
+     37| function choose(label: string) {
+     38|  fireEvent.click(within(uiFontRow()).getByRole("button"));
+     39|  fireEvent.click(screen.getByRole("button", { name: label }));
+       |                         ^
+     40| }
+     41|
+ ❯ tests/components/settings-font-family.test.tsx:46:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/components/settings-font-family.test.tsx > font family picker > leaves custom mode when a preset is picked even if the input still has text
+TestingLibraryElementError: Unable to find an accessible element with the role "button" and name "自定义…"
+
+Here are the accessible roles:
+
+  dialog:
+
+  Name "设置":
+  [36m<div[39m
+    [33maria-labelledby[39m=[32m"_r_4_"[39m
+    [33maria-modal[39m=[32m"true"[39m
+    [33mclass[39m=[32m"settings-dialog glass-modal flex overflow-hidden"[39m
+    [33mdata-dialog-root[39m=[32m"dialog-2"[39m
+    [33mrole[39m=[32m"dialog"[39m
+    [33mstyle[39m=[32m"width: 800px; max-width: calc(100vw - 48px); height: min(800px, -48px + 100vh); border-radius: 32px; box-shadow: var(--dsw-elevation-prominent);"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "通用设置":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mdata-active[39m=[32m"true"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-bg-base);"[39m
+  [36m/>[39m
+
+  Name "模型":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "工具启用情况":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "插件":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "技能":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "远程连接":
+  [36m<button[39m
+    [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+    [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+  [36m/>[39m
+
+  Name "打开配置文件":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn-outline"[39m
+    [33mstyle[39m=[32m"height: 32px; font-size: 13px;"[39m
+  [36m/>[39m
+
+  Name "关闭":
+  [36m<button[39m
+    [33maria-label[39m=[32m"关闭"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "中文":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-haspopup[39m=[32m"listbox"[39m
+    [33mclass[39m=[32m"select-chip"[39m
+    [33mdata-open[39m=[32m"false"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "海与墨":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"true"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-module-platform); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "银钢":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "石灰与煤炭":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "亚麻与苔绿":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "北欧纸墨":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "Pebrel":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 150px; padding: 20px 32px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "浅色":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 120px; padding: 16px 24px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "深色":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"false"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 120px; padding: 16px 24px; border-radius: 20px; background: var(--dsw-bg-elevated); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "跟随系统":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"true"[39m
+    [33mclass[39m=[32m"isx-card flex flex-col items-center justify-center gap-1"[39m
+    [33mstyle[39m=[32m"flex: 1 1 120px; padding: 16px 24px; border-radius: 20px; background: var(--dsw-module-platform); color: var(--dsw-label-primary); font-size: 14px; line-height: 22px;"[39m
+  [36m/>[39m
+
+  Name "decrease font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"decrease font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "14 px":
+  [36m<button[39m
+    [33mstyle[39m=[32m"min-width: 48px; text-align: center; font-size: 13px; color: var(--dsw-label-tertiary);"[39m
+    [33mtitle[39m=[32m"reset"[39m
+  [36m/>[39m
+
+  Name "increase font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"increase font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "decrease font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"decrease font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "14 px":
+  [36m<button[39m
+    [33mstyle[39m=[32m"min-width: 48px; text-align: center; font-size: 13px; color: var(--dsw-label-tertiary);"[39m
+    [33mtitle[39m=[32m"reset"[39m
+  [36m/>[39m
+
+  Name "increase font size":
+  [36m<button[39m
+    [33maria-label[39m=[32m"increase font size"[39m
+    [33mclass[39m=[32m"icon-btn"[39m
+    [33mstyle[39m=[32m"width: 26px; height: 26px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px;"[39m
+  [36m/>[39m
+
+  Name "Maple Mono CN（默认）":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"_r_6_"[39m
+    [33maria-expanded[39m=[32m"true"[39m
+    [33maria-haspopup[39m=[32m"listbox"[39m
+    [33mclass[39m=[32m"select-chip"[39m
+    [33mdata-open[39m=[32m"true"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "插话：当前工具跑完就送达":
+  [36m<button[39m
+    [33maria-expanded[39m=[32m"false"[39m
+    [33maria-haspopup[39m=[32m"listbox"[39m
+    [33mclass[39m=[32m"select-chip"[39m
+    [33mdata-open[39m=[32m"false"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "检查更新":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn-outline"[39m
+    [33mstyle[39m=[32m"height: 26px; padding: 0px 10px; font-size: 12px; color: var(--dsw-label-primary);"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "检查更新":
+  [36m<button[39m
+    [33mclass[39m=[32m"btn-outline"[39m
+    [33mstyle[39m=[32m"height: 26px; padding: 0px 10px; font-size: 12px; color: var(--dsw-label-primary);"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  switch:
+
+  Name "":
+  [36m<button[39m
+    [33maria-checked[39m=[32m"true"[39m
+    [33mclass[39m=[32m"relative h-5 w-9 flex-none rounded-full transition-colors"[39m
+    [33mrole[39m=[32m"switch"[39m
+    [33mstyle[39m=[32m"background: var(--dsw-accent);"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<button[39m
+    [33maria-checked[39m=[32m"true"[39m
+    [33mclass[39m=[32m"relative h-5 w-9 flex-none rounded-full transition-colors"[39m
+    [33mrole[39m=[32m"switch"[39m
+    [33mstyle[39m=[32m"background: var(--dsw-accent);"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  spinbutton:
+
+  Name "保留 Token":
+  [36m<input[39m
+    [33mclass[39m=[32m"rounded-lg px-2 py-1"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mstyle[39m=[32m"width: 90px; text-align: right; background: var(--dsw-hover);"[39m
+    [33mtitle[39m=[32m"保留 Token"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"100"[39m
+  [36m/>[39m
+
+  Name "最大重试次数":
+  [36m<input[39m
+    [33mclass[39m=[32m"rounded-lg px-2 py-1"[39m
+    [33mmin[39m=[32m"0"[39m
+    [33mstyle[39m=[32m"width: 90px; text-align: right; background: var(--dsw-hover);"[39m
+    [33mtitle[39m=[32m"最大重试次数"[39m
+    [33mtype[39m=[32m"number"[39m
+    [33mvalue[39m=[32m"3"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "0.test":
+  [36m<a[39m
+    [33mhref[39m=[32m"https://github.com/RexVane/PiWeb"[39m
+    [33mrel[39m=[32m"noreferrer"[39m
+    [33mstyle[39m=[32m"font-family: var(--font-mono); font-size: 13px; color: var(--dsw-label-secondary); text-decoration: none;"[39m
+    [33mtarget[39m=[32m"_blank"[39m
+  [36m/>[39m
+
+  Name "0.test":
+  [36m<a[39m
+    [33mhref[39m=[32m"https://github.com/earendil-works/pi"[39m
+    [33mrel[39m=[32m"noreferrer"[39m
+    [33mstyle[39m=[32m"font-family: var(--font-mono); font-size: 13px; color: var(--dsw-label-secondary); text-decoration: none;"[39m
+    [33mtarget[39m=[32m"_blank"[39m
+  [36m/>[39m
+
+  --------------------------------------------------listbox:
+
+  Name "":
+  [36m<div[39m
+    [33mclass[39m=[32m"popover fixed z-[130] p-1.5 shadow-xl"[39m
+    [33mdata-dialog-owner[39m=[32m"dialog-2"[39m
+    [33mdata-placement[39m=[32m"bottom"[39m
+    [33mid[39m=[32m"_r_6_"[39m
+    [33mrole[39m=[32m"listbox"[39m
+    [33mstyle[39m=[32m"left: 0px; top: 6px; max-height: 280px; min-width: 220px; width: max-content; overflow-y: auto;"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  option:
+
+  Name "Maple Mono CN（默认）":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"true"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: var(--dsw-hover);"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "系统默认":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: transparent;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "思源黑体":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: transparent;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "自定义…":
+  [36m<button[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"[39m
+    [33mrole[39m=[32m"option"[39m
+    [33mstyle[39m=[32m"background: transparent;"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"modal-mask fixed inset-0 z-[100] flex items-center justify-center"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33maria-labelledby[39m=[32m"_r_4_"[39m
+        [33maria-modal[39m=[32m"true"[39m
+        [33mclass[39m=[32m"settings-dialog glass-modal flex overflow-hidden"[39m
+        [33mdata-dialog-root[39m=[32m"dialog-2"[39m
+        [33mrole[39m=[32m"dialog"[39m
+        [33mstyle[39m=[32m"width: 800px; max-width: calc(100vw - 48px); height: min(800px, -48px + 100vh); border-radius: 32px; box-shadow: var(--dsw-elevation-prominent);"[39m
+        [33mtabindex[39m=[32m"-1"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"settings-nav flex w-52 flex-none flex-col gap-1 py-4 pl-4 pr-3"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"settings-title px-2 pb-3"[39m
+            [33mid[39m=[32m"_r_4_"[39m
+            [33mstyle[39m=[32m"font-size: 16px; font-weight: 500;"[39m
+          [36m>[39m
+            [0m设置[0m
+          [36m</div>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+            [33mdata-active[39m=[32m"true"[39m
+            [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-bg-base);"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"isx-menu-icon"[39m
+              [33mstyle[39m=[32m"display: inline-flex;"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mviewBox[39m=[32m"0 0 16 16"[39m
+                [33mwidth[39m=[32m"15"[39m
+              [36m>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M14.0861 5.51366C13.8717 5.0575 13.588 4.58542 13.2889 4.18108C13.208 4.07172 13.1596 4.04373 13.0243 4.03054C12.4277 3.97255 11.8245 4.05527 11.2269 3.9972C10.7224 3.94816 10.3133 3.71661 10.0115 3.30919C9.66986 2.84777 9.43973 2.31343 9.09824 1.85234C9.01771 1.74365 8.96805 1.71589 8.83354 1.70282C8.29432 1.65044 7.70402 1.65061 7.16656 1.70282C7.03205 1.71589 6.98239 1.74365 6.90186 1.85234C6.56067 2.31303 6.33025 2.84774 5.98855 3.30919C5.68681 3.71661 5.27774 3.94816 4.77317 3.9972C4.17564 4.05527 3.57239 3.97255 2.97585 4.03054C2.84046 4.04373 2.79208 4.07172 2.71115 4.18108C2.41212 4.58542 2.12835 5.0575 1.91403 5.51366C1.85299 5.64359 1.85286 5.7018 1.91403 5.8319C2.14865 6.33077 2.49748 6.76892 2.73237 7.26854C2.9594 7.7515 2.96041 8.24717 2.73338 8.73044C2.49837 9.23061 2.14891 9.66837 1.91403 10.1681C1.85291 10.2982 1.85299 10.3564 1.91403 10.4863C2.12856 10.9429 2.41185 11.4142 2.71115 11.8189C2.79208 11.9283 2.84046 11.9563 2.97585 11.9694C3.57239 12.0274 4.17564 11.9447 4.77317 12.0028C5.27774 12.0518 5.68681 12.2834 5.98855 12.6908C6.33024 13.1522 6.56037 13.6866 6.90186 14.1476C6.98239 14.2563 7.03205 14.2841 7.16656 14.2972C7.70402 14.3494 8.29432 14.3495 8.83354 14.2972C8.96805 14.2841 9.01771 14.2563 9.09824 14.1476C9.43944 13.687 9.66985 13.1522 10.0115 12.6908C10.3133 12.2834 10.7224 12.0518 11.2269 12.0028C11.8244 11.9447 12.4271 12.0275 13.0243 11.9694C13.1596 11.9563 13.208 11.9283 13.2889 11.8189C13.5891 11.4131 13.872 10.942 14.0861 10.4863C14.1471 10.3564 14.1472 10.2982 14.0861 10.1681C13.8513 9.66861 13.5017 9.23061 13.2667 8.73044C13.0397 8.24717 13.0407 7.7515 13.2677 7.26854C13.5026 6.7689 13.8513 6.33106 14.0861 5.8319C14.1472 5.7018 14.1471 5.64359 14.0861 5.51366ZM15.3035 6.40373C15.0685 6.90359 14.7188 7.34119 14.4841 7.84037C14.4231 7.97025 14.423 8.02855 14.4841 8.15861C14.7189 8.65833 15.0685 9.09611 15.3035 9.59626C15.5308 10.0801 15.5308 10.5744 15.3035 11.0582C15.052 11.5933 14.7225 12.1426 14.37 12.6191C14.0685 13.0265 13.6581 13.259 13.1536 13.3081C12.5566 13.366 11.9541 13.2835 11.3573 13.3414C11.2228 13.3545 11.1731 13.3823 11.0926 13.491C10.7511 13.9521 10.521 14.4864 10.1793 14.9478C9.87828 15.3542 9.46719 15.5869 8.96387 15.6358C8.34008 15.6964 7.66194 15.6966 7.03623 15.6358C6.53291 15.5869 6.12182 15.3542 5.82084 14.9478C5.47911 14.4863 5.24878 13.9517 4.90753 13.491C4.82701 13.3823 4.77734 13.3545 4.64284 13.3414C4.04647 13.2835 3.44373 13.366 2.84653 13.3081C2.34201 13.259 1.93164 13.0265 1.63013 12.6191C1.27867 12.144 0.948453 11.5941 0.696621 11.0582C0.469315 10.5744 0.469279 10.0801 0.696621 9.59626C0.931628 9.09613 1.2813 8.65807 1.51597 8.15861C1.57708 8.02855 1.57702 7.97025 1.51597 7.84037C1.28117 7.34095 0.931635 6.9036 0.696621 6.40373C0.469213 5.91992 0.469367 5.42562 0.696621 4.94183C0.948441 4.40587 1.27868 3.85598 1.63013 3.38092C1.93164 2.97349 2.34201 2.74095 2.84653 2.6919C3.44353 2.63397 4.04599 2.71649 4.64284 2.65856C4.77734 2.64549 4.82701 2.61774 4.90753 2.50904C5.24905 2.04792 5.47913 1.51362 5.82084 1.05219C6.12182 0.645806 6.53291 0.413119 7.03623 0.364178C7.66002 0.303556 8.33816 0.303369 8.96387 0.364178C9.46719 0.413119 9.87828 0.645806 10.1793 1.05219C10.521 1.51365 10.7513 2.04828 11.0926 2.50904C11.1731 2.61774 11.2228 2.64549 11.3573 2.65856C11.9541 2.71649 12.5566 2.63397 13.1536 2.6919C13.6581 2.74095 14.0685 2.97349 14.37 3.38092C14.7214 3.85598 15.0517 4.40587 15.3035 4.94183C15.5307 5.42562 15.5309 5.91992 15.3035 6.40373Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M9.13764 7.99999C9.13764 7.3715 8.62855 6.8624 8.00005 6.8624C7.37155 6.8624 6.86246 7.3715 6.86246 7.99999C6.86246 8.62849 7.37155 9.13759 8.00005 9.13759C8.62855 9.13759 9.13764 8.62849 9.13764 7.99999ZM10.4834 7.99999C10.4834 9.37126 9.37132 10.4833 8.00005 10.4833C6.62878 10.4833 5.51674 9.37126 5.51674 7.99999C5.51674 6.62873 6.62878 5.51669 8.00005 5.51669C9.37132 5.51669 10.4834 6.62873 10.4834 7.99999Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</span>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"isx-menu-shift"[39m
+            [36m>[39m
+              [0m通用设置[0m
+            [36m</span>[39m
+          [36m</button>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"isx-menu-item flex h-[42px] items-center gap-2.5 rounded-xl px-3 text-left"[39m
+            [33mstyle[39m=[32m"padding-left: 10px; padding-right: 14px; font-size: 14px; color: var(--dsw-label-secondary);"[39m
+          [36m>[39m
+            [36m<span[39m
+              [33mclass[39m=[32m"isx-menu-icon"[39m
+              [33mstyle[39m=[32m"display: inline-flex;"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"15"[39m
+                [33mviewBox[39m=...
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ choose tests/components/settings-font-family.test.tsx:39:25
+     37| function choose(label: string) {
+     38|  fireEvent.click(within(uiFontRow()).getByRole("button"));
+     39|  fireEvent.click(screen.getByRole("button", { name: label }));
+       |                         ^
+     40| }
+     41|
+ ❯ tests/components/settings-font-family.test.tsx:63:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 145 passed | 2 skipped (148)
+      Tests  2 failed | 1184 passed | 3 skipped (1189)
+   Start at  21:21:33
+   Duration  27.39s (tests 53%, import 25%, environment 21%, transform 1%, setup 1%)
+
+    Isolate  148 workers spawned · ~213ms startup each (spawn + environment, per file)
+             at least ~7.65s faster with isolate: false — reuses workers across files instead of one per file
+
+JSON report written to /Users/kaijimima/Documents/Agent/PiWeb/docs/testing/2026-10-28/fixes/vitest-results.json

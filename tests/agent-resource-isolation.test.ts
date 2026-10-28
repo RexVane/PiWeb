@@ -53,6 +53,22 @@ async function create() {
 	return { m, session };
 }
 
+async function withDefaultTools(defaultTools: string[], run: () => Promise<void>) {
+	const settingsPath = path.join(cwd, ".pi", "settings.json");
+	const previous = await fs.readFile(settingsPath, "utf8").catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return "{}";
+		throw error;
+	});
+	await fs.writeFile(settingsPath, JSON.stringify({ ...JSON.parse(previous), defaultTools }));
+	await pi.getSettingsManager(cwd).reload();
+	try {
+		await run();
+	} finally {
+		await fs.writeFile(settingsPath, previous);
+		await pi.getSettingsManager(cwd).reload();
+	}
+}
+
 describe("real SDK session resource isolation", () => {
 	it("keeps execution guidance and user append instructions in discovery, live sessions and reloads", async () => {
 		const { session } = await create();
@@ -105,6 +121,54 @@ describe("real SDK session resource isolation", () => {
 		const event = m.buffer.map((frame) => JSON.parse(frame.json)).find((event) => event.type === "tools");
 		expect(event).toMatchObject({ active: session.getActiveToolNames() });
 		expect(event.all).toContain("read");
+	});
+
+	it.each(["readonly", "standard", "full"] as const)("includes PiWeb's question tool in a cold %s catalog and accepts selecting it", async (preset) => {
+		const { sessionPath } = await manager.createNewSession(cwd);
+		const m = manager.getManaged(sessionPath);
+		managed.push(m);
+		expect(await manager.execute(m, { cmd: "setToolPreset", preset })).toMatchObject({ ok: true });
+		const cold = await manager.buildSnapshot(m);
+		expect(m.session).toBeNull();
+		expect(cold.tools.all.map((tool) => tool.name)).toContain("ask_user_question");
+		expect(cold.tools.active).toContain("ask_user_question");
+		expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read", "ask_user_question"] })).toMatchObject({
+			ok: true, data: { active: ["read", "ask_user_question"] },
+		});
+		expect(m.session).toBeNull();
+		const session = await manager.ensureSession(m);
+		expect(session.getActiveToolNames()).toEqual(["read", "ask_user_question"]);
+	});
+
+	it("keeps explicit SDK default tools consistent between cold and hot snapshots within the preset", async () => {
+		await withDefaultTools(["read", "codemode"], async () => {
+			const { sessionPath } = await manager.createNewSession(cwd);
+			const m = manager.getManaged(sessionPath);
+			managed.push(m);
+			const readonly = await manager.buildSnapshot(m);
+			expect(readonly.tools.active).not.toContain("codemode");
+			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
+			const cold = await manager.buildSnapshot(m);
+			expect(m.session).toBeNull();
+			expect(cold.tools.active).toContain("codemode");
+			const session = await manager.ensureSession(m);
+			expect([...session.getActiveToolNames()].sort()).toEqual([...cold.tools.active].sort());
+		});
+	});
+
+	it("keeps a cold per-tool allowlist above explicit SDK default tools", async () => {
+		await withDefaultTools(["read", "codemode"], async () => {
+			const { sessionPath } = await manager.createNewSession(cwd);
+			const m = manager.getManaged(sessionPath);
+			managed.push(m);
+			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
+			expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read"] })).toMatchObject({ ok: true });
+			const cold = await manager.buildSnapshot(m);
+			expect(m.session).toBeNull();
+			expect(cold.tools.active).toEqual(["read"]);
+			const session = await manager.ensureSession(m);
+			expect(session.getActiveToolNames()).toEqual(["read"]);
+		});
 	});
 
 	it.each(["steer", "followUp"] as const)("removes a consumed image-only %s from the queue when the run settles", async (behavior) => {

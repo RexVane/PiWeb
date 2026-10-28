@@ -69,6 +69,49 @@ function pathKey(value: string): string {
 	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
+/** UI 新增目录与历史 CLI cwd 共用 realpath；离线或已移走的历史目录仍保留原路径。 */
+export async function canonicalWorkspacePath(value: string): Promise<string> {
+	if (!value) return value;
+	const resolved = path.resolve(value);
+	return fs.realpath(resolved).catch(() => resolved);
+}
+
+/** 只规范工作区身份，不改变会话文件路径。去重保留首次出现的位置，读取不改写注册表。 */
+async function normalizeWorkspaces(data: WorkspaceFile): Promise<WorkspaceFile> {
+	const paths = new Map<string, string>();
+	const values = new Set([
+		...data.workspaces, ...(data.removedWorkspaces ?? []),
+		...Object.keys(data.aliases ?? {}), ...Object.keys(data.growthInit ?? {}),
+	]);
+	await Promise.all([...values].map(async (value) => paths.set(value, await canonicalWorkspacePath(value))));
+	const canonical = (value: string) => paths.get(value) ?? value;
+	const unique = (values: string[]) => {
+		const seen = new Set<string>();
+		return values.map(canonical).filter((value) => {
+			const key = pathKey(value);
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+	};
+	const normalizeKeys = <T>(values: Record<string, T>) => {
+		const result: Record<string, T> = {};
+		for (const [original, value] of Object.entries(values)) {
+			const key = pathKey(canonical(original));
+			// 已有 canonical 别名优先；否则保留最早的符号链接别名。
+			if (!(key in result) || pathKey(original) === key) result[key] = value;
+		}
+		return result;
+	};
+	return {
+		...data,
+		workspaces: unique(data.workspaces),
+		removedWorkspaces: unique(data.removedWorkspaces ?? []),
+		aliases: normalizeKeys(data.aliases ?? {}),
+		...(data.growthInit ? { growthInit: normalizeKeys(data.growthInit) } : {}),
+	};
+}
+
 async function write(data: WorkspaceFile, target: string): Promise<void> {
 	await fs.mkdir(path.dirname(target), { recursive: true });
 	const temporary = `${target}.${randomUUID()}.tmp`;
@@ -123,14 +166,15 @@ async function readCached(target: string): Promise<WorkspaceFile> {
 }
 
 async function read(agentDir?: string): Promise<WorkspaceFile> {
-	return readCached(file(agentDir));
+	// 每次重新解析符号链接，避免链接改指向后沿用注册表快照中的旧 realpath。
+	return normalizeWorkspaces(await readCached(file(agentDir)));
 }
 
 async function mutate<T>(change: (data: WorkspaceFile, target: string) => Promise<T> | T, agentDir?: string): Promise<T> {
 	const target = file(agentDir);
 	return withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
 		try {
-			return await change(await readFile(target), target);
+			return await change(await normalizeWorkspaces(await readFile(target)), target);
 		} finally {
 			// 写完（或失败）都让下一次读重新取戳，避免把内存快照留在旧内容上
 			snapshot = null;
@@ -151,8 +195,8 @@ export async function getAliases(): Promise<Record<string, string>> {
 }
 
 export async function setAlias(dir: string, name: string): Promise<Record<string, string>> {
-	const key = pathKey(path.resolve(dir));
 	return mutate(async (data, target) => {
+		const key = pathKey(await canonicalWorkspacePath(dir));
 		if (!data.aliases) data.aliases = {};
 		// 键统一走 pathKey（win32 小写），并清掉历史遗留的大小写变体，避免别名时有时无
 		for (const existing of Object.keys(data.aliases)) {
@@ -170,12 +214,12 @@ export async function setAlias(dir: string, name: string): Promise<Record<string
 
 /** 项目生长能否在该目录建仓库：true 同意 / false 拒绝 / null 还没问过 */
 export async function getGrowthInitConsent(dir: string): Promise<boolean | null> {
-	return (await read()).growthInit?.[pathKey(dir)] ?? null;
+	return (await read()).growthInit?.[pathKey(await canonicalWorkspacePath(dir))] ?? null;
 }
 
 export async function setGrowthInitConsent(dir: string, allow: boolean): Promise<void> {
-	const key = pathKey(dir);
 	await mutate(async (data, target) => {
+		const key = pathKey(await canonicalWorkspacePath(dir));
 		data.growthInit = { ...data.growthInit, [key]: allow };
 		await write(data, target);
 	});
@@ -251,9 +295,10 @@ export async function getArchivedEntries({ now = Date.now(), persist = true }: {
 }
 
 export async function addWorkspace(dir: string): Promise<{ workspaces: string[]; removedWorkspaces: string[] }> {
-	const norm = path.resolve(dir);
-	const key = pathKey(norm);
 	return mutate(async (data, target) => {
+		// 取得写锁后再解析路径，保留并发 addWorkspace 的调用顺序。
+		const norm = await canonicalWorkspacePath(dir);
+		const key = pathKey(norm);
 		let changed = false;
 		if (!data.workspaces.some((w) => pathKey(w) === key)) {
 			data.workspaces.push(norm);
@@ -271,15 +316,15 @@ export async function addWorkspace(dir: string): Promise<{ workspaces: string[];
 
 export async function registerCwds(cwds: string[]): Promise<string[]> {
 	const target = file();
+	const normalizedCwds = await Promise.all(cwds.filter((cwd) => typeof cwd === "string" && cwd).map(canonicalWorkspacePath));
 	// 快路径：侧栏每 3 秒轮询一次，绝大多数时候没有任何新 cwd。
 	// 先在内存快照上判断，没有新增就不取锁、不写盘、不读文件。
-	const current = await readCached(target);
+	const current = await normalizeWorkspaces(await readCached(target));
 	const removedKeys = new Set((current.removedWorkspaces ?? []).map(pathKey));
 	const knownKeys = new Set(current.workspaces.map(pathKey));
 	let missing = false;
-	for (const cwd of cwds) {
-		if (!cwd || typeof cwd !== "string") continue;
-		const key = pathKey(path.resolve(cwd));
+	for (const cwd of normalizedCwds) {
+		const key = pathKey(cwd);
 		if (removedKeys.has(key) || knownKeys.has(key)) continue;
 		knownKeys.add(key);
 		missing = true;
@@ -291,9 +336,7 @@ export async function registerCwds(cwds: string[]): Promise<string[]> {
 		const removed = new Set((data.removedWorkspaces ?? []).map(pathKey));
 		const existingKeys = new Set(data.workspaces.map(pathKey));
 
-		for (const cwd of cwds) {
-			if (!cwd || typeof cwd !== "string") continue;
-			const norm = path.resolve(cwd);
+		for (const norm of normalizedCwds) {
 			const key = pathKey(norm);
 			if (!removed.has(key) && !existingKeys.has(key)) {
 				data.workspaces.push(norm);
@@ -307,9 +350,9 @@ export async function registerCwds(cwds: string[]): Promise<string[]> {
 }
 
 export async function removeWorkspace(dir: string): Promise<{ workspaces: string[]; removedWorkspaces: string[]; aliases: Record<string, string> }> {
-	const norm = path.resolve(dir);
-	const key = pathKey(norm);
 	return mutate(async (data, target) => {
+		const norm = await canonicalWorkspacePath(dir);
+		const key = pathKey(norm);
 		data.workspaces = data.workspaces.filter((w) => pathKey(w) !== key);
 		if (!data.removedWorkspaces) data.removedWorkspaces = [];
 		if (!data.removedWorkspaces.some((w) => pathKey(w) === key)) {

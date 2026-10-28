@@ -5,7 +5,7 @@
  * 里面只有一行路径时整个代码块被渲染成了按钮（丢了 pre 的样式和复制按钮的对象）。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MarkdownBlock } from "@/components/MarkdownBlock";
 import { MarkdownActionsProvider } from "@/components/chat/markdown-actions";
 
@@ -38,5 +38,25 @@ describe("file paths in markdown", () => {
 		const { container } = renderMd("说明：\n\n    src/lib/a.ts\n");
 		expect(container.querySelector("button.md-file-path")).toBeNull();
 		expect(container.querySelector("pre > code")).not.toBeNull();
+	});
+
+	it("opens explicit relative Markdown links in the file viewer, decoding the path once", () => {
+		const { openFile } = renderMd("[文件](docs/%E4%B8%AD%E6%96%87%20file.md?raw=1#L2) [README](README.md) [目录](src/) [无扩展名](./LICENSE)");
+		for (const name of ["文件", "README", "目录", "无扩展名"]) fireEvent.click(screen.getByRole("link", { name }));
+		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["docs/中文 file.md", "README.md", "src/", "./LICENSE"]);
+	});
+
+	it("preserves external, anchor, email and application links", () => {
+		const { openFile } = renderMd("[外部](https://example.com/a.md) [锚点](#section) [邮件](mailto:test@example.com) [站内](/login)");
+		for (const name of ["外部", "锚点", "邮件", "站内"]) {
+			const link = screen.getByRole("link", { name });
+			const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+			let preventedByMarkdown: boolean | undefined;
+			const suppressNavigation = (received: Event) => { preventedByMarkdown = received.defaultPrevented; received.preventDefault(); };
+			document.addEventListener("click", suppressNavigation, { once: true });
+			link.dispatchEvent(event);
+			expect(preventedByMarkdown).toBe(false);
+		}
+		expect(openFile).not.toHaveBeenCalled();
 	});
 });

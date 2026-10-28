@@ -36,7 +36,7 @@ function uiFontRow(): HTMLElement {
 
 function choose(label: string) {
 	fireEvent.click(within(uiFontRow()).getByRole("button"));
-	fireEvent.click(screen.getByRole("button", { name: label }));
+	fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: label }));
 }
 
 describe("font family picker", () => {

@@ -1,0 +1,84 @@
+npm notice run @rexvane/piweb@0.3.28 build
+npm notice run node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack
+▲ Next.js 16.4.2 (webpack)
+✓ Running next.config.ts took 76ms
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: "272mb"
+
+  Creating an optimized production build ...
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+⚠ Compiled with warnings in 5.9s
+
+./scripts/release.mjs
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+./scripts/release.mjs
+./src/lib/update-service.ts
+./src/lib/update/startup-check.ts
+./src/instrumentation-node.ts
+
+./scripts/release.mjs
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+./scripts/release.mjs
+./src/lib/update-service.ts
+./src/app/api/update/route.ts
+
+✓ Compiled successfully in 8.5s
+  Running TypeScript ...
+  Finished TypeScript in 1298ms ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/5) ...
+  Generating static pages using 7 workers (1/5) 
+  Generating static pages using 7 workers (2/5) 
+  Generating static pages using 7 workers (3/5) 
+✓ Generating static pages using 7 workers (5/5) in 4.2s
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/agent/[id]
+├ ƒ /api/agent/[id]/events
+├ ƒ /api/agent/[id]/tree
+├ ƒ /api/agent/new
+├ ƒ /api/agent/resources
+├ ƒ /api/config
+├ ƒ /api/files
+├ ƒ /api/fs
+├ ƒ /api/git
+├ ƒ /api/github
+├ ƒ /api/growth
+├ ƒ /api/health
+├ ƒ /api/models
+├ ƒ /api/models/defaults
+├ ƒ /api/pi-settings
+├ ƒ /api/plugins
+├ ƒ /api/prompts
+├ ƒ /api/remote
+├ ƒ /api/security
+├ ƒ /api/sessions
+├ ƒ /api/sessions/[id]
+├ ƒ /api/sessions/[id]/export
+├ ƒ /api/sessions/import
+├ ƒ /api/skills
+├ ƒ /api/update
+├ ƒ /api/version
+├ ƒ /api/web-auth
+├ ƒ /api/workspaces
+├ ○ /icon.svg
+└ ○ /login
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

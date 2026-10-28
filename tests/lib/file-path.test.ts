@@ -6,7 +6,7 @@
  * 通配符等容易混淆的形状都钉住。
  */
 import { describe, expect, it } from "vitest";
-import { looksLikeFilePath } from "@/lib/chat/file-path";
+import { looksLikeFilePath, markdownDocumentImageUrl, relativeMarkdownPath, resolveMarkdownDocumentPath } from "@/lib/chat/file-path";
 
 describe("looksLikeFilePath", () => {
 	it("accepts relative paths with a directory", () => {
@@ -65,5 +65,25 @@ describe("looksLikeFilePath", () => {
 
 	it("rejects over-long fragments", () => {
 		expect(looksLikeFilePath(`src/${"a".repeat(300)}.ts`)).toBe(false);
+	});
+});
+
+describe("Markdown document references", () => {
+	it("decodes explicit relative paths and strips actual query strings/fragments", () => {
+		expect(relativeMarkdownPath("docs/%E4%B8%AD%E6%96%87%20%23file.md?raw=1#L2")).toBe("docs/中文 #file.md");
+		expect(relativeMarkdownPath("asset%2520name.png")).toBe("asset%20name.png");
+		for (const href of ["https://example.com/a.md", "//example.com/a.png", "mailto:x@y.test", "#section", "?q=1", "/login", "bad%zz.png", "%00.png"]) expect(relativeMarkdownPath(href), href).toBeNull();
+	});
+	it.each(["docs/guide.md", "/workspace/docs/guide.md", "D:/ws/docs/guide.md"])("resolves relative to the document %s", (current) => {
+		expect(resolveMarkdownDocumentPath(current, "../assets/%E4%B8%AD%E6%96%87.png?raw=1#image")).toBe(current.startsWith("/") ? "/workspace/assets/中文.png" : current.startsWith("D:") ? "D:/ws/assets/中文.png" : "assets/中文.png");
+	});
+	it("builds an authenticated image URL and preserves external resources for consent", () => {
+		const url = new URL(markdownDocumentImageUrl("/workspace", "docs/guide.md", "../assets/pic%20one.png"), "http://localhost");
+		expect(url.pathname).toBe("/api/files");
+		expect(Object.fromEntries(url.searchParams)).toEqual({ image: "1", cwd: "/workspace", path: "assets/pic one.png" });
+		expect(markdownDocumentImageUrl("/workspace", "docs/guide.md", "https://outside.test/image.png")).toBe("https://outside.test/image.png");
+		const skill = new URL(markdownDocumentImageUrl("/workspace", "/skills/demo/references/guide.md", "../assets/pic.png", "/skills/demo/SKILL.md"), "http://localhost");
+		expect(skill.searchParams.get("path")).toBe("/skills/demo/assets/pic.png");
+		expect(skill.searchParams.get("sourcePath")).toBe("/skills/demo/SKILL.md");
 	});
 });

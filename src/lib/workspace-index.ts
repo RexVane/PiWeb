@@ -4,7 +4,7 @@
  * 同一个 `@que` 在终端和网页里给出同一批、同一顺序的候选。
  *
  * pi 的做法：`@` 后的文字按最后一个 `/` 拆成「目录 + 查询」（目录存在才算），
- * 在该目录下用 fd 过滤（查询当正则、smart case，默认只匹配文件名，带 `/` 时匹配整条路径），
+ * 在该目录下用 fd 过滤（查询先按字面转义、smart case，默认只匹配文件名，带 `/` 时匹配整条路径），
  * 再用 scoreEntry 打分（文件名全等 100 / 前缀 80 / 包含 50 / 路径包含 30，目录 +10），
  * 按分数、层级、路径长度、字典序排，取前 20。
  *
@@ -69,10 +69,10 @@ function escapeRegex(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** pi 的 buildFdPathQuery：带 `/` 的查询按段转义、段间允许 `/` 或 `\` */
+/** pi 的 buildFdPathQuery：查询按字面转义，带 `/` 时段间允许 `/` 或 `\` */
 function buildFdPathQuery(query: string): string {
 	const normalized = toDisplayPath(query);
-	if (!normalized.includes("/")) return normalized;
+	if (!normalized.includes("/")) return escapeRegex(normalized);
 	const trimmed = normalized.replace(/^\/+|\/+$/g, "");
 	if (!trimmed) return normalized;
 	const segments = trimmed.split("/").filter(Boolean).map(escapeRegex);
@@ -83,9 +83,7 @@ function buildFdPathQuery(query: string): string {
 
 /**
  * fd 的过滤：模式当正则，smart case（模式里有大写字母才区分大小写，转义序列如 `\W` 不算）。
- * fd 用的是 Rust 正则，`c++` 这种叠加量词它能编（等于 `(c+)+`），JS 会报错：
- * 编不过就退回字面包含——之后 scoreEntry 本来就要求查询按字面出现，所以 `c++` 的结果和 pi 一样；
- * Rust 也编不过的（未闭合的括号等）pi 没有候选，这里按字面给，算有意放宽。
+ * 查询字符已转义，只保留 buildFdPathQuery 生成的路径分隔符正则。
  */
 function fdFilter(pattern: string): (target: string) => boolean {
 	const caseSensitive = /\p{Lu}/u.test(pattern.replace(/\\./g, ""));

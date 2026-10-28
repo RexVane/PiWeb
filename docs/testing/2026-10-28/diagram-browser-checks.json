@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-28",
+  "build": "Egxe8_GiZqCvoKewdM2Mo",
+  "actualModel": "DeepSeek V4.1 Flash 1017 · ClinePass",
+  "realOverview": {
+    "source": "pi-generated-architecture-overview.mmd",
+    "nodes": 8,
+    "naturalWidth": 742,
+    "naturalHeight": 570,
+    "loaded": true,
+    "copyMatchesSource": true,
+    "svgDownload": "piweb-architecture.svg",
+    "svgBytes": 23093,
+    "pngDownload": "piweb-architecture.png",
+    "pngBytes": 109896,
+    "pngWidth": 1484,
+    "pngHeight": 1140,
+    "sourceDisclosureOpenedAndClosed": true,
+    "originalSizeAndFitWidthToggled": true
+  },
+  "narrowLayoutDomCheck": {
+    "browser": "Microsoft Edge",
+    "innerWidth": 390,
+    "documentWidth": 390,
+    "figureWidths": [348, 348],
+    "fitImageWidths": [298, 298],
+    "toolbarRightmost": 343.40625,
+    "originalImageWidth": 742,
+    "originalScrollRegionWidth": 346,
+    "originalScrollContentWidth": 790,
+    "keyboardEnterToggledAndRestored": true,
+    "note": "DOM measurements; screenshot provider returned 390x200 rather than 390x844, so that image is excluded from visual evidence. No physical mobile device tested."
+  },
+  "realSequence": {
+    "source": "pi-generated-request-sequence.mmd",
+    "naturalWidth": 1250,
+    "naturalHeight": 609,
+    "loaded": true,
+    "promptSpecifiedMermaid": false,
+    "additionalToolsCalled": false
+  },
+  "preconstructedBoundaryCases": {
+    "notModelOutput": true,
+    "validSequenceRendered": true,
+    "invalidSyntaxShowsSourceAndDisablesSave": true,
+    "externalImageSourceRejectedAndSaveDisabled": true,
+    "unclosedFenceRemainsCode": true,
+    "evidence": "diagram-boundary-dom.txt"
+  }
+}

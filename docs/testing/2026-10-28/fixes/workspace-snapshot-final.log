@@ -1,0 +1,21 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run tests/external-session-write.test.ts tests/session-reader.test.ts tests/agent-resource-isolation.test.ts tests/compaction-display.test.ts tests/session-import-service.test.ts tests/session-import-writer.test.ts --reporter=default --reporter=json --outputFile.json=/tmp/piweb-snapshot-cwd-20261028-6zeZP0/final-results.json
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ✓ tests/compaction-display.test.ts (4 tests) 527ms
+ ✓ tests/external-session-write.test.ts (6 tests) 529ms
+ ✓ tests/session-import-writer.test.ts (7 tests) 21ms
+ ✓ tests/session-import-service.test.ts (14 tests) 71ms
+ ✓ tests/agent-resource-isolation.test.ts (20 tests | 1 skipped) 1505ms
+ ✓ tests/session-reader.test.ts (6 tests) 4259ms
+   ✓ session-reader listSessions parity (6)
+     ✓ matches the SDK listing field by field and reuses cached summaries for unchanged files 1321ms
+     ✓ reuses the persisted summary index after a restart, and still re-reads changed files 2866ms
+
+ Test Files  6 passed (6)
+      Tests  56 passed | 1 skipped (57)
+   Start at  21:36:31
+   Duration  4.79s (tests 83%, import 16%, transform 1%)
+
+JSON report written to /tmp/piweb-snapshot-cwd-20261028-6zeZP0/final-results.json

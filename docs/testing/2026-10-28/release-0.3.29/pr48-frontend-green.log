@@ -1,0 +1,11 @@
+npm notice run @rexvane/piweb@0.3.29 test
+npm notice run vitest run tests/components/tool-preference-migration.test.tsx tests/components/settings-tools-session.test.tsx tests/use-piweb-events.test.ts
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  3 passed (3)
+      Tests  23 passed (23)
+   Start at  22:33:33
+   Duration  1.01s (environment 41%, tests 38%, import 11%, transform 9%, setup 1%)
+

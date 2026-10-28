@@ -28,6 +28,7 @@ import {
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
 import { languageForPath } from "@/lib/highlight";
 import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
+import { isCancelledTool } from "@/lib/chat/cancellation";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { PreviewImage } from "@/components/PreviewImage";
@@ -383,6 +384,7 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	const command = kind === "cmd" ? (str(a?.command) ?? str(a?.cmd) ?? str(a?.script) ?? "") : "";
 	const byCmd = (n: number) => (previewSide(cleanCommand(command, cwd).text) === "head" ? head(n) : tail(n));
 	if (running) return kind === "cmd" && body.length ? tail(PREVIEW_LINES) : none;
+	if (isCancelledTool(state.name, state.isError, raw)) return { head: t.turnAborted, ...(kind === "cmd" ? tail(4) : head(4)) };
 	if (state.isError) {
 		const h = exitCode !== undefined && exitCode !== 0 ? `${t.toolFailed} · ${t.toolExit.replace("{code}", String(exitCode))}` : t.toolFailed;
 		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
@@ -464,7 +466,8 @@ const ToolStep = memo(function ToolStep({
 		}
 		return null;
 	}, [args, isWriteTool, kind, output, state]);
-	const failed = Boolean(state?.isError) && !running;
+	const cancelled = Boolean(state && isCancelledTool(state.name, state.isError, output));
+	const failed = Boolean(state?.isError) && !cancelled && !running;
 	const summary = toolSummary(name, args, cwd);
 	// 标题 JSON：先截断超长字符串值再序列化——write 的 content 几 MB，直接 stringify
 	// 每次渲染白算一遍再扔掉 99.9%；截后仍保 2000 字符上限的展示语义不变
@@ -487,7 +490,7 @@ const ToolStep = memo(function ToolStep({
 	})();
 	const fullCommand = kind === "cmd" ? (str((args as Record<string, unknown>)?.command) ?? str((args as Record<string, unknown>)?.cmd) ?? str((args as Record<string, unknown>)?.script) ?? "") : "";
 	// 删除文件的命令：完成后给红色标记（内容级 diff 不强求）
-	const deletedTarget = kind === "cmd" && !running && !failed && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
+	const deletedTarget = kind === "cmd" && !running && !failed && !cancelled && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
 	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
 	const hasDiff = Boolean(diff && diff.length);
 	const hasOutput = Boolean(output || state?.encodingLoss);
@@ -1198,12 +1201,16 @@ function TurnBlockView({
 	// 过程里要渲染的消息：最终回答只在有思考块时进过程（只出思考）
 	const processIdx = assistants.filter((k) => k !== finalIdx || messages[k].content.some((c) => c.type === "thinking" && c.thinking.trim()));
 	const items = processIdx.flatMap((k) => buildItems(messages, k, tools, isStreaming && k === lastAssistantIndex, k === finalIdx, errorCounts.get(k)));
-	// 一段思考 + 命令的墙钟：从这段首条消息开始生成，到下一条助手消息开始生成（工具结果回来后）
+	// 仅累计模型生成时间；相邻助手消息之间可能在等工具或等用户，不能算成思考。
 	const spanOf = (a: number, b: number): number | undefined => {
-		const start = messages[a]?.timestamp;
-		const next = assistants.find((k) => k > b);
-		const end = next !== undefined ? messages[next]?.timestamp : messages[b]?.endedAt;
-		return typeof start === "number" && typeof end === "number" && end >= start ? end - start : undefined;
+		let duration = 0;
+		for (const k of assistants.filter((index) => index >= a && index <= b)) {
+			const message = messages[k];
+			if (typeof message.durationMs === "number" && Number.isFinite(message.durationMs) && message.durationMs >= 0) duration += message.durationMs;
+			else if (typeof message.timestamp === "number" && typeof message.endedAt === "number" && message.endedAt >= message.timestamp) duration += message.endedAt - message.timestamp;
+			else return undefined;
+		}
+		return duration;
 	};
 	const blocks: Block[] = turnLive ? items.map((item) => ({ kind: "item", item })) : collapseRuns(items, finalIdx, spanOf);
 	const last = items[items.length - 1];

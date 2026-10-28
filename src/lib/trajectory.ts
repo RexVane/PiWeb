@@ -6,6 +6,7 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { TrajEntry, TrajTokens } from "./types";
 import { sanitizeToolOutput } from "./text-sanitize";
+import { isAbortMessage, isCancelledTool } from "./chat/cancellation";
 
 /** 只恢复 SDK 已记录的耗时，不从相邻消息时间戳推算。 */
 function storedDuration(value: unknown): number | undefined {
@@ -29,6 +30,7 @@ function textOf(content: any): string {
 	if (typeof content === "object") {
 		if (typeof content.text === "string") return content.text;
 		if (typeof content.thinking === "string") return content.thinking;
+		if (Array.isArray(content.content)) return textOf(content.content);
 	}
 	return "";
 }
@@ -168,7 +170,7 @@ export class TrajLedger {
 						const result = sanitizeToolOutput(textOf(m.content));
 						e.detail = result.text || e.detail;
 						e.encodingLoss = result.encodingLoss || e.encodingLoss;
-						e.isError = m.isError === true;
+						e.isError = m.isError === true && !isCancelledTool(e.toolName ?? m.toolName ?? "", m.isError, result.text);
 						e.tokens = toTrajTokens(m.usage) ?? e.tokens;
 						const durationMs = storedDuration(m.durationMs);
 						if (durationMs !== undefined) e.timing = { ...e.timing, durationMs };
@@ -219,8 +221,8 @@ export class TrajLedger {
 						MESSAGE_TEXT_MAX_CHARS,
 					) || undefined;
 					e.detail = clipText(textOf((m.content ?? []).filter((c: any) => c.type === "text")), MESSAGE_TEXT_MAX_CHARS) || undefined;
-					e.isError = m.stopReason === "error";
-					if (m.stopReason === "error") e.title = "error";
+					e.isError = m.stopReason === "error" && !isAbortMessage(m.errorMessage);
+					if (e.isError) e.title = "error";
 					this.touch(e);
 					this.streamingStart = null;
 					// assistant 消息里的工具调用 → tool cell（结果随后由 tool_execution / toolResult 补全）
@@ -285,7 +287,7 @@ export class TrajLedger {
 					const tailText = clipText(result.text, TOOL_RESULT_MAX_CHARS);
 					e.detail = [keptArgs, tailText].filter(Boolean).join("\n\n---\n\n") || undefined;
 					e.encodingLoss = result.encodingLoss || e.encodingLoss;
-					e.isError = evt.isError === true;
+					e.isError = evt.isError === true && !isCancelledTool(e.toolName ?? evt.toolName ?? "", evt.isError, result.text);
 					const startedAt = this.toolStart.get(evt.toolCallId);
 					const durationMs = storedDuration((evt as any).durationMs) ?? (startedAt !== undefined ? now - startedAt : undefined);
 					if (durationMs !== undefined) e.timing = { ...(e.timing ?? {}), durationMs };
@@ -346,12 +348,12 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 					seq: seq++,
 					kind: "message",
 					ts,
-					title: m.stopReason === "error" ? "error" : "assistant",
+					title: m.stopReason === "error" && !isAbortMessage(m.errorMessage) ? "error" : "assistant",
 					detail: text,
 					thinking: thinking || undefined,
 					tokens: toTrajTokens(m.usage),
 					...(durationMs === undefined ? {} : { timing: { durationMs } }),
-					isError: m.stopReason === "error" || undefined,
+					isError: (m.stopReason === "error" && !isAbortMessage(m.errorMessage)) || undefined,
 				});
 				for (const c of m.content ?? []) {
 					if (c.type === "toolCall") {
@@ -375,7 +377,7 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 					const result = sanitizeToolOutput(textOf(m.content));
 					target.detail = [target.detail, result.text].filter(Boolean).join("\n\n---\n\n");
 					target.encodingLoss = result.encodingLoss || target.encodingLoss;
-					target.isError = m.isError === true || undefined;
+					target.isError = (m.isError === true && !isCancelledTool(target.toolName ?? m.toolName ?? "", m.isError, result.text)) || undefined;
 					target.tokens = toTrajTokens(m.usage) ?? target.tokens;
 					const durationMs = storedDuration(m.durationMs);
 					if (durationMs !== undefined) target.timing = { durationMs };

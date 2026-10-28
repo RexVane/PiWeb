@@ -10,11 +10,14 @@ import {
 	forgetSession,
 	getAliases,
 	getArchivedSessions,
+	getGrowthInitConsent,
 	getRemovedWorkspaces,
+	getWorkspaceRegistry,
 	listAdded,
 	registerCwds,
 	removeWorkspace,
 	setAlias,
+	setGrowthInitConsent,
 } from "../src/lib/workspace-store";
 
 describe("PiWeb workspace registry", () => {
@@ -67,6 +70,74 @@ describe("PiWeb workspace registry", () => {
 		// 大小写不同的路径也能清除别名
 		await setAlias(path.join(tempDir, process.platform === "win32" ? "CASEDIR" : "CaseDir"), "");
 		expect(await getAliases()).toEqual({});
+	});
+
+	it("treats a CLI symlink cwd and its real directory as one workspace through rename, removal and re-add", async () => {
+		const real = path.join(tempDir, "real");
+		const link = path.join(tempDir, "cli-link");
+		const other = path.join(tempDir, "other");
+		await fs.mkdir(real);
+		await fs.mkdir(other);
+		await fs.symlink(real, link, process.platform === "win32" ? "junction" : "dir");
+		const canonical = await fs.realpath(real);
+		const canonicalOther = await fs.realpath(other);
+		const key = process.platform === "win32" ? canonical.toLowerCase() : canonical;
+
+		await addWorkspace(other);
+		await addWorkspace(link);
+		await setAlias(link, "CLI project");
+		expect(await registerCwds([real, link])).toEqual([canonicalOther, canonical]);
+		expect(await getAliases()).toEqual({ [key]: "CLI project" });
+		await setAlias(real, "Renamed project");
+		expect(await getAliases()).toEqual({ [key]: "Renamed project" });
+		await setGrowthInitConsent(link, false);
+		expect(await getGrowthInitConsent(real)).toBe(false);
+
+		await removeWorkspace(link);
+		expect(await registerCwds([real, link])).toEqual([canonicalOther]);
+		expect(await getRemovedWorkspaces()).toEqual([canonical]);
+		expect(await getAliases()).toEqual({});
+		await addWorkspace(real);
+		expect(await listAdded()).toEqual([canonicalOther, canonical]);
+		expect(await getRemovedWorkspaces()).toEqual([]);
+	});
+
+	it("reads a legacy symlink registry without duplicates or losing its alias and first-seen order", async () => {
+		const real = path.join(tempDir, "real");
+		const link = path.join(tempDir, "cli-link");
+		const first = path.join(tempDir, "first");
+		const last = path.join(tempDir, "last");
+		await fs.mkdir(real);
+		await fs.symlink(real, link, process.platform === "win32" ? "junction" : "dir");
+		const canonical = await fs.realpath(real);
+		const key = process.platform === "win32" ? canonical.toLowerCase() : canonical;
+		const target = path.join(tempDir, "web-workspaces.json");
+		const original = JSON.stringify({ workspaces: [first, link, real, last], aliases: { [link]: "Legacy name" } });
+		await fs.writeFile(target, original);
+		expect(await getWorkspaceRegistry()).toMatchObject({
+			workspaces: [first, canonical, last], aliases: { [key]: "Legacy name" },
+		});
+		expect(await registerCwds([real, link])).toEqual([first, canonical, last]);
+		// Polling only normalizes the returned snapshot; migration must not rewrite user data.
+		expect(await fs.readFile(target, "utf8")).toBe(original);
+		await setAlias(real, "Updated name");
+		expect(await getAliases()).toEqual({ [key]: "Updated name" });
+		expect(await listAdded()).toEqual([first, canonical, last]);
+	});
+
+	it("honors a legacy symlink removal marker until the workspace is explicitly re-added", async () => {
+		const real = path.join(tempDir, "real");
+		const link = path.join(tempDir, "cli-link");
+		await fs.mkdir(real);
+		await fs.symlink(real, link, process.platform === "win32" ? "junction" : "dir");
+		const canonical = await fs.realpath(real);
+		const target = path.join(tempDir, "web-workspaces.json");
+		const original = JSON.stringify({ workspaces: [], removedWorkspaces: [link] });
+		await fs.writeFile(target, original);
+		expect(await registerCwds([real, link])).toEqual([]);
+		expect(await getRemovedWorkspaces()).toEqual([canonical]);
+		expect(await fs.readFile(target, "utf8")).toBe(original);
+		expect(await addWorkspace(link)).toEqual({ workspaces: [canonical], removedWorkspaces: [] });
 	});
 
 	it("serves repeated polls from the in-memory snapshot without rewriting or taking the lock", async () => {

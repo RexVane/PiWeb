@@ -7,10 +7,11 @@
  * 远程请求直接使用这里，避免把对话框弹在主机屏幕上。
  * 只列目录；选出的路径仍由服务端的 resolveWorkspacePath 校验后才写进工作区。
  */
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { folderIconSrc } from "@/lib/file-icons";
 import { IconChevronLeft14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
+import { useDialog } from "@/hooks/useDialog";
 
 interface FsEntry {
 	name: string;
@@ -49,33 +50,41 @@ export function DirectoryPicker({
 	const [listing, setListing] = useState<Listing | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const titleId = useId();
+	const request = useRef(0);
+	useDialog({ open, onClose: onCancel, ref: dialogRef });
 
 	const load = useCallback(async (target?: string) => {
+		const id = ++request.current;
 		setBusy(true);
 		setError(null);
 		try {
-			setListing((await post("list", target)) as unknown as Listing);
+			const next = (await post("list", target)) as unknown as Listing;
+			if (id === request.current) setListing(next);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e));
+			if (id === request.current) setError(e instanceof Error ? e.message : String(e));
 		} finally {
-			setBusy(false);
+			if (id === request.current) setBusy(false);
 		}
 	}, []);
 
 	useEffect(() => {
 		if (!open) return;
+		let active = true;
 		setListing(null);
 		setError(null);
 		setRoots([]);
 		void (async () => {
 			try {
 				const data = await post("roots");
-				setRoots((data.roots as FsEntry[]) ?? []);
+				if (active) setRoots((data.roots as FsEntry[]) ?? []);
 			} catch {
 				// 拿不到起点不影响从主目录开始
 			}
-			await load();
+			if (active) await load();
 		})();
+		return () => { active = false; request.current += 1; };
 	}, [open, load]);
 
 	if (!open) return null;
@@ -89,6 +98,10 @@ export function DirectoryPicker({
 			}}
 		>
 			<div
+				ref={dialogRef}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={titleId}
 				className="glass-modal flex flex-col overflow-hidden"
 				style={{
 					width: 560,
@@ -98,7 +111,7 @@ export function DirectoryPicker({
 					boxShadow: "var(--dsw-elevation-prominent)",
 				}}
 			>
-				<div className="px-5 pb-2 pt-4" style={{ fontSize: 15, fontWeight: 500 }}>
+				<div id={titleId} className="px-5 pb-2 pt-4" style={{ fontSize: 15, fontWeight: 500 }}>
 					{t.pickFolderTitle}
 				</div>
 

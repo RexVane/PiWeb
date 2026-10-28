@@ -1,0 +1,98 @@
+npm notice run @rexvane/piweb@0.3.29 check
+npm notice run npm run typecheck && npm run test && npm run build
+npm notice run @rexvane/piweb@0.3.29 typecheck
+npm notice run tsc --noEmit
+npm notice run @rexvane/piweb@0.3.29 test
+npm notice run vitest run
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  148 passed | 2 skipped (150)
+      Tests  1213 passed | 4 skipped (1217)
+   Start at  23:03:30
+   Duration  26.64s (tests 54%, import 23%, environment 21%, transform 1%)
+
+    Isolate  150 workers spawned · ~203ms startup each (spawn + environment, per file)
+             at least ~7.42s faster with isolate: false — reuses workers across files instead of one per file
+
+npm notice run @rexvane/piweb@0.3.29 build
+npm notice run node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack
+▲ Next.js 16.4.2 (webpack)
+✓ Running next.config.ts took 16ms
+- Experiments (use with caution):
+  · proxyClientMaxBodySize: "272mb"
+
+  Creating an optimized production build ...
+⚠ Compiled with warnings in 3.0s
+
+./scripts/release.mjs
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+./scripts/release.mjs
+./src/lib/update-service.ts
+./src/lib/update/startup-check.ts
+./src/instrumentation-node.ts
+
+./scripts/release.mjs
+Critical dependency: the request of a dependency is an expression
+
+Import trace for requested module:
+./scripts/release.mjs
+./src/lib/update-service.ts
+./src/lib/update/startup-check.ts
+./src/app/api/update/route.ts
+
+✓ Compiled successfully in 4.9s
+  Running TypeScript ...
+  Finished TypeScript in 471ms ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/5) ...
+  Generating static pages using 7 workers (1/5) 
+  Generating static pages using 7 workers (2/5) 
+  Generating static pages using 7 workers (3/5) 
+✓ Generating static pages using 7 workers (5/5) in 2.7s
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/agent/[id]
+├ ƒ /api/agent/[id]/events
+├ ƒ /api/agent/[id]/tree
+├ ƒ /api/agent/new
+├ ƒ /api/agent/resources
+├ ƒ /api/config
+├ ƒ /api/files
+├ ƒ /api/fs
+├ ƒ /api/git
+├ ƒ /api/github
+├ ƒ /api/growth
+├ ƒ /api/health
+├ ƒ /api/models
+├ ƒ /api/models/defaults
+├ ƒ /api/pi-settings
+├ ƒ /api/plugins
+├ ƒ /api/prompts
+├ ƒ /api/remote
+├ ƒ /api/security
+├ ƒ /api/sessions
+├ ƒ /api/sessions/[id]
+├ ƒ /api/sessions/[id]/export
+├ ƒ /api/sessions/import
+├ ƒ /api/skills
+├ ƒ /api/update
+├ ƒ /api/version
+├ ƒ /api/web-auth
+├ ƒ /api/workspaces
+├ ○ /icon.svg
+└ ○ /login
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

@@ -1,0 +1,20 @@
+{
+  "verifiedAt": "2026-10-28T15:07:45.765401+00:00",
+  "version": "0.3.29",
+  "piVersion": "1.4.0",
+  "buildId": "QWrqaNf6LRYQEB-SEJVy4",
+  "artifact": "dist/rexvane-piweb-0.3.29.tgz",
+  "bytes": 26276685,
+  "sha256": "08848d04d3c9e0850fb522f77503a80475e99a35def2e88c82d5608f5deb142f",
+  "packedFiles": 1537,
+  "cacheIncluded": false,
+  "sensitiveConfigIncluded": false,
+  "tests": {
+    "passed": 1214,
+    "failed": 0,
+    "skipped": 3
+  },
+  "cleanInstallation": "passed (verify-package-ci-final.log, same file count and build ID)",
+  "originalPr48Head": "b7e1a6a1643d2a3f57d3705117468049a139f030",
+  "publication": "Prepared locally; official publication is performed and verified after the release PR passes CI."
+}

@@ -1,5 +1,7 @@
 "use client";
 
+import { useId, useRef } from "react";
+
 /**
  * 右侧抽屉:顶部一列入口(可点选),下面渲染所选入口的内容。
  *
@@ -75,6 +77,8 @@ export function DrawerPanel({
 	onOpenFile?: (absPath: string) => void;
 }) {
 	const { t } = useI18n();
+	const id = useId();
+	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
 	const entries: { id: DrawerSection; label: string; icon: React.ReactNode }[] = [
 		// 入口只用现有的 i18n 键;「提示词」是入口短名,和面板标题「提示词来源」区分开
@@ -92,17 +96,33 @@ export function DrawerPanel({
 			    悬停底色交给 CSS（.drawer-tab:hover）：以前用 onMouseEnter/Leave 直接改 style，
 			    悬停时点下去这一项变成选中，移开时「选中就不复原」，底色就永远留在上面。 */}
 			<div className="hairline-b flex items-stretch gap-1 px-2" role="tablist" aria-label={t.drawerSections}>
-				{entries.map((entry) => (
+				{entries.map((entry, index) => (
 					<button
 						key={entry.id}
+						ref={(element) => { tabRefs.current[index] = element; }}
+						id={`${id}-${entry.id}`}
 						type="button"
 						role="tab"
 						aria-selected={section === entry.id}
+						aria-controls={`${id}-panel`}
+						tabIndex={section === entry.id ? 0 : -1}
 						className="settings-tab-underline drawer-tab flex flex-1 items-center justify-center rounded-t-lg"
 						data-active={section === entry.id}
 						title={entry.label}
 						aria-label={entry.label}
 						onClick={() => onSectionChange(entry.id)}
+						onKeyDown={(event) => {
+							if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+							let next: number;
+							if (event.key === "ArrowRight") next = (index + 1) % entries.length;
+							else if (event.key === "ArrowLeft") next = (index + entries.length - 1) % entries.length;
+							else if (event.key === "Home") next = 0;
+							else if (event.key === "End") next = entries.length - 1;
+							else return;
+							event.preventDefault();
+							onSectionChange(entries[next].id);
+							tabRefs.current[next]?.focus();
+						}}
 						data-testid={`drawer-entry-${entry.id}`}
 					>
 						{entry.icon}
@@ -112,7 +132,7 @@ export function DrawerPanel({
 
 			{/* 所选入口的内容:项目 / 提示词 / Git 三个面板自带标题行与滚动。
 			    「导入会话」段落没有标题行,这里补一行,排布照抄 PromptPanel(同样在入口列表下面、关掉整个抽屉) */}
-			<div className="flex min-h-0 flex-1 flex-col">
+			<div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-${section}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col">
 				{section === "import" ? (
 					<>
 						<div className="hairline-b flex items-center gap-2 px-4 py-2.5">

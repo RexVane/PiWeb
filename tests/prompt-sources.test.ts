@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildPromptSources, classifyPromptOrigin, latestCompactionSummary, listPromptSources, readPromptSource } from "../src/lib/prompt-sources";
+import { readWorkspaceImage } from "../src/lib/files-service";
 
 const prior = process.env.PI_CODING_AGENT_DIR;
 let agentDir: string;
@@ -149,6 +150,19 @@ describe("listPromptSources / readPromptSource（真实资源加载器）", () =
 		if (symlinked) await expect(readPromptSource(linked, ws, skill)).rejects.toThrow(/escapes/);
 		// 全局 AGENTS / 模板也不能用来授权整个人目录。
 		await expect(readPromptSource(outside, ws, path.join(agentDir, "prompts", "personal.md"))).rejects.toThrow(/escapes/);
+	});
+
+	it("二进制技能附件复用已发现来源边界，不能读取同级私人图片", async () => {
+		const skill = path.join(agentDir, "skills", "global-skill", "SKILL.md");
+		const image = path.join(path.dirname(skill), "images", "中文.png");
+		const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8QkAAAAASUVORK5CYII=", "base64");
+		await fs.mkdir(path.dirname(image), { recursive: true });
+		await fs.writeFile(image, png);
+		await expect(readWorkspaceImage(ws, image, skill)).resolves.toEqual({ bytes: png, mimeType: "image/png" });
+		const outside = path.join(agentDir, "private.png");
+		await fs.writeFile(outside, png);
+		await expect(readWorkspaceImage(ws, outside, skill)).rejects.toThrow(/escapes/);
+		await expect(readWorkspaceImage(ws, image, outside)).rejects.toThrow(/not part of the discovered/);
 	});
 });
 

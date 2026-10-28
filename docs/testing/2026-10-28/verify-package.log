@@ -1,0 +1,3 @@
+npm notice run @rexvane/piweb@0.3.28 verify:package
+npm notice run node scripts/verify-package.mjs
+[piweb] the packaged .next must not include the build cache (.next/cache/.previewinfo); remove .next/cache before packing

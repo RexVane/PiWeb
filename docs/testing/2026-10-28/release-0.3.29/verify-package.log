@@ -1,0 +1,4 @@
+npm notice run @rexvane/piweb@0.3.29 verify:package
+npm notice run node scripts/verify-package.mjs
+[piweb] Clean global installation: Pi 1.4.0 SDK, production startup, home page and first-paint APIs passed
+[piweb] rexvane-piweb-0.3.29.tgz: 1537 files, 25.1 MB, build V-x9GfKEae1o5yse2_RyS

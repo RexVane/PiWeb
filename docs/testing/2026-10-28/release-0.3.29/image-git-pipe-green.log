@@ -1,0 +1,11 @@
+npm notice run @rexvane/piweb@0.3.29 npx
+npm notice run 'vitest' run tests/api/workspace-image.test.ts tests/integration/files/ignore-process.test.ts
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  23:02:59
+   Duration  721ms (import 75%, tests 20%, transform 4%, setup 1%)
+

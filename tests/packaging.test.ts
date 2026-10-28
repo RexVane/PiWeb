@@ -110,6 +110,24 @@ describe("release gate on the real tarball", () => {
 		});
 		await expect(async () => verifyPackedPackage(root, { log: () => {} })).rejects.toThrow(/build cache/);
 	}, 60_000);
+
+	it("excludes local Next cache using the release files policy while keeping every runtime file and the local cache", async () => {
+		const manifest = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8"));
+		const root = await fakePackage(manifest.files, async (dir) => {
+			await writeBuild(dir);
+			await fs.mkdir(path.join(dir, ".next", "cache"), { recursive: true });
+			await fs.writeFile(path.join(dir, ".next", "cache", ".previewinfo"), "local cache");
+			await fs.writeFile(path.join(dir, ".next", "cache", "webpack.pack"), "compiled cache");
+		});
+		const result = await verifyPackedPackage(root, { log: () => {} });
+		const localFiles = (await fs.readdir(path.join(root, ".next"), { recursive: true }))
+			.map((file) => `.next/${String(file).replaceAll("\\", "/")}`);
+		for (const file of localFiles) {
+			if ((await fs.stat(path.join(root, file))).isFile() && !file.startsWith(".next/cache/")) expect(result.files).toContain(file);
+		}
+		expect(result.files.some((file: string) => file.startsWith(".next/cache/"))).toBe(false);
+		expect(await fs.readFile(path.join(root, ".next", "cache", ".previewinfo"), "utf8")).toBe("local cache");
+	}, 60_000);
 });
 
 /**

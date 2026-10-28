@@ -7,9 +7,8 @@
  * 「变更」= 整文件行内 diff（FullDiff）；「内容」= 所选步的全文（被删文件显示删除前）；「渲染」= Markdown。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
-import remarkGfm from "remark-gfm";
+import { MarkdownBlock } from "@/components/MarkdownBlock";
+import { MarkdownActionsProvider } from "@/components/chat/markdown-actions";
 import { parseUnifiedDiff, type DiffLine } from "@/components/DiffView";
 import { FullDiff, type FullDiffHandle } from "@/components/FullDiff";
 import { GrowthTree } from "@/components/GrowthTree";
@@ -22,6 +21,8 @@ import { fuzzyScore, type TreeNode } from "@/lib/growth-tree";
 import type { ViewerState } from "@/hooks/useFileViewer";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { highlightCode, languageForPath } from "@/lib/highlight";
+import { markdownDocumentImageUrl, resolveMarkdownDocumentPath } from "@/lib/chat/file-path";
+import { useDialog } from "@/hooks/useDialog";
 
 type Mode = "diff" | "content" | "render";
 
@@ -122,7 +123,11 @@ export function FileViewer({
 	const [dirPage, setDirPage] = useState<(DirPage & { key: string; error?: string }) | null>(null);
 	const diffRef = useRef<FullDiffHandle>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
+	const quickDialogRef = useRef<HTMLDivElement>(null);
 	const quickInputRef = useRef<HTMLInputElement>(null);
+	const quickComposingRef = useRef(false);
+	useDialog({ open: state.open, onClose, ref: rootRef });
+	useDialog({ open: state.open && quickOpen, onClose: () => setQuickOpen(false), ref: quickDialogRef });
 
 	const activeTab = state.tabs.find((tab) => tab.path === state.active) ?? null;
 	const change = useMemo(() => (activeTab ? growth.changes.find((c) => c.path === activeTab.path) ?? null : null), [activeTab, growth.changes]);
@@ -295,14 +300,10 @@ export function FileViewer({
 	useEffect(() => {
 		if (!state.open) return;
 		const h = (e: KeyboardEvent) => {
+			if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
 			const target = e.target as HTMLElement | null;
+			if (target && !rootRef.current?.contains(target)) return;
 			const typing = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
-			if (e.key === "Escape") {
-				e.preventDefault();
-				if (quickOpen) setQuickOpen(false);
-				else onClose();
-				return;
-			}
 			const mod = e.ctrlKey || e.metaKey;
 			if (mod && e.key.toLowerCase() === "w") {
 				e.preventDefault();
@@ -332,7 +333,7 @@ export function FileViewer({
 		}
 	}, [quickOpen]);
 	useEffect(() => {
-		if (state.open) setTimeout(() => rootRef.current?.focus(), 0);
+		if (!state.open) setQuickOpen(false);
 	}, [state.open]);
 
 	const quickMatches = useMemo(() => {
@@ -358,11 +359,8 @@ export function FileViewer({
 		if (!activeTab) return;
 		setLinkError(null);
 		try {
-			const current = activeTab.path.replaceAll("\\", "/");
-			const absolute = current.startsWith("/") || /^[a-z]:\//i.test(current);
-			const url = new URL(href, `file:///${current.replace(/^\//, "").split("/").map(encodeURIComponent).join("/")}`);
-			let target = decodeURIComponent(url.pathname);
-			if (!absolute || /^\/[a-z]:\//i.test(target)) target = target.slice(1);
+			// MarkdownActions already decoded the path and removed the link's query/fragment.
+			const target = resolveMarkdownDocumentPath(activeTab.path, href.split("/").map(encodeURIComponent).join("/"));
 			if (activeTab.staticContent === undefined || !onOpenContent) {
 				onOpen(target, { lazy: true });
 				return;
@@ -577,17 +575,13 @@ export function FileViewer({
 						) : loaded.diff ? (
 							<FullDiff lines={loaded.diff} language={languageForPath(activeTab.path)} folded={folded} handle={diffRef} initialChange />
 						) : mode === "render" && loaded.content !== null ? (
-							<div className="md min-h-0 flex-1 overflow-auto px-6 py-4" style={{ fontSize: 14 }}>
-								<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-									components={{ a: ({ node: _node, href, children, ...props }) => (
-										<a {...props} href={href} onClick={(event) => {
-											if (!href || href.startsWith("#") || href.startsWith("//") || /^[a-z][a-z\d+.-]*:/i.test(href)) return;
-											event.preventDefault();
-											void openDocumentLink(href);
-										}}>{children}</a>
-									) }}>
-									{loaded.content}
-								</ReactMarkdown>
+							<div className="min-h-0 flex-1 overflow-auto px-6 py-4" style={{ fontSize: 14 }}>
+								<MarkdownActionsProvider value={{
+									openFile: (href) => void openDocumentLink(href),
+									resolveImage: (href) => markdownDocumentImageUrl(cwd, activeTab.path, href, activeTab.staticContent === undefined ? undefined : activeTab.sourcePath ?? activeTab.path),
+								}}>
+									<MarkdownBlock text={loaded.content} />
+								</MarkdownActionsProvider>
 							</div>
 						) : loaded.content !== null ? (
 							<CodeBlock content={loaded.content} name={activeTab.path} />
@@ -627,7 +621,7 @@ export function FileViewer({
 				{/* 快速打开 */}
 				{quickOpen && (
 					<div className="pw-quick" onMouseDown={(e) => e.target === e.currentTarget && setQuickOpen(false)}>
-						<div className="pw-quick-box popover">
+						<div ref={quickDialogRef} className="pw-quick-box popover" role="dialog" aria-modal="true" aria-label={t.viewerQuickOpen} tabIndex={-1}>
 							<div className="flex items-center gap-2 px-2" style={{ height: 34 }}>
 								<IconSearchOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
 								<input
@@ -640,7 +634,10 @@ export function FileViewer({
 									placeholder={t.viewerQuickOpen}
 									className="min-w-0 flex-1 bg-transparent"
 									style={{ fontSize: 13 }}
+									onCompositionStart={() => { quickComposingRef.current = true; }}
+									onCompositionEnd={() => { quickComposingRef.current = false; }}
 									onKeyDown={(e) => {
+										if (quickComposingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
 										if (e.key === "ArrowDown") {
 											e.preventDefault();
 											setQuickIndex(Math.min(Math.max(0, quickMatches.length - 1), selectedQuickIndex + 1));

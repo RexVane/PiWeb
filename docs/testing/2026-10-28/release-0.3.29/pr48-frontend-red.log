@@ -1,0 +1,213 @@
+npm notice run @rexvane/piweb@0.3.29 test
+npm notice run vitest run tests/components/tool-preference-migration.test.tsx tests/components/settings-tools-session.test.tsx
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/components/settings-tools-session.test.tsx (4 tests | 1 failed) 428ms
+   × does not prepare an agent without an open session or when its tools are already loaded 51ms
+ ❯ tests/components/tool-preference-migration.test.tsx (6 tests | 3 failed) 1131ms
+   × pins an explicit matching legacy preset before another browser can replace it 1047ms
+   × does not migrate an implicit default when localStorage contains null 9ms
+   × does not migrate an implicit default when localStorage contains malformed 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/components/settings-tools-session.test.tsx > does not prepare an agent without an open session or when its tools are already loaded
+TestingLibraryElementError: Unable to find an element with the text: 打开一个会话后，这里会显示可用工具并支持逐个启停。. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<div[39m
+      [33mclass[39m=[32m"pw-app-shell grid w-screen overflow-hidden"[39m
+      [33mstyle[39m=[32m"grid-template-columns: 280px minmax(0,1fr) 0px; background: var(--dsw-bg-base);"[39m
+    [36m>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"min-h-0 overflow-hidden"[39m
+        [33mstyle[39m=[32m"background: var(--dsw-sidebar-fill);"[39m
+      [36m>[39m
+        [36m<button>[39m
+          [0mOpen cold[0m
+        [36m</button>[39m
+        [36m<button>[39m
+          [0mOpen other[0m
+        [36m</button>[39m
+        [36m<button>[39m
+          [0mSettings[0m
+        [36m</button>[39m
+        [36m<button>[39m
+          [0mNew chat[0m
+        [36m</button>[39m
+      [36m</div>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"pi-main flex min-h-0 min-w-0 flex-col"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"flex min-h-0 flex-1 flex-col"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"flex h-full min-h-0 flex-col items-center justify-center px-6"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"mb-5 flex items-center justify-center gap-3"[39m
+            [36m>[39m
+              [36m<svg[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mfill[39m=[32m"none"[39m
+                [33mheight[39m=[32m"40"[39m
+                [33mstyle[39m=[32m"display: block; flex: 0 0 auto;"[39m
+                [33mviewBox[39m=[32m"0 0 24 24"[39m
+                [33mwidth[39m=[32m"40"[39m
+              [36m>[39m
+                [36m<defs>[39m
+                  [36m<lineargradient[39m
+                    [33mid[39m=[32m"isx-pi-grad"[39m
+                    [33mx1[39m=[32m"0%"[39m
+                    [33mx2[39m=[32m"100%"[39m
+                    [33my1[39m=[32m"0%"[39m
+                    [33my2[39m=[32m"100%"[39m
+                  [36m>[39m
+                    [36m<stop[39m
+                      [33moffset[39m=[32m"0%"[39m
+                      [33mstop-color[39m=[32m"#02defc"[39m
+                    [36m/>[39m
+                    [36m<stop[39m
+                      [33moffset[39m=[32m"50%"[39m
+                      [33mstop-color[39m=[32m"#7ffe00"[39m
+                    [36m/>[39m
+                    [36m<stop[39m
+                      [33moffset[39m=[32m"100%"[39m
+                      [33mstop-color[39m=[32m"#fc0197"[39m
+                    [36m/>[39m
+                  [36m</lineargradient>[39m
+                [36m</defs>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M3.75 6.75C3.75 5.92 4.42 5.25 5.25 5.25H18.75C19.58 5.25 20.25 5.92 20.25 6.75C20.25 7.58 19.58 8.25 18.75 8.25H5.25C4.42 8.25 3.75 7.58 3.75 6.75Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M8.25 7.5V15.5C8.25 17.16 6.91 18.5 5.25 18.5C4.42 18.5 3.75 17.83 3.75 17C3.75 16.17 4.42 15.5 5.25 15.5C5.66 15.5 6 15.16 6 14.75V7.5H8.25Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+                [36m<path[39m
+                  [33md[39m=[32m"M15 7.5V14.5C15 15.88 16.12 17 17.5 17C18.33 17 19 17.67 19 18.5C19 19.33 18.33 20 17.5 20C14.46 20 12.75 17.54 12.75 14.5V7.5H15Z"[39m
+                  [33mfill[39m=[32m"currentColor"[39m
+                [36m/>[39m
+              [36m</svg>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"w-full flex flex-col items-stretch mx-auto"[39m
+              [33mstyle[39m=[32m"max-width: var(--dsh-composer-card-max-width);"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"mb-3 flex items-center gap-3"[39m
+                [33mstyle[39m=[32m"padding-left: 7px;"[39m
+              [36m>[39m
+                [36m<div[39m
+                  [33mclass[39m=[32m"relative"[39m
+                [36m>[39m
+                  [36m<button[39m
+                    [33mclass[39m=[32m"hero-chip"[39m
+                    [33mdata-open[39m=[32m"false"[39m
+                  [36m>[39m
+                    [36m<svg[39m
+                      [33mclass[39m=[32m"hero-chip-icon"[39m
+                      [33mfill[39m=[32m"none"[39m
+                      [33mheight[39m=[32m"16"[39m
+                      [33mviewBox[39m=[32m"0 0 16 16"[39m
+                      [33mwidth[39m=[32m"16"[39m
+                    [36m>[39m
+                      [36m<path[39m
+                        [33md[39m=[32m"M5.05582 0.518756L4.50669 0.86654L5.05582 0.518756ZM13 9.4837L13.65 9.4837L13.65 3.53962L13 3.53962L12.35 3.53962L12.35 9.4837L13 9.4837ZM11.3264 1.86603L11.3264 1.21603L6.52313 1.21603L6.52313 1.86603L6.52313 2.51603L11.3264 2.51603L11.3264 1.86603ZM5.58054 1.34727L6.12968 0.999489L5.60495 0.170972L5.05582 0.518756L4.50669 0.86654L5.03141 1.69506L5.58054 1.34727ZM4.11323 1.23058e-13L4.11323 -0.65L1.67359 -0.65L1.67359 5.00699e-14L1.67359 0.65L4.11323 0.65L4.11323 1.23058e-13ZM0 1.67359L-0.65 1.67359L-0.65 9.4837L0 9.4837L0.65 9.4837L0.65 1.67359L0 1.67359ZM11.3264 11.1573L11.3264 10.5073L1.67359 10.5073L1.67359 11.1573L1.67359 11.8073L11.3264 11.8073L11.3264 11.1573ZM0 9.4837L-0.65 9.4837C-0.65 10.767 0.390308 11.8073 1.67359 11.8073L1.67359 11.1573L1.67359 10.5073C1.10828 10.5073 0.65 10.049 0.65 9.4837L0 9.4837ZM1.67359 5.00699e-14L1.67359 -0.65C0.390307 -0.65 -0.65 0.390309 -0.65 1.67359L0 1.67359L0.65 1.67359C0.65 1.10828 1.10828 0.65 1.67359 0.65L1.67359 5.00699e-14ZM5.05582 0.518756L5.60495 0.170972C5.28121 -0.340193 4.71829 -0.65 4.11323 -0.65L4.11323 1.23058e-13L4.11323 0.65C4.27282 0.65 4.4213 0.731715 4.50669 0.86654L5.05582 0.518756ZM6.52313 1.86603L6.52313 1.21603C6.36354 1.21603 6.21507 1.13431 6.12968 0.999489L5.58054 1.34727L5.03141 1.69506C5.35515 2.20622 5.91808 2.51603 6.52313 2.51603L6.52313 1.86603ZM13 3.53962L13.65 3.53962C13.65 2.25634 12.6097 1.21603 11.3264 1.21603L11.3264 1.86603L11.3264 2.51603C11.8917 2.51603 12.35 2.97431 12.35 3.53962L13 3.53962ZM13 9.4837L12.35 9.4837C12.35 10.049 11.8917 10.5073 11.3264 10.5073L11.3264 11.1573L11.3264 11.8073C12.6097 11.8073 13.65 10.767 13.65 9.4837L13 9.4837Z"[39m
+                        [33mfill[39m=[32m"currentColor"[39m
+                        [33mtransform[39m=[32m"translate(1.5 2.429)"[39m
+                      [36m/>[39m
+                    [36m</svg>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"max-w-[220px] truncate"[39m
+                    [36m>[39m
+                      [0m新建工作区[0m
+                    [36m</span>[39m
+                    [36m<span[39m
+                      [33mclass[39m=[32m"chevron"[39m
+                    [36...
+ ❯ Object.getElementError node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ tests/components/settings-tools-session.test.tsx:98:16
+     96|  render(<AppShell />);
+     97|  await settings();
+     98|  expect(screen.getByText("打开一个会话后，这里会显示可用工具并支持逐个启停。")).toBeTruthy();
+       |                ^
+     99|  expect(commands).toEqual([]);
+    100|  await open("Open cold", { active: ["read"], all: [{ name: "read" }, {…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/components/tool-preference-migration.test.tsx > pins an explicit matching legacy preset before another browser can replace it
+AssertionError: expected undefined to deeply equal { toolPreset: 'standard', …(2) }
+
+Ignored nodes: comments, script, style
+[36m<html>[39m
+  [36m<head />[39m
+  [36m<body>[39m
+    [36m<div />[39m
+  [36m</body>[39m
+[36m</html>[39m
+
+- Expected:
+{
+  "customActiveTools": null,
+  "toolPreferenceSaved": true,
+  "toolPreset": "standard",
+}
+
++ Received:
+undefined
+
+ ❯ tests/components/tool-preference-migration.test.tsx:65:66
+     63|  const first = renderHook(() => usePiWeb());
+     64|  await open(first, "/old.jsonl", snapshot({ toolPreferenceSaved: false…
+     65|  await waitFor(() => expect(serverPreferences.get("/old.jsonl")).toEqu…
+       |                                                                  ^
+     66|  expect(commands).toEqual([{ path: "/old.jsonl", cmd: "setToolPreset",…
+     67|  first.unmount();
+ ❯ runWithExpensiveErrorDiagnosticsDisabled node_modules/@testing-library/dom/dist/config.js:47:12
+ ❯ checkCallback node_modules/@testing-library/dom/dist/wait-for.js:124:77
+ ❯ Timeout.checkRealTimersCallback node_modules/@testing-library/dom/dist/wait-for.js:118:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/components/tool-preference-migration.test.tsx > does not migrate an implicit default when localStorage contains null
+ FAIL  tests/components/tool-preference-migration.test.tsx > does not migrate an implicit default when localStorage contains malformed
+AssertionError: expected [ { path: '/old.jsonl', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "cmd": "setToolPreset",
++     "path": "/old.jsonl",
++     "preset": "standard",
++   },
++ ]
+
+ ❯ tests/components/tool-preference-migration.test.tsx:81:19
+     79|  const hook = renderHook(() => usePiWeb());
+     80|  await open(hook, "/old.jsonl", snapshot({ toolPreset: "readonly", too…
+     81|  expect(commands).toEqual([]);
+       |                   ^
+     82|  expect(hook.result.current.state.toolPreset).toBe("readonly");
+     83| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  4 failed | 6 passed (10)
+   Start at  22:32:30
+   Duration  1.87s (tests 52%, environment 34%, import 8%, transform 6%)
+

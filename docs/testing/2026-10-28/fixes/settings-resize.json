@@ -1,0 +1,26 @@
+[
+  {
+    "dialogWidth": 304,
+    "documentWidth": 320,
+    "settings": true,
+    "width": 320
+  },
+  {
+    "dialogWidth": 374,
+    "documentWidth": 390,
+    "settings": true,
+    "width": 390
+  },
+  {
+    "dialogWidth": 752,
+    "documentWidth": 768,
+    "settings": true,
+    "width": 768
+  },
+  {
+    "dialogWidth": 800,
+    "documentWidth": 1440,
+    "settings": true,
+    "width": 1440
+  }
+]

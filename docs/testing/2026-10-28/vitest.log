@@ -1,0 +1,228 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run --reporter=default --reporter=json --outputFile=docs/testing/2026-10-28/vitest-results.json
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ✓ tests/agent-resource-isolation.test.ts (20 tests | 1 skipped) 2713ms
+   ✓ real SDK session resource isolation (20)
+     ✓ keeps execution guidance and user append instructions in discovery, live sessions and reloads 382ms
+     ✓ stays busy through agent_end/retry and reloads pending resources only after agent_settled 320ms
+ ✓ tests/session-reader.test.ts (6 tests) 4342ms
+   ✓ session-reader listSessions parity (6)
+     ✓ matches the SDK listing field by field and reuses cached summaries for unchanged files 1330ms
+     ✓ reuses the persisted summary index after a restart, and still re-reads changed files 2844ms
+ ✓ tests/integration/remote/tunnel-status.test.ts (11 tests) 6214ms
+   ✓ tunnel status through API, process and HTTP (11)
+     ✓ detects 1033 after readiness and recovers on the same URL without respawning 553ms
+     ✓ keeps checking after the initial readiness deadline instead of remaining pending forever 474ms
+     ✓ concurrent starts wait for the same completed readiness check 450ms
+     ✓ does not mark {"status":403,"body":"forbidden"} as a working tunnel 411ms
+     ✓ does not mark {"status":200,"body":"<html>error page</html>"} as a working tunnel 403ms
+     ✓ does not mark {"status":200,"body":"{\"success\":true,\"data\":{\"ok\":true,\"service\":\"other\"}}"} as a working tunnel 394ms
+     ✓ does not mark {"status":502,"body":"Bad Gateway"} as a working tunnel 385ms
+     ✓ does not mark {"status":403,"headers":{"cf-mitigated":"challenge"},"body":"challenge"} as a working tunnel 389ms
+     ✓ reports a crash after startup and removes the expired address 903ms
+     ✓ coalesces checks and discards an in-flight failure after stopping 1147ms
+     ✓ can stop while waiting for an address and start a fresh tunnel 700ms
+ ✓ tests/api/workspace-picker.test.ts (5 tests) 3124ms
+   ✓ workspace picker API and native process (5)
+     ✓ falls back to page browsing when the native process fails 552ms
+     ✓ treats native cancellation as cancellation without opening another picker 695ms
+     ✓ registers a directory returned by the native process 1151ms
+     ✓ keeps invalid chosen paths as validation errors 721ms
+ ✓ tests/components/settings-model-roundtrip.test.tsx (11 tests) 1409ms
+   ✓ SettingsPanel model round trip and revision (11)
+     ✓ shows the remaining fields after saving capacities, and explicit text-only completion survives reopening 388ms
+stderr | tests/growth-tracker.test.ts > growth-tracker (real git) > retries a failed baseline and clears the visible error after recovery
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-tracker-KDvwFh/not-created-yet: workspace directory not found
+
+ ✓ tests/packaging.test.ts (12 tests) 1279ms
+   ✓ release gate on the real tarball (4)
+     ✓ passes for a package that ships a complete build 486ms
+     ✓ fails when the whitelist omits a runtime manifest (the 0.3.7 bug) 347ms
+     ✓ fails when the build cache sneaks into the tarball 375ms
+ ✓ tests/growth-tracker.test.ts (2 tests) 1716ms
+   ✓ growth-tracker (real git) (2)
+     ✓ commits the user's edits before a prompt and exactly one commit per round 1392ms
+     ✓ retries a failed baseline and clears the visible error after recovery 323ms
+ ✓ tests/growth-service.test.ts (18 tests) 9435ms
+   ✓ growth-service rounds (real git) (12)
+     ✓ commits one round per call with trailers, records user edits separately and serves diffs 1731ms
+     ✓ reads the same timeline back from git log in a fresh process 766ms
+     ✓ re-parents onto a head another process committed first 538ms
+     ✓ indexes a workspace across multiple bounded batches 772ms
+     ✓ initializes a non-git workspace only with consent and keeps HEAD unborn 553ms
+     ✓ nested-initializes a workspace that is a subdirectory of another repository 345ms
+     ✓ preserves the workspace Git index across non-empty file/directory replacements 568ms
+     ✓ removes all type conflicts before adding paths across multiple batches 2650ms
+     ✓ force-removes tracked paths replaced by symbolic links 566ms
+     ✓ removes a file replaced by a linked directory without snapshotting its target 496ms
+     ✓ removes tracked content when a file becomes a directory 403ms
+ ✓ tests/models-service-auth.test.ts (10 tests) 712ms
+ ✓ tests/components/app-shell-drafts.test.tsx (9 tests) 837ms
+ ✓ tests/git-service.test.ts (5 tests) 1615ms
+   ✓ Git status failures (1)
+     ✓ reports unknown instead of clean for a corrupt index and leaves Git files unchanged 334ms
+   ✓ complete Git line counts (1)
+     ✓ keeps full numstat for truncated worktree/staged/commit/untracked patches and binary files 488ms
+   ✓ truncated patches with multi-byte text (1)
+     ✓ cuts on a character boundary instead of leaving a U+FFFD at the end 487ms
+ ✓ tests/command-validation.test.ts (10 tests) 640ms
+   ✓ agent command validation (10)
+     ✓ rejects images totaling over 200MB (268MB base64, maxMessageImageBytes) 605ms
+ ✓ tests/compaction-display.test.ts (4 tests) 716ms
+ ✓ tests/files-service.test.ts (11 tests) 767ms
+   ✓ paginates a large directory without dropping files 361ms
+ ✓ tests/update-service.test.ts (25 tests) 1056ms
+ ✓ tests/components/settings-tools-session.test.tsx (4 tests) 616ms
+ ✓ tests/context-breakdown-session.test.ts (3 tests) 573ms
+ ✓ tests/integration/project/tree-expansion.test.tsx (5 tests) 560ms
+ ✓ tests/components/session-import-panel.test.tsx (15 tests) 890ms
+ ✓ tests/components/outline-rail.test.tsx (1 test) 457ms
+   ✓ outline rail (1)
+     ✓ never lists bare timestamps and picks up content that loads later 455ms
+ ✓ tests/external-session-write.test.ts (4 tests) 540ms
+ ✓ tests/launcher.test.ts (31 tests) 556ms
+ ✓ tests/components/chatwindow-markdown-paths.test.tsx (3 tests) 366ms
+ ✓ tests/components/context-meter.test.tsx (15 tests) 361ms
+ ✓ tests/use-growth.test.ts (12 tests) 374ms
+ ✓ tests/components/context-meter/session.test.tsx (2 tests) 448ms
+   ✓ shows the context ring on the first message event without another snapshot 313ms
+ ✓ tests/pi-settings.test.ts (8 tests) 433ms
+ ✓ tests/components/provider-setup-modal.test.tsx (12 tests) 387ms
+ ✓ tests/models-service-config.test.ts (34 tests) 576ms
+ ✓ tests/components/settings-usage-card.test.tsx (4 tests) 392ms
+ ✓ tests/components/file-viewer-dir.test.tsx (13 tests) 442ms
+ ✓ tests/components/chat-input-commands.test.tsx (14 tests) 292ms
+ ✓ tests/components/app-shell-drawer-shortcut.test.tsx (1 test) 351ms
+   ✓ Ctrl+Shift+E with the trajectory detail open (1)
+     ✓ brings the project drawer back on the first press 350ms
+ ✓ tests/components/chatwindow-compaction.test.tsx (3 tests) 324ms
+ ✓ tests/components/settings-font-family.test.tsx (2 tests) 323ms
+ ✓ tests/prompt-sources.test.ts (10 tests) 562ms
+ ✓ tests/components/chat-input-mentions.test.tsx (13 tests) 291ms
+ ✓ tests/components/app-shell-markdown-paths.test.tsx (1 test) 271ms
+ ✓ tests/components/chatwindow-edit-message.test.tsx (6 tests) 259ms
+ ✓ tests/files-service-upload.test.ts (11 tests) 166ms
+ ✓ tests/workspace-store.test.ts (10 tests) 263ms
+ ✓ tests/components/chatwindow-stream-markdown.test.tsx (4 tests) 238ms
+ ✓ tests/session-import-sources.test.ts (23 tests) 245ms
+ ✓ tests/components/growth-project-panel.test.tsx (13 tests) 241ms
+ ✓ tests/components/chatwindow-stick-bottom.test.tsx (1 test) 207ms
+ ✓ tests/components/sidebar-menus.test.tsx (4 tests) 195ms
+ ✓ tests/components/chat-input-chips.test.tsx (15 tests) 229ms
+ ✓ tests/session-import-service.test.ts (14 tests) 185ms
+ ✓ tests/components/remote-section.test.tsx (6 tests) 175ms
+ ✓ tests/components/workspace-picker/fallback.test.tsx (4 tests) 166ms
+ ✓ tests/components/growth-tree.test.tsx (2 tests) 118ms
+ ✓ tests/components/chat-input-lifecycle.test.tsx (4 tests) 176ms
+stderr | tests/growth-tracker-failures.test.ts > reports a terminal size error even after a recent transient failure and stops committing
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-failure-Zq1uCi: temporary failure
+
+stderr | tests/growth-tracker-failures.test.ts > reports a terminal size error even after a recent transient failure and stops committing
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-failure-Zq1uCi: workspace too large
+
+stderr | tests/growth-tracker-failures.test.ts > disables automatic tracking after a manual record hits a terminal error
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-manual-failure-7n7mOc: workspace too large
+
+stderr | tests/growth-tracker-failures.test.ts > clears a transient manual record error after a successful retry
+[piweb] growth commit failed for /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-growth-manual-retry-ovwEn1: temporary failure
+
+ ✓ tests/growth-tracker-failures.test.ts (6 tests) 163ms
+ ✓ tests/components/ask-user-card.test.tsx (6 tests) 165ms
+ ✓ tests/components/login-page.test.tsx (3 tests) 150ms
+ ✓ tests/components/git-panel-races.test.tsx (5 tests) 149ms
+ ✓ tests/components/extension-dialog.test.tsx (8 tests) 128ms
+ ✓ tests/components/chatwindow-lazy-turns.test.tsx (2 tests) 153ms
+ ✓ tests/source-encoding.test.ts (1 test) 75ms
+ ✓ tests/components/chatwindow-round-badge.test.tsx (9 tests) 154ms
+ ✓ tests/components/chat-image-preview.test.tsx (5 tests) 163ms
+ ✓ tests/components/prompt-panel.test.tsx (6 tests) 146ms
+ ✓ tests/components/plugins-section-state.test.tsx (3 tests) 161ms
+ ✓ tests/components/update-notice.test.tsx (6 tests) 150ms
+ ✓ tests/components/git-panel-areas.test.tsx (6 tests) 104ms
+ ✓ tests/components/streaming-markdown.test.tsx (16 tests) 59ms
+ ✓ tests/upload-proxy.test.ts (2 tests) 71ms
+ ✓ tests/plugins-service.test.ts (15 tests) 99ms
+ ✓ tests/github-identity.test.ts (6 tests) 99ms
+ ✓ tests/components/drawer-panel.test.tsx (2 tests) 86ms
+ ✓ tests/remote-proxy.test.ts (14 tests) 54ms
+ ✓ tests/install-build.test.ts (4 tests) 61ms
+ ✓ tests/models-service-context-window.test.ts (8 tests) 60ms
+ ✓ tests/components/app-shell-sidebar-actions.test.tsx (2 tests) 76ms
+ ✓ tests/agent-prompt-acceptance.test.ts (14 tests) 78ms
+ ✓ tests/models-service-credentials.test.ts (5 tests) 39ms
+ ✓ tests/components/sidebar-current.test.tsx (1 test) 50ms
+ ✓ tests/components/select-option-placement.test.tsx (2 tests) 63ms
+ ✓ tests/components/markdown-file-path.test.tsx (3 tests) 60ms
+ ✓ tests/proxy-auth.test.ts (34 tests) 53ms
+ ✓ tests/event-stream.test.ts (6 tests) 31ms
+ ✓ tests/skills-delete.test.ts (8 tests) 30ms
+ ✓ tests/components/chatwindow-ask-step.test.tsx (3 tests) 47ms
+ ✓ tests/session-import-writer.test.ts (7 tests) 38ms
+ ✓ tests/models-service-discovery.test.ts (16 tests) 43ms
+ ✓ tests/security-service.test.ts (8 tests) 42ms
+ ✓ tests/update-service-process.test.ts (6 tests) 25ms
+stderr | tests/mention-parity.test.ts
+[mention-parity] PATH 上没有 fd，端到端对照跳过
+
+ ✓ tests/mention-parity.test.ts (5 tests | 1 skipped) 27ms
+ ✓ tests/session-retention.test.ts (9 tests) 70ms
+ ✓ tests/agent-events-route.test.ts (4 tests) 24ms
+ ✓ tests/auth.test.ts (6 tests) 21ms
+ ✓ tests/remote-supervisor.test.ts (22 tests) 21ms
+ ✓ tests/web-auth.test.ts (15 tests) 18ms
+ ✓ tests/web-secret.test.ts (11 tests) 17ms
+ ✓ tests/components/extension-notices.test.tsx (5 tests) 39ms
+ ✓ tests/workspace-index.test.ts (16 tests) 15ms
+ ✓ tests/use-workspace-files.test.ts (2 tests) 18ms
+ ✓ tests/growth-tree.test.ts (8 tests) 13ms
+ ✓ tests/models-service-provider-usage.test.ts (34 tests) 8ms
+ ✓ tests/model-files.test.ts (4 tests) 19ms
+ ✓ tests/write-diff.test.ts (5 tests) 11ms
+ ✓ tests/process-format.test.ts (30 tests) 8ms
+ ✓ tests/integration/session-boundaries.test.ts (1 test) 10ms
+ ✓ tests/update-service-route.test.ts (16 tests) 10ms
+ ✓ tests/integration/files/ignore-process.test.ts (2 tests) 10ms
+ ✓ tests/context-breakdown.test.ts (7 tests) 6ms
+ ✓ tests/agent-resources-route.test.ts (5 tests) 11ms
+ ✓ tests/file-icons.test.ts (1 test) 6ms
+ ✓ tests/model-draft.test.ts (17 tests) 5ms
+ ✓ tests/integration/pi-runtime.test.ts (14 tests) 9ms
+ ✓ tests/model-audit.test.ts (5 tests) 3ms
+ ✓ tests/lib/file-path.test.ts (8 tests) 3ms
+ ✓ tests/extension-ui-lifecycle.test.ts (4 tests) 7ms
+ ✓ tests/format.test.ts (7 tests) 2ms
+ ✓ tests/trajectory.test.ts (18 tests) 11ms
+ ✓ tests/ask-user.test.ts (8 tests) 8ms
+ ✓ tests/fs-route.test.ts (4 tests) 15ms
+ ✓ tests/update-startup-check.test.ts (8 tests) 5ms
+ ✓ tests/use-piweb-events.test.ts (13 tests) 4ms
+ ✓ tests/path-security.test.ts (3 tests) 8ms
+ ✓ tests/api/session-export.test.ts (2 tests) 6ms
+ ✓ tests/event-batcher.test.ts (5 tests) 3ms
+ ✓ tests/provider-display.test.ts (4 tests) 4ms
+ ✓ tests/diff-parser.test.ts (5 tests) 3ms
+ ✓ tests/model-defaults.test.ts (7 tests) 4ms
+ ✓ tests/agent-hero-commands.test.ts (8 tests) 5ms
+ ✓ tests/slash-command-token.test.ts (12 tests) 3ms
+ ✓ tests/thinking-level.test.ts (8 tests) 3ms
+ ✓ tests/lib/skill-expansion.test.ts (9 tests) 3ms
+ ✓ tests/growth-turns.test.ts (4 tests) 3ms
+ ✓ tests/semver.test.ts (4 tests) 3ms
+ ✓ tests/model-endpoint.test.ts (2 tests) 2ms
+ ✓ tests/models-catalog-capabilities.test.ts (6 tests) 3ms
+ ✓ tests/hero-model-memory.test.ts (4 tests) 2ms
+ ↓ tests/remote-tunnel.integration.test.ts (1 test | 1 skipped)
+ ✓ tests/lib/models/model-scope.test.ts (2 tests) 3ms
+ ↓ tests/powershell-encoding.test.ts (1 test | 1 skipped)
+
+ Test Files  135 passed | 2 skipped (137)
+      Tests  1131 passed | 4 skipped (1135)
+   Start at  19:40:31
+   Duration  26.75s (tests 56%, import 23%, environment 19%, transform 1%)
+
+    Isolate  137 workers spawned · ~204ms startup each (spawn + environment, per file)
+             at least ~6.78s faster with isolate: false — reuses workers across files instead of one per file
+
+JSON report written to /Users/kaijimima/Documents/Agent/PiWeb/docs/testing/2026-10-28/vitest-results.json

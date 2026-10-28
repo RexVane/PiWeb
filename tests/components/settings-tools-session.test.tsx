@@ -95,7 +95,7 @@ it("shows a load error and allows retrying instead of claiming there is no sessi
 it("does not prepare an agent without an open session or when its tools are already loaded", async () => {
 	render(<AppShell />);
 	await settings();
-	expect(screen.getByText("正在发现本工作区的工具；如果一直为空，请检查扩展加载错误。")).toBeTruthy();
+	expect(screen.getByText("打开一个会话后，这里会显示可用工具并支持逐个启停。")).toBeTruthy();
 	expect(commands).toEqual([]);
 	await open("Open cold", { active: ["read"], all: [{ name: "read" }, { name: "bash" }] });
 	expect(screen.getByRole("switch", { name: "bash" })).toBeTruthy();

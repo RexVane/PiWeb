@@ -1,0 +1,36 @@
+flowchart TB
+  subgraph UI["浏览器 UI"]
+    Browser("浏览器 UI<br/>会话与聊天")
+    Input("输入与交互<br/>提问／插话／中止")
+  end
+
+  subgraph API["Next API / SSE"]
+    Api("Next API<br/>命令与会话入口")
+    SSE("SSE 事件流<br/>快照与增量")
+  end
+
+  subgraph Runtime["Pi 会话运行时"]
+    Manager("会话管理器<br/>懒启动与回收")
+    Agent("Pi Agent<br/>消息与工具循环")
+    Loader("资源加载器<br/>技能与提示模板")
+  end
+
+  subgraph Deps["模型 / 工具 / 会话存储"]
+    Models("模型运行时<br/>目录与请求")
+    Tools("工具与扩展<br/>内置／项目／MCP")
+    Store[("会话 JSONL<br/>本地存储")]
+  end
+
+  Browser -->|发送命令| Api
+  Input -->|发送命令| Api
+  Api -->|转发命令| Manager
+  Manager -->|创建或复用| Agent
+  Manager -->|读取资源| Loader
+  Agent -->|模型请求| Models
+  Agent -->|调用工具| Tools
+  Loader -->|装配工具| Tools
+  Agent -->|读写会话| Store
+  Manager -->|读取会话| Store
+  Agent -->|运行事件| Manager
+  Manager -->|转译并广播| SSE
+  SSE -->|推送快照／增量| Browser

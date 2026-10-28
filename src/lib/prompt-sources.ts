@@ -215,13 +215,12 @@ export async function listPromptSources({
 	};
 }
 
-/** 来源正文只读发现列表；正文里的链接限于该技能目录或当前工作区，realpath 后再次验边界。 */
-export async function readPromptSource(filePath: string, cwd: string, sourcePath?: string): Promise<string> {
+/** 来源正文及其附件共用发现边界；链接限于该技能目录或当前工作区，realpath 后再次验边界。 */
+export async function resolvePromptSourcePath(filePath: string, cwd: string, sourcePath?: string): Promise<string> {
 	const { sources } = await listPromptSources({ cwd });
 	const allowed = sources.map((source) => source.path).filter((value): value is string => typeof value === "string");
 	if (sourcePath === undefined) {
-		const authorized = await resolveDiscoveredPath(filePath, allowed);
-		return fs.readFile(authorized, "utf8");
+		return resolveDiscoveredPath(filePath, allowed);
 	}
 	const source = await resolveDiscoveredPath(sourcePath, allowed);
 	if (typeof filePath !== "string" || !path.isAbsolute(filePath) || filePath.length > 4096) throw new BoundaryError("invalid resource path");
@@ -237,7 +236,13 @@ export async function readPromptSource(filePath: string, cwd: string, sourcePath
 	}
 	const stat = await fs.stat(authorized);
 	if (!stat.isFile()) throw new BoundaryError("resource is not a file");
-	if (stat.size > 1024 * 1024) throw new BoundaryError("linked resource exceeds 1 MB");
+	return authorized;
+}
+
+export async function readPromptSource(filePath: string, cwd: string, sourcePath?: string): Promise<string> {
+	const authorized = await resolvePromptSourcePath(filePath, cwd, sourcePath);
+	const stat = await fs.stat(authorized);
+	if (sourcePath !== undefined && stat.size > 1024 * 1024) throw new BoundaryError("linked resource exceeds 1 MB");
 	return fs.readFile(authorized, "utf8");
 }
 

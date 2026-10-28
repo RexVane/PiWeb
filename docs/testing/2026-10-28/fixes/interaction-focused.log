@@ -1,0 +1,14 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run tests/components/directory-picker.test.tsx tests/components/select-keyboard.test.tsx tests/components/settings-dialog-keyboard.test.tsx tests/components/select-option-placement.test.tsx tests/components/drawer-panel.test.tsx tests/components/sidebar-menus.test.tsx tests/components/dialog-stack.test.tsx tests/components/provider-setup-modal.test.tsx tests/components/settings-font-family.test.tsx
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  9 passed (9)
+      Tests  37 passed (37)
+   Start at  21:23:21
+   Duration  2.55s (environment 54%, tests 33%, import 9%, transform 3%)
+
+    Isolate  9 workers spawned · ~568ms startup each (spawn + environment, per file)
+             at least ~710ms faster with isolate: false — reuses workers across files instead of one per file
+

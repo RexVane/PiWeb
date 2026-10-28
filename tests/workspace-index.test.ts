@@ -107,11 +107,19 @@ describe("匹配与排序（pi 的 getFuzzyFileSuggestions）", () => {
 		expect(descriptions("Read")).toEqual(["docs/Reader.md"]);
 	});
 
-	it("查询按正则过滤、再按字面评分；JS 编不过的正则退回字面匹配", () => {
+	it("查询里的正则字符按字面匹配，与 Pi SDK 的 fd 转义一致", () => {
 		expect(descriptions("a.b")).toEqual(["a.b.ts"]);
-		// fd（Rust 正则）把 c++ 当 (c+)+；JS 报错 → 按字面，结果同样只剩名字里真有 c++ 的
 		expect(suggestPaths(candidatesOf(["notes/c++.md", "cc.txt"]), "c++").map((item) => item.description)).toEqual(["notes/c++.md"]);
 		expect(descriptions("c++")).toEqual([]);
+		const special = candidatesOf(["src/app/[slug]/page.tsx", "src/app/(group)/layout.tsx", "docs/[draft.md", "docs/(notes.md"]);
+		for (const [query, expected] of [
+			["[slug]", "src/app/[slug]"],
+			["(group)", "src/app/(group)"],
+			["[draft", "docs/[draft.md"],
+			["(notes", "docs/(notes.md"],
+		]) {
+			expect(suggestPaths(special, query).map((item) => item.description), query).toEqual([expected]);
+		}
 	});
 
 	it("工作区外的路径不支持", () => {

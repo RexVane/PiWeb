@@ -74,7 +74,7 @@ export function verifyPackedPackage(root, { log = console.log, runtime = false }
 		}
 		const files = (entry.files ?? []).map((file) => String(file.path).replaceAll("\\", "/").replace(/^package\//, ""));
 		const cached = files.find((file) => file.startsWith(".next/cache/"));
-		if (cached) throw new Error(`the packaged .next must not include the build cache (${cached}); remove .next/cache before packing`);
+		if (cached) throw new Error(`the packaged .next must not include the build cache (${cached}); exclude .next/cache from the package files policy`);
 		if (!files.includes("package.json")) throw new Error("the tarball has no package.json");
 		const unpacked = path.join(tmp, "unpacked");
 		fs.mkdirSync(unpacked, { recursive: true });

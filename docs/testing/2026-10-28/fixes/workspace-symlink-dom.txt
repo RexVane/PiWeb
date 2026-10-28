@@ -1,0 +1,75 @@
+- generic: Pi
+- generic: Web
+- button "«":
+- button "新会话":
+  - text: 新会话
+- generic: 工作区
+- button "搜索":
+- button "分组方式":
+- button "添加工作区":
+- button "验收工作区":
+  - generic: 验收工作区
+- button "CLI 符号链接历史":
+  - generic: CLI 符号链接历史
+- generic: 3分钟
+- button "真实停止回归测试：请只用 bash 执行 python3 -u -c \"import time; print('PIWEB_STOP_FIX_STARTED', flush=True); time.sleep(45); print('PIWEB_STOP_FIX_FINISHED', flush=True)\"。不要改文件，不要换命令。执行期间等待我主动停止。":
+  - generic: 真实停止回归测试：请只用 bash 执行 python3 -u -c "import time; print('PIWEB_STOP_FIX_STARTED', flush=True); time.sleep(45); print('PIWEB_STOP_FIX_FINISHED', flush=True)"。不要改文件，不要换命令。执行期间等待我主动停止。
+- generic: 5分钟
+- button "修复验收：预制文件与纯图":
+  - generic: 修复验收：预制文件与纯图
+- generic: 21分钟
+- button "设置":
+  - generic: 设置
+- generic: CLI 符号链接历史
+- button "右侧抽屉":
+- separator "拖动调整对话宽度"
+- separator "拖动调整对话宽度"
+- log:
+  - paragraph: CLI 符号链接历史，只读验收
+  - generic: 10月28日 21:37
+  - button "复制":
+  - button "编辑这条消息":
+  - button "上下文注入 Appended system prompt 1":
+    - generic: 上下文注入
+    - generic "Appended system prompt 1"
+  - paragraph: 历史工作区身份验收。
+  - button "复制":
+  - button "在新对话中分支":
+  - button "耗时 0 秒":
+    - generic: 耗时 0 秒
+  - generic: 10月28日 21:37
+- textbox "给 pi 发消息…"
+- button "fixture/fixture":
+  - generic: fixture
+- button "上下文用量未知":
+- button "发送" [disabled]:
+- generic: 1 轮 · 1 步
+- tablist "抽屉入口":
+  - tab "项目" [active] [selected]:
+  - tab "提示词":
+  - tab "Git 详情":
+  - tab "导入会话":
+- tabpanel "项目":
+  - generic "/private/tmp/piweb-fix-ui-20261028-d2nj5yro/workspace": 验收工作区
+  - button "立即记录：把当前改动记为「你的修改」":
+  - button "关闭":
+  - radiogroup:
+    - radio "本轮" [checked]
+    - radio "本会话累计"
+  - button "只看改动" [pressed]
+  - textbox "筛选…"
+  - tree:
+    - treeitem "a/":
+      - generic: a/
+    - treeitem "b/":
+      - generic: b/
+    - treeitem "docs/":
+      - generic: docs/
+    - treeitem "src/":
+      - generic: src/
+    - treeitem "README.md":
+      - generic: README.md
+  - button "上一轮" [disabled]:
+  - button "下一轮" [disabled]:
+  - button "第 0/0 轮"
+- alert

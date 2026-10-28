@@ -1,0 +1,10 @@
+{
+  "fixture": "UI-only preconstructed session, not model output",
+  "command": "/export",
+  "sourceName": "2026-10-28T12-30-00-000Z_ui-diagram-boundaries.jsonl",
+  "downloadName": "2026-10-28T12-30-00-000Z_ui-diagram-boundaries.jsonl",
+  "byteIdentical": true,
+  "bytes": 1598,
+  "sha256": "aa7e290ab7ab9abe5df99e69d0ce0b7e6f310432631796dd9525a718ac8890a3",
+  "note": "Export opens a new window; the source-tab download event does not observe it."
+}

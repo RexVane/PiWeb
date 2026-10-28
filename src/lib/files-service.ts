@@ -161,10 +161,12 @@ function checkIgnore(root: string, git: string, rels: string[]): Promise<string>
 		child.on("error", (error) => { clearTimeout(timer); reject(error); });
 		child.on("close", (code) => {
 			clearTimeout(timer);
-			if (inputError) reject(inputError);
+			// Git can reject a non-repository before reading stdin; its failure explains
+			// the resulting EPIPE. A successful exit still requires complete input.
+			if (code !== 0 && code !== 1) reject(new Error(err.trim() || `git check-ignore exited with ${code}`));
+			else if (inputError) reject(inputError);
 			else if (code === 0) resolve(out);
-			else if (code === 1) resolve("");
-			else reject(new Error(err.trim() || `git check-ignore exited with ${code}`));
+			else resolve("");
 		});
 		try {
 			child.stdin.end(`${rels.join("\u0000")}\u0000`);
@@ -297,6 +299,82 @@ export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Pr
 		binary: false,
 		truncated,
 		content: preview.toString("utf8"),
+	}
+}
+
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const IMAGE_TYPES: Record<string, string> = {
+	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+	".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon", ".svg": "image/svg+xml",
+};
+
+function matchesImageType(bytes: Buffer, mimeType: string): boolean {
+	if (mimeType === "image/png") return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+	if (mimeType === "image/jpeg") return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+	if (mimeType === "image/gif") return /^GIF8[79]a$/.test(bytes.toString("ascii", 0, 6));
+	if (mimeType === "image/webp") return bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP";
+	if (mimeType === "image/bmp") return bytes.toString("ascii", 0, 2) === "BM";
+	if (mimeType === "image/x-icon") return bytes.subarray(0, 4).equals(Buffer.from([0, 0, 1, 0]));
+	if (mimeType === "image/avif") return bytes.toString("ascii", 4, 8) === "ftyp" && /(?:avif|avis)/.test(bytes.toString("ascii", 8, 64));
+	if (mimeType === "image/svg+xml") {
+		const svg = bytes.toString("utf8").replace(/^\uFEFF/, "").trimStart();
+		// SVG is served with a sandbox CSP; do not accept XML entity declarations at all.
+		return !/<!\s*(?:DOCTYPE|ENTITY)/i.test(svg) && /^(?:<\?xml\b[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg(?:\s|>)/i.test(svg);
+	}
+	return false;
+}
+
+/** Only bounded image data: lexical + realpath checks, ignore rules, MIME signatures and a read limit. */
+export async function readWorkspaceImage(cwdValue: unknown, imagePath: unknown, sourcePath?: string | null): Promise<{ bytes: Buffer; mimeType: string }> {
+	if (typeof imagePath !== "string" || !imagePath.trim() || imagePath.length > 4096 || /[\u0000-\u001f\u007f]/.test(imagePath)) throw new BoundaryError("invalid image path");
+	const value = imagePath.trim();
+	if (value.startsWith("//") || (!path.isAbsolute(value) && /^[a-z][a-z\d+.-]*:/i.test(value))) throw new BoundaryError("invalid image path");
+	const mimeType = IMAGE_TYPES[path.extname(value).toLowerCase()];
+	if (!mimeType) throw new BoundaryError("unsupported image type");
+	const root = await resolveWorkspacePath(cwdValue);
+	const requestedRoot = path.resolve(String(cwdValue).trim());
+	const target = path.resolve(root, value);
+	let real: string;
+	if (sourcePath) {
+		const { resolvePromptSourcePath } = await import("./prompt-sources");
+		real = await resolvePromptSourcePath(target, root, sourcePath);
+	} else {
+		if (!isPathInside(root, target) && !isPathInside(requestedRoot, target)) throw new BoundaryError("image path escapes the workspace");
+		real = await fs.realpath(target).catch(() => { throw new BoundaryError("image not found"); });
+		if (!isPathInside(root, real)) throw new BoundaryError("image path escapes the workspace");
+	}
+	// Discovered skill attachments outside the workspace already passed their own stricter source boundary.
+	if (isPathInside(root, real)) {
+		const requestedRelative = isPathInside(root, target) ? toRel(root, target)
+			: isPathInside(requestedRoot, target) ? toRel(requestedRoot, target) : toRel(root, real);
+		const rels = [...new Set([requestedRelative, toRel(root, real)])];
+		if (rels.some((rel) => rel.split("/").includes(".git"))) throw new BoundaryError("image is not a visible workspace file");
+		try {
+			const ignored = await checkIgnore(root, await resolveGitBin(), rels);
+			if (parseCheckIgnore(ignored).length) throw new BoundaryError("image is ignored by the workspace");
+		} catch (error) {
+			if (error instanceof BoundaryError) throw error;
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !/not a git repository/i.test(String((error as Error).message))) throw error;
+		}
+	}
+	const handle = await fs.open(real, "r");
+	try {
+		const stat = await handle.stat();
+		if (!stat.isFile()) throw new BoundaryError("not an image file");
+		if (stat.size > MAX_IMAGE_BYTES) throw new BoundaryError("image exceeds 20 MB");
+		const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_IMAGE_BYTES + 1));
+		let offset = 0;
+		while (offset < bytes.length) {
+			const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+			if (!bytesRead) break;
+			offset += bytesRead;
+		}
+		if (offset > MAX_IMAGE_BYTES || offset > stat.size) throw new BoundaryError("image changed while reading");
+		const content = bytes.subarray(0, offset);
+		if (!matchesImageType(content, mimeType)) throw new BoundaryError("image content does not match its type");
+		return { bytes: content, mimeType };
+	} finally {
+		await handle.close();
 	}
 }
 

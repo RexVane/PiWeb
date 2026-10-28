@@ -38,6 +38,27 @@ function Harness({ initial }: { initial: DrawerSection }) {
 }
 
 describe("drawer panel", () => {
+	it("moves tab selection and focus with arrows, Home and End", () => {
+		render(<Harness initial="project" />);
+		const project = screen.getByTestId("drawer-entry-project");
+		project.focus();
+		fireEvent.keyDown(project, { key: "ArrowRight" });
+		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-prompts"));
+		expect(document.activeElement?.getAttribute("aria-selected")).toBe("true");
+		fireEvent.keyDown(document.activeElement!, { key: "End" });
+		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-import"));
+		fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+		expect(document.activeElement).toBe(project);
+		fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-import"));
+		fireEvent.keyDown(document.activeElement!, { key: "Home" });
+		expect(document.activeElement).toBe(project);
+		expect(screen.getAllByRole("tab").filter((tab) => tab.tabIndex === 0)).toEqual([project]);
+		const panel = screen.getByRole("tabpanel");
+		expect(project.getAttribute("aria-controls")).toBe(panel.id);
+		expect(panel.getAttribute("aria-labelledby")).toBe(project.id);
+	});
+
 	it("leaves no hover background behind after clicking a tab", () => {
 		render(<Harness initial="project" />);
 		const git = screen.getByTestId("drawer-entry-git");

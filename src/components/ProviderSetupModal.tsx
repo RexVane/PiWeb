@@ -17,6 +17,7 @@ import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-dis
 import { formatCapacity, modelDraftFromCatalog, parseCapacity, serializeModelDraft, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
 import styles from "./ProviderSetupModal.module.css";
+import { useDialog } from "@/hooks/useDialog";
 
 export { formatCapacity, parseCapacity, serializeModelDraft, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 
@@ -81,24 +82,14 @@ export function ProviderSetupModal({
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState("");
 	const pickerRef = useRef<HTMLDivElement>(null);
+	const dialogRef = useRef<HTMLElement>(null);
+	useDialog({ open: true, onClose: () => pickerOpen ? setPickerOpen(false) : onClose(), ref: dialogRef });
 	const selected = providers.find((provider) => provider.id === selectedId);
 	const catalogIds = useMemo(() => new Set(catalogModelIds?.[selectedId] ?? []), [catalogModelIds, selectedId]);
 	const filtered = providers.filter((provider) => {
 		const needle = search.trim().toLocaleLowerCase();
 		return !needle || provider.name.toLocaleLowerCase().includes(needle) || provider.id.toLocaleLowerCase().includes(needle);
 	});
-
-	useEffect(() => {
-		const handleKeyDown = (event: KeyboardEvent) => {
-			if (event.key !== "Escape") return;
-			event.preventDefault();
-			event.stopPropagation();
-			if (pickerOpen) setPickerOpen(false);
-			else onClose();
-		};
-		document.addEventListener("keydown", handleKeyDown, true);
-		return () => document.removeEventListener("keydown", handleKeyDown, true);
-	}, [onClose, pickerOpen]);
 
 	useEffect(() => {
 		if (!pickerOpen) return;
@@ -194,7 +185,7 @@ export function ProviderSetupModal({
 				if (event.target === event.currentTarget) onClose();
 			}}
 		>
-			<section className={`${styles.dialog} ${mode === "builtin" ? styles.builtinDialog : ""}`} role="dialog" aria-modal="true" aria-labelledby="provider-setup-title">
+			<section ref={dialogRef} className={`${styles.dialog} ${mode === "builtin" ? styles.builtinDialog : ""}`} role="dialog" aria-modal="true" aria-labelledby="provider-setup-title">
 				<header className={styles.header}>
 					<h2 id="provider-setup-title" className={styles.title}>
 						{mode === "builtin" ? t.addProvider : t.customProviderTitle}
@@ -421,6 +412,7 @@ export function ModelCatalog({
 	const [discoverError, setDiscoverError] = useState("");
 	// 候选对话框：null = 关闭
 	const [candidates, setCandidates] = useState<ModelDraft[] | null>(null);
+	const candidateRef = useRef<HTMLDivElement>(null);
 	const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
 	// 容量逐字段文本缓冲，避免输入中被 K/M 格式化打断
 	const [capacityText, setCapacityText] = useState<Record<string, string>>({});
@@ -541,6 +533,7 @@ export function ModelCatalog({
 		setCandidates(null);
 		setPicked(new Set());
 	};
+	useDialog({ open: candidates !== null, onClose: closeCandidates, ref: candidateRef });
 
 	const adoptPicked = () => {
 		if (!candidates) return;
@@ -698,7 +691,7 @@ export function ModelCatalog({
 
 			{candidates ? (
 				<div className={styles.candidateMask}>
-					<div className={styles.candidateDialog} role="dialog" aria-modal="true" aria-label={t.discoverModels}>
+					<div ref={candidateRef} className={styles.candidateDialog} role="dialog" aria-modal="true" aria-label={t.discoverModels}>
 						<div className={styles.candidateHeader}>
 							<span>{t.candidateTitle.replace("{count}", String(candidates.length))}</span>
 						</div>

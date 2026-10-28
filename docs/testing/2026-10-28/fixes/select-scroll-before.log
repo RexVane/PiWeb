@@ -1,0 +1,39 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run tests/components/select-keyboard.test.tsx
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/components/select-keyboard.test.tsx (6 tests | 2 failed) 188ms
+   ❯ custom select keyboard (3)
+     × keeps long-menu keyboard candidates visible without scrolling an ancestor 117ms
+   ❯ settings select keyboard (3)
+     × keeps long-menu keyboard candidates visible without scrolling an ancestor 21ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/components/select-keyboard.test.tsx > custom select keyboard > keeps long-menu keyboard candidates visible without scrolling an ancestor
+ FAIL  tests/components/select-keyboard.test.tsx > settings select keyboard > keeps long-menu keyboard candidates visible without scrolling an ancestor
+AssertionError: expected +0 to be 340 // Object.is equality
+
+- Expected
++ Received
+
+- 340
++ 0
+
+ ❯ tests/components/select-keyboard.test.tsx:29:26
+     27|   fireEvent.keyDown(document.activeElement!, { key: "End" });
+     28|   expect(document.activeElement).toBe(option("Choice 19"));
+     29|   expect(menu.scrollTop).toBe(340);
+       |                          ^
+     30|   fireEvent.keyDown(document.activeElement!, { key: "ArrowUp" });
+     31|   expect(menu.scrollTop).toBe(340);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+   Start at  21:29:28
+   Duration  970ms (environment 59%, tests 21%, import 12%, transform 6%)
+

@@ -55,8 +55,8 @@ const texts = (messages: WebMessage[]) => messages
 	.filter((message) => message.role === "user" || message.role === "assistant")
 	.map((message) => message.content.map((block) => ("text" in block ? block.text : "")).join(""));
 
-function seed() {
-	const sm = pi.SessionManager.create(cwd);
+function seed(workspace = cwd) {
+	const sm = pi.SessionManager.create(workspace);
 	sm.appendMessage(user("网页里的问题"));
 	sm.appendMessage(assistant("网页里的回答"));
 	files.push(sm.getSessionFile()!);
@@ -70,6 +70,46 @@ function terminalWrites(file: string, ...lines: string[]) {
 }
 
 describe("终端 pi 同时写会话", () => {
+	it("冷读取历史符号链接会话时只规范界面 cwd，保留 SDK cwd 和原始 JSONL", async () => {
+		const link = path.join(root, "read-cli-link");
+		await fs.symlink(cwd, link, process.platform === "win32" ? "junction" : "dir");
+		const file = seed(link);
+		const original = await fs.readFile(file, "utf8");
+		const cold = await reader.readSession(file);
+		expect(cold.cwd).toBe(await fs.realpath(cwd));
+		expect(texts(cold.messages)).toEqual(["网页里的问题", "网页里的回答"]);
+		expect(pi.SessionManager.open(file).getCwd()).toBe(link);
+		expect(await fs.readFile(file, "utf8")).toBe(original);
+	});
+
+	it("历史符号链接会话的冷热快照都匹配工作区别名，运行时仍使用原 cwd", async () => {
+		const link = path.join(root, "snapshot-cli-link");
+		await fs.symlink(cwd, link, process.platform === "win32" ? "junction" : "dir");
+		const canonical = await fs.realpath(cwd);
+		const { getWorkspaceRegistry, setAlias } = await import("../src/lib/workspace-store");
+		await setAlias(cwd, "My project");
+		const { aliases } = await getWorkspaceRegistry();
+		const file = seed(link);
+		const original = await fs.readFile(file, "utf8");
+		const m = manager.getManaged(file);
+		const cold = await manager.buildSnapshot(m);
+		expect(m.session).toBeNull();
+		expect(cold.cwd).toBe(canonical);
+		const aliasKey = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+		expect(aliases[aliasKey(cold.cwd)]).toBe("My project");
+		expect(await fs.readFile(file, "utf8")).toBe(original);
+		await manager.ensureSession(m);
+		// SDK 启动可追加 thinking_level_change；快照投影本身不应再改写 JSONL。
+		const started = await fs.readFile(file, "utf8");
+		expect(started.startsWith(original)).toBe(true);
+		const warm = await manager.buildSnapshot(m);
+		expect(warm.cwd).toBe(canonical);
+		expect(aliases[aliasKey(warm.cwd)]).toBe("My project");
+		expect(m.cwd).toBe(link);
+		expect(m.sm.getCwd()).toBe(link);
+		expect(await fs.readFile(file, "utf8")).toBe(started);
+	}, 60_000);
+
 	it("空闲时重开：消息换成磁盘上的、会话级选择带过去、正在看的浏览器收到重载事件", async () => {
 		const file = seed();
 		const m = manager.getManaged(file);

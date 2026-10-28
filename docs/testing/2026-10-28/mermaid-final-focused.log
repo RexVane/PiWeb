@@ -1,0 +1,19 @@
+PiWeb Mermaid pure-image focused verification — 2026-10-28
+
+$ npm run test -- tests/mermaid.test.ts tests/components/mermaid-diagram.test.tsx tests/components/markdown-mermaid.test.tsx tests/components/markdown-file-path.test.tsx tests/components/chatwindow-stream-markdown.test.tsx
+
+ Test Files  5 passed (5)
+      Tests  17 passed (17)
+   Start at  20:48:02
+   Duration  1.62s (environment 67%, import 17%, tests 11%, transform 5%)
+
+
+exit_code: 0
+
+$ npm run typecheck
+npm notice run tsc --noEmit
+exit_code: 0
+
+$ git diff --check
+exit_code: 0
+
