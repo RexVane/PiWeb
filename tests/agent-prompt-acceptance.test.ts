@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -40,7 +43,20 @@ function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string
 	return { m, session };
 }
 
-afterEach(() => vi.restoreAllMocks());
+let agentDir: string | null = null;
+
+beforeEach(async () => {
+// 工具偏好会落盘到 agent 目录；测试绝不能写进用户真实的 ~/.pi/agent
+agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-acceptance-agent-"));
+vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+});
+
+afterEach(async () => {
+vi.restoreAllMocks();
+vi.unstubAllEnvs();
+if (agentDir) await fs.rm(agentDir, { recursive: true, force: true });
+agentDir = null;
+});
 
 describe("prompt acceptance boundary", () => {
 	it("returns acceptance before run completion and reports a later rejection through SSE", async () => {
@@ -172,7 +188,7 @@ describe("prompt acceptance boundary", () => {
 		running.resolve();
 	});
 
-	it("setToolPreset on a cold session only records the choice instead of starting the agent", async () => {
+	it("setToolPreset on a cold session records the choice and catalogs tools without starting the agent", async () => {
 		const { m } = fixture(async () => {});
 		(m as any).session = null;
 		(m as any).toolPreset = "readonly";
@@ -181,7 +197,23 @@ describe("prompt acceptance boundary", () => {
 		expect((m as any).session).toBeNull();
 		expect((m as any).creating).toBeNull();
 		const published = m.buffer.map((frame) => JSON.parse(frame.json));
-		expect(published).toContainEqual(expect.objectContaining({ type: "tools", toolPreset: "full" }));
+		const toolsEvent = published.find((event) => event.type === "tools" && event.toolPreset === "full");
+		expect(toolsEvent).toBeTruthy();
+		// 冷会话也要能显示工具：否则设置里的「工具启用情况」整块是空的
+		expect(toolsEvent.all).toEqual(expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]));
+		expect(toolsEvent.active).toEqual(expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]));
+	});
+
+	it("setActiveTools on a cold session saves the allowlist without starting the agent", async () => {
+		const { m } = fixture(async () => {});
+		(m as any).session = null;
+		(m as any).toolPreset = "standard";
+		expect(await execute(m, { cmd: "setActiveTools", names: ["read", "grep"] })).toMatchObject({ ok: true });
+		expect((m as any).session).toBeNull();
+		expect((m as any).creating).toBeNull();
+		expect((m as any).customActiveTools).toEqual(["read", "grep"]);
+		const published = m.buffer.map((frame) => JSON.parse(frame.json));
+		expect(published).toContainEqual(expect.objectContaining({ type: "tools", active: ["read", "grep"], customActiveTools: ["read", "grep"] }));
 	});
 
 	it("editAndResend rejects a missing entry or empty text without touching the session", async () => {

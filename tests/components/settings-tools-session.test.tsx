@@ -68,23 +68,16 @@ async function settings() {
 	click("工具启用情况");
 }
 
-it("loads tools for an open cold session and toggles the selected session's tools", async () => {
+it("shows cold-session tools from the snapshot without starting an agent", async () => {
 	render(<AppShell />);
-	const stream = await open();
-	let resolve!: (response: Response) => void;
-	prepare = () => new Promise((yes) => { resolve = yes; });
+	// 冷会话的快照现在直接带工具目录：不能再为空，也不需要为了看工具去 prepare（那会触发 session_start）
+	await open("Open cold", { active: ["read", "bash"], all: [{ name: "read" }, { name: "bash" }, { name: "probe_tool" }] });
 	await settings();
-	await waitFor(() => expect(commands.filter((c) => c.cmd === "prepare")).toHaveLength(1));
-	expect(screen.getByText("正在加载当前会话的工具…")).toBeTruthy();
-	expect(screen.queryByText("打开一个会话后，这里会显示可用工具并支持逐个启停。")).toBeNull();
-	await act(async () => {
-		stream.emit({ type: "tools", active: ["read", "bash"], all: ["read", "bash", "probe_tool"], ts: 1 });
-		resolve(response({}));
-	});
 	expect(await screen.findByRole("switch", { name: "probe_tool" })).toBeTruthy();
+	expect(commands).toEqual([]);
 	fireEvent.click(screen.getByRole("switch", { name: "probe_tool" }));
 	await waitFor(() => expect(commands.at(-1)).toMatchObject({ cmd: "setActiveTools", names: ["read", "bash", "probe_tool"] }));
-	expect(commands.at(-1)!.url).toBe(commands[0].url);
+	expect(commands.at(-1)!.url).toContain("/api/agent/");
 });
 
 it("shows a load error and allows retrying instead of claiming there is no session", async () => {
@@ -102,7 +95,7 @@ it("shows a load error and allows retrying instead of claiming there is no sessi
 it("does not prepare an agent without an open session or when its tools are already loaded", async () => {
 	render(<AppShell />);
 	await settings();
-	expect(screen.getByText("打开一个会话后，这里会显示可用工具并支持逐个启停。")).toBeTruthy();
+	expect(screen.getByText("正在发现本工作区的工具；如果一直为空，请检查扩展加载错误。")).toBeTruthy();
 	expect(commands).toEqual([]);
 	await open("Open cold", { active: ["read"], all: [{ name: "read" }, { name: "bash" }] });
 	expect(screen.getByRole("switch", { name: "bash" })).toBeTruthy();

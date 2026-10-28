@@ -223,6 +223,7 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				...s.snapshot,
 				toolPreset: evt.toolPreset ?? s.snapshot.toolPreset,
 				customActiveTools: evt.customActiveTools === undefined ? s.snapshot.customActiveTools : evt.customActiveTools,
+				toolPreferenceSaved: evt.toolPreferenceSaved === undefined ? s.snapshot.toolPreferenceSaved : evt.toolPreferenceSaved,
 				tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) },
 			};
 			return s;
@@ -956,7 +957,7 @@ export function usePiWeb() {
 			if (activeSessionRef.current === currentId) setState((s) => ({
 				...s,
 				toolPreset: preset,
-				snapshot: s.snapshot ? { ...s.snapshot, toolPreset: preset } : null,
+				snapshot: s.snapshot ? { ...s.snapshot, toolPreset: preset, toolPreferenceSaved: true } : null,
 			}));
 		},
 		[currentId, sendCommand],
@@ -1003,9 +1004,11 @@ export function usePiWeb() {
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
 	const setError = useCallback((message: string) => setState((s) => ({ ...s, error: message })), []);
 
-	// 工具权限不写入 Pi JSONL。每次收到服务端快照后恢复本地选择；运行中延后到空闲。
+	// 工具权限不写入 Pi JSONL。服务端按会话保存后以服务端为准；
+	// 只有从未保存过的旧用户才用浏览器 localStorage 的档位做一次迁移。运行中延后到空闲。
 	useEffect(() => {
-		if (!currentId || !state.connected || !state.snapshot || state.snapshot.isStreaming || state.snapshot.customActiveTools != null) return;
+		if (!currentId || !state.connected || !state.snapshot || state.snapshot.isStreaming) return;
+		if (state.snapshot.customActiveTools != null || state.snapshot.toolPreferenceSaved === true) return;
 		const preset = savedToolPreset();
 		if (state.snapshot.toolPreset === preset) return;
 		const attemptKey = `${currentId}:${snapshotEpoch}`;
@@ -1016,7 +1019,7 @@ export function usePiWeb() {
 			if (result?.success && activeSessionRef.current === sessionId && savedToolPreset() === preset) setState((current) => ({
 				...current,
 				toolPreset: preset,
-				snapshot: current.snapshot ? { ...current.snapshot, toolPreset: preset } : null,
+				snapshot: current.snapshot ? { ...current.snapshot, toolPreset: preset, toolPreferenceSaved: true } : null,
 			}));
 		}).finally(() => {
 			if (presetRestorePromiseRef.current === restore) presetRestorePromiseRef.current = null;
