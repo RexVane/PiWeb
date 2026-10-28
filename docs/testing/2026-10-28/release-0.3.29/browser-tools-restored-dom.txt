@@ -1,0 +1,103 @@
+Browser tab: 4, Title: "PR #48 冷会话工具验收 · pi", URL: "http://127.0.0.1:34130/".
+0 AXWebArea PR #48 冷会话工具验收 · pi, URL: 127.0.0.1:34130/
+	1 text Pi
+	2 text Web
+	3 button «
+		4 image
+	5 button 新会话
+		6 image
+		7 text 新会话
+	8 text 工作区
+	9 button 搜索
+		10 image
+	11 button 分组方式
+		12 image
+	13 button 添加工作区
+		14 image
+	42 button workspace
+		43 image
+		44 image
+		45 text workspace
+	40 container
+		41 button PR #48 冷会话工具验收
+		70 text 6分钟
+	18 button 设置
+		19 image
+		20 text 设置
+	48 text PR #48 冷会话工具验收
+	49 button 右侧抽屉
+		50 image
+	51 container
+		52 splitter Description: 拖动调整对话宽度, Value: 50
+		53 splitter Description: 拖动调整对话宽度, Value: 50
+		71 text PR #48 工具偏好验收（离线 SDK 历史，无模型请求）
+		54 text 10月28日 22:33
+		55 button 复制
+			56 image
+		57 button 编辑这条消息
+			58 image
+		59 button (collapsed) 上下文注入 Appended system prompt 1, Secondary Actions: Expand
+			60 text 上下文注入
+			61 text Appended system prompt 1
+	62 container
+		63 pop up button (collapsed) Description: 选择模型, Secondary Actions: Expand
+			64 text 选择模型
+			65 image
+		66 button 上下文用量未知
+			67 image
+		68 button (disabled) 发送
+			69 image
+	72 container 设置
+		73 text 设置
+		74 button 通用设置
+			75 image
+			76 text 通用设置
+		77 button 模型
+			78 image
+			79 text 模型
+		80 button 工具启用情况
+			81 image
+			82 text 工具启用情况
+		83 button 插件
+			84 image
+			85 text 插件
+		86 button 技能
+			87 image
+			88 text 技能
+		89 button 远程连接
+			90 image
+			91 text 远程连接
+		92 button 打开配置文件
+			93 image
+			94 text 打开配置文件
+		95 button 关闭
+			96 image
+		97 container
+			98 text 工具启用情况 三档预设决定新会话的默认工具；逐项开关按会话保存，会话重启后仍然生效。 权限 切换当前会话工具集；Workspace Write 包含 bash，并非文件系统沙箱
+			99 pop up button (collapsed) Read Only, Secondary Actions: Expand
+				100 text Read Only
+				101 image
+			102 text 当前会话 4/11 已启用 read 读取文件
+			103 switch Description: read, Value: 1
+			104 text bash 执行 Shell 命令
+			105 switch Description: bash, Value: 0
+			106 text edit 编辑文件
+			107 switch Description: edit, Value: 0
+			108 text write 写入文件
+			109 switch Description: write, Value: 0
+			110 text grep 搜索文件内容
+			111 switch Description: grep, Value: 0
+			112 text find 按名称查找文件
+			113 switch Description: find, Value: 1
+			114 text ls 列出目录内容
+			115 switch Description: ls, Value: 1
+			116 text powershell 执行 PowerShell
+			117 switch Description: powershell, Value: 0
+			118 text codemode
+			119 switch Description: codemode, Value: 0
+			120 text tool_search
+			121 switch Description: tool_search, Value: 0
+			122 text ask_user_question
+			123 switch Description: ask_user_question, Value: 1
+
+The focused UI element is 111 switch Description: grep, Value: 0

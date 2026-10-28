@@ -1,0 +1,44 @@
+npm notice run @rexvane/piweb@0.3.29 npx
+npm notice run 'vitest' run tests/agent-resource-isolation.test.ts tests/agent-prompt-acceptance.test.ts tests/tool-preferences.test.ts
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/agent-resource-isolation.test.ts (26 tests | 1 failed | 1 skipped) 1808ms
+   ❯ real SDK session resource isolation (26)
+     × keeps explicit SDK default tools consistent between cold and hot snapshots within the preset 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/agent-resource-isolation.test.ts > real SDK session resource isolation > keeps explicit SDK default tools consistent between cold and hot snapshots within the preset
+AssertionError: expected [ 'ask_user_question', 'bash', …(6) ] to deeply equal [ 'ask_user_question', 'bash', …(7) ]
+
+- Expected
++ Received
+
+@@ -1,9 +1,8 @@
+  [
+    "ask_user_question",
+    "bash",
+-   "codemode",
+    "edit",
+    "find",
+    "grep",
+    "ls",
+    "read",
+
+ ❯ tests/agent-resource-isolation.test.ts:142:53
+    140|    expect(cold.tools.active).toContain("codemode");
+    141|    const session = await manager.ensureSession(m);
+    142|    expect([...session.getActiveToolNames()].sort()).toEqual([...cold.t…
+       |                                                     ^
+    143|   } finally {
+    144|    settings.applyOverrides({ defaultTools: previous });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 43 passed | 1 skipped (45)
+   Start at  22:32:47
+   Duration  2.14s (tests 72%, import 24%, transform 4%)
+

@@ -1,0 +1,103 @@
+Browser tab: 4, Title: "pi", URL: "http://127.0.0.1:34130/".
+1 AXWebArea pi, URL: 127.0.0.1:34130/
+	2 text Pi
+	3 text Web
+	4 button «
+		5 image
+	6 button 新会话
+		7 image
+		8 text 新会话
+	9 text 工作区
+	10 button 搜索
+		11 image
+	12 button 分组方式
+		13 image
+	14 button 添加工作区
+		15 image
+	16 button workspace
+		17 image
+		18 image
+		19 text workspace
+	20 container
+		21 button PR #48 冷会话工具验收
+		22 text 9分钟
+	23 button 设置
+		24 image
+		25 text 设置
+	26 text PR #48 冷会话工具验收
+	27 button 右侧抽屉
+		28 image
+	29 container
+		30 splitter Description: 拖动调整对话宽度, Value: 50
+		31 splitter Description: 拖动调整对话宽度, Value: 50
+		42 text PR #48 工具偏好验收（离线 SDK 历史，无模型请求）
+		43 text 10月28日 22:33
+		32 button 复制
+			33 image
+		34 button 编辑这条消息
+			35 image
+		36 button (collapsed) 上下文注入 Appended system prompt 1, Secondary Actions: Expand
+			44 text 上下文注入
+			45 text Appended system prompt 1
+	37 container
+		38 pop up button (collapsed) Description: 选择模型, Secondary Actions: Expand
+			46 text 选择模型
+			39 image
+		40 button 上下文用量未知
+			41 image
+		47 button (disabled) 发送
+			48 image
+	49 container 设置
+		50 text 设置
+		51 button 通用设置
+			52 image
+			53 text 通用设置
+		54 button 模型
+			55 image
+			56 text 模型
+		57 button 工具启用情况
+			58 image
+			59 text 工具启用情况
+		60 button 插件
+			61 image
+			62 text 插件
+		63 button 技能
+			64 image
+			65 text 技能
+		66 button 远程连接
+			67 image
+			68 text 远程连接
+		69 button 打开配置文件
+			70 image
+			71 text 打开配置文件
+		72 button 关闭
+			73 image
+		74 container
+			75 text 工具启用情况 三档预设决定新会话的默认工具；逐项开关按会话保存，会话重启后仍然生效。 权限 切换当前会话工具集；Workspace Write 包含 bash，并非文件系统沙箱
+			76 pop up button (collapsed) Read Only, Secondary Actions: Expand
+				77 text Read Only
+				78 image
+			79 text 当前会话 4/11 已启用 read Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.
+			80 switch Description: read, Value: 1
+			81 text bash Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.
+			82 switch Description: bash, Value: 0
+			83 text edit Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.
+			84 switch Description: edit, Value: 0
+			85 text write Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
+			86 switch Description: write, Value: 0
+			87 text grep Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars.
+			88 switch Description: grep, Value: 0
+			89 text find Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to 1000 results or 50KB (whichever is hit first).
+			90 switch Description: find, Value: 1
+			91 text ls List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to 500 entries or 50KB (whichever is hit first).
+			92 switch Description: ls, Value: 1
+			93 text powershell Execute a PowerShell command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.
+			94 switch Description: powershell, Value: 0
+			95 text codemode Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level `await` and `return` work. No Node, file system, network, or timers. - `await tools.<name>({ ...args })` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled. - Optional first line: `// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}` Globals: - `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and top-level `return` add output; `exit()` ends the script. With several text items, each starts with a `==> text N/M <==` line, and `console` lines follow the other output in one `<console_output>` block. `image()` also saves the image to a temp file and the result names its path. - `store(key, value)` and `load(key)` keep JSON values across codemode calls. - `ALL_TOOLS`, `await searchTools(query, { limit?, namespace? })`, `await describeTool(name)`, `await describeNamespace(name)`: find unlisted tools, such as MCP tools. - `models`: classifiers and image generation. Read /Users/kaijimima/Documents/Agent/PiWeb/node_modules/@earendil-works/pi-coding-agent/docs/codemode.md first.
+			96 switch Description: codemode, Value: 0
+			97 text tool_search # Tool discovery Searches over deferred tool metadata with BM25 and exposes matching tools for the next model call. Some of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (`tool_search`) to search for the required tools. For MCP tool discovery, always use `tool_search`.
+			98 switch Description: tool_search, Value: 0
+			99 text ask_user_question Ask the user 1–4 multiple-choice questions in an interactive window and wait for their answers. Use it when you are blocked on a decision that is genuinely the user's — choosing between approaches, confirming scope, clarifying an ambiguous requirement — instead of asking in plain text and ending your turn. Don't use it for things you can find out by reading the code or for routine permission to continue. Give each question 2–4 concise options with a one-line description of the trade-off; put the recommended option first and append " (Recommended)" to its label (in the user's language). The user can always type their own answer instead, so never add an "Other" option. Set multiSelect when several options can apply together.
+			100 switch Description: ask_user_question, Value: 1
+
+The focused UI element is 57 button 工具启用情况

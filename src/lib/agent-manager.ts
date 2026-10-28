@@ -1081,6 +1081,11 @@ const BUILTIN_TOOL_DEFINITIONS = [
 	createPowerShellToolDefinition,
 ];
 
+/** PiWeb 的 SDK 自定义工具：构造定义不会执行工具或启动会话。冷热路径共用，避免目录漏项。 */
+function sessionCustomTools(m: Managed) {
+	return [createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })))];
+}
+
 interface CatalogTool {
 	name: string;
 	description?: string;
@@ -1127,6 +1132,15 @@ function toolCatalog(m: Managed): CatalogTool[] {
 	} catch {
 		/* 扩展发现失败：至少保留内置工具，工具页不会整块空白 */
 	}
+	// SDK 在扩展注册工具后应用 customTools，同名定义以 PiWeb 注入的工具为准。
+	for (const definition of sessionCustomTools(m)) {
+		catalog.set(definition.name, {
+			name: definition.name,
+			description: definition.description,
+			exposure: definition.exposure,
+			defaultActive: definition.defaultActive,
+		});
+	}
 	return [...catalog.values()];
 }
 
@@ -1136,8 +1150,12 @@ function coldActiveToolNames(m: Managed, catalog: CatalogTool[]): string[] {
 		? m.customActiveTools.includes(tool.name)
 		: presetAllowsTool(m.toolPreset, tool.name));
 	if (m.customActiveTools) return allowed.map((tool) => tool.name);
+	// 热启动把 SDK 初始激活集记入 requestedTools；冷路径直接读取同一份已合并的设置。
+	// 显式点名的 defaultActive:false 工具也要展示为启用，档位与逐项白名单仍优先。
+	const requested = new Set(getSettingsManager(m.cwd).getDefaultTools() ?? []);
 	return allowed
-		.filter((tool) => (tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only") && tool.defaultActive !== false)
+		.filter((tool) => tool.exposure !== "hidden" && (requested.has(tool.name)
+			|| ((tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only") && tool.defaultActive !== false)))
 		.map((tool) => tool.name);
 }
 
@@ -1328,7 +1346,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				resourceLoader: loader,
 				settingsManager,
 				// 内置的选择窗口：问题经扩展界面桥推给浏览器（m.ui 在下面 bindExtensions 前建好，调用时再取）
-				customTools: [createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })))],
+				customTools: sessionCustomTools(m),
 			});
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");

@@ -1,0 +1,66 @@
+{
+  "version": {
+    "piWeb": "0.3.29",
+    "piEngine": "1.4.0",
+    "node": "v24.15.0"
+  },
+  "cold": true,
+  "toolPreset": "readonly",
+  "customActiveTools": null,
+  "toolPreferenceSaved": false,
+  "tools": {
+    "active": [
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "ask_user_question"
+    ],
+    "all": [
+      {
+        "name": "read",
+        "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete."
+      },
+      {
+        "name": "bash",
+        "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
+      },
+      {
+        "name": "edit",
+        "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes."
+      },
+      {
+        "name": "write",
+        "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories."
+      },
+      {
+        "name": "grep",
+        "description": "Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars."
+      },
+      {
+        "name": "find",
+        "description": "Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to 1000 results or 50KB (whichever is hit first)."
+      },
+      {
+        "name": "ls",
+        "description": "List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to 500 entries or 50KB (whichever is hit first)."
+      },
+      {
+        "name": "powershell",
+        "description": "Execute a PowerShell command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds."
+      },
+      {
+        "name": "codemode",
+        "description": "Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level `await` and `return` work. No Node, file system, network, or timers.\n- `await tools.<name>({ ...args })` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.\n- Optional first line: `// @options: {\"max_output_tokens\": 10000, \"timeout_ms\": 60000}`\n\nGlobals:\n- `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and top-level `return` add output; `exit()` ends the script. With several text items, each starts with a `==> text N/M <==` line, and `console` lines follow the other output in one `<console_output>` block. `image()` also saves the image to a temp file and the result names its path.\n- `store(key, value)` and `load(key)` keep JSON values across codemode calls.\n- `ALL_TOOLS`, `await searchTools(query, { limit?, namespace? })`, `await describeTool(name)`, `await describeNamespace(name)`: find unlisted tools, such as MCP tools.\n- `models`: classifiers and image generation. Read /Users/kaijimima/Documents/Agent/PiWeb/node_modules/@earendil-works/pi-coding-agent/docs/codemode.md first."
+      },
+      {
+        "name": "tool_search",
+        "description": "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (`tool_search`) to search for the required tools. For MCP tool discovery, always use `tool_search`."
+      },
+      {
+        "name": "ask_user_question",
+        "description": "Ask the user 1–4 multiple-choice questions in an interactive window and wait for their answers. Use it when you are blocked on a decision that is genuinely the user's — choosing between approaches, confirming scope, clarifying an ambiguous requirement — instead of asking in plain text and ending your turn. Don't use it for things you can find out by reading the code or for routine permission to continue. Give each question 2–4 concise options with a one-line description of the trade-off; put the recommended option first and append \" (Recommended)\" to its label (in the user's language). The user can always type their own answer instead, so never add an \"Other\" option. Set multiSelect when several options can apply together."
+      }
+    ]
+  }
+}

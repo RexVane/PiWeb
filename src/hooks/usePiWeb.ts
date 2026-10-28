@@ -326,10 +326,14 @@ export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: Ex
 	return [...dialogs.values()];
 }
 
-function savedToolPreset(): ToolPreset {
-	if (typeof window === "undefined") return "standard";
+function storedToolPreset(): ToolPreset | null {
+	if (typeof window === "undefined") return null;
 	const saved = localStorage.getItem("piweb.toolPreset");
-	return saved === "readonly" || saved === "full" ? saved : "standard";
+	return saved === "readonly" || saved === "standard" || saved === "full" ? saved : null;
+}
+
+function savedToolPreset(): ToolPreset {
+	return storedToolPreset() ?? "standard";
 }
 
 function toolsFromMessages(messages: WebMessage[], streaming = false): Record<string, ToolCardState> {
@@ -1009,14 +1013,17 @@ export function usePiWeb() {
 	useEffect(() => {
 		if (!currentId || !state.connected || !state.snapshot || state.snapshot.isStreaming) return;
 		if (state.snapshot.customActiveTools != null || state.snapshot.toolPreferenceSaved === true) return;
-		const preset = savedToolPreset();
-		if (state.snapshot.toolPreset === preset) return;
+		const preset = storedToolPreset();
+		// 没有旧选择时不把界面的默认值迁移成用户偏好；新服务端即使档位相同也要完成保存，
+		// 否则换浏览器后，另一个旧 localStorage 档位仍会覆盖这个会话。
+		if (preset === null) return;
+		if (state.snapshot.toolPreset === preset && state.snapshot.toolPreferenceSaved !== false) return;
 		const attemptKey = `${currentId}:${snapshotEpoch}`;
 		if (presetRestoreAttemptRef.current === attemptKey) return;
 		presetRestoreAttemptRef.current = attemptKey;
 		const sessionId = currentId;
 		const restore = sendCommand({ cmd: "setToolPreset", preset }).then((result) => {
-			if (result?.success && activeSessionRef.current === sessionId && savedToolPreset() === preset) setState((current) => ({
+			if (result?.success && activeSessionRef.current === sessionId && storedToolPreset() === preset) setState((current) => ({
 				...current,
 				toolPreset: preset,
 				snapshot: current.snapshot ? { ...current.snapshot, toolPreset: preset, toolPreferenceSaved: true } : null,

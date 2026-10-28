@@ -1,0 +1,46 @@
+npm notice run @rexvane/piweb@0.3.29 npx
+npm notice run 'vitest' run tests/agent-resource-isolation.test.ts
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/agent-resource-isolation.test.ts (26 tests | 4 failed | 1 skipped) 1690ms
+   ❯ real SDK session resource isolation (26)
+     × includes PiWeb's question tool in a cold readonly catalog and accepts selecting it 8ms
+     × includes PiWeb's question tool in a cold standard catalog and accepts selecting it 3ms
+     × includes PiWeb's question tool in a cold full catalog and accepts selecting it 2ms
+     × keeps explicit SDK default tools consistent between cold and hot snapshots within the preset 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/agent-resource-isolation.test.ts > real SDK session resource isolation > includes PiWeb's question tool in a cold readonly catalog and accepts selecting it
+ FAIL  tests/agent-resource-isolation.test.ts > real SDK session resource isolation > includes PiWeb's question tool in a cold standard catalog and accepts selecting it
+ FAIL  tests/agent-resource-isolation.test.ts > real SDK session resource isolation > includes PiWeb's question tool in a cold full catalog and accepts selecting it
+AssertionError: expected [ 'read', 'bash', 'edit', …(8) ] to include 'ask_user_question'
+ ❯ tests/agent-resource-isolation.test.ts:117:51
+    115|   const cold = await manager.buildSnapshot(m);
+    116|   expect(m.session).toBeNull();
+    117|   expect(cold.tools.all.map((tool) => tool.name)).toContain("ask_user_…
+       |                                                   ^
+    118|   expect(cold.tools.active).toContain("ask_user_question");
+    119|   expect(await manager.execute(m, { cmd: "setActiveTools", names: ["re…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/agent-resource-isolation.test.ts > real SDK session resource isolation > keeps explicit SDK default tools consistent between cold and hot snapshots within the preset
+AssertionError: expected [ 'read', 'bash', 'edit', …(4) ] to include 'codemode'
+ ❯ tests/agent-resource-isolation.test.ts:140:30
+    138|    const cold = await manager.buildSnapshot(m);
+    139|    expect(m.session).toBeNull();
+    140|    expect(cold.tools.active).toContain("codemode");
+       |                              ^
+    141|    const session = await manager.ensureSession(m);
+    142|    expect([...session.getActiveToolNames()].sort()).toEqual([...cold.t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 21 passed | 1 skipped (26)
+   Start at  22:31:39
+   Duration  2.03s (tests 87%, import 11%, transform 2%)
+
