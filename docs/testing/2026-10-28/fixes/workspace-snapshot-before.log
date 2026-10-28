@@ -1,0 +1,55 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run tests/external-session-write.test.ts --reporter=default --reporter=json --outputFile.json=/tmp/piweb-snapshot-cwd-20261028-6zeZP0/before-results.json
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/external-session-write.test.ts (6 tests | 2 failed) 696ms
+   ❯ 终端 pi 同时写会话 (6)
+     × 冷读取历史符号链接会话时只规范界面 cwd，保留 SDK cwd 和原始 JSONL 7ms
+     × 历史符号链接会话的冷热快照都匹配工作区别名，运行时仍使用原 cwd 32ms
+     ✓ 空闲时重开：消息换成磁盘上的、会话级选择带过去、正在看的浏览器收到重载事件 19ms
+     ✓ 自己写的条目不算外来，不重载 1ms
+     ✓ 正在跑只提醒；空闲后侧栏拉列表时重载 8ms
+     ✓ 终端那一行还没写完：先不算，写完后再重载 2ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/external-session-write.test.ts > 终端 pi 同时写会话 > 冷读取历史符号链接会话时只规范界面 cwd，保留 SDK cwd 和原始 JSONL
+AssertionError: expected '/var/folders/pd/rprxbn9s46s28zy73z4n2…' to be '/private/var/folders/pd/rprxbn9s46s28…' // Object.is equality
+
+Expected: "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-external-write-G3rcd5/workspace"
+Received: "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-external-write-G3rcd5/read-cli-link"
+
+ ❯ tests/external-session-write.test.ts:79:20
+     77|   const original = await fs.readFile(file, "utf8");
+     78|   const cold = await reader.readSession(file);
+     79|   expect(cold.cwd).toBe(await fs.realpath(cwd));
+       |                    ^
+     80|   expect(texts(cold.messages)).toEqual(["网页里的问题", "网页里的回答"]);
+     81|   expect(pi.SessionManager.open(file).getCwd()).toBe(link);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/external-session-write.test.ts > 终端 pi 同时写会话 > 历史符号链接会话的冷热快照都匹配工作区别名，运行时仍使用原 cwd
+AssertionError: expected '/var/folders/pd/rprxbn9s46s28zy73z4n2…' to be '/private/var/folders/pd/rprxbn9s46s28…' // Object.is equality
+
+Expected: "/private/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-external-write-G3rcd5/workspace"
+Received: "/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-external-write-G3rcd5/snapshot-cli-link"
+
+ ❯ tests/external-session-write.test.ts:97:20
+     95|   const cold = await manager.buildSnapshot(m);
+     96|   expect(m.session).toBeNull();
+     97|   expect(cold.cwd).toBe(canonical);
+       |                    ^
+     98|   const aliasKey = (value: string) => process.platform === "win32" ? v…
+     99|   expect(aliases[aliasKey(cold.cwd)]).toBe("My project");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+   Start at  21:34:25
+   Duration  910ms (tests 95%, transform 4%, import 1%)
+
+JSON report written to /tmp/piweb-snapshot-cwd-20261028-6zeZP0/before-results.json

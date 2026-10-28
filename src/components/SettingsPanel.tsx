@@ -4,7 +4,7 @@
  * 设置弹窗（对齐 dsh SettingsRoot）：居中模态、左导航 + 右侧行式内容。
  * 五节：General / Models / 安全 / 技能 / 插件。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/enter-behavior";
 import {
@@ -59,6 +59,8 @@ import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
 import type { ToolPreset } from "@/lib/types";
+import { useDialog } from "@/hooks/useDialog";
+import { useSelectKeyboard } from "@/hooks/useSelectKeyboard";
 
 type Section = "general" | "models" | "tools" | "skills" | "plugins" | "remote";
 
@@ -90,15 +92,9 @@ export function SettingsPanel({
 }) {
 	const { t, lang, setLang } = useI18n();
 	const [section, setSection] = useState<Section>("general");
-
-	useEffect(() => {
-		if (!open) return;
-		const h = (e: KeyboardEvent) => {
-			if (e.key === "Escape" && !document.querySelector('[data-provider-modal="true"]')) onClose();
-		};
-		document.addEventListener("keydown", h);
-		return () => document.removeEventListener("keydown", h);
-	}, [open, onClose]);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const titleId = useId();
+	useDialog({ open, onClose, ref: dialogRef });
 
 	if (!open) return null;
 
@@ -119,6 +115,10 @@ export function SettingsPanel({
 			}}
 		>
 			<div
+				ref={dialogRef}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={titleId}
 				className="settings-dialog glass-modal flex overflow-hidden"
 				style={{
 					width: 800,
@@ -130,7 +130,7 @@ export function SettingsPanel({
 			>
 				{/* 左导航（Iconsax .isx-menu-item：h42 r12，悬停/激活高对比反转 + 文字右移 + 右侧短竖条） */}
 				<div className="settings-nav flex w-52 flex-none flex-col gap-1 py-4 pl-4 pr-3">
-					<div className="settings-title px-2 pb-3" style={{ fontSize: 16, fontWeight: 500 }}>
+					<div id={titleId} className="settings-title px-2 pb-3" style={{ fontSize: 16, fontWeight: 500 }}>
 						{t.settings}
 					</div>
 					{navItems.map((n) => (
@@ -159,7 +159,7 @@ export function SettingsPanel({
 						<button className="btn-outline" style={{ height: 32, fontSize: 13 }} onClick={() => window.open("/api/config", "_blank")}>
 							<IconDownloadOutline16 size={14} /> {t.openConfigFile}
 						</button>
-						<button className="icon-btn" onClick={onClose}>
+						<button type="button" className="icon-btn" aria-label={t.close} onClick={onClose}>
 							<IconCloseOutline14 size={15} />
 						</button>
 					</div>
@@ -556,7 +556,7 @@ export function SelectOption({
 	disabled,
 }: {
 	value: string;
-	options: { value: string; label: string }[];
+	options: { value: string; label: string; disabled?: boolean }[];
 	onChange: (v: string) => void;
 	width?: number;
 	disabled?: boolean;
@@ -565,6 +565,8 @@ export function SelectOption({
 	const [rect, setRect] = useState<{ left: number; top: number; bottom: number } | null>(null);
 	const anchorRef = useRef<HTMLButtonElement>(null);
 	const popRef = useRef<HTMLDivElement>(null);
+	const listId = useId();
+	const keyboard = useSelectKeyboard({ value, options, open, setOpen, disabled, onChange, triggerRef: anchorRef });
 	useEffect(() => {
 		if (!open) return;
 		// 弹层挂在 body（fixed 定位）：设置对话框 overflow-hidden 会裁掉 absolute 弹层
@@ -593,8 +595,8 @@ export function SelectOption({
 			: { top: rect.top, maxHeight: Math.min(280, Math.max(below, 80)) };
 	})();
 	return (
-		<div className="relative">
-			<button ref={anchorRef} className="select-chip" data-open={open} disabled={disabled} onClick={() => setOpen((o) => !o)}>
+		<div className="relative" onKeyDown={keyboard.onKeyDown}>
+			<button ref={anchorRef} type="button" className="select-chip" data-open={open} disabled={disabled} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => open ? keyboard.closeMenu() : keyboard.openMenu()}>
 				{current?.label ?? value}
 				<span className="chevron">
 					<IconChevronDown14 size={14} />
@@ -602,20 +604,29 @@ export function SelectOption({
 			</button>
 			{open && !disabled && rect && placement && createPortal(
 				<div
+					id={listId}
 					ref={popRef}
+					role="listbox"
+					data-dialog-owner={anchorRef.current?.closest<HTMLElement>("[data-dialog-root]")?.dataset.dialogRoot}
 					className="popover fixed z-[130] p-1.5 shadow-xl"
 					data-placement={"bottom" in placement ? "top" : "bottom"}
 					// 左右都对齐 chip 左缘
 					style={{ left: rect.left, ...placement, minWidth: width ?? 140, width: "max-content", overflowY: "auto" }}
 				>
-					{options.map((o) => {
+					{options.map((o, index) => {
 						const selected = o.value === value;
 						return (
 							<button
 								key={o.value}
+								ref={(element) => { keyboard.optionRefs.current[index] = element; }}
+								type="button"
+								role="option"
+								aria-selected={selected}
+								disabled={o.disabled}
+								tabIndex={-1}
 								className="flex w-full items-center justify-between gap-3 rounded-xl px-3.5 py-2 text-left transition-colors"
 								style={{
-									background: selected ? "var(--dsw-accent-soft)" : "transparent",
+									background: keyboard.activeIndex === index ? "var(--dsw-hover)" : selected ? "var(--dsw-accent-soft)" : "transparent",
 								}}
 								onMouseEnter={(e) => {
 									if (!selected) e.currentTarget.style.background = "var(--dsw-hover)";
@@ -623,10 +634,8 @@ export function SelectOption({
 								onMouseLeave={(e) => {
 									if (!selected) e.currentTarget.style.background = "transparent";
 								}}
-								onClick={() => {
-									onChange(o.value);
-									setOpen(false);
-								}}
+								onFocus={() => keyboard.setActiveIndex(index)}
+								onClick={() => keyboard.choose(index)}
 							>
 								<span style={{ fontSize: 13.5, color: selected ? "var(--dsw-accent)" : "var(--dsw-label-primary)", whiteSpace: "nowrap" }}>
 									{o.label}

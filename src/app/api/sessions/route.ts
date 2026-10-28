@@ -2,14 +2,17 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { listSessions } from "@/lib/session-reader";
 import { activeStatus, warmSessionResources } from "@/lib/agent-manager";
-import { getWorkspaceRegistry, registerCwds } from "@/lib/workspace-store";
+import { canonicalWorkspacePath, getWorkspaceRegistry, registerCwds } from "@/lib/workspace-store";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
 	try {
 		const q = new URL(req.url).searchParams.get("q") ?? undefined;
-		const sessions = await listSessions(q);
+		const listed = await listSessions(q);
+		const cwds = new Map([...new Set(listed.map((session) => session.cwd))].map((cwd) => [cwd, canonicalWorkspacePath(cwd)]));
+		// CLI 会话头保留启动时的符号链接拼写；只统一列表身份，不改原始 JSONL。
+		const sessions = await Promise.all(listed.map(async (session) => ({ ...session, cwd: await cwds.get(session.cwd)! })));
 		// 侧栏一拿到列表就预热最近那个工作区的资源发现（约 140ms），别等用户点开会话才做
 		warmSessionResources(sessions.slice(0, 1).map((session) => session.cwd));
 		await registerCwds(sessions.map((session) => session.cwd));

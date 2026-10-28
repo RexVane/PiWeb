@@ -1,0 +1,13 @@
+{
+  "scannedDirectories": [
+    "src",
+    "scripts",
+    "bin",
+    "assets",
+    "public"
+  ],
+  "scannedFiles": 637,
+  "matches": [],
+  "sensitiveDataFilesInTarball": [],
+  "note": "Heuristic source and artifact filename audit only; no credential values are recorded."
+}

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { IconCheckOutline14, IconChevronDown14 } from "@/components/icons";
 import styles from "./CustomSelect.module.css";
+import { useSelectKeyboard } from "@/hooks/useSelectKeyboard";
 
 export interface SelectOption {
 	value: string;
@@ -39,6 +40,8 @@ export function CustomSelect({
 	const [flip, setFlip] = useState(false);
 	const wrapRef = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
+	const listId = useId();
+	const keyboard = useSelectKeyboard({ value, options, open, setOpen, disabled, onChange, triggerRef });
 
 	const selectedOption = options.find((opt) => opt.value === value);
 
@@ -57,31 +60,14 @@ export function CustomSelect({
 			}
 		};
 
-		const handleKeyDownDoc = (e: globalThis.KeyboardEvent) => {
-			if (e.key === "Escape") {
-				setOpen(false);
-				triggerRef.current?.focus();
-			}
-		};
-
 		document.addEventListener("mousedown", handlePointerDown);
-		document.addEventListener("keydown", handleKeyDownDoc);
 		return () => {
 			document.removeEventListener("mousedown", handlePointerDown);
-			document.removeEventListener("keydown", handleKeyDownDoc);
 		};
 	}, [open]);
 
-	const handleKeyDown = (e: KeyboardEvent<HTMLButtonElement>) => {
-		if (disabled) return;
-		if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
-			e.preventDefault();
-			setOpen((prev) => !prev);
-		}
-	};
-
 	return (
-		<div ref={wrapRef} className={`${styles.wrap} ${className}`} style={style}>
+		<div ref={wrapRef} className={`${styles.wrap} ${className}`} style={style} onKeyDown={keyboard.onKeyDown}>
 			{/* 原生隐藏 select：保证测试、表单无障碍与自动化脚本完全兼容 */}
 			<select
 				tabIndex={-1}
@@ -119,31 +105,30 @@ export function CustomSelect({
 				aria-label={ariaLabel}
 				aria-haspopup="listbox"
 				aria-expanded={open}
+				aria-controls={open ? listId : undefined}
 				className={`${styles.trigger} ${size === "sm" ? styles.sizeSm : styles.sizeMd}`}
-				onClick={() => setOpen((prev) => !prev)}
-				onKeyDown={handleKeyDown}
+				onClick={() => open ? keyboard.closeMenu() : keyboard.openMenu()}
 			>
 				<span className={styles.label}>{selectedOption?.label ?? placeholder ?? value}</span>
 				<IconChevronDown14 size={size === "sm" ? 13 : 15} className={`${styles.chevron} ${open ? styles.chevronOpen : ""}`} />
 			</button>
 
 			{open && (
-				<div className={`${styles.menu} ${flip ? styles.menuFlip : ""}`} role="listbox" aria-label={ariaLabel}>
-					{options.map((opt) => {
+				<div id={listId} className={`${styles.menu} ${flip ? styles.menuFlip : ""}`} role="listbox" aria-label={ariaLabel}>
+					{options.map((opt, index) => {
 						const isSelected = opt.value === value;
 						return (
 							<button
 								key={opt.value}
+								ref={(element) => { keyboard.optionRefs.current[index] = element; }}
 								type="button"
 								role="option"
 								aria-selected={isSelected}
+								tabIndex={-1}
 								disabled={opt.disabled}
 								className={`${styles.option} ${isSelected ? styles.optionSelected : ""}`}
-								onClick={() => {
-									onChange(opt.value);
-									setOpen(false);
-									triggerRef.current?.focus();
-								}}
+								onFocus={() => keyboard.setActiveIndex(index)}
+								onClick={() => keyboard.choose(index)}
 							>
 								<span className="truncate">{opt.label}</span>
 								{isSelected ? <IconCheckOutline14 size={14} className={styles.check} /> : null}

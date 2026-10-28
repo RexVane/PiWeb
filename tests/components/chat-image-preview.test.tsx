@@ -66,4 +66,13 @@ describe("chat image previews", () => {
 		fireEvent.click(screen.getByRole("button", { name: "点击放大预览: example" }));
 		expect(within(screen.getByRole("dialog")).getByRole("img").getAttribute("src")).toBe("https://external.example/image.png");
 	});
+
+	it("requires approval again when a Markdown image changes its external URL", () => {
+		const view = render(<MarkdownBlock text="![example](https://external.example/first.png)" />);
+		fireEvent.click(screen.getByRole("button", { name: /外部图片，点击加载/ }));
+		expect(screen.getByRole("img").getAttribute("src")).toBe("https://external.example/first.png");
+		view.rerender(<MarkdownBlock text="![example](https://another.example/second.png)" />);
+		expect(screen.queryByRole("img")).toBeNull();
+		expect(screen.getByTitle("https://another.example/second.png")).toBeTruthy();
+	});
 });

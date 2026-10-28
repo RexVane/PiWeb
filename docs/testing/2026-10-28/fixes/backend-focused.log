@@ -1,0 +1,39 @@
+npm notice run @rexvane/piweb@0.3.28 npx
+npm notice run 'vitest' run tests/workspace-index.test.ts tests/mention-parity.test.ts tests/workspace-store.test.ts tests/api/session-workspaces.test.ts tests/packaging.test.ts tests/integration/remote/tunnel-status.test.ts tests/api/workspace-picker.test.ts tests/session-retention.test.ts --reporter=default --reporter=json --outputFile.json=/var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-backend-fixes-20261028-GCWFdP/final-results.json
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ✓ tests/workspace-store.test.ts (13 tests) 239ms
+ ✓ tests/packaging.test.ts (13 tests) 1017ms
+ ✓ tests/mention-parity.test.ts (5 tests) 574ms
+   ✓ 端到端：同一批文件，pi（真 fd）与网页给出同样的候选 (1)
+     ✓ 各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符 541ms
+ ✓ tests/workspace-index.test.ts (16 tests) 15ms
+ ✓ tests/session-retention.test.ts (9 tests) 37ms
+ ✓ tests/api/session-workspaces.test.ts (2 tests) 13ms
+ ✓ tests/api/workspace-picker.test.ts (5 tests) 4715ms
+   ✓ workspace picker API and native process (5)
+     ✓ falls back to page browsing when the native process fails 1236ms
+     ✓ treats native cancellation as cancellation without opening another picker 785ms
+     ✓ registers a directory returned by the native process 1919ms
+     ✓ keeps invalid chosen paths as validation errors 772ms
+ ✓ tests/integration/remote/tunnel-status.test.ts (11 tests) 9739ms
+   ✓ tunnel status through API, process and HTTP (11)
+     ✓ detects 1033 after readiness and recovers on the same URL without respawning 1228ms
+     ✓ keeps checking after the initial readiness deadline instead of remaining pending forever 814ms
+     ✓ concurrent starts wait for the same completed readiness check 776ms
+     ✓ does not mark {"status":403,"body":"forbidden"} as a working tunnel 1918ms
+     ✓ does not mark {"status":200,"body":"<html>error page</html>"} as a working tunnel 754ms
+     ✓ does not mark {"status":200,"body":"{\"success\":true,\"data\":{\"ok\":true,\"service\":\"other\"}}"} as a working tunnel 521ms
+     ✓ does not mark {"status":502,"body":"Bad Gateway"} as a working tunnel 443ms
+     ✓ does not mark {"status":403,"headers":{"cf-mitigated":"challenge"},"body":"challenge"} as a working tunnel 454ms
+     ✓ reports a crash after startup and removes the expired address 507ms
+     ✓ coalesces checks and discards an in-flight failure after stopping 516ms
+     ✓ can stop while waiting for an address and start a fresh tunnel 1806ms
+
+ Test Files  8 passed (8)
+      Tests  74 passed (74)
+   Start at  21:16:30
+   Duration  9.88s (tests 90%, import 9%, transform 1%)
+
+JSON report written to /var/folders/pd/rprxbn9s46s28zy73z4n22j40000gn/T/piweb-backend-fixes-20261028-GCWFdP/final-results.json

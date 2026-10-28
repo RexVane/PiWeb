@@ -1,0 +1,53 @@
+npm notice run @rexvane/piweb@0.3.28 npx
+npm notice run 'vitest' run tests/mention-parity.test.ts --reporter=default
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+ ❯ tests/mention-parity.test.ts (5 tests | 1 failed) 352ms
+   ✓ @ token 识别与 pi 一致 (3)
+     ✓ 分隔符规则和 pi-tui 的正则是同一个 1ms
+     ✓ 固定用例 2ms
+     ✓ 随机用例 18ms
+   ✓ 评分与 pi 一致 (1)
+     ✓ scoreEntry 逐条相等（文件 / 目录、大小写、路径包含） 2ms
+   ❯ 端到端：同一批文件，pi（真 fd）与网页给出同样的候选 (1)
+     × 各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符 320ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/mention-parity.test.ts > 端到端：同一批文件，pi（真 fd）与网页给出同样的候选 > 各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符
+AssertionError: expected { query: '[slug]', …(1) } to deeply equal { Object (query, items) }
+
+- Expected
++ Received
+
+@@ -2,8 +2,12 @@
+    "items": [
+      {
+        "description": "src/app/[slug]",
+        "label": "[slug]/",
+      },
++     {
++       "description": "src/app/[slug]/page.tsx",
++       "label": "page.tsx",
++     },
+    ],
+    "query": "[slug]",
+  }
+
+ ❯ tests/mention-parity.test.ts:153:35
+    151|   for (const query of queries) {
+    152|    const mine = suggestPaths(candidates, query).map(({ label, descript…
+    153|    expect({ query, items: mine }).toEqual({ query, items: await piItem…
+       |                                   ^
+    154|    if (mine.length) nonEmpty += 1;
+    155|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Start at  19:42:06
+   Duration  476ms (tests 88%, import 9%, transform 1%, setup 1%, worker 1%)
+

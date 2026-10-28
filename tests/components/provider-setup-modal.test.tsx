@@ -49,6 +49,20 @@ describe("capacity helpers", () => {
 });
 
 describe("ProviderSetupModal (builtin mode)", () => {
+	it("closes the authentication select before the provider dialog on Escape", () => {
+		const onClose = vi.fn();
+		render(<ProviderSetupModal mode="builtin" providers={[provider({ authTypes: ["api_key", "oauth"] })]} existingIds={[]} onClose={onClose}
+			onSaveBuiltin={vi.fn(async () => ({ success: true }))} onSaveCustom={vi.fn(async () => ({ success: true }))} onOAuthLogin={vi.fn(async () => ({ success: true }))} />);
+		const trigger = screen.getByRole("button", { name: "认证方式" });
+		fireEvent.click(trigger);
+		fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+		expect(screen.queryByRole("listbox")).toBeNull();
+		expect(onClose).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(trigger);
+		fireEvent.keyDown(trigger, { key: "Escape" });
+		expect(onClose).toHaveBeenCalledOnce();
+	});
+
 	it("offers OAuth as an authentication method when the provider supports it", () => {
 		const onOAuthLogin = vi.fn(async () => ({ success: true }));
 		render(

@@ -5,7 +5,7 @@
  * 触发按钮不在菜单的 ref 里，再点一下永远关不掉。测试照真实顺序先 mouseDown 再 click。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import type { SessionListItem } from "@/hooks/usePiWeb";
 
@@ -21,7 +21,7 @@ const session: SessionListItem = {
 	streaming: false,
 };
 
-function renderSidebar(groupBy: "workspace" | "flat", archivedSessions: SessionListItem[] = []) {
+function renderSidebar(groupBy: "workspace" | "flat", archivedSessions: SessionListItem[] = [], onRename = vi.fn(async (_path: string, _name: string) => {})) {
 	return render(
 		<SessionSidebar
 			sessions={[session]}
@@ -38,7 +38,7 @@ function renderSidebar(groupBy: "workspace" | "flat", archivedSessions: SessionL
 			onOpen={vi.fn()}
 			onNew={vi.fn()}
 			onNewInWorkspace={vi.fn()}
-			onRename={vi.fn(async () => {})}
+			onRename={onRename}
 			onOpenSettings={vi.fn()}
 			onAddWorkspace={vi.fn()}
 		/>,
@@ -52,6 +52,25 @@ function press(element: Element) {
 }
 
 describe("sidebar row menus", () => {
+	it("does not submit a rename while an IME is composing or confirming a candidate", async () => {
+		const onRename = vi.fn(async () => {});
+		renderSidebar("flat", [], onRename);
+		press(screen.getByRole("button", { name: "session-actions" }));
+		fireEvent.click(screen.getByRole("button", { name: "重命名" }));
+		const input = screen.getByRole("textbox");
+		fireEvent.change(input, { target: { value: "中文会话" } });
+		fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+		fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+		fireEvent.compositionStart(input);
+		fireEvent.keyDown(input, { key: "Enter" });
+		fireEvent.keyDown(input, { key: "Escape" });
+		expect(onRename).not.toHaveBeenCalled();
+		expect(screen.getByRole("textbox")).toBe(input);
+		fireEvent.compositionEnd(input);
+		await act(async () => fireEvent.keyDown(input, { key: "Enter" }));
+		expect(onRename).toHaveBeenCalledWith(session.path, "中文会话");
+	});
+
 	it("closes the session menu when its … button is pressed again", () => {
 		renderSidebar("flat");
 		const trigger = screen.getByRole("button", { name: "session-actions" });

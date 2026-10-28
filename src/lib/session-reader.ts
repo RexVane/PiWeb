@@ -11,6 +11,7 @@ import { sessionDisplayMessages, syncSessionsFromDisk } from "./agent-manager";
 import { getAgentDir } from "./pi";
 import { BoundaryError, isPathInside } from "./path-security";
 import { promptTitleText } from "./chat/skill-expansion";
+import { canonicalWorkspacePath } from "./workspace-store";
 
 function toSummary(info: {
 	path: string;
@@ -315,5 +316,5 @@ export async function readSession(sessionPath: string): Promise<{
 	} catch {
 		name = "";
 	}
-	return { cwd: sm.getCwd(), name, messages };
+	return { cwd: await canonicalWorkspacePath(sm.getCwd()), name, messages };
 }

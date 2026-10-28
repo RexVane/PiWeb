@@ -1,0 +1,4 @@
+[piweb] Clean global installation: Pi 1.4.0 SDK, production startup, home page and first-paint APIs passed
+[piweb] Clean installation Mermaid dependency: {"name":"mermaid","version":"12.2.0","initialize":true,"render":true}
+[piweb] rexvane-piweb-0.3.28.tgz: 1540 files, 25.1 MB, build Egxe8_GiZqCvoKewdM2Mo
+{"filename":"rexvane-piweb-0.3.28.tgz","files":1540,"bytes":26355788,"buildId":"Egxe8_GiZqCvoKewdM2Mo","mermaidRuntime":{"name":"mermaid","version":"12.2.0","initialize":true,"render":true},"sensitiveFileNames":[]}

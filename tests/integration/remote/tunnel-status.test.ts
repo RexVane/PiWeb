@@ -1,5 +1,6 @@
 /** 真实远程 API + 子进程；仅把 Cloudflare 网络边界接到本地故障响应服务器。 */
 import fs from "node:fs/promises";
+import { watch } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -21,6 +22,30 @@ describe.skipIf(process.platform === "win32")("tunnel status through API, proces
 	const read = async () => (await (await GET()).json()).data.public;
 	const nextCheck = () => { now += 6_000; };
 
+	/** Wait for the actual child startup event, independently of URL publication. */
+	const fixtureStarted = () => new Promise<void>((resolve, reject) => {
+		let settled = false;
+		const finish = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+			watcher.close();
+			if (error) reject(error);
+			else resolve();
+		};
+		const check = async () => {
+			try {
+				if (/^\d+$/.test(await fs.readFile(path.join(root, "pid"), "utf8"))) finish();
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") finish(error as Error);
+			}
+		};
+		const watcher = watch(root, () => { void check(); });
+		const timeout = setTimeout(() => finish(new Error("tunnel fixture did not publish its startup PID within 10 seconds")), 10_000);
+		watcher.once("error", finish);
+		void check();
+	});
+
 	beforeEach(async () => {
 		root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-tunnel-status-"));
 		resetRemoteSupervisor();
@@ -30,10 +55,13 @@ describe.skipIf(process.platform === "win32")("tunnel status through API, proces
 		await fs.writeFile(executable, `#!${process.execPath}
 const fs = require("node:fs");
 const root = process.env.PI_CODING_AGENT_DIR;
+const startupDelay = fs.existsSync(root + "/startup-delay") ? Number(fs.readFileSync(root + "/startup-delay", "utf8")) : 0;
+setTimeout(() => {
 fs.appendFileSync(root + "/starts", "started\\n");
 fs.writeFileSync(root + "/pid", String(process.pid));
 if (!fs.existsSync(root + "/no-url")) console.log("https://status-fixture.trycloudflare.com");
 setInterval(() => { if (fs.existsSync(root + "/exit")) process.exit(7); }, 20);
+}, startupDelay);
 `, { mode: 0o755 });
 		vi.stubEnv("PIWEB_CLOUDFLARED", executable);
 		reply = health();
@@ -136,11 +164,15 @@ setInterval(() => { if (fs.existsSync(root + "/exit")) process.exit(7); }, 20);
 
 	it("can stop while waiting for an address and start a fresh tunnel", async () => {
 		await fs.writeFile(path.join(root, "no-url"), "yes");
+		// A busy full-suite run can take over one second to initialize the child.
+		await fs.writeFile(path.join(root, "startup-delay"), "1200");
+		const ready = fixtureStarted();
 		const starting = startPublic();
-		await vi.waitFor(async () => expect(await fs.readFile(path.join(root, "pid"), "utf8")).toMatch(/^\d+$/));
+		await ready;
 		await stopPublic();
 		expect(await starting).toMatchObject({ running: false, ready: false, url: null, error: null });
 		await fs.unlink(path.join(root, "no-url"));
+		await fs.unlink(path.join(root, "startup-delay"));
 		expect(await startPublic()).toMatchObject({ running: true, ready: true, error: null });
 	});
 });

@@ -71,6 +71,8 @@ export interface WebMessage {
 	timestamp?: number;
 	/** assistant：生成结束的时刻（热会话由 message_end 打点；冷会话没有，回落到 timestamp） */
 	endedAt?: number;
+	/** SDK-recorded model generation time; excludes tool execution and time waiting for the user. */
+	durationMs?: number;
 	stopReason?: string;
 	errorMessage?: string;
 	/** assistant：模型/用量/思考级别等元信息 */

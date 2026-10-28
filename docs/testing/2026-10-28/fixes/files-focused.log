@@ -1,0 +1,14 @@
+npm notice run @rexvane/piweb@0.3.28 npx
+npm notice run 'vitest' run tests/lib/file-path.test.ts tests/components/markdown-file-path.test.tsx tests/components/file-viewer-dir.test.tsx tests/components/chat-image-preview.test.tsx tests/components/app-shell-markdown-paths.test.tsx tests/components/chatwindow-markdown-paths.test.tsx tests/prompt-sources.test.ts tests/api/workspace-image.test.ts tests/files-service.test.ts tests/components/markdown-mermaid.test.tsx
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  10 passed (10)
+      Tests  78 passed (78)
+   Start at  21:23:09
+   Duration  3.65s (tests 39%, import 31%, environment 26%, transform 3%)
+
+    Isolate  10 workers spawned · ~421ms startup each (spawn + environment, per file)
+             at least ~632ms faster with isolate: false — reuses workers across files instead of one per file
+

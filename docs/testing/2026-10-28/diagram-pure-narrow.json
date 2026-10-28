@@ -1,0 +1,48 @@
+{
+  "diagrams": [
+    {
+      "border": "0px",
+      "childTags": [
+        "IMG"
+      ],
+      "controls": 0,
+      "image": {
+        "complete": true,
+        "naturalWidth": 1183,
+        "width": 348
+      },
+      "padding": "0px",
+      "width": 348
+    },
+    {
+      "border": "0px",
+      "childTags": [
+        "IMG"
+      ],
+      "controls": 0,
+      "image": {
+        "complete": true,
+        "naturalWidth": 742,
+        "width": 348
+      },
+      "padding": "0px",
+      "width": 348
+    },
+    {
+      "border": "0px",
+      "childTags": [
+        "IMG"
+      ],
+      "controls": 0,
+      "image": {
+        "complete": true,
+        "naturalWidth": 1250,
+        "width": 348
+      },
+      "padding": "0px",
+      "width": 348
+    }
+  ],
+  "documentWidth": 390,
+  "innerWidth": 390
+}

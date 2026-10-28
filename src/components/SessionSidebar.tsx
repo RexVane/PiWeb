@@ -33,6 +33,7 @@ import {
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { SessionListItem } from "@/hooks/usePiWeb";
+import { useDialog } from "@/hooks/useDialog";
 
 function relTime(iso: string, lang: "zh" | "en"): string {
 	const d = Date.now() - new Date(iso).getTime();
@@ -140,6 +141,9 @@ function SessionSidebarImpl({
 	const menuRef = useRef<HTMLDivElement>(null);
 	const sessionMenuRef = useRef<HTMLDivElement>(null);
 	const renameInputRef = useRef<HTMLInputElement>(null);
+	const renameDialogRef = useRef<HTMLDivElement>(null);
+	const deleteWorkspaceDialogRef = useRef<HTMLDivElement>(null);
+	const renameComposingRef = useRef(false);
 
 	// 自定义弹窗状态（重命名与删除工作区）
 	const [renameTarget, setRenameTarget] = useState<
@@ -164,14 +168,16 @@ function SessionSidebarImpl({
 	}, []);
 
 	useEffect(() => {
+		renameComposingRef.current = false;
 		if (renameTarget) {
 			setRenameValue(renameTarget.name);
 			setRenamePending(false);
 			setRenameError(null);
-			setTimeout(() => {
+			const timer = setTimeout(() => {
 				renameInputRef.current?.focus();
 				renameInputRef.current?.select();
 			}, 30);
+			return () => clearTimeout(timer);
 		}
 	}, [renameTarget]);
 
@@ -205,6 +211,10 @@ function SessionSidebarImpl({
 		setRenameTarget(null);
 		setRenameError(null);
 	};
+	useDialog({ open: mounted && renameTarget !== null, onClose: closeRename, ref: renameDialogRef });
+	useDialog({ open: mounted && deleteWorkspaceTarget !== null, onClose: () => {
+		if (!deleteWorkspacePending) setDeleteWorkspaceTarget(null);
+	}, ref: deleteWorkspaceDialogRef });
 
 	const handleConfirmDeleteWorkspace = async () => {
 		if (!deleteWorkspaceTarget || deleteWorkspacePending) return;
@@ -888,6 +898,7 @@ function SessionSidebarImpl({
 					onClick={closeRename}
 				>
 					<div
+						ref={renameDialogRef}
 						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
@@ -924,9 +935,17 @@ function SessionSidebarImpl({
 									setRenameError(null);
 								}}
 								onKeyDown={(e) => {
-									if (e.key === "Enter") void handleConfirmRename();
-									if (e.key === "Escape") closeRename();
+									if (renameComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
+										e.stopPropagation();
+										return;
+									}
+									if (e.key === "Enter") {
+										e.preventDefault();
+										void handleConfirmRename();
+									}
 								}}
+								onCompositionStart={() => { renameComposingRef.current = true; }}
+								onCompositionEnd={() => { renameComposingRef.current = false; }}
 								className="w-full rounded-full bg-white/[0.05] border border-white/15 px-4 py-2.5 text-[14.5px] text-white outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30 transition"
 							/>
 						</div>
@@ -965,6 +984,7 @@ function SessionSidebarImpl({
 					onClick={() => !deleteWorkspacePending && setDeleteWorkspaceTarget(null)}
 				>
 					<div
+						ref={deleteWorkspaceDialogRef}
 						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"

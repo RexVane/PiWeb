@@ -1,0 +1,18 @@
+flowchart TB
+  UI("浏览器交互")
+  API("Next API")
+  MGR("会话管理")
+  AGENT("Pi Agent")
+  MODEL("模型服务")
+  TOOLS("工具与扩展")
+  STORE[("JSONL 存储")]
+  SSE("SSE 事件")
+
+  UI --> API
+  API --> MGR
+  MGR --> AGENT
+  AGENT --> MODEL
+  AGENT --> TOOLS
+  AGENT --> STORE
+  AGENT -.事件.-> SSE
+  SSE -.推送.-> UI

@@ -52,3 +52,34 @@ export function looksLikeFilePath(raw: string): boolean {
 	const ext = value.slice(value.lastIndexOf(".") + 1).toLowerCase();
 	return BARE_EXTENSIONS.has(ext);
 }
+
+/** Explicit Markdown links can name Chinese files, spaces, directories or extensionless files. */
+export function relativeMarkdownPath(href: string): string | null {
+	if (!href || /^[#?/~\\]/.test(href) || /^[a-z][a-z\d+.-]*:/i.test(href)) return null;
+	const rawPath = href.split(/[?#]/, 1)[0];
+	try {
+		const decoded = decodeURIComponent(rawPath);
+		if (!decoded || /[\u0000-\u001f\u007f\\]/.test(decoded) || decoded.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return null;
+		return decoded;
+	} catch {
+		return null;
+	}
+}
+
+/** Resolve document references without importing Node's path module into the browser. */
+export function resolveMarkdownDocumentPath(documentPath: string, href: string): string {
+	const current = documentPath.replaceAll("\\", "/");
+	const absolute = current.startsWith("/") || /^[a-z]:\//i.test(current);
+	const url = new URL(href, `file:///${current.replace(/^\//, "").split("/").map(encodeURIComponent).join("/")}`);
+	let target = decodeURIComponent(url.pathname);
+	if (!absolute || /^\/[a-z]:\//i.test(target)) target = target.slice(1);
+	return target;
+}
+
+/** Local preview images use the same authenticated workspace/discovered-source boundary as files. */
+export function markdownDocumentImageUrl(cwd: string, documentPath: string, href: string, sourcePath?: string): string {
+	if (relativeMarkdownPath(href) === null) return href;
+	const query = new URLSearchParams({ image: "1", cwd, path: resolveMarkdownDocumentPath(documentPath, href) });
+	if (sourcePath) query.set("sourcePath", sourcePath);
+	return `/api/files?${query}`;
+}

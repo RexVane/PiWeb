@@ -36,9 +36,10 @@ import { projectedContextUsage } from "./session/metrics";
 import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview, toTrajTokens } from "./trajectory";
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
+import { isAbortMessage, isCancellationError } from "./chat/cancellation";
 import { BoundaryError } from "./path-security";
 import { newSessionThinkingLevel } from "./thinking-level";
-import { getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
+import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
@@ -157,8 +158,9 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 	if (m.role === "user") out.role = "user";
 	else if (m.role === "assistant") {
 		out.role = "assistant";
-		out.stopReason = m.stopReason;
+		out.stopReason = m.stopReason === "error" && isAbortMessage(m.errorMessage) ? "aborted" : m.stopReason;
 		out.errorMessage = m.errorMessage ?? undefined;
+		if (typeof m.durationMs === "number" && Number.isFinite(m.durationMs) && m.durationMs >= 0) out.durationMs = m.durationMs;
 		out.usage = toTrajTokens(m.usage);
 		if (m.usage?.cost?.total != null) out.usage = { ...out.usage, cost: { total: m.usage.cost.total } };
 		out.model = typeof m.model === "string" ? m.model : undefined;
@@ -1733,7 +1735,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	return {
 		seq: snapSeq ?? m.seq,
 		sessionPath: m.sessionPath,
-		cwd: m.cwd,
+		// 只投影界面工作区身份；SDK 仍使用历史会话保存的 cwd。
+		cwd: await canonicalWorkspacePath(m.cwd),
 		name,
 		contextFiles: contextResources.map((resource) => resource.path),
 		contextResources,
@@ -1878,6 +1881,7 @@ function submitPrompt(
 			if (!accepted) resolve({ ok: true, data: { accepted: true } });
 		}, (error) => {
 			const message = String(error?.message ?? error);
+			if (accepted && isCancellationError(error)) return;
 			if (accepted) publish(m, { type: "error", message, ts: Date.now() });
 			else resolve({ ok: false, error: message });
 		});

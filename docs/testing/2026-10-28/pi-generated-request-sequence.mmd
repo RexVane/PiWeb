@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant UI as 浏览器界面
+  participant API as Next API
+  participant MGR as 会话管理
+  participant AG as Pi Agent
+  participant MODEL as 模型服务
+  participant SSE as SSE 事件
+
+  UI->>SSE: 订阅会话
+  UI->>API: 提交提问
+  API->>MGR: 执行 prompt 命令
+  MGR->>AG: 复用或创建会话
+  AG->>MODEL: 发送消息与上下文
+  MODEL-->>AG: 返回流式回答
+  AG-->>MGR: 产生运行事件
+  MGR-->>SSE: 广播快照与增量
+  SSE-->>UI: 更新聊天界面

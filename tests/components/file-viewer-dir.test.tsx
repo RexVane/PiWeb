@@ -9,6 +9,8 @@ import { FileViewer } from "@/components/FileViewer";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import type { ViewerState } from "@/hooks/useFileViewer";
 import { useFileViewer } from "@/hooks/useFileViewer";
+import { useRef, useState } from "react";
+import { useDialog } from "@/hooks/useDialog";
 
 afterEach(() => {
 	cleanup();
@@ -190,11 +192,13 @@ it("快速打开索引失败时显示错误，不冒充无匹配", async () => {
 });
 
 it.each(["docs/guide.md", "D:/ws/docs/guide.md"])("相对工作区链接按当前文件 %s 解析，外部链接和锚点保持 href", async (current) => {
-	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { content: "[文件](../src/%E4%B8%AD%E6%96%87.ts#L2) [外部](https://example.com) [锚点](#section)", binary: false, truncated: false } }) })));
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { content: "[文件](../src/%E4%B8%AD%E6%96%87.ts#L2) [特殊](../src/%E4%B8%AD%E6%96%87%20%23%25file.ts?download=1#L2) [外部](https://example.com) [锚点](#section)", binary: false, truncated: false } }) })));
 	const onOpen = vi.fn();
 	render(<FileViewer state={{ open: true, tabs: [{ path: current, lazy: true }], active: current }} growth={growthStub()} cwd="D:/ws" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={onOpen} />);
 	fireEvent.click(await screen.findByRole("link", { name: "文件" }));
 	expect(onOpen).toHaveBeenCalledWith(current.startsWith("D:") ? "D:/ws/src/中文.ts" : "src/中文.ts", { lazy: true });
+	fireEvent.click(screen.getByRole("link", { name: "特殊" }));
+	expect(onOpen).toHaveBeenCalledWith(current.startsWith("D:") ? "D:/ws/src/中文 #%file.ts" : "src/中文 #%file.ts", { lazy: true });
 	expect(screen.getByRole("link", { name: "外部" }).getAttribute("href")).toBe("https://example.com");
 	expect(screen.getByRole("link", { name: "锚点" }).getAttribute("href")).toBe("#section");
 });
@@ -242,5 +246,78 @@ it("关闭查看器后才完成的技能链接请求不会重新打开文档", a
 	view.rerender(<FileViewer {...props} state={{ open: false, tabs, active: tabs[0].path }} />);
 	await act(async () => { complete({ ok: true, json: async () => ({ success: true, data: { content: "迟到的内容" } }) }); });
 	expect(onOpenContent).not.toHaveBeenCalled();
+	expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("快速打开的中文输入确认与229兼容事件不会提前打开文件", async () => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: { files: ["src/中文.ts"], source: "git", truncated: false } }) })));
+	const onOpen = vi.fn();
+	render(<FileViewer state={{ open: true, tabs: [], active: null }} growth={growthStub()} cwd="/ime-quick-open" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={onOpen} />);
+	fireEvent.click(screen.getByTitle(/Ctrl\/⌘\+P/));
+	const input = screen.getByPlaceholderText("输入文件名打开…");
+	await screen.findByText("中文.ts");
+	fireEvent.compositionStart(input);
+	fireEvent.change(input, { target: { value: "中文" } });
+	fireEvent.keyDown(input, { key: "Enter" });
+	expect(onOpen).not.toHaveBeenCalled();
+	fireEvent.compositionEnd(input);
+	fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+	fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+	expect(onOpen).not.toHaveBeenCalled();
+	fireEvent.keyDown(input, { key: "Enter" });
+	expect(onOpen).toHaveBeenCalledWith("src/中文.ts");
+});
+
+it("文档预览图片相对文档目录解析并通过受保护API，外部图仍需明确加载", async () => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { content: "![本地图](../assets/%E4%B8%AD%E6%96%87%20image.png?raw=1#image) ![远程图](https://outside.example/pic.png)", binary: false, truncated: false } }) })));
+	render(<FileViewer state={{ open: true, tabs: [{ path: "docs/guide.md", lazy: true }], active: "docs/guide.md" }} growth={growthStub()} cwd="/workspace" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={vi.fn()} />);
+	const image = await screen.findByRole("img", { name: "本地图" });
+	const url = new URL(image.getAttribute("src")!, "http://localhost");
+	expect(url.pathname).toBe("/api/files");
+	expect(Object.fromEntries(url.searchParams)).toEqual({ image: "1", cwd: "/workspace", path: "assets/中文 image.png" });
+	expect(screen.queryByRole("img", { name: "远程图" })).toBeNull();
+	expect(screen.getByTitle("https://outside.example/pic.png")).toBeTruthy();
+});
+
+it("技能文档图片保留原始已发现来源边界", async () => {
+	render(<FileViewer state={{ open: true, tabs: [{ path: "/skills/demo/references/guide.md", staticContent: "![技能图](../images/ui.png)", sourcePath: "/skills/demo/SKILL.md" }], active: "/skills/demo/references/guide.md" }} growth={growthStub()} cwd="/workspace" onClose={vi.fn()} onSelectTab={vi.fn()} onCloseTab={vi.fn()} onOpen={vi.fn()} />);
+	const image = await screen.findByRole("img", { name: "技能图" });
+	const url = new URL(image.getAttribute("src")!, "http://localhost");
+	expect(url.searchParams.get("path")).toBe("/skills/demo/images/ui.png");
+	expect(url.searchParams.get("sourcePath")).toBe("/skills/demo/SKILL.md");
+});
+
+it("Escape只关闭最上层：快速打开、图片、文件查看器、设置逐层返回", async () => {
+	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: { files: [], source: "git", truncated: false } }) })));
+	function Harness() {
+		const [settingsOpen, setSettingsOpen] = useState(true);
+		const settingsRef = useRef<HTMLDivElement>(null);
+		useDialog({ open: settingsOpen, onClose: () => setSettingsOpen(false), ref: settingsRef });
+		const viewer = useFileViewer();
+		return <>
+			{settingsOpen && <div ref={settingsRef} role="dialog" aria-label="设置"><button onClick={() => viewer.openStatic("/skills/demo/SKILL.md", "![图片](/local.png)")}>查看技能</button></div>}
+			<FileViewer state={viewer.state} growth={growthStub()} cwd="/workspace" onClose={viewer.close} onSelectTab={viewer.select} onCloseTab={viewer.closeTab} onOpen={viewer.open} />
+		</>;
+	}
+	render(<Harness />);
+	const opener = screen.getByRole("button", { name: "查看技能" });
+	fireEvent.click(opener);
+	await screen.findByRole("img", { name: "图片" });
+	fireEvent.click(screen.getByTitle(/Ctrl\/⌘\+P/));
+	const input = screen.getByPlaceholderText("输入文件名打开…");
+	fireEvent.keyDown(input, { key: "Escape" });
+	expect(screen.queryByPlaceholderText("输入文件名打开…")).toBeNull();
+	expect(screen.getByTestId("file-viewer")).toBeTruthy();
+	expect(screen.getByRole("dialog", { name: "设置" })).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: "点击放大预览: 图片" }));
+	expect(screen.getByRole("dialog", { name: "图片预览" })).toBeTruthy();
+	fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+	expect(screen.queryByRole("dialog", { name: "图片预览" })).toBeNull();
+	expect(screen.getByTestId("file-viewer")).toBeTruthy();
+	fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+	expect(screen.queryByTestId("file-viewer")).toBeNull();
+	expect(screen.getByRole("dialog", { name: "设置" })).toBeTruthy();
+	expect(document.activeElement).toBe(opener);
+	fireEvent.keyDown(document.activeElement!, { key: "Escape" });
 	expect(screen.queryByRole("dialog")).toBeNull();
 });

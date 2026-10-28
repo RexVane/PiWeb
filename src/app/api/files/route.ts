@@ -1,13 +1,24 @@
 import { NextResponse } from "next/server";
 import { BoundaryError } from "@/lib/path-security";
-import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readWorkspaceFile, saveUploadStream } from "@/lib/files-service";
+import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readWorkspaceFile, readWorkspaceImage, saveUploadStream } from "@/lib/files-service";
 
 export const dynamic = "force-dynamic";
 
-/** 工作区文件浏览：?cwd=&path=（目录列表）；?read=1&cwd=&path=（文本预览）；?index=1&cwd=（@ 引用候选全量清单） */
+/** 工作区文件浏览：?cwd=&path=（目录）；?read=1（文本）；?image=1（受保护图片）；?index=1（引用候选）。 */
 export async function GET(req: Request) {
 	const url = new URL(req.url);
 	try {
+		if (url.searchParams.get("image") === "1") {
+			const image = await readWorkspaceImage(url.searchParams.get("cwd"), url.searchParams.get("path"), url.searchParams.get("sourcePath"));
+			return new Response(Uint8Array.from(image.bytes), { headers: {
+				"Content-Type": image.mimeType,
+				"Content-Length": String(image.bytes.length),
+				"Cache-Control": "private, no-store",
+				"X-Content-Type-Options": "nosniff",
+				"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+				"Referrer-Policy": "no-referrer",
+			} });
+		}
 		if (url.searchParams.get("read") === "1") {
 			return NextResponse.json({ success: true, data: await readWorkspaceFile(url.searchParams.get("cwd"), url.searchParams.get("path")) });
 		}

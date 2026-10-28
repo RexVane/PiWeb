@@ -1,0 +1,37 @@
+{
+  "diagrams": [
+    {
+      "border": "0px",
+      "children": [
+        "IMG"
+      ],
+      "controls": 0,
+      "padding": "0px"
+    },
+    {
+      "border": "0px",
+      "children": [
+        "IMG"
+      ],
+      "controls": 0,
+      "padding": "0px"
+    }
+  ],
+  "images": [
+    {
+      "alt": "本地图片",
+      "height": 180,
+      "loaded": true,
+      "src": "/api/files?image=1&cwd=%2Fprivate%2Ftmp%2Fpiweb-fix-ui-20261028-d2nj5yro%2Fworkspace&path=docs%2Fassets%2Fpicture.png",
+      "width": 400
+    },
+    {
+      "alt": "Mermaid 图表",
+      "height": 320,
+      "loaded": true,
+      "src": "data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20xmlns%3Axlink%3D%22http%3A%2F%2Fwww.w3.org%2F1999%2Fxlink%22%20id%3D%22pw-mermaid-2%22%20width%3D%22172%2",
+      "width": 172
+    }
+  ],
+  "url": "http://127.0.0.1:34127/"
+}

@@ -1,0 +1,34 @@
+{
+  "time": "2026-10-28T21:52:19.592773+08:00",
+  "knownCredentialExactMatch": {
+    "textFilesChecked": 95,
+    "matches": 0,
+    "valuesPrinted": false,
+    "scope": "known copied credential values only; not a security audit"
+  },
+  "services": {
+    "34127": {
+      "listening": false
+    },
+    "34128": {
+      "listening": false
+    },
+    "34129": {
+      "listening": false
+    }
+  },
+  "stoppedOwnPids": [
+    8743
+  ],
+  "finalServerLog": "server-final.log",
+  "temporaryEnvironment": "/tmp/piweb-fix-ui-20261028-d2nj5yro",
+  "movedToFinderTrash": true,
+  "viewportOverridesRestored": true,
+  "gitCommitOrPush": false,
+  "existingDeletedCLAUDEPreserved": true,
+  "cleanupCompletedAt": "2026-10-28T21:52:47.733876+08:00",
+  "temporaryItemsMoved": 10,
+  "temporarySourcePathsRemain": false,
+  "trashEmptied": false,
+  "buildArtifactsAndCachesRetained": true
+}

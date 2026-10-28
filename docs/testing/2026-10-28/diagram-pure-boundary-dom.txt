@@ -1,0 +1,56 @@
+- generic: Pi
+- generic: Web
+- button "«":
+- button "新会话":
+  - text: 新会话
+- generic: 工作区
+- button "搜索":
+- button "分组方式":
+- button "添加工作区":
+- button "UI 测试工作区":
+  - generic: UI 测试工作区
+- button "图表边界测试（预制，非模型输出）":
+  - generic: 图表边界测试（预制，非模型输出）
+- generic: 22分钟
+- button "【Claude】外部导入测试 1：请演示中文对话。":
+  - generic: 【Claude】外部导入测试 1：请演示中文对话。
+- generic: 1小时
+- button "【Claude】外部导入测试 2：请演示中文对话。":
+  - generic: 【Claude】外部导入测试 2：请演示中文对话。
+- generic: 1小时
+- button "UI 全面测试：中文 / Markdown / 工具":
+  - generic: UI 全面测试：中文 / Markdown / 工具
+- generic: 1小时
+- button "UI 全面测试：中文 / Markdown / 工具":
+  - generic: UI 全面测试：中文 / Markdown / 工具
+- generic: 1小时
+- button "设置":
+  - generic: 设置
+- generic: 图表边界测试（预制，非模型输出）
+- button "右侧抽屉":
+- log:
+  - paragraph: 以下是预制的界面边界用例，不是实际模型的输出。
+  - heading "时序图" [level=3]
+  - img "Mermaid 图表"
+  - heading "语法错误" [level=3]
+  - status: 图表暂时无法绘制，源码保留在下方。
+  - code: flowchart TB A --> [
+  - heading "受阻的外部图片" [level=3]
+  - status: 图表暂时无法绘制，源码保留在下方。
+  - code: "flowchart TB A@{ img: \"https://example.invalid/do-not-request.png\" }"
+  - heading "未闭合围栏保留为代码" [level=3]
+  - button "复制":
+  - code: flowchart TB A --> B
+  - button "复制":
+  - button "在新对话中分支":
+  - generic: 10月28日 20:31
+- generic "大纲"
+- textbox "给 pi 发消息…"
+- button "UI Fixture (Local)/test-model · medium":
+  - generic: test-model
+  - generic: medium
+- button "0.25% 上下文估算":
+- button "发送" [disabled]:
+- generic: 0 轮 · 1 步 | 输入 120 tok · 输出 200 tok
+- button "工作区":
+- alert

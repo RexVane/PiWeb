@@ -1,0 +1,11 @@
+npm notice run @rexvane/piweb@0.3.28 test
+npm notice run vitest run tests/components/select-keyboard.test.tsx tests/components/settings-dialog-keyboard.test.tsx tests/components/select-option-placement.test.tsx tests/components/provider-setup-modal.test.tsx tests/components/settings-font-family.test.tsx
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  5 passed (5)
+      Tests  25 passed (25)
+   Start at  21:30:02
+   Duration  1.86s (environment 53%, tests 32%, import 11%, transform 3%)
+

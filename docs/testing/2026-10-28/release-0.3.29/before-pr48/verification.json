@@ -1,0 +1,46 @@
+{
+  "time": "2026-10-28T22:01:52.682926+08:00",
+  "version": "0.3.29",
+  "branch": "rexvane-piweb",
+  "sourceBaseCommit": "26a4d9f49e0f8cc91146f1c43a855a237aa9699d",
+  "buildId": "myYYSclkP7JANFaW31Ocy",
+  "check": {
+    "typecheck": true,
+    "testFiles": 148,
+    "passedTestFiles": 146,
+    "skippedTestFiles": 2,
+    "tests": 1195,
+    "passedTests": 1192,
+    "failedTests": 0,
+    "skippedTests": 3,
+    "durationSeconds": 25.02,
+    "productionBuild": true
+  },
+  "cleanInstall": {
+    "passed": true,
+    "piSdkVersion": "1.4.0",
+    "homePage": true,
+    "apiRoutes": [
+      "/api/health",
+      "/api/version",
+      "/api/models",
+      "/api/sessions",
+      "/api/workspaces",
+      "/api/pi-settings"
+    ]
+  },
+  "artifact": {
+    "path": "dist/rexvane-piweb-0.3.29.tgz",
+    "filename": "rexvane-piweb-0.3.29.tgz",
+    "bytes": 26270474,
+    "fileCount": 1536,
+    "sha256": "62f60a2a1dbf9e74c4553803dadcc1c6c87ff271b340fec63bde3df02fa8068d",
+    "npmIntegrity": "sha512-J+urmmZ2iHIl9xzEZWZiwwyB5FbGMrO709+fYMYg6R1V6z8xEwW9YNicF4DUSSwy1/n4invT3xw9Fy5PSCe+Wg==",
+    "containsBuildCache": false,
+    "sensitiveFileNameMatches": 0,
+    "retainedAsFinalArtifact": false
+  },
+  "pushed": false,
+  "published": false,
+  "supersededByPr48Integration": true
+}
