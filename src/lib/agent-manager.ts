@@ -6,7 +6,20 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { ExtensionRunner, ModelRegistry, formatSkillsForPrompt, generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import {
+ExtensionRunner,
+ModelRegistry,
+createBashToolDefinition,
+createEditToolDefinition,
+createFindToolDefinition,
+createGrepToolDefinition,
+createLsToolDefinition,
+createPowerShellToolDefinition,
+createReadToolDefinition,
+createWriteToolDefinition,
+formatSkillsForPrompt,
+generateUnifiedPatch,
+} from "@earendil-works/pi-coding-agent";
 import {
 	getResourceLoader,
 	createSessionResourceLoader,
@@ -40,6 +53,7 @@ import { isAbortMessage, isCancellationError } from "./chat/cancellation";
 import { BoundaryError } from "./path-security";
 import { newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
+import { readToolPreference, saveToolPreference, type ToolPreference } from "./tool-preferences";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type {
 	AgentCommand,
@@ -93,6 +107,10 @@ interface Managed {
 	 * 档位过滤会把它们从激活集里拿掉，记在这里，换到放行它们的档位时才能恢复。
 	 */
 	requestedTools: Set<string>;
+	/** 服务端按会话保存的工具偏好：只加载一次，冷启动与快照都先等它。 */
+	toolPreferenceLoaded?: Promise<void>;
+	/** 是否已经有服务端偏好；前端只在这之后不再用 localStorage 迁移覆盖。 */
+	toolPreferenceSaved?: boolean;
 	resourceVersion: number;
 	resourceReloadPending: boolean;
 	resourceReloading: boolean;
@@ -1021,6 +1039,119 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 	return m;
 }
 
+/** 首次打开某会话时，把服务端保存的 preset / 逐项选择装进 Managed。只读一次文件。 */
+function ensureToolPreference(m: Managed): Promise<void> {
+	m.toolPreferenceLoaded ??= readToolPreference(m.sessionPath).then((preference) => {
+		if (!preference || m.disposed) return;
+		m.toolPreset = preference.toolPreset;
+		m.customActiveTools = preference.customActiveTools;
+		m.toolPreferenceSaved = true;
+	}).catch(() => {
+		/* 偏好文件坏掉 / 读不了：本次按默认档位跑，不影响会话本身 */
+	});
+	return m.toolPreferenceLoaded;
+}
+
+/**
+ * 工具选择只在服务端按会话持久化，不写会话 JSONL。保存失败不阻断本次切换，
+ * 但仍把 `toolPreferenceSaved` 置真，避免前端反复用 localStorage 覆盖用户刚做的选择。
+ */
+async function persistToolPreference(m: Managed): Promise<void> {
+	const preference: ToolPreference = {
+		toolPreset: m.toolPreset,
+		...(m.customActiveTools ? { customActiveTools: m.customActiveTools } : {}),
+	};
+	m.toolPreferenceSaved = true;
+	try {
+		await saveToolPreference(m.sessionPath, preference);
+	} catch {
+		/* 只影响下次重启恢复；当前会话已按新选择生效 */
+	}
+}
+
+/** SDK 内置工具定义：直接构造，不启动 agent，也不连接 MCP。 */
+const BUILTIN_TOOL_DEFINITIONS = [
+	createReadToolDefinition,
+	createBashToolDefinition,
+	createEditToolDefinition,
+	createWriteToolDefinition,
+	createGrepToolDefinition,
+	createFindToolDefinition,
+	createLsToolDefinition,
+	createPowerShellToolDefinition,
+];
+
+interface CatalogTool {
+	name: string;
+	description?: string;
+	exposure?: string;
+	defaultActive?: boolean;
+}
+
+/**
+ * 冷会话的工具全集：SDK 内置定义直接构造；扩展工具取加载器已注册的 definition
+ * （资源发现本来就已加载，不会触发 session_start）。同名扩展工具覆盖内置定义，与 SDK 顺序一致。
+ */
+function toolCatalog(m: Managed): CatalogTool[] {
+	const catalog = new Map<string, CatalogTool>();
+	for (const create of BUILTIN_TOOL_DEFINITIONS) {
+		try {
+			const definition = create(m.cwd);
+			catalog.set(definition.name, {
+				name: definition.name,
+				description: definition.description,
+				exposure: definition.exposure,
+				defaultActive: definition.defaultActive,
+			});
+		} catch {
+			/* 单个内置定义构造失败（例如平台不支持 powershell）就跳过 */
+		}
+	}
+	let loader: AgentSession["resourceLoader"] | undefined;
+	try {
+		loader = m.session?.resourceLoader ?? peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
+	} catch {
+		loader = undefined;
+	}
+	try {
+		for (const extension of loader?.getExtensions().extensions ?? []) {
+			for (const { definition } of extension.tools.values()) {
+				catalog.set(definition.name, {
+					name: definition.name,
+					description: definition.description,
+					exposure: definition.exposure,
+					defaultActive: definition.defaultActive,
+				});
+			}
+		}
+	} catch {
+		/* 扩展发现失败：至少保留内置工具，工具页不会整块空白 */
+	}
+	return [...catalog.values()];
+}
+
+/** 冷会话按与热会话相同的档位 / 逐项策略算出激活集。 */
+function coldActiveToolNames(m: Managed, catalog: CatalogTool[]): string[] {
+	const allowed = catalog.filter((tool) => m.customActiveTools
+		? m.customActiveTools.includes(tool.name)
+		: presetAllowsTool(m.toolPreset, tool.name));
+	if (m.customActiveTools) return allowed.map((tool) => tool.name);
+	return allowed
+		.filter((tool) => (tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only") && tool.defaultActive !== false)
+		.map((tool) => tool.name);
+}
+
+function snapshotTools(m: Managed, session: AgentSession | null): WebSnapshot["tools"] {
+	if (session) {
+		return { active: listActiveTools(session), all: listAllToolNames(session).map((name) => ({ name })) };
+	}
+	const catalog = toolCatalog(m);
+	return {
+		active: coldActiveToolNames(m, catalog),
+		all: catalog.map((tool) => ({ name: tool.name, ...(tool.description ? { description: tool.description } : {}) })),
+	};
+}
+
 function loadContextResources(cwd: string, loader: AgentSession["resourceLoader"] = getResourceLoader(cwd)): ContextResource[] {
 	const files = loader.getAgentsFiles().agentsFiles.map((file) => ({
 		path: file.path,
@@ -1181,6 +1312,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 	if (m.creating) return m.creating;
 	if (m.session) return m.session;
 	m.creating = (async () => {
+		// 恢复服务端保存的工具选择必须在创建 session 之前完成，SDK 的初始激活集随后即被策略覆盖
+		await ensureToolPreference(m);
 		await resourceLoaderReady(m.cwd);
 		const settingsManager = getSettingsManager(m.cwd);
 		const loader = await createSessionResourceLoader(m.cwd);
@@ -1315,8 +1448,17 @@ function shutdownSession(session: AgentSession): Promise<void> {
 	return done;
 }
 
-function publishTools(m: Managed, session: AgentSession): void {
-	publish(m, { type: "tools", active: listActiveTools(session), all: listAllToolNames(session), toolPreset: m.toolPreset, customActiveTools: m.customActiveTools ?? null, ts: Date.now() });
+function publishTools(m: Managed, session: AgentSession | null): void {
+	const tools = snapshotTools(m, session);
+	publish(m, {
+		type: "tools",
+		active: tools.active,
+		all: tools.all.map((tool) => tool.name),
+		toolPreset: m.toolPreset,
+		customActiveTools: m.customActiveTools ?? null,
+		toolPreferenceSaved: m.toolPreferenceSaved === true,
+		ts: Date.now(),
+	});
 	publishContextBreakdown(m);
 }
 
@@ -1592,6 +1734,8 @@ export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 
 export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	touch(m);
+	// 工具偏好先于 active 计算就位：否则服务重启后的首个快照会短暂回到默认档位
+	await ensureToolPreference(m);
 	// 冷路径的 prompt/技能/上下文资源都来自加载器，先等发现完成；
 	// 用户刚在 prompts/skills/extensions 目录新建了文件的话顺手重载一次（只 stat 几个目录）
 	await resourceLoaderReady(m.cwd);
@@ -1694,9 +1838,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		}
 	}
 
-	const tools = session
-		? { active: listActiveTools(session), all: listAllToolNames(session).map((n) => ({ name: n })) }
-		: { active: [], all: [] };
+	const tools = snapshotTools(m, session);
 	const queue = session
 		? { steering: [...session.getSteeringMessages()], followUp: [...session.getFollowUpMessages()] }
 		: { steering: [], followUp: [] };
@@ -1751,6 +1893,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		thinkingLevels,
 		toolPreset: m.toolPreset,
 		customActiveTools: m.customActiveTools ?? null,
+		toolPreferenceSaved: m.toolPreferenceSaved === true,
 		extensionUiRequests: m.ui?.getPendingRequests() ?? [],
 		// 扩展 setStatus 的当前值：重连拿快照时页脚状态不能丢
 		extensionStatuses: Object.fromEntries(m.ui?.statuses ?? []),
@@ -1974,15 +2117,17 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 			case "setToolPreset": {
 				const preset = cmd.preset as ToolPreset;
 				if (!Object.hasOwn(TOOL_PRESETS, preset)) return { ok: false, error: "invalid tool preset" };
+				await ensureToolPreference(m);
 				// 运行中也能改：SDK 的 setActiveToolsByName 不做 busy 检查，改完重建系统提示词，
 				// 在下一轮生效（本轮的请求已经发出去了，改不了）。这里不再自行拦一层。
 				if (!m.session && !m.creating) {
 					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
-					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复本地档位，
+					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复保存的档位，
 					// 若这里 ensureSession，光是浏览历史会话就会跑一遍扩展的 session_start。
 					m.toolPreset = preset;
 					m.customActiveTools = undefined;
-					publish(m, { type: "tools", active: [], all: [], toolPreset: preset, customActiveTools: null, ts: Date.now() });
+					await persistToolPreference(m);
+					publishTools(m, null);
 					return { ok: true };
 				}
 				const session = await ensureSession(m);
@@ -1990,23 +2135,27 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				m.toolPreset = preset;
 				m.customActiveTools = undefined;
 				applyToolPolicy(m, session);
+				await persistToolPreference(m);
 				publishEnvironmentTrajectory(m, session);
 				publishTools(m, session);
 				return { ok: true };
 			}
 			case "setActiveTools": {
-				// 同上：运行中允许改，下一轮生效。
-				const session = await ensureSession(m);
-				if (m.disposed) return { ok: false, error: "session is disposed" };
+				// 同上：运行中允许改，下一轮生效。冷会话也能先记下，不必为开关工具启动 agent。
+				await ensureToolPreference(m);
 				const wanted = Array.isArray(cmd.names) ? cmd.names.map(String) : [];
-				const all = listAllToolNames(session);
-				const next = [...new Set(wanted)].filter((n) => all.includes(n));
+				const session = m.session ?? (m.creating ? await m.creating : null);
+				const all = session ? listAllToolNames(session) : toolCatalog(m).map((tool) => tool.name);
+				const next = [...new Set(wanted)].filter((name) => all.includes(name));
 				if (next.length === 0) return { ok: false, error: "cannot disable all tools" };
 				m.customActiveTools = next;
-				applyToolPolicy(m, session);
-				publishEnvironmentTrajectory(m, session);
+				if (session) {
+					applyToolPolicy(m, session);
+					publishEnvironmentTrajectory(m, session);
+				}
+				await persistToolPreference(m);
 				publishTools(m, session);
-				return { ok: true, data: { active: listActiveTools(session) } };
+				return { ok: true, data: { active: session ? listActiveTools(session) : coldActiveToolNames(m, toolCatalog(m)) } };
 			}
 			case "cycleModel": {
 				const session = await ensureSession(m);

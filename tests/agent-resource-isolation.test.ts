@@ -188,6 +188,30 @@ describe("real SDK session resource isolation", () => {
 		expect(session.getActiveToolNames()).not.toContain("probe_tool");
 	});
 
+	it("restores every tool choice after the server reopens a disposed session", async () => {
+		const first = await create();
+		expect(await manager.execute(first.m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
+		expect(await manager.execute(first.m, { cmd: "setActiveTools", names: ["read", "probe_tool"] })).toMatchObject({ ok: true });
+		expect(first.session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
+		const sessionPath = first.m.sessionPath;
+		// SDK 只在出现真实对话后才创建 JSONL；写一条用户消息，确保重新打开时文件存在
+		first.m.sm.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "persist me" }],
+			timestamp: Date.now(),
+		});
+		// 模拟服务重启 / 空闲回收后重新打开同一 JSONL：从持久化偏好恢复，不回到默认档位
+		manager.disposeSession(first.m);
+		const reopened = manager.getManaged(sessionPath);
+		managed.push(reopened);
+		const cold = await manager.buildSnapshot(reopened);
+		expect(cold.customActiveTools).toEqual(["read", "probe_tool"]);
+		expect(cold.toolPreferenceSaved).toBe(true);
+		expect(cold.tools.active).toEqual(expect.arrayContaining(["read", "probe_tool"]));
+		const session = await manager.ensureSession(reopened);
+		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
+	});
+
 	it("loads the SDK built-in extensions but leaves their opt-in tools to the SDK", async () => {
 		const { m, session } = await create();
 		expect(session.getAllTools().map((tool) => tool.name)).toEqual(expect.arrayContaining(["codemode", "tool_search"]));

@@ -141,7 +141,7 @@ export type WebEvent =
 	/** 发现终端写入后从磁盘重载：这条之后流会关闭，前端立刻重连拿新快照 */
 	| { type: "external_reload"; entries: number; at: number; ts: number }
 	| { type: "name"; name: string; ts: number }
-	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; ts: number }
+	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; toolPreferenceSaved?: boolean; ts: number }
 	/** 上下文分项变了（会话启动、工具 / 资源重载、压缩之后）：替换快照里的 contextBreakdown */
 	| { type: "context_breakdown"; breakdown: ContextBreakdown; ts: number }
 	| {
@@ -330,6 +330,8 @@ export interface WebSnapshot {
 	toolPreset: ToolPreset;
 	/** custom 白名单优先于 preset；null 表示使用 preset，省略兼容旧服务端。 */
 	customActiveTools?: string[] | null;
+	/** 工具选择是否已在服务端按会话持久化；旧服务端省略（前端仍用 localStorage 迁移）。 */
+	toolPreferenceSaved?: boolean;
 	/** 当前待应答的扩展请求；快照是权威集合，不重放已答请求。 */
 	extensionUiRequests?: Extract<WebEvent, { type: "extension_ui" }>[];
 	/** 扩展通过 setStatus 设的页脚状态（key → 文本）；缺省按空处理（兼容旧服务端） */
