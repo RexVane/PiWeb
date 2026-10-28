@@ -161,10 +161,12 @@ function checkIgnore(root: string, git: string, rels: string[]): Promise<string>
 		child.on("error", (error) => { clearTimeout(timer); reject(error); });
 		child.on("close", (code) => {
 			clearTimeout(timer);
-			if (inputError) reject(inputError);
+			// Git can reject a non-repository before reading stdin; its failure explains
+			// the resulting EPIPE. A successful exit still requires complete input.
+			if (code !== 0 && code !== 1) reject(new Error(err.trim() || `git check-ignore exited with ${code}`));
+			else if (inputError) reject(inputError);
 			else if (code === 0) resolve(out);
-			else if (code === 1) resolve("");
-			else reject(new Error(err.trim() || `git check-ignore exited with ${code}`));
+			else resolve("");
 		});
 		try {
 			child.stdin.end(`${rels.join("\u0000")}\u0000`);

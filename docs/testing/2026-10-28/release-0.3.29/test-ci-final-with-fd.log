@@ -1,0 +1,14 @@
+npm notice run @rexvane/piweb@0.3.29 test
+npm notice run vitest run
+
+ RUN  v5.0.5 /Users/kaijimima/Documents/Agent/PiWeb
+
+
+ Test Files  148 passed | 2 skipped (150)
+      Tests  1214 passed | 3 skipped (1217)
+   Start at  23:05:50
+   Duration  29.21s (tests 56%, import 22%, environment 20%, transform 1%)
+
+    Isolate  150 workers spawned · ~214ms startup each (spawn + environment, per file)
+             at least ~7.82s faster with isolate: false — reuses workers across files instead of one per file
+

@@ -2,7 +2,28 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const gitPipeFailure = vi.hoisted(() => ({ result: null as { code: number; stderr: string } | null }));
+vi.mock("node:child_process", async (original) => {
+	const actual = await original<typeof import("node:child_process")>();
+	const { EventEmitter } = await import("node:events");
+	const { PassThrough } = await import("node:stream");
+	return { ...actual, spawn: (file: string, args: readonly string[] = [], options: import("node:child_process").SpawnOptions = {}) => {
+		const result = gitPipeFailure.result;
+		if (!result || args[0] !== "check-ignore") return actual.spawn(file, args, options);
+		const child = Object.assign(new EventEmitter(), {
+			stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+		});
+		queueMicrotask(() => {
+			child.stdout.end();
+			child.stderr.end(result.stderr);
+			child.stdin.destroy(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+			setImmediate(() => child.emit("close", result.code));
+		});
+		return child;
+	} };
+});
 import { GET } from "../../src/app/api/files/route";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8QkAAAAASUVORK5CYII=", "base64");
@@ -14,7 +35,10 @@ beforeEach(async () => {
 	await fs.mkdir(path.join(cwd, "assets"), { recursive: true });
 	await fs.writeFile(path.join(cwd, "assets", "中文 image.png"), PNG);
 });
-afterEach(async () => { await fs.rm(temporary, { recursive: true, force: true }); });
+afterEach(async () => {
+	gitPipeFailure.result = null;
+	await fs.rm(temporary, { recursive: true, force: true });
+});
 
 const imageRequest = (file: string) => GET(new Request(`http://localhost/api/files?${new URLSearchParams({ image: "1", cwd, path: file })}`));
 
@@ -60,8 +84,32 @@ describe("protected workspace image endpoint", () => {
 	it("does not serve HTML or SVG disguised by a raster extension", async () => {
 		for (const [name, content] of [["fake.png", "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"], ["fake.jpg", "<html>not an image</html>"], ["page.html", "<html>page</html>"], ["entity.svg", "<!DOCTYPE svg [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><svg>&x;</svg>"]]) {
 			await fs.writeFile(path.join(cwd, name), content);
-			expect((await imageRequest(name)).status, name).toBe(400);
+			const response = await imageRequest(name);
+			expect(response.status, `${name}: ${await response.text()}`).toBe(400);
 		}
+	});
+
+	it.each(["valid", "disguised"])("checks %s image content after Git closes stdin before reporting a non-repository error", async (kind) => {
+		gitPipeFailure.result = { code: 128, stderr: "fatal: not a git repository (or any of the parent directories): .git\n" };
+		if (kind === "disguised") await fs.writeFile(path.join(cwd, "fake.png"), "<svg><script>alert(1)</script></svg>");
+		const response = await imageRequest(kind === "valid" ? "assets/中文 image.png" : "fake.png");
+		expect(response.status, await response.clone().text()).toBe(kind === "valid" ? 200 : 400);
+		if (kind === "valid") expect(Buffer.from(await response.arrayBuffer())).toEqual(PNG);
+		else expect((await response.json()).error).toBe("image content does not match its type");
+	});
+
+	it.each([0, 1])("does not accept an incomplete Git ignore check after stdin fails (exit %s)", async (code) => {
+		gitPipeFailure.result = { code, stderr: "" };
+		const response = await imageRequest("assets/中文 image.png");
+		expect(response.status).toBe(500);
+		expect((await response.json()).error).toBe("write EPIPE");
+	});
+
+	it("keeps unsafe-repository failures closed when Git also closes stdin early", async () => {
+		gitPipeFailure.result = { code: 128, stderr: "fatal: detected dubious ownership in repository\n" };
+		const response = await imageRequest("assets/中文 image.png");
+		expect(response.status).toBe(500);
+		expect((await response.json()).error).toBe("fatal: detected dubious ownership in repository");
 	});
 
 	it("serves real SVG with scripts and external requests disabled even when navigated directly", async () => {

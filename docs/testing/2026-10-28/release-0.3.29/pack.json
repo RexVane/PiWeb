@@ -3,10 +3,10 @@
     "id": "@rexvane/piweb@0.3.29",
     "name": "@rexvane/piweb",
     "version": "0.3.29",
-    "size": 26278516,
-    "unpackedSize": 44960921,
-    "shasum": "df7cd1c8a6a2b98b9b277353e5b66ba07254ede7",
-    "integrity": "sha512-GbXBugVMm5qk3wmjtCM/va+BqdlQRserTlSHF8z1fUE1mB0xa8zKhMsEFalqb3ESJbIHl+aVJtT8Y0fXVSXefg==",
+    "size": 26276685,
+    "unpackedSize": 44919470,
+    "shasum": "589036e4acf840e53923e252482f6c87adf0da66",
+    "integrity": "sha512-kjNu0y//UFdcgaV+RYeCNJLfiQmaWpWs8Sq1NGXVuj74rIQyKTVmv7zWJ3uMk2pZx1VdBEv8LLbKPnXFTJbU+g==",
     "filename": "rexvane-piweb-0.3.29.tgz",
     "files": [
       {
@@ -276,7 +276,7 @@
       },
       {
         "path": ".next/server/app/api/files/route.js",
-        "size": 22046,
+        "size": 22053,
         "mode": 420
       },
       {
@@ -1192,46 +1192,6 @@
       {
         "path": ".next/server/preview-props.json",
         "size": 250,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_PAGE/c6377dd9ce6a1c2cd100eb4344e843eb4639b9ed26f84643f77680e9eb454c4b/$/index.html",
-        "size": 26721,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_PAGE/c6377dd9ce6a1c2cd100eb4344e843eb4639b9ed26f84643f77680e9eb454c4b/$/index.meta",
-        "size": 481,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_PAGE/c6377dd9ce6a1c2cd100eb4344e843eb4639b9ed26f84643f77680e9eb454c4b/$/index.rsc",
-        "size": 4015,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_PAGE/c6377dd9ce6a1c2cd100eb4344e843eb4639b9ed26f84643f77680e9eb454c4b/$/index.segments/__PAGE__.segment.rsc",
-        "size": 3581,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_PAGE/c6377dd9ce6a1c2cd100eb4344e843eb4639b9ed26f84643f77680e9eb454c4b/$/index.segments/_full.segment.rsc",
-        "size": 4015,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_PAGE/c6377dd9ce6a1c2cd100eb4344e843eb4639b9ed26f84643f77680e9eb454c4b/$/index.segments/_tree.segment.rsc",
-        "size": 272,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_ROUTE/46324d98b8e71cdc62410a339bc8cac206ca0a652c8fd0a60955b78d02081b73/$/icon.svg.body",
-        "size": 440,
-        "mode": 420
-      },
-      {
-        "path": ".next/server/route-cache/APP_ROUTE/46324d98b8e71cdc62410a339bc8cac206ca0a652c8fd0a60955b78d02081b73/$/icon.svg.meta",
-        "size": 444,
         "mode": 420
       },
       {
@@ -4290,23 +4250,23 @@
         "mode": 420
       },
       {
-        "path": ".next/static/V-x9GfKEae1o5yse2_RyS/_buildManifest.js",
+        "path": ".next/static/QWrqaNf6LRYQEB-SEJVy4/_buildManifest.js",
         "size": 1476,
         "mode": 420
       },
       {
-        "path": ".next/static/V-x9GfKEae1o5yse2_RyS/_ssgManifest.js",
+        "path": ".next/static/QWrqaNf6LRYQEB-SEJVy4/_ssgManifest.js",
         "size": 80,
         "mode": 420
       },
       {
         "path": ".next/trace",
-        "size": 163641,
+        "size": 161982,
         "mode": 420
       },
       {
         "path": ".next/trace-build",
-        "size": 1205,
+        "size": 1204,
         "mode": 420
       },
       {
@@ -7391,7 +7351,7 @@
       },
       {
         "path": "src/lib/files-service.ts",
-        "size": 27143,
+        "size": 27314,
         "mode": 420
       },
       {
@@ -7735,7 +7695,7 @@
         "mode": 420
       }
     ],
-    "entryCount": 1545,
+    "entryCount": 1537,
     "bundled": []
   }
 }

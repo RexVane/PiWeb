@@ -1,0 +1,500 @@
+﻿2026-10-28T14:53:53.5699787Z Current runner version: '2.338.0'
+2026-10-28T14:53:53.5727847Z ##[group]Runner Image Provisioner
+2026-10-28T14:53:53.5728675Z Hosted Compute Agent
+2026-10-28T14:53:53.5729179Z Version: 20261021.618
+2026-10-28T14:53:53.5729689Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-28T14:53:53.5730365Z Build Date: 2026-10-21T00:45:21Z
+2026-10-28T14:53:53.5730947Z Worker ID: {e8919f8a-93f3-4811-8025-4cdb33f70493}
+2026-10-28T14:53:53.5731544Z Region: centralus
+2026-10-28T14:53:53.5732023Z Cloud: Azure
+2026-10-28T14:53:53.5732496Z ##[endgroup]
+2026-10-28T14:53:53.5734000Z ##[group]Operating System
+2026-10-28T14:53:53.5734926Z Ubuntu
+2026-10-28T14:53:53.5735402Z 24.04.5
+2026-10-28T14:53:53.5735848Z LTS
+2026-10-28T14:53:53.5736280Z ##[endgroup]
+2026-10-28T14:53:53.5736787Z ##[group]Runner Image
+2026-10-28T14:53:53.5737285Z Image: ubuntu-24.04
+2026-10-28T14:53:53.5737752Z Version: 20261012.334.1
+2026-10-28T14:53:53.5738844Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-28T14:53:53.5740149Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+2026-10-28T14:53:53.5740935Z ##[endgroup]
+2026-10-28T14:53:53.5741891Z ##[group]GITHUB_TOKEN Permissions
+2026-10-28T14:53:53.5743666Z Contents: read
+2026-10-28T14:53:53.5744344Z Metadata: read
+2026-10-28T14:53:53.5744836Z ##[endgroup]
+2026-10-28T14:53:53.5746556Z Secret source: Actions
+2026-10-28T14:53:53.5747333Z Cache mode: write
+2026-10-28T14:53:53.5747902Z Prepare workflow directory
+2026-10-28T14:53:53.6039759Z Prepare all required actions
+2026-10-28T14:53:53.6083951Z Getting action download info
+2026-10-28T14:53:53.8799940Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-28T14:53:53.9819413Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-10-28T14:53:54.2707472Z Complete job name: check (ubuntu-latest, 24)
+2026-10-28T14:53:54.3390964Z ##[group]Run actions/checkout@v4
+2026-10-28T14:53:54.3391687Z with:
+2026-10-28T14:53:54.3392203Z   repository: RexVane/PiWeb
+2026-10-28T14:53:54.3395838Z   token: ***
+2026-10-28T14:53:54.3396305Z   ssh-strict: true
+2026-10-28T14:53:54.3396788Z   ssh-user: git
+2026-10-28T14:53:54.3397205Z   persist-credentials: true
+2026-10-28T14:53:54.3397721Z   clean: true
+2026-10-28T14:53:54.3398189Z   sparse-checkout-cone-mode: true
+2026-10-28T14:53:54.3398690Z   fetch-depth: 1
+2026-10-28T14:53:54.3399124Z   fetch-tags: false
+2026-10-28T14:53:54.3399559Z   show-progress: true
+2026-10-28T14:53:54.3400007Z   lfs: false
+2026-10-28T14:53:54.3400431Z   submodules: false
+2026-10-28T14:53:54.3400859Z   set-safe-directory: true
+2026-10-28T14:53:54.3401401Z   allow-unsafe-pr-checkout: false
+2026-10-28T14:53:54.3402044Z ##[endgroup]
+2026-10-28T14:53:54.5744158Z Syncing repository: RexVane/PiWeb
+2026-10-28T14:53:54.5746095Z ##[group]Getting Git version info
+2026-10-28T14:53:54.5746827Z Working directory is '/home/runner/work/PiWeb/PiWeb'
+2026-10-28T14:53:54.5747820Z [command]/usr/bin/git version
+2026-10-28T14:53:54.5829400Z git version 2.55.0
+2026-10-28T14:53:54.5846531Z ##[endgroup]
+2026-10-28T14:53:54.5858426Z Temporarily overriding HOME='/home/runner/work/_temp/fe27383b-1cbc-4595-b9ee-f31d769de9c4' before making global git config changes
+2026-10-28T14:53:54.5860621Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-28T14:53:54.5862921Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/PiWeb/PiWeb
+2026-10-28T14:53:54.5913950Z Deleting the contents of '/home/runner/work/PiWeb/PiWeb'
+2026-10-28T14:53:54.5919793Z ##[group]Initializing the repository
+2026-10-28T14:53:54.5926255Z [command]/usr/bin/git init /home/runner/work/PiWeb/PiWeb
+2026-10-28T14:53:54.6024434Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-28T14:53:54.6029655Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-28T14:53:54.6031397Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-28T14:53:54.6032879Z hint: call:
+2026-10-28T14:53:54.6033568Z hint:
+2026-10-28T14:53:54.6034827Z hint: 	git config --global init.defaultBranch <name>
+2026-10-28T14:53:54.6035872Z hint:
+2026-10-28T14:53:54.6036867Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-28T14:53:54.6038272Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-28T14:53:54.6039540Z hint:
+2026-10-28T14:53:54.6040335Z hint: 	git branch -m <name>
+2026-10-28T14:53:54.6041088Z hint:
+2026-10-28T14:53:54.6042104Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-28T14:53:54.6043673Z Initialized empty Git repository in /home/runner/work/PiWeb/PiWeb/.git/
+2026-10-28T14:53:54.6047280Z [command]/usr/bin/git remote add origin https://github.com/RexVane/PiWeb
+2026-10-28T14:53:54.6092595Z ##[endgroup]
+2026-10-28T14:53:54.6094041Z ##[group]Disabling automatic garbage collection
+2026-10-28T14:53:54.6096201Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-28T14:53:54.6128496Z ##[endgroup]
+2026-10-28T14:53:54.6129829Z ##[group]Setting up auth
+2026-10-28T14:53:54.6135989Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-28T14:53:54.6169012Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-28T14:53:54.6522657Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-28T14:53:54.6554053Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-28T14:53:54.6733339Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-28T14:53:54.6759367Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-28T14:53:54.6921979Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-28T14:53:54.6953699Z ##[endgroup]
+2026-10-28T14:53:54.6954791Z ##[group]Fetching the repository
+2026-10-28T14:53:54.6965097Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +e8056b50fbdb8d66738647babd2b2722e88a4466:refs/remotes/pull/49/merge
+2026-10-28T14:53:55.8162121Z From https://github.com/RexVane/PiWeb
+2026-10-28T14:53:55.8163633Z  * [new ref]         e8056b50fbdb8d66738647babd2b2722e88a4466 -> pull/49/merge
+2026-10-28T14:53:55.8166796Z ##[endgroup]
+2026-10-28T14:53:55.8167850Z ##[group]Determining the checkout info
+2026-10-28T14:53:55.8169082Z ##[endgroup]
+2026-10-28T14:53:55.8175900Z [command]/usr/bin/git sparse-checkout disable
+2026-10-28T14:53:55.8224805Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-28T14:53:55.8249996Z ##[group]Checking out the ref
+2026-10-28T14:53:55.8253324Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/49/merge
+2026-10-28T14:53:55.8966134Z Note: switching to 'refs/remotes/pull/49/merge'.
+2026-10-28T14:53:55.8967347Z 
+2026-10-28T14:53:55.8968375Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-28T14:53:55.8970829Z changes and commit them, and you can discard any commits you make in this
+2026-10-28T14:53:55.8972413Z state without impacting any branches by switching back to a branch.
+2026-10-28T14:53:55.8973649Z 
+2026-10-28T14:53:55.8974536Z If you want to create a new branch to retain commits you create, you may
+2026-10-28T14:53:55.8976041Z do so (now or later) by using -c with the switch command. Example:
+2026-10-28T14:53:55.8976883Z 
+2026-10-28T14:53:55.8977295Z   git switch -c <new-branch-name>
+2026-10-28T14:53:55.8978148Z 
+2026-10-28T14:53:55.8978655Z Or undo this operation with:
+2026-10-28T14:53:55.8979450Z 
+2026-10-28T14:53:55.8979816Z   git switch -
+2026-10-28T14:53:55.8980283Z 
+2026-10-28T14:53:55.8980979Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-28T14:53:55.8981955Z 
+2026-10-28T14:53:55.8983319Z HEAD is now at e8056b5 Merge 84e2f1e70c7dbc4e8a502bda36b0c48fdafd09bd into 475c0ea0856fdfed20f1122c8889a03a9c763e12
+2026-10-28T14:53:55.8987300Z ##[endgroup]
+2026-10-28T14:53:55.9009526Z [command]/usr/bin/git log -1 --format=%H
+2026-10-28T14:53:55.9028235Z e8056b50fbdb8d66738647babd2b2722e88a4466
+2026-10-28T14:53:55.9368854Z ##[group]Run actions/setup-node@v4
+2026-10-28T14:53:55.9369913Z with:
+2026-10-28T14:53:55.9370773Z   node-version: 24
+2026-10-28T14:53:55.9371655Z   cache: npm
+2026-10-28T14:53:55.9372519Z   always-auth: false
+2026-10-28T14:53:55.9373478Z   check-latest: false
+2026-10-28T14:53:55.9381005Z   token: ***
+2026-10-28T14:53:55.9381903Z ##[endgroup]
+2026-10-28T14:53:56.0621133Z (node:2082) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-28T14:53:56.0623555Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-28T14:53:56.0626716Z Found in cache @ /opt/hostedtoolcache/node/24.21.0/x64
+2026-10-28T14:53:56.0629364Z ##[group]Environment details
+2026-10-28T14:53:56.4193115Z node: v24.21.0
+2026-10-28T14:53:56.4193703Z npm: 11.19.0
+2026-10-28T14:53:56.4194423Z yarn: 1.22.22
+2026-10-28T14:53:56.4195524Z ##[endgroup]
+2026-10-28T14:53:56.4209624Z [command]/opt/hostedtoolcache/node/24.21.0/x64/bin/npm config get cache
+2026-10-28T14:53:56.5210441Z /home/runner/.npm
+2026-10-28T14:53:56.6985331Z npm cache is not found
+2026-10-28T14:53:56.7113588Z ##[group]Run npm ci
+2026-10-28T14:53:56.7114015Z [36;1mnpm ci[0m
+2026-10-28T14:53:56.7292460Z shell: /usr/bin/bash -e {0}
+2026-10-28T14:53:56.7292881Z ##[endgroup]
+2026-10-28T14:54:00.5284682Z npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+2026-10-28T14:54:13.9214624Z 
+2026-10-28T14:54:13.9215804Z > @rexvane/piweb@0.3.29 postinstall
+2026-10-28T14:54:13.9216411Z > node scripts/postinstall.mjs
+2026-10-28T14:54:13.9216807Z 
+2026-10-28T14:54:13.9821421Z 
+2026-10-28T14:54:13.9822588Z added 469 packages, and audited 470 packages in 17s
+2026-10-28T14:54:13.9823039Z 
+2026-10-28T14:54:13.9823649Z 137 packages are looking for funding
+2026-10-28T14:54:13.9824405Z   run `npm fund` for details
+2026-10-28T14:54:13.9891636Z 
+2026-10-28T14:54:13.9892578Z 2 vulnerabilities (1 moderate, 1 high)
+2026-10-28T14:54:13.9893077Z 
+2026-10-28T14:54:13.9893427Z To address all issues (including breaking changes), run:
+2026-10-28T14:54:13.9894597Z   npm audit fix --force
+2026-10-28T14:54:13.9894852Z 
+2026-10-28T14:54:13.9895032Z Run `npm audit` for details.
+2026-10-28T14:54:13.9910186Z npm warn install-scripts 2 packages have install scripts not yet covered by allowScripts:
+2026-10-28T14:54:13.9914960Z npm warn install-scripts   @google/genai@2.21.0 (preinstall: echo 'preinstall: no-op')
+2026-10-28T14:54:13.9916156Z npm warn install-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+2026-10-28T14:54:13.9916814Z npm warn install-scripts
+2026-10-28T14:54:13.9917856Z npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+2026-10-28T14:54:14.0855278Z ##[group]Run node scripts/testing/prepare-sdk-tools.mjs
+2026-10-28T14:54:14.0855792Z [36;1mnode scripts/testing/prepare-sdk-tools.mjs[0m
+2026-10-28T14:54:14.0896841Z shell: /usr/bin/bash -e {0}
+2026-10-28T14:54:14.0897161Z env:
+2026-10-28T14:54:14.0897549Z   PI_CODING_AGENT_DIR: /home/runner/work/_temp/piweb-test-agent
+2026-10-28T14:54:14.0897945Z   PI_OFFLINE: 0
+2026-10-28T14:54:14.0898193Z ##[endgroup]
+2026-10-28T14:54:15.6533608Z [ci] fd is ready for offline SDK tests
+2026-10-28T14:54:15.8960929Z [ci] rg is ready for offline SDK tests
+2026-10-28T14:54:15.9150676Z ##[group]Run npm run check
+2026-10-28T14:54:15.9151014Z [36;1mnpm run check[0m
+2026-10-28T14:54:15.9187951Z shell: /usr/bin/bash -e {0}
+2026-10-28T14:54:15.9188271Z env:
+2026-10-28T14:54:15.9188667Z   PI_CODING_AGENT_DIR: /home/runner/work/_temp/piweb-test-agent
+2026-10-28T14:54:15.9189076Z   PI_OFFLINE: 1
+2026-10-28T14:54:15.9189452Z   NEXT_TELEMETRY_DISABLED: 1
+2026-10-28T14:54:15.9189732Z ##[endgroup]
+2026-10-28T14:54:16.0055593Z 
+2026-10-28T14:54:16.0056629Z > @rexvane/piweb@0.3.29 check
+2026-10-28T14:54:16.0057309Z > npm run typecheck && npm run test && npm run build
+2026-10-28T14:54:16.0057770Z 
+2026-10-28T14:54:16.0826098Z 
+2026-10-28T14:54:16.0827038Z > @rexvane/piweb@0.3.29 typecheck
+2026-10-28T14:54:16.0827590Z > tsc --noEmit
+2026-10-28T14:54:16.0827732Z 
+2026-10-28T14:54:18.6204790Z 
+2026-10-28T14:54:18.6205694Z > @rexvane/piweb@0.3.29 test
+2026-10-28T14:54:18.6206243Z > vitest run
+2026-10-28T14:54:18.6206578Z 
+2026-10-28T14:54:18.8674984Z 
+2026-10-28T14:54:18.8697458Z [1m[30m[46m RUN [49m[39m[22m [36mv5.0.5 [39m[90m/home/runner/work/PiWeb/PiWeb[39m
+2026-10-28T14:54:18.8706359Z 
+2026-10-28T14:54:19.8765724Z  [32m✓[39m tests/session-import-sources.test.ts [2m([22m[2m23 tests[22m[2m)[22m[33m 466[2mms[22m[39m
+2026-10-28T14:54:19.9056882Z  [32m✓[39m tests/launcher.test.ts [2m([22m[2m31 tests[22m[2m)[22m[33m 553[2mms[22m[39m
+2026-10-28T14:54:21.2230095Z  [32m✓[39m tests/growth-service.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 1896[2mms[22m[39m
+2026-10-28T14:54:21.2231030Z    [32m✓[39m growth-service rounds (real git) [2m(12)[22m
+2026-10-28T14:54:21.2231735Z      [33m[2m✓[22m[39m removes all type conflicts before adding paths across multiple batches[33m 665[2mms[22m[39m
+2026-10-28T14:54:21.3676621Z  [32m✓[39m tests/update-service.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 376[2mms[22m[39m
+2026-10-28T14:54:21.8837607Z  [32m✓[39m tests/agent-resource-isolation.test.ts [2m([22m[2m26 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[33m 2464[2mms[22m[39m
+2026-10-28T14:54:22.6177278Z  [32m✓[39m tests/models-service-provider-usage.test.ts [2m([22m[2m34 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+2026-10-28T14:54:22.7809799Z  [32m✓[39m tests/components/file-viewer-dir.test.tsx [2m([22m[2m17 tests[22m[2m)[22m[33m 1316[2mms[22m[39m
+2026-10-28T14:54:23.2459028Z  [32m✓[39m tests/proxy-auth.test.ts [2m([22m[2m34 tests[22m[2m)[22m[32m 110[2mms[22m[39m
+2026-10-28T14:54:23.2783971Z  [32m✓[39m tests/components/context-meter.test.tsx [2m([22m[2m15 tests[22m[2m)[22m[33m 925[2mms[22m[39m
+2026-10-28T14:54:23.2813511Z    [32m✓[39m 上下文圆环弹窗 [2m(10)[22m
+2026-10-28T14:54:23.2822629Z      [33m[2m✓[22m[39m 冷会话列出能算的分项，点「现在统计」后等新分项补齐[33m 312[2mms[22m[39m
+2026-10-28T14:54:24.2309914Z  [32m✓[39m tests/models-service-config.test.ts [2m([22m[2m34 tests[22m[2m)[22m[33m 317[2mms[22m[39m
+2026-10-28T14:54:24.5586933Z  [32m✓[39m tests/components/session-import-panel.test.tsx [2m([22m[2m15 tests[22m[2m)[22m[33m 1487[2mms[22m[39m
+2026-10-28T14:54:24.5588357Z    [32m✓[39m 导入会话面板 [2m(15)[22m
+2026-10-28T14:54:24.5636093Z      [33m[2m✓[22m[39m 已归档的会话可选择恢复，普通已导入会话仍然禁用[33m 429[2mms[22m[39m
+2026-10-28T14:54:25.0626572Z  [32m✓[39m tests/components/growth-project-panel.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 649[2mms[22m[39m
+2026-10-28T14:54:25.5312961Z  [32m✓[39m tests/agent-prompt-acceptance.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 127[2mms[22m[39m
+2026-10-28T14:54:25.5989034Z  [32m✓[39m tests/components/provider-setup-modal.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 1116[2mms[22m[39m
+2026-10-28T14:54:25.6036282Z    [32m✓[39m ProviderSetupModal (builtin mode) [2m(6)[22m
+2026-10-28T14:54:25.6048469Z      [33m[2m✓[22m[39m closes the authentication select before the provider dialog on Escape[33m 336[2mms[22m[39m
+2026-10-28T14:54:26.7917089Z  [32m✓[39m tests/components/chat-input-chips.test.tsx [2m([22m[2m15 tests[22m[2m)[22m[33m 632[2mms[22m[39m
+2026-10-28T14:54:27.1572729Z  [32m✓[39m tests/use-growth.test.ts [2m([22m[2m12 tests[22m[2m)[22m[33m 408[2mms[22m[39m
+2026-10-28T14:54:27.7316505Z  [32m✓[39m tests/components/app-shell-drafts.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 1753[2mms[22m[39m
+2026-10-28T14:54:27.7343956Z    [32m✓[39m AppShell session-owned composer drafts [2m(9)[22m
+2026-10-28T14:54:27.7351209Z      [33m[2m✓[22m[39m loads skills, templates and extension commands before sending the first Hero message[33m 423[2mms[22m[39m
+2026-10-28T14:54:28.3309586Z  [32m✓[39m tests/session-import-service.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 227[2mms[22m[39m
+2026-10-28T14:54:28.6023303Z  [32m✓[39m tests/workspace-store.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 309[2mms[22m[39m
+2026-10-28T14:54:29.4948979Z  [32m✓[39m tests/models-service-discovery.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 95[2mms[22m[39m
+2026-10-28T14:54:29.7233010Z  [32m✓[39m tests/components/settings-model-roundtrip.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 2897[2mms[22m[39m
+2026-10-28T14:54:29.7234927Z    [32m✓[39m SettingsPanel model round trip and revision [2m(11)[22m
+2026-10-28T14:54:29.7236745Z      [33m[2m✓[22m[39m shows the remaining fields after saving capacities, and explicit text-only completion survives reopening[33m 968[2mms[22m[39m
+2026-10-28T14:54:29.9505089Z  [32m✓[39m tests/remote-supervisor.test.ts [2m([22m[2m22 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+2026-10-28T14:54:30.0990657Z  [32m✓[39m tests/use-piweb-events.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+2026-10-28T14:54:30.3619952Z  [32m✓[39m tests/models-service-auth.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 727[2mms[22m[39m
+2026-10-28T14:54:30.3788761Z  [32m✓[39m tests/prompt-sources.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 137[2mms[22m[39m
+2026-10-28T14:54:30.5419368Z  [32m✓[39m tests/process-format.test.ts [2m([22m[2m30 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+2026-10-28T14:54:31.0046229Z  [32m✓[39m tests/plugins-service.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+2026-10-28T14:54:31.1931220Z  [32m✓[39m tests/skills-delete.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+2026-10-28T14:54:31.3341521Z  [32m✓[39m tests/model-draft.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+2026-10-28T14:54:31.9476450Z  [32m✓[39m tests/packaging.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 1393[2mms[22m[39m
+2026-10-28T14:54:31.9479954Z    [32m✓[39m release gate on the real tarball [2m(5)[22m
+2026-10-28T14:54:31.9481093Z      [33m[2m✓[22m[39m passes for a package that ships a complete build[33m 371[2mms[22m[39m
+2026-10-28T14:54:31.9482305Z      [33m[2m✓[22m[39m fails when the whitelist omits a runtime manifest (the 0.3.7 bug)[33m 321[2mms[22m[39m
+2026-10-28T14:54:31.9483710Z      [33m[2m✓[22m[39m excludes local Next cache using the release files policy while keeping every runtime file and the local cache[33m 376[2mms[22m[39m
+2026-10-28T14:54:31.9696895Z  [32m✓[39m tests/components/chat-input-mentions.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 573[2mms[22m[39m
+2026-10-28T14:54:32.1115179Z  [32m✓[39m tests/trajectory.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+2026-10-28T14:54:32.2274649Z  [32m✓[39m tests/remote-proxy.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 93[2mms[22m[39m
+2026-10-28T14:54:32.3813770Z [90mstderr[2m | tests/growth-tracker-failures.test.ts[2m > [22m[2mreports a terminal size error even after a recent transient failure and stops committing
+2026-10-28T14:54:32.3814966Z [22m[39m[piweb] growth commit failed for /tmp/piweb-growth-failure-bBp0Xg: temporary failure
+2026-10-28T14:54:32.3815449Z 
+2026-10-28T14:54:32.3827843Z [90mstderr[2m | tests/growth-tracker-failures.test.ts[2m > [22m[2mreports a terminal size error even after a recent transient failure and stops committing
+2026-10-28T14:54:32.3828915Z [22m[39m[piweb] growth commit failed for /tmp/piweb-growth-failure-bBp0Xg: workspace too large
+2026-10-28T14:54:32.3829345Z 
+2026-10-28T14:54:32.4866403Z [90mstderr[2m | tests/growth-tracker-failures.test.ts[2m > [22m[2mdisables automatic tracking after a manual record hits a terminal error
+2026-10-28T14:54:32.4873714Z [22m[39m[piweb] growth commit failed for /tmp/piweb-growth-manual-failure-Jv4zcG: workspace too large
+2026-10-28T14:54:32.4874611Z 
+2026-10-28T14:54:32.5137255Z  [32m✓[39m tests/files-service.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 315[2mms[22m[39m
+2026-10-28T14:54:32.5466279Z [90mstderr[2m | tests/growth-tracker-failures.test.ts[2m > [22m[2mclears a transient manual record error after a successful retry
+2026-10-28T14:54:32.5486231Z [22m[39m[piweb] growth commit failed for /tmp/piweb-growth-manual-retry-IH6A0U: temporary failure
+2026-10-28T14:54:32.5487654Z  [32m✓[39m tests/growth-tracker-failures.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 169[2mms[22m[39m
+2026-10-28T14:54:32.5514699Z 
+2026-10-28T14:54:32.9806255Z  [32m✓[39m tests/session-import-writer.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+2026-10-28T14:54:33.0862073Z  [32m✓[39m tests/session-reader.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 4263[2mms[22m[39m
+2026-10-28T14:54:33.0905297Z    [32m✓[39m session-reader listSessions parity [2m(6)[22m
+2026-10-28T14:54:33.0907692Z      [33m[2m✓[22m[39m matches the SDK listing field by field and reuses cached summaries for unchanged files[33m 1323[2mms[22m[39m
+2026-10-28T14:54:33.0909372Z      [33m[2m✓[22m[39m reuses the persisted summary index after a restart, and still re-reads changed files[33m 2852[2mms[22m[39m
+2026-10-28T14:54:33.1967360Z [90mstderr[2m | tests/mention-parity.test.ts
+2026-10-28T14:54:33.1995769Z [22m[39m[mention-parity] PATH 上没有 fd，端到端对照跳过
+2026-10-28T14:54:33.2037723Z 
+2026-10-28T14:54:33.2966551Z  [32m✓[39m tests/mention-parity.test.ts [2m([22m[2m5 tests[22m[2m | [22m[33m1 skipped[39m[2m)[22m[32m 96[2mms[22m[39m
+2026-10-28T14:54:33.6085670Z  [32m✓[39m tests/external-session-write.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 955[2mms[22m[39m
+2026-10-28T14:54:33.6586186Z  [32m✓[39m tests/models-service-context-window.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 105[2mms[22m[39m
+2026-10-28T14:54:34.4106374Z  [32m✓[39m tests/compaction-display.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 891[2mms[22m[39m
+2026-10-28T14:54:34.5549752Z  [32m✓[39m tests/ask-user.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+2026-10-28T14:54:35.0121148Z  [32m✓[39m tests/pi-settings.test.ts [2m([22m[2m8 tests[22m[2m)[22m[33m 394[2mms[22m[39m
+2026-10-28T14:54:35.3386596Z  [32m✓[39m tests/integration/remote/tunnel-status.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 1986[2mms[22m[39m
+2026-10-28T14:54:35.3498033Z    [32m✓[39m tunnel status through API, process and HTTP [2m(11)[22m
+2026-10-28T14:54:35.3499174Z      [33m[2m✓[22m[39m can stop while waiting for an address and start a fresh tunnel[33m 1298[2mms[22m[39m
+2026-10-28T14:54:35.7166605Z  [32m✓[39m tests/files-service-upload.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 453[2mms[22m[39m
+2026-10-28T14:54:35.8271146Z  [32m✓[39m tests/components/streaming-markdown.test.tsx [2m([22m[2m16 tests[22m[2m)[22m[32m 164[2mms[22m[39m
+2026-10-28T14:54:36.0986317Z  [32m✓[39m tests/agent-hero-commands.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+2026-10-28T14:54:37.0905815Z  [32m✓[39m tests/security-service.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 128[2mms[22m[39m
+2026-10-28T14:54:37.1538828Z  [32m✓[39m tests/components/chat-input-commands.test.tsx [2m([22m[2m14 tests[22m[2m)[22m[33m 739[2mms[22m[39m
+2026-10-28T14:54:37.2806969Z  [32m✓[39m tests/context-breakdown-session.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 1020[2mms[22m[39m
+2026-10-28T14:54:37.4267859Z  [32m✓[39m tests/git-service.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 575[2mms[22m[39m
+2026-10-28T14:54:37.5206169Z  [32m✓[39m tests/web-auth.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+2026-10-28T14:54:37.6717527Z  [32m✓[39m tests/workspace-index.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+2026-10-28T14:54:38.4270922Z  [32m✓[39m tests/components/chatwindow-round-badge.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[32m 151[2mms[22m[39m
+2026-10-28T14:54:38.6526493Z  [32m✓[39m tests/session-retention.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 62[2mms[22m[39m
+2026-10-28T14:54:39.2932360Z  [32m✓[39m tests/components/remote-section.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 562[2mms[22m[39m
+2026-10-28T14:54:39.2956054Z    [32m✓[39m remote entry links [2m(6)[22m
+2026-10-28T14:54:39.2986019Z      [33m[2m✓[22m[39m links and copies the tokened address but only shows the bare one[33m 312[2mms[22m[39m
+2026-10-28T14:54:39.3491106Z  [32m✓[39m tests/integration/project/tree-expansion.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1172[2mms[22m[39m
+2026-10-28T14:54:39.3536061Z    [32m✓[39m project directory defaults [2m(5)[22m
+2026-10-28T14:54:39.3546352Z      [33m[2m✓[22m[39m ignores old expanded-all storage, opens changed ancestors and leaves unchanged siblings closed[33m 357[2mms[22m[39m
+2026-10-28T14:54:39.3548012Z      [33m[2m✓[22m[39m respects manual collapse during refresh and resets manual expansion when the project reopens[33m 329[2mms[22m[39m
+2026-10-28T14:54:39.5521596Z  [32m✓[39m tests/growth-tree.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+2026-10-28T14:54:39.7916599Z  [32m✓[39m tests/update-service-process.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 63[2mms[22m[39m
+2026-10-28T14:54:39.9897951Z  [32m✓[39m tests/components/tool-preference-migration.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[32m 142[2mms[22m[39m
+2026-10-28T14:54:40.5362938Z  [32m✓[39m tests/models-service-credentials.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 102[2mms[22m[39m
+2026-10-28T14:54:40.7826466Z  [32m✓[39m tests/agent-events-route.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 54[2mms[22m[39m
+2026-10-28T14:54:41.0576504Z  [32m✓[39m tests/update-service-route.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+2026-10-28T14:54:41.2502900Z  [32m✓[39m tests/components/update-notice.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 382[2mms[22m[39m
+2026-10-28T14:54:41.3589773Z  [32m✓[39m tests/components/settings-tools-session.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1510[2mms[22m[39m
+2026-10-28T14:54:41.3593530Z    [33m[2m✓[22m[39m shows cold-session tools from the snapshot without starting an agent[33m 740[2mms[22m[39m
+2026-10-28T14:54:41.4927669Z  [32m✓[39m tests/web-secret.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+2026-10-28T14:54:41.5012800Z  [32m✓[39m tests/components/prompt-panel.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 354[2mms[22m[39m
+2026-10-28T14:54:42.0430286Z [90mstderr[2m | tests/growth-tracker.test.ts[2m > [22m[2mgrowth-tracker (real git)[2m > [22m[2mretries a failed baseline and clears the visible error after recovery
+2026-10-28T14:54:42.0437291Z [22m[39m[piweb] growth commit failed for /tmp/piweb-tracker-0QZONZ/not-created-yet: workspace directory not found
+2026-10-28T14:54:42.0457098Z 
+2026-10-28T14:54:42.0947203Z  [32m✓[39m tests/growth-tracker.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 499[2mms[22m[39m
+2026-10-28T14:54:42.0977000Z    [32m✓[39m growth-tracker (real git) [2m(2)[22m
+2026-10-28T14:54:42.0978539Z      [33m[2m✓[22m[39m commits the user's edits before a prompt and exactly one commit per round[33m 443[2mms[22m[39m
+2026-10-28T14:54:42.5056794Z  [32m✓[39m tests/components/ask-user-card.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 436[2mms[22m[39m
+2026-10-28T14:54:42.6915252Z  [32m✓[39m tests/components/app-shell-sidebar-actions.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 156[2mms[22m[39m
+2026-10-28T14:54:42.9186247Z  [32m✓[39m tests/event-stream.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 65[2mms[22m[39m
+2026-10-28T14:54:43.1645877Z  [2m[90m↓[39m[22m tests/remote-tunnel.integration.test.ts [2m([22m[2m1 test[22m[2m | [22m[33m1 skipped[39m[2m)[22m
+2026-10-28T14:54:43.3707942Z  [32m✓[39m tests/components/app-shell-drawer-shortcut.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 750[2mms[22m[39m
+2026-10-28T14:54:43.3748140Z    [32m✓[39m Ctrl+Shift+E with the trajectory detail open [2m(1)[22m
+2026-10-28T14:54:43.3775703Z      [33m[2m✓[22m[39m brings the project drawer back on the first press[33m 748[2mms[22m[39m
+2026-10-28T14:54:44.0872623Z  [32m✓[39m tests/components/app-shell-markdown-paths.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 738[2mms[22m[39m
+2026-10-28T14:54:44.0922776Z    [32m✓[39m 正文里的文件路径点击（AppShell 接线） [2m(1)[22m
+2026-10-28T14:54:44.0925408Z      [33m[2m✓[22m[39m 点开页内文件查看器，而不是本机编辑器[33m 736[2mms[22m[39m
+2026-10-28T14:54:44.1947702Z  [32m✓[39m tests/components/chat-input-lifecycle.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 557[2mms[22m[39m
+2026-10-28T14:54:44.1949202Z    [32m✓[39m ChatInput acceptance and attachments [2m(4)[22m
+2026-10-28T14:54:44.1950765Z      [33m[2m✓[22m[39m prevents duplicate pending acceptance, then permits steer/follow-up during streaming[33m 396[2mms[22m[39m
+2026-10-28T14:54:45.4772800Z  [32m✓[39m tests/model-defaults.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+2026-10-28T14:54:45.4923832Z  [32m✓[39m tests/components/context-meter/session.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 1035[2mms[22m[39m
+2026-10-28T14:54:45.4936162Z    [33m[2m✓[22m[39m shows the context ring on the first message event without another snapshot[33m 750[2mms[22m[39m
+2026-10-28T14:54:45.6360188Z  [32m✓[39m tests/components/settings-usage-card.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 1121[2mms[22m[39m
+2026-10-28T14:54:45.6380262Z    [32m✓[39m provider usage inside the provider card [2m(4)[22m
+2026-10-28T14:54:45.6381361Z      [33m[2m✓[22m[39m renders quota windows inside the same frame as the provider card[33m 615[2mms[22m[39m
+2026-10-28T14:54:45.7425911Z  [32m✓[39m tests/update-startup-check.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+2026-10-28T14:54:45.7468981Z  [32m✓[39m tests/components/git-panel-races.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 434[2mms[22m[39m
+2026-10-28T14:54:46.7135748Z  [31m❯[39m tests/api/workspace-image.test.ts [2m([22m[2m7 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[32m 106[2mms[22m[39m
+2026-10-28T14:54:46.7151409Z    [31m❯[39m protected workspace image endpoint [2m(7)[22m
+2026-10-28T14:54:46.7152837Z      [32m✓[39m returns exact image bytes with MIME, nosniff and a sandbox for direct navigation[32m 28[2mms[22m[39m
+2026-10-28T14:54:46.7154602Z      [32m✓[39m checks both path traversal and directory symlinks against the real workspace[32m 5[2mms[22m[39m
+2026-10-28T14:54:46.7156159Z      [32m✓[39m accepts an absolute document image when the workspace was opened through a directory alias[32m 19[2mms[22m[39m
+2026-10-28T14:54:46.7157532Z      [32m✓[39m rejects ignored images and hidden Git internals[32m 19[2mms[22m[39m
+2026-10-28T14:54:46.7158800Z [31m     [31m×[31m does not serve HTML or SVG disguised by a raster extension[39m[32m 19[2mms[22m[39m
+2026-10-28T14:54:46.7160257Z      [32m✓[39m serves real SVG with scripts and external requests disabled even when navigated directly[32m 6[2mms[22m[39m
+2026-10-28T14:54:46.7161543Z      [32m✓[39m rejects oversized files before loading their image data[32m 6[2mms[22m[39m
+2026-10-28T14:54:46.8213116Z  [32m✓[39m tests/context-breakdown.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+2026-10-28T14:54:46.9069133Z  [32m✓[39m tests/lib/file-path.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+2026-10-28T14:54:47.0966424Z  [32m✓[39m tests/model-audit.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+2026-10-28T14:54:47.4496274Z  [32m✓[39m tests/components/sidebar-menus.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 685[2mms[22m[39m
+2026-10-28T14:54:47.4525688Z    [32m✓[39m sidebar row menus [2m(5)[22m
+2026-10-28T14:54:47.4555850Z      [33m[2m✓[22m[39m does not submit a rename while an IME is composing or confirming a candidate[33m 397[2mms[22m[39m
+2026-10-28T14:54:47.5927105Z  [32m✓[39m tests/components/chat-image-preview.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 493[2mms[22m[39m
+2026-10-28T14:54:47.6005658Z    [32m✓[39m chat image previews [2m(6)[22m
+2026-10-28T14:54:47.6055897Z      [33m[2m✓[22m[39m opens sent user images as a read-only gallery, navigates, and restores focus and scrolling[33m 303[2mms[22m[39m
+2026-10-28T14:54:48.7072800Z  [32m✓[39m tests/components/chatwindow-edit-message.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 701[2mms[22m[39m
+2026-10-28T14:54:48.7156188Z    [32m✓[39m user message edit affordance [2m(6)[22m
+2026-10-28T14:54:48.7201225Z      [33m[2m✓[22m[39m offers edit next to copy and resends the edited text[33m 335[2mms[22m[39m
+2026-10-28T14:54:48.8489857Z  [32m✓[39m tests/components/git-panel-areas.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 312[2mms[22m[39m
+2026-10-28T14:54:48.8756156Z  [32m✓[39m tests/components/chatwindow-stream-markdown.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 633[2mms[22m[39m
+2026-10-28T14:54:48.8760637Z    [32m✓[39m streaming markdown rendering [2m(4)[22m
+2026-10-28T14:54:48.8762233Z      [33m[2m✓[22m[39m renders markdown while the message is still pending[33m 400[2mms[22m[39m
+2026-10-28T14:54:49.3341108Z  [32m✓[39m tests/components/select-keyboard.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 639[2mms[22m[39m
+2026-10-28T14:54:49.3396026Z    [32m✓[39m custom select keyboard [2m(3)[22m
+2026-10-28T14:54:49.3428974Z      [33m[2m✓[22m[39m keeps long-menu keyboard candidates visible without scrolling an ancestor[33m 390[2mms[22m[39m
+2026-10-28T14:54:50.1486410Z  [32m✓[39m tests/components/extension-dialog.test.tsx [2m([22m[2m8 tests[22m[2m)[22m[33m 330[2mms[22m[39m
+2026-10-28T14:54:50.3648674Z  [32m✓[39m tests/components/plugins-section-state.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 487[2mms[22m[39m
+2026-10-28T14:54:50.8455747Z  [32m✓[39m tests/components/settings-font-family.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 864[2mms[22m[39m
+2026-10-28T14:54:50.8465388Z    [32m✓[39m font family picker [2m(2)[22m
+2026-10-28T14:54:50.8506288Z      [33m[2m✓[22m[39m keeps the custom input when it is emptied[33m 576[2mms[22m[39m
+2026-10-28T14:54:51.0422382Z  [32m✓[39m tests/components/chatwindow-lazy-turns.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 429[2mms[22m[39m
+2026-10-28T14:54:51.7786571Z  [32m✓[39m tests/api/workspace-picker.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 261[2mms[22m[39m
+2026-10-28T14:54:51.9297443Z  [32m✓[39m tests/components/workspace-picker/fallback.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 470[2mms[22m[39m
+2026-10-28T14:54:51.9305233Z    [33m[2m✓[22m[39m page picker can finish adding a workspace after {"browse":true}[33m 364[2mms[22m[39m
+2026-10-28T14:54:51.9710280Z  [32m✓[39m tests/extension-ui-lifecycle.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+2026-10-28T14:54:52.0421857Z  [32m✓[39m tests/write-diff.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+2026-10-28T14:54:52.4116636Z  [32m✓[39m tests/components/drawer-panel.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 296[2mms[22m[39m
+2026-10-28T14:54:52.6155718Z  [32m✓[39m tests/integration/pi-runtime.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+2026-10-28T14:54:53.4243381Z  [32m✓[39m tests/components/dialog-stack.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 357[2mms[22m[39m
+2026-10-28T14:54:53.4275624Z    [32m✓[39m modal focus and Escape stack [2m(3)[22m
+2026-10-28T14:54:53.4297311Z      [33m[2m✓[22m[39m traps focus in the top portal, closes one layer, and restores each opener[33m 304[2mms[22m[39m
+2026-10-28T14:54:53.4800591Z  [32m✓[39m tests/command-validation.test.ts [2m([22m[2m10 tests[22m[2m)[22m[33m 1364[2mms[22m[39m
+2026-10-28T14:54:53.4826173Z    [32m✓[39m agent command validation [2m(10)[22m
+2026-10-28T14:54:53.4865782Z      [33m[2m✓[22m[39m rejects images totaling over 200MB (268MB base64, maxMessageImageBytes)[33m 1279[2mms[22m[39m
+2026-10-28T14:54:53.7339560Z  [32m✓[39m tests/components/chatwindow-compaction.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 696[2mms[22m[39m
+2026-10-28T14:54:53.7365847Z    [32m✓[39m compaction divider [2m(3)[22m
+2026-10-28T14:54:53.7395909Z      [33m[2m✓[22m[39m keeps messages above the divider editable and expands the summary[33m 658[2mms[22m[39m
+2026-10-28T14:54:54.3776714Z  [32m✓[39m tests/components/chatwindow-markdown-paths.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 611[2mms[22m[39m
+2026-10-28T14:54:54.3802418Z    [32m✓[39m 正文里的文件路径点击 [2m(3)[22m
+2026-10-28T14:54:54.3803669Z      [33m[2m✓[22m[39m 走页内查看器（onOpenPath），不碰本机编辑器（onOpenFile）[33m 390[2mms[22m[39m
+2026-10-28T14:54:54.5626439Z  [32m✓[39m tests/mermaid.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 114[2mms[22m[39m
+2026-10-28T14:54:54.6209310Z  [32m✓[39m tests/models-catalog-capabilities.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+2026-10-28T14:54:54.7236355Z  [32m✓[39m tests/lib/skill-expansion.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+2026-10-28T14:54:55.1416671Z  [32m✓[39m tests/components/growth-tree.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 269[2mms[22m[39m
+2026-10-28T14:54:55.5813647Z  [32m✓[39m tests/github-identity.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+2026-10-28T14:54:55.7866803Z  [32m✓[39m tests/auth.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+2026-10-28T14:54:55.8506568Z  [32m✓[39m tests/tool-preferences.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 975[2mms[22m[39m
+2026-10-28T14:54:55.8536257Z    [32m✓[39m tool preferences [2m(4)[22m
+2026-10-28T14:54:55.8546541Z      [33m[2m✓[22m[39m returns null before anything is saved[33m 950[2mms[22m[39m
+2026-10-28T14:54:56.2147180Z  [32m✓[39m tests/components/markdown-file-path.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 299[2mms[22m[39m
+2026-10-28T14:54:56.3976581Z  [32m✓[39m tests/install-build.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+2026-10-28T14:54:56.4795535Z  [32m✓[39m tests/upload-proxy.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 150[2mms[22m[39m
+2026-10-28T14:54:56.6846469Z  [32m✓[39m tests/diff-parser.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+2026-10-28T14:54:56.8016554Z  [32m✓[39m tests/thinking-level.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+2026-10-28T14:54:56.9826380Z  [32m✓[39m tests/growth-turns.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+2026-10-28T14:54:57.1006547Z  [32m✓[39m tests/api/session-workspaces.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 84[2mms[22m[39m
+2026-10-28T14:54:57.2360695Z  [32m✓[39m tests/components/directory-picker.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[33m 342[2mms[22m[39m
+2026-10-28T14:54:57.8197764Z  [32m✓[39m tests/model-files.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+2026-10-28T14:54:58.2508822Z  [32m✓[39m tests/components/chatwindow-ask-step.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 115[2mms[22m[39m
+2026-10-28T14:54:58.5728824Z  [32m✓[39m tests/components/chatwindow-stick-bottom.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 383[2mms[22m[39m
+2026-10-28T14:54:58.5730447Z    [32m✓[39m ChatWindow 贴底 [2m(1)[22m
+2026-10-28T14:54:58.5731625Z      [33m[2m✓[22m[39m 往上翻 40px 就不再跟着新内容贴底；滚回底部附近又跟上[33m 381[2mms[22m[39m
+2026-10-28T14:54:58.8896416Z  [32m✓[39m tests/components/outline-rail.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 611[2mms[22m[39m
+2026-10-28T14:54:58.8932865Z    [32m✓[39m outline rail [2m(1)[22m
+2026-10-28T14:54:58.8955723Z      [33m[2m✓[22m[39m never lists bare timestamps and picks up content that loads later[33m 609[2mms[22m[39m
+2026-10-28T14:54:59.0743784Z  [32m✓[39m tests/event-batcher.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+2026-10-28T14:54:59.3568053Z  [32m✓[39m tests/components/extension-notices.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 105[2mms[22m[39m
+2026-10-28T14:54:59.6600254Z  [32m✓[39m tests/message-cancellation.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+2026-10-28T14:54:59.7325513Z  [32m✓[39m tests/components/settings-dialog-keyboard.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 914[2mms[22m[39m
+2026-10-28T14:54:59.7341962Z    [32m✓[39m Settings dialog keyboard [2m(2)[22m
+2026-10-28T14:54:59.7356154Z      [33m[2m✓[22m[39m announces a modal and traps Tab and background focus[33m 711[2mms[22m[39m
+2026-10-28T14:55:00.0026351Z  [32m✓[39m tests/api/session-export.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+2026-10-28T14:55:00.4411287Z  [32m✓[39m tests/components/mermaid-diagram.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 272[2mms[22m[39m
+2026-10-28T14:55:00.8102814Z  [32m✓[39m tests/fs-route.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+2026-10-28T14:55:00.8566351Z  [32m✓[39m tests/components/markdown-mermaid.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 148[2mms[22m[39m
+2026-10-28T14:55:01.5373330Z  [32m✓[39m tests/path-security.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+2026-10-28T14:55:01.6746785Z  [32m✓[39m tests/components/chatwindow-cancellation-timing.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[33m 445[2mms[22m[39m
+2026-10-28T14:55:01.6765070Z    [32m✓[39m stopped tools and model generation time [2m(2)[22m
+2026-10-28T14:55:01.6805954Z      [33m[2m✓[22m[39m excludes the time spent waiting for an answer from the thinking summary[33m 336[2mms[22m[39m
+2026-10-28T14:55:01.8766366Z  [32m✓[39m tests/provider-display.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+2026-10-28T14:55:01.8976129Z  [32m✓[39m tests/use-workspace-files.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+2026-10-28T14:55:02.0756644Z  [32m✓[39m tests/agent-resources-route.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 58[2mms[22m[39m
+2026-10-28T14:55:02.7890032Z  [32m✓[39m tests/components/login-page.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 196[2mms[22m[39m
+2026-10-28T14:55:02.9535195Z  [32m✓[39m tests/integration/session-boundaries.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 12[2mms[22m[39m
+2026-10-28T14:55:02.9709937Z  [32m✓[39m tests/hero-model-memory.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+2026-10-28T14:55:03.0123903Z  [32m✓[39m tests/components/sidebar-current.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 123[2mms[22m[39m
+2026-10-28T14:55:03.1078376Z  [32m✓[39m tests/format.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+2026-10-28T14:55:03.2493066Z  [32m✓[39m tests/source-encoding.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 85[2mms[22m[39m
+2026-10-28T14:55:03.2900862Z  [32m✓[39m tests/semver.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+2026-10-28T14:55:03.3333084Z  [32m✓[39m tests/components/select-option-placement.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 197[2mms[22m[39m
+2026-10-28T14:55:03.4976077Z  [32m✓[39m tests/model-endpoint.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+2026-10-28T14:55:03.5216132Z  [32m✓[39m tests/slash-command-token.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+2026-10-28T14:55:03.6804550Z  [32m✓[39m tests/file-icons.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 17[2mms[22m[39m
+2026-10-28T14:55:04.0046274Z  [32m✓[39m tests/integration/files/ignore-process.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+2026-10-28T14:55:04.1288133Z  [32m✓[39m tests/lib/models/model-scope.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+2026-10-28T14:55:04.2652822Z  [2m[90m↓[39m[22m tests/powershell-encoding.test.ts [2m([22m[2m1 test[22m[2m | [22m[33m1 skipped[39m[2m)[22m
+2026-10-28T14:55:04.2716221Z 
+2026-10-28T14:55:04.2717239Z [31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+2026-10-28T14:55:04.2717686Z 
+2026-10-28T14:55:04.2720077Z [41m[1m FAIL [22m[49m tests/api/workspace-image.test.ts[2m > [22mprotected workspace image endpoint[2m > [22mdoes not serve HTML or SVG disguised by a raster extension
+2026-10-28T14:55:04.2726062Z [31m[1mAssertionError[22m: fake.png: expected 500 to be 400 // Object.is equality[39m
+2026-10-28T14:55:04.2726595Z 
+2026-10-28T14:55:04.2726861Z [32m- Expected[39m
+2026-10-28T14:55:04.2727478Z [31m+ Received[39m
+2026-10-28T14:55:04.2727751Z 
+2026-10-28T14:55:04.2727915Z [32m- 400[39m
+2026-10-28T14:55:04.2728326Z [31m+ 500[39m
+2026-10-28T14:55:04.2728576Z 
+2026-10-28T14:55:04.2729126Z [36m [2m❯[22m tests/api/workspace-image.test.ts:[2m63:52[22m[39m
+2026-10-28T14:55:04.2763774Z 
+2026-10-28T14:55:04.2770367Z 
+2026-10-28T14:55:04.2770406Z 
+2026-10-28T14:55:04.2771594Z [31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+2026-10-28T14:55:04.2771931Z 
+2026-10-28T14:55:04.2777768Z [2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m147 passed[39m[22m[2m | [22m[33m2 skipped[39m[90m (150)[39m
+2026-10-28T14:55:04.2785008Z [2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1207 passed[39m[22m[2m | [22m[33m4 skipped[39m[90m (1212)[39m
+2026-10-28T14:55:04.2785676Z [2m   Start at [22m 14:54:18
+2026-10-28T14:55:04.2789363Z [2m   Duration [22m 45.39s[2m (tests 38%, import 30%, environment 28%, transform 3%, setup 1%, worker 1%)[22m
+2026-10-28T14:55:04.2802691Z 
+2026-10-28T14:55:04.2803499Z [2m     Import [22m [33m329 modules were evaluated 727 times[39m[2m · 47.46s total, 30% of tracked time[22m
+2026-10-28T14:55:04.2804733Z [2m            [22m [2m~3.77s faster with [22m[33misolate: false[39m[2m — shared modules are evaluated once per worker instead of once per file[22m
+2026-10-28T14:55:04.2805597Z [2m            [22m [2mlearn more: https://vitest.dev/guide/improving-performance#test-isolation[22m
+2026-10-28T14:55:04.2805966Z 
+2026-10-28T14:55:04.2822833Z 
+2026-10-28T14:55:04.2844108Z ##[error]AssertionError: fake.png: expected 500 to be 400 // Object.is equality
+
+- Expected
++ Received
+
+- 400
++ 500
+
+ ❯ tests/api/workspace-image.test.ts:63:52
+
+
+2026-10-28T14:55:04.3181087Z ##[error]Process completed with exit code 1.
+2026-10-28T14:55:04.3319760Z Post job cleanup.
+2026-10-28T14:55:04.4082142Z [command]/usr/bin/git version
+2026-10-28T14:55:04.4114363Z git version 2.55.0
+2026-10-28T14:55:04.4145220Z Temporarily overriding HOME='/home/runner/work/_temp/fb6982e0-c03a-419e-9e68-516530a1f220' before making global git config changes
+2026-10-28T14:55:04.4146773Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-28T14:55:04.4150521Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/PiWeb/PiWeb
+2026-10-28T14:55:04.4181790Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-28T14:55:04.4208860Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-28T14:55:04.4388461Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-28T14:55:04.4405474Z http.https://github.com/.extraheader
+2026-10-28T14:55:04.4413770Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-28T14:55:04.4455711Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-28T14:55:04.4652943Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-28T14:55:04.4678405Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-28T14:55:04.5037114Z Cleaning up orphan processes
+2026-10-28T14:55:04.5322617Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
