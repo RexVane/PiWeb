@@ -29,7 +29,39 @@ PiWeb 和 pi 是两个独立的程序，PiWeb 也不是 pi 的另一个版本：
 - **模型与扩展**：管理内置或自定义提供商、模型、pi 包和技能；查看提示词来源，并使用只读、工作区写入或完全访问预设管理工具权限。
 - **多设备访问**：桌面和手机浏览器均可使用；可通过内置局域网入口或 Cloudflare 快速隧道远程连接。
 
-<p align="center"><img src="assets/readme-mobile.jpg" alt="PiWeb 手机端对话界面" width="300" /></p>
+## 界面一览
+
+### 桌面端
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/readme-chat.jpg" alt="桌面端对话" /><br /><strong>对话工作区</strong><br />流式对话、工具调用与项目会话集中查看。</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面端项目树" /><br /><strong>项目文件</strong><br />在侧栏浏览项目结构与每轮改动。</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面端文件查看器" /><br /><strong>文件查看器</strong><br />查看代码、文件内容和变更。</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面端会话导入" /><br /><strong>导入会话</strong><br />选择其他编程工具的历史会话。</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面端模型提供方选择" /><br /><strong>模型提供方</strong><br />搜索并配置模型提供方。</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面端上下文用量" /><br /><strong>上下文用量</strong><br />查看上下文窗口与用量组成。</td>
+  </tr>
+</table>
+
+### 手机端
+
+<table>
+  <tr>
+    <td width="33%"><img src="assets/readme-mobile.jpg" alt="手机端对话" /><br /><strong>随时对话</strong><br />在手机上继续工作。</td>
+    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="手机端工作区" /><br /><strong>工作区</strong><br />切换项目和会话。</td>
+    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="手机端会话导入" /><br /><strong>会话导入</strong><br />选择并导入已有对话。</td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="手机端文件查看器" /><br /><strong>文件查看</strong><br />直接浏览项目代码。</td>
+    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="手机端模型提供方选择" /><br /><strong>模型配置</strong><br />搜索与配置提供方。</td>
+    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="手机端上下文用量" /><br /><strong>上下文用量</strong><br />查看可用空间和用量。</td>
+  </tr>
+</table>
 
 ### 归档与数据
 

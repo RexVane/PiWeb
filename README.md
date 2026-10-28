@@ -29,7 +29,39 @@ PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it
 - **Models and extensions:** Manage built-in and custom providers, models, pi packages and skills; inspect prompt sources and choose Read Only, Workspace Write or Full Access tool presets.
 - **Multiple devices:** Use PiWeb from desktop and mobile browsers, with built-in local-network access or a Cloudflare quick tunnel for remote access.
 
-<p align="center"><img src="assets/readme-mobile.jpg" alt="PiWeb conversation on a phone" width="300" /></p>
+## Screenshots
+
+### Desktop
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/readme-chat.jpg" alt="Desktop conversation" /><br /><strong>Conversation workspace</strong><br />Stream responses and review tool calls alongside your sessions.</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="Desktop project tree" /><br /><strong>Project files</strong><br />Browse the project and changes for each round.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="Desktop file viewer" /><br /><strong>File viewer</strong><br />Inspect code, file contents and changes.</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="Desktop session import" /><br /><strong>Session import</strong><br />Choose conversations from other coding tools.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="Desktop provider selection" /><br /><strong>Model providers</strong><br />Find and configure a provider.</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="Desktop context usage" /><br /><strong>Context usage</strong><br />Inspect the context window and its breakdown.</td>
+  </tr>
+</table>
+
+### Mobile
+
+<table>
+  <tr>
+    <td width="33%"><img src="assets/readme-mobile.jpg" alt="Mobile conversation" /><br /><strong>Chat on the go</strong><br />Continue working from your phone.</td>
+    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="Mobile workspaces" /><br /><strong>Workspaces</strong><br />Switch projects and sessions.</td>
+    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="Mobile session import" /><br /><strong>Session import</strong><br />Select and import conversations.</td>
+  </tr>
+  <tr>
+    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="Mobile file viewer" /><br /><strong>File viewer</strong><br />Browse project code.</td>
+    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="Mobile provider selection" /><br /><strong>Model setup</strong><br />Find and configure providers.</td>
+    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="Mobile context usage" /><br /><strong>Context usage</strong><br />See usage and available space.</td>
+  </tr>
+</table>
 
 ### Archives and data
 
