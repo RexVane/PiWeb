@@ -330,7 +330,7 @@ export interface WebSnapshot {
 	toolPreset: ToolPreset;
 	/** custom 白名单优先于 preset；null 表示使用 preset，省略兼容旧服务端。 */
 	customActiveTools?: string[] | null;
-	/** 工具选择是否已在服务端按会话持久化；旧服务端省略（前端仍用 localStorage 迁移）。 */
+	/** 全局工具配置是否已保存到服务端；旧服务端省略（前端仍用 localStorage 迁移）。 */
 	toolPreferenceSaved?: boolean;
 	/** 当前待应答的扩展请求；快照是权威集合，不重放已答请求。 */
 	extensionUiRequests?: Extract<WebEvent, { type: "extension_ui" }>[];
