@@ -4,7 +4,7 @@
  * AppShell：三栏网格（对齐 dsh ui-layout 几何）+ 拖拽调宽 + 侧栏窄条 +
  * 头部（对话/轨迹标签 + Session log）+ Hero 新会话页 + 设置弹窗。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
@@ -1294,7 +1294,47 @@ function Hero({
 }) {
 	const { t } = useI18n();
 	const [wsMenu, setWsMenu] = useState(false);
+	const [wsMenuMaxHeight, setWsMenuMaxHeight] = useState(340);
+	const heroRef = useRef<HTMLDivElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const wsListRef = useRef<HTMLDivElement>(null);
+
+	// 向上展开的菜单不能只按视口高度限高：芯片上方才是实际可用空间。
+	// 附件会改变芯片的位置，因此同时观察 Hero 和输入卡容器的尺寸。
+	useLayoutEffect(() => {
+		if (!wsMenu) return;
+		const measure = () => {
+			const trigger = triggerRef.current;
+			const hero = heroRef.current;
+			if (!trigger || !hero) return;
+			const top = Math.max(hero.getBoundingClientRect().top, window.visualViewport?.offsetTop ?? 0);
+			setWsMenuMaxHeight(Math.max(0, Math.min(340, trigger.getBoundingClientRect().top - top - 6 - 8)));
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		if (heroRef.current) observer.observe(heroRef.current);
+		if (menuRef.current?.parentElement) observer.observe(menuRef.current.parentElement);
+		window.addEventListener("resize", measure);
+		window.visualViewport?.addEventListener("resize", measure);
+		window.visualViewport?.addEventListener("scroll", measure);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", measure);
+			window.visualViewport?.removeEventListener("resize", measure);
+			window.visualViewport?.removeEventListener("scroll", measure);
+		};
+	}, [wsMenu]);
+
+	useLayoutEffect(() => {
+		if (!wsMenu) return;
+		const list = wsListRef.current;
+		const selected = list?.querySelector<HTMLButtonElement>('[aria-current="true"]');
+		// 只滚动列表，不能用 scrollIntoView 连带移动整页或输入卡。
+		if (list && selected && list.clientHeight > 0) {
+			list.scrollTop = Math.max(0, selected.offsetTop - (list.clientHeight - selected.offsetHeight) / 2);
+		}
+	}, [wsMenu, wsMenuMaxHeight, cwd, knownCwds.length]);
 
 	useEffect(() => {
 		if (!wsMenu) return;
@@ -1303,8 +1343,18 @@ function Hero({
 				setWsMenu(false);
 			}
 		};
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				setWsMenu(false);
+				triggerRef.current?.focus();
+			}
+		};
 		document.addEventListener("mousedown", h);
-		return () => document.removeEventListener("mousedown", h);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("mousedown", h);
+			document.removeEventListener("keydown", onKeyDown);
+		};
 	}, [wsMenu]);
 
 	const pickWorkspace = async () => {
@@ -1318,7 +1368,7 @@ function Hero({
 	const currentLabel = cwd ? (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) : t.startWith;
 
 	return (
-		<div className="flex h-full min-h-0 flex-col items-center justify-center px-6">
+		<div ref={heroRef} className="flex h-full min-h-0 flex-col items-center justify-center px-6">
 			{/* 品牌行：仅 π 标 */}
 			<div className="mb-5 flex items-center justify-center gap-3">
 				<PiMark size={40} />
@@ -1328,7 +1378,7 @@ function Hero({
 			<div className="w-full flex flex-col items-stretch mx-auto" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 				<div ref={menuRef} className="mb-3 flex items-center gap-3" style={{ paddingLeft: 7 }}>
 					<div className="relative">
-						<button className="hero-chip" data-open={wsMenu} onClick={() => setWsMenu((v) => !v)}>
+						<button ref={triggerRef} className="hero-chip" data-open={wsMenu} aria-expanded={wsMenu} onClick={() => setWsMenu((v) => !v)}>
 							<IconFolderClose16 className="hero-chip-icon" size={16} />
 							<span className="max-w-[220px] truncate" suppressHydrationWarning>{currentLabel}</span>
 							<span className="chevron">
@@ -1336,46 +1386,53 @@ function Hero({
 							</span>
 						</button>
 						{wsMenu && (
-							<div className="popover absolute bottom-9 left-0 z-50 w-56 py-1">
-								{knownCwds.map((c) => {
-									const itemLabel = getWorkspaceName ? getWorkspaceName(c) : basename(c);
-									return (
-										<button
-											key={c}
-											className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
-											style={{
-												fontSize: 13,
-												background: cwd === c ? "var(--dsw-accent-soft)" : "transparent",
-												color: cwd === c ? "var(--dsw-accent)" : "inherit",
-											}}
-											onMouseEnter={(e) => {
-												if (cwd !== c) e.currentTarget.style.background = "var(--dsw-hover)";
-											}}
-											onMouseLeave={(e) => {
-												if (cwd !== c) e.currentTarget.style.background = "transparent";
-											}}
-											onClick={() => {
-												setCwd(c);
-												setWsMenu(false);
-											}}
-										>
-											<IconFolderClose16 size={14} style={{ flex: "none", color: cwd === c ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)" }} />
-											<span className="min-w-0 flex-1 truncate">{itemLabel}</span>
-											{cwd === c && <IconCheckOutline14 size={13} style={{ flex: "none" }} />}
-										</button>
-									);
-								})}
-								<div className="my-1" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }} />
-								<button
-									className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
-									style={{ fontSize: 13 }}
-									onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
-									onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-									onClick={pickWorkspace}
-								>
-									<IconProjectAddOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
-									{t.addWorkspace}
-								</button>
+							<div data-testid="workspace-menu" className="popover absolute bottom-full left-0 z-[75] mb-1.5 flex w-56 max-w-[calc(100vw-48px)] flex-col" style={{ maxHeight: wsMenuMaxHeight }}>
+								{/* 滚动放在内层，避免 .popover 的 overflow:hidden 覆盖滚动样式。 */}
+								<div ref={wsListRef} data-testid="workspace-menu-list" className="relative min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain">
+									{knownCwds.map((c) => {
+										const itemLabel = getWorkspaceName ? getWorkspaceName(c) : basename(c);
+										return (
+											<button
+												key={c}
+												title={c}
+												aria-current={cwd === c ? "true" : undefined}
+												className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
+												style={{
+													fontSize: 13,
+													background: cwd === c ? "var(--dsw-accent-soft)" : "transparent",
+													color: cwd === c ? "var(--dsw-accent)" : "inherit",
+												}}
+												onMouseEnter={(e) => {
+													if (cwd !== c) e.currentTarget.style.background = "var(--dsw-hover)";
+												}}
+												onMouseLeave={(e) => {
+													if (cwd !== c) e.currentTarget.style.background = "transparent";
+												}}
+												onClick={() => {
+													setCwd(c);
+													setWsMenu(false);
+												}}
+											>
+												<IconFolderClose16 size={14} style={{ flex: "none", color: cwd === c ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)" }} />
+												<span className="min-w-0 flex-1 truncate">{itemLabel}</span>
+												{cwd === c && <IconCheckOutline14 size={13} style={{ flex: "none" }} />}
+											</button>
+										);
+									})}
+								</div>
+								<div className="shrink-0">
+									<div className="my-1" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }} />
+									<button
+										className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
+										style={{ fontSize: 13 }}
+										onMouseEnter={(e) => (e.currentTarget.style.background = "var(--dsw-hover)")}
+										onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+										onClick={pickWorkspace}
+									>
+										<IconProjectAddOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+										{t.addWorkspace}
+									</button>
+								</div>
 							</div>
 						)}
 					</div>
