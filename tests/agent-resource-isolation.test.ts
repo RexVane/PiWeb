@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { PIWEB_EXECUTION_GUIDANCE } from "../src/lib/execution-guidance";
 
@@ -37,6 +37,12 @@ beforeAll(async () => {
 	manager = await import("../src/lib/agent-manager");
 	pi = await import("../src/lib/pi");
 }, 90_000);
+
+beforeEach(async () => {
+	// 工具配置是全局一份：每个用例从干净状态开始，避免上一个用例的选择漏到下一个
+	manager.resetGlobalToolPreference();
+	await fs.rm(path.join(process.env.PI_CODING_AGENT_DIR!, "web-tool-preferences.json"), { force: true });
+});
 
 afterAll(async () => {
 	for (const m of managed) manager.disposeSession(m);
@@ -252,7 +258,7 @@ describe("real SDK session resource isolation", () => {
 		expect(session.getActiveToolNames()).not.toContain("probe_tool");
 	});
 
-	it("restores every tool choice after the server reopens a disposed session", async () => {
+	it("restores the global tool choice after the server reopens a disposed session", async () => {
 		const first = await create();
 		expect(await manager.execute(first.m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
 		expect(await manager.execute(first.m, { cmd: "setActiveTools", names: ["read", "probe_tool"] })).toMatchObject({ ok: true });
@@ -424,19 +430,37 @@ describe("real SDK session resource isolation", () => {
 		}
 	});
 
-	it("keeps custom choices on snapshot-triggered reload for both same-cwd sessions", async () => {
+	it("applies one global tool choice to every same-cwd session and keeps it across snapshot reloads", async () => {
 		const a = await create();
 		const b = await create();
+		// 与 pi 的 defaultTools 一样，工具选择是全局一份：改一个会话，另一个立刻跟着变
 		await manager.execute(a.m, { cmd: "setActiveTools", names: ["read"] });
+		expect(a.session.getActiveToolNames()).toEqual(["read"]);
+		expect(b.session.getActiveToolNames()).toEqual(["read"]);
 		await manager.execute(b.m, { cmd: "setActiveTools", names: ["grep"] });
+		expect(a.session.getActiveToolNames()).toEqual(["grep"]);
+		expect(b.session.getActiveToolNames()).toEqual(["grep"]);
 		await fs.mkdir(path.join(cwd, ".pi", "prompts"), { recursive: true });
 		await fs.writeFile(path.join(cwd, ".pi", "prompts", "fresh.md"), "Fresh prompt");
 		await manager.buildSnapshot(a.m);
 		await manager.buildSnapshot(b.m);
 		expect(a.session.promptTemplates.some((prompt) => prompt.name === "fresh")).toBe(true);
 		expect(b.session.promptTemplates.some((prompt) => prompt.name === "fresh")).toBe(true);
-		expect(a.session.getActiveToolNames()).toEqual(["read"]);
+		expect(a.session.getActiveToolNames()).toEqual(["grep"]);
 		expect(b.session.getActiveToolNames()).toEqual(["grep"]);
+	});
+
+	it("opens a brand-new session with the globally saved tool choice", async () => {
+		const first = await create();
+		expect(await manager.execute(first.m, { cmd: "setToolPreset", preset: "full" })).toMatchObject({ ok: true });
+		expect(await manager.execute(first.m, { cmd: "setActiveTools", names: ["read", "bash"] })).toMatchObject({ ok: true });
+		const second = await create();
+		// 新会话不启动 agent 也能看到同一份选择
+		const cold = await manager.buildSnapshot(second.m);
+		expect(cold.customActiveTools).toEqual(["read", "bash"]);
+		expect(cold.tools.active).toEqual(["read", "bash"]);
+		const session = await manager.ensureSession(second.m);
+		expect(session.getActiveToolNames()).toEqual(["read", "bash"]);
 	});
 
 	it("surfaces SDK preflight rejection without an unhandled promise or stuck submit lock", async () => {

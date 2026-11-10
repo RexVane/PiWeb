@@ -58,18 +58,18 @@ async function open(hook: ReturnType<typeof renderHook<ReturnType<typeof usePiWe
 	return stream;
 }
 
-it("pins an explicit matching legacy preset before another browser can replace it", async () => {
+it("migrates a legacy browser preset once into the global server preference", async () => {
 	localStorage.setItem("piweb.toolPreset", "standard");
 	const first = renderHook(() => usePiWeb());
-	await open(first, "/old.jsonl", snapshot({ toolPreferenceSaved: false }));
+	await open(first, "/old.jsonl", snapshot({ toolPreset: "readonly", toolPreferenceSaved: false }));
 	await waitFor(() => expect(serverPreferences.get("/old.jsonl")).toEqual({ toolPreset: "standard", toolPreferenceSaved: true, customActiveTools: null }));
 	expect(commands).toEqual([{ path: "/old.jsonl", cmd: "setToolPreset", preset: "standard" }]);
 	first.unmount();
-	// A different browser has an older Full access default, but this session is already migrated.
+	// 另一个浏览器带着旧的 Full 档位进来，但服务端已经有全局配置了，不能再被覆盖
 	localStorage.clear();
 	localStorage.setItem("piweb.toolPreset", "full");
 	const second = renderHook(() => usePiWeb());
-	await open(second, "/old.jsonl", snapshot(serverPreferences.get("/old.jsonl")));
+	await open(second, "/other.jsonl", snapshot({ toolPreset: "standard", toolPreferenceSaved: true }));
 	expect(second.result.current.state.toolPreset).toBe("standard");
 	expect(commands).toHaveLength(1);
 });
@@ -82,13 +82,13 @@ it.each([null, "malformed"])("does not migrate an implicit default when localSto
 	expect(hook.result.current.state.toolPreset).toBe("readonly");
 });
 
-it("keeps each saved session's preset and explicit tool list over the browser default", async () => {
+it("does not migrate again once the global preference is saved", async () => {
+	// 全局配置已经存过：即使 localStorage 还留着别的档位也不覆盖
 	localStorage.setItem("piweb.toolPreset", "full");
 	const hook = renderHook(() => usePiWeb());
-	await open(hook, "/a.jsonl", snapshot({ toolPreset: "readonly", toolPreferenceSaved: true }));
-	expect(hook.result.current.state.toolPreset).toBe("readonly");
-	await open(hook, "/b.jsonl", snapshot({ toolPreset: "standard", toolPreferenceSaved: true, customActiveTools: ["read"] }));
-	expect(hook.result.current.state.snapshot?.customActiveTools).toEqual(["read"]);
+	await open(hook, "/a.jsonl", snapshot({ toolPreset: "standard", toolPreferenceSaved: true }));
+	expect(hook.result.current.state.toolPreset).toBe("standard");
+	await open(hook, "/b.jsonl", snapshot({ toolPreset: "standard", toolPreferenceSaved: true }));
 	expect(hook.result.current.state.toolPreset).toBe("standard");
 	expect(commands).toEqual([]);
 });

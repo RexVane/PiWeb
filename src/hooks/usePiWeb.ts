@@ -326,6 +326,10 @@ export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: Ex
 	return [...dialogs.values()];
 }
 
+function isToolPreset(value: unknown): value is ToolPreset {
+	return value === "readonly" || value === "standard" || value === "full";
+}
+
 function storedToolPreset(): ToolPreset | null {
 	if (typeof window === "undefined") return null;
 	const saved = localStorage.getItem("piweb.toolPreset");
@@ -405,11 +409,9 @@ export function usePiWeb() {
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
-	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
 	const shownReloadsRef = useRef(new Set<string>());
-	const presetRestoreAttemptRef = useRef<string | null>(null);
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
 	const activeSessionRef = useRef(currentId);
 	activeSessionRef.current = currentId;
@@ -715,6 +717,24 @@ export function usePiWeb() {
 		refreshModels();
 	}, [refreshModels]);
 
+	// 工具配置是全局一份：新会话页没有会话快照，进来先读服务端那份，别只信浏览器 localStorage
+	useEffect(() => {
+		let cancelled = false;
+		void fetch("/api/tools").then((r) => r.json()).then((j) => {
+			const preset = j?.success ? j.data?.toolPreset : undefined;
+			if (cancelled || !isToolPreset(preset) || activeSessionRef.current) return;
+			try {
+				localStorage.setItem("piweb.toolPreset", preset);
+			} catch {
+				/* ignore */
+			}
+			setState((s) => (s.toolPreset === preset ? s : { ...s, toolPreset: preset }));
+		}).catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
 	// SSE 订阅当前会话（resyncNonce 变化时强制重连取新快照）
 	useEffect(() => {
 		esRef.current?.close();
@@ -770,7 +790,6 @@ export function usePiWeb() {
 					retryDelayMs = 2000;
 					const snap = parsed.snapshot as WebSnapshot;
 					const notice = reloadNotice(snap.externalReload);
-					setSnapshotEpoch((epoch) => epoch + 1);
 					setState((prev) => ({
 						snapshot: snap,
 						messages: snap.messages,
@@ -875,8 +894,9 @@ export function usePiWeb() {
 			if (j.success) {
 				const p = j.data.sessionPath as string;
 				const id = idOf(p);
-				// 工具预设取通用设置的持久化选择；模型/思考级别由 Hero 页显式下发
-				const setup: Record<string, unknown>[] = [{ cmd: "setToolPreset", preset: savedToolPreset() }];
+				// 工具配置是全局的（同 pi 的 defaultTools）：新会话自动继承服务端已保存的那一份，
+				// 不再逐个下发；只有从未保存过的旧用户由下面的迁移 effect 用 localStorage 补一次。
+				const setup: Record<string, unknown>[] = [];
 				if (overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId, fresh: true });
 				if (overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
 				for (const command of setup) {
@@ -954,8 +974,17 @@ export function usePiWeb() {
 			await presetRestorePromiseRef.current;
 			if (activeSessionRef.current !== currentId) return;
 			if (currentId) {
+				// 打开着会话：走 agent 命令，服务端会把同一份全局配置同步到所有会话
 				const result = await sendCommand({ cmd: "setToolPreset", preset });
 				if (!result?.success) return;
+			} else {
+				// 新会话页没有会话可发命令：直接写全局配置，之后开的会话都用它
+				const response = await fetch("/api/tools", {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ toolPreset: preset }),
+				}).catch(() => null);
+				if (!response?.ok) return;
 			}
 			localStorage.setItem("piweb.toolPreset", preset);
 			if (activeSessionRef.current === currentId) setState((s) => ({
@@ -1008,19 +1037,15 @@ export function usePiWeb() {
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
 	const setError = useCallback((message: string) => setState((s) => ({ ...s, error: message })), []);
 
-	// 工具权限不写入 Pi JSONL。服务端按会话保存后以服务端为准；
-	// 只有从未保存过的旧用户才用浏览器 localStorage 的档位做一次迁移。运行中延后到空闲。
+	// 工具配置是全局一份（同 pi 的 defaultTools），不写进会话 JSONL。
+	// 服务端保存过就以服务端为准；只有从未保存过的旧用户，才用浏览器 localStorage 的档位迁移一次。
 	useEffect(() => {
 		if (!currentId || !state.connected || !state.snapshot || state.snapshot.isStreaming) return;
-		if (state.snapshot.customActiveTools != null || state.snapshot.toolPreferenceSaved === true) return;
+		if (state.snapshot.toolPreferenceSaved === true) return;
 		const preset = storedToolPreset();
-		// 没有旧选择时不把界面的默认值迁移成用户偏好；新服务端即使档位相同也要完成保存，
-		// 否则换浏览器后，另一个旧 localStorage 档位仍会覆盖这个会话。
+		// 没有旧选择时不把界面的默认值迁移成用户偏好。
 		if (preset === null) return;
-		if (state.snapshot.toolPreset === preset && state.snapshot.toolPreferenceSaved !== false) return;
-		const attemptKey = `${currentId}:${snapshotEpoch}`;
-		if (presetRestoreAttemptRef.current === attemptKey) return;
-		presetRestoreAttemptRef.current = attemptKey;
+		if (state.snapshot.toolPreset === preset) return;
 		const sessionId = currentId;
 		const restore = sendCommand({ cmd: "setToolPreset", preset }).then((result) => {
 			if (result?.success && activeSessionRef.current === sessionId && storedToolPreset() === preset) setState((current) => ({
@@ -1032,7 +1057,7 @@ export function usePiWeb() {
 			if (presetRestorePromiseRef.current === restore) presetRestorePromiseRef.current = null;
 		});
 		presetRestorePromiseRef.current = restore;
-	}, [currentId, snapshotEpoch, state.connected, state.snapshot, sendCommand]);
+	}, [currentId, state.connected, state.snapshot, sendCommand]);
 
 	// 会话可见性规则：归档即离开工作区列表——包括当前会话（归档后切到相邻会话或空态），
 	// 归档区显示全部已归档会话。

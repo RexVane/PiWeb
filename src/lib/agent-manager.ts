@@ -107,7 +107,7 @@ interface Managed {
 	 * 档位过滤会把它们从激活集里拿掉，记在这里，换到放行它们的档位时才能恢复。
 	 */
 	requestedTools: Set<string>;
-	/** 服务端按会话保存的工具偏好：只加载一次，冷启动与快照都先等它。 */
+	/** 全局工具配置的加载 Promise（进程内只读一次文件，所有会话共用）。 */
 	toolPreferenceLoaded?: Promise<void>;
 	/** 是否已经有服务端偏好；前端只在这之后不再用 localStorage 迁移覆盖。 */
 	toolPreferenceSaved?: boolean;
@@ -1039,34 +1039,59 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 	return m;
 }
 
-/** 首次打开某会话时，把服务端保存的 preset / 逐项选择装进 Managed。只读一次文件。 */
+/**
+ * 全局工具配置：与官方 pi 的 defaultTools 一样只有一份，所有会话共用。
+ * 第一个 Managed 打开时读一次文件，之后各会话共用同一个 Promise。
+ */
+let globalToolPreference: Promise<ToolPreference | null> | undefined;
+
 function ensureToolPreference(m: Managed): Promise<void> {
-	m.toolPreferenceLoaded ??= readToolPreference(m.sessionPath).then((preference) => {
+	m.toolPreferenceLoaded ??= (globalToolPreference ??= readToolPreference().catch(() => null)).then((preference) => {
 		if (!preference || m.disposed) return;
 		m.toolPreset = preference.toolPreset;
 		m.customActiveTools = preference.customActiveTools;
 		m.toolPreferenceSaved = true;
-	}).catch(() => {
-		/* 偏好文件坏掉 / 读不了：本次按默认档位跑，不影响会话本身 */
 	});
 	return m.toolPreferenceLoaded;
 }
 
+/** 测试用：丢掉进程内缓存，下一次打开会话重新读文件。 */
+export function resetGlobalToolPreference(): void {
+	globalToolPreference = undefined;
+}
+
 /**
- * 工具选择只在服务端按会话持久化，不写会话 JSONL。保存失败不阻断本次切换，
- * 但仍把 `toolPreferenceSaved` 置真，避免前端反复用 localStorage 覆盖用户刚做的选择。
+ * 写全局工具配置：内存里的共享选择、磁盘上的偏好文件、所有已打开会话三者一起更新，
+ * 与 pi 改 `defaultTools` 后各会话下一次请求就换工具的行为一致。
+ * 保存失败不阻断本次切换，但仍把 `toolPreferenceSaved` 置真，避免前端反复用 localStorage 覆盖用户刚做的选择。
  */
-async function persistToolPreference(m: Managed): Promise<void> {
-	const preference: ToolPreference = {
-		toolPreset: m.toolPreset,
-		...(m.customActiveTools ? { customActiveTools: m.customActiveTools } : {}),
+export async function saveGlobalToolPreference(preference: ToolPreference): Promise<void> {
+	const value: ToolPreference = {
+		toolPreset: preference.toolPreset,
+		...(preference.customActiveTools ? { customActiveTools: [...preference.customActiveTools] } : {}),
 	};
-	m.toolPreferenceSaved = true;
+	globalToolPreference = Promise.resolve(value);
 	try {
-		await saveToolPreference(m.sessionPath, preference);
+		await saveToolPreference(value);
 	} catch {
 		/* 只影响下次重启恢复；当前会话已按新选择生效 */
 	}
+	for (const m of sessions.values()) {
+		if (m.disposed) continue;
+		m.toolPreset = value.toolPreset;
+		m.customActiveTools = value.customActiveTools ? [...value.customActiveTools] : undefined;
+		m.toolPreferenceSaved = true;
+		if (m.session) applyToolPolicy(m, m.session);
+		// 冷会话也要推新的工具目录 / 激活集，开着的页面才能立刻看到全局选择变了
+		if (hasViewers(m)) publishTools(m, m.session);
+	}
+}
+
+async function persistToolPreference(m: Managed): Promise<void> {
+	await saveGlobalToolPreference({
+		toolPreset: m.toolPreset,
+		...(m.customActiveTools ? { customActiveTools: m.customActiveTools } : {}),
+	});
 }
 
 /** SDK 内置工具定义：直接构造，不启动 agent，也不连接 MCP。 */
