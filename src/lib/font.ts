@@ -1,5 +1,5 @@
 /**
- * 界面字体族偏好。
+ * 界面与对话正文字体族偏好。
  * 与字号（piweb.fontSize / piweb.chatFontSize，见 theme.ts applyFontSize）分开，
  * 存 localStorage：piweb.fontUi，通过覆盖 CSS 变量 --font-ui 生效（默认值见 globals.css）。
  *
@@ -7,22 +7,34 @@
  * 原先的 piweb.fontMono 偏好会被清掉，避免旧值残留却已无入口可改。
  *
  * 值有两种写法：
- *   - 预设 id（如 "maple" / "system" / "noto"）
+ *   - 预设 id（如 "maple" / "reading" / "system" / "noto"）
  *   - 自定义字体栈，前缀 "custom:"（如 "custom:Fira Code, monospace"）
  */
 
 export const DEFAULT_FONT_STACK =
 	'"Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", "Microsoft YaHei", monospace';
+export const SYSTEM_FONT_STACK =
+	'ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 
 export interface FontPreset {
 	id: string;
 	stack: string;
 	label: { zh: string; en: string };
+	description?: { zh: string; en: string };
 }
 
 export const FONT_PRESETS: FontPreset[] = [
 	{ id: "maple", stack: DEFAULT_FONT_STACK, label: { zh: "Maple Mono CN（默认）", en: "Maple Mono CN (default)" } },
-	{ id: "system", stack: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif', label: { zh: "系统默认", en: "System default" } },
+	{
+		id: "reading",
+		stack: SYSTEM_FONT_STACK,
+		label: { zh: "阅读预设（系统无衬线）", en: "Reading preset (system sans)" },
+		description: {
+			zh: "界面与对话正文使用系统无衬线字体，代码保持系统等宽，适合长篇阅读。",
+			en: "System sans-serif for the interface and message text, with system monospace for code. Suited to longer reading.",
+		},
+	},
+	{ id: "system", stack: SYSTEM_FONT_STACK, label: { zh: "系统默认", en: "System default" } },
 	{ id: "noto", stack: '"Noto Sans SC", ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif', label: { zh: "思源黑体", en: "Noto Sans SC" } },
 ];
 

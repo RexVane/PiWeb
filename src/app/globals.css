@@ -45,8 +45,8 @@
 	--dsw-active: rgba(0, 0, 0, 0.09);
 	--dsw-label-primary: #09090b;
 	--dsw-label-secondary: #3f3f46;
-	--dsw-label-tertiary: #71717a;
-	--dsw-label-caption: #a1a1aa;
+	--dsw-label-tertiary: #5f6673;
+	--dsw-label-caption: #676f7d;
 	--dsw-border-l1: rgba(0, 0, 0, 0.08);
 	--dsw-border-l2: #d1d5db;
 	--dsw-border-l3: #9ca3af;
@@ -86,6 +86,17 @@
 	--ds-duration-normal: 0.25s;
 	--ds-duration-slow: 0.32s;
 
+	/* 共享表面：内容卡 / 输入面板 / 浮层 / 模态窗口使用同一组层级。 */
+	--pw-radius-control: 10px;
+	--pw-radius-card: 16px;
+	--pw-radius-panel: 20px;
+	--pw-radius-modal: 24px;
+	--pw-surface-border: var(--dsw-border-l2);
+	--pw-shadow-card: inset 0 1px 0 var(--pw-specular-rim), 0 2px 8px rgba(0, 0, 0, 0.04);
+	--pw-shadow-panel: inset 0 1px 0 var(--pw-specular-rim), 0 6px 20px rgba(0, 0, 0, 0.08);
+	--pw-shadow-floating: inset 0 1px 0 var(--pw-specular-rim), 0 12px 32px rgba(0, 0, 0, 0.12);
+	--pw-shadow-modal: inset 0 1px 0 var(--pw-specular-rim), 0 24px 64px rgba(0, 0, 0, 0.18);
+
 	/* 字体 */
 	--dsh-content-font-size: 14px;
 	--dsh-content-font-delta: 0px;
@@ -111,7 +122,7 @@
 @media (prefers-color-scheme: dark) {
 	:root:not([data-ds-light-theme]),
 	body:not([data-ds-light-theme]) {
-		/* Iconsax 柔和曜石黑与护眼银灰（告别刺眼纯白，WCAG AAA 护眼高对比） */
+		/* 深色文字按正文、次级、辅助三档递减，辅助信息仍保持可读。 */
 		--dsw-bg-base: #09090c;
 		--dsw-bg-elevated: #111116;
 		--dsw-sidebar-fill: #0c0c10;
@@ -120,9 +131,9 @@
 		--dsw-hover: rgba(255, 255, 255, 0.05);
 		--dsw-active: rgba(255, 255, 255, 0.09);
 		--dsw-label-primary: #e3e4e8;
-		--dsw-label-secondary: #9da1ad;
-		--dsw-label-tertiary: #6b707e;
-		--dsw-label-caption: #4d515e;
+		--dsw-label-secondary: #b9bdc9;
+		--dsw-label-tertiary: #a0a6b4;
+		--dsw-label-caption: #8b92a2;
 		--dsw-border-l1: rgba(255, 255, 255, 0.05);
 		--dsw-border-l2: rgba(255, 255, 255, 0.08);
 		--dsw-border-l3: rgba(255, 255, 255, 0.12);
@@ -146,12 +157,16 @@
 			0 0 24px rgba(0, 0, 0, 0.25);
 		--dsw-elevation-panel: 0 0 0 1px var(--dsw-elevation-stroke), 0 12px 38px rgba(0, 0, 0, 0.55);
 		--dsw-elevation-prominent: 0 0 0 1px var(--dsw-elevation-stroke), 0 20px 56px rgba(0, 0, 0, 0.72);
+		--pw-shadow-card: inset 0 1px 0 var(--pw-specular-rim), 0 2px 8px rgba(0, 0, 0, 0.12);
+		--pw-shadow-panel: inset 0 1px 0 var(--pw-specular-rim), 0 6px 20px rgba(0, 0, 0, 0.24);
+		--pw-shadow-floating: inset 0 1px 0 var(--pw-specular-rim), 0 12px 32px rgba(0, 0, 0, 0.32);
+		--pw-shadow-modal: inset 0 1px 0 var(--pw-specular-rim), 0 24px 64px rgba(0, 0, 0, 0.48);
 	}
 }
 
 html[data-ds-dark-theme],
 body[data-ds-dark-theme] {
-	/* Iconsax 柔和曜石黑与护眼银灰（告别刺眼纯白，WCAG AAA 护眼高对比） */
+	/* 与系统深色回退保持同一套文字与表面层级。 */
 	--dsw-bg-base: #09090c;
 	--dsw-bg-elevated: #111116;
 	--dsw-sidebar-fill: #0c0c10;
@@ -160,9 +175,9 @@ body[data-ds-dark-theme] {
 	--dsw-hover: rgba(255, 255, 255, 0.05);
 	--dsw-active: rgba(255, 255, 255, 0.09);
 	--dsw-label-primary: #e3e4e8;
-	--dsw-label-secondary: #9da1ad;
-	--dsw-label-tertiary: #6b707e;
-	--dsw-label-caption: #4d515e;
+	--dsw-label-secondary: #b9bdc9;
+	--dsw-label-tertiary: #a0a6b4;
+	--dsw-label-caption: #8b92a2;
 	--dsw-border-l1: rgba(255, 255, 255, 0.05);
 	--dsw-border-l2: rgba(255, 255, 255, 0.08);
 	--dsw-border-l3: rgba(255, 255, 255, 0.12);
@@ -186,6 +201,10 @@ body[data-ds-dark-theme] {
 		0 0 24px rgba(0, 0, 0, 0.25);
 	--dsw-elevation-panel: 0 0 0 1px var(--dsw-elevation-stroke), 0 12px 38px rgba(0, 0, 0, 0.55);
 	--dsw-elevation-prominent: 0 0 0 1px var(--dsw-elevation-stroke), 0 20px 56px rgba(0, 0, 0, 0.72);
+	--pw-shadow-card: inset 0 1px 0 var(--pw-specular-rim), 0 2px 8px rgba(0, 0, 0, 0.12);
+	--pw-shadow-panel: inset 0 1px 0 var(--pw-specular-rim), 0 6px 20px rgba(0, 0, 0, 0.24);
+	--pw-shadow-floating: inset 0 1px 0 var(--pw-specular-rim), 0 12px 32px rgba(0, 0, 0, 0.32);
+	--pw-shadow-modal: inset 0 1px 0 var(--pw-specular-rim), 0 24px 64px rgba(0, 0, 0, 0.48);
 }
 
 /* 基础 */
@@ -241,10 +260,18 @@ textarea::placeholder {
 	corner-shape: superellipse(1.5);
 }
 @media (prefers-reduced-motion: reduce) {
-	* {
+	*,
+	*::before,
+	*::after {
 		transition: none !important;
 		animation: none !important;
+		scroll-behavior: auto !important;
 	}
+}
+html[data-pw-background] *,
+html[data-pw-background] *::before,
+html[data-pw-background] *::after {
+	animation-play-state: paused !important;
 }
 
 .piweb-conversation-width-handle {
@@ -527,7 +554,7 @@ textarea::placeholder {
 	inset: -14px;
 	background: var(--isx-aura-gradient);
 	filter: blur(12px);
-	opacity: 0.52;
+	opacity: 0;
 	z-index: -2;
 	transition: opacity 0.32s var(--isx-ease), transform 0.55s var(--isx-ease);
 	pointer-events: none;
@@ -551,8 +578,12 @@ textarea::placeholder {
 	box-shadow: 0 6px 22px rgba(2, 222, 252, 0.16), 0 4px 18px rgba(252, 1, 151, 0.14);
 }
 .btn-new-session:hover::before {
-	opacity: 0.95;
+	opacity: 0.45;
 	transform: rotate(24deg) scale(1.08);
+}
+.btn-new-session:focus-visible {
+	outline: 2px solid var(--dsw-accent);
+	outline-offset: 3px;
 }
 .btn-new-session:hover svg {
 	transform: scale(1.15) rotate(90deg);
@@ -737,18 +768,7 @@ textarea::placeholder {
 .btn-primary-circle[data-streaming="true"] {
 	background: rgb(226, 22, 42);
 	color: #ffffff;
-	box-shadow: 0 0 16px rgba(226, 22, 42, 0.45), 0 0 28px rgba(226, 22, 42, 0.25);
-	animation: isx-stop-breathe 2s ease-in-out infinite;
-}
-@keyframes isx-stop-breathe {
-	0%, 100% {
-		transform: translateY(-2px) scale(1);
-		box-shadow: 0 0 14px rgba(226, 22, 42, 0.4);
-	}
-	50% {
-		transform: translateY(-2px) scale(1.06);
-		box-shadow: 0 0 22px rgba(226, 22, 42, 0.65), 0 0 32px rgba(226, 22, 42, 0.35);
-	}
+	box-shadow: 0 2px 8px rgba(226, 22, 42, 0.2);
 }
 .btn-primary-circle.isx-btn-stop:hover:not(:disabled),
 .btn-primary-circle[data-streaming="true"]:hover:not(:disabled) {
@@ -1069,8 +1089,8 @@ textarea::placeholder {
 /* 3. 主输入卡 Composer（Iconsax .con-input + 底部发光短横条 ::after） */
 .isx-composer {
 	position: relative;
-	border-radius: 24px !important;
-	border: 1.5px solid var(--dsw-border-l2);
+	border-radius: var(--pw-radius-panel) !important;
+	border: 1px solid var(--pw-surface-border);
 	background: var(--dsw-glass-input);
 	box-shadow: var(--dsw-elevation-panel);
 	transition: border-color 0.28s var(--isx-ease), box-shadow 0.28s var(--isx-ease),
@@ -1093,18 +1113,18 @@ textarea::placeholder {
 	border-color: var(--dsw-border-l3);
 }
 .isx-composer:focus-within {
-	border-color: var(--dsw-label-primary);
+	border-color: color-mix(in srgb, var(--dsw-accent) 60%, var(--dsw-border-l2));
 }
 .isx-composer:focus-within::after {
 	width: 58px;
 	opacity: 1;
-	background: var(--isx-line-gradient);
+	background: var(--dsw-accent);
 }
 
 /* 4. 展示与设置卡片（Iconsax .sec11 .card：20px 圆角 + 1px 描边 + 左下角 20×2px 标志短横条） */
 .isx-card {
 	position: relative;
-	border-radius: 20px;
+	border-radius: var(--pw-radius-card);
 	border: 1px solid var(--dsw-border-l2);
 	background: var(--dsw-bg-elevated);
 	transition: border-color 0.25s var(--isx-ease), background 0.25s var(--isx-ease),
@@ -1224,16 +1244,17 @@ textarea::placeholder {
 	backdrop-filter: blur(18px);
 	-webkit-backdrop-filter: blur(18px);
 	padding: 6px;
-	border-radius: 20px;
-	box-shadow: var(--dsw-elevation-prominent);
-	border: 1px solid var(--dsw-border-l2);
+	border-radius: var(--pw-radius-card);
+	box-shadow: var(--pw-shadow-floating);
+	border: 1px solid var(--pw-surface-border);
 	overflow: hidden;
-	animation: isx-popover-in 0.2s var(--isx-spring) both;
+	transform-origin: bottom right;
+	animation: isx-popover-in 160ms var(--isx-ease) both;
 }
 @keyframes isx-popover-in {
 	from {
 		opacity: 0;
-		transform: translateY(4px) scale(0.97);
+		transform: translateY(3px) scale(0.985);
 	}
 	to {
 		opacity: 1;
@@ -1253,7 +1274,8 @@ textarea::placeholder {
 	background: var(--dsw-glass-modal);
 	backdrop-filter: blur(20px);
 	-webkit-backdrop-filter: blur(20px);
-	border: 1px solid var(--dsw-border-l2);
+	border-radius: var(--pw-radius-modal);
+	border: 1px solid var(--pw-surface-border);
 }
 
 /* markdown 内容（字号独立可调：对话字体设置驱动，缺省跟界面字体） */
@@ -1401,16 +1423,16 @@ body[data-ds-dark-theme] {
 .md-code-block {
 	position: relative;
 	margin: 0.85em 0;
-	border-radius: 16px;
-	border: 1px solid var(--dsw-border-l2);
+	border-radius: var(--pw-radius-card);
+	border: 1px solid var(--pw-surface-border);
 	background: var(--dsw-bg-elevated);
 	overflow: hidden;
-	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.1);
+	box-shadow: var(--pw-shadow-card);
 	transition: border-color 0.25s var(--isx-ease), box-shadow 0.25s var(--isx-ease);
 }
 .md-code-block:hover {
 	border-color: var(--dsw-border-l3);
-	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+	box-shadow: var(--pw-shadow-card);
 }
 .md-code-copy {
 	position: absolute;
@@ -1668,17 +1690,12 @@ body[data-ds-dark-theme] {
 	white-space: nowrap;
 }
 
-/* 消息操作图标行：常显低透明度，悬停变亮，纯净无框 */
+/* 消息操作行保留文字对比度，交互反馈交给图标自身。 */
 .msg-actions {
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
 	margin-top: 6px;
-	opacity: 0.45;
-	transition: opacity 0.2s var(--isx-ease);
-}
-.msg-actions:hover {
-	opacity: 1;
 }
 
 /* 操作行时钟（dsh MessageIconActions timeStart/timeEnd）：
@@ -1813,6 +1830,9 @@ body[data-ds-dark-theme] {
 .pw-step[data-tone="live"] .pw-icon {
 	color: var(--dsw-label-primary);
 	animation: isx-icon-pulse 1.8s ease-in-out infinite;
+}
+.pw-step[data-kind="work"][data-tone="live"] .pw-icon {
+	animation: none;
 }
 @keyframes isx-icon-pulse {
 	0%, 100% {
@@ -1974,7 +1994,7 @@ button.pw-line:hover .pw-chev {
 	background-clip: text;
 	color: transparent;
 	font-weight: 500;
-	animation: pw-shimmer 2.2s linear infinite;
+	animation: pw-shimmer 3.4s linear infinite;
 }
 @keyframes pw-shimmer {
 	from {
@@ -2050,8 +2070,8 @@ button.pw-line:hover .pw-chev {
 	margin: 2px 0 8px 20px;
 	max-height: 420px;
 	overflow: auto;
-	border-radius: 14px;
-	border: 1px solid var(--dsw-border-l2);
+	border-radius: var(--pw-radius-card);
+	border: 1px solid var(--pw-surface-border);
 	padding: 8px 10px;
 	background: var(--dsw-markdown-code-block, var(--dsw-bg-elevated));
 }
@@ -2059,8 +2079,8 @@ button.pw-line:hover .pw-chev {
 	margin: 2px 0 8px 20px;
 	max-height: 360px;
 	overflow: auto;
-	border-radius: 14px;
-	border: 1px solid var(--dsw-border-l2);
+	border-radius: var(--pw-radius-card);
+	border: 1px solid var(--pw-surface-border);
 	padding: 10px 14px;
 	background: var(--dsw-markdown-code-block, var(--dsw-bg-elevated));
 	font-family: var(--font-mono);
@@ -2160,9 +2180,9 @@ body[data-pebrel-theme] {
 	--dsw-hover: rgba(100, 116, 139, 0.13);
 	--dsw-active: rgba(100, 116, 139, 0.2);
 	--dsw-label-primary: #334155;
-	--dsw-label-secondary: #64748b;
-	--dsw-label-tertiary: #94a3b8;
-	--dsw-label-caption: #a3adbb;
+	--dsw-label-secondary: #526176;
+	--dsw-label-tertiary: #647083;
+	--dsw-label-caption: #626e7e;
 	--dsw-border-l1: rgba(51, 65, 85, 0.08);
 	--dsw-border-l2: rgba(51, 65, 85, 0.12);
 	--dsw-border-l3: rgba(51, 65, 85, 0.16);
@@ -2226,8 +2246,8 @@ body[data-pebrel-theme="nord-paper"] {
 	--dsw-active: rgba(43, 90, 56, 0.18);
 	--dsw-label-primary: #1a1a1a;
 	--dsw-label-secondary: #474646;
-	--dsw-label-tertiary: #8c8a80;
-	--dsw-label-caption: #a8a49a;
+	--dsw-label-tertiary: #69685f;
+	--dsw-label-caption: #706e65;
 	--dsw-border-l1: #eceae4;
 	--dsw-border-l2: #e0dfd5;
 	--dsw-border-l3: #d5d3c9;
@@ -2255,8 +2275,8 @@ html[data-pebrel-theme][data-ds-dark-theme],
 body[data-pebrel-theme][data-ds-dark-theme] {
 	--dsw-label-primary: #e2e8f0;
 	--dsw-label-secondary: #b9c3cf;
-	--dsw-label-tertiary: #94a3b8;
-	--dsw-label-caption: #64748b;
+	--dsw-label-tertiary: #a6b0c0;
+	--dsw-label-caption: #96a2b4;
 	--dsw-bubble: rgba(255, 255, 255, 0.05);
 	--dsw-hover: rgba(203, 213, 225, 0.14);
 	--dsw-active: rgba(203, 213, 225, 0.21);
@@ -2343,8 +2363,8 @@ body[data-pebrel-theme="nord-paper"][data-ds-dark-theme] {
 	--dsw-active: rgba(136, 192, 208, 0.18);
 	--dsw-label-primary: #e5e9f0;
 	--dsw-label-secondary: #c0c7d3;
-	--dsw-label-tertiary: #7b8294;
-	--dsw-label-caption: #6f7688;
+	--dsw-label-tertiary: #b2bac9;
+	--dsw-label-caption: #aab2c2;
 	--dsw-border-l1: rgba(255, 255, 255, 0.05);
 	--dsw-border-l2: rgba(255, 255, 255, 0.06);
 	--dsw-border-l3: #434c5e;
@@ -3560,7 +3580,7 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
    ============================================================ */
 
 :root {
-	--pw-specular-rim: rgba(255, 255, 255, 0.75);
+	--pw-specular-rim: rgba(255, 255, 255, 0.65);
 	--pw-specular-inner: rgba(0, 0, 0, 0.04);
 	--pw-code-header-bg: rgba(0, 0, 0, 0.03);
 	--pw-spring-snappy: cubic-bezier(0.22, 1.12, 0.36, 1);
@@ -3569,30 +3589,30 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 
 html[data-ds-dark-theme],
 body[data-ds-dark-theme] {
-	--pw-specular-rim: rgba(255, 255, 255, 0.12);
+	--pw-specular-rim: rgba(255, 255, 255, 0.075);
 	--pw-specular-inner: rgba(0, 0, 0, 0.25);
 	--pw-code-header-bg: rgba(255, 255, 255, 0.028);
 }
 
 /* 1. Composer Streaming Border Beam & Inner Specular Bevel (BoardUI ComposerLoader + Libraries.dev BorderBeam) */
 .isx-composer {
-	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), var(--dsw-elevation-panel);
+	box-shadow: var(--pw-shadow-panel);
 }
 .isx-composer[data-streaming="true"] {
 	border-color: transparent !important;
 	box-shadow:
 		inset 0 1px 0 0 var(--pw-specular-rim),
-		0 0 0 1px rgba(59, 130, 246, 0.35),
-		0 8px 30px -6px rgba(59, 130, 246, 0.18),
-		0 6px 24px -8px rgba(168, 85, 247, 0.16),
-		var(--dsw-elevation-panel);
+		0 0 0 1px rgba(59, 130, 246, 0.2),
+		0 6px 20px -6px rgba(59, 130, 246, 0.12),
+		var(--pw-shadow-panel);
 }
 .isx-composer[data-streaming="true"]::before {
 	content: "";
 	position: absolute;
-	inset: -1.5px;
-	border-radius: 25px;
-	padding: 1.5px;
+	inset: -1px;
+	border-radius: calc(var(--pw-radius-panel) + 1px);
+	padding: 1px;
+	opacity: 0.72;
 	background: linear-gradient(
 		115deg,
 		rgba(59, 130, 246, 0.15) 0%,
@@ -3603,7 +3623,7 @@ body[data-ds-dark-theme] {
 		rgba(59, 130, 246, 0.15) 100%
 	);
 	background-size: 260% 260%;
-	animation: pw-composer-beam 3.2s linear infinite;
+	animation: pw-composer-beam 4.8s linear infinite;
 	-webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
 	-webkit-mask-composite: xor;
 	mask-composite: exclude;
@@ -3611,8 +3631,8 @@ body[data-ds-dark-theme] {
 	z-index: 2;
 }
 .isx-composer[data-streaming="true"]::after {
-	width: 84px;
-	opacity: 1;
+	width: 56px;
+	opacity: 0.8;
 	background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
 }
 @keyframes pw-composer-beam {
@@ -3659,7 +3679,7 @@ body[data-ds-dark-theme] {
 	color: var(--dsw-label-primary);
 }
 .pw-agent-limits-row[data-dimmed="true"] {
-	opacity: 0.42;
+	opacity: 0.9;
 }
 .pw-agent-limits-dot {
 	flex: none;
@@ -3729,7 +3749,7 @@ body[data-ds-dark-theme] {
 	border-radius: 999px;
 	background: currentColor;
 	opacity: 0.22;
-	animation: pw-thinking-wave 1.35s ease-in-out infinite;
+	animation: pw-thinking-wave 1.8s ease-in-out infinite;
 }
 .pw-thinking-grid > i:nth-child(1) { animation-delay: 0ms; }
 .pw-thinking-grid > i:nth-child(2),
@@ -3752,16 +3772,15 @@ body[data-ds-dark-theme] {
 }
 
 /* 4. Watermelon UI & HeroUI Pro Double-Stage Specular Surfaces & Code Block Header Bar */
-.popover,
 .glass-modal {
-	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), var(--dsw-elevation-prominent);
+	box-shadow: var(--pw-shadow-modal);
 }
 .pw-diff,
 .pw-output {
-	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), inset 0 2px 4px 0 var(--pw-specular-inner);
+	box-shadow: var(--pw-shadow-card);
 }
 .md-code-block {
-	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), 0 4px 18px rgba(0, 0, 0, 0.1);
+	box-shadow: var(--pw-shadow-card);
 }
 .md-code-block::after {
 	content: "";
@@ -3858,13 +3877,11 @@ body[data-ds-dark-theme] {
 	align-items: center;
 	gap: 10px;
 	padding: 10px 14px;
-	border-radius: 16px;
+	border-radius: var(--pw-radius-card);
 	background: var(--dsw-bg-elevated);
 	color: var(--dsw-label-primary);
 	border: 1px solid var(--dsw-border-l2);
-	box-shadow:
-		inset 0 1px 0 0 var(--pw-specular-rim),
-		0 10px 28px -8px rgba(0, 0, 0, 0.32);
+	box-shadow: var(--pw-shadow-floating);
 	transition: transform 260ms var(--pw-spring-snappy), box-shadow 260ms ease, border-color 200ms ease;
 }
 /* Tucked peek cards behind the front toast (Bencho ToastStack signature) */

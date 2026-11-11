@@ -299,6 +299,17 @@ export function AppShell() {
 		return () => query.removeEventListener("change", sync);
 	}, []);
 
+	// 后台页面暂停装饰动画，返回时从原位置继续。
+	useEffect(() => {
+		const sync = () => document.documentElement.toggleAttribute("data-pw-background", document.hidden);
+		sync();
+		document.addEventListener("visibilitychange", sync);
+		return () => {
+			document.removeEventListener("visibilitychange", sync);
+			document.documentElement.removeAttribute("data-pw-background");
+		};
+	}, []);
+
 	// 全局 Pebrel 主题初始化与系统亮暗/跨标签动态监听
 	useEffect(() => {
 		const sync = () => syncPebrelTheme();

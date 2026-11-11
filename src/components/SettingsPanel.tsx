@@ -107,8 +107,8 @@ export function SettingsPanel({
 					width: 800,
 					maxWidth: "calc(100vw - 48px)",
 					height: "min(800px, calc(100vh - 48px))",
-					borderRadius: 32,
-					boxShadow: "var(--dsw-elevation-prominent)",
+					borderRadius: "var(--pw-radius-modal)",
+					boxShadow: "var(--pw-shadow-modal)",
 				}}
 			>
 				{/* 左导航（Iconsax .isx-menu-item：h42 r12，悬停/激活高对比反转 + 文字右移 + 右侧短竖条） */}
@@ -703,7 +703,7 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 	);
 }
 
-/** 界面字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。
+/** 界面与对话正文字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。
  *  代码字体已固定为系统等宽、不再可配（见 lib/font.ts）。 */
 function FontFamilyPicker() {
 	const { t, lang } = useI18n();
@@ -741,6 +741,7 @@ function FontFamilyPicker() {
 	};
 
 	const selectValue = customMode ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[0].id;
+	const presetDescription = FONT_PRESETS.find((preset) => preset.id === selectValue)?.description?.[lang];
 
 	return (
 		<div className="flex flex-col items-end gap-2">
@@ -756,6 +757,11 @@ function FontFamilyPicker() {
 				]}
 				onChange={pick}
 			/>
+			{presetDescription && (
+				<p style={{ maxWidth: 260, fontSize: 12, lineHeight: 1.6, textAlign: "right", color: "var(--dsw-label-tertiary)" }}>
+					{presetDescription}
+				</p>
+			)}
 			{customMode && (
 				<input
 					value={custom}
