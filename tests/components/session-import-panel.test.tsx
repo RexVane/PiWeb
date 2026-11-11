@@ -82,8 +82,13 @@ async function chooseSource(source: string) {
 	fireEvent.click(screen.getByTestId("import-source-" + source));
 }
 
+function chooseProject(path: string) {
+	fireEvent.click(screen.getByRole("button", { name: "筛选项目" }));
+	fireEvent.click(within(screen.getByRole("listbox", { name: "筛选项目" })).getByRole("option", { name: path }));
+}
+
 describe("导入会话面板", () => {
-	it("项目与状态筛选可组合，跨来源已选项可统一检查，清除结果只影响可见项", async () => {
+	it("项目筛选保留已导入状态，批选只勾可用项，跨来源已选可检查并返回全部", async () => {
 		setup({ imported: ["zcode:done"], sessions: [
 			session({ externalId: "a", title: "网页修复", projectPath: "D:\\AIApp\\PiWeb" }),
 			session({ externalId: "b", title: "另一个项目", projectPath: "/other" }),
@@ -91,20 +96,79 @@ describe("导入会话面板", () => {
 			session({ source: "zcode", externalId: "done", title: "已完成导入", projectPath: "D:\\AIApp\\PiWeb" }),
 		] });
 		await chooseSource("all");
-		fireEvent.change(screen.getByRole("combobox", { name: "筛选项目" }), { target: { value: "d:/aiapp/piweb" } });
-		fireEvent.change(screen.getByRole("combobox", { name: "筛选状态" }), { target: { value: "available" } });
+		chooseProject("D:\\AIApp\\PiWeb");
 		expect(screen.queryByText("另一个项目")).toBeNull();
-		expect(screen.queryByText("已完成导入")).toBeNull();
+		expect(screen.queryByRole("combobox", { name: "筛选状态" })).toBeNull();
+		expect((screen.getByText("已完成导入").closest("label")!.querySelector("input") as HTMLInputElement).disabled).toBe(true);
 		fireEvent.click(screen.getByRole("button", { name: "全选结果" }));
 		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
 		await chooseSource("claude");
 		expect(screen.getByText("其中 1 条不在当前列表")).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: "取消选择结果" }));
+		fireEvent.click(screen.getByRole("button", { name: "清空本组" }));
 		expect(screen.getByTestId("import-run").textContent).toContain("(1)");
 		fireEvent.click(screen.getByRole("button", { name: "查看全部已选" }));
 		expect(screen.getByTestId("import-group-all").textContent).toContain("同项目旧会话");
 		expect(screen.queryByText("网页修复")).toBeNull();
-		expect((screen.getByRole("combobox", { name: "筛选状态" }) as HTMLSelectElement).value).toBe("selected");
+		expect(screen.getByText("已选会话 · 1")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "返回全部会话" }));
+		expect(screen.getByText("网页修复")).toBeTruthy();
+		expect(screen.getByText("另一个项目")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "查看全部已选" }));
+		fireEvent.click(screen.getByRole("button", { name: "清空选择" }));
+		expect(screen.queryByText("已选会话 · 1")).toBeNull();
+		expect(screen.getByText("网页修复")).toBeTruthy();
+		expect(screen.queryByTestId("import-run")).toBeNull();
+	});
+
+	it("项目菜单按完整路径搜索区分同名目录，键盘选择与会话搜索可组合", async () => {
+		setup({ imported: [], sessions: [
+			session({ externalId: "one", title: "第一个项目", projectPath: "C:\\work\\web" }),
+			session({ externalId: "two", title: "第二个项目", projectPath: "D:\\apps\\web" }),
+			session({ externalId: "none", title: "无目录会话", projectPath: undefined }),
+		] });
+		await screen.findByText("第一个项目");
+		const trigger = screen.getByRole("button", { name: "筛选项目" });
+		fireEvent.click(trigger);
+		expect(within(screen.getByRole("listbox", { name: "筛选项目" })).getAllByRole("option")).toHaveLength(4);
+		const search = screen.getByRole("combobox", { name: "搜索项目名称或路径…" });
+		fireEvent.change(search, { target: { value: "D:\\APPS web" } });
+		expect(within(screen.getByRole("listbox", { name: "筛选项目" })).getAllByRole("option")).toHaveLength(1);
+		fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+		expect(screen.getByRole("dialog", { name: "筛选项目" })).toBeTruthy();
+		fireEvent.keyDown(search, { key: "ArrowDown" });
+		fireEvent.keyDown(search, { key: "Enter" });
+		expect(document.activeElement).toBe(trigger);
+		expect(screen.queryByText("第一个项目")).toBeNull();
+		expect(screen.getByText("第二个项目")).toBeTruthy();
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "not found" } });
+		chooseProject("全部项目");
+		expect(screen.getByText("没有匹配的会话")).toBeTruthy();
+		fireEvent.click(screen.getByText("清空搜索", { selector: "button" }));
+		chooseProject("（无项目目录）");
+		expect(screen.getByText("无目录会话")).toBeTruthy();
+		expect(screen.queryByText("第二个项目")).toBeNull();
+		fireEvent.click(trigger);
+		fireEvent.change(screen.getByRole("combobox", { name: "搜索项目名称或路径…" }), { target: { value: "zzzzzz" } });
+		expect(screen.getByText("没有匹配的项目")).toBeTruthy();
+		fireEvent.keyDown(screen.getByRole("combobox", { name: "搜索项目名称或路径…" }), { key: "Escape" });
+		expect(document.activeElement).toBe(trigger);
+		expect(screen.queryByRole("dialog", { name: "筛选项目" })).toBeNull();
+	});
+
+	it("重新扫描移除当前项目时回到全部项目，避免显示与列表筛选不一致", async () => {
+		const options = { imported: [], sessions: [
+			session({ externalId: "a", title: "项目A会话", projectPath: "/project-a" }),
+			session({ externalId: "b", title: "项目B会话", projectPath: "/project-b" }),
+		] };
+		setup(options);
+		await screen.findByText("项目A会话");
+		chooseProject("/project-a");
+		expect(screen.queryByText("项目B会话")).toBeNull();
+		options.sessions = [session({ externalId: "b", title: "项目B会话", projectPath: "/project-b" })];
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await screen.findByText("项目B会话");
+		expect(screen.getByTestId("import-project-picker").textContent).toContain("全部项目");
+		expect(screen.queryByText("没有匹配的会话")).toBeNull();
 	});
 
 	it("找不到旧会话时可扩大搜索范围，并在后续重新扫描时保留范围与已选项", async () => {

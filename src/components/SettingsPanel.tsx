@@ -37,7 +37,7 @@ import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } fr
 import { useI18n } from "@/i18n";
 import { fmtTokens } from "@/lib/format";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
-import { applyFontChoice, CUSTOM_PREFIX, FONT_PRESETS, loadFontChoice } from "@/lib/font";
+import { applyFontChoice, FONT_PRESETS, loadFontChoice } from "@/lib/font";
 import {
 	customModelGaps,
 	fillModelFields,
@@ -703,44 +703,22 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 	);
 }
 
-/** 界面与对话正文字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。
+/** 界面与对话正文字体族选择：三个预设，改动即生效并持久化。
  *  代码字体已固定为系统等宽、不再可配（见 lib/font.ts）。 */
 function FontFamilyPicker() {
-	const { t, lang } = useI18n();
+	const { lang } = useI18n();
 	const [stored, setStored] = useState<string | null>(null);
-	const [custom, setCustom] = useState("");
-	// 「自定义」是下拉自己的选中状态，不能从输入框内容推断：删空输入框不该把下拉弹回预设、
-	// 连输入框一起收掉；选回预设也不该因为输入框里还留着字而停在「自定义」
-	const [customMode, setCustomMode] = useState(false);
 
 	useEffect(() => {
-		const saved = loadFontChoice();
-		const savedCustom = saved?.startsWith(CUSTOM_PREFIX) ? saved.slice(CUSTOM_PREFIX.length) : null;
-		setStored(saved);
-		setCustomMode(savedCustom !== null);
-		setCustom(savedCustom ?? "");
+		setStored(loadFontChoice());
 	}, []);
 
-	const applyCustom = (v: string) => {
-		setCustom(v);
-		const next = v.trim() ? CUSTOM_PREFIX + v.trim() : null;
-		setStored(next);
-		applyFontChoice(next);
-	};
-
 	const pick = (v: string) => {
-		if (v === CUSTOM_PREFIX) {
-			setCustomMode(true);
-			// 输入框里留着上次的字体栈就接着用；空的先回落默认，等你输入
-			applyCustom(custom);
-			return;
-		}
-		setCustomMode(false);
 		setStored(v);
 		applyFontChoice(v);
 	};
 
-	const selectValue = customMode ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[0].id;
+	const selectValue = stored ?? FONT_PRESETS[0].id;
 	const presetDescription = FONT_PRESETS.find((preset) => preset.id === selectValue)?.description?.[lang];
 
 	return (
@@ -748,36 +726,13 @@ function FontFamilyPicker() {
 			<SelectOption
 				value={selectValue}
 				width={220}
-				options={[
-					...FONT_PRESETS.map((p) => ({
-						value: p.id,
-						label: lang === "zh" ? p.label.zh : p.label.en,
-					})),
-					{ value: CUSTOM_PREFIX, label: t.fontCustom },
-				]}
+				options={FONT_PRESETS.map((p) => ({ value: p.id, label: p.label[lang] }))}
 				onChange={pick}
 			/>
 			{presetDescription && (
 				<p style={{ maxWidth: 260, fontSize: 12, lineHeight: 1.6, textAlign: "right", color: "var(--dsw-label-tertiary)" }}>
 					{presetDescription}
 				</p>
-			)}
-			{customMode && (
-				<input
-					value={custom}
-					onChange={(e) => applyCustom(e.target.value)}
-					placeholder={t.fontCustomPlaceholder}
-					style={{
-						height: 30,
-						width: 260,
-						padding: "0 10px",
-						fontSize: 13,
-						background: "var(--dsw-input-major)",
-						border: "0.5px solid var(--dsw-border-l3)",
-						borderRadius: 8,
-						color: "var(--dsw-label-primary)",
-					}}
-				/>
 			)}
 		</div>
 	);

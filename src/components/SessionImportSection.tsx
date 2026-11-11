@@ -11,6 +11,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { useI18n } from "@/i18n";
 import { IconRefreshOutline14, IconDownloadOutline16, IconSearchOutline16, IconFolderOpenOutline16, IconCheckOutline14, IconCloseOutline14, IconChevronDown14 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
+import { ImportProjectPicker } from "@/components/ImportProjectPicker";
 import { INITIAL_SCAN_LIMIT, MAX_SCAN_LIMIT, MAX_IMPORT_SELECTION } from "@/lib/session-import/limits";
 import { SESSION_CHANGE_EVENT, notifySessionsChanged } from "@/lib/session-change-events";
 import styles from "./SessionImportSection.module.css";
@@ -87,7 +88,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const [fallback, setFallback] = useState(cwd);
 	const [query, setQuery] = useState("");
 	const [projectFilter, setProjectFilter] = useState("");
-	const [statusFilter, setStatusFilter] = useState("all");
+	const [selectedOnly, setSelectedOnly] = useState(false);
 	const [scanLimit, setScanLimit] = useState(INITIAL_SCAN_LIMIT);
 	const scanLimitRef = useRef(INITIAL_SCAN_LIMIT);
 	const [hasMore, setHasMore] = useState<Record<string, boolean>>({});
@@ -215,21 +216,35 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	}, [highlightedSource, pickerId, pickerOpen]);
 	const activeGroup = groups.find((group) => group.source === activeSource);
 	const search = query.trim().toLocaleLowerCase();
-	const projects = [...new Map((activeGroup?.rows ?? []).map((row) => [projectKey(row.projectPath), row.projectPath ?? ""])).entries()].sort((left, right) => left[1].localeCompare(right[1]));
+	const projects = useMemo(() => {
+		const byProject = new Map<string, { value: string; path: string; count: number }>();
+		for (const row of activeGroup?.rows ?? []) {
+			const value = projectKey(row.projectPath);
+			const existing = byProject.get(value);
+			if (existing) existing.count += 1;
+			else byProject.set(value, { value, path: row.projectPath ?? "", count: 1 });
+		}
+		return [...byProject.values()].sort((left, right) => folderName(left.path).localeCompare(folderName(right.path)) || left.path.localeCompare(right.path));
+	}, [activeGroup]);
+	useEffect(() => {
+		if (!scanning && projectFilter && !projects.some((project) => project.value === projectFilter)) setProjectFilter("");
+	}, [scanning, projectFilter, projects]);
 	const visibleRows = (activeGroup?.rows ?? []).filter((row) =>
 		(!search || [row.title, row.projectPath, row.provider, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search))) &&
 		(!projectFilter || projectKey(row.projectPath) === projectFilter) &&
-		(statusFilter !== "available" || !isImported(row)) &&
-		(statusFilter !== "selected" || selected.has(key(row))),
+		(!selectedOnly || selected.has(key(row))),
 	);
 	const availableRows = visibleRows.filter((row) => !isImported(row));
 	const selectedArchived = [...selected].filter((key) => archivedKeys.has(key)).length;
 	const hiddenSelected = selected.size - visibleRows.filter((row) => selected.has(key(row))).length;
-	const filtersActive = Boolean(search || projectFilter || statusFilter !== "all");
+	const filtersActive = Boolean(search || projectFilter || selectedOnly);
 	const moreAvailable = activeSource === "all" ? Object.values(hasMore).some(Boolean) : Boolean(hasMore[activeSource]);
 	const scanFailed = errors.some((error) => activeSource === "all" || error.source === activeSource);
-	const clearFilters = () => { setQuery(""); setProjectFilter(""); setStatusFilter("all"); };
-	const reviewSelected = () => { setActiveSource("all"); setQuery(""); setProjectFilter(""); setStatusFilter("selected"); };
+	const clearFilters = () => { setQuery(""); setProjectFilter(""); setSelectedOnly(false); };
+	const reviewSelected = () => { setActiveSource("all"); setQuery(""); setProjectFilter(""); setSelectedOnly(true); };
+	useEffect(() => {
+		if (!selected.size) setSelectedOnly(false);
+	}, [selected.size]);
 
 	const toggle = (summary: Summary) => {
 		if (isImported(summary) || importInFlight.current || scanInFlight.current) return;
@@ -305,6 +320,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const chooseSource = (source: string) => {
 		setActiveSource(source);
 		setProjectFilter("");
+		setSelectedOnly(false);
 		setPickerOpen(false);
 		pickerTrigger.current?.focus();
 	};
@@ -416,16 +432,9 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							{query && <button type="button" aria-label={t.importClearSearch} title={t.importClearSearch} onClick={() => setQuery("")} disabled={importing}><IconCloseOutline14 size={12} /></button>}
 						</div>
 						<div className={styles.filters}>
-							<select aria-label={t.importProjectFilter} value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)} disabled={importing || scanning} title={projects.find(([id]) => id === projectFilter)?.[1] || t.importProjectAll}>
-								<option value="">{t.importProjectAll}</option>
-								{projects.map(([id, project]) => <option key={id} value={id}>{project || t.importNoProject}</option>)}
-							</select>
-							<select aria-label={t.importStatusFilter} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} disabled={importing || scanning}>
-								<option value="all">{t.importStatusAll}</option>
-								<option value="available">{t.importStatusAvailable}</option>
-								<option value="selected">{t.importStatusSelected}</option>
-							</select>
+							<ImportProjectPicker value={projectFilter} onChange={setProjectFilter} projects={projects} disabled={importing || scanning} />
 						</div>
+						{selectedOnly && <div className={styles.reviewMode}><span>{t.importSelectedSessions} · {selected.size}</span><button type="button" onClick={clearFilters} disabled={importing || scanning}>{t.importBackToAll}</button></div>}
 						{moreAvailable && scanLimit < MAX_SCAN_LIMIT && <button type="button" className={styles.loadMore} onClick={() => void scan(Math.min(MAX_SCAN_LIMIT, scanLimit * 2))} disabled={importing || scanning} data-testid="import-load-more"><IconRefreshOutline14 className={scanning ? styles.spinning : undefined} size={12} />{scanning ? t.importScanning : t.importLoadEarlier}</button>}
 
 						{activeGroup && (
@@ -440,7 +449,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 								{!activeGroup.rows.length ? (
 									<div className={styles.empty} role="status"><IconFolderOpenOutline16 size={24} /><strong>{errors.some((error) => error.source === activeSource) ? t.importSourceScanFailed : t.importEmpty}</strong><p>{t.importEmptyHint}</p></div>
 								) : !visibleRows.length ? (
-									<div className={styles.empty} role="status"><IconSearchOutline16 size={24} /><strong>{t.importNoMatches}</strong><button type="button" onClick={clearFilters}>{projectFilter || statusFilter !== "all" ? t.importClearFilters : t.importClearSearch}</button></div>
+									<div className={styles.empty} role="status"><IconSearchOutline16 size={24} /><strong>{t.importNoMatches}</strong><button type="button" onClick={clearFilters}>{projectFilter || selectedOnly ? t.importClearFilters : t.importClearSearch}</button></div>
 								) : (
 									<div className={styles.rows}>
 										{visibleRows.map((row) => {
