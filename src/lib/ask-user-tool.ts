@@ -1,8 +1,8 @@
 /**
- * ask_user_question 的工具定义（只在服务端用：引了 pi-ai 的 TypeBox）。
+ * ask_user_question 的工具定义（只在服务端用：引入 TypeBox 构建参数 schema）。
  * 题目 / 答案的归一化与给模型的结果文本在 ask-user.ts，前端也共用那份。
  */
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { ASK_USER_TOOL, formatOutcome, normalizeQuestions, type AskOutcome, type AskQuestion } from "./ask-user";
 
