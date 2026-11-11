@@ -47,7 +47,7 @@ import type { NewSessionDefaults } from "@/lib/model-defaults";
 import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import { promptTitleText } from "@/lib/chat/skill-expansion";
-import type { ImageAttachment, TrajEntry, WebSnapshot } from "@/lib/types";
+import type { ImageAttachment, ToolPreset, TrajEntry, WebSnapshot } from "@/lib/types";
 
 /** 补全需要的资源清单；新会话页与冷会话都能从服务端单独发现，不必等快照 */
 type WorkspaceCommands = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensionCommands">;
@@ -91,6 +91,7 @@ export function AppShell() {
 		retrySessionList,
 		archivedSessions,
 		archivedSessionPaths,
+		pinnedSessionPaths,
 		currentId,
 		currentPath,
 		state,
@@ -103,6 +104,9 @@ export function AppShell() {
 		patchSessionName,
 		archiveSession,
 		unarchiveSession,
+		pinSession,
+		unpinSession,
+		deleteSession,
 		resync,
 		groupBy,
 		orderBy,
@@ -119,6 +123,7 @@ export function AppShell() {
 		openSession,
 		closeSession,
 		setToolPreset,
+		toolPresetChanging,
 		clearError,
 		clearCompaction,
 		setError,
@@ -161,7 +166,6 @@ export function AppShell() {
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const loadSessionTools = useCallback(() => sendCommand({ cmd: "prepare" }), [sendCommand]);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
 	/** 抽屉入口保存在浏览器 */
@@ -546,6 +550,22 @@ export function AppShell() {
 		[unarchiveSession],
 	);
 
+	const doDeleteSession = useCallback(
+		async (path: string) => {
+			// 失败时让异常继续抛给侧栏的确认框显示（usePiWeb 同时写入共享错误横幅）
+			await deleteSession(path);
+			// 正在看的会话被物理删除后必须切走：逻辑同归档（同工作区另一个会话优先，没有就回空态）
+			if (!currentPath || !samePath(path, currentPath)) return;
+			const cwd = sessions.find((s) => samePath(s.path, currentPath))?.cwd;
+			const next =
+				sessions.find((s) => !samePath(s.path, path) && cwd && samePath(s.cwd, cwd)) ??
+				sessions.find((s) => !samePath(s.path, path));
+			if (next) openSession(next.path);
+			else closeSession();
+		},
+		[closeSession, currentPath, deleteSession, openSession, sessions],
+	);
+
 	// ---------- 侧栏回调：全部 useCallback，配合 SessionSidebar 的 memo ——
 	// 流式期间 state.messages 每 16ms 换引用，AppShell 整树重渲染时侧栏不再跟着空转
 	const openSessionAndCloseMobileNav = useCallback((path: string) => {
@@ -911,6 +931,7 @@ export function AppShell() {
 					onRetrySessionList={retrySessionList}
 					archivedSessions={archivedSessions}
 					archivedPaths={archivedSessionPaths}
+					pinnedPaths={pinnedSessionPaths}
 					addedWorkspaces={addedWorkspaces}
 					removedWorkspaces={removedWorkspaces}
 					currentPath={currentPath}
@@ -927,6 +948,9 @@ export function AppShell() {
 					onFork={doForkSession}
 					onArchive={doArchiveSession}
 					onUnarchive={doUnarchiveSession}
+					onPin={pinSession}
+					onUnpin={unpinSession}
+					onDelete={doDeleteSession}
 					onExport={exportSessionFile}
 					getWorkspaceName={getWorkspaceName}
 					onRenameWorkspace={doRenameWorkspace}
@@ -944,6 +968,9 @@ export function AppShell() {
 				{!currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
 						<Hero
+							toolPreset={state.toolPreset}
+							onToolPresetChange={setToolPreset}
+							permissionChanging={toolPresetChanging}
 								draft={composerDrafts.current.get(heroDraftKey) ?? EMPTY_CHAT_DRAFT}
 								onDraftChange={saveHeroDraft}
 								onUploadError={(message) => failUpload(heroDraftKey, message)}
@@ -976,16 +1003,17 @@ export function AppShell() {
 							heroEffectiveThinking={heroEffectiveThinking}
 							onSelectHeroThinking={setHeroThinking}
 						/>
-						{/* 草稿阶段的错误行内显示（不再弹右下角） */}
+						{/* 草稿阶段的错误行内显示（Bencho ToastStack 层叠通知卡风格） */}
 						{state.error && (
 							<div className="px-4 pb-3">
 								<button
-									className="mx-auto block w-full max-w-md rounded-xl px-3 py-2 text-left"
-									style={{ fontSize: 12.5, background: "var(--dsw-danger)", color: "white" }}
+									className="pw-toast-stack pw-toast-error mx-auto flex w-full max-w-md items-center gap-2.5 text-left"
+									style={{ fontSize: 12.5 }}
 									onClick={clearError}
 									role="alert"
 								>
-									{state.error}
+									<span className="pw-toast-icon" aria-hidden="true">✕</span>
+									<span className="pw-toast-body">{state.error}</span>
 								</button>
 							</div>
 						)}
@@ -1080,6 +1108,10 @@ export function AppShell() {
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										{askDialog && <AskUserCard key={askDialog.id} dialog={askDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />}
 										<ChatInput
+											toolPreset={state.toolPreset}
+											customActiveTools={snapshot?.customActiveTools}
+											onToolPresetChange={setToolPreset}
+											permissionChanging={toolPresetChanging}
 											key={draftKey}
 											// 问题卡占着输入框上方：附件预览改成随文档流排在输入框里，免得浮层盖住卡片
 											attachmentLayout={askDialog ? "flow" : undefined}
@@ -1198,14 +1230,6 @@ export function AppShell() {
 				}}
 				onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
 				cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
-				toolPreset={state.toolPreset}
-				onToolPresetChange={setToolPreset}
-				tools={snapshot?.tools ?? null}
-				sessionId={currentId}
-				onLoadTools={currentId ? loadSessionTools : undefined}
-				onSetTools={(names) => {
-					void sendCommand({ cmd: "setActiveTools", names });
-				}}
 			/>
 			{isNarrow && (
 				<button
@@ -1242,6 +1266,9 @@ function basename(p: string): string {
 }
 
 function Hero({
+	toolPreset,
+	onToolPresetChange,
+	permissionChanging,
 	draft,
 	onDraftChange,
 	onUploadError,
@@ -1267,6 +1294,9 @@ function Hero({
 	heroEffectiveThinking,
 	onSelectHeroThinking,
 }: {
+	toolPreset: ToolPreset;
+	onToolPresetChange: (preset: ToolPreset) => Promise<{ success: boolean; error?: string }>;
+	permissionChanging: boolean;
 	draft: ChatDraft;
 	onDraftChange: (update: ChatDraftUpdate) => void;
 	onUploadError: (message: string) => void;
@@ -1383,6 +1413,9 @@ function Hero({
 
 				{/* 输入卡 */}
 				<ChatInput
+					toolPreset={toolPreset}
+					onToolPresetChange={onToolPresetChange}
+					permissionChanging={permissionChanging}
 					draft={draft}
 					onDraftChange={onDraftChange}
 					onUploadError={onUploadError}

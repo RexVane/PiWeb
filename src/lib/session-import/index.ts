@@ -20,6 +20,7 @@ import { opencodeSource } from "./opencode";
 import { importedKey, listImportedSessions, findImported, writeImportedSession } from "./writer";
 import { getArchivedSessions, forgetSession } from "../workspace-store";
 import { readHead } from "./files";
+import { INITIAL_SCAN_LIMIT } from "./limits";
 
 export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 	claude: claudeSource,
@@ -32,11 +33,8 @@ export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 
 /** 单来源扫描超时：库被别的进程锁死时不让整个面板卡住 */
 const SCAN_TIMEOUT_MS = 30_000;
-/**
- * 面板每个来源只列最近这么多条：本机六个来源合计上千个会话，全读一遍纯属浪费，
- * 而用户真正要导的基本都是最近用的那几个。想看更早的会话时把这里调大即可。
- */
-export const SCAN_LIMIT_PER_SOURCE = 15;
+/** 首次只加载最近的会话；界面可继续扩大扫描范围。 */
+export const SCAN_LIMIT_PER_SOURCE = INITIAL_SCAN_LIMIT;
 /** 单会话上限：超过就别导了，内存和解压都吃不消（dsh 解压后能膨胀到几百 MB） */
 const MAX_SOURCE_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRIES = 50_000;
@@ -53,6 +51,8 @@ export interface ScanReport {
 	imported: string[];
 	/** 已导入但被归档的会话，再次选择时恢复原会话。 */
 	archived: string[];
+	/** 多读一条确认是否还有更早的会话，避免把加载上限误报成总数。 */
+	hasMore: Partial<Record<ImportSource, boolean>>;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -77,6 +77,7 @@ export async function scanAllSources(agentDir: string, options: { sources?: Impo
 	const limit = options.limit ?? SCAN_LIMIT_PER_SOURCE;
 	const summaries: ExternalSessionSummary[] = [];
 	const errors: SourceScanError[] = [];
+	const hasMore: Partial<Record<ImportSource, boolean>> = {};
 	const imported = await listImportedSessions(agentDir);
 	const archivedPaths = new Set((await getArchivedSessions(agentDir)).map(pathKey));
 	const archived = [...imported].filter(([, file]) => archivedPaths.has(pathKey(file))).map(([key]) => key);
@@ -85,15 +86,16 @@ export async function scanAllSources(agentDir: string, options: { sources?: Impo
 		const module = IMPORT_SOURCE_MODULES[source];
 		if (!module) return;
 		try {
-			const found = await withTimeout(module.scan({ limit }), SCAN_TIMEOUT_MS, "扫描超时（30 秒）");
-			summaries.push(...found);
+			const found = await withTimeout(module.scan({ limit: limit > 0 ? limit + 1 : 0 }), SCAN_TIMEOUT_MS, "扫描超时（30 秒）");
+			hasMore[source] = limit > 0 && found.length > limit;
+			summaries.push(...(limit > 0 ? found.slice(0, limit) : found));
 		} catch (error) {
 			errors.push({ source, message: error instanceof Error ? error.message : String(error) });
 		}
 	}));
 
 	summaries.sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
-	return { summaries, errors, imported: [...imported.keys()], archived };
+	return { summaries, errors, imported: [...imported.keys()], archived, hasMore };
 }
 
 export interface ImportSelection {

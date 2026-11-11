@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SessionImportSection } from "@/components/SessionImportSection";
+import { INITIAL_SCAN_LIMIT, MAX_SCAN_LIMIT, MAX_IMPORT_SELECTION } from "@/lib/session-import/limits";
 
 afterEach(() => {
 	cleanup();
@@ -27,12 +28,13 @@ const session = (overrides: Record<string, unknown>) => ({
 	...overrides,
 });
 
-function setup(options: { sessions?: unknown[]; imported?: string[]; archived?: string[]; workspace?: string; errors?: unknown[]; importResponse?: Promise<unknown> } = {}) {
+function setup(options: { sessions?: unknown[]; imported?: string[]; archived?: string[]; workspace?: string; errors?: unknown[]; importResponse?: Promise<unknown>; scanPages?: Record<number, unknown[]>; hasMore?: Record<string, boolean> } = {}) {
 	const posts: Array<{ url: string; body: unknown }> = [];
 	const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-		if (url === "/api/sessions/import" && (!init || init.method !== "POST")) {
+		if (url.startsWith("/api/sessions/import") && (!init || init.method !== "POST")) {
+			const limit = Number(new URL(url, "http://localhost").searchParams.get("limit") ?? INITIAL_SCAN_LIMIT);
 			return response({
-				sessions: options.sessions ?? [
+				sessions: options.scanPages?.[limit] ?? options.sessions ?? [
 					session({ source: "claude", externalId: "c1", title: "Claude 的会话" }),
 					session({ source: "zcode", externalId: "z1", title: "ZCode 的会话", projectPath: "D:\\AIApp\\PiWeb" }),
 					session({ source: "zcode", externalId: "z2", title: "已经导过的", messageCount: undefined }),
@@ -41,6 +43,8 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; archived?: 
 				imported: options.imported ?? ["zcode:z2"],
 				archived: options.archived ?? [],
 				sources: ["claude", "codex", "grok", "zcode", "dsh", "opencode"],
+				limit,
+				hasMore: options.hasMore ?? {},
 			});
 		}
 		if (url === "/api/sessions/import" && init?.method === "POST") {
@@ -79,6 +83,80 @@ async function chooseSource(source: string) {
 }
 
 describe("导入会话面板", () => {
+	it("项目与状态筛选可组合，跨来源已选项可统一检查，清除结果只影响可见项", async () => {
+		setup({ imported: ["zcode:done"], sessions: [
+			session({ externalId: "a", title: "网页修复", projectPath: "D:\\AIApp\\PiWeb" }),
+			session({ externalId: "b", title: "另一个项目", projectPath: "/other" }),
+			session({ source: "zcode", externalId: "c", title: "同项目旧会话", projectPath: "d:/aiapp/piweb/" }),
+			session({ source: "zcode", externalId: "done", title: "已完成导入", projectPath: "D:\\AIApp\\PiWeb" }),
+		] });
+		await chooseSource("all");
+		fireEvent.change(screen.getByRole("combobox", { name: "筛选项目" }), { target: { value: "d:/aiapp/piweb" } });
+		fireEvent.change(screen.getByRole("combobox", { name: "筛选状态" }), { target: { value: "available" } });
+		expect(screen.queryByText("另一个项目")).toBeNull();
+		expect(screen.queryByText("已完成导入")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "全选结果" }));
+		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
+		await chooseSource("claude");
+		expect(screen.getByText("其中 1 条不在当前列表")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "取消选择结果" }));
+		expect(screen.getByTestId("import-run").textContent).toContain("(1)");
+		fireEvent.click(screen.getByRole("button", { name: "查看全部已选" }));
+		expect(screen.getByTestId("import-group-all").textContent).toContain("同项目旧会话");
+		expect(screen.queryByText("网页修复")).toBeNull();
+		expect((screen.getByRole("combobox", { name: "筛选状态" }) as HTMLSelectElement).value).toBe("selected");
+	});
+
+	it("找不到旧会话时可扩大搜索范围，并在后续重新扫描时保留范围与已选项", async () => {
+		const recent = Array.from({ length: INITIAL_SCAN_LIMIT }, (_, index) => session({ externalId: `recent-${index}`, title: `近期会话 ${index}` }));
+		const options = { imported: [], scanPages: { [INITIAL_SCAN_LIMIT]: recent, [INITIAL_SCAN_LIMIT * 2]: [...recent, session({ externalId: "old", title: "更早的部署记录" })] }, hasMore: { claude: true } };
+		const { fetchMock } = setup(options);
+		fireEvent.click((await screen.findByText("近期会话 0")).closest("label")!.querySelector("input")!);
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "更早" } });
+		expect(screen.getByText("没有匹配的会话")).toBeTruthy();
+		options.hasMore.claude = false;
+		fireEvent.click(screen.getByTestId("import-load-more"));
+		const older = await screen.findByText("更早的部署记录");
+		expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/import?limit=${INITIAL_SCAN_LIMIT * 2}`);
+		expect(screen.getByText("其中 1 条不在当前列表")).toBeTruthy();
+		fireEvent.click(older.closest("label")!.querySelector("input")!);
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await waitFor(() => expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(false));
+		expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(`/api/sessions/import?limit=${INITIAL_SCAN_LIMIT * 2}`);
+		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
+		expect(screen.queryByTestId("import-load-more")).toBeNull();
+	});
+
+	it("扩大扫描达到上限后说明范围，不再发起更大扫描", async () => {
+		const { fetchMock } = setup({ hasMore: { claude: true } });
+		await screen.findByTestId("import-group-claude");
+		for (const limit of [100, 200, 400, 800, MAX_SCAN_LIMIT]) {
+			fireEvent.click(screen.getByTestId("import-load-more"));
+			await waitFor(() => expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(false));
+			expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/import?limit=${limit}`);
+		}
+		expect(screen.queryByTestId("import-load-more")).toBeNull();
+		expect(screen.getByText(`每个来源最多查看最近 ${MAX_SCAN_LIMIT} 条会话`)).toBeTruthy();
+	});
+
+	it("跨来源批量选择最多 500 条，取消勾选后可更换最后一条", async () => {
+		const { posts } = setup({ imported: [], sessions: Array.from({ length: MAX_IMPORT_SELECTION + 1 }, (_, index) => session({ source: index < 250 ? "claude" : "zcode", externalId: `bulk-${index}`, title: `批量会话 ${index}` })) });
+		await chooseSource("all");
+		fireEvent.click(screen.getByRole("button", { name: "全选本组" }));
+		const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+		expect(boxes.filter((box) => box.checked)).toHaveLength(MAX_IMPORT_SELECTION);
+		expect(boxes[MAX_IMPORT_SELECTION].disabled).toBe(true);
+		expect(screen.getByText(`单次最多选择 ${MAX_IMPORT_SELECTION} 条，可分批导入`)).toBeTruthy();
+		fireEvent.click(boxes[0]);
+		fireEvent.click(boxes[MAX_IMPORT_SELECTION]);
+		fireEvent.click(screen.getByTestId("import-run"));
+		await waitFor(() => expect(posts).toHaveLength(1));
+		const body = posts[0].body as { sessions: Array<{ externalId: string }> };
+		expect(body.sessions).toHaveLength(MAX_IMPORT_SELECTION);
+		expect(body.sessions.some((row) => row.externalId === "bulk-0")).toBe(false);
+		expect(body.sessions.some((row) => row.externalId === `bulk-${MAX_IMPORT_SELECTION}`)).toBe(true);
+	});
+
 	it("已归档的会话可选择恢复，普通已导入会话仍然禁用", async () => {
 		const options = { archived: ["zcode:z2"], importResponse: Promise.resolve(response({ imported: 0, restored: 1, skipped: 0, failed: 0, results: [{ source: "zcode", externalId: "z2", status: "restored", workspace: "/ws" }], workspaces: ["/ws"] })) };
 		const { posts } = setup(options);
@@ -180,14 +258,16 @@ describe("导入会话面板", () => {
 		const checkboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
 		expect(checkboxes).toHaveLength(1); // 只渲染当前来源的行
 		expect(checkboxes.every((box) => !box.checked)).toBe(true);
-		// 没勾选时导入按钮禁用
-		expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true);
+		// 没勾选时不占用列表空间显示空的操作栏
+		expect(screen.queryByTestId("import-run")).toBeNull();
+		expect(screen.getByTestId("session-import").querySelector("footer")).toBeNull();
+		expect(screen.queryByText("清空选择")).toBeNull();
 	});
 
-	it("下拉列出全部六个来源和条数，空来源可查看，再扫描不重置选择", async () => {
+	it("下拉列出全部来源入口及六个来源和条数，空来源可查看，再扫描不重置选择", async () => {
 		setup();
 		await openSources();
-		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(6);
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(7);
 		expect(screen.getByTestId("import-source-zcode").textContent).toContain("2 条会话");
 		expect(screen.getByTestId("import-source-codex").textContent).toContain("0 条会话");
 		expect(screen.getByTestId("import-source-claude").getAttribute("aria-selected")).toBe("true");
@@ -205,7 +285,7 @@ describe("导入会话面板", () => {
 	it("没有会话时仍可查看全部支持来源", async () => {
 		setup({ sessions: [] });
 		await openSources();
-		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(6);
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(7);
 		fireEvent.click(screen.getByTestId("import-source-opencode"));
 		expect(screen.getByTestId("import-group-opencode").textContent).toContain("没有找到可导入的本地会话");
 	});
@@ -256,7 +336,7 @@ describe("导入会话面板", () => {
 		expect(report.textContent).toContain("已经导入过");
 		expect(report.textContent).toContain("源会话已不存在");
 		// 导入后面板重新扫描，并把选择清空
-		await waitFor(() => expect((screen.getByTestId("import-run") as HTMLButtonElement).disabled).toBe(true));
+		await waitFor(() => expect(screen.queryByTestId("import-run")).toBeNull());
 	});
 
 	it("全选只作用于当前来源，且跳过已导入的行", async () => {

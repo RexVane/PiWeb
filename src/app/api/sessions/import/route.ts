@@ -4,11 +4,9 @@ import { registerCwds } from "@/lib/workspace-store";
 import { IMPORT_SOURCES, type ExternalSessionSummary, type ImportSource } from "@/lib/session-import/types";
 import { importSessions, scanAllSources, type ImportSelection } from "@/lib/session-import";
 import { importedKey } from "@/lib/session-import/writer";
+import { INITIAL_SCAN_LIMIT, MAX_SCAN_LIMIT, MAX_IMPORT_SELECTION } from "@/lib/session-import/limits";
 
 export const dynamic = "force-dynamic";
-
-/** 单次导入上限：一次点太多会把内存和磁盘写爆，也让界面报告失去意义 */
-const MAX_SELECTION = 500;
 
 /** 内部定位信息（文件路径 / 库+行）只用于服务端再扫描，不下发到浏览器 */
 function publicSummary(summary: ExternalSessionSummary): Omit<ExternalSessionSummary, "location"> {
@@ -16,9 +14,14 @@ function publicSummary(summary: ExternalSessionSummary): Omit<ExternalSessionSum
 	return rest;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+	const rawLimit = new URL(req.url).searchParams.get("limit");
+	const limit = rawLimit === null ? INITIAL_SCAN_LIMIT : Number(rawLimit);
+	if (rawLimit !== null && (!/^\d+$/.test(rawLimit) || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_SCAN_LIMIT)) {
+		return NextResponse.json({ success: false, error: `limit must be an integer between 1 and ${MAX_SCAN_LIMIT}` }, { status: 400 });
+	}
 	try {
-		const report = await scanAllSources(getAgentDir());
+		const report = await scanAllSources(getAgentDir(), { limit });
 		const imported = new Set(report.imported);
 		const archived = new Set(report.archived);
 		const publicKey = (summary: ExternalSessionSummary) => `${summary.source}:${summary.externalId}`;
@@ -30,6 +33,8 @@ export async function GET() {
 				imported: report.summaries.filter((summary) => imported.has(importedKey(summary.source, summary.externalId))).map(publicKey),
 				archived: report.summaries.filter((summary) => archived.has(importedKey(summary.source, summary.externalId))).map(publicKey),
 				sources: IMPORT_SOURCES,
+				limit,
+				hasMore: report.hasMore,
 			},
 		});
 	} catch (error) {
@@ -50,7 +55,7 @@ export async function POST(req: Request) {
 	const { sessions, fallbackCwd } = body as { sessions?: unknown; fallbackCwd?: unknown };
 	if (!Array.isArray(sessions)) return NextResponse.json({ success: false, error: "sessions must be an array" }, { status: 400 });
 	if (!sessions.length) return NextResponse.json({ success: false, error: "nothing selected" }, { status: 400 });
-	if (sessions.length > MAX_SELECTION) return NextResponse.json({ success: false, error: `too many sessions (max ${MAX_SELECTION})` }, { status: 400 });
+	if (sessions.length > MAX_IMPORT_SELECTION) return NextResponse.json({ success: false, error: `too many sessions (max ${MAX_IMPORT_SELECTION})` }, { status: 400 });
 	if (fallbackCwd !== undefined && (typeof fallbackCwd !== "string" || fallbackCwd.length > 4096)) {
 		return NextResponse.json({ success: false, error: "invalid fallbackCwd" }, { status: 400 });
 	}

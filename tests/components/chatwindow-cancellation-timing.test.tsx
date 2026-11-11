@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatWindow } from "@/components/ChatWindow";
 import type { WebMessage } from "@/lib/types";
 
@@ -17,11 +17,26 @@ describe("stopped tools and model generation time", () => {
 		expect(screen.getAllByText("已中止").length).toBeGreaterThan(0);
 	});
 
-	it("excludes the time spent waiting for an answer from the thinking summary", () => {
+	it("excludes the time spent waiting for an answer from the thinking summary and collapses completed turn process by default", () => {
 		const ask = { role: "assistant", id: "ask", content: [{ type: "thinking", thinking: "Choose a format" }, { type: "toolCall", id: "q", name: "ask_user_question", arguments: { questions: [{ question: "Which format?", options: [{ label: "short" }] }] } }], stopReason: "toolUse", timestamp: 1000, durationMs: 4000 } as WebMessage;
 		const answer = { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop", timestamp: 60_000 } as WebMessage;
-		render(<ChatWindow messages={[user, ask, answer]} tools={{ q: { name: "ask_user_question", args: {}, state: "done", result: "short", startedAt: 5000, endedAt: 60_000 } }} />);
+		const { container } = render(<ChatWindow messages={[user, ask, answer]} tools={{ q: { name: "ask_user_question", args: {}, state: "done", result: "short", startedAt: 5000, endedAt: 60_000 } }} />);
+		expect(screen.queryByRole("button", { name: "思考了 4s" })).toBeNull();
+		const turnToggle = screen.getByRole("button", { name: "用时 1m 0s" });
+		expect(turnToggle.getAttribute("aria-expanded")).toBe("false");
+		const process = container.querySelector(".pw-turn-body")!;
+		expect(process.getAttribute("data-collapsed")).toBe("true");
+		expect(process.getAttribute("aria-hidden")).toBe("true");
+		expect(process.hasAttribute("inert")).toBe(true);
+		fireEvent.click(turnToggle);
+		expect(turnToggle.getAttribute("aria-expanded")).toBe("true");
+		expect(process.getAttribute("data-collapsed")).toBeNull();
+		expect(process.hasAttribute("aria-hidden")).toBe(false);
+		expect(process.hasAttribute("inert")).toBe(false);
 		expect(screen.getByRole("button", { name: "思考了 4s" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "思考了 59s" })).toBeNull();
+		fireEvent.click(turnToggle);
+		expect(screen.queryByRole("button", { name: "思考了 4s" })).toBeNull();
+		expect(process.hasAttribute("inert")).toBe(true);
 	});
 });

@@ -1315,21 +1315,54 @@ textarea::placeholder {
 .md-external:hover .md-external-mark {
 	opacity: 1;
 }
-/* 行内代码里的文件路径：可点击时用主题色标出（只变色，不加下划线，保持版面安静） */
-.md .md-file-path {
-	font-family: inherit;
-	font-size: inherit;
-	color: var(--dsw-accent);
-	background: inherit;
-	border: none;
-	border-radius: 5px;
-	padding: inherit;
+/* 文件引用：小文档图标与标题同色；完整路径保留在 title 与辅助名称中。 */
+:root {
+	--pw-file-link: #2563eb;
+}
+html[data-ds-dark-theme],
+body[data-ds-dark-theme] {
+	--pw-file-link: #58a6ff;
+}
+.md .md-file-path,
+.md .md-file-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.3em;
+	max-width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+	vertical-align: -0.15em;
+	font: inherit;
+	font-weight: 500;
+	color: var(--pw-file-link);
+	background: transparent;
+	border: 0;
+	border-radius: 2px;
+	padding: 0;
 	cursor: pointer;
 	text-align: left;
+	text-decoration: none;
+	transition: color var(--ds-duration-fast);
 }
-.md .md-file-path:hover {
-	color: var(--dsw-accent-hover, var(--dsw-accent));
-	background: var(--dsw-accent-soft);
+.md .md-file-path:hover,
+.md .md-file-link:hover {
+	color: var(--pw-file-link);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+.md .md-file-path:focus-visible,
+.md .md-file-link:focus-visible {
+	outline: 2px solid var(--pw-file-link);
+	outline-offset: 2px;
+}
+.md-file-path-icon {
+	width: 0.9em;
+	height: 0.9em;
+	flex: none;
+}
+.md-file-path-label {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 .md blockquote {
 	margin: 0.6em 0;
@@ -1407,11 +1440,16 @@ textarea::placeholder {
 	border-radius: 0;
 }
 .md-diagram {
-	margin: 1em 0;
+	margin: 0.9em 0;
 	max-width: 100%;
 	min-width: 0;
+	padding: 18px 20px;
+	border-radius: 16px;
+	border: 1px solid var(--dsw-border-l2);
+	background: var(--dsw-bg-elevated);
+	overflow-x: auto;
 }
-.md .md-diagram img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 0; }
+.md .md-diagram img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 8px; }
 .md .md-diagram pre { margin: 0; border: 0; border-radius: 0; }
 .md-diagram-status { margin: 0.5em 0; font-size: 12px; color: var(--dsw-label-secondary); }
 .md table {
@@ -1582,20 +1620,38 @@ body[data-ds-dark-theme] {
 	background: none;
 }
 
-/* 消息气泡（Iconsax 圆角描边卡风格） */
+/* 消息气泡（GPT / Codex 深海蓝圆润胶囊风格） */
+:root {
+	--pw-user-bubble-bg: #dbeafe;
+	--pw-user-bubble-border: rgba(37, 99, 235, 0.16);
+	--pw-user-bubble-border-hover: rgba(37, 99, 235, 0.28);
+	--pw-user-bubble-text: #1e3a8a;
+}
+html[data-ds-dark-theme],
+body[data-ds-dark-theme] {
+	--pw-user-bubble-bg: #1b375c;
+	--pw-user-bubble-border: rgba(120, 175, 255, 0.15);
+	--pw-user-bubble-border-hover: rgba(120, 175, 255, 0.28);
+	--pw-user-bubble-text: #eff6ff;
+}
 .msg-user-bubble {
-	background: var(--dsw-input-major);
-	border: 1px solid var(--dsw-border-l2);
-	border-radius: 20px 20px 6px 20px;
-	padding: 10px 16px;
+	background: var(--pw-user-bubble-bg);
+	border: 1px solid var(--pw-user-bubble-border);
+	color: var(--pw-user-bubble-text);
+	border-radius: 20px;
+	padding: 10px 18px;
 	display: inline-block;
 	max-width: 85%;
 	font-size: var(--piweb-chat-font-size);
 	line-height: 1.65;
-	transition: border-color 0.25s var(--isx-ease), box-shadow 0.25s var(--isx-ease);
+	transition: border-color 0.22s var(--isx-ease), box-shadow 0.22s var(--isx-ease);
 }
 .msg-user-bubble:hover {
-	border-color: var(--dsw-border-l3);
+	border-color: var(--pw-user-bubble-border-hover);
+}
+.msg-user-bubble .md code {
+	background: rgba(255, 255, 255, 0.12);
+	color: inherit;
 }
 
 /* 技能调用行：与「上下文注入」同款小字次级色，技能名用强调色区分。
@@ -1656,13 +1712,71 @@ body[data-ds-dark-theme] {
 .pw-turn {
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	gap: 2px;
 	padding: 6px 0 2px;
+}
+.pw-turn-bar {
+	display: flex;
+	align-items: center;
+	padding: 2px 0 10px;
+	border-bottom: 1px solid var(--dsw-border-l2);
+}
+.pw-turn-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: pointer;
+	font: inherit;
+	font-size: var(--piweb-chat-font-s);
+	line-height: 22px;
+	color: var(--dsw-label-tertiary);
+	transition: color 180ms ease;
+}
+.pw-turn-toggle:hover {
+	color: var(--dsw-label-primary);
+}
+.pw-turn-chev {
+	flex: none;
+	color: var(--dsw-label-caption);
+	transition: transform 200ms var(--isx-ease), color 180ms ease;
+}
+.pw-turn-toggle:hover .pw-turn-chev {
+	color: var(--dsw-label-secondary);
+}
+.pw-turn-toggle[aria-expanded="true"] .pw-turn-chev {
+	transform: rotate(90deg);
+	color: var(--dsw-label-secondary);
+}
+.pw-turn-body {
+	display: grid;
+	grid-template-rows: 1fr;
+	opacity: 1;
+	transition: grid-template-rows 220ms var(--isx-ease), opacity 180ms ease;
+}
+.pw-turn-body[data-collapsed="true"] {
+	grid-template-rows: 0fr;
+	opacity: 0;
+	overflow: hidden;
+	pointer-events: none;
+}
+.pw-turn-body-inner {
+	min-height: 0;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.pw-turn-bar + .pw-turn-body:not([data-collapsed="true"]) > .pw-turn-body-inner {
+	padding: 10px 0 8px;
+	border-bottom: 1px solid var(--dsw-border-l2);
 }
 .pw-run {
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	gap: 2px;
 }
 
 /* 步骤：左侧 16px 图标列 + 内容 */
@@ -1690,30 +1804,28 @@ body[data-ds-dark-theme] {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--dsw-label-caption);
-	transition: transform 0.24s var(--isx-ease), color 0.24s var(--isx-ease);
+	color: var(--dsw-label-tertiary);
+	transition: transform 0.2s var(--isx-ease), color 0.2s var(--isx-ease);
 }
 .pw-step:hover .pw-icon {
 	color: var(--dsw-label-primary);
-	transform: scale(1.14);
 }
 .pw-step[data-tone="live"] .pw-icon {
 	color: var(--dsw-label-primary);
-	animation: isx-icon-pulse 1.8s var(--isx-ease) infinite;
+	animation: isx-icon-pulse 1.8s ease-in-out infinite;
 }
 @keyframes isx-icon-pulse {
 	0%, 100% {
+		opacity: 0.7;
 		transform: scale(1);
-		filter: drop-shadow(0 0 4px rgba(2, 222, 252, 0.4)) drop-shadow(0 0 8px rgba(252, 1, 151, 0.2));
 	}
 	50% {
-		transform: scale(1.18);
-		filter: drop-shadow(0 0 8px rgba(2, 222, 252, 0.75)) drop-shadow(0 0 16px rgba(252, 1, 151, 0.5));
+		opacity: 1;
+		transform: scale(1.08);
 	}
 }
 .pw-step[data-tone="fail"] .pw-icon {
 	color: var(--dsw-danger);
-	filter: drop-shadow(0 0 6px rgba(226, 22, 42, 0.45));
 }
 .pw-step[data-tone="warn"] .pw-icon {
 	color: var(--dsw-warn);
@@ -1726,7 +1838,7 @@ body[data-ds-dark-theme] {
 		transform: rotate(360deg);
 	}
 }
-/* π 记号：工作指示的图标（Iconsax 天体律动脉冲） */
+/* π 记号：工作指示的图标 */
 .pw-pi {
 	display: inline-block;
 	font-family: var(--font-mono);
@@ -1735,16 +1847,16 @@ body[data-ds-dark-theme] {
 	line-height: 1;
 	transform: translateY(-1px);
 	color: var(--dsw-label-primary);
-	animation: isx-pi-glow 2.2s ease-in-out infinite;
+	animation: isx-pi-glow 2s ease-in-out infinite;
 }
 @keyframes isx-pi-glow {
 	0%, 100% {
-		filter: drop-shadow(0 0 2px rgba(2, 222, 252, 0.25));
+		opacity: 0.65;
 		transform: translateY(-1px) scale(1);
 	}
 	50% {
-		filter: drop-shadow(0 0 8px rgba(2, 222, 252, 0.7)) drop-shadow(0 0 14px rgba(252, 1, 151, 0.4));
-		transform: translateY(-1px) scale(1.12);
+		opacity: 1;
+		transform: translateY(-1px) scale(1.06);
 	}
 }
 .pw-body {
@@ -1797,6 +1909,17 @@ button.pw-line:hover {
 	font-size: var(--piweb-chat-font-s);
 	color: var(--dsw-label-secondary);
 }
+.pw-arg-file {
+	text-decoration: underline;
+	text-decoration-color: var(--dsw-border-l3);
+	text-underline-offset: 3px;
+}
+.pw-line-interactive:hover {
+	color: var(--dsw-label-primary);
+}
+.pw-line-interactive:hover .pw-arg {
+	color: var(--dsw-label-primary);
+}
 .pw-gist {
 	min-width: 0;
 	flex: 1;
@@ -1835,25 +1958,23 @@ button.pw-line:hover .pw-chev {
 	font-weight: 500;
 }
 
-/* 闪光渐变（进行中的思考 / 命令 / 状态词：Iconsax 6 色高反差金属流光） */
+/* 闪光渐变（进行中的思考 / 命令 / 状态词：柔和银白微光，参考 GPT / Codex） */
 .pw-shimmer {
 	flex: none;
 	background: linear-gradient(
 		90deg,
-		var(--dsw-label-secondary) 0%,
-		var(--dsw-label-primary) 18%,
-		#02defc 38%,
-		#ffffff 50%,
-		#fc0197 62%,
-		var(--dsw-label-primary) 82%,
-		var(--dsw-label-secondary) 100%
+		var(--dsw-label-tertiary) 0%,
+		var(--dsw-label-secondary) 28%,
+		var(--pw-shimmer-hi) 50%,
+		var(--dsw-label-secondary) 72%,
+		var(--dsw-label-tertiary) 100%
 	);
-	background-size: 260% 100%;
+	background-size: 240% 100%;
 	-webkit-background-clip: text;
 	background-clip: text;
 	color: transparent;
 	font-weight: 500;
-	animation: pw-shimmer 2s linear infinite;
+	animation: pw-shimmer 2.2s linear infinite;
 }
 @keyframes pw-shimmer {
 	from {
@@ -1985,13 +2106,14 @@ button.pw-more:hover {
 
 /* 叙述：阶段标题，基线对齐（步骤的图标列自然形成缩进） */
 .pw-narr {
-	margin: 7px 0 3px;
+	margin: 10px 0 4px;
 	font-size: var(--piweb-chat-font-l);
 	line-height: 1.65;
 	color: var(--dsw-label-primary);
 }
-.pw-turn > .pw-narr:first-child {
-	margin-top: 1px;
+.pw-turn > .pw-narr:first-child,
+.pw-turn-body-inner > .pw-narr:first-child {
+	margin-top: 2px;
 }
 .pw-narr[data-error="true"] {
 	color: var(--dsw-danger);
@@ -3429,5 +3551,457 @@ body[data-pebrel-theme="pebrel"][data-ds-dark-theme] {
 		.pw-viewer {
 			height: 100dvh;
 		}
+	}
+}
+
+/* ============================================================
+   Next-Gen Visual & Micro-Interaction System
+   (BoardUI · Bencho · HeroUI Pro · Libraries.dev · Watermelon UI)
+   ============================================================ */
+
+:root {
+	--pw-specular-rim: rgba(255, 255, 255, 0.75);
+	--pw-specular-inner: rgba(0, 0, 0, 0.04);
+	--pw-code-header-bg: rgba(0, 0, 0, 0.03);
+	--pw-spring-snappy: cubic-bezier(0.22, 1.12, 0.36, 1);
+	--pw-spring-smooth: cubic-bezier(0.2, 0, 0, 1);
+}
+
+html[data-ds-dark-theme],
+body[data-ds-dark-theme] {
+	--pw-specular-rim: rgba(255, 255, 255, 0.12);
+	--pw-specular-inner: rgba(0, 0, 0, 0.25);
+	--pw-code-header-bg: rgba(255, 255, 255, 0.028);
+}
+
+/* 1. Composer Streaming Border Beam & Inner Specular Bevel (BoardUI ComposerLoader + Libraries.dev BorderBeam) */
+.isx-composer {
+	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), var(--dsw-elevation-panel);
+}
+.isx-composer[data-streaming="true"] {
+	border-color: transparent !important;
+	box-shadow:
+		inset 0 1px 0 0 var(--pw-specular-rim),
+		0 0 0 1px rgba(59, 130, 246, 0.35),
+		0 8px 30px -6px rgba(59, 130, 246, 0.18),
+		0 6px 24px -8px rgba(168, 85, 247, 0.16),
+		var(--dsw-elevation-panel);
+}
+.isx-composer[data-streaming="true"]::before {
+	content: "";
+	position: absolute;
+	inset: -1.5px;
+	border-radius: 25px;
+	padding: 1.5px;
+	background: linear-gradient(
+		115deg,
+		rgba(59, 130, 246, 0.15) 0%,
+		#38bdf8 22%,
+		#818cf8 45%,
+		#c084fc 65%,
+		#22d3ee 85%,
+		rgba(59, 130, 246, 0.15) 100%
+	);
+	background-size: 260% 260%;
+	animation: pw-composer-beam 3.2s linear infinite;
+	-webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	pointer-events: none;
+	z-index: 2;
+}
+.isx-composer[data-streaming="true"]::after {
+	width: 84px;
+	opacity: 1;
+	background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc);
+}
+@keyframes pw-composer-beam {
+	0% {
+		background-position: 0% 50%;
+	}
+	50% {
+		background-position: 100% 50%;
+	}
+	100% {
+		background-position: 0% 50%;
+	}
+}
+
+/* 2. BoardUI <AgentLimitsCard /> Stacked Context Meter & Interactive Dot Legend */
+.pw-agent-limits-bar,
+.pw-turn-token-bar {
+	gap: 1.5px;
+	padding: 1px;
+	background: var(--dsw-selector);
+	box-shadow: inset 0 1px 2px var(--pw-specular-inner), 0 0 0 0.5px var(--dsw-border-l2);
+}
+.pw-agent-limits-seg {
+	height: 100%;
+	border-radius: 3px;
+	transition: width 260ms var(--pw-spring-smooth), opacity 180ms ease, filter 180ms ease;
+}
+.pw-agent-limits-seg:first-child {
+	border-top-left-radius: 999px;
+	border-bottom-left-radius: 999px;
+}
+.pw-agent-limits-seg:last-child {
+	border-top-right-radius: 999px;
+	border-bottom-right-radius: 999px;
+}
+.pw-agent-limits-row {
+	padding: 2px 6px;
+	margin: 0 -6px;
+	border-radius: 8px;
+	transition: background 160ms ease, opacity 160ms ease, color 160ms ease;
+}
+.pw-agent-limits-row[data-active="true"] {
+	background: var(--dsw-hover);
+	color: var(--dsw-label-primary);
+}
+.pw-agent-limits-row[data-dimmed="true"] {
+	opacity: 0.42;
+}
+.pw-agent-limits-dot {
+	flex: none;
+	transition: transform 180ms var(--pw-spring-snappy), box-shadow 180ms ease;
+}
+.pw-agent-limits-row[data-active="true"] .pw-agent-limits-dot {
+	transform: scale(1.22);
+}
+
+/* 3. BoardUI <WebSearch /> Domain Chips & <AgentThinking /> 3x3 Wave Dot-Matrix */
+.pw-arg-search {
+	display: inline-flex;
+	align-items: center;
+	padding: 0 7px;
+	border-radius: 6px;
+	background: var(--dsw-hover);
+	box-shadow: inset 0 0 0 0.5px var(--dsw-border-l2);
+}
+.pw-domain-stack {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: 2px;
+	flex: none;
+}
+.pw-domain-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 19px;
+	padding: 0 7px;
+	border-radius: 999px;
+	background: var(--dsw-bg-elevated);
+	border: 0.5px solid var(--dsw-border-l2);
+	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim);
+	color: var(--dsw-label-secondary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1;
+}
+.pw-domain-chip::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	border-radius: 999px;
+	background: var(--dsw-accent);
+	opacity: 0.85;
+}
+.pw-domain-chip::after {
+	content: attr(data-domain);
+}
+
+/* BoardUI 3x3 diagonal wave dot matrix for live AgentThinking */
+.pw-thinking-grid {
+	display: inline-grid;
+	grid-template-columns: repeat(3, 3px);
+	grid-template-rows: repeat(3, 3px);
+	gap: 1.5px;
+	width: 12px;
+	height: 12px;
+	vertical-align: middle;
+}
+.pw-thinking-grid > i {
+	display: block;
+	width: 3px;
+	height: 3px;
+	border-radius: 999px;
+	background: currentColor;
+	opacity: 0.22;
+	animation: pw-thinking-wave 1.35s ease-in-out infinite;
+}
+.pw-thinking-grid > i:nth-child(1) { animation-delay: 0ms; }
+.pw-thinking-grid > i:nth-child(2),
+.pw-thinking-grid > i:nth-child(4) { animation-delay: 140ms; }
+.pw-thinking-grid > i:nth-child(3),
+.pw-thinking-grid > i:nth-child(5),
+.pw-thinking-grid > i:nth-child(7) { animation-delay: 280ms; }
+.pw-thinking-grid > i:nth-child(6),
+.pw-thinking-grid > i:nth-child(8) { animation-delay: 420ms; }
+.pw-thinking-grid > i:nth-child(9) { animation-delay: 560ms; }
+@keyframes pw-thinking-wave {
+	0%, 100% {
+		opacity: 0.2;
+		transform: scale(0.85);
+	}
+	45% {
+		opacity: 1;
+		transform: scale(1.15);
+	}
+}
+
+/* 4. Watermelon UI & HeroUI Pro Double-Stage Specular Surfaces & Code Block Header Bar */
+.popover,
+.glass-modal {
+	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), var(--dsw-elevation-prominent);
+}
+.pw-diff,
+.pw-output {
+	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), inset 0 2px 4px 0 var(--pw-specular-inner);
+}
+.md-code-block {
+	box-shadow: inset 0 1px 0 0 var(--pw-specular-rim), 0 4px 18px rgba(0, 0, 0, 0.1);
+}
+.md-code-block::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 36px;
+	background: var(--pw-code-header-bg);
+	border-bottom: 1px solid var(--dsw-border-l1);
+	pointer-events: none;
+	z-index: 1;
+}
+.md-code-block[data-lang]::before {
+	content: attr(data-lang);
+	position: absolute;
+	top: 9px;
+	left: 14px;
+	z-index: 2;
+	display: inline-flex;
+	align-items: center;
+	height: 18px;
+	padding: 0 7px;
+	border-radius: 6px;
+	background: var(--dsw-selector);
+	border: 0.5px solid var(--dsw-border-l2);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--dsw-label-secondary);
+	pointer-events: none;
+}
+
+/* 5. Bencho Slingshot Jump Button (.pw-slingshot-btn) */
+.pw-slingshot-btn {
+	background: var(--dsw-label-primary);
+	color: var(--dsw-bg-base);
+	border: none;
+	box-shadow:
+		0 0 0 5px color-mix(in srgb, var(--dsw-label-primary) 10%, transparent),
+		0 6px 20px rgba(0, 0, 0, 0.26);
+	transition:
+		transform 240ms var(--pw-spring-snappy),
+		box-shadow 240ms var(--pw-spring-snappy),
+		background 180ms ease;
+}
+.pw-slingshot-btn .sls-svg {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	pointer-events: none;
+}
+.pw-slingshot-btn .sls-dust line {
+	stroke: var(--dsw-label-primary);
+	stroke-linecap: round;
+	opacity: 0;
+	transform-origin: center;
+	transition: opacity 200ms ease, transform 260ms var(--pw-spring-snappy);
+}
+.pw-slingshot-btn .sls-arrow {
+	display: block;
+	transition: transform 220ms var(--pw-spring-snappy);
+}
+.pw-slingshot-btn:hover {
+	transform: translateY(-2px) scale(1.06);
+	box-shadow:
+		0 0 0 7px color-mix(in srgb, var(--dsw-label-primary) 14%, transparent),
+		0 10px 26px rgba(0, 0, 0, 0.34);
+}
+.pw-slingshot-btn:hover .sls-dust line {
+	opacity: 0.55;
+	transform: scale(1.08);
+}
+.pw-slingshot-btn:hover .sls-arrow {
+	transform: translateY(1.5px);
+}
+.pw-slingshot-btn:active {
+	transform: translateY(2px) scale(0.91);
+	box-shadow:
+		0 0 0 3px color-mix(in srgb, var(--dsw-label-primary) 18%, transparent),
+		0 3px 10px rgba(0, 0, 0, 0.22);
+}
+
+/* 6. Bencho ToastStack Layered Notification Cards (.pw-toast-stack / .pw-toast-card) */
+.pw-toast-stack,
+.pw-toast-card {
+	position: relative;
+	isolation: isolate;
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	border-radius: 16px;
+	background: var(--dsw-bg-elevated);
+	color: var(--dsw-label-primary);
+	border: 1px solid var(--dsw-border-l2);
+	box-shadow:
+		inset 0 1px 0 0 var(--pw-specular-rim),
+		0 10px 28px -8px rgba(0, 0, 0, 0.32);
+	transition: transform 260ms var(--pw-spring-snappy), box-shadow 260ms ease, border-color 200ms ease;
+}
+/* Tucked peek cards behind the front toast (Bencho ToastStack signature) */
+.pw-toast-stack::before,
+.pw-toast-stack::after {
+	content: "";
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	height: 100%;
+	border-radius: 15px;
+	background: var(--dsw-bg-elevated);
+	border: 1px solid var(--dsw-border-l2);
+	pointer-events: none;
+	transition: transform 280ms var(--pw-spring-snappy), opacity 240ms ease;
+}
+.pw-toast-stack::before {
+	top: -6px;
+	z-index: -1;
+	transform: scale(0.95);
+	opacity: 0.65;
+}
+.pw-toast-stack::after {
+	top: -11px;
+	z-index: -2;
+	transform: scale(0.9);
+	opacity: 0.35;
+}
+.pw-toast-stack:hover {
+	transform: translateY(2px);
+}
+.pw-toast-stack:hover::before {
+	transform: translateY(-4px) scale(0.97);
+	opacity: 0.82;
+}
+.pw-toast-stack:hover::after {
+	transform: translateY(-8px) scale(0.93);
+	opacity: 0.52;
+}
+.pw-toast-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 700;
+	flex: none;
+}
+.pw-toast-error {
+	border-color: color-mix(in srgb, var(--dsw-danger) 42%, var(--dsw-border-l2));
+}
+.pw-toast-error .pw-toast-icon {
+	background: color-mix(in srgb, var(--dsw-danger) 16%, transparent);
+	color: var(--dsw-danger);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-danger) 32%, transparent);
+}
+.pw-toast-info .pw-toast-icon {
+	background: color-mix(in srgb, var(--dsw-accent) 16%, transparent);
+	color: var(--dsw-accent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dsw-accent) 32%, transparent);
+}
+.pw-toast-body {
+	min-width: 0;
+	flex: 1;
+	line-height: 1.45;
+}
+.pw-toast-close {
+	width: 22px;
+	height: 22px;
+	border-radius: 999px;
+	flex: none;
+}
+
+/* 7. Bencho Liquid Toggle (.liq-sw / .liq-thumb — Black & White Inversion Pill Switch) */
+.liq-sw {
+	position: relative;
+	width: 38px;
+	height: 21px;
+	padding: 0;
+	border: 0;
+	border-radius: 999px;
+	background: var(--dsw-bg-elevated);
+	box-shadow:
+		0 0 0 1px var(--dsw-border-l3),
+		inset 0 1px 2px var(--pw-specular-inner);
+	cursor: pointer;
+	touch-action: none;
+	transition: background 280ms var(--pw-spring-smooth), box-shadow 240ms ease, opacity 180ms ease;
+}
+.liq-sw:hover:not(:disabled) {
+	box-shadow:
+		0 0 0 1px var(--dsw-label-secondary),
+		inset 0 1px 2px var(--pw-specular-inner);
+}
+.liq-sw[data-on="true"],
+.liq-sw[aria-checked="true"] {
+	background: var(--dsw-label-primary);
+	box-shadow: 0 0 0 1px var(--dsw-label-primary);
+}
+.liq-sw:disabled {
+	opacity: 0.42;
+	cursor: not-allowed;
+}
+.liq-thumb {
+	position: absolute;
+	left: 2.5px;
+	top: 50%;
+	width: 16px;
+	height: 16px;
+	margin-top: -8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--dsw-label-primary) 32%, var(--dsw-bg-elevated));
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+	transition:
+		transform 300ms var(--pw-spring-snappy),
+		width 180ms var(--pw-spring-smooth),
+		background 280ms ease;
+}
+.liq-sw[data-on="true"] .liq-thumb,
+.liq-sw[aria-checked="true"] .liq-thumb {
+	background: var(--dsw-bg-base);
+	transform: translateX(17px);
+}
+.liq-sw:active:not(:disabled) .liq-thumb {
+	width: 19px;
+}
+.liq-sw[data-on="true"]:active:not(:disabled) .liq-thumb,
+.liq-sw[aria-checked="true"]:active:not(:disabled) .liq-thumb {
+	transform: translateX(14px);
+}
+@media (prefers-reduced-motion: reduce) {
+	.liq-sw,
+	.liq-thumb,
+	.pw-slingshot-btn,
+	.pw-toast-stack {
+		transition-duration: 140ms;
 	}
 }

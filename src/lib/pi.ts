@@ -9,6 +9,7 @@ import { readJsonObjectSync } from "./agent-config";
 import {
 	type ModelRuntime as PiModelRuntime,
 	type SettingsManager,
+	type InlineExtension,
 	DefaultPackageManager,
 	DefaultResourceLoader,
 	ModelRuntime,
@@ -293,10 +294,10 @@ function loaderKey(cwd: string): string {
 }
 
 /** 每个热会话必须拥有自己的扩展 runtime；这里只创建，不加入发现缓存。 */
-export async function createSessionResourceLoader(cwd: string, settingsOverride?: SettingsManager): Promise<DefaultResourceLoader> {
+export async function createSessionResourceLoader(cwd: string, settingsOverride?: SettingsManager, sessionExtensions: InlineExtension[] = []): Promise<DefaultResourceLoader> {
 	const settingsManager = settingsOverride ?? getSettingsManager(cwd);
 	settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
-	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: BUILTIN_EXTENSIONS,
+	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: [...BUILTIN_EXTENSIONS, ...sessionExtensions],
 		appendSystemPromptOverride: (base) => [...base, PIWEB_EXECUTION_GUIDANCE],
 	});
 	const reload = loader.reload.bind(loader);

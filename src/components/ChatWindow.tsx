@@ -110,13 +110,17 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 		return () => document.removeEventListener("mousedown", h);
 	}, [open]);
 	const billed = (usage?.input ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
-	const hasUsage = usage != null && (billed > 0 || (usage.output ?? 0) > 0);
+	const outTokens = usage?.output ?? 0;
+	const cacheRead = usage?.cacheRead ?? 0;
+	const uncachedInput = Math.max(0, billed - cacheRead);
+	const totalTokens = Math.max(1, billed + outTokens);
+	const hasUsage = usage != null && (billed > 0 || outTokens > 0);
 	return (
 		<div ref={ref} className="relative">
 			<button
 				type="button"
 				className="flex items-center gap-1 rounded-full px-2"
-				style={{ height: 22, fontSize: "var(--piweb-chat-font-xs)", color: "var(--dsw-label-caption)" }}
+				style={{ height: 22, fontSize: "var(--piweb-chat-font-xs)", color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}
 				title={t.turnUsageTitle}
 				aria-haspopup="dialog"
 				aria-expanded={open}
@@ -126,34 +130,48 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 				<span style={{ whiteSpace: "nowrap" }}>{t.turnRanFor.replace("{duration}", formatRunDuration(durationMs, t))}</span>
 			</button>
 			{open && (
-				<div className="popover absolute left-0 top-full z-50 mt-1.5 w-44 p-3" role="dialog" aria-label={t.turnUsageTitle}>
-					<div className="flex flex-col gap-1" style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-secondary)" }}>
+				<div className="popover absolute left-0 top-full z-50 mt-1.5 w-52 p-3" role="dialog" aria-label={t.turnUsageTitle}>
+					<div className="flex flex-col gap-1.5" style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-secondary)", fontVariantNumeric: "tabular-nums" }}>
 						<div className="flex items-center justify-between gap-2">
 							<span style={{ color: "var(--dsw-label-caption)" }}>{t.duration}</span>
-							<span>{formatRunDuration(durationMs, t)}</span>
+							<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>{formatRunDuration(durationMs, t)}</span>
 						</div>
 						{hasUsage && (
 							<>
-								<div className="flex items-center justify-between gap-2">
-									<span style={{ color: "var(--dsw-label-caption)" }}>{t.inputTokens}</span>
-									<span>{fmtTokens(billed)}</span>
+								<div className="pw-turn-token-bar my-1 flex h-2 w-full overflow-hidden rounded-full" aria-hidden="true">
+									{uncachedInput > 0 && <span className="pw-agent-limits-seg flex-none" style={{ width: `${(uncachedInput / totalTokens) * 100}%`, background: "#3b82f6" }} />}
+									{cacheRead > 0 && <span className="pw-agent-limits-seg flex-none" style={{ width: `${(cacheRead / totalTokens) * 100}%`, background: "#10b981" }} />}
+									{outTokens > 0 && <span className="pw-agent-limits-seg flex-none" style={{ width: `${(outTokens / totalTokens) * 100}%`, background: "#8b5cf6" }} />}
 								</div>
 								<div className="flex items-center justify-between gap-2">
-									<span style={{ color: "var(--dsw-label-caption)" }}>{t.outputTokens}</span>
-									<span>{fmtTokens(usage.output ?? 0)}</span>
+									<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-caption)" }}>
+										<span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#3b82f6" }} aria-hidden="true" />
+										{t.inputTokens}
+									</span>
+									<span style={{ fontFamily: "var(--font-mono)" }}>{fmtTokens(billed)}</span>
+								</div>
+								<div className="flex items-center justify-between gap-2">
+									<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-caption)" }}>
+										<span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#8b5cf6" }} aria-hidden="true" />
+										{t.outputTokens}
+									</span>
+									<span style={{ fontFamily: "var(--font-mono)" }}>{fmtTokens(outTokens)}</span>
 								</div>
 								{(usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) > 0 && (
 									<div className="flex items-center justify-between gap-2">
-										<span style={{ color: "var(--dsw-label-caption)" }}>{t.cacheHits}</span>
-										<span>{fmtPercent(((usage.cacheRead ?? 0) / Math.max(billed, 1)) * 100)}</span>
+										<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-caption)" }}>
+											<span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#10b981" }} aria-hidden="true" />
+											{t.cacheHits}
+										</span>
+										<span style={{ fontFamily: "var(--font-mono)" }}>{fmtPercent(((usage.cacheRead ?? 0) / Math.max(billed, 1)) * 100)}</span>
 									</div>
 								)}
 							</>
 						)}
 						{usage?.cost?.total != null && usage.cost.total > 0 && (
-							<div className="flex items-center justify-between gap-2">
+							<div className="hairline-t mt-1 flex items-center justify-between gap-2 pt-1.5">
 								<span style={{ color: "var(--dsw-label-caption)" }}>{t.cost}</span>
-								<span>${usage.cost.total.toFixed(4)}</span>
+								<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>${usage.cost.total.toFixed(4)}</span>
 							</div>
 						)}
 					</div>
@@ -302,7 +320,11 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "retry":
 			return <IconRefreshOutline14 {...p} />;
 		case "work":
-			return <span className="pw-pi" aria-hidden>π</span>;
+			return (
+				<span className="pw-thinking-grid" aria-hidden="true">
+					<i /><i /><i /><i /><i /><i /><i /><i /><i />
+				</span>
+			);
 		case "skill":
 			return <IconSkillOutline16 size={14} style={{ flex: "none" }} />;
 		default:
@@ -419,6 +441,32 @@ function askPreview(body: string[], t: Dict): Preview {
 	return { lines, hidden: 0 };
 }
 
+/** 从工具参数或摘要里提取至多 3 个外部域名（对齐 BoardUI WebSearch 站点徽章） */
+function extractToolDomains(summaryText: string, args: unknown): string[] {
+	const seen = new Set<string>();
+	const scan = (input: string) => {
+		const matches = input.match(/https?:\/\/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g);
+		if (!matches) return;
+		for (const raw of matches) {
+			try {
+				const host = new URL(raw).hostname.replace(/^www\./, "");
+				if (host && host !== "localhost" && host !== "127.0.0.1") seen.add(host);
+			} catch {
+				/* ignore */
+			}
+			if (seen.size >= 3) break;
+		}
+	};
+	scan(summaryText);
+	if (seen.size < 3 && args && typeof args === "object") {
+		for (const val of Object.values(args as Record<string, unknown>)) {
+			if (typeof val === "string") scan(val);
+			if (seen.size >= 3) break;
+		}
+	}
+	return [...seen];
+}
+
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
 	if (n === ASK_USER_TOOL) return t.stepAsked;
@@ -469,6 +517,7 @@ const ToolStep = memo(function ToolStep({
 	const cancelled = Boolean(state && isCancelledTool(state.name, state.isError, output));
 	const failed = Boolean(state?.isError) && !cancelled && !running;
 	const summary = toolSummary(name, args, cwd);
+	const domains = useMemo(() => extractToolDomains(summary.text, args), [summary.text, args]);
 	// 标题 JSON：先截断超长字符串值再序列化——write 的 content 几 MB，直接 stringify
 	// 每次渲染白算一遍再扔掉 99.9%；截后仍保 2000 字符上限的展示语义不变
 	const argsTitle = useMemo(() => {
@@ -496,7 +545,11 @@ const ToolStep = memo(function ToolStep({
 	const hasOutput = Boolean(output || state?.encodingLoss);
 	const canExpand = hasOutput && !hasDiff && !running;
 	const duration = state?.startedAt && state?.endedAt ? state.endedAt - state.startedAt : 0;
-	const showPreview = Boolean(preview.head) || preview.lines.length > 0;
+	const isAskTool = name.toLowerCase() === ASK_USER_TOOL;
+	// 单行极简模式：已完成的常规工具默认只展示单行（点击该行展开输出或 Diff）；
+	// 运行中、失败、已中止、或用户问答（ask_user_question）保留 ⎿ 结果行。
+	const showPreview = (running || failed || cancelled || isAskTool) && (Boolean(preview.head) || preview.lines.length > 0);
+	const lineInteractive = hasDiff || canExpand;
 	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
 	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));
 	// 折叠时只留标题行：diff 正文整块不渲染（原来固定露出前 12 行，手机上十几次编辑
@@ -517,27 +570,34 @@ const ToolStep = memo(function ToolStep({
 	return (
 		<Step kind={kind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
 			<div
-				className="pw-line"
-				role={hasDiff ? "button" : undefined}
-				tabIndex={hasDiff ? 0 : undefined}
-				aria-expanded={hasDiff ? open : undefined}
-				style={hasDiff ? { cursor: "pointer" } : undefined}
-				title={hasDiff ? (open ? t.collapseOutput : t.expandDiff) : undefined}
-				onClick={hasDiff ? toggle : undefined}
-				onKeyDown={hasDiff ? onKey : undefined}
+				className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}
+				role={lineInteractive ? "button" : undefined}
+				tabIndex={lineInteractive ? 0 : undefined}
+				aria-expanded={lineInteractive ? open : undefined}
+				style={lineInteractive ? { cursor: "pointer" } : undefined}
+				title={lineInteractive ? (open ? t.collapseOutput : hasDiff ? t.expandDiff : t.expandOutput) : undefined}
+				onClick={lineInteractive ? toggle : undefined}
+				onKeyDown={lineInteractive ? onKey : undefined}
 			>
 				{running ? <span className="pw-shimmer">{name === ASK_USER_TOOL ? t.stepAskWaiting : t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
 				{summary.text ? (
-					<span className="pw-arg" title={argsTitle}>{summary.text}</span>
+					<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={argsTitle}>{summary.text}</span>
 				) : (
 					<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
 				)}
+				{domains.length > 0 && (
+					<span className="pw-domain-stack" aria-hidden="true">
+						{domains.map((domain) => (
+							<span key={domain} className="pw-domain-chip" data-domain={domain} />
+						))}
+					</span>
+				)}
 				{diffStat && <span className="pw-meta">{diffStat}</span>}
-				{hasDiff && (
+				{lineInteractive && (
 					<span
-						className="pw-meta"
+						className={hasDiff ? "pw-meta" : "pw-meta opacity-0 group-hover/tool:opacity-100"}
 						aria-hidden
-						style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)" }}
+						style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)", opacity: open ? 1 : undefined }}
 					>
 						<IconChevronRight14 size={11} />
 					</span>
@@ -1165,7 +1225,9 @@ function TurnBlockView({
 	onInspectTool?: (toolCallId: string) => void;
 	onOpenFile?: (path: string) => void;
 }) {
+	const { t } = useI18n();
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+	const [processOpen, setProcessOpen] = useState(false);
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
 	// 技能展开的用户消息不在这一层当「发言」渲染，改成本轮过程里的一个技能步骤
 	const skill = useMemo(() => (user ? parseExpandedSkill(userTextOf(user)) : null), [user]);
@@ -1216,38 +1278,71 @@ function TurnBlockView({
 	const last = items[items.length - 1];
 	const hasLiveStep = Boolean(runningTool) || (last?.kind === "think" && last.live) || (last?.kind === "narr" && last.live);
 	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
+	const canCollapseProcess = !turnLive && finalIdx >= 0;
+	const processCollapsed = !processOpen && canCollapseProcess;
+	const turnDurationMs = (() => {
+		if (finalIdx < 0) return undefined;
+		const endMsg = messages[finalIdx];
+		const endMs = endMsg?.endedAt ?? endMsg?.timestamp;
+		const startMs = user?.timestamp ?? (assistants.length > 0 ? messages[assistants[0]]?.timestamp : undefined);
+		if (typeof startMs === "number" && typeof endMs === "number" && endMs > startMs) {
+			return endMs - startMs;
+		}
+		return assistants.length > 0 ? spanOf(assistants[0], finalIdx) : undefined;
+	})();
 
 	return (
 		<>
 			{user && !skill && <UserMessage message={user} onEditMessage={onEditMessage} />}
 			{skill && <UserImages images={user?.content.filter((c) => c.type === "image") ?? []} />}
 			{showProcess && (
-				<div className="pw-turn">
-					{skill && <SkillStep name={skill.name} args={skill.args} />}
-					{contextFiles?.map((resource, i) => (
-						<ContextStep key={`ctx-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${i}`} resource={resource} cwd={cwd} />
-					))}
-					{blocks.map((b) => {
-						if (b.kind === "item") return <ItemView key={b.item.key} item={b.item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />;
-						const open = expanded.has(b.key);
-						return (
-							<div key={b.key} className="pw-run" data-open={open || undefined}>
-								<SummaryStep
-									run={b}
-									expanded={open}
-									onToggle={() => setExpanded((prev) => {
-										const next = new Set(prev);
-										if (next.has(b.key)) next.delete(b.key);
-										else next.add(b.key);
-										return next;
-									})}
-								/>
-								{open && b.items.map((item) => <ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />)}
-							</div>
-						);
-					})}
-					{isLast && retryNotice && <RetryStep text={retryNotice} />}
-					{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} hasLiveStep={hasLiveStep} />}
+				<div className="pw-turn" data-collapsed={processCollapsed || undefined}>
+					{canCollapseProcess && (
+						<div className="pw-turn-bar">
+							<button
+								type="button"
+								className="pw-turn-toggle"
+								aria-expanded={processOpen}
+								onClick={() => setProcessOpen((v) => !v)}
+							>
+								<span>
+									{turnDurationMs !== undefined && turnDurationMs > 0
+										? t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))
+										: t.turnProcessToggle}
+								</span>
+								<IconChevronRight14 size={12} className="pw-turn-chev" />
+							</button>
+						</div>
+					)}
+					<div className="pw-turn-body" data-collapsed={processCollapsed || undefined} inert={processCollapsed || undefined} aria-hidden={processCollapsed || undefined}>
+						<div className="pw-turn-body-inner">
+							{skill && <SkillStep name={skill.name} args={skill.args} />}
+							{contextFiles?.map((resource, i) => (
+								<ContextStep key={`ctx-${typeof resource === "string" ? resource : `${resource.source}-${resource.path}`}-${i}`} resource={resource} cwd={cwd} />
+							))}
+							{blocks.map((b) => {
+								if (b.kind === "item") return <ItemView key={b.item.key} item={b.item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />;
+								const open = expanded.has(b.key);
+								return (
+									<div key={b.key} className="pw-run" data-open={open || undefined}>
+										<SummaryStep
+											run={b}
+											expanded={open}
+											onToggle={() => setExpanded((prev) => {
+												const next = new Set(prev);
+												if (next.has(b.key)) next.delete(b.key);
+												else next.add(b.key);
+												return next;
+											})}
+										/>
+										{open && b.items.map((item) => <ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />)}
+									</div>
+								);
+							})}
+							{isLast && retryNotice && <RetryStep text={retryNotice} />}
+							{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} hasLiveStep={hasLiveStep} />}
+						</div>
+					</div>
 				</div>
 			)}
 			{finalIdx >= 0 && <FinalAnswer message={messages[finalIdx]} onFork={onFork} showActions={!isStreaming || !isLast} turnStartMs={user?.timestamp} roundBadge={roundBadge} onShowRound={onShowRound} />}
@@ -1870,20 +1965,22 @@ export function ChatWindow({
 						)}
 						{compaction && (
 							<div className="mt-3 flex justify-center" role="status">
-								<div className="flex items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-hover)", color: "var(--dsw-label-secondary)" }}>
-									<span>{compaction.phase === "start" ? t.compacting : compaction.errorMessage ? `${t.compactionFailed}: ${compaction.errorMessage}` : t.compactionComplete}</span>
-									{compaction.phase === "end" && <button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn">×</button>}
+								<div className="pw-toast-stack pw-toast-info flex items-center gap-2.5" style={{ fontSize: "var(--piweb-chat-font-s)" }}>
+									<span className="pw-toast-icon" aria-hidden="true">i</span>
+									<span className="pw-toast-body">{compaction.phase === "start" ? t.compacting : compaction.errorMessage ? `${t.compactionFailed}: ${compaction.errorMessage}` : t.compactionComplete}</span>
+									{compaction.phase === "end" && <button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn pw-toast-close">×</button>}
 								</div>
 							</div>
 						)}
 						{error && (
 							<button
-								className="mt-3 rounded-xl px-3 py-2 text-left"
-								style={{ fontSize: "var(--piweb-chat-font-s)", background: "var(--dsw-danger)", color: "white" }}
+								className="pw-toast-stack pw-toast-error mt-3 text-left"
+								style={{ fontSize: "var(--piweb-chat-font-s)" }}
 								onClick={onClearError}
 								role="alert"
 							>
-								{error}
+								<span className="pw-toast-icon" aria-hidden="true">✕</span>
+								<span className="pw-toast-body">{error}</span>
 							</button>
 						)}
 					</div>
@@ -1892,7 +1989,7 @@ export function ChatWindow({
 			</ChatScrollContext.Provider>
 			{/* 右侧大纲导航：从助手回答的标题和用户消息生成，随滚动高亮，悬停展开 */}
 			<OutlineRail scrollRef={scrollRef} revision={`${messages.length}:${nearTurns.size}:${isStreaming ? 1 : 0}`} />
-			{/* 脱离底部时的“回到底部”浮钮：与输入框卡片同轴，挂在右上角顶部，图标带新内容角标 */}
+			{/* 脱离底部时的“回到底部”浮钮（Bencho Slingshot 弹性光座 + 粒子微动效）：与输入框卡片同轴，挂在右上角顶部 */}
 			{(unseen > 0 || awayFromBottom) && (
 				<div
 					className="pointer-events-none absolute inset-x-0 bottom-2 mx-auto flex w-full justify-end"
@@ -1900,14 +1997,22 @@ export function ChatWindow({
 				>
 					<button
 						type="button"
-						className="pointer-events-auto relative flex h-8 w-8 items-center justify-center rounded-full"
-						style={{ background: "var(--dsw-glass-popover)", border: "0.5px solid var(--dsw-border-l2)", boxShadow: "var(--dsw-elevation-soft)", color: "var(--dsw-label-secondary)" }}
+						className="pw-slingshot-btn pointer-events-auto relative flex h-9 w-9 items-center justify-center rounded-full"
 						onClick={scrollToBottom}
 						title={t.backToBottom}
 					>
+						<svg className="sls-svg" viewBox="-12 -12 40 40" fill="none" aria-hidden="true">
+							<g className="sls-dust">
+								<line x1="8" y1="-6" x2="8" y2="-10" strokeWidth="1.4" />
+								<line x1="21" y1="-2" x2="24" y2="-5" strokeWidth="1.4" />
+								<line x1="-5" y1="-2" x2="-8" y2="-5" strokeWidth="1.4" />
+								<line x1="23" y1="8" x2="27" y2="8" strokeWidth="1.4" />
+								<line x1="-7" y1="8" x2="-11" y2="8" strokeWidth="1.4" />
+							</g>
+						</svg>
 						{/* 向下箭头 */}
-						<svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
-							<path d="M8 3.5v9M4.5 9L8 12.5 11.5 9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+						<svg className="sls-arrow" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+							<path d="M8 3.5v9M4.5 9L8 12.5 11.5 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
 						</svg>
 						{unseen > 0 && (
 							<span

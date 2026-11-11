@@ -16,6 +16,20 @@ const providers = (): Record<string, unknown> => ({
 });
 
 describe("customModelGaps", () => {
+	it("同 ID 的 modelOverrides 能补全自定义模型，false 声明也不会再次要求填写", () => {
+		expect(customModelGaps({ gateway: {
+			models: [{ id: "custom", contextWindow: 100_000 }],
+			modelOverrides: { custom: { contextWindow: 256_000, maxTokens: 8192, input: ["text"], reasoning: false } },
+		} })).toEqual([]);
+	});
+
+	it("只展示有效配置仍缺失的字段，已写能力优先显示覆盖层的值", () => {
+		expect(customModelGaps({ gateway: {
+			models: [{ id: "custom", name: "Old name", contextWindow: 100_000, reasoning: true }],
+			modelOverrides: { custom: { name: "Effective name", contextWindow: 256_000, input: ["text"], reasoning: false } },
+		} })).toEqual([{ provider: "gateway", index: 0, id: "custom", name: "Effective name", contextWindow: 256_000, vision: false, reasoning: false, missing: ["maxTokens"] }]);
+	});
+
 	it("只列 models[] 里缺字段的条目，带上位置和已写的值", () => {
 		// reasoning 也要算：没写时 pi 按 false 处理，推理模型的思考档位会整个消失
 		expect(customModelGaps(providers())).toEqual([
@@ -33,6 +47,18 @@ describe("customModelGaps", () => {
 });
 
 describe("fillModelFields", () => {
+	it("补全只填有效配置的空项，不向定义重复写入覆盖层已有的能力", () => {
+		const source = { gateway: {
+			models: [{ id: "custom" }],
+			modelOverrides: { custom: { contextWindow: 256_000, input: ["text"], reasoning: false } },
+		} };
+		const result = fillModelFields(source, [{ provider: "gateway", index: 0, id: "custom", contextWindow: 128_000, maxTokens: 8192, vision: true, reasoning: true }]);
+		expect(result.filled).toBe(1);
+		expect(result.providers).toEqual({ gateway: { ...source.gateway, models: [{ id: "custom", maxTokens: 8192 }] } });
+		expect(customModelGaps(result.providers)).toEqual([]);
+		expect(source.gateway.models).toEqual([{ id: "custom" }]);
+	});
+
 	it("只写用户填的值、只填空：已有值、modelOverrides 都不动", () => {
 		const source = providers();
 		const before = structuredClone(source);

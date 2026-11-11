@@ -41,7 +41,7 @@ function choose(label: string) {
 
 describe("font family picker", () => {
 	it("keeps the custom input when it is emptied", async () => {
-		render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
+		render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
 		await waitFor(() => expect(uiFontRow()).toBeTruthy());
 		choose("自定义…");
 		const input = within(uiFontRow()).getByPlaceholderText(PLACEHOLDER);
@@ -58,7 +58,7 @@ describe("font family picker", () => {
 	});
 
 	it("leaves custom mode when a preset is picked even if the input still has text", async () => {
-		render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
+		render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
 		await waitFor(() => expect(uiFontRow()).toBeTruthy());
 		choose("自定义…");
 		fireEvent.change(within(uiFontRow()).getByPlaceholderText(PLACEHOLDER), { target: { value: "Fira Code" } });

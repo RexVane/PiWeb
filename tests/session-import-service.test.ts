@@ -23,7 +23,7 @@ vi.mock("../src/lib/session-import/paths", () => ({
 import { importSessions, scanAllSources } from "../src/lib/session-import";
 import { claudeSource } from "../src/lib/session-import/claude";
 import { codexSource } from "../src/lib/session-import/codex";
-import { readSession } from "../src/lib/session-reader";
+import { deleteSession, readSession } from "../src/lib/session-reader";
 import { archiveSession, getArchivedSessions } from "../src/lib/workspace-store";
 import { sweepArchivedSessions } from "../src/lib/session-retention";
 
@@ -71,6 +71,26 @@ async function seedCodex(id: string, cwd: string): Promise<void> {
 }
 
 describe("扫描", () => {
+	it("扩大范围可找到更早会话，hasMore 区分截断与恰好全部加载", async () => {
+		const summaries = ["new", "middle", "old"].map((externalId, index) => ({ source: "claude" as const, externalId, location: `${externalId}.jsonl`, updatedAt: TS - index * 1000 }));
+		const scan = vi.spyOn(claudeSource, "scan").mockImplementation(async (options) => options?.limit ? summaries.slice(0, options.limit) : summaries);
+		try {
+			const first = await scanAllSources(agentDir, { sources: ["claude"], limit: 2 });
+			expect(first.summaries.map((row) => row.externalId)).toEqual(["new", "middle"]);
+			expect(first.hasMore.claude).toBe(true);
+			expect(scan).toHaveBeenLastCalledWith({ limit: 3 });
+			const expanded = await scanAllSources(agentDir, { sources: ["claude"], limit: 3 });
+			expect(expanded.summaries.map((row) => row.externalId)).toEqual(["new", "middle", "old"]);
+			expect(expanded.hasMore.claude).toBe(false);
+			expect(scan).toHaveBeenLastCalledWith({ limit: 4 });
+			const unlimited = await scanAllSources(agentDir, { sources: ["claude"], limit: 0 });
+			expect(unlimited.summaries).toHaveLength(3);
+			expect(unlimited.hasMore.claude).toBe(false);
+		} finally {
+			scan.mockRestore();
+		}
+	});
+
 	it("按来源聚合，且已导入的会话被标出来", async () => {
 		await seedClaude("s1", project);
 		await seedCodex("rollout-1", project);
@@ -101,7 +121,7 @@ describe("扫描", () => {
 		await seedClaude("s1", project);
 		const report = await scanAllSources(agentDir);
 		const { GET } = await import("../src/app/api/sessions/import/route");
-		const response = await GET();
+		const response = await GET(new Request("http://localhost/api/sessions/import"));
 		const body = await response.json();
 		expect(body.success).toBe(true);
 		expect(body.data.sessions[0]).not.toHaveProperty("location");
@@ -184,10 +204,10 @@ describe("幂等与失败报告", () => {
 		const first = await importSessions([selection], { agentDir });
 		await archiveSession(first.results[0].path!, agentDir);
 		const { GET, POST } = await import("../src/app/api/sessions/import/route");
-		expect((await (await GET()).json()).data).toMatchObject({ imported: ["claude:session special"], archived: ["claude:session special"] });
+		expect((await (await GET(new Request("http://localhost/api/sessions/import"))).json()).data).toMatchObject({ imported: ["claude:session special"], archived: ["claude:session special"] });
 		const result = await POST(new Request("http://localhost/api/sessions/import", { method: "POST", body: JSON.stringify({ sessions: [selection] }) }));
 		expect((await result.json()).data).toMatchObject({ imported: 0, restored: 1, failed: 0 });
-		expect((await (await GET()).json()).data).toMatchObject({ imported: ["claude:session special"], archived: [] });
+		expect((await (await GET(new Request("http://localhost/api/sessions/import"))).json()).data).toMatchObject({ imported: ["claude:session special"], archived: [] });
 	});
 
 	it("已导入过的会话再导入是 skipped（不会产生第二个文件）", async () => {
@@ -198,6 +218,22 @@ describe("幂等与失败报告", () => {
 		expect(second.results[0].reason).toMatch(/已经导入过/);
 		const files = await fs.readdir(path.dirname(first.results[0].path as string));
 		expect(files.filter((name) => name.includes("import-claude-s1"))).toHaveLength(1);
+	});
+
+	it("删除已导入文件后不再标为已导入，原会话可重新导入和打开", async () => {
+		await seedClaude("session special", project, "保留的源会话");
+		const selection = { source: "claude" as const, externalId: "session special" };
+		const first = await importSessions([selection], { agentDir, fallbackCwd: fallback });
+		expect((await scanAllSources(agentDir)).imported).toHaveLength(1);
+		await deleteSession(first.results[0].path!);
+		const { GET } = await import("../src/app/api/sessions/import/route");
+		const scan = await (await GET(new Request("http://localhost/api/sessions/import"))).json();
+		expect(scan.data.imported).toEqual([]);
+		expect(scan.data.sessions).toEqual(expect.arrayContaining([expect.objectContaining(selection)]));
+		const second = await importSessions([selection], { agentDir, fallbackCwd: fallback });
+		expect(second).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+		expect((await readSession(second.results[0].path!)).messages[0].content).toEqual(expect.arrayContaining([expect.objectContaining({ text: "保留的源会话" })]));
+		expect((await scanAllSources(agentDir)).imported).toHaveLength(1);
 	});
 
 	it("同一次请求里重复勾选同一条只导入一次", async () => {

@@ -22,10 +22,17 @@ function renderMd(text: string) {
 }
 
 describe("file paths in markdown", () => {
-	it("turns an inline code path into a button", () => {
-		const { container } = renderMd("改了 `src/lib/a.ts` 这个文件");
-		const button = container.querySelector("button.md-file-path");
-		expect(button?.textContent).toBe("src/lib/a.ts");
+	it("keeps the full path available and opens the right file when references share a filename", () => {
+		const first = "src/plugins/worktree.ts";
+		const second = "tests/integration/fixtures/worktree.ts";
+		const { openFile } = renderMd(`改了 \`${first}\` 和 \`${second}\``);
+		for (const path of [first, second]) {
+			const button = screen.getByRole("button", { name: path });
+			expect(button.getAttribute("title")).toBe(path);
+			expect(button.textContent).toBe("worktree.ts");
+			fireEvent.click(button);
+		}
+		expect(openFile.mock.calls.map(([path]) => path)).toEqual([first, second]);
 	});
 
 	it("leaves a fenced block without a language as code even when it holds a single path", () => {
@@ -41,9 +48,23 @@ describe("file paths in markdown", () => {
 	});
 
 	it("opens explicit relative Markdown links in the file viewer, decoding the path once", () => {
-		const { openFile } = renderMd("[文件](docs/%E4%B8%AD%E6%96%87%20file.md?raw=1#L2) [README](README.md) [目录](src/) [无扩展名](./LICENSE)");
+		const { container, openFile } = renderMd("[文件](docs/%E4%B8%AD%E6%96%87%20file.md?raw=1#L2) [README](README.md) [目录](src/) [无扩展名](./LICENSE)");
 		for (const name of ["文件", "README", "目录", "无扩展名"]) fireEvent.click(screen.getByRole("link", { name }));
 		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["docs/中文 file.md", "README.md", "src/", "./LICENSE"]);
+		expect(container.querySelectorAll("a.md-file-link").length).toBe(4);
+		expect(screen.getByRole("link", { name: "文件" }).querySelector("svg.md-file-path-icon")).not.toBeNull();
+	});
+
+	it("preserves meaningful titles and compacts path-shaped link labels without changing their targets", () => {
+		const path = "src/plugins/worktree.ts";
+		const { openFile } = renderMd(`[**底层结构图与执行链**](docs/architecture.md) [${path}](${path})`);
+		const title = screen.getByRole("link", { name: "底层结构图与执行链" });
+		expect(title.getAttribute("title")).toBe("docs/architecture.md");
+		fireEvent.click(title);
+		const file = screen.getByRole("link", { name: path });
+		expect(file.textContent).toBe("worktree.ts");
+		fireEvent.click(file);
+		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["docs/architecture.md", path]);
 	});
 
 	it("preserves external, anchor, email and application links", () => {

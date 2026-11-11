@@ -28,7 +28,6 @@ import { looksLikeFilePath, relativeMarkdownPath } from "@/lib/chat/file-path";
 import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
-import { MermaidDiagram } from "@/components/MermaidDiagram";
 
 type MarkdownTextNode = { value?: unknown; tagName?: string; properties?: { className?: unknown }; children?: MarkdownTextNode[]; position?: { start: { offset?: number }; end: { offset?: number } } };
 
@@ -38,19 +37,20 @@ function markdownNodeText(node: MarkdownTextNode | undefined): string {
 	return node.children?.map(markdownNodeText).join("") ?? "";
 }
 
-function mermaidSource(node: MarkdownTextNode | undefined, markdown: string): string | null {
-	const code = node?.children?.find((child) => child.tagName === "code");
-	const classes = code?.properties?.className;
-	if (!Array.isArray(classes) || !classes.some((name) => String(name).toLowerCase() === "language-mermaid")) return null;
-	const start = node?.position?.start.offset;
-	const end = node?.position?.end.offset;
-	if (start === undefined || end === undefined) return null;
-	const fenced = markdown.slice(start, end).split(/\r?\n/);
-	const opening = /^[ \t>]*(`{3,}|~{3,})\s*mermaid(?:\s.*)?$/i.exec(fenced[0] ?? "");
-	if (!opening || fenced.length < 2) return null;
-	const marker = opening[1];
-	if (!new RegExp(`^[ \\t>]*${marker[0]}{${marker.length},}[ \\t]*$`).test(fenced.at(-1) ?? "")) return null;
-	return markdownNodeText(code).replace(/\n$/, "");
+function extractCodeLang(node: MarkdownTextNode | undefined): string | undefined {
+	const codeNode = node?.children?.find((child) => child.tagName === "code");
+	const rawClass = codeNode?.properties?.className;
+	const classes = Array.isArray(rawClass)
+		? rawClass.filter((item): item is string => typeof item === "string")
+		: typeof rawClass === "string"
+			? rawClass.split(/\s+/)
+			: [];
+	for (const cls of classes) {
+		if (cls.startsWith("language-") && cls.length > "language-".length) {
+			return cls.slice("language-".length).toLowerCase();
+		}
+	}
+	return undefined;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -123,14 +123,58 @@ function SafeImage({ src, alt, title }: { src?: unknown; alt?: string; title?: s
  * 链接：外部链接加一个 ↗ 标记，让「点了会离开本站」一眼可见。
  * 站内链接（同源）不加标记，避免到处都是符号。
  */
-function MarkdownLink({ href, children, ...props }: { href?: string; children?: React.ReactNode } & Record<string, unknown>) {
+function FileReferenceIcon() {
+	return <svg className="md-file-path-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+		<path d="M9.5 1.5H4A1.5 1.5 0 0 0 2.5 3v10A1.5 1.5 0 0 0 4 14.5h8a1.5 1.5 0 0 0 1.5-1.5V5.5L9.5 1.5Z" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+		<path d="M9.5 1.5v4h4" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+	</svg>;
+}
+
+function FilePathLabel({ path }: { path: string }) {
+	// A trailing slash denotes a directory; keep it after the compact name.
+	const trimmed = path.replace(/\/$/, "");
+	const fileName = trimmed.slice(trimmed.lastIndexOf("/") + 1) + (path.endsWith("/") ? "/" : "");
+	return <><FileReferenceIcon /><span className="md-file-path-label">{fileName}</span></>;
+}
+
+function MarkdownLink({ href, children, node, ...props }: { href?: string; children?: React.ReactNode; node?: MarkdownTextNode } & Record<string, unknown>) {
 	const actions = useMarkdownActions();
 	const filePath = href ? relativeMarkdownPath(href) : null;
 	if (filePath !== null && actions.openFile) {
-		return <a href={href} {...props} onClick={(event) => {
-			event.preventDefault();
-			actions.openFile!(filePath);
-		}}>{children}</a>;
+		const labelText = markdownNodeText(node) || (typeof children === "string" ? children : "");
+		const pathLabel = labelText === filePath || labelText === href;
+		if (pathLabel) {
+			return (
+				<a
+					href={href}
+					{...props}
+					className="md-file-path"
+					title={filePath}
+					aria-label={filePath}
+					onClick={(event) => {
+						event.preventDefault();
+						actions.openFile!(filePath);
+					}}
+				>
+					<FilePathLabel path={filePath} />
+				</a>
+			);
+		}
+		return (
+			<a
+				href={href}
+				{...props}
+				className="md-file-link"
+				title={filePath}
+				onClick={(event) => {
+					event.preventDefault();
+					actions.openFile!(filePath);
+				}}
+			>
+				<FileReferenceIcon />
+				<span className="md-file-path-label">{children}</span>
+			</a>
+		);
 	}
 	let external = false;
 	if (typeof href === "string" && href) {
@@ -159,17 +203,18 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 			remarkPlugins={[remarkGfm]}
 			rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
 			components={{
-				a: ({ node: _node, ...props }) => <MarkdownLink {...props} />,
+				a: ({ node, ...props }) => <MarkdownLink node={node} {...props} />,
 				img: ({ src, alt, title }) => <SafeImage src={src} alt={alt} title={title} />,
 				pre: ({ node, children, ...props }) => {
-					const diagram = mermaidSource(node, text);
-					if (diagram !== null) return <MermaidDiagram source={diagram} />;
-					return <div className="md-code-block">
-						<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
-						<pre {...props}>{children}</pre>
-					</div>;
+					const lang = extractCodeLang(node);
+					return (
+						<div className="md-code-block" data-lang={lang}>
+							<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
+							<pre {...props}>{children}</pre>
+						</div>
+					);
 				},
-				// 行内代码里常是文件路径：能认出来且能打开时，变成可点（只变色，不加下划线）
+				// 文件引用显示短名称；完整路径留在悬停提示、打开动作与辅助名称中。
 				code: ({ node: _node, className, children }) => {
 					const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";
 					const path = raw.trim();
@@ -178,8 +223,8 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 					const block = Boolean(className) || raw.endsWith("\n");
 					if (actions.openFile && !block && looksLikeFilePath(path)) {
 						return (
-							<button type="button" className="md-file-path" title={path} onClick={() => actions.openFile!(path)}>
-								{children}
+							<button type="button" className="md-file-path" title={path} aria-label={path} onClick={() => actions.openFile!(path)}>
+								<FilePathLabel path={path} />
 							</button>
 						);
 					}

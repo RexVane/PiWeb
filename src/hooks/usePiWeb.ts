@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
+import { notifySessionsChanged } from "@/lib/session-change-events";
 import type { AskQuestion } from "@/lib/ask-user";
 import type {
 	GrowthConsentRequest,
@@ -411,6 +412,11 @@ export function usePiWeb() {
 	const shownReloadsRef = useRef(new Set<string>());
 	const presetRestoreAttemptRef = useRef<string | null>(null);
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
+	const pendingPresetChangesRef = useRef(new Set<string | null>());
+	const [, setPresetChangeVersion] = useState(0);
+	const toolPresetChanging = pendingPresetChangesRef.current.has(currentId);
+	const liveStateRef = useRef(state);
+	liveStateRef.current = state;
 	const activeSessionRef = useRef(currentId);
 	activeSessionRef.current = currentId;
 	const subscribedSessionRef = useRef<string | null>(null);
@@ -450,8 +456,9 @@ export function usePiWeb() {
 
 	const [workspaceAliases, setWorkspaceAliases] = useState<Record<string, string>>({});
 	const [archivedSessionPaths, setArchivedSessionPaths] = useState<string[]>([]);
+	const [pinnedSessionPaths, setPinnedSessionPaths] = useState<string[]>([]);
 
-	// 手动添加的工作区与别名、归档
+	// 手动添加的工作区与别名、归档、置顶
 	const refreshWorkspaces = useCallback(async () => {
 		try {
 			const r = await fetch("/api/workspaces");
@@ -462,6 +469,7 @@ export function usePiWeb() {
 				if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
 				if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
 				if (Array.isArray(j.data.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+				if (Array.isArray(j.data.pinnedSessions)) setPinnedSessionPaths(j.data.pinnedSessions);
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to load workspaces";
@@ -510,6 +518,9 @@ export function usePiWeb() {
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+			const key = pathKey(sessionPath);
+			setPinnedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
+			notifySessionsChanged();
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to archive session";
 			setState((current) => ({ ...current, error: message }));
@@ -527,12 +538,65 @@ export function usePiWeb() {
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+			notifySessionsChanged();
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to unarchive session";
 			setState((current) => ({ ...current, error: message }));
 			throw error;
 		}
 	}, []);
+
+	const pinSession = useCallback(async (sessionPath: string) => {
+		try {
+			const r = await fetch("/api/workspaces", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "pinSession", path: sessionPath }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (Array.isArray(j.data?.pinnedSessions)) setPinnedSessionPaths(j.data.pinnedSessions);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to pin session";
+			setState((current) => ({ ...current, error: message }));
+			throw error;
+		}
+	}, []);
+
+	const unpinSession = useCallback(async (sessionPath: string) => {
+		try {
+			const r = await fetch("/api/workspaces", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action: "unpinSession", path: sessionPath }),
+			});
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (Array.isArray(j.data?.pinnedSessions)) setPinnedSessionPaths(j.data.pinnedSessions);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to unpin session";
+			setState((current) => ({ ...current, error: message }));
+			throw error;
+		}
+	}, []);
+
+	/** 物理删除会话文件（服务端先让会话收工再删文件并清掉归档记录），成功后立刻从列表里拿掉，不等轮询 */
+	const deleteSession = useCallback(async (sessionPath: string) => {
+		try {
+			const r = await fetch(`/api/sessions/${idOf(sessionPath)}`, { method: "DELETE" });
+			const j = await r.json();
+			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			const key = pathKey(sessionPath);
+			setSessions((prev) => prev.filter((s) => pathKey(s.path) !== key));
+			setArchivedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
+			setPinnedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
+			notifySessionsChanged();
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "failed to delete session";
+			setState((current) => ({ ...current, error: message }));
+			throw error;
+		}
+	}, [idOf]);
 
 	const getWorkspaceName = useCallback(
 		(dir: string): string => {
@@ -670,6 +734,7 @@ export function usePiWeb() {
 					if (Array.isArray(registry.removedWorkspaces)) setRemovedWorkspaces(registry.removedWorkspaces);
 					if (registry.aliases && typeof registry.aliases === "object") setWorkspaceAliases(registry.aliases);
 					if (Array.isArray(registry.archivedSessions)) setArchivedSessionPaths(registry.archivedSessions);
+					if (Array.isArray(registry.pinnedSessions)) setPinnedSessionPaths(registry.pinnedSessions);
 				}
 				setSessions(
 					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
@@ -834,7 +899,7 @@ export function usePiWeb() {
 		};
 	}, [currentId, resyncNonce]);
 
-	const sendCommand = useCallback(async (cmd: Record<string, unknown>, id?: string): Promise<any> => {
+	const sendCommand = useCallback(async (cmd: Record<string, unknown>, id?: string, options?: { shouldReportError?: () => boolean }): Promise<any> => {
 		const target = id ?? currentId;
 		if (!target) {
 			setState((s) => ({ ...s, error: "no session" }));
@@ -850,11 +915,11 @@ export function usePiWeb() {
 				body: JSON.stringify(cmd),
 			});
 			const result = await r.json();
-			if (!r.ok || !result.success) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
+			if ((!r.ok || !result.success) && options?.shouldReportError?.() !== false) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
 			return result;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "request failed";
-			setState((s) => ({ ...s, error: message }));
+			if (options?.shouldReportError?.() !== false) setState((s) => ({ ...s, error: message }));
 			return { success: false, error: message };
 		} finally {
 			if (isPrompt) promptRequestsRef.current.delete(target);
@@ -950,24 +1015,39 @@ export function usePiWeb() {
 	}, [sessions, openSession]);
 
 	const setToolPreset = useCallback(
-		async (preset: ToolPreset) => {
-			await presetRestorePromiseRef.current;
-			if (activeSessionRef.current !== currentId) return;
-			if (currentId) {
-				const result = await sendCommand({ cmd: "setToolPreset", preset });
-				if (!result?.success) return;
+		async (preset: ToolPreset): Promise<{ success: boolean; error?: string }> => {
+			if (pendingPresetChangesRef.current.has(currentId)) return { success: false, error: "permission change pending" };
+			pendingPresetChangesRef.current.add(currentId);
+			setPresetChangeVersion((version) => version + 1);
+			const current = () => activeSessionRef.current === currentId;
+			try {
+				await presetRestorePromiseRef.current;
+				if (!current()) return { success: false, error: "session changed" };
+				if (currentId) {
+					const result = await sendCommand({ cmd: "setToolPreset", preset }, currentId, { shouldReportError: current });
+					if (!current()) return { success: false, error: "session changed" };
+					if (!result?.success) return { success: false, error: result?.error };
+				}
+				try { localStorage.setItem("piweb.toolPreset", preset); } catch (error) { if (!currentId) throw error; }
+				setState((s) => ({
+					...s,
+					toolPreset: preset,
+					snapshot: s.snapshot ? { ...s.snapshot, toolPreset: preset, customActiveTools: null, toolPreferenceSaved: true } : null,
+				}));
+				return { success: true };
+			} catch (error) {
+				const message = error instanceof Error ? error.message : "permission change failed";
+				if (current()) setState((s) => ({ ...s, error: message }));
+				return { success: false, error: current() ? message : "session changed" };
+			} finally {
+				pendingPresetChangesRef.current.delete(currentId);
+				setPresetChangeVersion((version) => version + 1);
 			}
-			localStorage.setItem("piweb.toolPreset", preset);
-			if (activeSessionRef.current === currentId) setState((s) => ({
-				...s,
-				toolPreset: preset,
-				snapshot: s.snapshot ? { ...s.snapshot, toolPreset: preset, toolPreferenceSaved: true } : null,
-			}));
 		},
 		[currentId, sendCommand],
 	);
 
-	// ---------- 会话预设已移除：工具档位见通用设置/工具启用情况，模型与思考级别由 Hero 页显式下发 ----------
+	// ---------- 工具权限由输入框选择，模型与思考级别由 Hero 页显式下发 ----------
 
 	/** 强制重连 SSE 拿新快照（navigate 等场景） */
 	const resync = useCallback(() => setResyncNonce((n) => n + 1), []);
@@ -1052,6 +1132,7 @@ export function usePiWeb() {
 		archivedSessions,
 		/** 原始归档路径列表（含被豁免的当前会话，供菜单显示真实归档态） */
 		archivedSessionPaths,
+		pinnedSessionPaths,
 		currentId,
 		currentPath,
 		state,
@@ -1064,6 +1145,9 @@ export function usePiWeb() {
 		patchSessionName,
 		archiveSession,
 		unarchiveSession,
+		pinSession,
+		unpinSession,
+		deleteSession,
 		resync,
 		groupBy,
 		orderBy,
@@ -1080,6 +1164,7 @@ export function usePiWeb() {
 		openSession,
 		closeSession,
 		setToolPreset,
+		toolPresetChanging,
 		clearError,
 		clearCompaction,
 		setError,

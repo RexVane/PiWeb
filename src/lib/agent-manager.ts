@@ -1334,7 +1334,18 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 		await ensureToolPreference(m);
 		await resourceLoaderReady(m.cwd);
 		const settingsManager = getSettingsManager(m.cwd);
-		const loader = await createSessionResourceLoader(m.cwd);
+		const loader = await createSessionResourceLoader(m.cwd, undefined, [{
+			name: "piweb-tool-permissions", hidden: true,
+			factory: (api) => {
+				// SDK tool_call covers top-level calls and ctx.executeTool / codemode nested calls.
+				// Read the current choice at execution time, including tools registered later.
+				api.on("tool_call", (event) => {
+					if (m.session) guardToolExecution(m, m.session);
+					const reason = toolPolicyDenial(m, event.toolName);
+					if (reason) return { block: true, reason };
+				});
+			},
+		}]);
 		let created: AgentSession | undefined;
 		try {
 			if (m.disposed) throw new Error("session is disposed");
@@ -1395,9 +1406,14 @@ function isManagedBusy(m: Managed): boolean {
 	return m.promptSubmitting || m.resourceReloading || m.runActive || !!(m.session && !m.session.isIdle);
 }
 
+function toolPolicyDenial(m: Managed, name: string): string | undefined {
+	if (m.disposed) return "Session is disposed";
+	const allowed = m.customActiveTools ? m.customActiveTools.includes(name) : presetAllowsTool(m.toolPreset, name);
+	if (!allowed) return `Tool "${name}" is blocked by the current permission level (${m.customActiveTools ? "custom" : m.toolPreset}).`;
+}
+
 function allowedToolNames(m: Managed, session: AgentSession): string[] {
-	const custom = m.customActiveTools;
-	return listAllToolNames(session).filter((name) => (custom ? custom.includes(name) : presetAllowsTool(m.toolPreset, name)));
+	return listAllToolNames(session).filter((name) => !toolPolicyDenial(m, name));
 }
 
 /** SDK 注册即激活的规则：direct / model-only 曝光、且没有写 defaultActive: false */
@@ -1421,10 +1437,29 @@ function policyToolNames(m: Managed, session: AgentSession): string[] {
 
 /** installSessionPolicy 包装前的原始 setActiveToolsByName：PiWeb 自己落策略时不能被记成"扩展要求" */
 const rawSetActiveTools = new WeakMap<AgentSession, (names: string[]) => void>();
+const guardedTools = new WeakSet<object>();
+
+function guardToolExecution(m: Managed, session: AgentSession): void {
+	// Guard the SDK's per-session execution objects. Extension definitions can be
+	// shared by their factories; modifying those would leak one session's policy.
+	for (const tool of session.agent.state.tools) {
+		if (guardedTools.has(tool)) continue;
+		const execute = tool.execute;
+		tool.execute = (...args) => {
+			// Parallel batches may prepare calls before any execute. Check once more at the
+			// actual invocation, so a prepared or nested call cannot retain an old permission.
+			const reason = toolPolicyDenial(m, tool.name);
+			if (reason) throw new Error(reason);
+			return execute.call(tool, ...args);
+		};
+		guardedTools.add(tool);
+	}
+}
 
 function applyToolPolicy(m: Managed, session: AgentSession): void {
 	const names = policyToolNames(m, session);
 	(rawSetActiveTools.get(session) ?? session.setActiveToolsByName.bind(session))(names);
+	guardToolExecution(m, session);
 }
 
 /**
@@ -1491,6 +1526,7 @@ function installSessionPolicy(m: Managed, session: AgentSession): void {
 		for (const name of wanted) m.requestedTools.add(name);
 		const allowed = allowedToolNames(m, session);
 		setActive(wanted.filter((name) => allowed.includes(name)));
+		guardToolExecution(m, session);
 	};
 	const reload = session.reload.bind(session);
 	session.reload = async (options) => {
@@ -2136,8 +2172,8 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const preset = cmd.preset as ToolPreset;
 				if (!Object.hasOwn(TOOL_PRESETS, preset)) return { ok: false, error: "invalid tool preset" };
 				await ensureToolPreference(m);
-				// 运行中也能改：SDK 的 setActiveToolsByName 不做 busy 检查，改完重建系统提示词，
-				// 在下一轮生效（本轮的请求已经发出去了，改不了）。这里不再自行拦一层。
+				// 运行中也能改。SDK 在下一轮更新声明；执行入口读取当前策略，
+				// 本轮尚未开始的调用也立即受限。已经执行的操作不会被撤回。
 				if (!m.session && !m.creating) {
 					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
 					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复保存的档位，

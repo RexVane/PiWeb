@@ -11,13 +11,16 @@ import {
 	getAliases,
 	getArchivedSessions,
 	getGrowthInitConsent,
+	getPinnedSessions,
 	getRemovedWorkspaces,
 	getWorkspaceRegistry,
 	listAdded,
+	pinSession,
 	registerCwds,
 	removeWorkspace,
 	setAlias,
 	setGrowthInitConsent,
+	unpinSession,
 } from "../src/lib/workspace-store";
 
 describe("PiWeb workspace registry", () => {
@@ -277,5 +280,26 @@ process.send("locked");`;
 		await expect(listAdded()).rejects.toThrow();
 		await expect(addWorkspace(path.join(tempDir, "new-workspace"))).rejects.toThrow();
 		expect(await fs.readFile(registryPath, "utf8")).toBe("{malformed");
+	});
+
+	it("pins, unpins and forgets pinned sessions", async () => {
+		const s1 = path.join(tempDir, "session-1.jsonl");
+		const s2 = path.join(tempDir, "session-2.jsonl");
+
+		await pinSession(s1);
+		await pinSession(s2);
+		expect(await getPinnedSessions()).toEqual([path.resolve(s1), path.resolve(s2)]);
+
+		// 重复置顶幂等
+		await pinSession(s1);
+		expect(await getPinnedSessions()).toEqual([path.resolve(s1), path.resolve(s2)]);
+
+		// 取消置顶
+		await unpinSession(s1);
+		expect(await getPinnedSessions()).toEqual([path.resolve(s2)]);
+
+		// 归档时自动取消置顶
+		await archiveSession(s2);
+		expect(await getPinnedSessions()).toEqual([]);
 	});
 });

@@ -41,9 +41,9 @@ export function modelInputFor(vision: boolean): string[] {
  *
  * PiWeb 不替用户编容量：maxTokens 会原样当成请求的 max_tokens 发出去（pi-ai simple-options），
  * contextWindow 决定 max_tokens 的钳制和自动压缩的时机——往大了猜，上游会直接拒绝请求；
- * 往小了猜只是提前压缩。所以只写端点报的或用户填的值，缺的交给体检卡片提醒。
+ * 往小了猜只是提前压缩。除端点报的或用户填的值外，只有用户明确选择沿用缺省时才写下这些值。
  */
-export const PI_MODEL_FALLBACKS = { contextWindow: 128_000, maxTokens: 16_384 } as const;
+export const PI_MODEL_FALLBACKS = { contextWindow: 128_000, maxTokens: 16_384, vision: false, reasoning: false } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -308,9 +308,26 @@ export interface CustomModelGap {
 	missing: CustomModelField[];
 }
 
+/** SDK 最后将 modelOverrides 套到所有同 ID 模型上，包括 models[] 中的自定义定义。 */
+function declaredModelWithOverrides(config: unknown, model: Record<string, unknown>): Record<string, unknown> {
+	const overrides = isRecord(config) && isRecord(config.modelOverrides) ? config.modelOverrides : undefined;
+	const id = typeof model.id === "string" ? model.id : "";
+	const value = overrides && Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : undefined;
+	const override = isRecord(value) ? value : {};
+	return {
+		...model,
+		name: override.name ?? model.name,
+		contextWindow: override.contextWindow ?? model.contextWindow,
+		maxTokens: override.maxTokens ?? model.maxTokens,
+		input: override.input ?? model.input,
+		reasoning: override.reasoning ?? model.reasoning,
+	};
+}
+
 /**
  * 体检：models.json 里哪些模型有字段没写、会落到 pi 的缺省上（见 PI_MODEL_FALLBACKS）。
- * 只看 providers[].models[]——modelOverrides 覆盖的是内置模型，那些模型 pi 的目录里有真值。
+ * 检查 providers[].models[] 与同 ID modelOverrides 合成后的声明；只有覆盖、没有自定义定义的
+ * 模型沿用目录真值，不列为缺口。
  * 读的是设置页已经载入的那份配置（密钥已去掉也不影响），保存后重新载入就自动刷新。
  */
 export function customModelGaps(providers: Readonly<Record<string, unknown>>): CustomModelGap[] {
@@ -321,19 +338,20 @@ export function customModelGaps(providers: Readonly<Record<string, unknown>>): C
 			if (!isRecord(model)) return;
 			const id = typeof model.id === "string" ? model.id.trim() : "";
 			if (!id) return;
+			const effective = declaredModelWithOverrides(config, model);
 			const missing: CustomModelField[] = [];
-			if (model.contextWindow === undefined) missing.push("contextWindow");
-			if (model.maxTokens === undefined) missing.push("maxTokens");
-			if (!Array.isArray(model.input)) missing.push("input");
+			if (effective.contextWindow === undefined) missing.push("contextWindow");
+			if (effective.maxTokens === undefined) missing.push("maxTokens");
+			if (!Array.isArray(effective.input)) missing.push("input");
 			// reasoning 没写时 pi 按 false 处理，推理模型的思考档位会整个消失，所以也要提醒
-			if (typeof model.reasoning !== "boolean") missing.push("reasoning");
+			if (typeof effective.reasoning !== "boolean") missing.push("reasoning");
 			if (!missing.length) return;
-			const declared = modelDraftFromConfig(model);
+			const declared = modelDraftFromConfig(effective);
 			gaps.push({
 				provider,
 				index,
 				id,
-				name: typeof model.name === "string" && model.name.trim() ? model.name.trim() : null,
+				name: declared.name.trim() || null,
 				...(declared.contextWindow === undefined ? {} : { contextWindow: declared.contextWindow }),
 				...(declared.maxTokens === undefined ? {} : { maxTokens: declared.maxTokens }),
 				...(declared.vision === undefined ? {} : { vision: declared.vision }),
@@ -367,19 +385,20 @@ export function fillModelFields(providers: Readonly<Record<string, unknown>>, fi
 		const config = Object.prototype.hasOwnProperty.call(next, fill.provider) ? next[fill.provider] : undefined;
 		const model = isRecord(config) && Array.isArray(config.models) ? config.models[fill.index] : undefined;
 		if (!isRecord(model) || typeof model.id !== "string" || model.id.trim() !== fill.id) continue;
+		const effective = declaredModelWithOverrides(config, model);
 		let touched = false;
 		for (const key of ["contextWindow", "maxTokens"] as const) {
 			const value = positiveInt(fill[key]);
-			if (model[key] === undefined && value !== undefined) {
+			if (effective[key] === undefined && value !== undefined) {
 				model[key] = value;
 				touched = true;
 			}
 		}
-		if (typeof fill.vision === "boolean" && !Array.isArray(model.input)) {
+		if (typeof fill.vision === "boolean" && !Array.isArray(effective.input)) {
 			model.input = modelInputFor(fill.vision);
 			touched = true;
 		}
-		if (typeof fill.reasoning === "boolean" && typeof model.reasoning !== "boolean") {
+		if (typeof fill.reasoning === "boolean" && typeof effective.reasoning !== "boolean") {
 			model.reasoning = fill.reasoning;
 			touched = true;
 		}

@@ -11,15 +11,17 @@ const originalModel = { id: "test-model", name: "Test model", reasoning: true, i
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false, auditMissing = false, refreshFailure = false }: {
-	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean; auditMissing?: boolean; refreshFailure?: boolean;
+function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false, auditMissing = false, refreshFailure = false, outputOnly = false, reorderOnConflict = false }: {
+	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean; auditMissing?: boolean; refreshFailure?: boolean; outputOnly?: boolean; reorderOnConflict?: boolean;
 } = {}) {
 	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
-	if (auditOnly || auditMissing) {
+	if (auditOnly || auditMissing || outputOnly) {
 		const undeclared = structuredClone(originalModel);
-		Reflect.deleteProperty(undeclared, "reasoning");
+		if (!outputOnly) Reflect.deleteProperty(undeclared, "reasoning");
 		if (auditMissing) for (const field of ["contextWindow", "maxTokens", "input"]) Reflect.deleteProperty(undeclared, field);
+		if (outputOnly) Reflect.deleteProperty(undeclared, "maxTokens");
 		saved.providers.gateway.models = [structuredClone(originalModel), { ...undeclared, id: "undeclared" }];
+		if (reorderOnConflict) saved.providers.gateway.models[0] = { ...undeclared, id: "other" };
 	}
 	let revision = "rev-1";
 	const writes: Array<{ action: string; content: string; revision: string }> = [];
@@ -42,6 +44,11 @@ function setup({ builtin = false, conflict = false, catalog, extraProviders = []
 			if (body.action === "loginState") return response({ prompt: null, notifyLog: [], done: true });
 			if (body.action !== "saveCustomProviders") throw new Error("unexpected action");
 			writes.push(body);
+			if (reorderOnConflict && writes.length === 1) {
+				saved.providers.gateway.models.reverse();
+				revision = "rev-2";
+				return { ok: false, status: 409, json: async () => ({ success: false, error: "Model configuration changed; reload before saving." }) };
+			}
 			if (conflict) return { ok: false, status: 409, json: async () => ({ success: false, error: "Model configuration changed; reload before saving." }) };
 			saved = JSON.parse(body.content);
 			revision = "rev-2";
@@ -54,7 +61,7 @@ function setup({ builtin = false, conflict = false, catalog, extraProviders = []
 		throw new Error(`unexpected URL ${url}`);
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
+	render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
 	fireEvent.click(screen.getByRole("button", { name: "模型" }));
 	return { writes, keys, fetchMock, saved: () => saved };
 }
@@ -62,6 +69,46 @@ function response(data: unknown) { return { ok: true, status: 200, json: async (
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "编辑" })); }
 
 describe("SettingsPanel model round trip and revision", () => {
+	it("lets the user save the current default output once without changing already configured capabilities", async () => {
+		const { saved, writes } = setup({ outputOnly: true });
+		const useDefaults = await screen.findByRole("button", { name: "使用默认值并保存" });
+		expect(screen.getByText(/这些是默认设置，不是模型官方能力上限/)).toBeTruthy();
+		expect(writes).toHaveLength(0);
+		fireEvent.click(useDefaults);
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+		expect(saved().providers.gateway.models).toEqual([originalModel, { ...originalModel, id: "undeclared", maxTokens: 16384 }]);
+		cleanup();
+		render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
+		fireEvent.click(screen.getByRole("button", { name: "模型" }));
+		await screen.findByRole("button", { name: "编辑" });
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+	});
+
+	it("keeps entered values when default completion fills the remaining fields", async () => {
+		const { saved } = setup({ auditMissing: true });
+		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 上下文" }), { target: { value: "256K" } });
+		fireEvent.click(screen.getByRole("checkbox", { name: "undeclared 图片" }));
+		fireEvent.click(screen.getByRole("button", { name: "使用默认值并保存" }));
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 16384, input: ["text", "image"], reasoning: false });
+	});
+
+	it("retains drafts by model identity after a conflicting save reloads a reordered configuration", async () => {
+		const { saved, writes } = setup({ auditMissing: true, reorderOnConflict: true });
+		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 输出上限" }), { target: { value: "32K" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
+		await screen.findByText("Model configuration changed; reload before saving.");
+		await waitFor(() => expect(saved().providers.gateway.models[0].id).toBe("undeclared"));
+		expect((screen.getByRole("textbox", { name: "undeclared 输出上限" }) as HTMLInputElement).value).toBe("32K");
+		expect((screen.getByRole("textbox", { name: "other 输出上限" }) as HTMLInputElement).value).toBe("");
+		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
+		await waitFor(() => expect(screen.queryByRole("textbox", { name: "undeclared 输出上限" })).toBeNull());
+		expect(writes).toHaveLength(2);
+		expect(writes[1].revision).toBe("rev-2");
+		expect(saved().providers.gateway.models[0]).toMatchObject({ id: "undeclared", maxTokens: 32000 });
+		expect(saved().providers.gateway.models[1]).not.toHaveProperty("maxTokens");
+	});
+
 	it("shows the remaining fields after saving capacities, and explicit text-only completion survives reopening", async () => {
 		const { saved } = setup({ auditMissing: true });
 		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 上下文" }), { target: { value: "256K" } });
@@ -76,7 +123,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
 		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: false });
 		cleanup();
-		render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
+		render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
 		fireEvent.click(screen.getByRole("button", { name: "模型" }));
 		await screen.findByRole("button", { name: "编辑" });
 		expect(screen.queryByTestId("model-audit")).toBeNull();

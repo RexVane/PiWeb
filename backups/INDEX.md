@@ -83,3 +83,6 @@
 20261017-105500 | docs/state/progress.md（含未提交的 #149 行） | backups/files/progress-20261017-pending149.md | 提交 #150 前临时摘下 #149 行以免混入提交，全部提交后已恢复
 20261017-114500 | .next-releases/active.json | backups/files/release-active-20261017-112432.json | 2026-10-16 一次失败的 build:release 留下 state=failed 标记，它会阻止所有生产启动（selectProductionBuild 拒绝回退）。当前 .next 已由本轮构建修复并通过校验，故移除该标记让生产模式可用；下次要做正式发布请跑 npm run build:release
 20261017-1310 | .next/、.next-dev-webpack/、.next-dev-webpack.broken-20261017-105502/、.next-releases/ 下 31 个旧构建 | 未备份（全部可重新生成） | 按用户确认清理旧构建与旧产物，保留 .next-releases/mvbx09xv-8a50bcae-3208-4069-9763-80681dc673f3（active 发布）；共释放约 7.9 GB
+2026-11-11 18:56:58 +08:00 | D:\AIApp\PiWeb 本地未提交修改（10 个文件） | git stash 491a906dae9ba9842b8dcd3f319133c8a6241bec | 更新 PiWeb 前保存，保留 stash 不清理
+2026-11-11 18:56:58 +08:00 | D:\AIApp\PiWeb\CLAUDE.md | HEAD 44c85b3d9cc6f8118e3cd0492d0eedc535c8029f | 上游 0.3.29 移除该已提交且未修改文件
+2026-11-11 21:11:49 +08:00 | D:\AIApp\PiWeb\.next-releases\active.json | D:\AIApp\PiWeb\backups\files\active-20261111-211149.json | 升级默认启动构建前保留 0.3.25 的旧发布指针

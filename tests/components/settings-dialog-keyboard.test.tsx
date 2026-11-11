@@ -8,7 +8,7 @@ beforeEach(() => {
 	vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => ({ success: true, data: url === "/api/pi-settings" ? { compaction: { enabled: true, reserveTokens: 100 }, retry: { enabled: true, maxRetries: 3 } } : {} }) })));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-const props = { cwd: "/w", toolPreset: "standard" as const, onToolPresetChange: () => {} };
+const props = { cwd: "/w" };
 
 describe("Settings dialog keyboard", () => {
 	it("announces a modal and traps Tab and background focus", async () => {
