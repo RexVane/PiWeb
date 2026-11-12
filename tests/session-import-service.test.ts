@@ -24,7 +24,7 @@ import { importSessions, scanAllSources } from "../src/lib/session-import";
 import { claudeSource } from "../src/lib/session-import/claude";
 import { codexSource } from "../src/lib/session-import/codex";
 import { deleteSession, readSession } from "../src/lib/session-reader";
-import { archiveSession, getArchivedSessions } from "../src/lib/workspace-store";
+import { archiveSession, getArchivedSessions, getWorkspaceRegistry, registerCwds, removeWorkspace } from "../src/lib/workspace-store";
 import { sweepArchivedSessions } from "../src/lib/session-retention";
 
 let root: string;
@@ -132,6 +132,28 @@ describe("扫描", () => {
 });
 
 describe("去向：源项目还在就导回原工作区，否则用兜底工作区", () => {
+	it("explicit imports restore only their project workspace, including retries of an existing import", async () => {
+		await seedClaude("s1", project);
+		await removeWorkspace(project);
+		await removeWorkspace(fallback);
+		await registerCwds([project, fallback]);
+		expect((await getWorkspaceRegistry()).workspaces).toEqual([]);
+		const { POST } = await import("../src/app/api/sessions/import/route");
+		const request = () => POST(new Request("http://localhost/api/sessions/import", {
+			method: "POST", body: JSON.stringify({ sessions: [{ source: "claude", externalId: "s1" }] }),
+		}));
+		const first = await (await request()).json();
+		expect(first.data).toMatchObject({ imported: 1, failed: 0 });
+		expect(await getWorkspaceRegistry()).toMatchObject({ workspaces: [project], removedWorkspaces: [fallback] });
+		const sessionFile = first.data.results[0].path;
+		const original = await fs.readFile(sessionFile, "utf8");
+		await removeWorkspace(project);
+		const retry = await (await request()).json();
+		expect(retry.data).toMatchObject({ imported: 0, skipped: 1, failed: 0, workspaces: [project] });
+		expect(await getWorkspaceRegistry()).toMatchObject({ workspaces: [project], removedWorkspaces: [fallback] });
+		expect(await fs.readFile(sessionFile, "utf8")).toBe(original);
+	});
+
 	it("源项目目录存在时，会话落在该工作区下", async () => {
 		await seedClaude("s1", project);
 		const report = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });
@@ -161,6 +183,30 @@ describe("去向：源项目还在就导回原工作区，否则用兜底工作�
 });
 
 describe("幂等与失败报告", () => {
+	it("hides legacy Claude task notifications without changing the imported session file or genuine questions", async () => {
+		await seedClaude("s1", project);
+		const report = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir });
+		const file = report.results[0].path!;
+		const entries = (await fs.readFile(file, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+		const notification = "<task-notification><task-id>task-1</task-id><status>killed</status><summary>Background server stopped</summary></task-notification>";
+		const question = `请解释这段通知：${notification}`;
+		const appendUser = (id: string, parentId: string, text: string) => ({
+			type: "message", id, parentId, timestamp: new Date(TS).toISOString(), message: { role: "user", content: [{ type: "text", text }], timestamp: TS },
+		});
+		entries.push(appendUser("legacy-notification", entries.at(-1).id, notification), appendUser("real-question", "legacy-notification", question));
+		const original = entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+		await fs.writeFile(file, original);
+		const displayed = (await readSession(file)).messages;
+		expect(displayed.filter((message) => message.role === "user").map((message) => message.content[0])).toEqual([
+			{ type: "text", text: "你好" }, { type: "text", text: question },
+		]);
+		expect(await fs.readFile(file, "utf8")).toBe(original);
+		// 相同字面内容来自其它工具或真人会话时，不套用 Claude 的兼容处理。
+		entries.find((entry) => entry.customType === "piweb-import").data.source = "codex";
+		await fs.writeFile(file, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+		expect((await readSession(file)).messages.some((message) => message.id === "legacy-notification")).toBe(true);
+	});
+
 	it("恢复已归档的导入会话，保留后续内容且不依赖源工具仍可读取", async () => {
 		await seedClaude("s1", project);
 		const selection = { source: "claude" as const, externalId: "s1" };

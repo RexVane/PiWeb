@@ -50,6 +50,7 @@ import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview, toTrajTokens }
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { isAbortMessage, isCancellationError } from "./chat/cancellation";
+import { isClaudeTaskNotification } from "./chat/task-notification";
 import { BoundaryError } from "./path-security";
 import { newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
@@ -330,7 +331,10 @@ export function sessionDisplayMessages(sm: Pick<SessionManager, "getBranch" | "b
 		const message = entryToWebMessage(entry);
 		return message ? [message] : [];
 	});
-	return [...compactedHistory(sm, context), ...current];
+	const messages = [...compactedHistory(sm, context), ...current];
+	// 兼容早期导入：只隐藏 Claude 来源中被误记成用户发言的任务通知，不改会话文件与模型上下文。
+	const importedFromClaude = sm.getBranch().some((entry: any) => entry.type === "custom" && entry.customType === "piweb-import" && entry.data?.source === "claude");
+	return importedFromClaude ? messages.filter((message) => message.role !== "user" || !isClaudeTaskNotification(message.content)) : messages;
 }
 
 /**

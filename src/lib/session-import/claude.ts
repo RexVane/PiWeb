@@ -11,6 +11,7 @@ import { eachJsonLine, listFiles, readHead, reachedLimit, sortByRecency } from "
 import { claudeRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedMessage, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
 import { cleanTitle, compactBlocks, outputBlocks, textBlock, toEpochMs } from "./types";
+import { isClaudeTaskNotification } from "../chat/task-notification";
 
 const ROOT = claudeRoot;
 
@@ -18,6 +19,10 @@ const ROOT = claudeRoot;
 const SYNTHETIC_PREFIXES = ["<command-name>", "<command-message>", "<local-command-stdout>", "<local-command-caveat>", "<system-reminder>", "<user_info>", "<bash-input>", "<bash-stdout>"];
 
 const isSynthetic = (text: string) => SYNTHETIC_PREFIXES.some((prefix) => text.startsWith(prefix));
+
+function isTaskNotificationRecord(record: Record<string, unknown>): boolean {
+	return (record.origin as { kind?: unknown } | undefined)?.kind === "task-notification" || record.turnOrigin === "task_notification";
+}
 
 /**
  * 子代理的转写不能当作会话：Claude Code 把它们放在
@@ -53,9 +58,9 @@ function titleFrom(records: Record<string, unknown>[]): string | undefined {
 		if (record.type === "summary" && typeof record.summary === "string" && record.summary.trim()) return record.summary.trim();
 	}
 	for (const record of records) {
-		if (record.type !== "user") continue;
+		if (record.type !== "user" || isTaskNotificationRecord(record)) continue;
 		const plain = userTextOf((record.message as { content?: unknown } | undefined)?.content);
-		if (plain && !isSynthetic(plain)) return plain;
+		if (plain && !isSynthetic(plain) && !isClaudeTaskNotification(plain)) return plain;
 	}
 	return undefined;
 }
@@ -189,6 +194,10 @@ export const claudeSource: ImportSourceModule = {
 				continue;
 			}
 			if (typeof record.cwd === "string" && record.cwd.trim()) projectPath = projectPath ?? record.cwd;
+			if (record.type === "user" && isTaskNotificationRecord(record)) {
+				synthetic += 1;
+				continue;
+			}
 			const message = record.message as Record<string, unknown> | undefined;
 			if (!message) continue;
 			if (typeof message.model === "string" && message.model.trim()) model = message.model;
@@ -229,7 +238,7 @@ export const claudeSource: ImportSourceModule = {
 				const { text: textBlocks, results } = splitUserContent((message as { content?: unknown }).content);
 				const plain = textBlocks.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 				const keepText = textBlocks.filter((block) => block.type !== "text");
-				if (plain && !isSynthetic(plain.trim()) && !/^Caveat:/i.test(plain.trim())) {
+				if (plain && !isSynthetic(plain.trim()) && !isClaudeTaskNotification(plain) && !/^Caveat:/i.test(plain.trim())) {
 					entries.push({ type: "message", message: { role: "user", content: [...keepText, { type: "text", text: plain }], timestamp } as ImportedMessage });
 					// 真人发了新消息，之前的回复已经结束：不要再把后面的行合并到它前面去
 					assistantById.clear();

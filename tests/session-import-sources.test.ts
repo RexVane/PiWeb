@@ -67,6 +67,24 @@ const messagesOf = (entries: ImportedEntry[]): ImportedMessage[] =>
 	entries.filter((entry): entry is { type: "message"; message: ImportedMessage } => entry.type === "message").map((entry) => entry.message);
 
 describe("Claude Code", () => {
+	it("does not import background-task notifications as user messages or conversation titles", async () => {
+		const notification = "<task-notification><task-id>task-1</task-id><status>killed</status><summary>Background server stopped</summary></task-notification>";
+		const question = `请解释这段通知：${notification}`;
+		await write(path.join(roots.claude, "-proj", "notifications.jsonl"), [
+			{ type: "user", cwd: root, origin: { kind: "task-notification" }, promptSource: "system", message: { content: notification } },
+			{ type: "user", cwd: root, message: { content: "真正的提问" } },
+			{ type: "user", message: { content: [{ type: "text", text: notification }] } },
+			{ type: "user", message: { content: question } },
+		].map((line) => JSON.stringify(line)).join("\n"));
+		const [summary] = await claudeSource.scan();
+		expect(summary.title).toBe("真正的提问");
+		const imported = (await claudeSource.read(summary))!;
+		expect(messagesOf(imported.entries).map((message) => message.content)).toEqual([
+			[{ type: "text", text: "真正的提问" }], [{ type: "text", text: question }],
+		]);
+		expect(imported.skipped?.join()).toMatch(/2 条合成输入/);
+	});
+
 	async function fixture() {
 		const file = path.join(roots.claude, "-D-AIApp-PiWeb", "763deadc-d149-44d6-ace1-398792539a91.jsonl");
 		await write(file, [

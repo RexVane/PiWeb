@@ -360,7 +360,8 @@ export async function addWorkspace(dir: string): Promise<{ workspaces: string[];
 	});
 }
 
-export async function registerCwds(cwds: string[]): Promise<string[]> {
+/** 自动扫描保留已移除状态；用户主动导入时可重新显示对应工作区。 */
+export async function registerCwds(cwds: string[], { restoreRemoved = false }: { restoreRemoved?: boolean } = {}): Promise<string[]> {
 	const target = file();
 	const normalizedCwds = await Promise.all(cwds.filter((cwd) => typeof cwd === "string" && cwd).map(canonicalWorkspacePath));
 	// 快路径：侧栏每 3 秒轮询一次，绝大多数时候没有任何新 cwd。
@@ -371,7 +372,11 @@ export async function registerCwds(cwds: string[]): Promise<string[]> {
 	let missing = false;
 	for (const cwd of normalizedCwds) {
 		const key = pathKey(cwd);
-		if (removedKeys.has(key) || knownKeys.has(key)) continue;
+		if (removedKeys.has(key)) {
+			if (restoreRemoved) missing = true;
+			continue;
+		}
+		if (knownKeys.has(key)) continue;
 		knownKeys.add(key);
 		missing = true;
 	}
@@ -379,6 +384,15 @@ export async function registerCwds(cwds: string[]): Promise<string[]> {
 
 	return mutate(async (data, writeTarget) => {
 		let changed = false;
+		if (restoreRemoved) {
+			const requestedKeys = new Set(normalizedCwds.map(pathKey));
+			const previous = data.removedWorkspaces ?? [];
+			const next = previous.filter((cwd) => !requestedKeys.has(pathKey(cwd)));
+			if (next.length !== previous.length) {
+				data.removedWorkspaces = next;
+				changed = true;
+			}
+		}
 		const removed = new Set((data.removedWorkspaces ?? []).map(pathKey));
 		const existingKeys = new Set(data.workspaces.map(pathKey));
 

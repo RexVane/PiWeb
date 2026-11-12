@@ -76,7 +76,7 @@ export async function POST(req: Request) {
 
 	try {
 		const report = await importSessions(selection, { agentDir: getAgentDir(), fallbackCwd: typeof fallbackCwd === "string" ? fallbackCwd : undefined });
-		if (report.workspaces.length) await registerCwds(report.workspaces);
+		if (report.workspaces.length) await registerCwds(report.workspaces, { restoreRemoved: true });
 		return NextResponse.json({ success: true, data: report });
 	} catch (error) {
 		return NextResponse.json({ success: false, error: error instanceof Error ? error.message : String(error) }, { status: 500 });

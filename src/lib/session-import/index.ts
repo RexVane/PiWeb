@@ -193,16 +193,16 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 				outcome.status = "skipped";
 				outcome.reason = "同一次导入里重复选择";
 			} else if (existing) {
+				const header = JSON.parse((await readHead(existing)).split("\n")[0]);
+				if (header.type !== "session" || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) throw new Error("既有会话的工作区信息无效");
+				outcome.path = existing;
+				outcome.workspace = header.cwd;
+				workspaces.add(header.cwd);
+				seen.add(identity);
 				if ((await getArchivedSessions(options.agentDir)).some((file) => pathKey(file) === pathKey(existing))) {
 					// 恢复既有文件，保留导入后在 Pi 中追加的内容；不依赖源会话仍然存在。
-					const header = JSON.parse((await readHead(existing)).split("\n")[0]);
-					if (header.type !== "session" || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) throw new Error("归档会话的工作区信息无效");
 					await forgetSession(existing, options.agentDir);
 					outcome.status = "restored";
-					outcome.path = existing;
-					outcome.workspace = header.cwd;
-					workspaces.add(header.cwd);
-					seen.add(identity);
 				} else {
 					outcome.status = "skipped";
 					outcome.reason = "已经导入过";
