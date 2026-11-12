@@ -126,6 +126,9 @@
 
 .timelineSpan[data-kind="user"] { background: var(--traj-user); }
 .timelineSpan[data-kind="context"] { background: var(--traj-context); }
+/* 扩展注入的消息也是喂给模型的上下文；`!` 命令是一次执行，用工具色 */
+.timelineSpan[data-kind="custom"] { background: var(--traj-context); }
+.timelineSpan[data-kind="bash"] { background: var(--traj-tool); opacity: 1; }
 .timelineSpan[data-kind="message"] { background: var(--traj-model); opacity: 1; }
 .timelineSpan[data-kind="tool"] { background: var(--traj-tool); opacity: 1; }
 .timelineSpan[data-error="true"] { background: var(--dsw-danger); }
@@ -191,18 +194,22 @@
 .row[data-kind="user"] .kindTag,
 .inspectorTag[data-kind="user"] { color: var(--dsw-accent); background: var(--dsw-accent-soft); }
 .row[data-kind="context"] .kindTag,
-.inspectorTag[data-kind="context"] { color: var(--traj-context); background: color-mix(in srgb, var(--traj-context) 14%, transparent); }
+.inspectorTag[data-kind="context"],
+.row[data-kind="custom"] .kindTag,
+.inspectorTag[data-kind="custom"] { color: var(--traj-context); background: color-mix(in srgb, var(--traj-context) 14%, transparent); }
 .row[data-kind="message"] .kindTag,
 .inspectorTag[data-kind="message"] { color: var(--traj-model); background: color-mix(in srgb, var(--traj-model) 14%, transparent); }
 .row[data-kind="tool"] .kindTag,
-.inspectorTag[data-kind="tool"] { color: var(--traj-tool); background: color-mix(in srgb, var(--traj-tool) 14%, transparent); }
+.inspectorTag[data-kind="tool"],
+.row[data-kind="bash"] .kindTag,
+.inspectorTag[data-kind="bash"] { color: var(--traj-tool); background: color-mix(in srgb, var(--traj-tool) 14%, transparent); }
 .row[data-kind="compacted"] .kindTag,
 .inspectorTag[data-kind="compacted"] { color: var(--dsw-label-tertiary); }
 
 .rowText { min-width: 0; overflow: hidden; color: var(--dsw-label-primary); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .empty { display: flex; height: 100%; align-items: center; justify-content: center; color: var(--dsw-label-caption); font-size: 13px; }
 
-.inspector { --traj-model: #a881d5; --traj-tool: #d09a57; display: flex; height: 100%; min-height: 0; flex-direction: column; background: var(--dsw-bg-base); }
+.inspector { --traj-model: #a881d5; --traj-tool: #d09a57; --traj-context: #41b97a; display: flex; height: 100%; min-height: 0; flex-direction: column; background: var(--dsw-bg-base); }
 .inspectorHeader { display: flex; height: 56px; flex: none; align-items: center; gap: 9px; padding: 0 14px; border-bottom: 0.5px solid var(--dsw-border-l2); }
 .inspectorTitle { min-width: 0; flex: 1; overflow: hidden; font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .closeButton { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 7px; color: var(--dsw-label-tertiary); }

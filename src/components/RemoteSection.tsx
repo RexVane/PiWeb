@@ -227,8 +227,8 @@ export function RemoteSection() {
 				<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{pluginOn ? t.remotePluginOn : t.remotePluginOff}</span>
 				<button
 					type="button"
-					className="relative h-5 w-9 flex-none rounded-full transition-colors"
-					style={{ background: pluginOn ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }}
+					className="liq-sw flex-none"
+					data-on={pluginOn ? "true" : undefined}
 					role="switch"
 					aria-checked={pluginOn}
 					aria-label={t.remotePluginToggle}
@@ -237,7 +237,7 @@ export function RemoteSection() {
 					disabled={busy || !status || blocked !== null}
 					onClick={() => void togglePlugin()}
 				>
-					<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: pluginOn ? 18 : 2 }} />
+					<span className="liq-thumb" />
 				</button>
 			</div>
 			<div style={{ fontSize: 12, color: "var(--dsw-label-secondary)", lineHeight: 1.6, marginTop: -12 }}>{t.remotePluginHint}</div>

@@ -1,0 +1,6 @@
+
+> @rexvane/piweb@0.3.30 verify:package
+> node scripts/verify-package.mjs
+
+[piweb] Clean global installation: Pi 1.5.2 SDK, production startup, home page and first-paint APIs passed
+[piweb] rexvane-piweb-0.3.30.tgz: 1417 files, 22.4 MB, build LuYe8CRVSzlXF-U5cn-1C

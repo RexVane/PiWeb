@@ -154,3 +154,105 @@ describe("PiWeb SSE event folding", () => {
 		expect(streaming.retryNotice).toBeNull();
 	});
 });
+
+describe("扩展面与 ! 命令的事件折叠", () => {
+	const base = (overrides: Partial<PiWebState> = {}): PiWebState => ({
+		snapshot: null, messages: [], tools: {}, toolPreset: "standard", connected: true, error: null, compaction: null, retryNotice: null,
+		extensionDialogs: [], extensionNotices: [], extensionStatuses: {}, extensionWidgets: {}, extensionTitle: null, editorText: null,
+		workingMessage: null, growth: { rounds: [], error: null, consent: null },
+		...overrides,
+	});
+	const pending: WebMessage = { role: "assistant", streamId: "run-1", content: [{ type: "text", text: "我来写文件" }], stopReason: "pending" };
+
+	it("puts a streaming tool call into its message before the arguments finish", () => {
+		const started = foldPiWebEvent(base({ messages: [pending] }), { type: "toolcall", messageId: "run-1", contentIndex: 1, id: "call-1", name: "write", args: {}, ts: 1 });
+		expect(started.messages[0].content).toEqual([{ type: "text", text: "我来写文件" }, { type: "toolCall", id: "call-1", name: "write", arguments: {} }]);
+		const grown = foldPiWebEvent(started, { type: "toolcall", messageId: "run-1", contentIndex: 1, id: "call-1", name: "write", args: { path: "src/a.ts" }, ts: 2 });
+		expect(grown.messages[0].content[1]).toEqual({ type: "toolCall", id: "call-1", name: "write", arguments: { path: "src/a.ts" } });
+		// 原消息对象不被就地修改
+		expect(pending.content).toHaveLength(1);
+	});
+
+	it("never replaces complete arguments with a clipped preview that arrives late", () => {
+		const complete: WebMessage = { role: "assistant", streamId: "run-1", stopReason: "toolUse", content: [{ type: "toolCall", id: "call-1", name: "write", arguments: { path: "src/a.ts", content: "完整内容" } }] };
+		const next = foldPiWebEvent(base({ messages: [complete] }), { type: "toolcall", messageId: "run-1", contentIndex: 0, id: "call-1", name: "write", args: { path: "src/a.ts", content: "完…" }, ts: 3 });
+		expect(next.messages[0]).toBe(complete);
+		// 找不到对应的消息就什么都不做
+		expect(foldPiWebEvent(base(), { type: "toolcall", messageId: "missing", contentIndex: 0, id: "c", name: "read", args: {}, ts: 1 }).messages).toEqual([]);
+	});
+
+	it("shows a ! command as soon as it starts and appends its output as it arrives", () => {
+		const start: WebMessage = { role: "bashExecution", streamId: "bash-1", content: [], bash: { command: "npm test", output: "", running: true } };
+		let state = foldPiWebEvent(base({ messages: [pending] }), { type: "message", phase: "start", message: start, ts: 1 });
+		expect(state.messages.map((message) => message.role)).toEqual(["assistant", "bashExecution"]);
+		state = foldPiWebEvent(state, { type: "bash_output", messageId: "bash-1", delta: "PASS a\n", ts: 2 });
+		state = foldPiWebEvent(state, { type: "bash_output", messageId: "bash-1", delta: "PASS b\n", ts: 3 });
+		expect(state.messages[1].bash).toMatchObject({ command: "npm test", output: "PASS a\nPASS b\n", running: true });
+		// 结束帧按流 ID 合并进同一条，并带回持久化的条目 ID
+		const end: WebMessage = { role: "bashExecution", id: "entry-9", streamId: "bash-1", content: [], bash: { command: "npm test", output: "PASS a\nPASS b\n", exitCode: 0 } };
+		state = foldPiWebEvent(state, { type: "message", phase: "end", message: end, ts: 4 });
+		expect(state.messages).toHaveLength(2);
+		expect(state.messages[1]).toMatchObject({ id: "entry-9", bash: { exitCode: 0 } });
+		expect(state.messages[1].bash?.running).toBeUndefined();
+	});
+
+	it("shows an extension's injected message when it starts", () => {
+		const custom: WebMessage = { role: "custom", streamId: "c-1", customType: "plan-mode", content: [{ type: "text", text: "已进入计划模式" }] };
+		const state = foldPiWebEvent(base(), { type: "message", phase: "start", message: custom, ts: 1 });
+		expect(state.messages).toEqual([custom]);
+	});
+
+	it("hangs nested tool calls under the call that made them", () => {
+		let state = foldPiWebEvent(base(), { type: "tool", id: "call-1", name: "codemode", args: { script: "…" }, state: "running", ts: 1 });
+		const parentBefore = state.tools["call-1"];
+		state = foldPiWebEvent(state, { type: "tool", id: "call-1/1", name: "read", parentId: "call-1", args: { path: "a.ts" }, state: "running", ts: 2 });
+		expect(state.tools["call-1"].children).toEqual(["call-1/1"]);
+		// 父条目换了身份：回合级 memo 靠它发现「多了一个子调用」
+		expect(state.tools["call-1"]).not.toBe(parentBefore);
+		expect(state.tools["call-1/1"]).toMatchObject({ name: "read", parentId: "call-1", state: "running" });
+		// 子调用结束：不带 args 也沿用开始时的参数，不重复登记
+		state = foldPiWebEvent(state, { type: "tool", id: "call-1/1", name: "read", parentId: "call-1", state: "done", result: "内容", ts: 3 });
+		expect(state.tools["call-1"].children).toEqual(["call-1/1"]);
+		expect(state.tools["call-1/1"]).toMatchObject({ args: { path: "a.ts" }, state: "done", result: "内容", parentId: "call-1" });
+		// 父调用自己的进度事件不丢子调用
+		state = foldPiWebEvent(state, { type: "tool", id: "call-1", name: "codemode", state: "done", result: "ok", ts: 4 });
+		expect(state.tools["call-1"].children).toEqual(["call-1/1"]);
+	});
+
+	it("queues an editor request as a dialog, and applies widget, title and editor-text notices", () => {
+		let state = foldPiWebEvent(base(), { type: "extension_ui", id: "e1", method: "editor", title: "编辑说明", prefill: "草稿", ts: 1 });
+		expect(state.extensionDialogs).toEqual([{ id: "e1", method: "editor", title: "编辑说明", message: undefined, options: undefined, questions: undefined, placeholder: undefined, prefill: "草稿", timeout: undefined, ts: 1 }]);
+
+		state = foldPiWebEvent(state, { type: "extension_ui", id: "w1", method: "setWidget", widgetKey: "todo", widgetLines: ["☐ a"], widgetPlacement: "belowEditor", ts: 2 });
+		state = foldPiWebEvent(state, { type: "extension_ui", id: "w2", method: "setWidget", widgetKey: "plan", widgetLines: ["1/3"], ts: 3 });
+		expect(state.extensionWidgets).toEqual({ todo: { lines: ["☐ a"], placement: "belowEditor" }, plan: { lines: ["1/3"], placement: "aboveEditor" } });
+		state = foldPiWebEvent(state, { type: "extension_ui", id: "w3", method: "setWidget", widgetKey: "todo", ts: 4 });
+		expect(Object.keys(state.extensionWidgets)).toEqual(["plan"]);
+
+		state = foldPiWebEvent(state, { type: "extension_ui", id: "t1", method: "setTitle", title: "pi · 重构", ts: 5 });
+		expect(state.extensionTitle).toBe("pi · 重构");
+		expect(foldPiWebEvent(state, { type: "extension_ui", id: "t2", method: "setTitle", title: "", ts: 6 }).extensionTitle).toBeNull();
+
+		state = foldPiWebEvent(state, { type: "extension_ui", id: "x1", method: "setEditorText", text: "/review", ts: 7 });
+		expect(state.editorText).toEqual({ id: "x1", text: "/review" });
+		// 同样的文字再发一次也是一次新的请求（id 不同）
+		expect(foldPiWebEvent(state, { type: "extension_ui", id: "x2", method: "setEditorText", text: "/review", ts: 8 }).editorText).toEqual({ id: "x2", text: "/review" });
+	});
+
+	it("restores a pending editor request from a snapshot", () => {
+		const snapshot = { extensionUiRequests: [{ type: "extension_ui", id: "e1", method: "editor", title: "编辑", prefill: "内容", ts: 1 }] } as unknown as WebSnapshot;
+		expect(extensionDialogsFromSnapshot(snapshot)).toMatchObject([{ id: "e1", method: "editor", title: "编辑", prefill: "内容" }]);
+	});
+
+	it("tracks which physical model a virtual model was routed to", () => {
+		const snapshot = { model: { provider: "router", id: "auto", name: "Auto" }, thinkingLevels: [] } as unknown as WebSnapshot;
+		let state = foldPiWebEvent(base({ snapshot }), { type: "model", provider: "router", model: "auto", routedModel: { provider: "anthropic", id: "claude-sonnet-5-5" }, ts: 1 });
+		expect(state.snapshot?.routedModel).toEqual({ provider: "anthropic", id: "claude-sonnet-5-5" });
+		// 没带这个字段的 model 事件（只换了思考档位）不动它
+		state = foldPiWebEvent(state, { type: "model", thinkingLevel: "high", ts: 2 });
+		expect(state.snapshot?.routedModel).toEqual({ provider: "anthropic", id: "claude-sonnet-5-5" });
+		// 换回普通模型：显式 null 清掉
+		state = foldPiWebEvent(state, { type: "model", provider: "openai", model: "gpt-6", routedModel: null, ts: 3 });
+		expect(state.snapshot?.routedModel).toBeNull();
+	});
+});

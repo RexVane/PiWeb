@@ -9,7 +9,7 @@ const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: noop, selectLatest: noop }) }));
-vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
+vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null, ExtensionWidgets: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: { onOpen: (path: string) => void }) => <>
 	<button onClick={() => props.onOpen("/new.jsonl")}>Open new</button>
 	<button onClick={() => props.onOpen("/empty.jsonl")}>Open empty</button>

@@ -19,6 +19,7 @@ import {
 import { ContextMeter } from "@/components/ContextMeter";
 import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
 import { ComposerFiles } from "@/components/composer/ComposerFiles";
+import { PermissionSelector, type PermissionChangeResult } from "@/components/composer/PermissionSelector";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
@@ -26,7 +27,8 @@ import { fmtBytes } from "@/lib/format";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/workspace-index";
 import { slashCommandToken } from "@/lib/slash-command-token";
-import type { ImageAttachment } from "@/lib/types";
+import { parseBashCommand } from "@/lib/chat/bash-command";
+import type { ImageAttachment, ToolPreset } from "@/lib/types";
 
 export interface SlashCommand {
 	name: string;
@@ -65,6 +67,7 @@ export function ChatInput({
 	contextVisible = true,
 	cwd,
 	model,
+	routedModel,
 	thinkingLevel,
 	thinkingLevels,
 	models,
@@ -74,6 +77,7 @@ export function ChatInput({
 	commands,
 	onCommand,
 	onSend,
+	onBash,
 	onSteer,
 	onFollowUp,
 	onAbort,
@@ -90,6 +94,10 @@ export function ChatInput({
 	pendingSend = false,
 	onSendPendingChange,
 	attachmentLayout = "overlay",
+	toolPreset,
+	customActiveTools,
+	onToolPresetChange,
+	permissionChanging = false,
 }: {
 	disabled?: boolean;
 	isStreaming: boolean;
@@ -99,7 +107,7 @@ export function ChatInput({
 	/** 上下文分段数据源：ContextMeter 弹窗打开时才做字符统计 */
 	contextSource?: {
 		systemChars: number;
-		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
+		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; bash?: { command: string; output: string; excludeFromContext?: boolean }; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
 		breakdown?: import("@/lib/types").ContextBreakdown;
 		loadFull?: () => Promise<unknown> | unknown;
 	};
@@ -108,6 +116,8 @@ export function ChatInput({
 	/** 工作区根：@ 引用的候选清单从这里取（不传就不启用 @ 引用） */
 	cwd?: string;
 	model?: { provider: string; id: string; name: string };
+	/** 虚拟模型实际路由到的物理模型（与选中项不同才显示） */
+	routedModel?: { provider: string; id: string; thinkingLevel?: string } | null;
 	thinkingLevel?: string;
 	thinkingLevels: string[];
 	models: ModelChoice[];
@@ -117,6 +127,11 @@ export function ChatInput({
 	commands?: SlashCommand[];
 	onCommand?: (name: string, args: string) => void;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
+	/**
+	 * `!cmd`：直接在工作区跑命令（pi 终端的 bash 模式），不发给模型；`!!` 的结果不进模型上下文。
+	 * 不传就不启用（正文照常当消息发）。
+	 */
+	onBash?: (command: string, excludeFromContext: boolean) => Promise<SendResult> | SendResult;
 	onSteer: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
 	onFollowUp?: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
 	/** 停止：服务端先清空队列再中止，并返回被清掉的文本，这里把它们放回输入框 */
@@ -137,6 +152,10 @@ export function ChatInput({
 	onSendPendingChange?: (pending: boolean) => void;
 	/** Hero 在输入卡上方预留空间；聊天中仍让附件悬浮、不占布局高度 */
 	attachmentLayout?: "overlay" | "flow";
+	toolPreset?: ToolPreset;
+	customActiveTools?: string[] | null;
+	onToolPresetChange?: (preset: ToolPreset) => Promise<PermissionChangeResult>;
+	permissionChanging?: boolean;
 }) {
 	const [localDraft, setLocalDraft] = useState<ChatDraft>(initialDraft ?? EMPTY_CHAT_DRAFT);
 	const currentDraft = draft ?? localDraft;
@@ -151,6 +170,8 @@ export function ChatInput({
 	const { text, images, uploads } = currentDraft;
 	const references = currentDraft.references ?? [];
 	const adopted = currentDraft.adopted ?? null;
+	/** 这一条会不会当命令跑（`!cmd`）：输入时就把模式显示出来，免得误发 */
+	const bashCommand = onBash && !adopted ? parseBashCommand(text.trim(), images.length > 0 || uploads.length > 0 || references.length > 0) : null;
 	const setText = (value: string | ((previous: string) => string)) => changeDraft((previous) => ({ ...previous, text: typeof value === "function" ? value(previous.text) : value }));
 	const setAdopted = (value: SlashCommand | null) => changeDraft((previous) => ({ ...previous, adopted: value }));
 	const pendingReads = useRef<Promise<void>[]>([]);
@@ -303,7 +324,7 @@ export function ChatInput({
 
 	// 行内扩展命令（如 /fast）自己执行：不能为了切换它把周围的草稿、图片或引用一起发出去
 	const runInlineExtension = async (entry: SlashCommand) => {
-		if (disabled || isBlocked || sendingRef.current || pendingSend || uploadBusy) return;
+		if (disabled || isBlocked || sendingRef.current || pendingSend || permissionChanging || uploadBusy) return;
 		const original = text;
 		const remaining = withoutCommandToken();
 		sendingRef.current = true;
@@ -378,7 +399,7 @@ export function ChatInput({
 	};
 
 	const doSend = (override?: "steer" | "followUp", forcedText?: string) => {
-		if (disabled || isBlocked || sendingRef.current || pendingSend || uploadBusy) return;
+		if (disabled || isBlocked || sendingRef.current || pendingSend || permissionChanging || uploadBusy) return;
 		sendingRef.current = true;
 		setSending(true);
 		onSendPendingChange?.(true);
@@ -411,7 +432,10 @@ export function ChatInput({
 					return parts.filter(Boolean).join("\n\n");
 				};
 				let result: SendResult;
-				if (isStreaming) {
+				// `!cmd` 直接跑命令：带附件 / 引用时不是命令（那时正文要和 @ 路径拼在一起）
+				const bash = onBash && !adopted ? parseBashCommand(trimmed, attachments.length > 0 || files.length > 0 || refs.length > 0) : null;
+				if (bash) result = await onBash!(bash.command, bash.excludeFromContext);
+				else if (isStreaming) {
 					const mode = override ?? (enterBehavior === "steer" ? "steer" : "followUp");
 					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(trimmed), attachments);
 					else result = await onSteer(compose(trimmed), attachments);
@@ -619,8 +643,9 @@ export function ChatInput({
 				</div>
 			)}
 			{attachmentError && (
-				<div className="mb-2 px-2" role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>
-					{attachmentError}
+				<div className="pw-toast-card pw-toast-error mb-2" role="alert">
+					<span className="pw-toast-icon" aria-hidden="true">✕</span>
+					<span className="pw-toast-body">{attachmentError}</span>
 				</div>
 			)}
 			{/* @ 引用候选（与斜杠菜单同一处锚点：输入卡上方） */}
@@ -783,8 +808,8 @@ export function ChatInput({
 
 			</div>}
 
-			{/* 卡片（Iconsax .isx-composer：24px 圆角 + 聚焦高对比描边 + 底部流光短横条）—— 拖放由 document 级监听统一接管 */}
-			<div className="isx-composer relative w-full">
+			{/* 卡片（Iconsax .isx-composer：24px 圆角 + 聚焦高对比描边 + 底部流光短横条 + 运行中环绕虹彩流光轨道）—— 拖放由 document 级监听统一接管 */}
+			<div className="isx-composer relative w-full" data-streaming={isStreaming ? "true" : undefined}>
 				<div className="px-4 pt-3 flex flex-col items-stretch gap-1.5">
 					{adopted && (
 						<button
@@ -810,6 +835,12 @@ export function ChatInput({
 							<span className="min-w-0 truncate" style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
 							<IconCloseOutline14 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
 						</button>
+					)}
+					{bashCommand && (
+						<div className="flex items-center gap-1.5 self-start" data-testid="composer-bash-hint" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+							<IconTerminalOutline14 size={13} style={{ color: "var(--dsw-accent)", flex: "none" }} />
+							<span>{bashCommand.excludeFromContext ? t.bashModeHintExcluded : t.bashModeHint}</span>
+						</div>
 					)}
 					<textarea
 						ref={taRef}
@@ -927,7 +958,7 @@ export function ChatInput({
 					/>
 				</div>
 
-				{/* 按钮行：左侧只保留命令入口；图片通过拖放或粘贴添加。 */}
+				{/* 权限与模型常驻输入框；图片通过拖放或粘贴添加。 */}
 				<div
 					className="flex items-center gap-2"
 					style={{
@@ -939,12 +970,17 @@ export function ChatInput({
 						containerType: "inline-size",
 					}}
 				>
+					{toolPreset && onToolPresetChange && <PermissionSelector value={toolPreset} custom={customActiveTools != null}
+						disabled={disabled || sendBusy}
+						saving={permissionChanging} onChange={onToolPresetChange} />}
 					{/* 命令菜单通过输入 / 触发（dsh 同款），不再提供 ＋ 启动按钮 */}
 					<div className="flex-1" />
 
 					{/* 模型芯片（右组，dsh 分组菜单；/model 命令可受控打开） */}
+					<div className="min-w-0 [&>div]:min-w-0 [&_.chip]:max-w-full">
 					<ModelSelector
 						model={model}
+						routedModel={routedModel}
 						thinkingLevel={thinkingLevel}
 						thinkingLevels={thinkingLevels}
 						models={models}
@@ -955,6 +991,7 @@ export function ChatInput({
 						open={modelOpen}
 						onOpenChange={setModelOpen}
 					/>
+					</div>
 
 					{/* 上下文圆环 */}
 					{contextVisible && (
@@ -992,7 +1029,7 @@ export function ChatInput({
 							<button
 								className="btn-primary-circle"
 								title={isStreaming ? (enterBehavior === "steer" ? t.sendSteer : t.sendQueue) : t.send}
-								disabled={!hasDraft || disabled || isBlocked || sendBusy || uploadBusy}
+								disabled={!hasDraft || disabled || isBlocked || sendBusy || permissionChanging || uploadBusy}
 								onClick={() => doSend()}
 							>
 								<IconSendArrowUp14 size={16} />

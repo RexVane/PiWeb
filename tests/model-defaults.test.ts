@@ -61,8 +61,8 @@ describe("pickInitialModel follows pi's findInitialModel order", () => {
 
 	it("walks pi's known-provider table order, not the order models were listed", async () => {
 		// 表里 anthropic 排在 openai 前面，即使 openai 的模型先列出来也选 anthropic
-		const runtime = fakeRuntime([{ provider: "openai", id: "gpt-5.5" }, { provider: "anthropic", id: "claude-opus-4-8" }], ["openai", "anthropic"]);
-		await expect(pickInitialModel(runtime, { patterns: [] })).resolves.toMatchObject({ provider: "anthropic", id: "claude-opus-4-8" });
+		const runtime = fakeRuntime([{ provider: "openai", id: DEFAULT_MODEL_PER_PROVIDER.openai }, { provider: "anthropic", id: DEFAULT_MODEL_PER_PROVIDER.anthropic }], ["openai", "anthropic"]);
+		await expect(pickInitialModel(runtime, { patterns: [] })).resolves.toMatchObject({ provider: "anthropic", id: DEFAULT_MODEL_PER_PROVIDER.anthropic });
 	});
 
 	it("falls back to the first available model when no known default is available", async () => {

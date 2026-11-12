@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
 import { PIWEB_EXECUTION_GUIDANCE } from "../src/lib/execution-guidance";
 
 vi.mock("../src/lib/growth-tracker", () => ({
@@ -26,6 +26,7 @@ beforeAll(async () => {
 	await fs.writeFile(path.join(agentDir, "APPEND_SYSTEM.md"), "User append instructions must be preserved.");
 	await fs.writeFile(path.join(cwd, ".pi", "extensions", "probe.js"), `export default function(pi) {
 		pi.registerTool({ name: "probe_tool", label: "Probe", description: "Offline probe", parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }] }) });
+		pi.registerTool({ name: "mcp__probe__write", label: "Deferred write", description: "Offline connected-tool probe", exposure: "deferred", parameters: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] }, execute: async (_id, args) => { const fs = await import("node:fs/promises"); await fs.writeFile(args.path, args.content); return { content: [{ type: "text", text: "written" }] }; } });
 		pi.registerCommand("probe", { handler: async (args) => { pi.setSessionName(args); } });
 		pi.registerCommand("ask", { handler: async (_args, ctx) => { const accepted = await ctx.ui.confirm("Confirm probe", "Continue?"); pi.setSessionName(accepted ? "confirmed" : "cancelled"); } });
 		pi.on("session_shutdown", (event) => { (globalThis.__piwebProbeShutdowns ??= []).push(event.reason); });
@@ -239,7 +240,8 @@ describe("real SDK session resource isolation", () => {
 		expect(session.getAllTools().map((tool) => tool.name)).toContain("probe_tool");
 		expect(session.getActiveToolNames()).not.toContain("probe_tool");
 		await session.reload();
-		expect(session.getActiveToolNames()).toEqual(["read", "grep", "find", "ls", "ask_user_question"]);
+		// SDK 可调整注册顺序；只读策略要求工具集合精确一致。
+		expect([...session.getActiveToolNames()].sort()).toEqual(["read", "grep", "find", "ls", "ask_user_question"].sort());
 		expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read", "probe_tool"] })).toMatchObject({ ok: true });
 		expect(await manager.execute(m, { cmd: "reload" })).toMatchObject({ ok: true });
 		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
@@ -274,6 +276,129 @@ describe("real SDK session resource isolation", () => {
 		expect(cold.tools.active).toEqual(expect.arrayContaining(["read", "probe_tool"]));
 		const session = await manager.ensureSession(reopened);
 		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
+	});
+
+	it("revokes prepared parallel calls immediately while retaining read access and other sessions", async () => {
+		const { m, session } = await create();
+		const other = await create();
+		await manager.execute(m, { cmd: "setToolPreset", preset: "full" });
+		await manager.execute(other.m, { cmd: "setToolPreset", preset: "full" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		session.agent.toolExecution = "parallel";
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
+		const declarations: string[][] = [];
+		let calls = 0;
+		session.agent.streamFunction = (_model, context) => {
+			declarations.push(getCurrentTools(context.messages).map((tool) => tool.name));
+			return streams[calls++] as never;
+		};
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		let prepared = false;
+		const extension = session.resourceLoader.getExtensions().extensions[0];
+		extension.handlers.set("tool_call", [async (event: any) => {
+			if (event.toolCallId === "permitted-read") { prepared = true; await gate; }
+		}]);
+		const target = path.join(cwd, "permission-prepared-write.txt");
+		const raw: AssistantMessage = {
+			role: "assistant" as const, api: model.api, provider: model.provider, model: model.id, timestamp: 100,
+			stopReason: "toolUse" as const,
+			content: [
+				{ type: "toolCall" as const, id: "prepared-write", name: "write", arguments: { path: target, content: "must not appear" } },
+				{ type: "toolCall" as const, id: "prepared-probe", name: "probe_tool", arguments: {} },
+				{ type: "toolCall" as const, id: "permitted-read", name: "read", arguments: { path: path.join(cwd, ".pi", "extensions", "probe.js") } },
+			],
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		};
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "offline permission batch" })).toMatchObject({ ok: true });
+			await vi.waitFor(() => expect(calls).toBe(1));
+			expect(declarations[0]).toEqual(expect.arrayContaining(["write", "probe_tool"]));
+			streams[0].push({ type: "done", reason: "toolUse", message: raw });
+			await vi.waitFor(() => expect(prepared).toBe(true));
+			expect((await manager.buildSnapshot(m)).isStreaming).toBe(true);
+			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
+			expect(session.getActiveToolNames()).not.toContain("write");
+			expect(other.session.getActiveToolNames()).toEqual(expect.arrayContaining(["write", "probe_tool"]));
+			const otherProbe = other.session.agent.state.tools.find((tool) => tool.name === "probe_tool")!;
+			expect(await otherProbe.execute("other-session-probe", {})).toMatchObject({ content: [{ type: "text", text: "ok" }] });
+			release();
+			await vi.waitFor(() => expect(calls).toBe(2));
+			const results = session.messages.filter((message: any) => message.role === "toolResult") as any[];
+			for (const id of ["prepared-write", "prepared-probe"]) {
+				expect(results.find((result) => result.toolCallId === id)).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("current permission level (readonly)") }] });
+			}
+			expect(results.find((result) => result.toolCallId === "permitted-read")).toMatchObject({ isError: false });
+			await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
+			expect(declarations[1]).not.toContain("write");
+			expect(declarations[1]).not.toContain("probe_tool");
+			// Raising the level restores real SDK tools without reopening or ending the run.
+			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "standard" })).toMatchObject({ ok: true });
+			expect(session.getActiveToolNames()).toContain("write");
+			expect(session.getActiveToolNames()).not.toContain("probe_tool");
+			await session.getToolDefinition("write")!.execute("restored-write", { path: target, content: "restored" }, undefined, undefined, undefined as never);
+			expect(await fs.readFile(target, "utf8")).toBe("restored");
+			streams[1].push({ type: "done", reason: "stop", message: { ...raw, stopReason: "stop", content: [{ type: "text", text: "done" }] } });
+			await session.waitForIdle();
+		} finally {
+			release();
+			session.agent.abort();
+			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...raw, stopReason: "aborted", content: [] } });
+			await session.waitForIdle();
+			auth.mockRestore();
+		}
+	});
+
+	it("checks deferred connected-tool calls against the current permission inside an already running extension", async () => {
+		const { m, session } = await create();
+		await manager.execute(m, { cmd: "setToolPreset", preset: "full" });
+		const rt = await pi.getModelRuntime();
+		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
+		session.agent.state.model = model;
+		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
+		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
+		let calls = 0;
+		session.agent.streamFunction = () => streams[calls++] as never;
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		let entered = false;
+		let nested: any;
+		const target = path.join(cwd, "permission-nested-write.txt");
+		const definition = session.getToolDefinition("probe_tool")!;
+		const originalExecute = definition.execute;
+		definition.execute = async (_id, _args, _signal, _update, ctx) => {
+			entered = true;
+			await gate;
+			nested = await ctx.executeTool("mcp__probe__write", { path: target, content: "must not appear" });
+			return nested.result;
+		};
+		const raw: AssistantMessage = {
+			role: "assistant" as const, api: model.api, provider: model.provider, model: model.id, timestamp: 100,
+			stopReason: "toolUse" as const, content: [{ type: "toolCall" as const, id: "running-parent", name: "probe_tool", arguments: {} }],
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		};
+		try {
+			expect(await manager.execute(m, { cmd: "prompt", text: "offline nested permission" })).toMatchObject({ ok: true });
+			streams[0].push({ type: "done", reason: "toolUse", message: raw });
+			await vi.waitFor(() => expect(entered).toBe(true));
+			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
+			release();
+			await vi.waitFor(() => expect(calls).toBe(2));
+			expect(nested).toMatchObject({ isError: true, result: { content: [{ type: "text", text: expect.stringContaining("current permission level (readonly)") }] } });
+			await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
+			streams[1].push({ type: "done", reason: "stop", message: { ...raw, stopReason: "stop", content: [{ type: "text", text: "done" }] } });
+			await session.waitForIdle();
+		} finally {
+			release();
+			session.agent.abort();
+			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...raw, stopReason: "aborted", content: [] } });
+			await session.waitForIdle();
+			definition.execute = originalExecute;
+			auth.mockRestore();
+		}
 	});
 
 	it("loads the SDK built-in extensions but leaves their opt-in tools to the SDK", async () => {

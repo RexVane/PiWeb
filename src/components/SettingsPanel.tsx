@@ -8,7 +8,6 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/enter-behavior";
 import {
-	IconAgentPresetOutline16,
 	IconChevronDown14,
 	IconCheckOutline14,
 	IconCloseOutline14,
@@ -38,7 +37,7 @@ import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } fr
 import { useI18n } from "@/i18n";
 import { fmtTokens } from "@/lib/format";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
-import { applyFontChoice, CUSTOM_PREFIX, FONT_PRESETS, loadFontChoice } from "@/lib/font";
+import { applyFontChoice, FONT_PRESETS, loadFontChoice } from "@/lib/font";
 import {
 	customModelGaps,
 	fillModelFields,
@@ -58,35 +57,21 @@ import {
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
-import type { ToolPreset } from "@/lib/types";
+import type { CompactionModelOverride, PiSettings } from "@/lib/pi-settings";
 import { useDialog } from "@/hooks/useDialog";
 import { useSelectKeyboard } from "@/hooks/useSelectKeyboard";
 
-type Section = "general" | "models" | "tools" | "skills" | "plugins" | "remote";
+type Section = "general" | "models" | "skills" | "plugins" | "remote";
 
 export function SettingsPanel({
 	open,
 	onClose,
 	cwd,
-	toolPreset,
-	onToolPresetChange,
-	tools,
-	onSetTools,
-	sessionId,
-	onLoadTools,
 	onOpenFileContent,
 }: {
 	open: boolean;
 	onClose: () => void;
 	cwd: string;
-	toolPreset: ToolPreset;
-	onToolPresetChange: (preset: ToolPreset) => void;
-	/** 当前会话的工具状态（快照数据；无会话时为 null） */
-	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
-	/** 逐个启停当前会话的工具（写回 setActiveTools） */
-	onSetTools?: (names: string[]) => void;
-	sessionId?: string | null;
-	onLoadTools?: () => Promise<{ success: boolean; error?: string }>;
 	/** 在大窗口查看器中打开内容已就绪的文件（技能文档等） */
 	onOpenFileContent?: (path: string, content: string) => void;
 }) {
@@ -101,7 +86,6 @@ export function SettingsPanel({
 	const navItems: { id: Section; label: string; icon: React.ReactNode }[] = [
 		{ id: "general", label: t.setGeneral, icon: <IconSettingsOutline16 size={15} /> },
 		{ id: "models", label: t.setModels, icon: <IconModelOutline16 size={15} /> },
-		{ id: "tools", label: t.toolsSection, icon: <IconAgentPresetOutline16 size={15} /> },
 		{ id: "plugins", label: t.setPlugins, icon: <IconPluginOutline16 size={15} /> },
 		{ id: "skills", label: t.setSkills, icon: <IconSkillOutline16 size={15} /> },
 		{ id: "remote", label: t.setRemote, icon: <IconShieldOutline16 size={15} /> },
@@ -124,8 +108,8 @@ export function SettingsPanel({
 					width: 800,
 					maxWidth: "calc(100vw - 48px)",
 					height: "min(800px, calc(100vh - 48px))",
-					borderRadius: 32,
-					boxShadow: "var(--dsw-elevation-prominent)",
+					borderRadius: "var(--pw-radius-modal)",
+					boxShadow: "var(--pw-shadow-modal)",
 				}}
 			>
 				{/* 左导航（Iconsax .isx-menu-item：h42 r12，悬停/激活高对比反转 + 文字右移 + 右侧短竖条） */}
@@ -167,7 +151,6 @@ export function SettingsPanel({
 						{section === "general" && <GeneralSection lang={lang} setLang={setLang} />}
 						{section === "models" && <ModelsSection />}
 						{section === "skills" && <SkillsSection cwd={cwd} onOpenFileContent={onOpenFileContent} />}
-						{section === "tools" && <ToolsSection key={sessionId ?? "none"} toolPreset={toolPreset} onToolPresetChange={onToolPresetChange} tools={tools} onSetTools={onSetTools} onLoadTools={onLoadTools} />}
 						{section === "plugins" && <PluginsSection cwd={cwd} />}
 						{section === "remote" && <RemoteSection />}
 					</div>
@@ -192,13 +175,16 @@ function GeneralSection({
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
-	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number }; retry: { enabled: boolean; maxRetries: number } } | null>(null);
+	const [piSettings, setPiSettings] = useState<PiSettings | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
 	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
 	const [settingsLoading, setSettingsLoading] = useState(true);
 	const [settingsSaving, setSettingsSaving] = useState(false);
 	const [settingsError, setSettingsError] = useState<"load" | "save" | null>(null);
+	/** 服务端给的保存失败原因（如 shell 路径不存在）；有就接在通用提示后面 */
+	const [saveErrorDetail, setSaveErrorDetail] = useState("");
 	const [numberDrafts, setNumberDrafts] = useState({ reserveTokens: "", maxRetries: "" });
+	const [textDrafts, setTextDrafts] = useState({ httpProxy: "", shellPath: "" });
 
 	const loadRemoteSettings = async () => {
 		setSettingsLoading(true);
@@ -221,6 +207,7 @@ function GeneralSection({
 				reserveTokens: String(ps.value.compaction.reserveTokens),
 				maxRetries: String(ps.value.retry.maxRetries),
 			});
+			setTextDrafts({ httpProxy: ps.value.httpProxy ?? "", shellPath: ps.value.shellPath ?? "" });
 		} else setPiSettings(null);
 		if (health.status === "fulfilled" && health.value?.piWeb) setVersions({ piWeb: health.value.piWeb, piEngine: health.value.piEngine });
 		else setVersions(null);
@@ -278,6 +265,7 @@ function GeneralSection({
 		if (!piSettings || settingsSaving) return false;
 		setSettingsSaving(true);
 		setSettingsError(null);
+		setSaveErrorDetail("");
 		try {
 			const r = await fetch("/api/pi-settings", {
 				method: "PUT",
@@ -288,13 +276,36 @@ function GeneralSection({
 			if (!r.ok || !j.success) throw new Error(j.error || "save failed");
 			setPiSettings(j.data);
 			return true;
-		} catch {
+		} catch (error) {
 			setSettingsError("save");
+			setSaveErrorDetail(error instanceof Error && error.message !== "save failed" ? error.message : "");
 			return false;
 		} finally {
 			setSettingsSaving(false);
 		}
 	};
+
+	/** 文本设置（代理 / shell 路径）：失焦或回车时保存；存不进去就退回原值，免得输入框里留着一个没生效的值 */
+	const commitText = async (field: "httpProxy" | "shellPath") => {
+		if (!piSettings) return;
+		const value = textDrafts[field].trim();
+		if (value === piSettings[field]) return;
+		if (!(await patchPiSettings({ [field]: value }))) setTextDrafts((previous) => ({ ...previous, [field]: piSettings[field] }));
+	};
+	const textInput = (field: "httpProxy" | "shellPath", placeholder: string) => (
+		<input
+			type="text"
+			value={textDrafts[field]}
+			placeholder={placeholder}
+			spellCheck={false}
+			disabled={!piSettings || settingsLoading || settingsSaving}
+			onChange={(event) => setTextDrafts((previous) => ({ ...previous, [field]: event.target.value }))}
+			onBlur={() => void commitText(field)}
+			onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+			className="rounded-lg px-2 py-1"
+			style={{ width: 240, fontFamily: "var(--font-mono)", fontSize: 12.5, background: "var(--dsw-hover)" }}
+		/>
+	);
 
 	const commitNumber = async (section: "compaction" | "retry", field: "reserveTokens" | "maxRetries") => {
 		if (!piSettings) return;
@@ -335,7 +346,7 @@ function GeneralSection({
 		<div className="flex flex-col gap-6">
 			{(settingsLoading || settingsError) && (
 				<div role={settingsError ? "alert" : "status"} className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: "var(--dsw-hover)", color: settingsError ? "var(--dsw-danger)" : "var(--dsw-label-secondary)" }}>
-					<span className="flex-1">{settingsError === "load" ? t.settingsLoadFailed : settingsError === "save" ? t.settingsSaveFailed : t.settingsLoading}</span>
+					<span className="flex-1">{settingsError === "load" ? t.settingsLoadFailed : settingsError === "save" ? `${t.settingsSaveFailed}${saveErrorDetail ? ` (${saveErrorDetail})` : ""}` : t.settingsLoading}</span>
 					{settingsError === "load" && <button type="button" className="pw-chip" onClick={() => void loadRemoteSettings()}>{t.settingsRetry}</button>}
 				</div>
 			)}
@@ -427,19 +438,66 @@ function GeneralSection({
 			</Row>
 			<Row title={t.autoCompact} desc={t.autoCompactDesc}>
 				<div className="flex items-center gap-2">
-					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.compaction.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.compaction.enabled ?? false} onClick={() => void patchPiSettings({ compaction: { enabled: !piSettings?.compaction.enabled } })}>
-						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.compaction.enabled ? 18 : 2 }} />
+					<button disabled={!piSettings || settingsSaving} className="liq-sw flex-none" data-on={piSettings?.compaction.enabled ? "true" : undefined} role="switch" aria-checked={piSettings?.compaction.enabled ?? false} onClick={() => void patchPiSettings({ compaction: { enabled: !piSettings?.compaction.enabled } })}>
+						<span className="liq-thumb" />
 					</button>
 					{numberInput("compaction", "reserveTokens", t.reserveTokens)}
 				</div>
 			</Row>
 			<Row title={t.autoRetry} desc={t.autoRetryDesc}>
 				<div className="flex items-center gap-2">
-					<button disabled={!piSettings || settingsSaving} className="relative h-5 w-9 flex-none rounded-full transition-colors" style={{ background: piSettings?.retry.enabled ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }} role="switch" aria-checked={piSettings?.retry.enabled ?? false} onClick={() => void patchPiSettings({ retry: { enabled: !piSettings?.retry.enabled } })}>
-						<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: piSettings?.retry.enabled ? 18 : 2 }} />
+					<button disabled={!piSettings || settingsSaving} className="liq-sw flex-none" data-on={piSettings?.retry.enabled ? "true" : undefined} role="switch" aria-checked={piSettings?.retry.enabled ?? false} onClick={() => void patchPiSettings({ retry: { enabled: !piSettings?.retry.enabled } })}>
+						<span className="liq-thumb" />
 					</button>
 					{numberInput("retry", "maxRetries", t.maxRetries)}
 				</div>
+			</Row>
+			<RowColumn title={t.compactionOverrides} desc={t.compactionOverridesDesc}>
+				<CompactionOverrides
+					overrides={piSettings?.compaction.modelOverrides ?? {}}
+					disabled={!piSettings || settingsLoading || settingsSaving}
+					onSave={(key, override) => patchPiSettings({ compaction: { modelOverrides: { [key]: override } } })}
+				/>
+			</RowColumn>
+			<Row title={t.cacheWarming} desc={t.cacheWarmingDesc}>
+				<SelectOption
+					value={piSettings?.cacheWarming ?? "idle"}
+					disabled={!piSettings || settingsSaving}
+					options={[
+						{ value: "idle", label: t.cacheWarmingIdle },
+						{ value: "streaming", label: t.cacheWarmingStreaming },
+						{ value: "off", label: t.cacheWarmingOff },
+					]}
+					onChange={(v) => void patchPiSettings({ cacheWarming: v })}
+				/>
+			</Row>
+			<Row title={t.steeringMode} desc={t.steeringModeDesc}>
+				<SelectOption
+					value={piSettings?.steeringMode ?? "one-at-a-time"}
+					disabled={!piSettings || settingsSaving}
+					options={[
+						{ value: "one-at-a-time", label: t.queueModeOne },
+						{ value: "all", label: t.queueModeAll },
+					]}
+					onChange={(v) => void patchPiSettings({ steeringMode: v })}
+				/>
+			</Row>
+			<Row title={t.followUpMode} desc={t.followUpModeDesc}>
+				<SelectOption
+					value={piSettings?.followUpMode ?? "one-at-a-time"}
+					disabled={!piSettings || settingsSaving}
+					options={[
+						{ value: "one-at-a-time", label: t.queueModeOne },
+						{ value: "all", label: t.queueModeAll },
+					]}
+					onChange={(v) => void patchPiSettings({ followUpMode: v })}
+				/>
+			</Row>
+			<Row title={t.httpProxy} desc={t.httpProxyDesc}>
+				{textInput("httpProxy", "http://127.0.0.1:7890")}
+			</Row>
+			<Row title={t.shellPath} desc={t.shellPathDesc}>
+				{textInput("shellPath", t.shellPathPlaceholder)}
 			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
 				<div className="flex items-center gap-2.5">
@@ -467,6 +525,108 @@ function GeneralSection({
 					</button>
 				</Row>
 			) : null}
+		</div>
+	);
+}
+
+/**
+ * 按模型的压缩阈值（pi 的 compaction.modelOverrides）：上下文只有几千的本地模型和上百万的云端模型
+ * 共用一个「保留 Token」不合适——给大模型留的余量，小模型一上来就超了。
+ * 每行一个 `provider/modelId`；没填的那一项沿用上面的通用值。
+ */
+function CompactionOverrides({
+	overrides,
+	disabled,
+	onSave,
+}: {
+	overrides: Record<string, CompactionModelOverride>;
+	disabled: boolean;
+	/** override 为 null = 删掉这个模型的覆盖 */
+	onSave: (key: string, override: CompactionModelOverride | null) => Promise<boolean>;
+}) {
+	const { t } = useI18n();
+	const listId = useId();
+	const [modelKey, setModelKey] = useState("");
+	const [reserve, setReserve] = useState("");
+	const [keepRecent, setKeepRecent] = useState("");
+	const [choices, setChoices] = useState<string[]>([]);
+
+	// 候选只是为了少打字：拿不到就手填，不影响保存
+	useEffect(() => {
+		let alive = true;
+		fetch("/api/models")
+			.then((response) => response.json())
+			.then((json) => {
+				if (!alive || !json?.success || !Array.isArray(json.data?.models)) return;
+				const keys = (json.data.models as Array<{ provider?: unknown; id?: unknown }>)
+					.filter((model) => typeof model.provider === "string" && typeof model.id === "string")
+					.map((model) => `${model.provider}/${model.id}`);
+				setChoices([...new Set(keys)].sort());
+			})
+			.catch(() => undefined);
+		return () => {
+			alive = false;
+		};
+	}, []);
+
+	/** 空 = 不覆盖这一项（undefined）；填了但不是非负整数 = 无效（null） */
+	const parseTokens = (raw: string): number | undefined | null => {
+		const text = raw.trim();
+		if (!text) return undefined;
+		const value = Number(text);
+		return Number.isSafeInteger(value) && value >= 0 ? value : null;
+	};
+	const key = modelKey.trim();
+	const reserveTokens = parseTokens(reserve);
+	const keepRecentTokens = parseTokens(keepRecent);
+	const canAdd = /^[^/\s]+\/\S+$/.test(key) && reserveTokens !== null && keepRecentTokens !== null && (reserveTokens !== undefined || keepRecentTokens !== undefined);
+	const add = async () => {
+		if (!canAdd || disabled) return;
+		const override: CompactionModelOverride = {};
+		if (typeof reserveTokens === "number") override.reserveTokens = reserveTokens;
+		if (typeof keepRecentTokens === "number") override.keepRecentTokens = keepRecentTokens;
+		if (!(await onSave(key, override))) return;
+		setModelKey("");
+		setReserve("");
+		setKeepRecent("");
+	};
+	const entries = Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b));
+	const field = { background: "var(--dsw-hover)", fontSize: 12.5 } as const;
+	const caption = { fontSize: 12, color: "var(--dsw-label-caption)" } as const;
+
+	return (
+		<div className="flex flex-col gap-2">
+			{entries.map(([entryKey, override]) => (
+				<div key={entryKey} className="flex items-center gap-3">
+					<span className="min-w-0 flex-1 truncate" style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }} title={entryKey}>{entryKey}</span>
+					<span className="flex-none" style={caption}>{t.reserveTokens} {override.reserveTokens ?? "—"}</span>
+					<span className="flex-none" style={caption}>{t.keepRecentTokens} {override.keepRecentTokens ?? "—"}</span>
+					<button type="button" className="icon-btn flex-none" disabled={disabled} aria-label={`${t.delete} ${entryKey}`} title={t.delete} onClick={() => void onSave(entryKey, null)}>
+						<IconCloseOutline14 size={13} />
+					</button>
+				</div>
+			))}
+			<div className="flex flex-wrap items-center gap-2">
+				<input
+					type="text"
+					list={listId}
+					value={modelKey}
+					placeholder="provider/model-id"
+					spellCheck={false}
+					disabled={disabled}
+					onChange={(event) => setModelKey(event.target.value)}
+					className="min-w-0 flex-1 rounded-lg px-2 py-1"
+					style={{ ...field, minWidth: 180, fontFamily: "var(--font-mono)" }}
+				/>
+				<datalist id={listId}>
+					{choices.map((choice) => <option key={choice} value={choice} />)}
+				</datalist>
+				<input type="number" min={0} value={reserve} placeholder={t.reserveTokens} title={t.reserveTokens} disabled={disabled} onChange={(event) => setReserve(event.target.value)} className="rounded-lg px-2 py-1" style={{ ...field, width: 110, textAlign: "right" }} />
+				<input type="number" min={0} value={keepRecent} placeholder={t.keepRecentTokens} title={t.keepRecentTokens} disabled={disabled} onChange={(event) => setKeepRecent(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void add(); }} className="rounded-lg px-2 py-1" style={{ ...field, width: 110, textAlign: "right" }} />
+				<button type="button" className="btn-outline flex-none" style={{ height: 28, padding: "0 12px", fontSize: 12.5 }} disabled={disabled || !canAdd} onClick={() => void add()}>
+					{t.compactionOverrideAdd}
+				</button>
+			</div>
 		</div>
 	);
 }
@@ -721,75 +881,36 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 	);
 }
 
-/** 界面字体族选择：预设下拉 + 「自定义」文本框。改动即生效并持久化。
+/** 界面与对话正文字体族选择：三个预设，改动即生效并持久化。
  *  代码字体已固定为系统等宽、不再可配（见 lib/font.ts）。 */
 function FontFamilyPicker() {
-	const { t, lang } = useI18n();
+	const { lang } = useI18n();
 	const [stored, setStored] = useState<string | null>(null);
-	const [custom, setCustom] = useState("");
-	// 「自定义」是下拉自己的选中状态，不能从输入框内容推断：删空输入框不该把下拉弹回预设、
-	// 连输入框一起收掉；选回预设也不该因为输入框里还留着字而停在「自定义」
-	const [customMode, setCustomMode] = useState(false);
 
 	useEffect(() => {
-		const saved = loadFontChoice();
-		const savedCustom = saved?.startsWith(CUSTOM_PREFIX) ? saved.slice(CUSTOM_PREFIX.length) : null;
-		setStored(saved);
-		setCustomMode(savedCustom !== null);
-		setCustom(savedCustom ?? "");
+		setStored(loadFontChoice());
 	}, []);
 
-	const applyCustom = (v: string) => {
-		setCustom(v);
-		const next = v.trim() ? CUSTOM_PREFIX + v.trim() : null;
-		setStored(next);
-		applyFontChoice(next);
-	};
-
 	const pick = (v: string) => {
-		if (v === CUSTOM_PREFIX) {
-			setCustomMode(true);
-			// 输入框里留着上次的字体栈就接着用；空的先回落默认，等你输入
-			applyCustom(custom);
-			return;
-		}
-		setCustomMode(false);
 		setStored(v);
 		applyFontChoice(v);
 	};
 
-	const selectValue = customMode ? CUSTOM_PREFIX : stored ?? FONT_PRESETS[0].id;
+	const selectValue = stored ?? FONT_PRESETS[0].id;
+	const presetDescription = FONT_PRESETS.find((preset) => preset.id === selectValue)?.description?.[lang];
 
 	return (
 		<div className="flex flex-col items-end gap-2">
 			<SelectOption
 				value={selectValue}
 				width={220}
-				options={[
-					...FONT_PRESETS.map((p) => ({
-						value: p.id,
-						label: lang === "zh" ? p.label.zh : p.label.en,
-					})),
-					{ value: CUSTOM_PREFIX, label: t.fontCustom },
-				]}
+				options={FONT_PRESETS.map((p) => ({ value: p.id, label: p.label[lang] }))}
 				onChange={pick}
 			/>
-			{customMode && (
-				<input
-					value={custom}
-					onChange={(e) => applyCustom(e.target.value)}
-					placeholder={t.fontCustomPlaceholder}
-					style={{
-						height: 30,
-						width: 260,
-						padding: "0 10px",
-						fontSize: 13,
-						background: "var(--dsw-input-major)",
-						border: "0.5px solid var(--dsw-border-l3)",
-						borderRadius: 8,
-						color: "var(--dsw-label-primary)",
-					}}
-				/>
+			{presetDescription && (
+				<p style={{ maxWidth: 260, fontSize: 12, lineHeight: 1.6, textAlign: "right", color: "var(--dsw-label-tertiary)" }}>
+					{presetDescription}
+				</p>
 			)}
 		</div>
 	);
@@ -814,7 +935,17 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 	const { t, lang } = useI18n();
 	const fieldLabels = { contextWindow: t.modelAuditColContext, maxTokens: t.modelAuditColOutput, input: t.modelAuditColVision, reasoning: t.reasoningLabel };
 	const [rows, setRows] = useState<Record<string, AuditRow>>({});
-	const keyOf = (gap: CustomModelGap) => `${gap.provider}\u0000${gap.index}`;
+	const identities = new Map<string, number>();
+	for (const gap of gaps) {
+		const id = JSON.stringify([gap.provider, gap.id]);
+		identities.set(id, (identities.get(id) ?? 0) + 1);
+	}
+	// 409 后重载可能改变 models[] 的顺序，未保存的输入要跟随模型 ID，不能落到原位置的新模型上。
+	// 手写重复 ID 无法稳定区分时，把位置和可见声明也纳入身份；宁可重新填写，也不能串行。
+	const keyOf = (gap: CustomModelGap) => {
+		const id = JSON.stringify([gap.provider, gap.id]);
+		return identities.get(id) === 1 ? id : JSON.stringify([gap.provider, gap.id, gap.index, gap.name, gap.contextWindow, gap.maxTokens, gap.vision, gap.reasoning, gap.missing]);
+	};
 	const rowOf = (gap: CustomModelGap) => rows[keyOf(gap)] ?? EMPTY_AUDIT_ROW;
 	const edit = (gap: CustomModelGap, patch: Partial<AuditRow>) =>
 		setRows((current) => ({ ...current, [keyOf(gap)]: { ...(current[keyOf(gap)] ?? EMPTY_AUDIT_ROW), ...patch } }));
@@ -844,8 +975,18 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 		fills.push({ provider: gap.provider, index: gap.index, id: gap.id, contextWindow, maxTokens, vision, reasoning });
 	}
 
-	const save = async () => {
-		if (await onSave(fills)) setRows({});
+	const save = async (useDefaults = false) => {
+		const saveFills = useDefaults ? gaps.map((gap) => {
+			const fill = fills.find((entry) => entry.provider === gap.provider && entry.index === gap.index && entry.id === gap.id);
+			return {
+				provider: gap.provider, index: gap.index, id: gap.id,
+				contextWindow: gap.missing.includes("contextWindow") ? fill?.contextWindow ?? PI_MODEL_FALLBACKS.contextWindow : undefined,
+				maxTokens: gap.missing.includes("maxTokens") ? fill?.maxTokens ?? PI_MODEL_FALLBACKS.maxTokens : undefined,
+				vision: gap.missing.includes("input") ? fill?.vision ?? PI_MODEL_FALLBACKS.vision : undefined,
+				reasoning: gap.missing.includes("reasoning") ? fill?.reasoning ?? PI_MODEL_FALLBACKS.reasoning : undefined,
+			};
+		}) : fills;
+		if (await onSave(saveFills)) setRows({});
 	};
 
 	const capacityCell = (gap: CustomModelGap, field: "contextWindow" | "maxTokens", label: string) => {
@@ -970,10 +1111,16 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 					</>
 				) : null}
 				<span className="flex-1" />
+				<button className="btn-outline" style={{ height: 32 }} disabled={busy || invalid} onClick={() => void save(true)}>
+					{t.modelAuditUseDefaults}
+				</button>
 				<button className="btn-primary-white" style={{ height: 32 }} disabled={busy || invalid || fills.length === 0} onClick={() => void save()}>
 					{busy ? t.saving : fills.length ? t.modelAuditSave.replace("{n}", String(fills.length)) : t.modelAuditSaveIdle}
 				</button>
 			</div>
+			<p style={{ fontSize: 11.5, lineHeight: 1.6, color: "var(--dsw-label-caption)" }}>
+				{t.modelAuditDefaultsHint.replace("{ctx}", formatCapacity(PI_MODEL_FALLBACKS.contextWindow)).replace("{out}", formatCapacity(PI_MODEL_FALLBACKS.maxTokens))}
+			</p>
 		</section>
 	);
 }
@@ -1928,135 +2075,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 	);
 }
 
-// ---------- 工具启用情况 ----------
-
-/** 内置工具的一句话说明（未知/扩展工具只显示原名） */
-const TOOL_DESCRIPTIONS: Record<string, { zh: string; en: string }> = {
-	read: { zh: "读取文件", en: "Read files" },
-	bash: { zh: "执行 Shell 命令", en: "Run shell commands" },
-	powershell: { zh: "执行 PowerShell", en: "Run PowerShell" },
-	edit: { zh: "编辑文件", en: "Edit files" },
-	write: { zh: "写入文件", en: "Write files" },
-	grep: { zh: "搜索文件内容", en: "Search file contents" },
-	find: { zh: "按名称查找文件", en: "Find files by name" },
-	ls: { zh: "列出目录内容", en: "List directories" },
-};
-
-function ToolsSection({
-	toolPreset,
-	onToolPresetChange,
-	tools,
-	onSetTools,
-	onLoadTools,
-}: {
-	toolPreset: ToolPreset;
-	onToolPresetChange: (preset: ToolPreset) => void;
-	tools?: { active: string[]; all: { name: string; description?: string }[] } | null;
-	onSetTools?: (names: string[]) => void;
-	onLoadTools?: () => Promise<{ success: boolean; error?: string }>;
-}) {
-	const { t, lang } = useI18n();
-	const active = new Set(tools?.active ?? []);
-	const all = tools?.all ?? [];
-	const hasSnapshot = tools != null;
-	const [loading, setLoading] = useState(!!onLoadTools && !all.length);
-	const [loadError, setLoadError] = useState("");
-	const [retry, setRetry] = useState(0);
-	useEffect(() => {
-		if (!onLoadTools || !hasSnapshot || all.length) return;
-		let cancelled = false;
-		setLoading(true);
-		setLoadError("");
-		void onLoadTools().then((result) => {
-			if (cancelled) return;
-			setLoading(false);
-			if (!result.success) setLoadError(result.error || t.toolsLoadFailed);
-		}, (error) => {
-			if (cancelled) return;
-			setLoading(false);
-			setLoadError(error instanceof Error ? error.message : t.toolsLoadFailed);
-		});
-		return () => { cancelled = true; };
-	}, [onLoadTools, hasSnapshot, all.length, retry, t.toolsLoadFailed]);
-
-	const toggle = (name: string) => {
-		if (!onSetTools) return;
-		const next = active.has(name) ? [...active].filter((n) => n !== name) : [...active, name];
-		onSetTools(next);
-	};
-
-	const describe = (name: string) => {
-		const d = TOOL_DESCRIPTIONS[name];
-		return d ? (lang === "zh" ? d.zh : d.en) : "";
-	};
-
-	return (
-		<div className="flex flex-col gap-5">
-			<div>
-				<div style={{ fontSize: 14, fontWeight: 400 }}>{t.toolsSection}</div>
-				<div className="mt-0.5" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
-					{t.toolsSectionDesc}
-				</div>
-			</div>
-
-			<Row title={t.securityToolPreset} desc={t.securityToolPresetDesc}>
-				<SelectOption
-					value={toolPreset}
-					options={[
-						{ value: "readonly", label: t.toolReadonly },
-						{ value: "standard", label: t.toolStandard },
-						{ value: "full", label: t.toolFull },
-					]}
-					onChange={(value) => onToolPresetChange(value as ToolPreset)}
-				/>
-			</Row>
-
-			{all.length === 0 ? (
-				<div className="rounded-2xl p-4" style={{ border: "0.5px dashed var(--dsw-border-l3)", fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
-					{loadError ? <>
-						<div role="alert">{loadError}</div>
-						<button className="btn-outline mt-3" onClick={() => setRetry((n) => n + 1)}>{t.retry}</button>
-					</> : <div role="status">{!onLoadTools ? t.toolsNoSession : loading ? t.toolsLoading : t.toolsEmpty}</div>}
-				</div>
-			) : (
-				<div className="flex flex-col gap-2.5">
-					<div className="flex items-center gap-2" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
-						<span style={{ fontWeight: 600 }}>{t.toolsCurrentSession}</span>
-						<span>{t.toolsActiveCount.replace("{n}", String(active.size)).replace("{total}", String(all.length))}</span>
-					</div>
-					{all.map((tool) => {
-						const on = active.has(tool.name);
-						const desc = tool.description || describe(tool.name);
-						return (
-							<div key={tool.name} className="flex items-center gap-3 rounded-2xl px-4 py-2.5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-								<div className="min-w-0 flex-1">
-									<div style={{ fontSize: 13.5, fontWeight: 500, fontFamily: "var(--font-mono)" }}>{tool.name}</div>
-									{desc && (
-										<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
-											{desc}
-										</div>
-									)}
-								</div>
-								<button
-									className="relative h-5 w-9 flex-none rounded-full transition-colors"
-									style={{ background: on ? "var(--dsw-accent)" : "var(--dsw-border-l3)" }}
-									role="switch"
-									aria-checked={on}
-									aria-label={tool.name}
-									disabled={!onSetTools || (on && active.size <= 1)}
-									onClick={() => toggle(tool.name)}
-								>
-									<span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: on ? 18 : 2 }} />
-								</button>
-						</div>
-						);
-					})}
-				</div>
-			)}
-		</div>
-	);
-}
-
 // ---------- Skills ----------
 
 interface SkillRow {
@@ -2169,17 +2187,14 @@ function SkillsSection({ cwd, onOpenFileContent }: { cwd: string; onOpenFileCont
 								</span>
 							)}
 							<button
-								className="relative h-5 w-9 flex-none rounded-full transition-colors"
-								style={{ background: s.disabled ? "var(--dsw-border-l3)" : "var(--dsw-accent)" }}
+								className="liq-sw flex-none"
+								data-on={!s.disabled ? "true" : undefined}
 								role="switch"
 								aria-checked={!s.disabled}
 								onClick={() => toggle(s)}
 							>
-							<span
-								className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all"
-								style={{ left: s.disabled ? 2 : 18 }}
-							/>
-						</button>
+								<span className="liq-thumb" />
+							</button>
 					</div>
 				</div>
 			))}

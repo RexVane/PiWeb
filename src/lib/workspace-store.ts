@@ -16,6 +16,7 @@ interface WorkspaceFile {
 	workspaces: string[];
 	aliases?: Record<string, string>;
 	archivedSessions?: string[];
+	pinnedSessions?: string[];
 	/** 归档时间（毫秒）：pathKey → 时间戳；保留期从这里起算 */
 	archivedAt?: Record<string, number>;
 	removedWorkspaces?: string[];
@@ -27,6 +28,7 @@ export interface WorkspaceRegistrySnapshot {
 	workspaces: string[];
 	aliases: Record<string, string>;
 	archivedSessions: string[];
+	pinnedSessions: string[];
 	removedWorkspaces: string[];
 }
 
@@ -54,6 +56,7 @@ async function readFile(target = file()): Promise<WorkspaceFile> {
 			workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter((w) => typeof w === "string") : [],
 			aliases,
 			archivedSessions: Array.isArray(parsed.archivedSessions) ? parsed.archivedSessions.filter((s) => typeof s === "string") : [],
+			pinnedSessions: Array.isArray(parsed.pinnedSessions) ? parsed.pinnedSessions.filter((s) => typeof s === "string") : [],
 			...(Object.keys(archivedAt).length ? { archivedAt } : {}),
 			removedWorkspaces: Array.isArray(parsed.removedWorkspaces) ? parsed.removedWorkspaces.filter((s) => typeof s === "string") : [],
 			...(Object.keys(growthInit).length ? { growthInit } : {}),
@@ -61,7 +64,7 @@ async function readFile(target = file()): Promise<WorkspaceFile> {
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
-	return { workspaces: [], aliases: {}, archivedSessions: [], removedWorkspaces: [] };
+	return { workspaces: [], aliases: {}, archivedSessions: [], pinnedSessions: [], removedWorkspaces: [] };
 }
 
 function pathKey(value: string): string {
@@ -124,7 +127,7 @@ async function write(data: WorkspaceFile, target: string): Promise<void> {
 }
 
 function emptyRegistry(): WorkspaceFile {
-	return { workspaces: [], aliases: {}, archivedSessions: [], removedWorkspaces: [] };
+	return { workspaces: [], aliases: {}, archivedSessions: [], pinnedSessions: [], removedWorkspaces: [] };
 }
 
 interface Snapshot {
@@ -229,26 +232,64 @@ export async function getArchivedSessions(agentDir?: string): Promise<string[]> 
 	return (await read(agentDir)).archivedSessions ?? [];
 }
 
+export async function getPinnedSessions(): Promise<string[]> {
+	return (await read()).pinnedSessions ?? [];
+}
+
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot> {
 	const data = await read();
 	return {
 		workspaces: data.workspaces,
 		aliases: data.aliases ?? {},
 		archivedSessions: data.archivedSessions ?? [],
+		pinnedSessions: data.pinnedSessions ?? [],
 		removedWorkspaces: data.removedWorkspaces ?? [],
 	};
+}
+
+export async function pinSession(sessionPath: string): Promise<string[]> {
+	const norm = path.resolve(sessionPath);
+	const key = pathKey(norm);
+	return mutate(async (data, target) => {
+		if (!data.pinnedSessions) data.pinnedSessions = [];
+		if (!data.pinnedSessions.some((p) => pathKey(p) === key)) {
+			data.pinnedSessions.push(norm);
+			await write(data, target);
+		}
+		return data.pinnedSessions;
+	});
+}
+
+export async function unpinSession(sessionPath: string): Promise<string[]> {
+	const norm = path.resolve(sessionPath);
+	const key = pathKey(norm);
+	return mutate(async (data, target) => {
+		const previous = data.pinnedSessions ?? [];
+		const next = previous.filter((p) => pathKey(p) !== key);
+		if (next.length !== previous.length) {
+			data.pinnedSessions = next;
+			await write(data, target);
+		}
+		return next;
+	});
 }
 
 export async function archiveSession(sessionPath: string, agentDir?: string): Promise<string[]> {
 	const norm = path.resolve(sessionPath);
 	const key = pathKey(norm);
 	return mutate(async (data, target) => {
+		let changed = false;
 		if (!data.archivedSessions) data.archivedSessions = [];
 		if (!data.archivedSessions.some((p) => pathKey(p) === key)) {
 			data.archivedSessions.push(norm);
 			data.archivedAt = { ...data.archivedAt, [key]: Date.now() };
-			await write(data, target);
+			changed = true;
 		}
+		if (data.pinnedSessions?.some((p) => pathKey(p) === key)) {
+			data.pinnedSessions = data.pinnedSessions.filter((p) => pathKey(p) !== key);
+			changed = true;
+		}
+		if (changed) await write(data, target);
 		return data.archivedSessions;
 	}, agentDir);
 }
@@ -260,7 +301,12 @@ export async function forgetSession(sessionPath: string, agentDir?: string): Pro
 		const previous = data.archivedSessions ?? [];
 		const next = previous.filter((p) => pathKey(p) !== key);
 		const hadTime = !!data.archivedAt && key in data.archivedAt;
-		if (next.length !== previous.length || hadTime) {
+		let pinnedChanged = false;
+		if (data.pinnedSessions?.some((p) => pathKey(p) === key)) {
+			data.pinnedSessions = data.pinnedSessions.filter((p) => pathKey(p) !== key);
+			pinnedChanged = true;
+		}
+		if (next.length !== previous.length || hadTime || pinnedChanged) {
 			data.archivedSessions = next;
 			if (data.archivedAt) delete data.archivedAt[key];
 			await write(data, target);

@@ -1,11 +1,13 @@
 /**
- * extension-ui：把 pi 扩展的界面请求（select / confirm / input / notify / setStatus）
- * 桥接到浏览器——与 pi 自己的 RPC 模式（extension_ui_request / extension_ui_response）同一套语义。
- * 没有页面在看时（无订阅者）select/input 返回 undefined、confirm 返回 false，与 pi 的 noOp 行为一致。
+ * extension-ui：把 pi 扩展的界面请求桥接到浏览器——与 pi 自己的 RPC 模式
+ * （extension_ui_request / extension_ui_response）同一套语义、同一份支持清单：
+ * 对话框 select / confirm / input / editor 等应答，notify / setStatus / setWidget / setTitle /
+ * setEditorText 只通知。其余依赖真实终端的能力（custom、setFooter、自定义编辑器…）与 RPC 模式一样是 no-op。
+ * 没有页面在看时（无订阅者）select/input/editor 返回 undefined、confirm 返回 false，与 pi 的 noOp 行为一致。
  */
 import { randomUUID } from "node:crypto";
 import { ASK_USER_TIMEOUT_MS, parseAnswers, type AskOutcome, type AskQuestion } from "./ask-user";
-import type { WebEvent } from "./types";
+import type { WebEvent, WebExtensionWidget } from "./types";
 
 type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
 type UiEvent = Extract<WebEvent, { type: "extension_ui" }>;
@@ -33,11 +35,21 @@ export interface ExtensionUiBridge {
 	askQuestions(questions: AskQuestion[], signal?: AbortSignal): Promise<AskOutcome>;
 	/** 扩展通过 setStatus 设的状态文本（页脚展示） */
 	statuses: Map<string, string>;
+	/** 扩展通过 setWidget 设的文字块（输入框上方 / 下方） */
+	widgets: Map<string, WebExtensionWidget>;
+	/** 扩展通过 setTitle 设的窗口标题 */
+	getTitle(): string | undefined;
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+/** 单个 widget 的上限：扩展把整份日志塞进来时不能撑爆快照和 SSE 帧 */
+const WIDGET_MAX_LINES = 200;
+const WIDGET_MAX_LINE_CHARS = 2_000;
 
 const plainText = (text: unknown): string => (typeof text === "string" ? text : String(text ?? ""));
+/** 扩展自己用 chalk 之类上的色：Web 不渲染 ANSI，原样显示就是一串乱码，去掉转义序列只留文字 */
+const ANSI_SEQUENCE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const displayText = (text: unknown): string => plainText(text).replace(ANSI_SEQUENCE, "");
 /**
  * 扩展常写 `ctx.ui.theme.fg("accent", text)` 给状态文字上色；pi 的 noOp 上下文也带 theme。
  * 缺了它扩展一调就抛 TypeError。Web 不渲染 ANSI，所以给一个原样返回文字、不加任何转义序列的主题。
@@ -65,6 +77,8 @@ export function createExtensionUiBridge(opts: {
 }): ExtensionUiBridge {
 	const pending = new Map<string, PendingUi>();
 	const statuses = new Map<string, string>();
+	const widgets = new Map<string, WebExtensionWidget>();
+	let title: string | undefined;
 	let disposed = false;
 
 	const ask = <T,>(
@@ -106,31 +120,59 @@ export function createExtensionUiBridge(opts: {
 			ask<boolean>({ method: "confirm", title, message }, o, false, (r) => (r.cancelled ? false : r.confirmed === true)),
 		input: (title: string, placeholder?: string, o?: { signal?: AbortSignal; timeout?: number }) =>
 			ask<string | undefined>({ method: "input", title, placeholder }, o, undefined, (r) => (r.cancelled ? undefined : r.value)),
+		editor: (title: string, prefill?: string, o?: { signal?: AbortSignal; timeout?: number }) =>
+			ask<string | undefined>({ method: "editor", title, prefill: typeof prefill === "string" ? prefill : undefined }, o, undefined, (r) => (r.cancelled ? undefined : r.value)),
 		notify: (message: string, type?: "info" | "warning" | "error") => {
 			opts.publish({ type: "extension_ui", id: randomUUID(), method: "notify", message, notifyType: type ?? "info", ts: Date.now() });
 		},
 		setStatus: (key: string, text: string | undefined) => {
-			if (text === undefined) statuses.delete(key);
-			else statuses.set(key, text);
-			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setStatus", statusKey: key, statusText: text, ts: Date.now() });
+			const shown = text === undefined ? undefined : displayText(text);
+			if (shown === undefined) statuses.delete(key);
+			else statuses.set(key, shown);
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setStatus", statusKey: key, statusText: shown, ts: Date.now() });
 		},
 		setWorkingMessage: (message?: string) => {
 			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWorkingMessage", message, ts: Date.now() });
+		},
+		/**
+		 * 与 RPC 模式一致：只接字符串数组，组件工厂（需要真实终端来渲染）忽略。
+		 * 忽略时不清掉同 key 的旧内容——扩展先发文字、再想升级成组件时，文字版仍是能看的那一个。
+		 */
+		setWidget: (key: string, content: unknown, options?: { placement?: string }) => {
+			if (typeof key !== "string" || !key) return;
+			if (content !== undefined && !Array.isArray(content)) return;
+			const placement = options?.placement === "belowEditor" ? "belowEditor" : "aboveEditor";
+			if (content === undefined) {
+				if (!widgets.delete(key)) return;
+				opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWidget", widgetKey: key, ts: Date.now() });
+				return;
+			}
+			const lines = content.slice(0, WIDGET_MAX_LINES).map((line) => displayText(line).slice(0, WIDGET_MAX_LINE_CHARS));
+			widgets.set(key, { lines, placement });
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWidget", widgetKey: key, widgetLines: lines, widgetPlacement: placement, ts: Date.now() });
+		},
+		setTitle: (value: string) => {
+			const shown = displayText(value).trim();
+			title = shown ? shown.slice(0, 200) : undefined;
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setTitle", title: title ?? "", ts: Date.now() });
+		},
+		setEditorText: (text: string) => {
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setEditorText", text: plainText(text), ts: Date.now() });
+		},
+		// RPC 模式同款：没有终端粘贴处理，直接当成设置输入框文字
+		pasteToEditor: (text: string) => {
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setEditorText", text: plainText(text), ts: Date.now() });
 		},
 		// 终端专属能力：Web 无对应物，按 pi 的 noOp 处理
 		onTerminalInput: () => () => {},
 		setWorkingVisible: () => {},
 		setWorkingIndicator: () => {},
 		setHiddenThinkingLabel: () => {},
-		setWidget: () => {},
 		setFooter: () => {},
 		setHeader: () => {},
-		setTitle: () => {},
 		custom: async () => undefined,
-		pasteToEditor: () => {},
-		setEditorText: () => {},
+		// 输入框的内容在浏览器里，服务端同步读不到（RPC 模式同样返回空串）
 		getEditorText: () => "",
-		editor: async () => undefined,
 		addAutocompleteProvider: () => {},
 		setEditorComponent: () => {},
 		getEditorComponent: () => undefined,
@@ -146,6 +188,8 @@ export function createExtensionUiBridge(opts: {
 	return {
 		uiContext,
 		statuses,
+		widgets,
+		getTitle: () => title,
 		askQuestions: async (questions, signal) => {
 			if (disposed) return { status: "unavailable" };
 			const outcome = await ask<AskOutcome>(

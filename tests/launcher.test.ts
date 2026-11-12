@@ -4,7 +4,7 @@ import path from "node:path";
 import http, { type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createLaunchPlan, isLoopback, isPiWebRunning, localUrl, parseLauncherArgs, probePort, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
+import { applyProxyEnv, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, nodeSupportsEnvProxy, parseLauncherArgs, probePort, readHttpProxySetting, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
 
@@ -413,5 +413,86 @@ describe("launcher lifecycle without real child processes", () => {
 		await productionBuild(prodRoot);
 		await runLauncher({ root: prodRoot, args: ["--no-open"], env: { PIWEB_SKIP_WARMUP: "1" }, dependencies: { ...base } });
 		expect(warm).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * pi 的 CLI 入口会把 httpProxy 设置写进环境并让 HTTP 客户端认代理；PiWeb 走 SDK，这一步得自己做，
+ * 否则在 pi 终端里配好的代理到了网页端对模型请求完全不生效。
+ */
+describe("proxy environment for the server process", () => {
+	it("fills in pi's httpProxy setting and turns on Node's env-proxy support", () => {
+		const env: Record<string, string | undefined> = {};
+		expect(applyProxyEnv(env, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "24.12.0" })).toEqual({ proxy: "http://127.0.0.1:7890", source: "settings", supported: true });
+		expect(env).toEqual({ HTTP_PROXY: "http://127.0.0.1:7890", HTTPS_PROXY: "http://127.0.0.1:7890", NODE_USE_ENV_PROXY: "1", NO_PROXY: "localhost,127.0.0.1,::1" });
+	});
+
+	it("leaves the environment alone when no proxy is configured anywhere", () => {
+		const env: Record<string, string | undefined> = { PATH: "/usr/bin" };
+		expect(applyProxyEnv(env, { proxySetting: null, nodeVersion: "24.12.0" })).toEqual({ proxy: null, source: null, supported: true });
+		expect(env).toEqual({ PATH: "/usr/bin" });
+	});
+
+	it("lets explicit environment variables win over the setting, in either letter case", () => {
+		const upper: Record<string, string | undefined> = { HTTPS_PROXY: "http://corp:3128" };
+		expect(applyProxyEnv(upper, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "24.12.0" })).toMatchObject({ proxy: "http://corp:3128", source: "env" });
+		// 只补缺的那一个，已有的不动（与 pi 的 `??=` 一致）
+		expect(upper).toMatchObject({ HTTPS_PROXY: "http://corp:3128", HTTP_PROXY: "http://127.0.0.1:7890", NODE_USE_ENV_PROXY: "1" });
+		// Windows 上变量名不分大小写：小写写法也算已设，不能再补一个只差大小写的重复键
+		const lower: Record<string, string | undefined> = { http_proxy: "http://corp:3128", https_proxy: "http://corp:3128" };
+		applyProxyEnv(lower, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "24.12.0" });
+		expect(Object.keys(lower).sort()).toEqual(["NODE_USE_ENV_PROXY", "NO_PROXY", "http_proxy", "https_proxy"]);
+	});
+
+	it("respects the user's own NO_PROXY and NODE_USE_ENV_PROXY choices", () => {
+		const env: Record<string, string | undefined> = { HTTP_PROXY: "http://corp:3128", no_proxy: "internal.example.com", NODE_USE_ENV_PROXY: "0" };
+		applyProxyEnv(env, { nodeVersion: "24.12.0" });
+		expect(env).toEqual({ HTTP_PROXY: "http://corp:3128", no_proxy: "internal.example.com", NODE_USE_ENV_PROXY: "0" });
+	});
+
+	it("reports an old Node instead of pretending the proxy is in effect", () => {
+		expect(nodeSupportsEnvProxy("24.0.0")).toBe(true);
+		expect(nodeSupportsEnvProxy("26.1.0")).toBe(true);
+		expect(nodeSupportsEnvProxy("22.21.0")).toBe(true);
+		expect(nodeSupportsEnvProxy("22.19.0")).toBe(false);
+		expect(nodeSupportsEnvProxy("23.11.0")).toBe(false);
+		const env: Record<string, string | undefined> = {};
+		expect(applyProxyEnv(env, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "22.19.0" })).toMatchObject({ supported: false, source: "settings" });
+		// 变量照样给（bash 工具里的 curl / git 用得上），但不声称 Node 会走它
+		expect(env).toEqual({ HTTP_PROXY: "http://127.0.0.1:7890", HTTPS_PROXY: "http://127.0.0.1:7890" });
+	});
+
+	it("reads httpProxy from the agent directory's settings.json and ignores a broken file", async () => {
+		const agentDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-proxy-setting-")));
+		cleanups.push(() => fs.rm(agentDir, { recursive: true, force: true }));
+		const env = { PI_CODING_AGENT_DIR: agentDir };
+		expect(readHttpProxySetting(env)).toBeNull();
+		await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ httpProxy: "  http://127.0.0.1:7890 " }));
+		expect(readHttpProxySetting(env)).toBe("http://127.0.0.1:7890");
+		await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ httpProxy: "" }));
+		expect(readHttpProxySetting(env)).toBeNull();
+		await fs.writeFile(path.join(agentDir, "settings.json"), "{ not json");
+		expect(readHttpProxySetting(env)).toBeNull();
+	});
+
+	it("starts the server with the proxy applied and says so without printing credentials", async () => {
+		const root = await installation();
+		const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+		const spawned: Array<Record<string, string | undefined>> = [];
+		const logs: string[] = [];
+		await runLauncher({
+			root, args: ["--dev", "--no-open"], env: {},
+			dependencies: {
+				spawn: vi.fn((_command: string, _args: string[], options: { env?: Record<string, string | undefined> }) => { spawned.push(options.env ?? {}); setImmediate(() => child.emit("exit", 0)); return child; }),
+				probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true),
+				readHttpProxySetting: () => "http://alice:s3cret@proxy.example.com:8080",
+				log: (message: string) => logs.push(message), warn: (message: string) => logs.push(message),
+			},
+		});
+		expect(spawned[0]).toMatchObject({ HTTP_PROXY: "http://alice:s3cret@proxy.example.com:8080", HTTPS_PROXY: "http://alice:s3cret@proxy.example.com:8080" });
+		const line = logs.find((message) => message.includes("代理"));
+		expect(line).toBeTruthy();
+		expect(line).not.toContain("s3cret");
+		expect(line).not.toContain("alice");
 	});
 });

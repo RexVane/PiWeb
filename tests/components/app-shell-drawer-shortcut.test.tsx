@@ -32,6 +32,7 @@ vi.mock("@/components/TrajectoryView", () => ({ TrajInspector: () => <div data-t
 vi.mock("@/components/ExtensionUI", () => ({
 	ExtensionDialogHost: () => null,
 	ExtensionNotices: ({ children }: { children?: React.ReactNode }) => children ?? null,
+	ExtensionWidgets: () => null,
 }));
 vi.mock("@/hooks/usePiWeb", () => ({
 	usePiWeb: () => ({

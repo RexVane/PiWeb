@@ -11,6 +11,8 @@ import type { ContextBreakdown, TrajTokens } from "@/lib/types";
 type ContextMessage = {
 	role?: string;
 	content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>;
+	/** `!` 命令：输出在 bash 里，不在 content 里（`!!` 的不进上下文） */
+	bash?: { command: string; output: string; excludeFromContext?: boolean };
 	usage?: TrajTokens;
 	stopReason?: string;
 	timestamp?: number;
@@ -43,6 +45,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 }) {
 	const [open, setOpen] = useState(false);
 	const [counting, setCounting] = useState(false);
+	const [hoverKey, setHoverKey] = useState<string | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
 	const cold = Boolean(source?.breakdown?.cold);
@@ -92,17 +95,17 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	const free = anchor === null ? null : Math.max(0, window_ - anchor - reserved);
 	const b = source?.breakdown?.characters;
 	const rows = [
-		{ key: "system", label: t.contextSystemPrompt, value: b?.systemPrompt, color: "var(--dsw-accent)" },
-		{ key: "builtin", label: t.contextSystemTools, value: b?.systemTools, color: "#8B7EC8" },
-		{ key: "custom", label: t.contextCustomTools, value: b?.customTools, color: "#B39DDB" },
-		{ key: "memory", label: t.contextMemory, value: b?.memory, color: "#5FA8D3" },
-		{ key: "skills", label: t.contextSkills, value: b?.skills, color: "#4FB286" },
-		{ key: "user", label: t.contextUserMessages, value: chars.user, color: "var(--dsw-success)" },
-		{ key: "text", label: t.contextAgentText, value: chars.agentText, color: "#7BC96F" },
-		{ key: "thinking", label: t.contextAgentThinking, value: chars.agentThinking, color: "#C9A66B" },
-		{ key: "call", label: t.contextAgentToolCall, value: chars.agentToolCall, color: "#D3A15F" },
-		{ key: "output", label: t.contextToolOutput, value: chars.toolOutput, color: "var(--dsw-warn)" },
-		{ key: "compacted", label: t.contextCompacted, value: b?.compacted, color: "#A05A78" },
+		{ key: "system", label: t.contextSystemPrompt, value: b?.systemPrompt, color: "#3b82f6" },
+		{ key: "builtin", label: t.contextSystemTools, value: b?.systemTools, color: "#8b5cf6" },
+		{ key: "custom", label: t.contextCustomTools, value: b?.customTools, color: "#a855f7" },
+		{ key: "memory", label: t.contextMemory, value: b?.memory, color: "#06b6d4" },
+		{ key: "skills", label: t.contextSkills, value: b?.skills, color: "#10b981" },
+		{ key: "user", label: t.contextUserMessages, value: chars.user, color: "#22c55e" },
+		{ key: "text", label: t.contextAgentText, value: chars.agentText, color: "#84cc16" },
+		{ key: "thinking", label: t.contextAgentThinking, value: chars.agentThinking, color: "#eab308" },
+		{ key: "call", label: t.contextAgentToolCall, value: chars.agentToolCall, color: "#f97316" },
+		{ key: "output", label: t.contextToolOutput, value: chars.toolOutput, color: "#f59e0b" },
+		{ key: "compacted", label: t.contextCompacted, value: b?.compacted, color: "#ec4899" },
 	].filter((row) => row.value !== undefined && row.value > 0);
 	const charTotal = rows.reduce((sum, row) => sum + (row.value ?? 0), 0);
 	/**
@@ -133,23 +136,24 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 				   认的钩子 —— 它用 calc(100vw-96px) + !important 压过那里的 .popover 兜底，重命名
 				   或删掉这个类会让手机端重新冒出溢出。 */
 				<div className="pw-context-popover popover absolute bottom-9 right-0 z-50 w-72 max-w-[calc(100vw-96px)] p-4" style={{ fontSize: "var(--dsh-content-font-size-secondary)" }}>
-					{measuredInput !== null && <div className="mt-2 flex items-center justify-between gap-2"><span>{t.contextApiInput}</span><span title={`${measuredInput} tok`}>{fmtTokens(measuredInput)} tok</span></div>}
+					{measuredInput !== null && <div className="mt-1 flex items-center justify-between gap-2" style={{ fontVariantNumeric: "tabular-nums" }}><span style={{ color: "var(--dsw-label-secondary)", fontWeight: 500 }}>{t.contextApiInput}</span><span title={`${measuredInput} tok`} style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--dsw-label-primary)" }}>{fmtTokens(measuredInput)} tok</span></div>}
 					{window_ > 0 && (
-						<div className="mt-3 flex h-2 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} data-testid="context-bar" aria-hidden>
+						<div className="pw-agent-limits-bar mt-3 flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} data-testid="context-bar" aria-hidden onMouseLeave={() => setHoverKey(null)}>
 							{segments.map((segment) => (
-								<span key={segment.key} data-segment={segment.key} className="flex-none" title={`${segment.label}：${fmtTokens(segment.value)} ${t.contextChars}`}
-									style={{ width: `${segment.width}%`, background: segment.color }} />
+								<span key={segment.key} data-segment={segment.key} className="pw-agent-limits-seg flex-none" title={`${segment.label}：${fmtTokens(segment.value)} ${t.contextChars}`}
+									onMouseEnter={() => setHoverKey(segment.key)}
+									style={{ width: `${segment.width}%`, background: segment.color, opacity: hoverKey && hoverKey !== segment.key ? 0.32 : 1 }} />
 							))}
-							{visibleReserved > 0 && <span data-segment="reserved" className="flex-none" style={{ width: `${visibleReserved / window_ * 100}%`, background: "var(--dsw-border-l3)" }} />}
+							{visibleReserved > 0 && <span data-segment="reserved" className="pw-agent-limits-seg flex-none" onMouseEnter={() => setHoverKey("reserved")} style={{ width: `${visibleReserved / window_ * 100}%`, background: "var(--dsw-border-l3)", opacity: hoverKey && hoverKey !== "reserved" ? 0.32 : 1 }} />}
 						</div>
 					)}
-					<div className="mt-2 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
-						{reserved > 0 && <DataRow label={t.contextAutoCompactBuffer} value={`${fmtTokens(reserved)} tok`} exact={`${reserved} tok`} color="var(--dsw-border-l3)" />}
+					<div className="mt-2.5 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
+						{reserved > 0 && <DataRow itemKey="reserved" active={hoverKey === "reserved"} dimmed={hoverKey !== null && hoverKey !== "reserved"} onHover={setHoverKey} label={t.contextAutoCompactBuffer} value={`${fmtTokens(reserved)} tok`} exact={`${reserved} tok`} color="var(--dsw-border-l3)" />}
 						{window_ > 0 && <DataRow label={t.contextFreeSpace} value={free === null ? "—" : `~${fmtTokens(free)} tok`} color="var(--dsw-selector)" />}
 					</div>
 					{/* 进度条的图例：颜色跟上面的分段一一对应，数字是真实字符数 */}
-					<div className="mt-3 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
-						{rows.map((row) => <DataRow key={row.key} label={row.label} value={`${fmtTokens(row.value!)} ${t.contextChars}`} exact={`${row.value} ${t.contextChars}`} color={row.color} />)}
+					<div className="mt-2.5 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }} onMouseLeave={() => setHoverKey(null)}>
+						{rows.map((row) => <DataRow key={row.key} itemKey={row.key} active={hoverKey === row.key} dimmed={hoverKey !== null && hoverKey !== row.key} onHover={setHoverKey} label={row.label} value={`${fmtTokens(row.value!)} ${t.contextChars}`} exact={`${row.value} ${t.contextChars}`} color={row.color} />)}
 					</div>
 					{cold && source?.loadFull && (
 						<div className="mt-3 flex items-center justify-between gap-2" style={{ color: "var(--dsw-label-tertiary)" }}>
@@ -290,9 +294,15 @@ function WindowEditor({ model, value, onSaved }: { model: { provider: string; id
 	);
 }
 
-function DataRow({ label, value, exact, color }: { label: string; value: string; exact?: string; color: string }) {
-	return <div className="flex items-center justify-between gap-2">
-		<span className="flex items-center gap-1.5"><span className="inline-block rounded-full" style={{ width: 7, height: 7, background: color }} />{label}</span>
-		<span title={exact}>{value}</span>
+function DataRow({ label, value, exact, color, itemKey, active, dimmed, onHover }: { label: string; value: string; exact?: string; color: string; itemKey?: string; active?: boolean; dimmed?: boolean; onHover?: (key: string | null) => void }) {
+	return <div
+		className="pw-agent-limits-row flex items-center justify-between gap-2"
+		data-active={active || undefined}
+		data-dimmed={dimmed || undefined}
+		onMouseEnter={itemKey && onHover ? () => onHover(itemKey) : undefined}
+		onMouseLeave={itemKey && onHover ? () => onHover(null) : undefined}
+	>
+		<span className="flex items-center gap-1.5"><span className="pw-agent-limits-dot inline-block rounded-full" style={{ width: 8, height: 8, background: color, boxShadow: active ? `0 0 8px ${color}` : undefined }} />{label}</span>
+		<span title={exact} style={{ fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-mono)", fontSize: "0.94em" }}>{value}</span>
 	</div>;
 }

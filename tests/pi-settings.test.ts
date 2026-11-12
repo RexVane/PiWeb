@@ -163,3 +163,103 @@ process.stdin.once("data", async () => { await release(); process.exit(0); });`;
 		await fs.rm(agentDir, { recursive: true, force: true });
 	}
 }, 15_000);
+
+describe("设置面板新接管的 pi 设置", () => {
+	/** 在临时 agent 目录里跑：绝不碰用户真实的 ~/.pi/agent/settings.json */
+	async function withAgentDir<T>(initial: Record<string, unknown>, run: (file: string, agentDir: string) => Promise<T>): Promise<T> {
+		const previous = process.env.PI_CODING_AGENT_DIR;
+		const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-settings-extra-"));
+		const file = path.join(agentDir, "settings.json");
+		try {
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			await fs.writeFile(file, JSON.stringify(initial));
+			return await run(file, agentDir);
+		} finally {
+			if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previous;
+			await fs.rm(agentDir, { recursive: true, force: true });
+		}
+	}
+	const read = async (file: string) => JSON.parse(await fs.readFile(file, "utf8")) as Record<string, any>;
+
+	it("reads pi's defaults when nothing is set, and tolerates junk in the file", async () => {
+		await withAgentDir({}, async () => {
+			expect(await getPiSettings()).toMatchObject({
+				cacheWarming: "idle", steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", httpProxy: "", shellPath: "",
+				compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000, modelOverrides: {} },
+			});
+		});
+		await withAgentDir({ cacheWarming: "sometimes", steeringMode: 3, compaction: { modelOverrides: { "a/b": { reserveTokens: 4000 }, "c/d": "oops", "e/f": { reserveTokens: -1 } } } }, async () => {
+			const settings = await getPiSettings();
+			expect(settings.cacheWarming).toBe("idle");
+			expect(settings.steeringMode).toBe("one-at-a-time");
+			// 写坏的条目跳过，不让一条坏数据挡住整个面板
+			expect(settings.compaction.modelOverrides).toEqual({ "a/b": { reserveTokens: 4000 } });
+		});
+	});
+
+	it("writes cache warming and queue delivery modes without touching other fields", async () => {
+		await withAgentDir({ theme: "dark", retry: { maxRetries: 7 } }, async (file) => {
+			await patchPiSettings({ cacheWarming: "off", steeringMode: "all", followUpMode: "all" });
+			expect(await read(file)).toEqual({ theme: "dark", retry: { maxRetries: 7 }, cacheWarming: "off", steeringMode: "all", followUpMode: "all" });
+			expect(await getPiSettings()).toMatchObject({ cacheWarming: "off", steeringMode: "all", followUpMode: "all" });
+		});
+	});
+
+	it("rejects values pi would not understand", () => {
+		expect(() => validatePiSettingsPatch({ cacheWarming: "always" })).toThrow(/cacheWarming/);
+		expect(() => validatePiSettingsPatch({ steeringMode: "some" })).toThrow(/steeringMode/);
+		expect(() => validatePiSettingsPatch({ followUpMode: true })).toThrow(/followUpMode/);
+		expect(() => validatePiSettingsPatch({ httpProxy: "not a url" })).toThrow(/httpProxy/);
+		expect(() => validatePiSettingsPatch({ httpProxy: "ftp://proxy.local:21" })).toThrow(/httpProxy/);
+		expect(() => validatePiSettingsPatch({ shellPath: 42 })).toThrow(/shellPath/);
+		// 没有 provider/ 前缀的键 pi 永远匹配不上
+		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: { "gpt-6": { reserveTokens: 1 } } } })).toThrow(/provider\/modelId/);
+		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: { "openai/gpt-6": { reserveTokens: -5 } } } })).toThrow(/non-negative/);
+		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: { "openai/gpt-6": { enabled: false } } } })).toThrow(/unknown compaction override field/);
+		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: [] } })).toThrow(/modelOverrides/);
+	});
+
+	it("accepts http, https and socks proxies, and clears the key when emptied", async () => {
+		for (const proxy of ["http://127.0.0.1:7890", "https://user:pass@proxy.example.com:8443", "socks5://127.0.0.1:1080"]) {
+			expect(validatePiSettingsPatch({ httpProxy: `  ${proxy}  ` })).toEqual({ httpProxy: proxy });
+		}
+		await withAgentDir({ theme: "dark" }, async (file) => {
+			await patchPiSettings({ httpProxy: "http://127.0.0.1:7890" });
+			expect((await read(file)).httpProxy).toBe("http://127.0.0.1:7890");
+			await patchPiSettings({ httpProxy: "" });
+			// 清空 = 删掉键，回到 pi 的默认行为；别的字段还在
+			expect(await read(file)).toEqual({ theme: "dark" });
+		});
+	});
+
+	it("refuses a shell path that does not exist, since every later bash call would fail", async () => {
+		await withAgentDir({}, async (file, agentDir) => {
+			await expect(patchPiSettings({ shellPath: path.join(agentDir, "no-such-shell") })).rejects.toThrow(/shell not found/);
+			expect(await read(file)).toEqual({});
+			const shell = path.join(agentDir, "my-shell");
+			await fs.writeFile(shell, "");
+			await patchPiSettings({ shellPath: shell });
+			expect((await read(file)).shellPath).toBe(shell);
+			await patchPiSettings({ shellPath: "" });
+			expect(await read(file)).toEqual({});
+		});
+	});
+
+	it("merges per-model compaction thresholds one model at a time", async () => {
+		await withAgentDir({ compaction: { reserveTokens: 16384, modelOverrides: { "ollama/qwen": { reserveTokens: 2000 } } } }, async (file) => {
+			await patchPiSettings({ compaction: { modelOverrides: { "llama-cpp/phi": { reserveTokens: 1500, keepRecentTokens: 3000 } } } });
+			expect((await read(file)).compaction).toEqual({
+				reserveTokens: 16384,
+				modelOverrides: { "ollama/qwen": { reserveTokens: 2000 }, "llama-cpp/phi": { reserveTokens: 1500, keepRecentTokens: 3000 } },
+			});
+			// null 删掉那一个模型的覆盖；两项都没写的覆盖也等于删除
+			await patchPiSettings({ compaction: { modelOverrides: { "ollama/qwen": null } } });
+			expect((await read(file)).compaction.modelOverrides).toEqual({ "llama-cpp/phi": { reserveTokens: 1500, keepRecentTokens: 3000 } });
+			await patchPiSettings({ compaction: { modelOverrides: { "llama-cpp/phi": {} } } });
+			// 一条都不剩就不留空对象
+			expect(await read(file)).toEqual({ compaction: { reserveTokens: 16384 } });
+			expect((await getPiSettings()).compaction.modelOverrides).toEqual({});
+		});
+	});
+});

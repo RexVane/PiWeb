@@ -11,6 +11,9 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { useI18n } from "@/i18n";
 import { IconRefreshOutline14, IconDownloadOutline16, IconSearchOutline16, IconFolderOpenOutline16, IconCheckOutline14, IconCloseOutline14, IconChevronDown14 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
+import { ImportProjectPicker } from "@/components/ImportProjectPicker";
+import { INITIAL_SCAN_LIMIT, MAX_SCAN_LIMIT, MAX_IMPORT_SELECTION } from "@/lib/session-import/limits";
+import { SESSION_CHANGE_EVENT, notifySessionsChanged } from "@/lib/session-change-events";
 import styles from "./SessionImportSection.module.css";
 
 interface Summary {
@@ -52,9 +55,6 @@ interface ImportReport {
 /** 来源中文名/英文名放在 i18n 里，这里只保留稳定的顺序与徽标色 */
 const SOURCE_ORDER = ["claude", "codex", "grok", "zcode", "dsh", "opencode"] as const;
 
-/** 与 src/lib/session-import/index.ts 的 SCAN_LIMIT_PER_SOURCE 保持一致（仅用于提示文案） */
-const SCAN_LIMIT = 15;
-
 function dayOf(ms?: number): string {
 	if (!ms) return "";
 	const d = new Date(ms);
@@ -65,6 +65,12 @@ function dayOf(ms?: number): string {
 
 function folderName(value: string): string {
 	return value.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || value;
+}
+
+function projectKey(value?: string): string {
+	if (!value) return "__no_project";
+	const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+	return /^[a-z]:|^\/\//i.test(normalized) ? normalized.toLocaleLowerCase() : normalized;
 }
 
 export function SessionImportSection({ cwd }: { cwd: string }) {
@@ -81,7 +87,13 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const [workspaces, setWorkspaces] = useState<string[]>([]);
 	const [fallback, setFallback] = useState(cwd);
 	const [query, setQuery] = useState("");
+	const [projectFilter, setProjectFilter] = useState("");
+	const [selectedOnly, setSelectedOnly] = useState(false);
+	const [scanLimit, setScanLimit] = useState(INITIAL_SCAN_LIMIT);
+	const scanLimitRef = useRef(INITIAL_SCAN_LIMIT);
+	const [hasMore, setHasMore] = useState<Record<string, boolean>>({});
 	const scanInFlight = useRef(false);
+	const pendingScanLimit = useRef<number | null>(null);
 	const importInFlight = useRef(false);
 	const scrollBody = useRef<HTMLDivElement>(null);
 	const pickerRef = useRef<HTMLDivElement>(null);
@@ -91,29 +103,42 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const [sourceQuery, setSourceQuery] = useState("");
 	const [highlightedSource, setHighlightedSource] = useState("");
 
-	const scan = useCallback(async () => {
-		if (scanInFlight.current) return;
+	const scan = useCallback(async (limit = scanLimitRef.current) => {
+		// Keep changes received during a scan: its response may predate a deletion or archive change.
+		scanLimitRef.current = Math.max(scanLimitRef.current, limit);
+		if (scanInFlight.current) {
+			pendingScanLimit.current = scanLimitRef.current;
+			return;
+		}
 		scanInFlight.current = true;
 		setScanning(true);
 		setFailure(null);
 		try {
-			const response = await fetch("/api/sessions/import");
-			const json = await response.json();
-			if (!response.ok || !json.success) {
-				setFailure(json.error || t.toastError);
-				return;
-			}
-			const nextSummaries: Summary[] = json.data.sessions ?? [];
-			const nextImported = new Set<string>(json.data.imported ?? []);
-			const nextArchived = new Set<string>(json.data.archived ?? []);
-			setSummaries(nextSummaries);
-			setErrors(json.data.errors ?? []);
-			setImportedKeys(nextImported);
-			setArchivedKeys(nextArchived);
-			const available = new Set(nextSummaries.map((row) => `${row.source}:${row.externalId}`).filter((key) => !nextImported.has(key) || nextArchived.has(key)));
-			setSelected((previous) => new Set([...previous].filter((key) => available.has(key))));
-		} catch (error) {
-			setFailure(error instanceof Error ? error.message : String(error));
+			do {
+				limit = pendingScanLimit.current ?? scanLimitRef.current;
+				pendingScanLimit.current = null;
+				try {
+					const response = await fetch(limit === INITIAL_SCAN_LIMIT ? "/api/sessions/import" : `/api/sessions/import?limit=${limit}`);
+					const json = await response.json();
+					if (!response.ok || !json.success) {
+						setFailure(json.error || t.toastError);
+						continue;
+					}
+					const nextSummaries: Summary[] = json.data.sessions ?? [];
+					const nextImported = new Set<string>(json.data.imported ?? []);
+					const nextArchived = new Set<string>(json.data.archived ?? []);
+					setSummaries(nextSummaries);
+					setErrors(json.data.errors ?? []);
+					setImportedKeys(nextImported);
+					setArchivedKeys(nextArchived);
+					setScanLimit(limit);
+					setHasMore(json.data.hasMore ?? {});
+					const available = new Set(nextSummaries.map((row) => `${row.source}:${row.externalId}`).filter((key) => !nextImported.has(key) || nextArchived.has(key)));
+					setSelected((previous) => new Set([...previous].filter((key) => available.has(key))));
+				} catch (error) {
+					setFailure(error instanceof Error ? error.message : String(error));
+				}
+			} while (pendingScanLimit.current !== null);
 		} finally {
 			scanInFlight.current = false;
 			setScanning(false);
@@ -135,6 +160,18 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	useEffect(() => {
 		void scan();
 	}, [scan]);
+	useEffect(() => {
+		const refresh = () => void scan();
+		const visible = () => { if (document.visibilityState === "visible") refresh(); };
+		window.addEventListener(SESSION_CHANGE_EVENT, refresh);
+		window.addEventListener("focus", refresh);
+		document.addEventListener("visibilitychange", visible);
+		return () => {
+			window.removeEventListener(SESSION_CHANGE_EVENT, refresh);
+			window.removeEventListener("focus", refresh);
+			document.removeEventListener("visibilitychange", visible);
+		};
+	}, [scan]);
 
 	const key = (summary: Summary) => `${summary.source}:${summary.externalId}`;
 	const isImported = (summary: Summary) => importedKeys.has(key(summary)) && !archivedKeys.has(key(summary));
@@ -146,21 +183,21 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			if (list) list.push(summary);
 			else bySource.set(summary.source, [summary]);
 		}
-		return SOURCE_ORDER.map((source) => {
+		const sources = SOURCE_ORDER.map((source) => {
 			const rows = [...(bySource.get(source) ?? [])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
 			return { source, rows, imported: rows.filter((row) => importedKeys.has(key(row))).length };
 		});
+		return [{ source: "all", rows: [...summaries].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0)), imported: summaries.filter((row) => importedKeys.has(key(row))).length }, ...sources];
 	}, [summaries, importedKeys]);
 
 	/**
-	 * 一次只显示一个来源：六个工具各列 15 条就是 90 行，全铺出来既难找也没必要。
-	 * 默认落在第一个有会话的来源上（SOURCE_ORDER 的顺序），用户切换后不被扫描结果重置。
+	 * 默认落在第一个有会话的来源上，也可跨来源查找；重新扫描保留用户当前的来源。
 	 */
 	const [activeSource, setActiveSource] = useState("");
 	useEffect(() => {
 		if (scanning) return;
 		// 扫描完成的 effect 可能晚于用户点击；按执行时的最新选择决定是否回退。
-		setActiveSource((current) => groups.some((group) => group.source === current) ? current : (groups.find((group) => group.rows.length) ?? groups[0]).source);
+		setActiveSource((current) => groups.some((group) => group.source === current) ? current : (groups.find((group) => group.source !== "all" && group.rows.length) ?? groups[0]).source);
 	}, [groups, scanning]);
 	useEffect(() => {
 		if (!pickerOpen) return;
@@ -179,16 +216,42 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	}, [highlightedSource, pickerId, pickerOpen]);
 	const activeGroup = groups.find((group) => group.source === activeSource);
 	const search = query.trim().toLocaleLowerCase();
-	const visibleRows = (activeGroup?.rows ?? []).filter((row) => !search || [row.title, row.projectPath, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search)));
+	const projects = useMemo(() => {
+		const byProject = new Map<string, { value: string; path: string; count: number }>();
+		for (const row of activeGroup?.rows ?? []) {
+			const value = projectKey(row.projectPath);
+			const existing = byProject.get(value);
+			if (existing) existing.count += 1;
+			else byProject.set(value, { value, path: row.projectPath ?? "", count: 1 });
+		}
+		return [...byProject.values()].sort((left, right) => folderName(left.path).localeCompare(folderName(right.path)) || left.path.localeCompare(right.path));
+	}, [activeGroup]);
+	useEffect(() => {
+		if (!scanning && projectFilter && !projects.some((project) => project.value === projectFilter)) setProjectFilter("");
+	}, [scanning, projectFilter, projects]);
+	const visibleRows = (activeGroup?.rows ?? []).filter((row) =>
+		(!search || [row.title, row.projectPath, row.provider, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search))) &&
+		(!projectFilter || projectKey(row.projectPath) === projectFilter) &&
+		(!selectedOnly || selected.has(key(row))),
+	);
 	const availableRows = visibleRows.filter((row) => !isImported(row));
 	const selectedArchived = [...selected].filter((key) => archivedKeys.has(key)).length;
+	const hiddenSelected = selected.size - visibleRows.filter((row) => selected.has(key(row))).length;
+	const filtersActive = Boolean(search || projectFilter || selectedOnly);
+	const moreAvailable = activeSource === "all" ? Object.values(hasMore).some(Boolean) : Boolean(hasMore[activeSource]);
+	const scanFailed = errors.some((error) => activeSource === "all" || error.source === activeSource);
+	const clearFilters = () => { setQuery(""); setProjectFilter(""); setSelectedOnly(false); };
+	const reviewSelected = () => { setActiveSource("all"); setQuery(""); setProjectFilter(""); setSelectedOnly(true); };
+	useEffect(() => {
+		if (!selected.size) setSelectedOnly(false);
+	}, [selected.size]);
 
 	const toggle = (summary: Summary) => {
 		if (isImported(summary) || importInFlight.current || scanInFlight.current) return;
 		setSelected((previous) => {
 			const next = new Set(previous);
 			if (next.has(key(summary))) next.delete(key(summary));
-			else next.add(key(summary));
+			else if (next.size < MAX_IMPORT_SELECTION) next.add(key(summary));
 			return next;
 		});
 	};
@@ -199,8 +262,9 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			const next = new Set(previous);
 			for (const row of rows) {
 				if (isImported(row)) continue;
-				if (checked) next.add(key(row));
-				else next.delete(key(row));
+				if (checked) {
+					if (next.size < MAX_IMPORT_SELECTION) next.add(key(row));
+				} else next.delete(key(row));
 			}
 			return next;
 		});
@@ -228,7 +292,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			setReport(json.data as ImportReport);
 			if (scrollBody.current) scrollBody.current.scrollTop = 0;
 			setSelected(new Set());
-			await scan(); // 重新扫描：已经导过的行马上变成"已导入"
+			notifySessionsChanged(); // 导入状态与其它打开的会话视图一起刷新
 		} catch (error) {
 			setFailure(error instanceof Error ? error.message : String(error));
 		} finally {
@@ -239,6 +303,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 	const sourceLabel = (source: string) => {
 		const labels: Record<string, string> = {
+			all: t.importSourceAll,
 			claude: t.importSourceClaude,
 			codex: t.importSourceCodex,
 			grok: t.importSourceGrok,
@@ -254,6 +319,8 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const highlighted = filteredSources.find((group) => group.source === highlightedSource) ?? filteredSources[0];
 	const chooseSource = (source: string) => {
 		setActiveSource(source);
+		setProjectFilter("");
+		setSelectedOnly(false);
 		setPickerOpen(false);
 		pickerTrigger.current?.focus();
 	};
@@ -303,7 +370,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 						<span>{scanning ? t.importScanning : t.importRescan}</span>
 					</button>
 				</div>
-				<p className={styles.hint} data-testid="import-limit-hint">{t.importLimitHint.replace("{n}", String(SCAN_LIMIT))}</p>
+				<p className={styles.hint} data-testid="import-limit-hint">{t.importLimitHint.replace("{n}", String(scanLimit))}</p>
 
 				{failure && <div role="alert" className={styles.error}>{failure}</div>}
 				{errors.map((error) => (
@@ -325,8 +392,8 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							<button type="button" ref={pickerTrigger} className={styles.sourceTrigger} data-open={pickerOpen} data-testid="import-source-picker" aria-label={t.importPickSource} aria-haspopup="listbox" aria-expanded={pickerOpen} aria-controls={pickerOpen ? pickerId : undefined} disabled={importing || scanning} onClick={() => pickerOpen ? setPickerOpen(false) : openPicker()} onKeyDown={(event) => {
 								if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openPicker(); }
 							}}>
-								<ProviderBrand id={brandId(activeSource)} name={sourceLabel(activeSource)} size={30} />
-								<span className={styles.sourceText}><strong>{sourceLabel(activeSource)}</strong><span>{activeSource} · {t.importSourceCount.replace("{n}", String(activeGroup?.rows.length ?? 0))}</span></span>
+								{activeSource === "all" ? <IconDownloadOutline16 size={26} /> : <ProviderBrand id={brandId(activeSource)} name={sourceLabel(activeSource)} size={30} />}
+								<span className={styles.sourceText}><strong>{sourceLabel(activeSource)}</strong><span>{activeSource !== "all" && `${activeSource} · `}{t.importSourceCount.replace("{n}", String(activeGroup?.rows.length ?? 0))}</span></span>
 								<IconChevronDown14 size={15} />
 							</button>
 							{pickerOpen && <div className={styles.sourceMenu}>
@@ -345,8 +412,8 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 									{filteredSources.map((group) => {
 										const count = group.rows.filter((row) => selected.has(key(row))).length;
 										return <button key={group.source} type="button" id={`${pickerId}-${group.source}`} role="option" aria-selected={group.source === activeSource} tabIndex={-1} className={styles.sourceOption} data-highlighted={group.source === highlighted?.source} data-testid={"import-source-" + group.source} onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSource(group.source)}>
-											<ProviderBrand id={brandId(group.source)} name={sourceLabel(group.source)} size={28} />
-											<span className={styles.sourceText}><strong>{sourceLabel(group.source)}</strong><span>{group.source} · {errors.some((error) => error.source === group.source) ? t.importSourceScanFailed : t.importSourceCount.replace("{n}", String(group.rows.length))}</span></span>
+											{group.source === "all" ? <IconDownloadOutline16 size={24} /> : <ProviderBrand id={brandId(group.source)} name={sourceLabel(group.source)} size={28} />}
+											<span className={styles.sourceText}><strong>{sourceLabel(group.source)}</strong><span>{group.source !== "all" && `${group.source} · `}{errors.some((error) => error.source === group.source) ? t.importSourceScanFailed : t.importSourceCount.replace("{n}", String(group.rows.length))}</span></span>
 											{count > 0 && <span className={styles.sourceSelected}>{t.importSourceSelected.replace("{n}", String(count))}</span>}
 											{group.source === activeSource && <IconCheckOutline14 size={15} className={styles.sourceCheck} />}
 										</button>;
@@ -364,20 +431,25 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 							<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.importSearch} aria-label={t.importSearch} disabled={importing} />
 							{query && <button type="button" aria-label={t.importClearSearch} title={t.importClearSearch} onClick={() => setQuery("")} disabled={importing}><IconCloseOutline14 size={12} /></button>}
 						</div>
+						<div className={styles.filters}>
+							<ImportProjectPicker value={projectFilter} onChange={setProjectFilter} projects={projects} disabled={importing || scanning} />
+						</div>
+						{selectedOnly && <div className={styles.reviewMode}><span>{t.importSelectedSessions} · {selected.size}</span><button type="button" onClick={clearFilters} disabled={importing || scanning}>{t.importBackToAll}</button></div>}
+						{moreAvailable && scanLimit < MAX_SCAN_LIMIT && <button type="button" className={styles.loadMore} onClick={() => void scan(Math.min(MAX_SCAN_LIMIT, scanLimit * 2))} disabled={importing || scanning} data-testid="import-load-more"><IconRefreshOutline14 className={scanning ? styles.spinning : undefined} size={12} />{scanning ? t.importScanning : t.importLoadEarlier}</button>}
 
 						{activeGroup && (
 							<div className={styles.group} data-testid={"import-group-" + activeGroup.source}>
 								<div className={styles.groupToolbar}>
-									<span>{t.importGroupCount.replace("{n}", String(activeGroup.rows.length)).replace("{imported}", String(activeGroup.imported))}</span>
-									<button type="button" onClick={() => selectGroup(visibleRows, true)} disabled={scanning || importing || !availableRows.some((row) => !selected.has(key(row)))}>
-										{search ? t.importSelectResults : t.importSelectAll}
+									<span>{filtersActive ? t.importFilteredCount.replace("{visible}", String(visibleRows.length)).replace("{total}", String(activeGroup.rows.length)) : t.importGroupCount.replace("{n}", String(activeGroup.rows.length)).replace("{imported}", String(activeGroup.imported))}</span>
+									<button type="button" onClick={() => selectGroup(visibleRows, true)} disabled={scanning || importing || selected.size >= MAX_IMPORT_SELECTION || !availableRows.some((row) => !selected.has(key(row)))}>
+										{filtersActive ? t.importSelectResults : t.importSelectAll}
 									</button>
-									<button type="button" onClick={() => selectGroup(visibleRows, false)} disabled={scanning || importing || !visibleRows.some((row) => selected.has(key(row)))}>{t.importSelectNone}</button>
+									<button type="button" onClick={() => selectGroup(visibleRows, false)} disabled={scanning || importing || !visibleRows.some((row) => selected.has(key(row)))}>{filtersActive ? t.importClearResults : t.importSelectNone}</button>
 								</div>
 								{!activeGroup.rows.length ? (
 									<div className={styles.empty} role="status"><IconFolderOpenOutline16 size={24} /><strong>{errors.some((error) => error.source === activeSource) ? t.importSourceScanFailed : t.importEmpty}</strong><p>{t.importEmptyHint}</p></div>
 								) : !visibleRows.length ? (
-									<div className={styles.empty} role="status"><IconSearchOutline16 size={24} /><strong>{t.importNoMatches}</strong><button type="button" onClick={() => setQuery("")}>{t.importClearSearch}</button></div>
+									<div className={styles.empty} role="status"><IconSearchOutline16 size={24} /><strong>{t.importNoMatches}</strong><button type="button" onClick={clearFilters}>{projectFilter || selectedOnly ? t.importClearFilters : t.importClearSearch}</button></div>
 								) : (
 									<div className={styles.rows}>
 										{visibleRows.map((row) => {
@@ -387,12 +459,13 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 											const date = dayOf(row.updatedAt ?? row.createdAt);
 											return (
 												<label key={key(row)} className={styles.row} data-selected={checked} data-imported={done}>
-													<input type="checkbox" checked={checked} disabled={done || scanning || importing} onChange={() => toggle(row)} />
+													<input type="checkbox" checked={checked} disabled={done || scanning || importing || (!checked && selected.size >= MAX_IMPORT_SELECTION)} onChange={() => toggle(row)} />
 													<div className={styles.rowContent}>
 														<div className={styles.rowTitle}><strong title={row.title}>{row.title || t.importUntitled}</strong>{done && <span className={styles.imported}><IconCheckOutline14 size={11} />{t.importAlready}</span>}{archived && <span className={styles.imported} title={t.importRestoreHint}>{t.importArchived}</span>}</div>
 														{archived && <p className={styles.restoreHint}>{t.importRestoreHint}</p>}
 														<div className={styles.project} title={row.projectPath}><IconFolderOpenOutline16 size={12} /><span>{row.projectPath ? folderName(row.projectPath) : t.importNoProject}</span></div>
 														<div className={styles.metadata}>
+															{activeSource === "all" && <span>{sourceLabel(row.source)}</span>}
 															{date && <time dateTime={new Date(row.updatedAt ?? row.createdAt!).toISOString()}>{date}</time>}
 															{typeof row.messageCount === "number" && <span>{t.importMessages.replace("{n}", String(row.messageCount))}</span>}
 															{row.model && <span title={row.model}>{row.model}</span>}
@@ -403,14 +476,11 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 										})}
 									</div>
 								)}
+								{activeGroup.rows.length > 0 && !scanning && !scanFailed && <p className={styles.scanStatus}>{moreAvailable ? scanLimit >= MAX_SCAN_LIMIT ? t.importScanLimitReached.replace("{n}", String(MAX_SCAN_LIMIT)) : t.importLimitHint.replace("{n}", String(scanLimit)) : t.importScanComplete}</p>}
 							</div>
 						)}
 					</>
 				)}
-				<details className={styles.help}><summary>{t.importHowItWorks}<IconChevronDown14 size={12} /></summary><p>{t.importDesc}</p></details>
-			</div>
-
-			<footer className={styles.footer}>
 				<details className={styles.destination}>
 					<summary><IconFolderOpenOutline16 size={14} /><span>{t.importWhereGoes}<small>{t.importOriginalFirst}</small></span><IconChevronDown14 size={12} /></summary>
 					<div className={styles.destinationOptions}>
@@ -422,15 +492,23 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 						<p>{t.importFallbackHint}</p>
 					</div>
 				</details>
-				<div className={styles.selection} aria-live="polite">
-					<span>{selected.size ? t.importSelectedCount.replace("{n}", String(selected.size)) : t.importSelectionHint}</span>
-					<button type="button" onClick={() => setSelected(new Set())} disabled={!selected.size || importing}>{t.importClearSelection}</button>
+				<details className={styles.help}><summary>{t.importHowItWorks}<IconChevronDown14 size={12} /></summary><p>{t.importDesc}</p></details>
+			</div>
+
+			{selected.size > 0 && <footer className={styles.footer}>
+				<div className={styles.selectionReview} aria-live="polite">
+					{hiddenSelected > 0 && <span>{t.importHiddenSelected.replace("{n}", String(hiddenSelected))}</span>}
+					<div className={styles.selectionActions}>
+						<button type="button" onClick={reviewSelected} disabled={importing || scanning}>{t.importViewSelected}</button>
+						<button type="button" onClick={() => setSelected(new Set())} disabled={importing || scanning}>{t.importClearSelection}</button>
+					</div>
 				</div>
+				{selected.size >= MAX_IMPORT_SELECTION && <p className={styles.selectionLimit} role="status">{t.importSelectionLimit.replace("{n}", String(MAX_IMPORT_SELECTION))}</p>}
 				<button type="button" className={styles.run} onClick={() => void run()} disabled={!selected.size || importing || scanning} data-testid="import-run">
 					{importing ? <IconRefreshOutline14 className={styles.spinning} /> : <IconDownloadOutline16 size={16} />}
 					{importing ? t.importRunning : (selectedArchived ? selectedArchived === selected.size ? t.importRestoreRun : t.importMixedRun : t.importRun).replace("{n}", String(selected.size))}
 				</button>
-			</footer>
+			</footer>}
 		</section>
 	);
 }

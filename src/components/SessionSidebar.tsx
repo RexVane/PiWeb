@@ -23,6 +23,8 @@ import {
 	IconNewChatOutline16,
 	IconPanelLeftOutline16,
 	IconPersonalizationOutline16,
+	IconPinFill16,
+	IconPinOutline16,
 	IconPlusOutline16,
 	IconProjectAddOutline16,
 	IconSearchOutline16,
@@ -75,6 +77,7 @@ function SessionSidebarImpl({
 	onRetrySessionList,
 	archivedSessions = [],
 	archivedPaths = [],
+	pinnedPaths = [],
 	addedWorkspaces,
 	removedWorkspaces = [],
 	currentPath,
@@ -91,6 +94,9 @@ function SessionSidebarImpl({
 	onFork,
 	onArchive,
 	onUnarchive,
+	onPin,
+	onUnpin,
+	onDelete,
 	onExport,
 	getWorkspaceName,
 	onRenameWorkspace,
@@ -105,6 +111,8 @@ function SessionSidebarImpl({
 	archivedSessions?: SessionListItem[];
 	/** 原始归档路径（含被豁免的当前会话：dsh 合同下主列表可见但菜单显示取消归档） */
 	archivedPaths?: string[];
+	/** 置顶会话路径列表 */
+	pinnedPaths?: string[];
 	addedWorkspaces: string[];
 	removedWorkspaces?: string[];
 	currentPath: string | null;
@@ -121,6 +129,10 @@ function SessionSidebarImpl({
 	onFork?: (path: string, cwd: string) => void;
 	onArchive?: (path: string) => void;
 	onUnarchive?: (path: string) => void;
+	onPin?: (path: string) => void | Promise<void>;
+	onUnpin?: (path: string) => void | Promise<void>;
+	/** 物理删除会话文件；失败时抛出，确认框里显示错误 */
+	onDelete?: (path: string) => Promise<void>;
 	/** 下载会话日志（JSONL 导出，经 AppShell 统一编码会话 id） */
 	onExport?: (path: string) => void;
 	getWorkspaceName?: (cwd: string) => string;
@@ -156,6 +168,9 @@ function SessionSidebarImpl({
 	const [deleteWorkspacePending, setDeleteWorkspacePending] = useState(false);
 	const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
 	const [mounted, setMounted] = useState(false);
+	const [deleteSessionTarget, setDeleteSessionTarget] = useState<{ path: string; name: string } | null>(null);
+	const [deleteSessionPending, setDeleteSessionPending] = useState(false);
+	const [deleteSessionError, setDeleteSessionError] = useState<string | null>(null);
 	const renameWorkspaceConflict = renameTarget?.type === "workspace"
 		&& renameValue.trim().length > 0
 		&& addedWorkspaces.some((cwd) => (
@@ -231,6 +246,30 @@ function SessionSidebarImpl({
 		}
 	};
 
+	const handleConfirmDeleteSession = async () => {
+		if (!deleteSessionTarget || deleteSessionPending) return;
+		const targetPath = deleteSessionTarget.path;
+		setDeleteSessionPending(true);
+		setDeleteSessionError(null);
+		try {
+			await onDelete?.(targetPath);
+			setDeleteSessionTarget(null);
+		} catch (error) {
+			setDeleteSessionError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setDeleteSessionPending(false);
+		}
+	};
+
+	const toggleSessionPin = async (path: string, pinned: boolean) => {
+		try {
+			if (pinned) await onUnpin?.(path);
+			else await onPin?.(path);
+		} catch {
+			// usePiWeb exposes the request failure in the shared error banner.
+		}
+	};
+
 	// 路径一律按 normPath 比：注册表里的工作区经过 path.resolve，会话头里的 cwd 是原样记下的，
 	// Windows 上盘符大小写、分隔符、尾斜杠都可能不同
 	const currentKey = currentPath ? normPath(currentPath) : "";
@@ -281,9 +320,18 @@ function SessionSidebarImpl({
 			}
 		}
 
+		const isItemPinned = (p: string) => pinnedPaths.some((pinned) => normPath(pinned) === normPath(p));
+		const sortSessions = (list: SessionListItem[]) =>
+			[...list].sort((a, b) => {
+				const pinA = isItemPinned(a.path) ? 1 : 0;
+				const pinB = isItemPinned(b.path) ? 1 : 0;
+				if (pinA !== pinB) return pinB - pinA;
+				return b.modified.localeCompare(a.modified);
+			});
+
 		const groups: WorkspaceGroup[] = Array.from(map.values()).map(({ cwd, sessions: list }) => ({
 			cwd,
-			sessions: [...list].sort((a, b) => b.modified.localeCompare(a.modified)),
+			sessions: sortSessions(list),
 			lastModified: list.reduce((acc, s) => (s.modified > acc ? s.modified : acc), ""),
 		}));
 
@@ -297,13 +345,13 @@ function SessionSidebarImpl({
 		if (ungroupedList.length > 0) {
 			ungrouped = {
 				cwd: "__ungrouped__",
-				sessions: [...ungroupedList].sort((a, b) => b.modified.localeCompare(a.modified)),
+				sessions: sortSessions(ungroupedList),
 				lastModified: ungroupedList.reduce((acc, s) => (s.modified > acc ? s.modified : acc), ""),
 			};
 		}
 
 		return { workspaceGroups: groups, ungroupedGroup: ungrouped };
-	}, [sessions, addedWorkspaces, removedWorkspaces, orderBy]);
+	}, [sessions, addedWorkspaces, removedWorkspaces, orderBy, pinnedPaths]);
 
 	// 工作区展开状态持久化：刷新后保持收起/展开，不被自动展开逻辑覆盖
 	const [openSet, setOpenSet] = useState<Set<string>>(() => {
@@ -366,11 +414,17 @@ function SessionSidebarImpl({
 	}, [draftCwd, workspaceGroups]);
 
 	const flatSessions = useMemo(() => {
+		const isItemPinned = (p: string) => pinnedPaths.some((pinned) => normPath(pinned) === normPath(p));
 		const list = [...sessions];
-		if (orderBy === "updated") list.sort((a, b) => b.modified.localeCompare(a.modified));
-		else list.sort((a, b) => a.created.localeCompare(b.created));
+		list.sort((a, b) => {
+			const pinA = isItemPinned(a.path) ? 1 : 0;
+			const pinB = isItemPinned(b.path) ? 1 : 0;
+			if (pinA !== pinB) return pinB - pinA;
+			if (orderBy === "updated") return b.modified.localeCompare(a.modified);
+			return a.created.localeCompare(b.created);
+		});
 		return list;
-	}, [sessions, orderBy]);
+	}, [sessions, orderBy, pinnedPaths]);
 
 	const toggleOpen = (cwd: string) => {
 		setOpenSet((prev) => {
@@ -419,6 +473,7 @@ function SessionSidebarImpl({
 		const selected = !!currentKey && normPath(s.path) === currentKey;
 		// dsh 合同：被归档的当前会话仍显示在主列表，菜单按真实归档态切换
 		const reallyArchived = archived || archivedPaths.some((p) => normPath(p) === normPath(s.path));
+		const pinned = !reallyArchived && pinnedPaths.some((p) => normPath(p) === normPath(s.path));
 		return (
 			<div
 				key={s.path}
@@ -448,13 +503,50 @@ function SessionSidebarImpl({
 						</span>
 					)}
 				</button>
+				{pinned && (
+					<span
+						className={`flex-none pl-1 text-zinc-400 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
+						title={t.pinned}
+					>
+						<IconPinFill16 size={12} />
+					</span>
+				)}
 				<span
 					className={`isx-menu-sub flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
 					style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}
 				>
 					{relTime(s.modified, lang)}
 				</span>
-				<span className={`flex-none items-center pl-1 ${sessionMenu === s.path ? "flex" : "hidden group-hover:flex group-focus-within:flex"}`}>
+				<span className={`flex-none items-center gap-0.5 pl-1 ${sessionMenu === s.path ? "flex" : "hidden group-hover:flex group-focus-within:flex"}`}>
+					<button
+						className="icon-btn"
+						style={{ width: 22, height: 22 }}
+						title={reallyArchived ? t.unarchiveSession : `${t.archiveSession} · ${t.archiveRetentionHint}`}
+						aria-label={reallyArchived ? t.unarchiveSession : t.archiveSession}
+						onClick={(e) => {
+							e.stopPropagation();
+							setSessionMenu(null);
+							if (reallyArchived) onUnarchive?.(s.path);
+							else onArchive?.(s.path);
+						}}
+					>
+						<IconArchiveOutline20 size={14} />
+					</button>
+					{!reallyArchived && (
+						<button
+							className={`icon-btn ${pinned ? "rounded-full bg-white/10 text-white" : ""}`}
+							style={{ width: 22, height: 22 }}
+							title={pinned ? t.unpinSession : t.pinSession}
+							aria-label={pinned ? t.unpinSession : t.pinSession}
+							onClick={(e) => {
+								e.stopPropagation();
+								setSessionMenu(null);
+								void toggleSessionPin(s.path, pinned);
+							}}
+						>
+							{pinned ? <IconPinFill16 size={13} /> : <IconPinOutline16 size={13} />}
+						</button>
+					)}
 					<button
 						className="icon-btn"
 						style={{ width: 22, height: 22 }}
@@ -485,6 +577,17 @@ function SessionSidebarImpl({
 								});
 							}}
 						/>
+						{!reallyArchived && (
+							<MenuItem
+								icon={pinned ? <IconPinOutline16 size={14} /> : <IconPinFill16 size={14} />}
+								label={pinned ? t.unpinSession : t.pinSession}
+								onClick={(e) => {
+									e.stopPropagation();
+									setSessionMenu(null);
+									void toggleSessionPin(s.path, pinned);
+								}}
+							/>
+						)}
 						<MenuItem
 							icon={<IconDownloadOutline16 size={14} />}
 							label={t.cmdExport}
@@ -504,14 +607,17 @@ function SessionSidebarImpl({
 							}}
 						/>
 						<MenuItem
-							icon={<IconArchiveOutline20 size={14} />}
-							label={reallyArchived ? t.unarchiveSession : t.archiveSession}
-							title={reallyArchived ? undefined : t.archiveRetentionHint}
+							icon={<IconTrashOutline16 size={14} />}
+							label={t.deleteSession}
+							danger
 							onClick={(e) => {
 								e.stopPropagation();
 								setSessionMenu(null);
-								if (reallyArchived) onUnarchive?.(s.path);
-								else onArchive?.(s.path);
+								setDeleteSessionError(null);
+								setDeleteSessionTarget({
+									path: s.path,
+									name: s.name || s.firstMessage || "(untitled)",
+								});
 							}}
 						/>
 					</div>
@@ -970,6 +1076,63 @@ function SessionSidebarImpl({
 								className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black hover:bg-zinc-200 transition"
 							>
 								{t.rename}
+							</button>
+						</div>
+					</div>
+				</div>,
+				document.body
+			)}
+
+			{/* 删除会话确认弹窗（样式同删除工作区；物理删除，不可恢复） */}
+			{mounted && deleteSessionTarget && createPortal(
+				<div
+					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+					onClick={() => !deleteSessionPending && setDeleteSessionTarget(null)}
+				>
+					<div
+						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
+						onClick={(e) => e.stopPropagation()}
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="delete-session-dialog-title"
+					>
+						<button
+							type="button"
+							onClick={() => setDeleteSessionTarget(null)}
+							disabled={deleteSessionPending}
+							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
+							aria-label={t.close}
+						>
+							<IconCloseOutline14 size={16} />
+						</button>
+						<h3 id="delete-session-dialog-title" className="text-lg font-medium text-white pr-8">
+							{t.deleteSession}
+						</h3>
+						<p className="mt-3 text-[14.5px] leading-relaxed text-zinc-300">
+							{t.deleteSessionConfirm.replace("{name}", deleteSessionTarget.name)}
+						</p>
+						{deleteSessionPending && (
+							<p className="mt-4 text-sm text-zinc-400" role="status">{t.deleteSessionPending}</p>
+						)}
+						{deleteSessionError && (
+							<p className="mt-4 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{deleteSessionError}</p>
+						)}
+						<div className="mt-6 flex items-center justify-end gap-3">
+							<button
+								type="button"
+								onClick={() => setDeleteSessionTarget(null)}
+								disabled={deleteSessionPending}
+								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 transition hover:border-white/25 hover:bg-[#383838]"
+							>
+								{t.cancel}
+							</button>
+							<button
+								type="button"
+								onClick={() => void handleConfirmDeleteSession()}
+								disabled={deleteSessionPending}
+								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] transition hover:border-[#f87171]/40 hover:bg-[#383838] hover:text-[#ef4444]"
+							>
+								{t.deleteSession}
 							</button>
 						</div>
 					</div>

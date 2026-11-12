@@ -80,4 +80,15 @@ describe("drawer panel", () => {
 		expect(tabs.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(screen.getByText("import-body")).toBeTruthy();
 	});
+
+	it("offers the session branches panel between Git and import", () => {
+		render(<Harness initial="git" />);
+		fireEvent.keyDown(screen.getByTestId("drawer-entry-git"), { key: "ArrowRight" });
+		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-tree"));
+		expect(screen.getByTestId("session-tree-panel")).toBeTruthy();
+		// 没有打开会话时给一句说明，不去请求
+		expect(screen.getByText("打开一个会话后，这里显示它的分支。")).toBeTruthy();
+		fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-import"));
+	});
 });

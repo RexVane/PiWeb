@@ -19,8 +19,9 @@ function deferred<T = void>() {
 function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string, unknown> = {}) {
 	// 假会话也要带工具 API：applyToolPolicy 会读 getAllTools / getActiveToolNames 并写回激活集，
 	// 缺了就会抛「session.getAllTools is not a function」或误判「cannot disable all tools」
-	const tools = [{ name: "read" }, { name: "bash" }, { name: "edit" }];
+	const tools = ["read", "bash", "edit"].map((name) => ({ name, execute: vi.fn(async () => ({ content: [] })) }));
 	const session = {
+		agent: { state: { tools } },
 		prompt: vi.fn(prompt),
 		isStreaming: false,
 		isIdle: true,
@@ -249,9 +250,8 @@ describe("prompt acceptance boundary", () => {
 		}
 	});
 
-	it("allows tool changes while the agent is running so they apply to the next turn", async () => {
-		// 用户要求工具启用能立即生效（含模型运行过程中）：SDK 的 setActiveToolsByName 不做 busy
-		// 检查、改完重建系统提示词，下一轮生效，所以 PiWeb 不再自行拦一层。
+	it("accepts permission changes while running, accepting a prompt or reloading resources", async () => {
+		// 请求立即受理；真实执行策略和后续请求声明由 SDK 集成用例另行验证。
 		const { m } = fixture(async () => {});
 		for (const field of ["promptSubmitting", "runActive", "resourceReloading"] as const) {
 			m[field] = true;

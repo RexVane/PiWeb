@@ -7,43 +7,71 @@ export interface MermaidImage {
 }
 
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
-const config: MermaidConfig = {
-	startOnLoad: false,
-	securityLevel: "strict",
-	suppressErrorRendering: true,
-	htmlLabels: false,
-	maxTextSize: 50_000,
-	maxEdges: 500,
-	theme: "base",
-	look: "classic",
-	layout: "dagre",
-	fontFamily: FONT,
-	altFontFamily: FONT,
-	themeVariables: {
+
+function isDarkTheme(): boolean {
+	if (typeof document === "undefined") return true;
+	return document.documentElement.hasAttribute("data-ds-dark-theme") || Boolean(document.body?.hasAttribute("data-ds-dark-theme"));
+}
+
+function buildMermaidConfig(dark: boolean): MermaidConfig {
+	const cfg: MermaidConfig = {
+		startOnLoad: false,
+		securityLevel: "strict",
+		suppressErrorRendering: true,
+		htmlLabels: false,
+		maxTextSize: 50_000,
+		maxEdges: 500,
+		theme: "base",
+		look: "classic",
+		layout: "dagre",
 		fontFamily: FONT,
-		fontSize: "16px",
-		primaryColor: "#e7f2ff",
-		primaryTextColor: "#25486c",
-		primaryBorderColor: "#cbd5df",
-		secondaryColor: "#eaf4f8",
-		tertiaryColor: "#eef5ee",
-		lineColor: "#8493a8",
-		textColor: "#25486c",
-		mainBkg: "#e7f2ff",
-		nodeBorder: "#cbd5df",
-		clusterBkg: "#f8fafc",
-		clusterBorder: "#d9e1eb",
-		edgeLabelBackground: "#ffffff",
-		background: "#ffffff",
-	},
-	flowchart: { htmlLabels: false, useMaxWidth: false, curve: "basis", padding: 18, nodeSpacing: 40, rankSpacing: 58 },
-	sequence: { useMaxWidth: false },
-	themeCSS: ".node rect { rx: 12px; ry: 12px; } .cluster rect { rx: 16px; ry: 16px; } .flowchart-link { stroke-width: 1.25px; } .edgeLabel { font-size: 14px; }",
-};
-// Diagram directives/frontmatter must never relax the site security or load remote assets.
-config.secure = [...Object.keys(config), "secure", "dompurifyConfig"];
+		altFontFamily: FONT,
+		themeVariables: dark
+			? {
+				fontFamily: FONT,
+				fontSize: "14px",
+				primaryColor: "#1b2838",
+				primaryTextColor: "#e2e8f0",
+				primaryBorderColor: "#3b4f6b",
+				secondaryColor: "#1e293b",
+				tertiaryColor: "#172033",
+				lineColor: "#64748b",
+				textColor: "#e2e8f0",
+				mainBkg: "#1b2838",
+				nodeBorder: "#3b4f6b",
+				clusterBkg: "#111827",
+				clusterBorder: "#283548",
+				edgeLabelBackground: "#161f2e",
+				background: "transparent",
+			}
+			: {
+				fontFamily: FONT,
+				fontSize: "14px",
+				primaryColor: "#eff6ff",
+				primaryTextColor: "#1e293b",
+				primaryBorderColor: "#93c5fd",
+				secondaryColor: "#f1f5f9",
+				tertiaryColor: "#f8fafc",
+				lineColor: "#64748b",
+				textColor: "#1e293b",
+				mainBkg: "#eff6ff",
+				nodeBorder: "#93c5fd",
+				clusterBkg: "#f8fafc",
+				clusterBorder: "#cbd5e1",
+				edgeLabelBackground: "#ffffff",
+				background: "transparent",
+			},
+		flowchart: { htmlLabels: false, useMaxWidth: false, curve: "basis", padding: 14, nodeSpacing: 34, rankSpacing: 44 },
+		sequence: { useMaxWidth: false },
+		themeCSS: ".node rect { rx: 10px; ry: 10px; } .cluster rect { rx: 14px; ry: 14px; } .flowchart-link { stroke-width: 1.35px; } .edgeLabel { font-size: 13px; }",
+	};
+	// Diagram directives/frontmatter must never relax the site security or load remote assets.
+	cfg.secure = [...Object.keys(cfg), "secure", "dompurifyConfig"];
+	return cfg;
+}
 
 let mermaidPromise: Promise<typeof import("mermaid")["default"]> | undefined;
+let lastThemeDark: boolean | undefined;
 let nextId = 0;
 
 /** Strict Mermaid still loads image nodes before sanitizing its final SVG. Check before import/render. */
@@ -94,17 +122,23 @@ export function sanitizeMermaidSvg(input: string): MermaidImage {
 	root.setAttribute("xmlns", "http://www.w3.org/2000/svg");
 	root.setAttribute("width", String(Math.ceil(width)));
 	root.setAttribute("height", String(Math.ceil(height)));
-	root.setAttribute("style", `background:#ffffff;font-family:${FONT}`);
+	root.setAttribute("style", `background:transparent;font-family:${FONT}`);
 	return { svg: new XMLSerializer().serializeToString(root), width: Math.ceil(width), height: Math.ceil(height) };
 }
 
 export async function renderMermaid(source: string): Promise<MermaidImage> {
 	assertStaticMermaid(source);
+	const dark = isDarkTheme();
 	mermaidPromise ??= import("mermaid").then(({ default: mermaid }) => {
-		mermaid.initialize(config);
+		lastThemeDark = dark;
+		mermaid.initialize(buildMermaidConfig(dark));
 		return mermaid;
 	}).catch((error: unknown) => { mermaidPromise = undefined; throw error; });
 	const mermaid = await mermaidPromise;
+	if (lastThemeDark !== dark) {
+		lastThemeDark = dark;
+		mermaid.initialize(buildMermaidConfig(dark));
+	}
 	await document.fonts?.ready;
 	const container = document.createElement("div");
 	container.setAttribute("aria-hidden", "true");

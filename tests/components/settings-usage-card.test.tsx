@@ -35,7 +35,7 @@ function setup(usagePayload: unknown, providerId = "deepseek", providerName = "D
 		throw new Error(`unexpected URL ${url}`);
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	render(<SettingsPanel open cwd="/test-workspace" toolPreset="standard" onClose={vi.fn()} onToolPresetChange={vi.fn()} />);
+	render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
 	fireEvent.click(screen.getByRole("button", { name: "模型" }));
 	return fetchMock;
 }

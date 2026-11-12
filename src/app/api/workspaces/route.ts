@@ -3,12 +3,15 @@ import {
 	addWorkspace,
 	archiveSession,
 	forgetSession,
+	getPinnedSessions,
 	getRemovedWorkspaces,
 	getWorkspaceRegistry,
 	pickFolderNative,
+	pinSession,
 	registerCwds,
 	removeWorkspace,
 	setAlias,
+	unpinSession,
 } from "@/lib/workspace-store";
 import { encodeSessionId } from "@/lib/pi";
 import { disposeSessionPath } from "@/lib/agent-manager";
@@ -39,7 +42,16 @@ export async function GET() {
 export async function POST(req: Request) {
 	try {
 		const body = (await req.json()) as {
-			action: "add" | "remove" | "pick" | "rename" | "archiveSession" | "forgetSession" | "registerCwds";
+			action:
+				| "add"
+				| "remove"
+				| "pick"
+				| "rename"
+				| "archiveSession"
+				| "forgetSession"
+				| "registerCwds"
+				| "pinSession"
+				| "unpinSession";
 			path?: string;
 			name?: string;
 			cwds?: string[];
@@ -87,6 +99,18 @@ export async function POST(req: Request) {
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const archivedSessions = await forgetSession(sessionPath);
 			return NextResponse.json({ success: true, data: { archivedSessions } });
+		}
+		if (body.action === "pinSession") {
+			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
+			const pinnedSessions = await pinSession(sessionPath);
+			return NextResponse.json({ success: true, data: { pinnedSessions } });
+		}
+		if (body.action === "unpinSession") {
+			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
+			const pinnedSessions = await unpinSession(sessionPath);
+			return NextResponse.json({ success: true, data: { pinnedSessions } });
 		}
 		if (body.action === "registerCwds") {
 			if (!Array.isArray(body.cwds)) return NextResponse.json({ success: false, error: "missing cwds" }, { status: 400 });

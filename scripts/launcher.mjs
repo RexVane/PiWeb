@@ -22,6 +22,7 @@ const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * @property {{log?: (message: string) => void, probePort?: typeof probePort,
  * isPiWebRunning?: typeof isPiWebRunning, openBrowser?: (url: string) => Promise<void>,
  * warmFirstPaint?: typeof warmFirstPaint, readLaunchToken?: typeof readLaunchToken,
+ * readHttpProxySetting?: typeof readHttpProxySetting, warn?: (message: string) => void,
  * spawn?: (command: string, args: string[], options: import('node:child_process').SpawnOptions) => LauncherChild}} [dependencies]
  */
 
@@ -70,27 +71,97 @@ export function tokenLoginUrl(base, token) {
 	return `${String(base).replace(/\/+$/, "")}/?token=${encodeURIComponent(token)}`;
 }
 
+/** agent 目录：`PI_CODING_AGENT_DIR`（支持 `~`），否则 `~/.pi/agent`；规则与 src/lib/web-secret.ts 一致 */
+function agentDirOf(env) {
+	const raw = env.PI_CODING_AGENT_DIR;
+	const home = os.homedir();
+	return !raw ? path.join(home, ".pi", "agent")
+		: raw === "~" ? home
+		: raw.startsWith("~/") || raw.startsWith("~\\") ? path.join(home, raw.slice(2))
+		: raw;
+}
+
 /**
  * 读某个端口上正在运行的实例留下的启动令牌（服务端 publishLaunchToken 写的，
- * 位置是 `<agentDir>/web-launch/<端口>.token`，agentDir 规则与 src/lib/web-secret.ts 一致）。
+ * 位置是 `<agentDir>/web-launch/<端口>.token`）。
  * 没有、读不了、内容不像令牌都返回 null —— 调用方退回打开裸地址。
  * @param {number} port
  * @param {Environment} [env]
  * @returns {string | null}
  */
 export function readLaunchToken(port, env = process.env) {
-	const raw = env.PI_CODING_AGENT_DIR;
-	const home = os.homedir();
-	const dir = !raw ? path.join(home, ".pi", "agent")
-		: raw === "~" ? home
-		: raw.startsWith("~/") || raw.startsWith("~\\") ? path.join(home, raw.slice(2))
-		: raw;
 	try {
-		const token = fs.readFileSync(path.join(dir, "web-launch", `${port}.token`), "utf8").trim();
+		const token = fs.readFileSync(path.join(agentDirOf(env), "web-launch", `${port}.token`), "utf8").trim();
 		return /^[A-Za-z0-9_-]{16,}$/.test(token) ? token : null;
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * pi 的 `httpProxy` 设置（agent 目录的 settings.json）。读不到、写坏了、没设都返回 null。
+ * 按标准 JSON 读：这份文件由 pi 和 PiWeb 的设置面板写，两边写出来的都是标准 JSON。
+ * @param {Environment} [env]
+ * @returns {string | null}
+ */
+export function readHttpProxySetting(env = process.env) {
+	try {
+		const raw = JSON.parse(fs.readFileSync(path.join(agentDirOf(env), "settings.json"), "utf8").replace(/^\uFEFF/, ""));
+		const proxy = typeof raw?.httpProxy === "string" ? raw.httpProxy.trim() : "";
+		return proxy || null;
+	} catch {
+		return null;
+	}
+}
+
+/** Node 自带的环境变量代理（NODE_USE_ENV_PROXY）：24.0 起支持，22.x 从 22.21 起 */
+export function nodeSupportsEnvProxy(version = process.versions.node) {
+	const [major, minor] = String(version).split(".").map(Number);
+	return major >= 24 || (major === 22 && minor >= 21);
+}
+
+/** 日志里的代理地址：去掉账号密码 */
+function redactProxy(proxy) {
+	try {
+		const url = new URL(proxy);
+		if (url.username || url.password) {
+			url.username = "";
+			url.password = "";
+			return `${url.href.replace(/\/$/, "")}（已隐去账号）`;
+		}
+		return url.href.replace(/\/$/, "");
+	} catch {
+		return "（格式无法解析）";
+	}
+}
+
+/**
+ * 给服务进程配代理环境。pi 的 CLI 入口会做这两件事，而 PiWeb 走的是 SDK，得自己做，
+ * 否则在 pi 终端里配好的代理到了网页端对模型请求完全不生效：
+ *  1. `httpProxy` 设置补进 HTTP_PROXY / HTTPS_PROXY（环境里已经有的不动，与 pi 的 `??=` 一致）；
+ *  2. 让 Node 的 fetch / http 认这些变量（NODE_USE_ENV_PROXY）——默认它们是被忽略的。
+ * 本机地址默认不走代理（本地 llama.cpp / Ollama），用户自己设了 NO_PROXY 就照他的。
+ * @param {Environment} childEnv 就地修改
+ * @param {{proxySetting?: string | null, nodeVersion?: string}} [options]
+ * @returns {{proxy: string | null, source: 'env' | 'settings' | null, supported: boolean}}
+ */
+export function applyProxyEnv(childEnv, { proxySetting = null, nodeVersion = process.versions.node } = {}) {
+	// Windows 上环境变量不分大小写，但展开成普通对象后分：两种写法都要查，免得补出一个只差大小写的重复键
+	const current = (name) => String(childEnv[name] ?? childEnv[name.toLowerCase()] ?? "").trim();
+	const fromEnv = current("HTTPS_PROXY") || current("HTTP_PROXY");
+	if (proxySetting) {
+		if (!current("HTTP_PROXY")) childEnv.HTTP_PROXY = proxySetting;
+		if (!current("HTTPS_PROXY")) childEnv.HTTPS_PROXY = proxySetting;
+	}
+	const proxy = fromEnv || proxySetting || null;
+	if (!proxy) return { proxy: null, source: null, supported: true };
+	const supported = nodeSupportsEnvProxy(nodeVersion);
+	if (supported) {
+		// 用户自己表过态（哪怕是 0）就尊重
+		if (!String(childEnv.NODE_USE_ENV_PROXY ?? "").trim()) childEnv.NODE_USE_ENV_PROXY = "1";
+		if (childEnv.NO_PROXY === undefined && childEnv.no_proxy === undefined) childEnv.NO_PROXY = "localhost,127.0.0.1,::1";
+	}
+	return { proxy, source: fromEnv ? "env" : "settings", supported };
 }
 
 function mergeHostnames(current, hostname) {
@@ -374,6 +445,13 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	// 内置插件要转发回 PiWeb 自己的端口；端口可能被占而 +1，所以在这里给最终值。
 	plan.env.PIWEB_PORT = String(port);
 	log(`[piweb] 启动 ${url} (${plan.command} 模式)`);
+	// 代理：让 pi 的 httpProxy 设置 / HTTP(S)_PROXY 环境变量对模型请求生效（见 applyProxyEnv）
+	const proxy = applyProxyEnv(plan.env, { proxySetting: (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env) });
+	if (proxy.proxy) {
+		const from = proxy.source === "settings" ? "pi 设置 httpProxy" : "环境变量";
+		if (proxy.supported) log(`[piweb] 模型请求走代理 ${redactProxy(proxy.proxy)}（来自${from}）`);
+		else (dependencies.warn ?? console.warn)(`[piweb] 配了代理（来自${from}），但 Node ${process.versions.node} 不支持按环境变量走代理，模型请求仍是直连。请升级到 Node 24 或 22.21 以上。`);
+	}
 	const authOn = isTruthyFlag(plan.env.PI_WEB_AUTH);
 	if (authOn) log("[piweb] 已启用启动令牌认证");
 	if (!isLoopback(options.hostname)) {

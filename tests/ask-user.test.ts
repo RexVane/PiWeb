@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import { ASK_RESULT_PREFIX, ASK_USER_TIMEOUT_MS, formatOutcome, normalizeQuestions, parseAnswers, type AskQuestion } from "../src/lib/ask-user";
 import { createAskUserTool } from "../src/lib/ask-user-tool";
 import { createExtensionUiBridge } from "../src/lib/extension-ui";
@@ -54,6 +55,13 @@ describe("ask_user_question helpers", () => {
 });
 
 describe("ask_user_question tool", () => {
+	it("validates its TypeBox parameter schema through the installed SDK", () => {
+		const tool = createAskUserTool(vi.fn());
+		const call = { type: "toolCall" as const, id: "schema-check", name: tool.name, arguments: { questions: [{ ...DB, options: DB.options.map((option) => ({ ...option })) }] } };
+		expect(validateToolArguments(tool, call)).toEqual(call.arguments);
+		expect(() => validateToolArguments(tool, { ...call, arguments: { questions: [{ ...DB, options: [] }] } })).toThrow();
+	});
+
 	it("asks with normalized questions and returns the formatted outcome plus details", async () => {
 		const ask = vi.fn(async () => ({ status: "answered" as const, answers: [{ selected: ["SQLite"] }] }));
 		const tool = createAskUserTool(ask);

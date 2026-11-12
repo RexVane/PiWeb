@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { IconShieldOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { ExtensionDialog, PiWebNotice } from "@/hooks/usePiWeb";
+import type { WebExtensionWidget } from "@/lib/types";
 
 /** message 若全是 "key : value" 行（权限对话框的常见形态），解析成键值表渲染 */
 function parseKeyValueRows(message: string): { key: string; value: string }[] | null {
@@ -35,14 +36,16 @@ export function ExtensionDialogHost({
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const isPermission = /permission|approve|allow/i.test(dialog?.title ?? "");
 	const kvRows = useMemo(() => (dialog?.message ? parseKeyValueRows(dialog.message) : null), [dialog?.message, dialog?.id]);
+	const isEditor = dialog?.method === "editor";
 	useEffect(() => {
-		setText("");
+		// editor 的初始内容由扩展给（prefill），其余对话框每次从空开始
+		setText(dialog?.method === "editor" ? dialog.prefill ?? "" : "");
 		setIdx(0);
-	}, [dialog?.id]);
+	}, [dialog?.id, dialog?.method, dialog?.prefill]);
 	useEffect(() => {
 		if (!dialog) return;
 		const previous = document.activeElement;
-		if (dialog.method !== "input") dialogRef.current?.focus();
+		if (dialog.method !== "input" && dialog.method !== "editor") dialogRef.current?.focus();
 		return () => {
 			if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
 		};
@@ -71,7 +74,7 @@ export function ExtensionDialogHost({
 				}
 			}}
 		>
-			<div className="popover flex w-[min(92vw,480px)] flex-col gap-3 p-5" style={{ background: "var(--dsw-glass-modal)" }}>
+			<div className="popover flex flex-col gap-3 p-5" style={{ width: isEditor ? "min(92vw,640px)" : "min(92vw,480px)", background: "var(--dsw-glass-modal)" }}>
 				<div className="flex items-start gap-2.5">
 					{isPermission && (
 						<span className="flex-none flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "color-mix(in srgb, var(--dsw-warn) 15%, transparent)" }}>
@@ -135,6 +138,19 @@ export function ExtensionDialogHost({
 						style={{ fontSize: 13, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }}
 					/>
 				)}
+				{dialog.method === "editor" && (
+					<textarea
+						autoFocus
+						value={text}
+						onChange={(e) => setText(e.target.value)}
+						onKeyDown={(e) => {
+							// Ctrl/Cmd + Enter 提交：多行编辑里单独的 Enter 是换行
+							if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onAnswer(dialog.id, { value: text });
+						}}
+						className="rounded-xl px-3 py-2"
+						style={{ fontSize: 13, minHeight: 180, maxHeight: "52vh", fontFamily: "var(--font-mono)", lineHeight: 1.6, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)", resize: "vertical" }}
+					/>
+				)}
 				<div className="flex justify-end gap-2">
 					<button className="btn-outline" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { cancelled: true })}>{t.cancel}</button>
 					{dialog.method === "confirm" && (
@@ -143,8 +159,34 @@ export function ExtensionDialogHost({
 					{dialog.method === "input" && (
 						<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { value: text })}>{t.confirm}</button>
 					)}
+					{dialog.method === "editor" && (
+						<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { value: text })}>{t.confirm}</button>
+					)}
 				</div>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * 扩展 setWidget 的文字块（待办列表、计划进度之类）：对应 pi 终端输入框上方 / 下方的 widget。
+ * 只有字符串数组（组件工厂在 RPC 模式同样是忽略的），按 key 各占一块、等宽字体原样显示。
+ */
+export function ExtensionWidgets({ widgets, placement, className }: { widgets: Record<string, WebExtensionWidget>; placement: "aboveEditor" | "belowEditor"; className?: string }) {
+	const { t } = useI18n();
+	const entries = Object.entries(widgets).filter(([, widget]) => widget.placement === placement && widget.lines.length > 0);
+	if (!entries.length) return null;
+	return (
+		<div className={`mx-auto flex w-full flex-col gap-1${className ? ` ${className}` : ""}`} data-widget-placement={placement} aria-label={t.extensionWidget}>
+			{entries.map(([key, widget]) => (
+				<pre
+					key={key}
+					className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl px-3 py-2"
+					style={{ margin: 0, fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.5, color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }}
+				>
+					{widget.lines.join("\n")}
+				</pre>
+			))}
 		</div>
 	);
 }

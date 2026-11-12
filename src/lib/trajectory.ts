@@ -49,6 +49,64 @@ function clipText(value: string, maxChars: number): string {
 	return value.length <= maxChars ? value : `${value.slice(0, maxChars)}…`;
 }
 
+/**
+ * 扩展注入的消息（pi.sendMessage）。display: false 的对话里不显示，但模型照样收到，
+ * 轨迹记的是「模型收到了什么」，所以也记，标题上注明。
+ */
+function customEntry(m: { customType?: unknown; content?: unknown; display?: unknown }, ts: number): Omit<TrajEntry, "seq"> {
+	const type = typeof m.customType === "string" && m.customType ? m.customType : "extension";
+	return {
+		kind: "custom",
+		ts,
+		title: m.display === true ? type : `${type} (hidden)`,
+		detail: clipText(textOf(m.content), MESSAGE_TEXT_MAX_CHARS) || undefined,
+	};
+}
+
+/** 用户用 `!` 跑的命令；`!!`（excludeFromContext）的结果不进模型上下文，标题沿用输入时的写法 */
+function bashEntry(
+	m: { command?: unknown; output?: unknown; exitCode?: unknown; cancelled?: unknown; excludeFromContext?: unknown },
+	ts: number,
+	durationMs?: number,
+): Omit<TrajEntry, "seq"> {
+	const command = typeof m.command === "string" ? m.command : "";
+	const output = sanitizeToolOutput(typeof m.output === "string" ? m.output : "");
+	return {
+		kind: "bash",
+		ts,
+		title: `${m.excludeFromContext === true ? "!!" : "!"} ${command.replace(/\s+/g, " ").trim()}`.trim(),
+		detail: [command, clipText(output.text, TOOL_RESULT_MAX_CHARS)].filter(Boolean).join("\n\n---\n\n") || undefined,
+		argSummary: command.replace(/\s+/g, " ").trim().slice(0, 80) || undefined,
+		encodingLoss: output.encodingLoss || undefined,
+		// 被用户停掉的不算失败
+		isError: (typeof m.exitCode === "number" && m.exitCode !== 0 && m.cancelled !== true) || undefined,
+		...(durationMs === undefined ? {} : { timing: { durationMs } }),
+	};
+}
+
+/** 工具自己发起的嵌套调用（SDK 记在父调用结果上的 nestedCalls）→ 冷会话的 tool 条目；结果正文 SDK 没存 */
+function nestedCallEntries(nestedCalls: unknown, ts: number): Array<Omit<TrajEntry, "seq">> {
+	const calls = (nestedCalls as { calls?: unknown } | undefined)?.calls;
+	if (!Array.isArray(calls)) return [];
+	const out: Array<Omit<TrajEntry, "seq">> = [];
+	for (const call of calls) {
+		if (!call || typeof call !== "object" || typeof call.id !== "string" || typeof call.name !== "string") continue;
+		const durationMs = storedDuration(call.durationMs);
+		out.push({
+			kind: "tool",
+			ts,
+			toolName: call.name,
+			toolCallId: call.id,
+			title: call.name,
+			detail: [argsToDetail(call.arguments), typeof call.error === "string" ? call.error : ""].filter(Boolean).join("\n\n---\n\n") || undefined,
+			argSummary: summarizeArgs(call.arguments),
+			isError: call.status === "error" || undefined,
+			...(durationMs === undefined ? {} : { timing: { durationMs } }),
+		});
+	}
+	return out;
+}
+
 /** 参数对象 → 侧栏摘要（先把每个字符串值截短再挑可读字段；预计算一次存进条目） */
 function summarizeArgs(args: unknown): string {
 	if (!args || typeof args !== "object" || Array.isArray(args)) return "";
@@ -147,6 +205,14 @@ export class TrajLedger {
 		return out;
 	}
 
+	/**
+	 * 用户的 `!` 命令跑完：SDK 记这条消息时不发事件，由 PiWeb 自己的执行路径报上来。
+	 * 所以 onEvent 里不处理 bashExecution 消息，免得将来 SDK 补发事件时记成两条。
+	 */
+	recordBash(message: { command?: unknown; output?: unknown; exitCode?: unknown; cancelled?: unknown; excludeFromContext?: unknown }, startedAt: number, now = Date.now()): void {
+		this.push(bashEntry(message, startedAt, Math.max(0, now - startedAt)));
+	}
+
 	/** 事件到达时间（服务端计时基准） */
 	onEvent(evt: AgentSessionEvent, now = Date.now()): void {
 		switch (evt.type) {
@@ -157,6 +223,8 @@ export class TrajLedger {
 				const m: any = evt.message;
 				if (m?.role === "user") {
 					this.push({ kind: "user", ts: m.timestamp ?? now, detail: textOf(m.content) });
+				} else if (m?.role === "custom") {
+					this.push(customEntry(m, m.timestamp ?? now));
 				} else if (m?.role === "assistant") {
 					// 供应商已经返回响应头才会有这条事件；起点用 turn_start（没有就退回现在）
 					const t0 = this.turnStartedAt ?? now;
@@ -339,6 +407,10 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 			if (!m) continue;
 			if (m.role === "user") {
 				out.push({ seq: seq++, kind: "user", ts: tsOf(m.timestamp, raw.timestamp), detail: textOf(m.content) });
+			} else if (m.role === "custom") {
+				out.push({ seq: seq++, ...customEntry(m, tsOf(m.timestamp, raw.timestamp)) });
+			} else if (m.role === "bashExecution") {
+				out.push({ seq: seq++, ...bashEntry(m, tsOf(m.timestamp, raw.timestamp)) });
 			} else if (m.role === "assistant") {
 				const thinking = textOf((m.content ?? []).filter((c: any) => c.type === "thinking"));
 				const text = textOf((m.content ?? []).filter((c: any) => c.type === "text"));
@@ -382,7 +454,11 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 					const durationMs = storedDuration(m.durationMs);
 					if (durationMs !== undefined) target.timing = { durationMs };
 				}
+				// 这次调用自己发起的嵌套调用（codemode 脚本等）：热会话由工具事件逐个记下，冷会话从结果上的记录还原
+				for (const nested of nestedCallEntries(m.nestedCalls, tsOf(m.timestamp, raw.timestamp))) out.push({ seq: seq++, ...nested });
 			}
+		} else if (raw.type === "custom_message") {
+			out.push({ seq: seq++, ...customEntry(raw, tsOf(raw.timestamp)) });
 		} else if (raw.type === "compaction") {
 			out.push({
 				seq: seq++,

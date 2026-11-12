@@ -19,7 +19,7 @@ import {
 	preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
 } from "../src/lib/models-service";
 import { GET, POST } from "../src/app/api/models/route";
-import { customModelGaps, fillModelFields } from "../src/lib/model-draft";
+import { customModelGaps, fillModelFields, PI_MODEL_FALLBACKS } from "../src/lib/model-draft";
 
 let agentDir: string;
 let file: string;
@@ -53,6 +53,18 @@ async function expectOnlyConfig() {
 }
 
 describe("JSONC model configuration", () => {
+	it("the explicit default-completion values match the installed SDK's effective defaults", async () => {
+		await fs.writeFile(file, JSON.stringify({ providers: { gateway: provider } }));
+		const runtime = await ModelRuntime.create({ modelsPath: file, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+		expect(runtime.getError()).toBeUndefined();
+		expect(runtime.getModel("gateway", "model-a")).toMatchObject({
+			contextWindow: PI_MODEL_FALLBACKS.contextWindow,
+			maxTokens: PI_MODEL_FALLBACKS.maxTokens,
+			input: PI_MODEL_FALLBACKS.vision ? ["text", "image"] : ["text"],
+			reasoning: PI_MODEL_FALLBACKS.reasoning,
+		});
+	});
+
 	it("persists audit capacities and false capabilities for a fresh SDK runtime after restart", async () => {
 		await fs.writeFile(file, JSON.stringify({ providers: { gateway: provider } }));
 		const snapshot = await readCustomProviders();

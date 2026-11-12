@@ -173,3 +173,62 @@ describe("侧栏最后一步正文", () => {
 		expect(ledger.entries[0].detail?.length).toBeLessThan(20_000);
 	});
 });
+
+/**
+ * 轨迹是「模型收到了什么」：扩展注入的消息和用户的 ! 命令都在里面，
+ * display: false 的注入虽然对话里不显示，模型照样收到，也要记。
+ */
+describe("轨迹里的扩展消息与 ! 命令", () => {
+	it("冷会话从会话文件还原，包括隐藏的注入和 !! 命令", () => {
+		const entries = buildTrajectoryFromEntries([
+			{ type: "message", message: { role: "user", content: "问题", timestamp: 1000 } },
+			{ type: "custom_message", customType: "plan-mode", content: "已进入计划模式", display: true, timestamp: "1970-01-01T00:00:01.000Z" },
+			{ type: "custom_message", customType: "recall", content: "内部提示", display: false, timestamp: "1970-01-01T00:00:02.000Z" },
+			{ type: "message", message: { role: "custom", customType: "todo", content: [{ type: "text", text: "待办 1/3" }], display: true, timestamp: 3000 } },
+			{ type: "message", message: { role: "bashExecution", command: "git status --short", output: " M src/a.ts", exitCode: 0, cancelled: false, truncated: false, timestamp: 4000 } },
+			{ type: "message", message: { role: "bashExecution", command: "npm test", output: "1 failed", exitCode: 1, cancelled: false, truncated: false, timestamp: 5000 } },
+			{ type: "message", message: { role: "bashExecution", command: "npm run dev", output: "listening", exitCode: undefined, cancelled: true, truncated: false, excludeFromContext: true, timestamp: 6000 } },
+		]);
+		expect(entries.map((entry) => entry.kind)).toEqual(["user", "custom", "custom", "custom", "bash", "bash", "bash"]);
+		expect(entries[1]).toMatchObject({ kind: "custom", title: "plan-mode", detail: "已进入计划模式" });
+		expect(entries[2]).toMatchObject({ title: "recall (hidden)", detail: "内部提示" });
+		expect(entries[3]).toMatchObject({ title: "todo", detail: "待办 1/3" });
+		expect(entries[4]).toMatchObject({ title: "! git status --short", argSummary: "git status --short" });
+		expect(entries[4].detail).toContain(" M src/a.ts");
+		expect(entries[4].isError).toBeUndefined();
+		// 退出码非 0 是失败；被用户停掉的不算
+		expect(entries[5].isError).toBe(true);
+		expect(entries[6]).toMatchObject({ title: "!! npm run dev", isError: undefined });
+	});
+
+	it("活跃会话：扩展消息走 message_start，! 命令由执行路径报上来", () => {
+		const ledger = new TrajLedger();
+		ledger.onEvent({ type: "message_start", message: { role: "custom", customType: "notice", content: "已切换模型", display: true, timestamp: 1000 } } as any, 1000);
+		// SDK 不为 bashExecution 发消息事件；真发来也不记（免得和 recordBash 记成两条）
+		ledger.onEvent({ type: "message_start", message: { role: "bashExecution", command: "ls", output: "", timestamp: 1100 } } as any, 1100);
+		ledger.recordBash({ command: "npm test", output: "ok", exitCode: 0, cancelled: false }, 2000, 2500);
+		expect(ledger.entries.map((entry) => entry.kind)).toEqual(["custom", "bash"]);
+		expect(ledger.entries[0]).toMatchObject({ title: "notice", detail: "已切换模型" });
+		expect(ledger.entries[1]).toMatchObject({ title: "! npm test", timing: { durationMs: 500 } });
+	});
+
+	it("冷会话里工具自己发起的嵌套调用也还原出来", () => {
+		const entries = buildTrajectoryFromEntries([
+			{
+				type: "message",
+				message: {
+					role: "toolResult", toolCallId: "call-1", toolName: "codemode", isError: false, content: [{ type: "text", text: "done" }], timestamp: 2000,
+					nestedCalls: { complete: true, calls: [
+						{ id: "call-1/1", name: "read", arguments: { path: "a.ts" }, status: "ok", durationMs: 12 },
+						{ id: "call-1/2", name: "edit", arguments: { path: "a.ts" }, status: "error", error: "oldText not found" },
+					] },
+				},
+			},
+		]);
+		const nested = entries.filter((entry) => entry.kind === "tool");
+		expect(nested.map((entry) => [entry.toolCallId, entry.toolName])).toEqual([["call-1/1", "read"], ["call-1/2", "edit"]]);
+		expect(nested[0].timing).toEqual({ durationMs: 12 });
+		expect(nested[1].isError).toBe(true);
+		expect(nested[1].detail).toContain("oldText not found");
+	});
+});
