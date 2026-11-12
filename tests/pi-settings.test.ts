@@ -185,16 +185,17 @@ describe("设置面板新接管的 pi 设置", () => {
 	it("reads pi's defaults when nothing is set, and tolerates junk in the file", async () => {
 		await withAgentDir({}, async () => {
 			expect(await getPiSettings()).toMatchObject({
-				cacheWarming: "idle", steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", httpProxy: "", shellPath: "",
-				compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000, modelOverrides: {} },
+				cacheWarming: "idle", steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", httpProxy: "",
+				compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
 			});
 		});
 		await withAgentDir({ cacheWarming: "sometimes", steeringMode: 3, compaction: { modelOverrides: { "a/b": { reserveTokens: 4000 }, "c/d": "oops", "e/f": { reserveTokens: -1 } } } }, async () => {
 			const settings = await getPiSettings();
 			expect(settings.cacheWarming).toBe("idle");
 			expect(settings.steeringMode).toBe("one-at-a-time");
-			// 写坏的条目跳过，不让一条坏数据挡住整个面板
-			expect(settings.compaction.modelOverrides).toEqual({ "a/b": { reserveTokens: 4000 } });
+			// 未开放的 SDK 配置不再映射进设置面板。
+			expect(settings.compaction).not.toHaveProperty("modelOverrides");
+			expect(settings).not.toHaveProperty("shellPath");
 		});
 	});
 
@@ -212,12 +213,6 @@ describe("设置面板新接管的 pi 设置", () => {
 		expect(() => validatePiSettingsPatch({ followUpMode: true })).toThrow(/followUpMode/);
 		expect(() => validatePiSettingsPatch({ httpProxy: "not a url" })).toThrow(/httpProxy/);
 		expect(() => validatePiSettingsPatch({ httpProxy: "ftp://proxy.local:21" })).toThrow(/httpProxy/);
-		expect(() => validatePiSettingsPatch({ shellPath: 42 })).toThrow(/shellPath/);
-		// 没有 provider/ 前缀的键 pi 永远匹配不上
-		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: { "gpt-6": { reserveTokens: 1 } } } })).toThrow(/provider\/modelId/);
-		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: { "openai/gpt-6": { reserveTokens: -5 } } } })).toThrow(/non-negative/);
-		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: { "openai/gpt-6": { enabled: false } } } })).toThrow(/unknown compaction override field/);
-		expect(() => validatePiSettingsPatch({ compaction: { modelOverrides: [] } })).toThrow(/modelOverrides/);
 	});
 
 	it("accepts http, https and socks proxies, and clears the key when emptied", async () => {
@@ -233,33 +228,30 @@ describe("设置面板新接管的 pi 设置", () => {
 		});
 	});
 
-	it("refuses a shell path that does not exist, since every later bash call would fail", async () => {
-		await withAgentDir({}, async (file, agentDir) => {
-			await expect(patchPiSettings({ shellPath: path.join(agentDir, "no-such-shell") })).rejects.toThrow(/shell not found/);
-			expect(await read(file)).toEqual({});
-			const shell = path.join(agentDir, "my-shell");
-			await fs.writeFile(shell, "");
-			await patchPiSettings({ shellPath: shell });
-			expect((await read(file)).shellPath).toBe(shell);
-			await patchPiSettings({ shellPath: "" });
-			expect(await read(file)).toEqual({});
+	it("preserves SDK-managed settings when changing visible settings", async () => {
+		const original = {
+			theme: "dark",
+			shellPath: "D:/git/Git/bin/bash.exe",
+			compaction: { enabled: true, reserveTokens: 50000, keepRecentTokens: 20000, modelOverrides: { "ollama/qwen": { reserveTokens: 2000 } } },
+		};
+		await withAgentDir(original, async (file) => {
+			await patchPiSettings({ compaction: { enabled: false }, steeringMode: "all" });
+			expect(await read(file)).toEqual({ ...original, compaction: { ...original.compaction, enabled: false }, steeringMode: "all" });
+			await patchPiSettings({ compaction: { enabled: true } });
+			const { SettingsManager } = await import("@earendil-works/pi-coding-agent");
+			const settings = SettingsManager.inMemory(await read(file));
+			expect(settings.getShellPath()).toBe(original.shellPath);
+			expect(settings.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 50000, keepRecentTokens: 20000 });
+			expect(settings.getCompactionSettings({ provider: "ollama", id: "qwen" }).reserveTokens).toBe(2000);
 		});
 	});
 
-	it("merges per-model compaction thresholds one model at a time", async () => {
-		await withAgentDir({ compaction: { reserveTokens: 16384, modelOverrides: { "ollama/qwen": { reserveTokens: 2000 } } } }, async (file) => {
-			await patchPiSettings({ compaction: { modelOverrides: { "llama-cpp/phi": { reserveTokens: 1500, keepRecentTokens: 3000 } } } });
-			expect((await read(file)).compaction).toEqual({
-				reserveTokens: 16384,
-				modelOverrides: { "ollama/qwen": { reserveTokens: 2000 }, "llama-cpp/phi": { reserveTokens: 1500, keepRecentTokens: 3000 } },
-			});
-			// null 删掉那一个模型的覆盖；两项都没写的覆盖也等于删除
-			await patchPiSettings({ compaction: { modelOverrides: { "ollama/qwen": null } } });
-			expect((await read(file)).compaction.modelOverrides).toEqual({ "llama-cpp/phi": { reserveTokens: 1500, keepRecentTokens: 3000 } });
-			await patchPiSettings({ compaction: { modelOverrides: { "llama-cpp/phi": {} } } });
-			// 一条都不剩就不留空对象
-			expect(await read(file)).toEqual({ compaction: { reserveTokens: 16384 } });
-			expect((await getPiSettings()).compaction.modelOverrides).toEqual({});
+	it("rejects removed setting fields before writing any part of the patch", async () => {
+		const original = { shellPath: "configured-shell", compaction: { enabled: true, reserveTokens: 50000 } };
+		await withAgentDir(original, async (file) => {
+			await expect(patchPiSettings({ retry: { maxRetries: 7 }, shellPath: "other-shell" })).rejects.toThrow(/unknown settings field/);
+			await expect(patchPiSettings({ compaction: { enabled: false, modelOverrides: {} } })).rejects.toThrow(/unknown compaction field/);
+			expect(await read(file)).toEqual(original);
 		});
 	});
 });

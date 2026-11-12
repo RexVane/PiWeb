@@ -15,14 +15,13 @@ import { PromptPanel } from "@/components/PromptPanel";
 import { GitPanel } from "@/components/GitPanel";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import { SessionImportSection } from "@/components/SessionImportSection";
-import { SessionTreePanel } from "@/components/SessionTreePanel";
-import { IconBranchOutline16, IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
+import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { TreeNode } from "@/lib/growth-tree";
 
-/** 抽屉入口：项目 → 提示词 → Git 详情 → 会话分支 → 会话导入。 */
-export type DrawerSection = "project" | "prompts" | "git" | "tree" | "import";
+/** 抽屉入口：项目 → 提示词 → Git 详情 → 会话导入。 */
+export type DrawerSection = "project" | "prompts" | "git" | "import";
 
 export function DrawerPanel({
 	cwd,
@@ -44,9 +43,6 @@ export function DrawerPanel({
 	onOpenContent,
 	onAskCommit,
 	onOpenFile,
-	treeRefreshKey,
-	onSwitchBranch,
-	onSetLabel,
 }: {
 	cwd: string;
 	/** 当前入口(由 AppShell 持有:轨迹详情关掉后要回到这个入口) */
@@ -79,12 +75,6 @@ export function DrawerPanel({
 	onAskCommit?: () => void;
 	/** 在本机编辑器打开(Git 文件) */
 	onOpenFile?: (absPath: string) => void;
-	/** 会话分支面板重新拉取的键(回合结束 / 换了分支) */
-	treeRefreshKey?: string | number | null;
-	/** 切到另一条分支(把会话的叶子挪到 leafId);返回是否成功 */
-	onSwitchBranch?: (leafId: string) => Promise<boolean>;
-	/** 给一问打标签(空串 = 清掉);返回是否成功 */
-	onSetLabel?: (entryId: string, label: string) => Promise<boolean>;
 }) {
 	const { t } = useI18n();
 	const id = useId();
@@ -95,8 +85,6 @@ export function DrawerPanel({
 		{ id: "project", label: t.projectPanel, icon: <IconFolderOpenOutline16 size={15} /> },
 		{ id: "prompts", label: t.drawerPrompts, icon: <IconAgentPresetOutline16 size={15} /> },
 		{ id: "git", label: t.gitDetails, icon: <IconGitOutline16 size={15} /> },
-		// 会话树：每一问一个可以回去的位置（pi 终端的 /tree）
-		{ id: "tree", label: t.sessionTree, icon: <IconBranchOutline16 size={15} /> },
 		// 「导入会话」的设置栏已移除,文案复用在这里
 		{ id: "import", label: t.importSessions, icon: <IconDownloadOutline16 size={15} /> },
 	];
@@ -180,16 +168,6 @@ export function DrawerPanel({
 				) : section === "prompts" ? (
 					// 三个面板的关闭按钮都收起整个抽屉(它们自己不再有"关闭"以外的语义)
 					<PromptPanel cwd={cwd} sessionId={sessionId} refreshKey={promptRefreshKey} onOpenContent={onOpenContent} onClose={onClose} />
-				) : section === "tree" ? (
-					<SessionTreePanel
-						sessionId={sessionId}
-						refreshKey={treeRefreshKey}
-						running={running}
-						onJump={(entryId) => onJumpToChat?.(entryId)}
-						onSwitch={async (leafId) => (onSwitchBranch ? onSwitchBranch(leafId) : false)}
-						onSetLabel={async (entryId, label) => (onSetLabel ? onSetLabel(entryId, label) : false)}
-						onClose={onClose}
-					/>
 				) : (
 					<GitPanel cwd={cwd} refreshKey={gitRefreshKey} onClose={onClose} onAskCommit={onAskCommit} onOpenFile={onOpenFile} />
 				)}

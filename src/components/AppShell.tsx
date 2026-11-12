@@ -196,7 +196,8 @@ export function AppShell() {
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
 		const section = localStorage.getItem("piweb.drawerSection");
-		if (["project", "prompts", "git", "tree", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
+		if (["project", "prompts", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
+		else if (section === "tree") localStorage.setItem("piweb.drawerSection", "project");
 	}, []);
 	/** 新会话时加载用户之前的选择；没有记住的，等 /api/models/defaults 回来用 pi 设置里的建议模型兜底 */
 	useEffect(() => {
@@ -648,8 +649,6 @@ export function AppShell() {
 		return sendCommand(command, encodeURIComponent(b64url(p)));
 	};
 	const heroSend = (text: string, images: ImageAttachment[]) => startHeroSession({ cmd: "prompt", text, images });
-	// `!cmd`：输入框判定后直接走这里（pi 终端的 bash 模式），不经过模型
-	const heroBash = (command: string, excludeFromContext: boolean) => startHeroSession({ cmd: "bash", command, excludeFromContext });
 
 	const sendPrompt = (text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images });
 
@@ -874,25 +873,6 @@ export function AppShell() {
 		updateDraft(draftKey, (previous) => ({ ...previous, text: request.text }));
 	}, [state.editorText, draftKey, updateDraft]);
 
-	/**
-	 * 会话分支面板：切到另一条分支。服务端换完会通知所有开着这份会话的页面重连取快照，这里不用自己 resync。
-	 * 目标落在一条用户消息上时，pi 把叶子放到它前面并把那句话交还（终端 /tree 同款）：放进输入框，改完可以重新发。
-	 */
-	const switchBranch = useCallback(async (leafId: string) => {
-		if (!currentId) return false;
-		const result = await sendCommand({ cmd: "navigate", entryId: leafId });
-		if (!result?.success) return false;
-		const editorText = result.data?.editorText;
-		if (typeof editorText === "string" && editorText) updateDraft(draftKey, (previous) => ({ ...previous, text: editorText }));
-		return true;
-	}, [currentId, sendCommand, updateDraft, draftKey]);
-	/** 给会话树上的一问打标签（空串 = 清掉）；标签存进会话文件，pi 终端的 /tree 里同样看得到 */
-	const setEntryLabel = useCallback(async (entryId: string, label: string) => {
-		if (!currentId) return false;
-		const result = await sendCommand({ cmd: "setLabel", entryId, text: label });
-		return result?.success === true;
-	}, [currentId, sendCommand]);
-
 	// 网格列(宽屏):侧栏 | 对话区 | 最右一列(轨迹详情 ⇄ 抽屉)。项目栏已降级成
 	// 抽屉里的一个入口,不再单独占一列,所以是 3 列而不是 4 列。
 	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
@@ -939,9 +919,6 @@ export function AppShell() {
 					onOpenContent={(path, content) => viewer.openStatic(path, content)}
 					onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
 					onOpenFile={openInEditor}
-					treeRefreshKey={`${currentId ?? ""}:${panelRefreshKey}`}
-					onSwitchBranch={switchBranch}
-					onSetLabel={setEntryLabel}
 				/>
 			)}
 		</div>
@@ -1033,7 +1010,6 @@ export function AppShell() {
 							knownCwds={knownCwds}
 							getWorkspaceName={getWorkspaceName}
 							onSend={heroSend}
-							onBash={heroBash}
 							models={modelChoices}
 							providerNames={providerNames}
 							authByProvider={authByProvider}
@@ -1191,7 +1167,6 @@ export function AppShell() {
 											cwd={panelCwd}
 											onCommand={runSlashCommand}
 											onSend={sendPrompt}
-											onBash={(command, excludeFromContext) => sendCommand({ cmd: "bash", command, excludeFromContext })}
 											onSteer={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
 											onFollowUp={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
 											onAbort={() => sendCommand({ cmd: "abort" })}
@@ -1336,7 +1311,6 @@ function Hero({
 	knownCwds,
 	getWorkspaceName,
 	onSend,
-	onBash,
 	models,
 	providerNames,
 	authByProvider,
@@ -1365,7 +1339,6 @@ function Hero({
 	knownCwds: string[];
 	getWorkspaceName?: (cwd: string) => string;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<{ success: boolean }>;
-	onBash?: (command: string, excludeFromContext: boolean) => Promise<{ success: boolean }>;
 	models: ModelChoice[];
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
@@ -1497,7 +1470,6 @@ function Hero({
 					authByProvider={authByProvider}
 					queue={{ steering: [], followUp: [] }}
 					onSend={onSend}
-					onBash={onBash}
 					onSteer={() => ({ success: false })}
 					onAbort={() => {}}
 					onSelectModel={onSelectHeroModel}

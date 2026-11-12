@@ -27,7 +27,6 @@ import { fmtBytes } from "@/lib/format";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/workspace-index";
 import { slashCommandToken } from "@/lib/slash-command-token";
-import { parseBashCommand } from "@/lib/chat/bash-command";
 import type { ImageAttachment, ToolPreset } from "@/lib/types";
 
 export interface SlashCommand {
@@ -77,7 +76,6 @@ export function ChatInput({
 	commands,
 	onCommand,
 	onSend,
-	onBash,
 	onSteer,
 	onFollowUp,
 	onAbort,
@@ -127,11 +125,6 @@ export function ChatInput({
 	commands?: SlashCommand[];
 	onCommand?: (name: string, args: string) => void;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
-	/**
-	 * `!cmd`：直接在工作区跑命令（pi 终端的 bash 模式），不发给模型；`!!` 的结果不进模型上下文。
-	 * 不传就不启用（正文照常当消息发）。
-	 */
-	onBash?: (command: string, excludeFromContext: boolean) => Promise<SendResult> | SendResult;
 	onSteer: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
 	onFollowUp?: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
 	/** 停止：服务端先清空队列再中止，并返回被清掉的文本，这里把它们放回输入框 */
@@ -170,8 +163,6 @@ export function ChatInput({
 	const { text, images, uploads } = currentDraft;
 	const references = currentDraft.references ?? [];
 	const adopted = currentDraft.adopted ?? null;
-	/** 这一条会不会当命令跑（`!cmd`）：输入时就把模式显示出来，免得误发 */
-	const bashCommand = onBash && !adopted ? parseBashCommand(text.trim(), images.length > 0 || uploads.length > 0 || references.length > 0) : null;
 	const setText = (value: string | ((previous: string) => string)) => changeDraft((previous) => ({ ...previous, text: typeof value === "function" ? value(previous.text) : value }));
 	const setAdopted = (value: SlashCommand | null) => changeDraft((previous) => ({ ...previous, adopted: value }));
 	const pendingReads = useRef<Promise<void>[]>([]);
@@ -432,10 +423,7 @@ export function ChatInput({
 					return parts.filter(Boolean).join("\n\n");
 				};
 				let result: SendResult;
-				// `!cmd` 直接跑命令：带附件 / 引用时不是命令（那时正文要和 @ 路径拼在一起）
-				const bash = onBash && !adopted ? parseBashCommand(trimmed, attachments.length > 0 || files.length > 0 || refs.length > 0) : null;
-				if (bash) result = await onBash!(bash.command, bash.excludeFromContext);
-				else if (isStreaming) {
+				if (isStreaming) {
 					const mode = override ?? (enterBehavior === "steer" ? "steer" : "followUp");
 					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(trimmed), attachments);
 					else result = await onSteer(compose(trimmed), attachments);
@@ -835,12 +823,6 @@ export function ChatInput({
 							<span className="min-w-0 truncate" style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
 							<IconCloseOutline14 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
 						</button>
-					)}
-					{bashCommand && (
-						<div className="flex items-center gap-1.5 self-start" data-testid="composer-bash-hint" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
-							<IconTerminalOutline14 size={13} style={{ color: "var(--dsw-accent)", flex: "none" }} />
-							<span>{bashCommand.excludeFromContext ? t.bashModeHintExcluded : t.bashModeHint}</span>
-						</div>
 					)}
 					<textarea
 						ref={taRef}

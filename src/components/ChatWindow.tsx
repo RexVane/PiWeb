@@ -320,11 +320,7 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "retry":
 			return <IconRefreshOutline14 {...p} />;
 		case "work":
-			return (
-				<span className="pw-thinking-grid" aria-hidden="true">
-					<i /><i /><i /><i /><i /><i /><i /><i /><i />
-				</span>
-			);
+			return <span className="pw-pi" aria-hidden="true">π</span>;
 		case "skill":
 			return <IconSkillOutline16 size={14} style={{ flex: "none" }} />;
 		default:
