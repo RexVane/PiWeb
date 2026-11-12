@@ -61,8 +61,8 @@ export async function probeThroughProxy(proxy: string): Promise<{ ok: boolean; s
 }
 
 export async function testProxyConnection(input: string, {
-	automatic = automaticProxy(), probe = probeThroughProxy,
-}: { automatic?: ProxyChoice; probe?: typeof probeThroughProxy } = {}): Promise<ProxyTestResult> {
+	automatic = automaticProxy(), probe = probeThroughProxy, nodeVersion = process.versions.node,
+}: { automatic?: ProxyChoice; probe?: typeof probeThroughProxy; nodeVersion?: string } = {}): Promise<ProxyTestResult> {
 	const started = Date.now();
 	const raw = input.trim();
 	const choice: ProxyChoice = raw ? { source: "manual", http: raw, https: raw } : automatic;
@@ -75,7 +75,7 @@ export async function testProxyConnection(input: string, {
 	try { url = new URL(proxy); } catch { return result(false, "invalid"); }
 	if (!/^https?:$/.test(url.protocol)) return result(false, "unsupported");
 	if (proxy.length > 2048 || !url.hostname || url.port === "0" || url.pathname !== "/" || url.search || url.hash) return result(false, "invalid");
-	const [major, minor] = process.versions.node.split(".").map(Number);
+	const [major, minor] = nodeVersion.split(".").map(Number);
 	if (major < 24 && !(major === 22 && minor >= 21)) return result(false, "unsupported");
 	try {
 		const response = await probe(proxy);

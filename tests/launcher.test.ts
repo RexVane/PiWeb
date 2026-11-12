@@ -449,13 +449,13 @@ describe("proxy environment for the server process", () => {
 	it("inherits the system proxy only when the setting and environment are empty", () => {
 		const systemProxy = { http: "http://system:8080", https: "http://system:8443", noProxy: "*.internal.example" };
 		const env: Record<string, string | undefined> = {};
-		expect(applyProxyEnv(env, { systemProxy })).toMatchObject({ proxy: systemProxy.https, source: "system" });
+		expect(applyProxyEnv(env, { systemProxy, nodeVersion: "24.12.0" })).toMatchObject({ proxy: systemProxy.https, source: "system" });
 		expect(env).toMatchObject({ HTTP_PROXY: systemProxy.http, HTTPS_PROXY: systemProxy.https, NO_PROXY: "localhost,127.0.0.1,::1,*.internal.example" });
 		const explicit = { https_proxy: "http://env:3128", NO_PROXY: "custom.local" };
-		expect(applyProxyEnv(explicit, { systemProxy })).toMatchObject({ proxy: "http://env:3128", source: "env" });
+		expect(applyProxyEnv(explicit, { systemProxy, nodeVersion: "24.12.0" })).toMatchObject({ proxy: "http://env:3128", source: "env" });
 		expect(explicit).toMatchObject({ https_proxy: "http://env:3128", NO_PROXY: "custom.local" });
 		const all: Record<string, string | undefined> = {};
-		applyProxyEnv(all, { systemProxy: { ...systemProxy, noProxy: "*" } });
+		applyProxyEnv(all, { systemProxy: { ...systemProxy, noProxy: "*" }, nodeVersion: "24.12.0" });
 		expect(all.NO_PROXY).toBe("*");
 	});
 
