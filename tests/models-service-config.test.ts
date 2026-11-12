@@ -11,12 +11,14 @@ const mocks = vi.hoisted(() => ({ refreshModelRuntime: vi.fn(), getModelRuntime:
 vi.mock("../src/lib/pi", () => ({
 	getAgentDir: () => process.env.PI_CODING_AGENT_DIR,
 	refreshModelRuntime: mocks.refreshModelRuntime,
+	refreshModelRuntimeIfFilesChanged: vi.fn(async () => false),
+	modelRuntimeVersion: () => 0,
 	getModelRuntime: mocks.getModelRuntime,
 }));
 
 import {
 	CustomProvidersConflictError, CustomProvidersValidationError,
-	preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
+	invalidateModelList, preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
 } from "../src/lib/models-service";
 import { GET, POST } from "../src/app/api/models/route";
 import { customModelGaps, fillModelFields, PI_MODEL_FALLBACKS } from "../src/lib/model-draft";
@@ -215,6 +217,24 @@ describe("JSONC model configuration", () => {
 });
 
 describe("configuration revision and route contract", () => {
+	it("leaves model-catalog compression to the HTTP layer so the Next adapter receives valid JSON", async () => {
+		const runtime = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+		mocks.getModelRuntime.mockResolvedValue(runtime);
+		invalidateModelList();
+		try {
+			const response = await GET(new Request("http://localhost/api/models?full=1", { headers: { "Accept-Encoding": "gzip, deflate" } }));
+			const body = await response.json();
+			expect(response.status, body.error).toBe(200);
+			expect(response.headers.get("content-encoding")).toBeNull();
+			expect(response.headers.get("cache-control")).toBe("no-store");
+			expect(body.success).toBe(true);
+			expect(body.data.models.length).toBeGreaterThan(0);
+			expect(JSON.stringify(body).length).toBeGreaterThan(2048);
+		} finally {
+			invalidateModelList();
+		}
+	});
+
 	it("rejects stale revisions before merging keys, even when the incoming JSON is invalid", async () => {
 		await fs.writeFile(file, JSON.stringify({ providers: { gateway: { ...provider, apiKey: "new-secret" } } }));
 		const original = await fs.readFile(file, "utf8");

@@ -164,11 +164,6 @@ export function invalidateModelList(): void {
 	invalidateJsonFilesNamed("auth.json");
 }
 
-/** 目录版本戳：路由层用它决定能不能复用已经压好的响应体 */
-export function modelListStamp(): string {
-	return listCache ? String(listCache.at) : "none";
-}
-
 /** Read the unmodified SDK catalog through its public modelsPath:null option: provider ID → model ID → built-in context window. */
 function getBuiltInCatalog(): Promise<Map<string, Map<string, number>>> {
 	if (!builtInCatalogPromise) {

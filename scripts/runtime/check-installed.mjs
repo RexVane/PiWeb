@@ -36,7 +36,12 @@ export async function checkInstalledRuntime(root = process.cwd()) {
 		const base = "http://127.0.0.1:" + server.address().port;
 		for (const route of routes) {
 			const response = await fetch(base + route, { signal: AbortSignal.timeout(30_000) });
-			const body = await response.json();
+			let body;
+			try {
+				body = await response.json();
+			} catch {
+				throw new Error(route + " returned invalid JSON (status " + response.status + ", content-type " + response.headers.get("content-type") + ", content-encoding " + response.headers.get("content-encoding") + ")");
+			}
 			if (!response.ok || body.success !== true) {
 				throw new Error(route + " failed: " + response.status + " " + JSON.stringify(body));
 			}
