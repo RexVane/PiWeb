@@ -473,7 +473,7 @@ function GeneralSection({
 					onChange={(v) => void patchPiSettings({ followUpMode: v })}
 				/>
 			</Row>
-			<Row title={t.httpProxy} desc={t.httpProxyDesc}>
+			<Row title={t.httpProxy}>
 				<ProxySettings value={textDrafts.httpProxy} disabled={!piSettings || settingsLoading || settingsSaving}
 					onChange={(httpProxy) => setTextDrafts({ httpProxy })} onCommit={() => void commitText("httpProxy")} />
 			</Row>
