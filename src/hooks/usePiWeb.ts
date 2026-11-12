@@ -14,7 +14,9 @@ import type {
 	SessionSummary,
 	TrajEntry,
 	WebEvent,
+	WebExtensionWidget,
 	WebMessage,
+	WebNestedCall,
 	WebSnapshot,
 	ToolPreset,
 } from "@/lib/types";
@@ -32,20 +34,26 @@ export interface ToolCardState {
 	/** 服务端事件时间戳：运行中显示已用时长，完成后显示耗时 */
 	startedAt?: number;
 	endedAt?: number;
+	/** 嵌套调用：发起它的那次工具调用（codemode 脚本、扩展的 ctx.executeTool） */
+	parentId?: string;
+	/** 这次调用自己发起的嵌套调用，按出现顺序 */
+	children?: string[];
 }
 
 /**
- * 需要浏览器应答的对话框：扩展发来的 select/confirm/input（对应 pi RPC 的 extension_ui_request），
+ * 需要浏览器应答的对话框：扩展发来的 select/confirm/input/editor（对应 pi RPC 的 extension_ui_request），
  * 以及内置 ask_user_question 的选择窗口（questions，显示在输入框上方）
  */
 export interface ExtensionDialog {
 	id: string;
-	method: "select" | "confirm" | "input" | "questions";
+	method: "select" | "confirm" | "input" | "editor" | "questions";
 	title: string;
 	message?: string;
 	options?: string[];
 	questions?: AskQuestion[];
 	placeholder?: string;
+	/** editor：编辑框的初始内容 */
+	prefill?: string;
 	timeout?: number;
 	ts: number;
 }
@@ -77,6 +85,12 @@ export interface PiWebState {
 	extensionNotices: PiWebNotice[];
 	/** 扩展设的页脚状态文本（setStatus） */
 	extensionStatuses: Record<string, string>;
+	/** 扩展设的文字块（setWidget）：输入框上方 / 下方 */
+	extensionWidgets: Record<string, WebExtensionWidget>;
+	/** 扩展设的窗口标题（setTitle）；null = 用会话名 */
+	extensionTitle: string | null;
+	/** 扩展要放进输入框的文字（setEditorText）；id 每次不同，同样的文字连发两次也会再放一次 */
+	editorText: { id: string; text: string } | null;
 	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
 	workingMessage: string | null;
 	/** 项目生长：本次连接期间收到的 commit（完整时间轴由 useGrowth 拉取后按 commit 去重合并） */
@@ -128,6 +142,35 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 			s.messages = msgs;
 			return s;
 		}
+		case "toolcall": {
+			// 参数还在生成：先把这一行立起来（args 是截短过的部分参数，完整参数随 message end 到达）
+			const msgs = [...s.messages];
+			let i = msgs.length - 1;
+			if (evt.messageId) while (i >= 0 && msgs[i].streamId !== evt.messageId && msgs[i].id !== evt.messageId) i -= 1;
+			if (i < 0 || msgs[i].role !== "assistant") return s;
+			const content = [...msgs[i].content];
+			const existing = content[evt.contentIndex];
+			// 已经拿到完整参数（message end 先到）时不要用截短版本覆盖
+			if (existing?.type === "toolCall" && existing.id === evt.id && msgs[i].stopReason !== "pending") return s;
+			while (content.length < evt.contentIndex) content.push({ type: "text", text: "" });
+			content[evt.contentIndex] = { type: "toolCall", id: evt.id, name: evt.name, arguments: evt.args };
+			msgs[i] = { ...msgs[i], content };
+			s.messages = msgs;
+			return s;
+		}
+		case "bash_output": {
+			// `!` 命令的输出增量：接在服务端推的那条 bashExecution 消息后面
+			const msgs = [...s.messages];
+			let i = msgs.length - 1;
+			while (i >= 0 && msgs[i].streamId !== evt.messageId && msgs[i].id !== evt.messageId) i -= 1;
+			if (i < 0 || !msgs[i].bash) return s;
+			const message = msgs[i];
+			if (!message.bash) return s;
+			const bash = message.bash;
+			msgs[i] = { ...message, bash: { ...bash, output: `${bash.output}${evt.delta}` } };
+			s.messages = msgs;
+			return s;
+		}
 		case "message": {
 			const msgs = [...s.messages];
 			const same = msgs.findIndex((message) =>
@@ -140,7 +183,9 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				return s;
 			}
 			if (evt.phase === "start") {
-				if (evt.message.role === "user" || evt.message.role === "assistant") msgs.push(evt.message);
+				// custom：扩展注入并声明要显示的消息；bashExecution：用户 `!` 命令
+				if (evt.message.role === "user" || evt.message.role === "assistant" || evt.message.role === "custom" || evt.message.role === "bashExecution")
+					msgs.push(evt.message);
 			} else if (evt.message.role !== "toolResult") {
 				// 无稳定流 ID 的旧服务端：只在本轮末尾匹配 pending，不按时间戳覆盖历史消息。
 				let index = -1;
@@ -169,7 +214,15 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				patch: evt.patch ?? prev?.patch,
 				startedAt: prev?.startedAt ?? evt.ts,
 				endedAt: evt.state === "done" ? evt.ts : prev?.endedAt,
+				parentId: evt.parentId ?? prev?.parentId,
+				children: prev?.children,
 			};
+			// 嵌套调用（codemode 脚本里发起的工具调用）：挂到父调用下面，聊天里不再是一片平铺
+			const parentId = evt.parentId;
+			if (parentId && tools[parentId]) {
+				const ids = tools[parentId].children ?? [];
+				if (!ids.includes(evt.id)) tools[parentId] = { ...tools[parentId], children: [...ids, evt.id] };
+			}
 			s.tools = tools;
 			return s;
 		}
@@ -184,6 +237,8 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				if (evt.provider && snap.model) snap.model = { ...snap.model, provider: evt.provider };
 				if (evt.thinkingLevel) snap.thinkingLevel = evt.thinkingLevel;
 				if (evt.thinkingLevels) snap.thinkingLevels = evt.thinkingLevels;
+				// 省略 = 不变；null = 不是虚拟模型
+				if (evt.routedModel !== undefined) snap.routedModel = evt.routedModel;
 				s.snapshot = snap;
 			}
 			return s;
@@ -248,7 +303,7 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				if (s.extensionDialogs.some((dialog) => dialog.id === evt.id)) return s;
 				s.extensionDialogs = [
 					...s.extensionDialogs,
-					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, questions: evt.questions, placeholder: evt.placeholder, timeout: evt.timeout, ts: evt.ts },
+					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, questions: evt.questions, placeholder: evt.placeholder, prefill: evt.prefill, timeout: evt.timeout, ts: evt.ts },
 				];
 			} else if (evt.method === "notify") {
 				s.extensionNotices = [...s.extensionNotices.slice(-4), { id: evt.id, message: evt.message ?? "", type: evt.notifyType ?? "info", ts: evt.ts }];
@@ -257,6 +312,15 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				if (evt.statusText === undefined || evt.statusText === "") delete next[evt.statusKey];
 				else next[evt.statusKey] = evt.statusText;
 				s.extensionStatuses = next;
+			} else if (evt.method === "setWidget" && evt.widgetKey) {
+				const next = { ...s.extensionWidgets };
+				if (evt.widgetLines === undefined || evt.widgetLines.length === 0) delete next[evt.widgetKey];
+				else next[evt.widgetKey] = { lines: evt.widgetLines, placement: evt.widgetPlacement === "belowEditor" ? "belowEditor" : "aboveEditor" };
+				s.extensionWidgets = next;
+			} else if (evt.method === "setTitle") {
+				s.extensionTitle = evt.title?.trim() ? evt.title : null;
+			} else if (evt.method === "setEditorText") {
+				s.editorText = { id: evt.id, text: evt.text ?? "" };
 			} else if (evt.method === "setWorkingMessage") {
 				s.workingMessage = evt.message ?? null;
 			}
@@ -312,7 +376,7 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 };
 
 function isDialogMethod(method: Extract<WebEvent, { type: "extension_ui" }>["method"]): method is ExtensionDialog["method"] {
-	return method === "select" || method === "confirm" || method === "input" || method === "questions";
+	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "questions";
 }
 
 export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: ExtensionDialog[] = []): ExtensionDialog[] {
@@ -353,6 +417,8 @@ function toolsFromMessages(messages: WebMessage[], streaming = false): Record<st
 					encodingLoss: content.encodingLoss,
 					patch: content.patch,
 				};
+				// 嵌套调用（codemode 脚本等）记在父调用的结果上：冷会话/重连后靠它把层级还原出来
+				if (content.nestedCalls?.length) linkNestedCalls(tools, content.toolCallId, content.nestedCalls);
 			}
 		}
 	}
@@ -363,6 +429,28 @@ function toolsFromMessages(messages: WebMessage[], streaming = false): Record<st
 		}
 	}
 	return tools;
+}
+
+/**
+ * 把嵌套调用挂到父调用下面。SDK 给的 id 是 `<父id>/<序号>`（父也可能是嵌套调用），
+ * 所以先按 id 前缀找最近的已知父，找不到才用结果所属的那次调用。
+ */
+function linkNestedCalls(tools: Record<string, ToolCardState>, parentId: string, calls: WebNestedCall[]): void {
+	for (const call of calls) {
+		if (tools[call.id]) continue;
+		const trimmed = call.id.slice(0, call.id.lastIndexOf("/"));
+		const owner = trimmed && tools[trimmed] ? trimmed : parentId;
+		tools[call.id] = {
+			name: call.name,
+			args: call.args,
+			state: "done",
+			result: call.error,
+			isError: call.status === "error",
+			parentId: owner,
+		};
+		const ids = tools[owner].children ?? [];
+		if (!ids.includes(call.id)) tools[owner] = { ...tools[owner], children: [...ids, call.id] };
+	}
 }
 
 const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
@@ -377,6 +465,9 @@ const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
 	extensionDialogs: [],
 	extensionNotices: [],
 	extensionStatuses: {},
+	extensionWidgets: {},
+	extensionTitle: null,
+	editorText: null,
 	workingMessage: null,
 	growth: { rounds: [], error: null, consent: null },
 });
@@ -419,6 +510,8 @@ export function usePiWeb() {
 	liveStateRef.current = state;
 	const activeSessionRef = useRef(currentId);
 	activeSessionRef.current = currentId;
+	/** 扩展命令换会话（session_navigate 事件）时打开目标会话；SSE 处理器定义在 openSession 之前 */
+	const openSessionRef = useRef<((path: string) => void) | null>(null);
 	const subscribedSessionRef = useRef<string | null>(null);
 	const retrySessionList = useCallback(() => setSessionListRetryNonce((value) => value + 1), []);
 	const clearCompaction = useCallback(() => setState((current) => ({ ...current, compaction: null })), []);
@@ -829,6 +922,17 @@ export function usePiWeb() {
 					setResyncNonce((n) => n + 1);
 					return;
 				}
+				if (parsed.type === "resync") {
+					// 扩展换了会话分支（ctx.navigateTree）：眼前的消息列表已过时，重连拿新快照
+					setResyncNonce((n) => n + 1);
+					return;
+				}
+				if (parsed.type === "session_navigate") {
+					// 扩展命令换了会话（ctx.newSession / fork / switchSession）：浏览器跟着打开目标会话
+					const target = typeof parsed.sessionPath === "string" ? parsed.sessionPath : "";
+					if (target) openSessionRef.current?.(target);
+					return;
+				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
 					// 快照是权威状态：之前缓冲的增量已经过时，直接丢弃
 					batcher.cancel();
@@ -849,6 +953,10 @@ export function usePiWeb() {
 						extensionDialogs: extensionDialogsFromSnapshot(snap, prev.extensionDialogs),
 						extensionNotices: notice ? [...prev.extensionNotices.slice(-4), notice] : prev.extensionNotices,
 						extensionStatuses: snap.extensionStatuses ?? {},
+						extensionWidgets: snap.extensionWidgets ?? {},
+						extensionTitle: snap.extensionTitle?.trim() ? snap.extensionTitle : null,
+						// 输入框内容属于浏览器：快照不重置它，setEditorText 按 id 只放一次
+						editorText: prev.editorText,
 						workingMessage: null,
 						// 重连的快照不带生长账本；连接期间已收到的步保留，useGrowth 会按 seq 与拉取结果去重
 						growth: { ...prev.growth, error: snap.growthError ?? null, consent: snap.growthConsent ?? null },
@@ -984,6 +1092,8 @@ export function usePiWeb() {
 		},
 		[idOf],
 	);
+	// 扩展命令换会话时由 SSE 处理器调用：它在这个 useCallback 之前定义，只能经 ref 拿
+	openSessionRef.current = openSession;
 
 	const closeSession = useCallback(() => {
 		setCurrentId(null);

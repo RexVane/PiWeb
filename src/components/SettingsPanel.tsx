@@ -57,6 +57,7 @@ import {
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
+import type { CompactionModelOverride, PiSettings } from "@/lib/pi-settings";
 import { useDialog } from "@/hooks/useDialog";
 import { useSelectKeyboard } from "@/hooks/useSelectKeyboard";
 
@@ -174,13 +175,16 @@ function GeneralSection({
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
-	const [piSettings, setPiSettings] = useState<{ compaction: { enabled: boolean; reserveTokens: number }; retry: { enabled: boolean; maxRetries: number } } | null>(null);
+	const [piSettings, setPiSettings] = useState<PiSettings | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
 	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
 	const [settingsLoading, setSettingsLoading] = useState(true);
 	const [settingsSaving, setSettingsSaving] = useState(false);
 	const [settingsError, setSettingsError] = useState<"load" | "save" | null>(null);
+	/** 服务端给的保存失败原因（如 shell 路径不存在）；有就接在通用提示后面 */
+	const [saveErrorDetail, setSaveErrorDetail] = useState("");
 	const [numberDrafts, setNumberDrafts] = useState({ reserveTokens: "", maxRetries: "" });
+	const [textDrafts, setTextDrafts] = useState({ httpProxy: "", shellPath: "" });
 
 	const loadRemoteSettings = async () => {
 		setSettingsLoading(true);
@@ -203,6 +207,7 @@ function GeneralSection({
 				reserveTokens: String(ps.value.compaction.reserveTokens),
 				maxRetries: String(ps.value.retry.maxRetries),
 			});
+			setTextDrafts({ httpProxy: ps.value.httpProxy ?? "", shellPath: ps.value.shellPath ?? "" });
 		} else setPiSettings(null);
 		if (health.status === "fulfilled" && health.value?.piWeb) setVersions({ piWeb: health.value.piWeb, piEngine: health.value.piEngine });
 		else setVersions(null);
@@ -260,6 +265,7 @@ function GeneralSection({
 		if (!piSettings || settingsSaving) return false;
 		setSettingsSaving(true);
 		setSettingsError(null);
+		setSaveErrorDetail("");
 		try {
 			const r = await fetch("/api/pi-settings", {
 				method: "PUT",
@@ -270,13 +276,36 @@ function GeneralSection({
 			if (!r.ok || !j.success) throw new Error(j.error || "save failed");
 			setPiSettings(j.data);
 			return true;
-		} catch {
+		} catch (error) {
 			setSettingsError("save");
+			setSaveErrorDetail(error instanceof Error && error.message !== "save failed" ? error.message : "");
 			return false;
 		} finally {
 			setSettingsSaving(false);
 		}
 	};
+
+	/** 文本设置（代理 / shell 路径）：失焦或回车时保存；存不进去就退回原值，免得输入框里留着一个没生效的值 */
+	const commitText = async (field: "httpProxy" | "shellPath") => {
+		if (!piSettings) return;
+		const value = textDrafts[field].trim();
+		if (value === piSettings[field]) return;
+		if (!(await patchPiSettings({ [field]: value }))) setTextDrafts((previous) => ({ ...previous, [field]: piSettings[field] }));
+	};
+	const textInput = (field: "httpProxy" | "shellPath", placeholder: string) => (
+		<input
+			type="text"
+			value={textDrafts[field]}
+			placeholder={placeholder}
+			spellCheck={false}
+			disabled={!piSettings || settingsLoading || settingsSaving}
+			onChange={(event) => setTextDrafts((previous) => ({ ...previous, [field]: event.target.value }))}
+			onBlur={() => void commitText(field)}
+			onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+			className="rounded-lg px-2 py-1"
+			style={{ width: 240, fontFamily: "var(--font-mono)", fontSize: 12.5, background: "var(--dsw-hover)" }}
+		/>
+	);
 
 	const commitNumber = async (section: "compaction" | "retry", field: "reserveTokens" | "maxRetries") => {
 		if (!piSettings) return;
@@ -317,7 +346,7 @@ function GeneralSection({
 		<div className="flex flex-col gap-6">
 			{(settingsLoading || settingsError) && (
 				<div role={settingsError ? "alert" : "status"} className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: "var(--dsw-hover)", color: settingsError ? "var(--dsw-danger)" : "var(--dsw-label-secondary)" }}>
-					<span className="flex-1">{settingsError === "load" ? t.settingsLoadFailed : settingsError === "save" ? t.settingsSaveFailed : t.settingsLoading}</span>
+					<span className="flex-1">{settingsError === "load" ? t.settingsLoadFailed : settingsError === "save" ? `${t.settingsSaveFailed}${saveErrorDetail ? ` (${saveErrorDetail})` : ""}` : t.settingsLoading}</span>
 					{settingsError === "load" && <button type="button" className="pw-chip" onClick={() => void loadRemoteSettings()}>{t.settingsRetry}</button>}
 				</div>
 			)}
@@ -423,6 +452,53 @@ function GeneralSection({
 					{numberInput("retry", "maxRetries", t.maxRetries)}
 				</div>
 			</Row>
+			<RowColumn title={t.compactionOverrides} desc={t.compactionOverridesDesc}>
+				<CompactionOverrides
+					overrides={piSettings?.compaction.modelOverrides ?? {}}
+					disabled={!piSettings || settingsLoading || settingsSaving}
+					onSave={(key, override) => patchPiSettings({ compaction: { modelOverrides: { [key]: override } } })}
+				/>
+			</RowColumn>
+			<Row title={t.cacheWarming} desc={t.cacheWarmingDesc}>
+				<SelectOption
+					value={piSettings?.cacheWarming ?? "idle"}
+					disabled={!piSettings || settingsSaving}
+					options={[
+						{ value: "idle", label: t.cacheWarmingIdle },
+						{ value: "streaming", label: t.cacheWarmingStreaming },
+						{ value: "off", label: t.cacheWarmingOff },
+					]}
+					onChange={(v) => void patchPiSettings({ cacheWarming: v })}
+				/>
+			</Row>
+			<Row title={t.steeringMode} desc={t.steeringModeDesc}>
+				<SelectOption
+					value={piSettings?.steeringMode ?? "one-at-a-time"}
+					disabled={!piSettings || settingsSaving}
+					options={[
+						{ value: "one-at-a-time", label: t.queueModeOne },
+						{ value: "all", label: t.queueModeAll },
+					]}
+					onChange={(v) => void patchPiSettings({ steeringMode: v })}
+				/>
+			</Row>
+			<Row title={t.followUpMode} desc={t.followUpModeDesc}>
+				<SelectOption
+					value={piSettings?.followUpMode ?? "one-at-a-time"}
+					disabled={!piSettings || settingsSaving}
+					options={[
+						{ value: "one-at-a-time", label: t.queueModeOne },
+						{ value: "all", label: t.queueModeAll },
+					]}
+					onChange={(v) => void patchPiSettings({ followUpMode: v })}
+				/>
+			</Row>
+			<Row title={t.httpProxy} desc={t.httpProxyDesc}>
+				{textInput("httpProxy", "http://127.0.0.1:7890")}
+			</Row>
+			<Row title={t.shellPath} desc={t.shellPathDesc}>
+				{textInput("shellPath", t.shellPathPlaceholder)}
+			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
 				<div className="flex items-center gap-2.5">
 					<VersionLink href="https://github.com/RexVane/PiWeb" value={versions?.piWeb} />
@@ -449,6 +525,108 @@ function GeneralSection({
 					</button>
 				</Row>
 			) : null}
+		</div>
+	);
+}
+
+/**
+ * 按模型的压缩阈值（pi 的 compaction.modelOverrides）：上下文只有几千的本地模型和上百万的云端模型
+ * 共用一个「保留 Token」不合适——给大模型留的余量，小模型一上来就超了。
+ * 每行一个 `provider/modelId`；没填的那一项沿用上面的通用值。
+ */
+function CompactionOverrides({
+	overrides,
+	disabled,
+	onSave,
+}: {
+	overrides: Record<string, CompactionModelOverride>;
+	disabled: boolean;
+	/** override 为 null = 删掉这个模型的覆盖 */
+	onSave: (key: string, override: CompactionModelOverride | null) => Promise<boolean>;
+}) {
+	const { t } = useI18n();
+	const listId = useId();
+	const [modelKey, setModelKey] = useState("");
+	const [reserve, setReserve] = useState("");
+	const [keepRecent, setKeepRecent] = useState("");
+	const [choices, setChoices] = useState<string[]>([]);
+
+	// 候选只是为了少打字：拿不到就手填，不影响保存
+	useEffect(() => {
+		let alive = true;
+		fetch("/api/models")
+			.then((response) => response.json())
+			.then((json) => {
+				if (!alive || !json?.success || !Array.isArray(json.data?.models)) return;
+				const keys = (json.data.models as Array<{ provider?: unknown; id?: unknown }>)
+					.filter((model) => typeof model.provider === "string" && typeof model.id === "string")
+					.map((model) => `${model.provider}/${model.id}`);
+				setChoices([...new Set(keys)].sort());
+			})
+			.catch(() => undefined);
+		return () => {
+			alive = false;
+		};
+	}, []);
+
+	/** 空 = 不覆盖这一项（undefined）；填了但不是非负整数 = 无效（null） */
+	const parseTokens = (raw: string): number | undefined | null => {
+		const text = raw.trim();
+		if (!text) return undefined;
+		const value = Number(text);
+		return Number.isSafeInteger(value) && value >= 0 ? value : null;
+	};
+	const key = modelKey.trim();
+	const reserveTokens = parseTokens(reserve);
+	const keepRecentTokens = parseTokens(keepRecent);
+	const canAdd = /^[^/\s]+\/\S+$/.test(key) && reserveTokens !== null && keepRecentTokens !== null && (reserveTokens !== undefined || keepRecentTokens !== undefined);
+	const add = async () => {
+		if (!canAdd || disabled) return;
+		const override: CompactionModelOverride = {};
+		if (typeof reserveTokens === "number") override.reserveTokens = reserveTokens;
+		if (typeof keepRecentTokens === "number") override.keepRecentTokens = keepRecentTokens;
+		if (!(await onSave(key, override))) return;
+		setModelKey("");
+		setReserve("");
+		setKeepRecent("");
+	};
+	const entries = Object.entries(overrides).sort(([a], [b]) => a.localeCompare(b));
+	const field = { background: "var(--dsw-hover)", fontSize: 12.5 } as const;
+	const caption = { fontSize: 12, color: "var(--dsw-label-caption)" } as const;
+
+	return (
+		<div className="flex flex-col gap-2">
+			{entries.map(([entryKey, override]) => (
+				<div key={entryKey} className="flex items-center gap-3">
+					<span className="min-w-0 flex-1 truncate" style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }} title={entryKey}>{entryKey}</span>
+					<span className="flex-none" style={caption}>{t.reserveTokens} {override.reserveTokens ?? "—"}</span>
+					<span className="flex-none" style={caption}>{t.keepRecentTokens} {override.keepRecentTokens ?? "—"}</span>
+					<button type="button" className="icon-btn flex-none" disabled={disabled} aria-label={`${t.delete} ${entryKey}`} title={t.delete} onClick={() => void onSave(entryKey, null)}>
+						<IconCloseOutline14 size={13} />
+					</button>
+				</div>
+			))}
+			<div className="flex flex-wrap items-center gap-2">
+				<input
+					type="text"
+					list={listId}
+					value={modelKey}
+					placeholder="provider/model-id"
+					spellCheck={false}
+					disabled={disabled}
+					onChange={(event) => setModelKey(event.target.value)}
+					className="min-w-0 flex-1 rounded-lg px-2 py-1"
+					style={{ ...field, minWidth: 180, fontFamily: "var(--font-mono)" }}
+				/>
+				<datalist id={listId}>
+					{choices.map((choice) => <option key={choice} value={choice} />)}
+				</datalist>
+				<input type="number" min={0} value={reserve} placeholder={t.reserveTokens} title={t.reserveTokens} disabled={disabled} onChange={(event) => setReserve(event.target.value)} className="rounded-lg px-2 py-1" style={{ ...field, width: 110, textAlign: "right" }} />
+				<input type="number" min={0} value={keepRecent} placeholder={t.keepRecentTokens} title={t.keepRecentTokens} disabled={disabled} onChange={(event) => setKeepRecent(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void add(); }} className="rounded-lg px-2 py-1" style={{ ...field, width: 110, textAlign: "right" }} />
+				<button type="button" className="btn-outline flex-none" style={{ height: 28, padding: "0 12px", fontSize: 12.5 }} disabled={disabled || !canAdd} onClick={() => void add()}>
+					{t.compactionOverrideAdd}
+				</button>
+			</div>
 		</div>
 	);
 }

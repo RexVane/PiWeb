@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	basename,
+	classifyMessageChars,
 	classifyModelError,
 	cleanCommand,
 	deleteTargetOf,
@@ -215,5 +216,26 @@ describe("isDeleteCommand / deleteTargetOf", () => {
 		expect(deleteTargetOf("rm -rf dist")).toBe("dist");
 		expect(deleteTargetOf("rm \"src/old file.ts\"")).toBe("src/old file.ts");
 		expect(deleteTargetOf("Remove-Item -Recurse build")).toBe("build");
+	});
+});
+
+describe("上下文分项的消息归类", () => {
+	it("扩展注入的消息和用户的 ! 命令都算用户内容", () => {
+		const chars = classifyMessageChars([
+			{ role: "user", content: [{ type: "text", text: "12345" }] },
+			// 扩展注入：pi 会把它转成用户消息发给模型
+			{ role: "custom", content: [{ type: "text", text: "1234567" }] },
+			// `!` 命令：命令与输出都进上下文
+			{ role: "bashExecution", content: [], bash: { command: "ls", output: "abc" } },
+			// `!!` 命令不进上下文
+			{ role: "bashExecution", content: [], bash: { command: "cat .env", output: "secret", excludeFromContext: true } },
+			{ role: "assistant", content: [{ type: "text", text: "12" }, { type: "thinking", thinking: "123" }] },
+			{ role: "toolResult", content: [{ type: "text", text: "1234" }] },
+		]);
+		expect(chars).toEqual({ user: 5 + 7 + 5, agentText: 2, agentThinking: 3, agentToolCall: 0, toolOutput: 4 });
+	});
+
+	it("没有 bash 字段的历史消息不影响归类", () => {
+		expect(classifyMessageChars([{ role: "bashExecution", content: [] }])).toEqual({ user: 0, agentText: 0, agentThinking: 0, agentToolCall: 0, toolOutput: 0 });
 	});
 });

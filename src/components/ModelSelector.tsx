@@ -23,7 +23,7 @@ const modelKey = (model: { provider: string; id: string }) => JSON.stringify([mo
 export function ModelSelector({
 	model, thinkingLevel, thinkingLevels, models, providerNames, authByProvider,
 	onSelectModel, onSelectLevel, open: openProp, onOpenChange,
-	modelOnly = false, disabled = false, defaultOption,
+	modelOnly = false, disabled = false, defaultOption, routedModel,
 }: {
 	model?: { provider: string; id: string; name: string };
 	thinkingLevel?: string;
@@ -39,6 +39,8 @@ export function ModelSelector({
 	modelOnly?: boolean;
 	disabled?: boolean;
 	defaultOption?: { label: string; selected: boolean; onSelect: () => void };
+	/** 虚拟模型：最近一次回复实际路由到的物理模型（与选中项相同就不显示） */
+	routedModel?: { provider: string; id: string; thinkingLevel?: string } | null;
 }) {
 	const { t } = useI18n();
 	const id = useId();
@@ -212,8 +214,11 @@ export function ModelSelector({
 	const hasModel = Boolean(model?.id);
 	const modelName = hasModel ? (model?.name || model?.id || "") : "";
 	const effortLabel = !modelOnly && hasModel && thinkingLevel && thinkingLevel !== "off" ? thinkingLevel : undefined;
+	// 虚拟模型（如按任务路由的 hero model）会让实际后端和选中项不同：显示出来，用户才知道到底是谁在回答
+	const routed = routedModel && (routedModel.provider !== model?.provider || routedModel.id !== model?.id) ? routedModel : null;
+	const routedLabel = routed ? t.routedModel.replace("{model}", routed.id) : "";
 	const triggerTitle = (defaultOption?.selected ? `${defaultOption.label} · ` : "") + (hasModel
-		? `${providerNames[model?.provider ?? ""] ?? model?.provider}/${modelName}${effortLabel ? ` · ${effortLabel}` : ""}`
+		? `${providerNames[model?.provider ?? ""] ?? model?.provider}/${modelName}${effortLabel ? ` · ${effortLabel}` : ""}${routed ? ` · ${routedLabel}` : ""}`
 		: t.selectModel);
 
 	return (
@@ -238,6 +243,7 @@ export function ModelSelector({
 					}
 				}}>
 				<span className={styles.triggerName} suppressHydrationWarning>{hasModel ? modelName : t.selectModel}</span>
+				{routed && <span className={styles.routedLabel} title={routedLabel}>→ {routed.id}</span>}
 				{effortLabel && <span className={styles.effortLabel}>{effortLabel}</span>}
 				<span className="chevron"><IconChevronDown14 size={14} /></span>
 			</button>

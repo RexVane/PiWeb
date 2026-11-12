@@ -6,6 +6,8 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"steer",
 	"followUp",
 	"abort",
+	"bash",
+	"abortBash",
 	"compact",
 	"setModel",
 	"setThinkingLevel",
@@ -15,6 +17,7 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"fork",
 	"cycleModel",
 	"navigate",
+	"setLabel",
 	"editAndResend",
 	"clearQueue",
 	"extensionUiResponse",
@@ -24,6 +27,8 @@ const TOOL_PRESETS = new Set<ToolPreset>(["readonly", "standard", "full"]);
 const STREAMING_BEHAVIORS = new Set(["steer", "followUp"]);
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_TEXT = 1_000_000;
+/** 会话树书签（标签）的长度上限 */
+const MAX_LABEL = 80;
 const MAX_IMAGES = 20;
 const MAX_IMAGE_BASE64 = 28_000_000; // dsh: 单图 20MB
 const MAX_IMAGES_BASE64 = 268_000_000; // dsh: 单条消息图片总量 200MB
@@ -95,6 +100,11 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		}
 
 		if (raw.requestId !== undefined) command.requestId = optionalText(raw.requestId, "requestId");
+		if (raw.command !== undefined) command.command = optionalText(raw.command, "command");
+		if (raw.excludeFromContext !== undefined) {
+			if (typeof raw.excludeFromContext !== "boolean") throw new Error("excludeFromContext must be a boolean");
+			command.excludeFromContext = raw.excludeFromContext;
+		}
 		if (raw.value !== undefined) command.value = optionalText(raw.value, "value");
 		if (raw.confirmed !== undefined) {
 			if (typeof raw.confirmed !== "boolean") throw new Error("confirmed must be a boolean");
@@ -110,6 +120,12 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (command.cmd === "setToolPreset" && !command.preset) throw new Error("preset is required");
 		if (command.cmd === "setActiveTools" && !command.names) throw new Error("names are required");
 		if (command.cmd === "navigate" && !command.entryId) throw new Error("entryId is required");
+		if (command.cmd === "setLabel") {
+			if (!command.entryId) throw new Error("entryId is required");
+			// 标签是树上的一个书签名，不是正文；text 省略或为空 = 清掉
+			if ((command.text ?? "").length > MAX_LABEL) throw new Error(`label must be at most ${MAX_LABEL} characters`);
+		}
+		if (command.cmd === "bash" && !command.command?.trim()) throw new Error("command is required");
 		return { ok: true, command };
 	} catch (error) {
 		return { ok: false, error: error instanceof Error ? error.message : "invalid command" };

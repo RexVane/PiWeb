@@ -19,7 +19,11 @@ export interface SessionSummary {
 
 // ---------- 轨迹账本 ----------
 
-export type TrajKind = "system" | "context" | "user" | "message" | "tool" | "compacted";
+/**
+ * custom：扩展注入的消息（pi 转成用户内容发给模型）；bash：用户用 `!` 跑的命令。
+ * 两者都不是用户发言，不开新的一轮。
+ */
+export type TrajKind = "system" | "context" | "user" | "custom" | "bash" | "message" | "tool" | "compacted";
 
 export interface TrajTokens {
 	input?: number;
@@ -60,9 +64,17 @@ export interface WebMessage {
 	id?: string;
 	/** 热会话流的稳定身份；持久 entry id 尚未生成时也可关联 start/delta/end 与快照。 */
 	streamId?: string;
-	/** summary：压缩分隔卡 / 分支摘要卡（pi 的 compactionSummary / branchSummary），不参与回合 */
-	role: "user" | "assistant" | "toolResult" | "custom" | "summary" | "other";
+	/**
+	 * summary：压缩分隔卡 / 分支摘要卡（pi 的 compactionSummary / branchSummary），不参与回合。
+	 * custom：扩展注入、要求显示的消息（pi 的 CustomMessage，display: true）——模型看得到，界面也必须看得到。
+	 * bashExecution：用户用 `!` 直接跑的命令（不是模型的工具调用）。
+	 */
+	role: "user" | "assistant" | "toolResult" | "custom" | "bashExecution" | "summary" | "other";
 	content: WebContent[];
+	/** custom：扩展给这类消息起的类型名（pi 的 customType） */
+	customType?: string;
+	/** bashExecution：命令与输出；running = 还在跑（输出由 bash_output 增量补齐） */
+	bash?: WebBashExecution;
 	/** summary：compaction = 以上内容模型只看得到摘要；branch = 切换分支时离开的分支被总结成摘要 */
 	summaryKind?: "compaction" | "branch";
 	summary?: string;
@@ -82,20 +94,62 @@ export interface WebMessage {
 	thinkingLevel?: string;
 }
 
+export interface WebBashExecution {
+	command: string;
+	output: string;
+	exitCode?: number;
+	cancelled?: boolean;
+	truncated?: boolean;
+	/** `!!`：结果不进模型上下文 */
+	excludeFromContext?: boolean;
+	running?: boolean;
+	/** 命令没能跑起来（找不到 shell 等）：output 里是错误信息，没有退出码 */
+	failed?: boolean;
+}
+
+/**
+ * 工具在执行中自己发起的调用（codemode 脚本、扩展的 ctx.executeTool）。模型没有为它们发 toolCall，
+ * SDK 把记录挂在父调用的工具结果上（nestedCalls）；这里只留渲染要用的字段，不含输出。
+ */
+export interface WebNestedCall {
+	id: string;
+	name: string;
+	/** 参数过大时 SDK 不记录，只有 argumentsBytes */
+	args?: unknown;
+	status: "ok" | "error" | "unfinished";
+	error?: string;
+	durationMs?: number;
+}
+
 export type WebContent =
 	| { type: "text"; text: string }
 	| { type: "image"; data: string; mimeType: string }
 	| { type: "thinking"; thinking: string }
 	| { type: "toolCall"; id: string; name: string; arguments: unknown }
-	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string };
+	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string; nestedCalls?: WebNestedCall[] };
+
+/** 扩展 setWidget 设的文字块：显示在输入框上方或下方 */
+export interface WebExtensionWidget {
+	lines: string[];
+	placement: "aboveEditor" | "belowEditor";
+}
 
 export type WebEvent =
 	| { type: "delta"; kind: "text" | "thinking"; contentIndex: number; delta: string; messageId?: string; ts: number }
 	| { type: "message"; message: WebMessage; phase: "start" | "end"; ts: number }
+	/**
+	 * 模型正在生成的工具调用（参数还没出完）：让工具行在参数流出时就出现，而不是等整段参数生成完。
+	 * args 是当前已解析出的部分参数，长字符串已截短；完整参数随 message end / tool 事件到达。
+	 */
+	| { type: "toolcall"; messageId?: string; contentIndex: number; id: string; name: string; args: unknown; ts: number }
+	/** `!` 命令的输出增量，接在 messageId 对应的 bashExecution 消息后面 */
+	| { type: "bash_output"; messageId: string; delta: string; ts: number }
 	| {
 			type: "tool";
 			id: string;
 			name: string;
+			/** 嵌套调用：发起它的那次工具调用（见 WebNestedCall） */
+			parentId?: string;
 			/** 进度更新（running 且带 partialResult）不重发 args，接收方沿用 start 时的值 */
 			args?: unknown;
 			state: "running" | "done";
@@ -116,6 +170,8 @@ export type WebEvent =
 			thinkingLevel?: string;
 			/** 当前模型支持的档位；切模型后随之更新，否则前端菜单停留在旧模型的档位 */
 			thinkingLevels?: string[];
+			/** 虚拟模型实际路由到的物理模型；null = 没有（不是虚拟模型或还没回过话），省略 = 不变 */
+			routedModel?: WebRoutedModel | null;
 			ts: number;
 	  }
 	| {
@@ -156,24 +212,40 @@ export type WebEvent =
 	  }
 	| {
 			/**
-			 * 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input 需要浏览器应答。
+			 * 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input/editor 需要浏览器应答。
 			 * questions 是内置 ask_user_question 工具的选择窗口（输入框上方的卡片），应答 value 为 JSON 答案。
+			 * 其余（notify / setStatus / setWidget / setTitle / setEditorText / setWorkingMessage）只通知、不等应答。
 			 */
 			type: "extension_ui";
 			id: string;
-			method: "select" | "confirm" | "input" | "questions" | "notify" | "setStatus" | "setWorkingMessage";
+			method: "select" | "confirm" | "input" | "editor" | "questions" | "notify" | "setStatus" | "setWidget" | "setTitle" | "setEditorText" | "setWorkingMessage";
 			title?: string;
 			message?: string;
 			options?: string[];
 			questions?: AskQuestion[];
 			placeholder?: string;
+			/** editor：编辑框的初始内容 */
+			prefill?: string;
 			notifyType?: "info" | "warning" | "error";
 			statusKey?: string;
 			statusText?: string;
+			/** setWidget：widgetLines 省略 = 清除这个 key */
+			widgetKey?: string;
+			widgetLines?: string[];
+			widgetPlacement?: "aboveEditor" | "belowEditor";
+			/** setEditorText：要放进输入框的文字 */
+			text?: string;
 			timeout?: number;
 			ts: number;
 	  }
 	| { type: "extension_ui_resolved"; id: string; ts: number }
+	/**
+	 * 扩展命令换了会话（ctx.newSession / ctx.fork / ctx.switchSession）：PiWeb 一个会话一份文件，
+	 * 「换会话」就是让浏览器打开目标会话。
+	 */
+	| { type: "session_navigate"; sessionPath: string; reason: "new" | "resume" | "fork"; ts: number }
+	/** 会话分支被换了（扩展调 ctx.navigateTree）：眼前的消息列表已过时，重连拿新快照 */
+	| { type: "resync"; ts: number }
 	| { type: "error"; message: string; ts: number }
 	/** 自动重试:流程内通知,界面聚合成一条「重试 n/max」,不作为错误条目累积 */
 	| { type: "retry"; attempt: number; maxAttempts: number; message: string; ts: number }
@@ -184,6 +256,14 @@ export type WebEvent =
 	| { type: "growth_error"; message: string | null; ts: number }
 	/** 项目生长要先在工作区建 git 仓库，等用户同意；request 为 null = 已回答（关掉弹窗） */
 	| { type: "growth_consent"; request: GrowthConsentRequest | null; ts: number };
+
+/** 虚拟模型选择下，最近一次成功回复实际用的物理模型 */
+export interface WebRoutedModel {
+	provider: string;
+	id: string;
+	/** 实际生效的思考档位（路由可能按模型钳制） */
+	thinkingLevel?: string;
+}
 
 export interface WebStats {
 	userMessages: number;
@@ -325,6 +405,8 @@ export interface WebSnapshot {
 	/** 等用户回答的建仓库请求；缺省按没有处理（兼容旧服务端） */
 	growthConsent?: GrowthConsentRequest | null;
 	model?: { provider: string; id: string; name: string };
+	/** 虚拟模型实际路由到的物理模型；缺省 = 不是虚拟模型 */
+	routedModel?: WebRoutedModel | null;
 	thinkingLevel?: string;
 	thinkingLevels: string[];
 	toolPreset: ToolPreset;
@@ -336,6 +418,10 @@ export interface WebSnapshot {
 	extensionUiRequests?: Extract<WebEvent, { type: "extension_ui" }>[];
 	/** 扩展通过 setStatus 设的页脚状态（key → 文本）；缺省按空处理（兼容旧服务端） */
 	extensionStatuses?: Record<string, string>;
+	/** 扩展通过 setWidget 设的文字块（key → 内容）；缺省按空处理（兼容旧服务端） */
+	extensionWidgets?: Record<string, WebExtensionWidget>;
+	/** 扩展通过 setTitle 设的窗口标题；缺省 = 用会话名（兼容旧服务端） */
+	extensionTitle?: string;
 	tools: { active: string[]; all: { name: string; description?: string }[] };
 	stats: WebStats | null;
 	contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | null;
@@ -363,6 +449,8 @@ export interface AgentCommand {
 		| "steer"
 		| "followUp"
 		| "abort"
+		| "bash"
+		| "abortBash"
 		| "compact"
 		| "setModel"
 		| "setThinkingLevel"
@@ -371,6 +459,7 @@ export interface AgentCommand {
 		| "fork"
 		| "cycleModel"
 		| "navigate"
+		| "setLabel"
 		| "editAndResend"
 		| "clearQueue"
 		| "setActiveTools"
@@ -378,6 +467,9 @@ export interface AgentCommand {
 		| "reload";
 	text?: string;
 	images?: ImageAttachment[];
+	/** bash：要执行的命令（`!!` 前缀由前端去掉并置 excludeFromContext） */
+	command?: string;
+	excludeFromContext?: boolean;
 	instructions?: string;
 	provider?: string;
 	modelId?: string;

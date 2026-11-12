@@ -10,7 +10,7 @@ vi.mock("next/dynamic", async () => {
 });
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {}, applyPebrelTheme: () => {}, loadPebrelTheme: () => "dsh", loadThemeMode: () => "system" }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {}, selectLatest: () => {} }) }));
-vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null }));
+vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null, ExtensionWidgets: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>
 	<button onClick={() => props.onOpen("/cold.jsonl")}>Open cold</button>
 	<button onClick={() => props.onOpen("/other.jsonl")}>Open other</button>

@@ -11,6 +11,8 @@ import type { ContextBreakdown, TrajTokens } from "@/lib/types";
 type ContextMessage = {
 	role?: string;
 	content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>;
+	/** `!` 命令：输出在 bash 里，不在 content 里（`!!` 的不进上下文） */
+	bash?: { command: string; output: string; excludeFromContext?: boolean };
 	usage?: TrajTokens;
 	stopReason?: string;
 	timestamp?: number;

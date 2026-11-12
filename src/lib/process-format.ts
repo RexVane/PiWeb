@@ -76,16 +76,28 @@ export function estimateTokensOf(text: string): number {
 	return Math.ceil(text.length / 4);
 }
 
-/** 上下文 13 类分段中的 5 个消息分项：按 role / content.type 归类字符数 */
+/**
+ * 上下文 13 类分段中的 5 个消息分项：按 role / content.type 归类字符数。
+ * 扩展注入的消息（custom）和用户的 `!` 命令（bashExecution）在发给模型时都被 pi 转成用户内容，算在 user 里；
+ * `!!` 命令（excludeFromContext）不进上下文，不算。
+ */
 export function classifyMessageChars(
-	messages: Array<{ role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown }> }>,
+	messages: Array<{
+		role?: string;
+		content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown }>;
+		bash?: { command: string; output: string; excludeFromContext?: boolean };
+	}>,
 ): { user: number; agentText: number; agentThinking: number; agentToolCall: number; toolOutput: number } {
 	const out = { user: 0, agentText: 0, agentThinking: 0, agentToolCall: 0, toolOutput: 0 };
 	for (const message of messages) {
+		if (message.role === "bashExecution") {
+			if (message.bash && !message.bash.excludeFromContext) out.user += message.bash.command.length + message.bash.output.length;
+			continue;
+		}
 		for (const content of message.content) {
 			if (content.type === "text") {
 				const chars = content.text?.length ?? 0;
-				if (message.role === "user") out.user += chars;
+				if (message.role === "user" || message.role === "custom") out.user += chars;
 				else if (message.role === "toolResult") out.toolOutput += chars;
 				else if (message.role !== "system") out.agentText += chars;
 			} else if (content.type === "thinking") {

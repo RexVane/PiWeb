@@ -295,7 +295,7 @@ function fmtSpan(ms: number): string {
 }
 
 type StepTone = "dim" | "live" | "fail" | "warn";
-type StepKind = ToolKind | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill";
+type StepKind = ToolKind | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
 
 function KindIcon({ kind }: { kind: StepKind }) {
 	const p = { size: 14, style: { flex: "none" as const } };
@@ -477,12 +477,34 @@ function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	return displayToolName(name);
 }
 
+/**
+ * 嵌套调用树：工具在执行中自己发起的调用（codemode 脚本、扩展的 ctx.executeTool）。
+ * 模型没有为它们发 toolCall，所以消息里找不到；跟着父调用的 children 渲染在它下面。
+ */
+type ToolNode = { id: string; state: ToolCardState; children: ToolNode[] };
+
+const NESTED_MAX_DEPTH = 4;
+const NO_NESTED: ToolNode[] = [];
+
+function nestedNodes(tools: Record<string, ToolCardState>, parentId: string, depth = 0): ToolNode[] {
+	const ids = tools[parentId]?.children;
+	if (!ids?.length || depth >= NESTED_MAX_DEPTH) return NO_NESTED;
+	const out: ToolNode[] = [];
+	for (const id of ids) {
+		const state = tools[id];
+		if (state) out.push({ id, state, children: nestedNodes(tools, id, depth + 1) });
+	}
+	return out;
+}
+
 const ToolStep = memo(function ToolStep({
 	id,
 	name,
 	args,
 	state,
 	cwd,
+	nested,
+	badge,
 	onInspectTool,
 	onOpenFile,
 }: {
@@ -491,6 +513,10 @@ const ToolStep = memo(function ToolStep({
 	args: unknown;
 	state?: ToolCardState;
 	cwd?: string;
+	/** 这次调用自己发起的嵌套调用（见 ToolNode） */
+	nested?: ToolNode[];
+	/** 行内小标签：区分「用户用 ! 跑的命令」和模型的工具调用 */
+	badge?: string;
 	onInspectTool?: (toolCallId: string) => void;
 	onOpenFile?: (path: string) => void;
 }) {
@@ -580,6 +606,7 @@ const ToolStep = memo(function ToolStep({
 				onKeyDown={lineInteractive ? onKey : undefined}
 			>
 				{running ? <span className="pw-shimmer">{name === ASK_USER_TOOL ? t.stepAskWaiting : t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
+				{badge && <span className="pw-badge">{badge}</span>}
 				{summary.text ? (
 					<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={argsTitle}>{summary.text}</span>
 				) : (
@@ -674,6 +701,13 @@ const ToolStep = memo(function ToolStep({
 					{fullCommand && <div className="cmdline">{fullCommand}</div>}
 					{state?.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn)" }}>{t.encodingLossWarning}</p>}
 					{output && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{output}</pre>}
+				</div>
+			)}
+			{nested && nested.length > 0 && (
+				<div className="pw-nested">
+					{nested.map((node) => (
+						<ToolStep key={node.id} id={node.id} name={node.state.name} args={node.state.args} state={node.state} cwd={cwd} nested={node.children} onOpenFile={onOpenFile} />
+					))}
 				</div>
 			)}
 		</Step>
@@ -829,6 +863,38 @@ function SkillStep({ name, args }: { name: string; args: string }) {
 	);
 }
 
+/**
+ * 扩展注入的消息（pi.sendMessage，display: true）：模型看得到，界面也必须看得到，
+ * 否则用户看到的上下文和模型实际收到的不是一回事。它不是用户发言也不是模型回答，
+ * 所以放在过程里：一行类型名 + 首行，点开看全文。
+ */
+function CustomStep({ customType, text }: { customType: string; text: string }) {
+	const { t } = useI18n();
+	const [open, setOpen] = useState(false);
+	const oneLine = text.replace(/\s+/g, " ").trim();
+	const label = customType || t.customMessage;
+	return (
+		<Step kind="custom">
+			{oneLine ? (
+				<button type="button" className="pw-line pw-clickable" aria-expanded={open} onClick={() => setOpen((value) => !value)} title={`${t.customMessageTitle} · ${label}`}>
+					<span className="pw-verb">{label}</span>
+					{!open && <span className="pw-gist">{oneLine}</span>}
+					<IconChevronRight14 size={12} className="pw-chev" />
+				</button>
+			) : (
+				<div className="pw-line" title={t.customMessageTitle}>
+					<span className="pw-verb">{label}</span>
+				</div>
+			)}
+			{open && oneLine && (
+				<div className="pw-custom-body">
+					<Markdown text={text} />
+				</div>
+			)}
+		</Step>
+	);
+}
+
 // ---------- 工作指示：π 记号 + 英文状态词闪光（没有正在进行的步骤时）或「Working for 12s」；整行固定英文 ----------
 
 function WorkingStep({ startedAt, outputTokens, workingMessage, hasLiveStep }: { startedAt: number; outputTokens?: number; workingMessage?: string | null; hasLiveStep: boolean }) {
@@ -853,22 +919,74 @@ type Item =
 	| { kind: "think"; key: string; msgIndex: number; text: string; live: boolean; startedAt?: number }
 	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
 	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string }
-	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState }
+	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState; nested?: ToolNode[]; badge?: string }
+	| { kind: "custom"; key: string; msgIndex: number; customType: string; text: string }
 	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
 	| { kind: "abort"; key: string; msgIndex: number };
 
 type Run = { kind: "run"; key: string; items: Item[]; hasThink: boolean; cmds: number; reads: number; searches: number; durationMs?: number };
 type Block = { kind: "item"; item: Item } | Run;
 
+/** 消息里的文本块拼成一段（扩展消息 / `!` 命令的输出都用它） */
+function messageText(message: WebMessage): string {
+	return message.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text" && typeof c.text === "string")
+		.map((c) => c.text)
+		.join("\n\n");
+}
+
+/** 用户 `!` 命令的行内标签：与输入时的写法一致（`!!` = 结果不进模型上下文），不必翻译 */
+const USER_BASH_BADGE = "!";
+const USER_BASH_EXCLUDED_BADGE = "!!";
+
+/**
+ * 用户 `!` 命令 → 工具行：与模型的工具调用同一套排版（命令 + 输出 + 耗时），用行内标签区分。
+ * SDK 不给这类消息发工具事件，卡片状态由消息本身给出。
+ */
+function bashToolItem(message: WebMessage, k: number): Extract<Item, { kind: "tool" }> | null {
+	const bash = message.bash;
+	if (!bash) return null;
+	const running = bash.running === true;
+	const cancelled = !running && bash.cancelled === true;
+	const failed = !running && (bash.failed === true || (bash.exitCode !== undefined && bash.exitCode !== 0));
+	// 被停止的命令：补上 SDK 给模型工具用的同一句收尾，工具行据此显示成「已中止」而不是失败或正常完成
+	const output = cancelled && !isCancelledTool("bash", true, bash.output) ? [bash.output.trimEnd(), "Command aborted"].filter(Boolean).join("\n\n") : bash.output;
+	return {
+		kind: "tool",
+		key: `${k}-bash`,
+		msgIndex: k,
+		call: { type: "toolCall", id: `bash-${message.streamId ?? message.id ?? k}`, name: "bash", arguments: { command: bash.command } },
+		badge: bash.excludeFromContext ? USER_BASH_EXCLUDED_BADGE : USER_BASH_BADGE,
+		state: {
+			name: "bash",
+			args: { command: bash.command },
+			state: running ? "running" : "done",
+			result: output || undefined,
+			isError: failed || cancelled,
+			startedAt: message.timestamp,
+			endedAt: running ? undefined : message.timestamp,
+		},
+	};
+}
+
 function buildItems(messages: WebMessage[], k: number, tools: Record<string, ToolCardState>, live: boolean, omitText: boolean, errorCount: number | undefined): Item[] {
 	const message = messages[k];
 	const lastIndex = message.content.length - 1;
 	const isError = message.stopReason === "error";
 	const items: Item[] = [];
+	if (message.role === "custom") {
+		items.push({ kind: "custom", key: `${k}-custom`, msgIndex: k, customType: message.customType ?? "", text: messageText(message) });
+		return items;
+	}
+	if (message.role === "bashExecution") {
+		const bash = bashToolItem(message, k);
+		if (bash) items.push(bash);
+		return items;
+	}
 	message.content.forEach((c, i) => {
 		const key = `${k}-${i}`;
 		if (c.type === "thinking" && c.thinking.trim()) items.push({ kind: "think", key, msgIndex: k, text: c.thinking, live: live && i === lastIndex, startedAt: message.timestamp });
-		else if (c.type === "toolCall") items.push({ kind: "tool", key: `${key}-${c.id}`, msgIndex: k, call: c, state: tools[c.id] });
+		else if (c.type === "toolCall") items.push({ kind: "tool", key: `${key}-${c.id}`, msgIndex: k, call: c, state: tools[c.id], nested: nestedNodes(tools, c.id) });
 		else if (c.type === "text" && !omitText && c.text.trim()) items.push({ kind: "narr", key, msgIndex: k, text: c.text, live: live && i === lastIndex, error: isError });
 		else if (c.type === "image" && !omitText) items.push({ kind: "image", key, msgIndex: k, data: c.data, mimeType: c.mimeType });
 	});
@@ -882,6 +1000,8 @@ function isCollapsible(it: Item, finalIdx: number): boolean {
 	if (it.msgIndex === finalIdx) return false;
 	if (it.kind === "think") return !it.live;
 	if (it.kind === "tool") {
+		// 用户自己用 `!` 跑的命令不折进「运行了 N 条命令」：那是用户的动作，不是模型的过程
+		if (it.badge) return false;
 		const s = it.state;
 		if (!s || s.state !== "done" || s.isError) return false;
 		const k = toolKind(it.call.name);
@@ -965,7 +1085,9 @@ function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: 
 				</div>
 			);
 		case "tool":
-			return <ToolStep id={item.call.id} name={item.call.name} args={item.call.arguments} state={item.state} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />;
+			return <ToolStep id={item.call.id} name={item.call.name} args={item.call.arguments} state={item.state} cwd={cwd} nested={item.nested} badge={item.badge} onInspectTool={item.badge ? undefined : onInspectTool} onOpenFile={onOpenFile} />;
+		case "custom":
+			return <CustomStep customType={item.customType} text={item.text} />;
 		case "error":
 			return <ErrorStep message={item.message} count={item.count} />;
 		case "abort":
@@ -1151,22 +1273,35 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 // ---------- 回合：用户消息 → 过程步骤 → 最终回答 ----------
 
 /** summaryIndex：压缩分隔卡 / 分支摘要卡单独占一格，没有用户消息和过程 */
-type Turn = { key: string; userIndex: number; assistantIndexes: number[]; summaryIndex?: number };
+/**
+ * extraIndexes：不属于模型回合、但要显示在对话里的消息——扩展注入的消息（custom）和用户的 `!` 命令
+ * （bashExecution）。它们按出现顺序排进所在回合的过程里。
+ */
+type Turn = { key: string; userIndex: number; assistantIndexes: number[]; extraIndexes: number[]; summaryIndex?: number };
 
 function buildTurns(messages: WebMessage[]): Turn[] {
 	const out: Turn[] = [];
 	let cur: Turn | null = null;
 	messages.forEach((m, i) => {
 		if (m.role === "user") {
-			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [] };
+			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [], extraIndexes: [] };
 			out.push(cur);
 		} else if (m.role === "summary") {
 			// 压缩可能切在回合中间：卡片后面的助手消息另起一个回合，不并回卡片上方的用户消息
-			out.push({ key: `s${i}`, userIndex: -1, assistantIndexes: [], summaryIndex: i });
+			out.push({ key: `s${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [], summaryIndex: i });
 			cur = null;
+		} else if (m.role === "custom" || m.role === "bashExecution") {
+			// 当前回合已经收尾（最后一条是最终回答）就另起一段：否则回答之后才跑的 `!` 命令
+			// 会被排进过程里、显示在那条回答的上方
+			const last: number | undefined = cur?.assistantIndexes[cur.assistantIndexes.length - 1];
+			if (!cur || (last !== undefined && isFinalAnswer(messages[last]))) {
+				cur = { key: `x${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [] };
+				out.push(cur);
+			}
+			cur.extraIndexes.push(i);
 		} else if (m.role === "assistant") {
 			if (!cur) {
-				cur = { key: `a${i}`, userIndex: -1, assistantIndexes: [] };
+				cur = { key: `a${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [] };
 				out.push(cur);
 			}
 			cur.assistantIndexes.push(i);
@@ -1260,8 +1395,11 @@ function TurnBlockView({
 		}
 	}
 
-	// 过程里要渲染的消息：最终回答只在有思考块时进过程（只出思考）
-	const processIdx = assistants.filter((k) => k !== finalIdx || messages[k].content.some((c) => c.type === "thinking" && c.thinking.trim()));
+	// 过程里要渲染的消息：最终回答只在有思考块时进过程（只出思考）；扩展消息 / `!` 命令按出现顺序穿插进来
+	const processIdx = [
+		...assistants.filter((k) => k !== finalIdx || messages[k].content.some((c) => c.type === "thinking" && c.thinking.trim())),
+		...turn.extraIndexes,
+	].sort((a, b) => a - b);
 	const items = processIdx.flatMap((k) => buildItems(messages, k, tools, isStreaming && k === lastAssistantIndex, k === finalIdx, errorCounts.get(k)));
 	// 仅累计模型生成时间；相邻助手消息之间可能在等工具或等用户，不能算成思考。
 	const spanOf = (a: number, b: number): number | undefined => {
@@ -1437,6 +1575,17 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 					</div>
 				);
 			})}
+			{turn.extraIndexes.map((k) => {
+				const m = messages[k];
+				if (!m) return null;
+				// 占位只出一行：扩展消息的首行，或 `!` 命令本身
+				const line = (m.role === "bashExecution" ? `! ${m.bash?.command ?? ""}` : plain(m)).replace(/\s+/g, " ").trim().slice(0, 200);
+				return line ? (
+					<div key={`x${k}`} className="pw-line" style={{ color: "var(--dsw-label-tertiary)" }}>
+						<span className="pw-gist">{line}</span>
+					</div>
+				) : null;
+			})}
 		</>
 	);
 }
@@ -1566,7 +1715,9 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 	if (prev.turn.key !== next.turn.key || prev.turn.userIndex !== next.turn.userIndex) return false;
 	if (prev.turn.assistantIndexes.length !== next.turn.assistantIndexes.length) return false;
 	if (!prev.turn.assistantIndexes.every((value, index) => value === next.turn.assistantIndexes[index])) return false;
-	const indexes = [prev.turn.userIndex, ...prev.turn.assistantIndexes].filter((index) => index >= 0);
+	if (prev.turn.extraIndexes.length !== next.turn.extraIndexes.length) return false;
+	if (!prev.turn.extraIndexes.every((value, index) => value === next.turn.extraIndexes[index])) return false;
+	const indexes = [prev.turn.userIndex, ...prev.turn.assistantIndexes, ...prev.turn.extraIndexes].filter((index) => index >= 0);
 	if (!indexes.every((index) => prev.messages[index] === next.messages[index])) return false;
 	// 只比较本回合引用到的工具条目：tools 外层容器每次工具事件都会换身份
 	const toolIds: string[] = [];
@@ -1575,6 +1726,10 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 			const call = part as { type?: string; id?: string };
 			if (call.type === "toolCall" && call.id) toolIds.push(call.id);
 		}
+	}
+	// 嵌套调用不在消息里，跟着父调用的 children 走（新增一个子调用会换掉父条目的身份，这里再逐个比子条目）
+	for (let i = 0; i < toolIds.length; i += 1) {
+		for (const child of next.tools[toolIds[i]]?.children ?? []) if (!toolIds.includes(child)) toolIds.push(child);
 	}
 	return toolIds.every((id) => prev.tools[id] === next.tools[id]);
 }

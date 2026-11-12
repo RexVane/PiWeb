@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
 import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
-import { ExtensionDialogHost, ExtensionNotices } from "@/components/ExtensionUI";
+import { ExtensionDialogHost, ExtensionNotices, ExtensionWidgets } from "@/components/ExtensionUI";
 import { AskUserCard } from "@/components/AskUserCard";
 import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
@@ -196,7 +196,7 @@ export function AppShell() {
 		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
 		const section = localStorage.getItem("piweb.drawerSection");
-		if (["project", "prompts", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
+		if (["project", "prompts", "git", "tree", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
 	}, []);
 	/** 新会话时加载用户之前的选择；没有记住的，等 /api/models/defaults 回来用 pi 设置里的建议模型兜底 */
 	useEffect(() => {
@@ -623,7 +623,7 @@ export function AppShell() {
 	);
 
 	// Hero 发送：先完整应用新会话预设，再发第一条消息。
-	const heroSend = async (text: string, images: ImageAttachment[]) => {
+	const startHeroSession = async (command: Record<string, unknown>) => {
 		// 启动不预选工作区：未选择就发送时明确提示，而不是静默落到第一个工作区
 		const cwd = heroCwd.trim();
 		if (!cwd) {
@@ -645,8 +645,11 @@ export function AppShell() {
 		// this same key; a failed acceptance keeps the original text and attachments.
 		sessionDraftKeys.current.set(p, heroDraftKey);
 		setHeroDraftKey(`__hero__:${++draftSequence.current}`);
-		return sendCommand({ cmd: "prompt", text, images }, encodeURIComponent(b64url(p)));
+		return sendCommand(command, encodeURIComponent(b64url(p)));
 	};
+	const heroSend = (text: string, images: ImageAttachment[]) => startHeroSession({ cmd: "prompt", text, images });
+	// `!cmd`：输入框判定后直接走这里（pi 终端的 bash 模式），不经过模型
+	const heroBash = (command: string, excludeFromContext: boolean) => startHeroSession({ cmd: "bash", command, excludeFromContext });
 
 	const sendPrompt = (text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images });
 
@@ -857,8 +860,38 @@ export function AppShell() {
 	}, []);
 
 	useEffect(() => {
-		document.title = currentId && title && title !== "pi" ? `${title} · pi` : "pi";
-	}, [currentId, title]);
+		// 扩展 setTitle 优先（pi 终端里它设的是窗口标题），否则用会话名
+		const extensionTitle = state.extensionTitle?.trim();
+		document.title = extensionTitle || (currentId && title && title !== "pi" ? `${title} · pi` : "pi");
+	}, [currentId, title, state.extensionTitle]);
+
+	// 扩展 setEditorText：把文字放进输入框（每次请求只放一次，之后用户怎么改都不再覆盖）
+	const appliedEditorText = useRef<string | null>(null);
+	useEffect(() => {
+		const request = state.editorText;
+		if (!request || appliedEditorText.current === request.id) return;
+		appliedEditorText.current = request.id;
+		updateDraft(draftKey, (previous) => ({ ...previous, text: request.text }));
+	}, [state.editorText, draftKey, updateDraft]);
+
+	/**
+	 * 会话分支面板：切到另一条分支。服务端换完会通知所有开着这份会话的页面重连取快照，这里不用自己 resync。
+	 * 目标落在一条用户消息上时，pi 把叶子放到它前面并把那句话交还（终端 /tree 同款）：放进输入框，改完可以重新发。
+	 */
+	const switchBranch = useCallback(async (leafId: string) => {
+		if (!currentId) return false;
+		const result = await sendCommand({ cmd: "navigate", entryId: leafId });
+		if (!result?.success) return false;
+		const editorText = result.data?.editorText;
+		if (typeof editorText === "string" && editorText) updateDraft(draftKey, (previous) => ({ ...previous, text: editorText }));
+		return true;
+	}, [currentId, sendCommand, updateDraft, draftKey]);
+	/** 给会话树上的一问打标签（空串 = 清掉）；标签存进会话文件，pi 终端的 /tree 里同样看得到 */
+	const setEntryLabel = useCallback(async (entryId: string, label: string) => {
+		if (!currentId) return false;
+		const result = await sendCommand({ cmd: "setLabel", entryId, text: label });
+		return result?.success === true;
+	}, [currentId, sendCommand]);
 
 	// 网格列(宽屏):侧栏 | 对话区 | 最右一列(轨迹详情 ⇄ 抽屉)。项目栏已降级成
 	// 抽屉里的一个入口,不再单独占一列,所以是 3 列而不是 4 列。
@@ -906,6 +939,9 @@ export function AppShell() {
 					onOpenContent={(path, content) => viewer.openStatic(path, content)}
 					onAskCommit={() => insertIntoComposer(t.gitAskCommitPrompt)}
 					onOpenFile={openInEditor}
+					treeRefreshKey={`${currentId ?? ""}:${panelRefreshKey}`}
+					onSwitchBranch={switchBranch}
+					onSetLabel={setEntryLabel}
 				/>
 			)}
 		</div>
@@ -997,6 +1033,7 @@ export function AppShell() {
 							knownCwds={knownCwds}
 							getWorkspaceName={getWorkspaceName}
 							onSend={heroSend}
+							onBash={heroBash}
 							models={modelChoices}
 							providerNames={providerNames}
 							authByProvider={authByProvider}
@@ -1118,6 +1155,7 @@ export function AppShell() {
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										{askDialog && <AskUserCard key={askDialog.id} dialog={askDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />}
+										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
 										<ChatInput
 											toolPreset={state.toolPreset}
 											customActiveTools={snapshot?.customActiveTools}
@@ -1142,6 +1180,7 @@ export function AppShell() {
 											// 首条消息由增量事件写入 state.messages，初次快照可能一直为空。
 											contextVisible={state.messages.length > 0}
 											model={snapshot?.model}
+											routedModel={snapshot?.routedModel}
 											thinkingLevel={snapshot?.thinkingLevel}
 											thinkingLevels={snapshot?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
 											models={modelChoices}
@@ -1152,6 +1191,7 @@ export function AppShell() {
 											cwd={panelCwd}
 											onCommand={runSlashCommand}
 											onSend={sendPrompt}
+											onBash={(command, excludeFromContext) => sendCommand({ cmd: "bash", command, excludeFromContext })}
 											onSteer={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
 											onFollowUp={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
 											onAbort={() => sendCommand({ cmd: "abort" })}
@@ -1165,6 +1205,7 @@ export function AppShell() {
 											onClearQueue={() => sendCommand({ cmd: "clearQueue" })}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
+										<ExtensionWidgets widgets={state.extensionWidgets} placement="belowEditor" className="mt-1" />
 										{Object.keys(state.extensionStatuses).length > 0 && (
 											<div className="mx-auto mt-0.5 flex w-full flex-wrap justify-center gap-x-3 px-4" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }} title={t.extensionStatus}>
 												{Object.entries(state.extensionStatuses).map(([k, v]) => <span key={k}>{v}</span>)}
@@ -1295,6 +1336,7 @@ function Hero({
 	knownCwds,
 	getWorkspaceName,
 	onSend,
+	onBash,
 	models,
 	providerNames,
 	authByProvider,
@@ -1323,6 +1365,7 @@ function Hero({
 	knownCwds: string[];
 	getWorkspaceName?: (cwd: string) => string;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<{ success: boolean }>;
+	onBash?: (command: string, excludeFromContext: boolean) => Promise<{ success: boolean }>;
 	models: ModelChoice[];
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
@@ -1454,6 +1497,7 @@ function Hero({
 					authByProvider={authByProvider}
 					queue={{ steering: [], followUp: [] }}
 					onSend={onSend}
+					onBash={onBash}
 					onSteer={() => ({ success: false })}
 					onAbort={() => {}}
 					onSelectModel={onSelectHeroModel}

@@ -5,7 +5,7 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, ExtensionCommandContextActions, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import {
 ExtensionRunner,
 ModelRegistry,
@@ -64,6 +64,8 @@ import type {
 	ToolPreset,
 	WebEvent,
 	WebMessage,
+	WebNestedCall,
+	WebRoutedModel,
 	WebSnapshot,
 	WebStats,
 } from "./types";
@@ -74,6 +76,12 @@ const BUFFER_CAP = 400;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 /** 外来写入重载后，这么久之内连上的快照都带着提示 */
 const EXTERNAL_RELOAD_NOTICE_MS = 60_000;
+/** 工具调用参数流出期间，同一个调用最多这么久推一次进度（参数可能是整份文件，逐 token 推没有意义） */
+const TOOLCALL_PROGRESS_MIN_INTERVAL_MS = 120;
+/** 参数进度里每个字符串值最多带这么多字符：工具行只用得上路径 / 命令开头，完整参数随后到达 */
+const TOOLCALL_ARG_PREVIEW_CHARS = 2_000;
+/** `!` 命令的输出增量：攒到这么久再推一次，避免刷屏的命令每行一帧 */
+const BASH_OUTPUT_FLUSH_MS = 80;
 
 interface Managed {
 	viewerAvailable?: () => boolean;
@@ -134,6 +142,19 @@ interface Managed {
 	externalEntries: number;
 	/** 这一份是因外来写入从磁盘重载出来的：快照带上，前端提示一次 */
 	externalReload?: { entries: number; at: number };
+	/**
+	 * 这份会话是扩展命令换出来的（ctx.newSession / fork / switchSession）：首次启动时
+	 * session_start 带上来由和上一个会话，扩展据此区分「新开」与「普通启动」。用一次就清。
+	 */
+	sessionStart?: Pick<SessionStartEvent, "reason" | "previousSessionFile">;
+	/** 正在流出参数的工具调用上次推进度的时间（contentIndex → ms），每条助手消息开始时清空 */
+	toolCallProgressAt?: Map<number, number>;
+	/** 上次推给前端的路由模型（provider/id/档位拼的键）：没变就不重复推 */
+	routedModelKey?: string;
+	/** 扩展调了 ctx.shutdown()：等本轮收尾后回收这份热会话 */
+	shutdownRequested?: boolean;
+	/** 用户的 `!` 命令正在跑：算忙（不回收、不重载），停止按钮能中断它 */
+	bashActive?: boolean;
 }
 
 const globalForAgentManager = globalThis as typeof globalThis & {
@@ -152,6 +173,27 @@ function textOf(content: any): string {
 		if (typeof content.thinking === "string") return content.thinking;
 	}
 	return "";
+}
+
+/** 工具结果里模型看不到、但界面要显示的部分：这次调用自己发起的嵌套调用记录（codemode 脚本等） */
+function nestedCallsOf(details: unknown): WebNestedCall[] | undefined {
+	const calls = (details as { calls?: unknown } | undefined)?.calls;
+	if (!Array.isArray(calls) || calls.length === 0) return undefined;
+	const out: WebNestedCall[] = [];
+	for (const call of calls) {
+		if (!call || typeof call !== "object") continue;
+		const record = call as Record<string, unknown>;
+		if (typeof record.id !== "string" || typeof record.name !== "string") continue;
+		out.push({
+			id: record.id,
+			name: record.name,
+			args: record.arguments,
+			status: record.status === "ok" || record.status === "error" ? record.status : "unfinished",
+			error: typeof record.error === "string" ? record.error : undefined,
+			durationMs: typeof record.durationMs === "number" && Number.isFinite(record.durationMs) ? record.durationMs : undefined,
+		});
+	}
+	return out.length ? out : undefined;
 }
 
 export function toWebMessage(m: any, entryId?: string): WebMessage {
@@ -193,7 +235,25 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 			isError: m.isError === true,
 			encodingLoss: result.encodingLoss || undefined,
 			patch: patchOf(m.details),
+			nestedCalls: nestedCallsOf(m.nestedCalls),
 		}];
+	} else if (m.role === "custom") {
+		// 扩展注入的消息（pi.sendMessage）：display: false 的只给模型看，pi 终端也不显示
+		if (m.display !== true) return out;
+		out.role = "custom";
+		out.customType = typeof m.customType === "string" ? m.customType : "";
+	} else if (m.role === "bashExecution") {
+		out.role = "bashExecution";
+		const result = sanitizeToolOutput(typeof m.output === "string" ? m.output : "");
+		out.content = [];
+		out.bash = {
+			command: typeof m.command === "string" ? m.command : "",
+			output: result.text,
+			exitCode: typeof m.exitCode === "number" ? m.exitCode : undefined,
+			cancelled: m.cancelled === true || undefined,
+			truncated: m.truncated === true || undefined,
+			excludeFromContext: m.excludeFromContext === true || undefined,
+		};
 	} else if (m.role === "compactionSummary" || m.role === "branchSummary") {
 		out.role = "summary";
 		out.summaryKind = m.role === "branchSummary" ? "branch" : "compaction";
@@ -203,9 +263,24 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 	return out;
 }
 
-/** 会话条目 → 显示消息：消息照常投影，压缩 / 分支摘要投影成摘要卡，其余条目（切模型、自定义状态等）不显示 */
+/**
+ * 会话条目 → 显示消息：消息照常投影，压缩 / 分支摘要投影成摘要卡，
+ * 扩展注入的消息（custom_message）按 display 决定显示，其余条目（切模型、标签、自定义状态等）不显示。
+ */
 function entryToWebMessage(entry: any): WebMessage | null {
 	if (entry?.type === "message" && entry.message) return toWebMessage(entry.message, entry.id);
+	if (entry?.type === "custom_message") {
+		// display: false 的注入只进模型上下文，pi 终端同样不渲染
+		if (entry.display !== true) return null;
+		const timestamp = Date.parse(entry.timestamp);
+		return toWebMessage({
+			role: "custom",
+			customType: entry.customType,
+			content: entry.content,
+			display: true,
+			timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
+		}, entry.id);
+	}
 	if (entry?.type !== "compaction" && !(entry?.type === "branch_summary" && entry.summary)) return null;
 	const timestamp = Date.parse(entry.timestamp);
 	return toWebMessage({
@@ -341,7 +416,8 @@ function patchOf(details: unknown): string | undefined {
  * 于是「新增绿 / 删除红」在两条写入路径上一致。新文件没有旧内容，仍按新增行展示。
  */
 const WRITE_BASE_MAX_BYTES = 512 * 1024;
-const writeBases = new Map<string, string>();
+/** 工具开始时留下的旧内容，连同这次要写的路径与内容：tool_execution_end 事件不带 args，结束时只能从这里取 */
+const writeBases = new Map<string, { previous: string; target: string; content: string | undefined }>();
 
 function writeArgsOf(args: unknown): { target: string; content: string | undefined } {
 	const a = args as { path?: unknown; file_path?: unknown; content?: unknown } | undefined;
@@ -350,7 +426,7 @@ function writeArgsOf(args: unknown): { target: string; content: string | undefin
 }
 
 export function captureWriteBase(cwd: string, sessionPath: string, toolCallId: string, args: unknown): void {
-	const { target } = writeArgsOf(args);
+	const { target, content } = writeArgsOf(args);
 	if (!target) return;
 	try {
 		const abs = path.isAbsolute(target) ? target : path.resolve(cwd, target);
@@ -360,21 +436,22 @@ export function captureWriteBase(cwd: string, sessionPath: string, toolCallId: s
 		if (previous.includes("\u0000")) return; // 二进制不做行级 diff
 		// 只淘汰最早的一条：整表清空会把其它会话里正在执行的 write 的旧内容一起丢掉
 		if (writeBases.size >= 256) writeBases.delete(writeBases.keys().next().value!);
-		writeBases.set(`${sessionPath}\u0000${toolCallId}`, previous);
+		writeBases.set(`${sessionPath}\u0000${toolCallId}`, { previous, target, content });
 	} catch {
 		/* 新文件或读不到：没有旧内容，走全绿兜底 */
 	}
 }
 
-export function takeWritePatch(cwd: string, sessionPath: string, toolCallId: string, args: unknown): string | undefined {
+/** args 省略时用开始时存下的那份（结束事件里没有 args）；显式传入的优先 */
+export function takeWritePatch(cwd: string, sessionPath: string, toolCallId: string, args?: unknown): string | undefined {
 	const key = `${sessionPath}\u0000${toolCallId}`;
-	const previous = writeBases.get(key);
+	const base = writeBases.get(key);
 	writeBases.delete(key);
-	if (previous === undefined) return undefined;
-	const { target, content } = writeArgsOf(args);
-	if (content === undefined || content === previous) return undefined;
+	if (base === undefined) return undefined;
+	const { target, content } = args === undefined ? base : writeArgsOf(args);
+	if (content === undefined || content === base.previous) return undefined;
 	try {
-		return generateUnifiedPatch(target, previous, content).slice(0, 60_000);
+		return generateUnifiedPatch(target, base.previous, content).slice(0, 60_000);
 	} catch {
 		return undefined;
 	}
@@ -450,14 +527,51 @@ function deferPublish(m: Managed, events: () => WebEvent[]): void {
 /** 模型/档位变化统一广播：同时带上新模型支持的档位，前端菜单据此刷新 */
 function publishModelState(m: Managed, session: AgentSession): void {
 	const model: any = session.model;
+	m.routedModelKey = routedModelKey(routedModelOf(session));
 	publish(m, {
 		type: "model",
 		provider: model ? String(model.provider ?? "") : undefined,
 		model: model ? String(model.id ?? "") : undefined,
 		thinkingLevel: String(session.thinkingLevel ?? ""),
 		thinkingLevels: session.getAvailableThinkingLevels() as unknown as string[],
+		routedModel: routedModelOf(session),
 		ts: Date.now(),
 	});
+}
+
+/** 虚拟模型实际路由到的物理模型；不是虚拟模型 / 还没回过话时是 undefined */
+function routedModelOf(session: AgentSession): WebRoutedModel | null {
+	let routed: AgentSession["routedModel"];
+	try {
+		routed = session.routedModel;
+	} catch {
+		return null;
+	}
+	if (!routed?.model) return null;
+	return {
+		provider: String(routed.model.provider ?? ""),
+		id: String(routed.model.id ?? ""),
+		thinkingLevel: routed.thinkingLevel ? String(routed.thinkingLevel) : undefined,
+	};
+}
+
+const routedModelKey = (routed: WebRoutedModel | null): string => (routed ? `${routed.provider}/${routed.id}/${routed.thinkingLevel ?? ""}` : "");
+
+/** 路由结果变了才返回事件（虚拟模型换后端时菜单要跟着变，没变就不推） */
+function routedModelEvent(m: Managed, session: AgentSession): WebEvent | null {
+	const routed = routedModelOf(session);
+	const key = routedModelKey(routed);
+	if (key === (m.routedModelKey ?? "")) return null;
+	m.routedModelKey = key;
+	return {
+		type: "model",
+		provider: session.model ? String(session.model.provider ?? "") : undefined,
+		model: session.model ? String(session.model.id ?? "") : undefined,
+		thinkingLevel: String(session.thinkingLevel ?? ""),
+		thinkingLevels: session.getAvailableThinkingLevels() as unknown as string[],
+		routedModel: routed,
+		ts: Date.now(),
+	};
 }
 
 /**
@@ -638,54 +752,95 @@ function publishUsage(m: Managed, flush = false): void {
 	if (evt) publish(m, evt);
 }
 
+/**
+ * 模型正在生成的工具调用：把参数流出期间的进度推给前端，工具行不必等整段参数生成完才出现。
+ * 同一个调用最多每 TOOLCALL_PROGRESS_MIN_INTERVAL_MS 推一次（write 的 content 可以有整份文件那么大），
+ * 起止两次一定推。字符串参数截短：工具行只需要路径 / 命令开头。
+ */
+function clipToolCallArgs(args: unknown): unknown {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+	return Object.fromEntries(Object.entries(args as Record<string, unknown>).map(([key, value]) => [
+		key,
+		typeof value === "string" && value.length > TOOLCALL_ARG_PREVIEW_CHARS ? `${value.slice(0, TOOLCALL_ARG_PREVIEW_CHARS)}…` : value,
+	]));
+}
+
+function publishToolCallProgress(m: Managed, e: { type: "toolcall_start" | "toolcall_delta" | "toolcall_end"; contentIndex: number; partial: unknown; toolCall?: unknown }, now: number): void {
+	const block = (e.type === "toolcall_end" ? e.toolCall : (e.partial as { content?: unknown[] } | undefined)?.content?.[e.contentIndex]) as
+		| { type?: string; id?: unknown; name?: unknown; arguments?: unknown }
+		| undefined;
+	if (!block || block.type !== "toolCall" || typeof block.id !== "string" || typeof block.name !== "string") return;
+	const started = e.type === "toolcall_start";
+	if (!started && e.type === "toolcall_delta") {
+		const progress = (m.toolCallProgressAt ??= new Map());
+		if (now - (progress.get(e.contentIndex) ?? 0) < TOOLCALL_PROGRESS_MIN_INTERVAL_MS) return;
+		progress.set(e.contentIndex, now);
+	}
+	publish(m, {
+		type: "toolcall",
+		messageId: m.inflightId,
+		contentIndex: e.contentIndex,
+		id: block.id,
+		name: block.name,
+		args: clipToolCallArgs(block.arguments),
+		ts: now,
+	});
+}
+
 function translate(m: Managed, evt: AgentSessionEvent): void {
 	m.ledger.onEvent(evt);
 	growthOf(m).onEvent(evt);
 	const now = Date.now();
 	switch (evt.type) {
 		case "message_start": {
-			const raw = (evt as any).message;
+			const raw = evt.message;
 			const msg = projectMessage(m, raw);
 			if (msg.role === "assistant") {
 				m.inflight = raw;
 				m.inflightId = msg.streamId;
 				m.inflightIndex = m.session?.messages.length;
+				m.toolCallProgressAt = undefined;
 				msg.stopReason = "pending";
 				// SDK 的 partial 是被就地追加的共享对象，发到这里时首个增量往往已经写进去了；
 				// 正文一律由后续 delta 事件补齐，这里清空文本，否则浏览器会把首段拼两遍（"TheThe user…"）
 				msg.content = msg.content.map((c) => (c.type === "text" ? { ...c, text: "" } : c.type === "thinking" ? { ...c, thinking: "" } : c));
 			}
-			if (msg.role === "user" || msg.role === "assistant") {
+			// custom：扩展注入的消息（display: true），与用户 / 助手消息一样走 start→end 两帧
+			if (msg.role === "user" || msg.role === "assistant" || msg.role === "custom") {
 				publish(m, { type: "message", message: msg, phase: "start", ts: now });
 			}
 			break;
 		}
 		case "message_update": {
-			const e: any = (evt as any).assistantMessageEvent;
-			if ((evt as any).message) {
-				m.inflight = (evt as any).message;
-				if (m.inflightId) m.messageIds.set((evt as any).message, m.inflightId);
+			const e = evt.assistantMessageEvent;
+			if (evt.message) {
+				m.inflight = evt.message;
+				if (m.inflightId) m.messageIds.set(evt.message, m.inflightId);
 			}
 			if (!e) break;
 			if (e.type === "text_delta" && typeof e.delta === "string") {
 				publish(m, { type: "delta", kind: "text", contentIndex: e.contentIndex, delta: e.delta, messageId: m.inflightId, ts: now });
 			} else if (e.type === "thinking_delta" && typeof e.delta === "string") {
 				publish(m, { type: "delta", kind: "thinking", contentIndex: e.contentIndex, delta: e.delta, messageId: m.inflightId, ts: now });
+			} else if (e.type === "toolcall_start" || e.type === "toolcall_delta" || e.type === "toolcall_end") {
+				publishToolCallProgress(m, e, now);
 			}
 			break;
 		}
 		case "message_end": {
-			const raw = (evt as any).message;
+			const raw = evt.message;
 			if (raw?.role === "assistant") {
 				if (m.inflightId) m.messageIds.set(raw, m.inflightId);
 				m.inflight = null;
 				m.inflightId = undefined;
 				m.inflightIndex = undefined;
+				m.toolCallProgressAt = undefined;
 			}
 			// Pi persists message_end after notifying listeners; wait one microtask so
 			// the browser receives the durable entry ID without reordering later tool events.
 			deferPublish(m, () => {
 				const msg = projectMessage(m, raw);
+				const events: WebEvent[] = [];
 				if (msg.role === "assistant") {
 					msg.endedAt = now;
 					// 首次回复结束后 pi 已把系统分段写进会话文件，此时分类能读到投影（比 systemPrompt 差分精确）
@@ -694,10 +849,15 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 						publishContextBreakdown(m);
 					}
 				}
+				events.push({ type: "message", message: msg, phase: "end", ts: now });
 				const usage = usageEvent(m);
-				return usage
-					? [{ type: "message", message: msg, phase: "end", ts: now }, usage]
-					: [{ type: "message", message: msg, phase: "end", ts: now }];
+				if (usage) events.push(usage);
+				// 虚拟模型：这一轮实际路由到哪个模型（变了才推）
+				if (msg.role === "assistant" && m.session) {
+					const routed = routedModelEvent(m, m.session);
+					if (routed) events.push(routed);
+				}
+				return events;
 			});
 			break;
 		}
@@ -708,18 +868,20 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				type: "tool",
 				id: evt.toolCallId,
 				name: evt.toolName,
+				parentId: evt.parentToolCallId,
 				args: evt.args,
 				state: "running",
 				ts: now,
 			});
 			break;
 		case "tool_execution_update": {
-			const partial = sanitizeToolOutput(coercePartial((evt as any).partialResult) ?? "");
+			const partial = sanitizeToolOutput(coercePartial(evt.partialResult) ?? "");
 			// 不带 args：start 已经发过，前端沿用上一次的值；write 的 args 含整份文件内容，每次进度都重发很浪费
 			publish(m, {
 				type: "tool",
 				id: evt.toolCallId,
 				name: evt.toolName,
+				parentId: evt.parentToolCallId,
 				state: "running",
 				partialResult: partial.text || undefined,
 				encodingLoss: partial.encodingLoss || undefined,
@@ -728,17 +890,18 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		}
 		case "tool_execution_end": {
-			const result = sanitizeToolOutput(coercePartial((evt as any).result) ?? "");
+			const result = sanitizeToolOutput(coercePartial(evt.result) ?? "");
+			// 结束事件不带 args：前端沿用 start 时收到的参数，write 的 patch 用开始时存下的内容算
 			publish(m, {
 				type: "tool",
 				id: evt.toolCallId,
 				name: evt.toolName,
-				args: (evt as any).args,
+				parentId: evt.parentToolCallId,
 				state: "done",
 				result: result.text || undefined,
 				isError: evt.isError,
 				encodingLoss: result.encodingLoss || undefined,
-				patch: patchOf((evt as any).result?.details) ?? (evt.toolName?.toLowerCase() === "write" ? takeWritePatch(m.cwd, m.sessionPath, evt.toolCallId, (evt as any).args) : undefined),
+				patch: patchOf(evt.result?.details) ?? (evt.toolName?.toLowerCase() === "write" ? takeWritePatch(m.cwd, m.sessionPath, evt.toolCallId) : undefined),
 				ts: now,
 			});
 			publishUsage(m);
@@ -757,53 +920,56 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			// SDK 1.3 的显示队列按非空文字匹配消费记录，纯图片消息会残留 ""。
 			// 只在实际发送队列已空时清理；中断后仍待发送的消息必须保留供用户取回。
 			if (m.session && !m.session.agent.hasQueuedMessages() && m.session.pendingMessageCount > 0) m.session.clearQueue();
-			publish(m, { type: "status", isStreaming: false, state: "idle", ts: now });
+			// 用户的 ! 命令可能比模型回合跑得久；回合结束不能把仍在执行的命令报成空闲。
+			publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: now });
 			publishUsage(m, true);
 			if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+			// 扩展命令调了 ctx.shutdown()：本轮收尾后才回收，回收中途不能掐掉正在写的东西
+			if (m.shutdownRequested) queueMicrotask(() => void shutdownFromExtensionCommand(m));
 			break;
 		case "queue_update":
 			publish(m, {
 				type: "queue",
-				steering: [...(evt as any).steering],
-				followUp: [...(evt as any).followUp],
+				steering: [...evt.steering],
+				followUp: [...evt.followUp],
 				ts: now,
 			});
 			break;
 		case "compaction_start":
 			publish(m, { type: "status", isStreaming: true, state: "compacting", ts: now });
-			publish(m, { type: "compaction", phase: "start", reason: (evt as any).reason, ts: now });
+			publish(m, { type: "compaction", phase: "start", reason: evt.reason, ts: now });
 			break;
 		case "compaction_end":
 			publish(m, {
 				type: "compaction",
 				phase: "end",
-				reason: (evt as any).reason,
-				errorMessage: (evt as any).errorMessage,
-				...((evt as any).result && !(evt as any).errorMessage ? compactionMarker(m) : {}),
+				reason: evt.reason,
+				errorMessage: evt.errorMessage,
+				...((evt.result && !evt.errorMessage) ? compactionMarker(m) : {}),
 				ts: now,
 			});
 			publishUsage(m, true);
 			publishContextBreakdown(m);
-			if ((evt as any).reason === "manual") {
+			if (evt.reason === "manual") {
 				publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: now });
 				if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
 			}
 			break;
 		case "session_info_changed":
-			publish(m, { type: "name", name: (evt as any).name ?? "", ts: now });
+			publish(m, { type: "name", name: evt.name ?? "", ts: now });
 			break;
 		case "thinking_level_changed":
 			if (m.session) publishModelState(m, m.session);
-			else publish(m, { type: "model", thinkingLevel: (evt as any).level, ts: now });
+			else publish(m, { type: "model", thinkingLevel: evt.level, ts: now });
 			break;
 		case "auto_retry_start":
 			// 重试是流程内通知:发一条结构化 retry 事件(界面聚合成「重试 n/max」一行),
 			// 不再走 error 通道,免得每次尝试都多出一条报错。
 			publish(m, {
 				type: "retry",
-				attempt: Number((evt as any).attempt) || 0,
-				maxAttempts: Number((evt as any).maxAttempts) || 0,
-				message: String((evt as any).errorMessage ?? ""),
+				attempt: evt.attempt,
+				maxAttempts: evt.maxAttempts,
+				message: evt.errorMessage,
 				ts: now,
 			});
 			break;
@@ -812,9 +978,17 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			// agent_settled 之前界面上还留着「重试 1/5 terminated」那一行(用户看到的
 			// 就是「已经恢复了还显示错误」)。这里显式发一条清除事件,重试区间一结束
 			// 就收掉这行;真失败时紧随其后的 assistant error 消息会照常出错误块。
-			publish(m, { type: "retry_end", attempt: Number((evt as any).attempt) || 0, ts: now });
+			publish(m, { type: "retry_end", attempt: evt.attempt, ts: now });
+			break;
+		case "summarization_retry_scheduled":
+			// 压缩 / 分支摘要的模型调用也在自动重试：同样聚合成「重试 n/max」一行
+			publish(m, { type: "retry", attempt: evt.attempt, maxAttempts: evt.maxAttempts, message: evt.errorMessage, ts: now });
+			break;
+		case "summarization_retry_finished":
+			publish(m, { type: "retry_end", attempt: 0, ts: now });
 			break;
 		default:
+			// 其余事件（turn_start / turn_end / entry_appended / bash_execution_update…）由轨迹账本消费
 			break;
 	}
 	publishTraj(m);
@@ -1356,9 +1530,12 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				modelRuntime: await getModelRuntime(),
 				resourceLoader: loader,
 				settingsManager,
+				// 扩展命令换出来的会话：session_start 要带上来由和上一个会话（否则扩展只能看到 "startup"）
+				...(m.sessionStart ? { sessionStartEvent: { type: "session_start" as const, ...m.sessionStart } } : {}),
 				// 内置的选择窗口：问题经扩展界面桥推给浏览器（m.ui 在下面 bindExtensions 前建好，调用时再取）
 				customTools: sessionCustomTools(m),
 			});
+			m.sessionStart = undefined;
 			created = session;
 			if (m.disposed) throw new Error("session is disposed");
 			m.session = session;
@@ -1372,6 +1549,14 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			await session.bindExtensions({
 				mode: "rpc",
 				uiContext: ui.uiContext as never,
+				// 扩展命令里的 ctx.newSession / ctx.fork / ctx.navigateTree / ctx.switchSession / ctx.reload /
+				// ctx.waitForIdle：不传的话 SDK 的默认实现是静默 no-op 并回「没取消」，扩展以为成功其实什么都没发生
+				commandContextActions: extensionCommandActions(m, session),
+				shutdownHandler: () => {
+					// ctx.shutdown()：pi 终端是退出进程；Web 里进程还要服务别的会话，等价动作是让这份会话收工
+					m.shutdownRequested = true;
+					setImmediate(() => void shutdownFromExtensionCommand(m));
+				},
 				onError: (error) => {
 					publish(m, { type: "error", message: `扩展 ${error.extensionPath.split(/[\\/]/).pop()} 在 ${error.event} 出错：${error.error}`, ts: Date.now() });
 				},
@@ -1403,7 +1588,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 }
 
 function isManagedBusy(m: Managed): boolean {
-	return m.promptSubmitting || m.resourceReloading || m.runActive || !!(m.session && !m.session.isIdle);
+	return m.promptSubmitting || m.resourceReloading || m.runActive || m.bashActive === true || !!(m.session && !m.session.isIdle);
 }
 
 function toolPolicyDenial(m: Managed, name: string): string | undefined {
@@ -1515,6 +1700,47 @@ function publishTools(m: Managed, session: AgentSession | null): void {
 	publishContextBreakdown(m);
 }
 
+/** installSessionPolicy 包装前的原始 reload / 扩展命令专用的重载入口（见 performReload） */
+const rawReloads = new WeakMap<AgentSession, AgentSession["reload"]>();
+const commandReloads = new WeakMap<AgentSession, () => Promise<void>>();
+
+/**
+ * session.reload 的统一实现。扩展命令处理器就在一次 prompt 提交里跑，它自己要重载不算「忙」，
+ * 其余忙态（正在跑、正在压缩、正在重载）照常挡住；正常路径仍按 isManagedBusy 判。
+ */
+async function performReload(
+	m: Managed,
+	session: AgentSession,
+	options: { beforeSessionStart?: () => void | Promise<void> } | undefined,
+	fromCommand: boolean,
+): Promise<void> {
+	const rawReload = rawReloads.get(session);
+	if (!rawReload) throw new Error("session is not ready");
+	if (fromCommand ? m.resourceReloading || m.runActive || !session.isIdle : isManagedBusy(m)) throw new Error("session is busy");
+	m.resourceReloading = true;
+	try {
+		await withResourceLock(async () => {
+			if (m.disposed || m.runActive || !session.isIdle) throw new Error("session is busy");
+			await rawReload({ beforeSessionStart: async () => {
+				// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
+				for (const name of listActiveTools(session)) m.requestedTools.add(name);
+				applyToolPolicy(m, session);
+				await options?.beforeSessionStart?.();
+				applyToolPolicy(m, session);
+			} });
+		});
+		m.resourceVersion = resourceLoaderVersion(m.cwd);
+	} finally {
+		applyToolPolicy(m, session);
+		m.resourceReloading = false;
+		if (!m.disposed) {
+			publishTools(m, session);
+			publishEnvironmentTrajectory(m, session);
+			publishResources(m);
+		}
+	}
+}
+
 /** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界收敛到服务端选择。 */
 function installSessionPolicy(m: Managed, session: AgentSession): void {
 	const setActive = session.setActiveToolsByName.bind(session);
@@ -1528,33 +1754,9 @@ function installSessionPolicy(m: Managed, session: AgentSession): void {
 		setActive(wanted.filter((name) => allowed.includes(name)));
 		guardToolExecution(m, session);
 	};
-	const reload = session.reload.bind(session);
-	session.reload = async (options) => {
-		if (m.disposed) throw new Error("session is disposed");
-		if (isManagedBusy(m)) throw new Error("session is busy");
-		m.resourceReloading = true;
-		try {
-			await withResourceLock(async () => {
-				if (m.disposed || m.runActive || !session.isIdle) throw new Error("session is busy");
-				await reload({ beforeSessionStart: async () => {
-					// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
-					for (const name of listActiveTools(session)) m.requestedTools.add(name);
-					applyToolPolicy(m, session);
-					await options?.beforeSessionStart?.();
-					applyToolPolicy(m, session);
-				} });
-			});
-			m.resourceVersion = resourceLoaderVersion(m.cwd);
-		} finally {
-			applyToolPolicy(m, session);
-			m.resourceReloading = false;
-			if (!m.disposed) {
-				publishTools(m, session);
-				publishEnvironmentTrajectory(m, session);
-				publishResources(m);
-			}
-		}
-	};
+	rawReloads.set(session, session.reload.bind(session));
+	commandReloads.set(session, () => performReload(m, session, undefined, true));
+	session.reload = (options) => performReload(m, session, options, false);
 }
 
 function listAllToolNames(session: AgentSession): string[] {
@@ -1566,6 +1768,137 @@ function listActiveTools(session: AgentSession): string[] {
 	// SDK 的真名是 getActiveToolNames（getActiveTools 不存在）
 	const active = (session as unknown as { getActiveToolNames?: () => string[] }).getActiveToolNames?.();
 	return active ?? [];
+}
+
+// ---------- 扩展命令的会话操作（对应 SDK 的 AgentSessionRuntime） ----------
+
+/**
+ * PiWeb 一个会话一份 JSONL，一个进程里可以同时开好几个，所以「换会话」不是替换运行时，
+ * 而是把目标会话热启动、把浏览器领过去（session_navigate）。语义与 pi 的 ctx.newSession /
+ * ctx.fork / ctx.switchSession 对齐：session_before_* 事件照发（扩展可取消），session_start
+ * 带上 reason 与上一个会话，命令上下文回调（withSession）拿到新会话的上下文。
+ */
+async function emitBeforeSwitch(session: AgentSession, reason: "new" | "resume", targetSessionFile?: string): Promise<boolean> {
+	try {
+		const runner = session.extensionRunner;
+		if (!runner?.hasHandlers("session_before_switch")) return false;
+		const result = await runner.emit({ type: "session_before_switch", reason, targetSessionFile });
+		return result?.cancel === true;
+	} catch {
+		return false;
+	}
+}
+
+async function emitBeforeFork(session: AgentSession, entryId: string, position: "before" | "at"): Promise<boolean> {
+	try {
+		const runner = session.extensionRunner;
+		if (!runner?.hasHandlers("session_before_fork")) return false;
+		const result = await runner.emit({ type: "session_before_fork", entryId, position });
+		return result?.cancel === true;
+	} catch {
+		return false;
+	}
+}
+
+/** 建分支出来的会话文件（不热启动）：有 entryId 就从该条目切，否则整份克隆 */
+function forkTarget(m: Managed, entryId: string, position: "before" | "at"): Managed {
+	const entry = m.sm.getEntry(entryId) as { id?: string; parentId?: string | null; type?: string; message?: { role?: string } } | null;
+	if (!entry?.id) throw new Error("Invalid entry ID for forking");
+	const leafId = position === "at" ? entry.id : entry.parentId ?? null;
+	if (position === "before" && (entry.type !== "message" || entry.message?.role !== "user")) throw new Error("Invalid entry ID for forking");
+	if (!leafId) {
+		const sm = SessionManager.create(m.cwd, m.sm.getSessionDir());
+		sm.newSession({ parentSession: m.sessionPath });
+		const created = sm.getSessionFile();
+		if (!created) throw new Error("failed to create forked session");
+		return registerManaged(created, m.cwd, sm);
+	}
+	if (!existsSync(m.sessionPath)) throw new Error("This session has not been saved yet. Send a message before forking it.");
+	const sm = SessionManager.open(m.sessionPath, m.sm.getSessionDir());
+	const forked = sm.createBranchedSession(leafId);
+	if (!forked) throw new Error("failed to create forked session");
+	return registerManaged(forked, sm.getCwd() || m.cwd, sm);
+}
+
+/** 目标会话就位：热启动（带 session_start 来由）、跑扩展的回调，最后让浏览器打开它 */
+async function adoptReplacement(
+	m: Managed,
+	target: Managed,
+	reason: "new" | "resume" | "fork",
+	hooks: { setup?: (sm: SessionManager) => unknown; withSession?: (ctx: ReturnType<AgentSession["createReplacedSessionContext"]>) => unknown },
+): Promise<void> {
+	target.sessionStart = { reason, previousSessionFile: m.sessionPath };
+	// 新建 / 分叉出来的会话：权限档位与思考档位跟着来源会话走，不必让用户再选一次。
+	// 切到已有会话（resume）不动它：那份会话有自己保存过的选择。
+	if (reason !== "resume") {
+		target.toolPreset = m.toolPreset;
+		target.customActiveTools = m.customActiveTools ? [...m.customActiveTools] : undefined;
+		target.desiredThinkingLevel = m.desiredThinkingLevel;
+		await persistToolPreference(target);
+	}
+	const next = await ensureSession(target);
+	if (hooks.setup) {
+		await hooks.setup(next.sessionManager);
+		next.refreshContext();
+	}
+	await hooks.withSession?.(next.createReplacedSessionContext());
+	publish(m, { type: "session_navigate", sessionPath: target.sessionPath, reason, ts: Date.now() });
+}
+
+function extensionCommandActions(m: Managed, session: AgentSession): ExtensionCommandContextActions {
+	return {
+		waitForIdle: () => session.waitForIdle(),
+		newSession: async (options) => {
+			if (await emitBeforeSwitch(session, "new")) return { cancelled: true };
+			const sm = SessionManager.create(m.cwd, m.sm.getSessionDir());
+			if (options?.parentSession) sm.newSession({ parentSession: options.parentSession });
+			const created = sm.getSessionFile();
+			if (!created) throw new Error("failed to create session file");
+			await adoptReplacement(m, registerManaged(created, m.cwd, sm), "new", { setup: options?.setup, withSession: options?.withSession });
+			return { cancelled: false };
+		},
+		fork: async (entryId, options) => {
+			const position = options?.position === "at" ? "at" : "before";
+			if (await emitBeforeFork(session, entryId, position)) return { cancelled: true };
+			await adoptReplacement(m, forkTarget(m, entryId, position), "fork", { withSession: options?.withSession });
+			return { cancelled: false };
+		},
+		navigateTree: async (targetId, options) => {
+			const result = await session.navigateTree(targetId, {
+				summarize: options?.summarize,
+				customInstructions: options?.customInstructions,
+				replaceInstructions: options?.replaceInstructions,
+				label: options?.label,
+			});
+			// 分支换了：浏览器手里的消息列表已经过时，让它重连拿新快照
+			if (!result.cancelled) publish(m, { type: "resync", ts: Date.now() });
+			return { cancelled: result.cancelled };
+		},
+		switchSession: async (sessionPath, options) => {
+			const target = getManaged(path.resolve(sessionPath));
+			if (await emitBeforeSwitch(session, "resume", target.sessionPath)) return { cancelled: true };
+			if (target === m) await options?.withSession?.(session.createReplacedSessionContext());
+			else await adoptReplacement(m, target, "resume", { withSession: options?.withSession });
+			return { cancelled: false };
+		},
+		reload: () => commandReloads.get(session)?.() ?? Promise.resolve(),
+	};
+}
+
+/**
+ * ctx.shutdown()：pi 终端是退出进程，Web 里进程还要服务别的会话，等价动作是让这份会话收工
+ * （释放 MCP 之类的扩展资源，会话文件留着，页面重连后照常冷读）。
+ * 只等真正的忙态，不等发起这次命令的那次提交（否则永远等不到）。
+ */
+async function shutdownFromExtensionCommand(m: Managed, attempt = 0): Promise<void> {
+	if (!m.shutdownRequested || m.disposed) return;
+	if (m.creating || m.resourceReloading || m.runActive || m.bashActive || (m.session && !m.session.isIdle)) {
+		// 没有下一轮 agent_settled 可以依赖时自己重试；最多等约 10 秒，之后放弃（下次命令/回收还会收）
+		if (attempt < 40) setTimeout(() => void shutdownFromExtensionCommand(m, attempt + 1), 250).unref?.();
+		return;
+	}
+	m.shutdownRequested = false;
+	await disposeSessionPath(m.sessionPath);
 }
 
 export function disposeSession(m: Managed): void {
@@ -1763,6 +2096,29 @@ export function refreshSessionModels(provider: string, id: string): number {
 	return n;
 }
 
+/**
+ * 设置面板改了排队投递方式 / 缓存预热：SDK 只在创建会话时把它们读进 agent，
+ * settings.json 重新读盘不会改到已经开着的会话，这里当场给它们换上。
+ */
+export function applySettingsToSessions(patch: { steeringMode?: "all" | "one-at-a-time"; followUpMode?: "all" | "one-at-a-time"; cacheWarming?: "off" | "streaming" | "idle" }): number {
+	if (!patch.steeringMode && !patch.followUpMode && !patch.cacheWarming) return 0;
+	let n = 0;
+	for (const m of sessions.values()) {
+		const session = m.session;
+		if (!session) continue;
+		try {
+			if (patch.steeringMode) session.agent.steeringMode = patch.steeringMode;
+			if (patch.followUpMode) session.agent.followUpMode = patch.followUpMode;
+			// 预热器要被通知一声才会按新模式重排定时器（顺带把同一个值再写一次，无害）
+			if (patch.cacheWarming) session.setCacheWarmingMode(patch.cacheWarming);
+			n += 1;
+		} catch {
+			/* 单个会话失败不影响其它；它下次冷启动会读到新设置 */
+		}
+	}
+	return n;
+}
+
 export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 	const key = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
 	let n = 0;
@@ -1943,14 +2299,17 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		growthError: m.growth?.getError?.() ?? null,
 		growthConsent: m.growth?.getConsentRequest?.() ?? null,
 		model,
+		routedModel: session ? routedModelOf(session) : null,
 		thinkingLevel,
 		thinkingLevels,
 		toolPreset: m.toolPreset,
 		customActiveTools: m.customActiveTools ?? null,
 		toolPreferenceSaved: m.toolPreferenceSaved === true,
 		extensionUiRequests: m.ui?.getPendingRequests() ?? [],
-		// 扩展 setStatus 的当前值：重连拿快照时页脚状态不能丢
+		// 扩展 setStatus / setWidget / setTitle 的当前值：重连拿快照时不能丢
 		extensionStatuses: Object.fromEntries(m.ui?.statuses ?? []),
+		extensionWidgets: Object.fromEntries(m.ui?.widgets ?? []),
+		extensionTitle: m.ui?.getTitle(),
 		tools,
 		stats,
 		contextUsage,
@@ -1997,7 +2356,7 @@ export function subscribe(
 	const pending = new Set(m.ui?.getPendingRequests().map((request) => request.id));
 	if (replay.some((frame) => {
 		const event = JSON.parse(frame.json) as WebEvent;
-		return event.type === "extension_ui" && ["select", "confirm", "input"].includes(event.method) && !pending.has(event.id);
+		return event.type === "extension_ui" && ["select", "confirm", "input", "editor"].includes(event.method) && !pending.has(event.id);
 	})) return false;
 	m.subscribers.add(send);
 	for (const b of replay) send(b.seq, b.json);
@@ -2085,6 +2444,63 @@ function submitPrompt(
 	});
 }
 
+/**
+ * 用户用 `!` 直接跑的命令（pi 终端的 bash 模式、RPC 的 bash 命令）。不是模型的工具调用：
+ * 结果记成一条 bashExecution 消息，除非 `!!`（excludeFromContext）否则下一次请求会带给模型。
+ * SDK 记这条消息时不发事件，所以消息帧和输出增量由这里自己推；请求在受理时就返回，不等命令跑完。
+ */
+async function runUserBash(m: Managed, session: AgentSession, command: string, excludeFromContext: boolean): Promise<void> {
+	const streamId = randomUUID();
+	const startedAt = Date.now();
+	publish(m, {
+		type: "message",
+		phase: "start",
+		message: { role: "bashExecution", streamId, content: [], timestamp: startedAt, bash: { command, output: "", running: true, excludeFromContext: excludeFromContext || undefined } },
+		ts: startedAt,
+	});
+	let pending = "";
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	const flush = () => {
+		if (timer) clearTimeout(timer);
+		timer = null;
+		if (!pending) return;
+		const delta = sanitizeToolOutput(pending).text;
+		pending = "";
+		if (delta) publish(m, { type: "bash_output", messageId: streamId, delta, ts: Date.now() });
+	};
+	/** 收尾帧：沿用开始帧的流 ID；entryId 是会话里那条消息的条目 ID（重连后的快照不会多出一条） */
+	const finish = (message: Record<string, unknown>, extra: { entryId?: string; failed?: boolean } = {}) => {
+		flush();
+		const frame = toWebMessage({ role: "bashExecution", command, excludeFromContext, timestamp: startedAt, ...message }, extra.entryId);
+		publish(m, { type: "message", phase: "end", message: { ...frame, streamId, bash: frame.bash && extra.failed ? { ...frame.bash, failed: true } : frame.bash }, ts: Date.now() });
+	};
+	try {
+		// 与 RPC 模式同一套：先问扩展的 user_bash 钩子（可以换执行后端，或直接给出结果），没接管才本地执行
+		const hooked = await session.extensionRunner.emitUserBash({ type: "user_bash", command, excludeFromContext, cwd: session.sessionManager.getCwd() });
+		let result: { output: string; exitCode: number | undefined; cancelled: boolean; truncated: boolean };
+		if (hooked?.result) {
+			session.recordBashResult(command, hooked.result, { excludeFromContext });
+			result = hooked.result;
+		} else {
+			result = await session.executeBash(command, (chunk) => {
+				pending += chunk;
+				timer ??= setTimeout(flush, BASH_OUTPUT_FLUSH_MS);
+			}, { excludeFromContext, operations: hooked?.operations });
+		}
+		// 空闲时 SDK 已把消息落进会话（最后一条就是它）；正在跑回合时它被延后到本轮结束，暂时没有条目 ID
+		const leaf = m.sm.getLeafEntry() as { id?: string; type?: string; message?: { role?: string; command?: string } } | undefined;
+		const entryId = leaf?.type === "message" && leaf.message?.role === "bashExecution" && leaf.message.command === command ? leaf.id : undefined;
+		finish({ output: result.output, exitCode: result.exitCode, cancelled: result.cancelled, truncated: result.truncated }, { entryId });
+		// 轨迹账本：SDK 不为这条消息发事件，这里报上去（冷会话重建时从会话文件里读得到同一条）
+		m.ledger.recordBash({ command, excludeFromContext, ...result }, startedAt);
+		publishTraj(m);
+		publishUsage(m, true);
+	} catch (error) {
+		// 没能跑起来（找不到 shell 等）：也要收尾，不留一个永远在跑的卡片
+		finish({ output: String((error as Error)?.message ?? error) }, { failed: true });
+	}
+}
+
 export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
 	touch(m);
 	try {
@@ -2134,9 +2550,38 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				// 先清队列再中止（pi 终端 Esc 同款）：Agent.abort() 不清队列，而 agent 循环每次开跑都先取走 steering 队列，
 				// 不清的话「已取消」的排队消息会在下一次提问时冒出来。清出来的文本交给前端放回输入框
 				const cleared = m.session.clearQueue();
+				// 用户的 `!` 命令不属于 agent 回合，abort() 管不到它，单独停
+				m.session.abortBash();
 				await m.session.abort();
 				publish(m, { type: "status", isStreaming: false, state: "aborted", ts: Date.now() });
 				return { ok: true, data: cleared };
+			}
+			case "bash": {
+				const command = (cmd.command ?? "").trim();
+				if (!command) return { ok: false, error: "empty command" };
+				if (m.bashActive) return { ok: false, error: "a shell command is already running" };
+				// 在第一个 await 前占位：两个并发请求不能都通过上面的检查
+				m.bashActive = true;
+				let session: AgentSession;
+				try {
+					session = await ensureSession(m);
+					if (m.disposed) throw new Error("session is disposed");
+				} catch (error) {
+					m.bashActive = false;
+					throw error;
+				}
+				publish(m, { type: "status", isStreaming: true, state: "running", ts: Date.now() });
+				// 受理即返回：命令可能跑几分钟，输出和结果走事件流
+				void runUserBash(m, session, command, cmd.excludeFromContext === true).finally(() => {
+					m.bashActive = false;
+					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
+					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+				});
+				return { ok: true, data: { accepted: true } };
+			}
+			case "abortBash": {
+				m.session?.abortBash();
+				return { ok: true };
 			}
 			case "compact": {
 				const session = await ensureSession(m);
@@ -2217,21 +2662,33 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				if (r?.model) {
 					reapplyDesiredLevel(m, session);
 					publishModelState(m, session);
-					return { ok: true, data: { model: String((r.model as any).id ?? ""), thinkingLevel: session.thinkingLevel } };
+					return { ok: true, data: { model: String(r.model.id ?? ""), thinkingLevel: session.thinkingLevel } };
 				}
 				return { ok: false, error: "no scoped models to cycle" };
 			}
 			case "navigate": {
-				const session = await ensureSession(m);
-				const entryId = String((cmd as any).entryId ?? "");
+				const entryId = cmd.entryId ?? "";
 				if (!entryId) return { ok: false, error: "missing entryId" };
+				// 换分支要等这一轮跑完：SDK 在运行中会直接拒绝，这里先给一句看得懂的话
+				if (isManagedBusy(m)) return { ok: false, error: "session is busy" };
+				const session = await ensureSession(m);
 				const r = await session.navigateTree(entryId);
+				// 分支换了：所有开着这份会话的页面手里的消息列表都过时了，让它们重连拿新快照
+				if (!r?.cancelled) publish(m, { type: "resync", ts: Date.now() });
 				return { ok: !r?.cancelled, data: { cancelled: r?.cancelled === true, editorText: r?.editorText } };
+			}
+			case "setLabel": {
+				const entryId = cmd.entryId ?? "";
+				if (!entryId || !m.sm.getEntry(entryId)) return { ok: false, error: "entry not found" };
+				// 标签是会话文件里的一条记录，pi 终端的 /tree 读的也是它；空 = 清掉。冷会话也能打，不必为此启动 agent
+				const label = (cmd.text ?? "").trim();
+				m.sm.appendLabelChange(entryId, label || undefined);
+				return { ok: true, data: { label: label || null } };
 			}
 			case "editAndResend": {
 				// 编辑用户消息并重发：先停在跑的回合（用户改口即表示不要这一轮的输出），
 				// 再回到该消息之前用新文本重新提问。放在服务端串行做，避免客户端"先 abort 再发"的竞态。
-				const entryId = String((cmd as any).entryId ?? "");
+				const entryId = cmd.entryId ?? "";
 				const text = (cmd.text ?? "").trim();
 				if (!entryId) return { ok: false, error: "missing entryId" };
 				if (!text) return { ok: false, error: "empty prompt" };
@@ -2296,6 +2753,10 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				return { ok: true };
 			}
 			case "fork": {
+				// 热会话走 pi 的 session_before_fork：扩展可以拦下这次分叉（冷会话没有加载扩展，无人可问）
+				if (cmd.entryId && m.session && (await emitBeforeFork(m.session, cmd.entryId, "at"))) {
+					return { ok: false, error: "fork cancelled by an extension" };
+				}
 				const forked = cmd.entryId
 					? SessionManager.open(m.sessionPath).createBranchedSession(cmd.entryId)
 					: SessionManager.forkFrom(m.sessionPath, m.cwd).getSessionFile();

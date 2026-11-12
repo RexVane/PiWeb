@@ -1973,6 +1973,43 @@ button.pw-line:hover .pw-chev {
 	margin-left: 4px;
 }
 
+/* 嵌套调用（codemode 脚本里发起的读 / 写 / 命令）：缩进 + 左侧细线，与父调用区分开 */
+.pw-nested {
+	display: flex;
+	flex-direction: column;
+	margin-left: 18px;
+	padding-left: 10px;
+	border-left: 1px solid var(--dsw-border-l3);
+}
+.pw-nested .pw-step {
+	margin-top: 1px;
+}
+
+/* 行内标签：用户的 `!` 命令（`!!` = 结果不进上下文，与输入时的写法一致） */
+.pw-badge {
+	flex: none;
+	padding: 0 5px;
+	border-radius: 999px;
+	font-family: var(--font-mono);
+	font-size: var(--piweb-chat-font-t);
+	line-height: 16px;
+	color: var(--dsw-label-caption);
+	background: var(--dsw-hover);
+	border: 0.5px solid var(--dsw-border-l2);
+}
+
+/* 扩展注入的消息（展开后的正文）：与工具输出同一套次级底 */
+.pw-custom-body {
+	margin: 2px 0 4px;
+	padding: 8px 10px;
+	border-radius: 10px;
+	max-height: 420px;
+	overflow: auto;
+	font-size: var(--piweb-chat-font-s);
+	color: var(--dsw-label-secondary);
+	background: var(--dsw-hover);
+}
+
 .pw-step[data-tone="live"] .pw-arg {
 	color: var(--dsw-label-primary);
 	font-weight: 500;

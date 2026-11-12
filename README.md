@@ -18,14 +18,14 @@
 
 ## Relationship to pi
 
-PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it is a web shell that bundles the official pi SDK, leaving the separately installed pi CLI untouched. The two **share one set of state** — the same agent directory (`~/.pi/agent`) holds your settings, models and credentials, sessions, skills and packages — so a conversation started in the pi CLI shows up in the browser right away, and the other way round. The bundled pi engine is upgraded with PiWeb releases. Only PiWeb checks for updates automatically; the pi version and a manual update entry remain in Settings. What runs underneath is native pi; plugin compatibility in the browser, interactive plugins especially, is not finished yet — for now plugins can be managed rather than fully driven from the page.
+PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it is a web shell that bundles the official pi SDK, leaving the separately installed pi CLI untouched. The two **share one set of state** — the same agent directory (`~/.pi/agent`) holds your settings, models and credentials, sessions, skills and packages — so a conversation started in the pi CLI shows up in the browser right away, and the other way round. The bundled pi engine is upgraded with PiWeb releases. Only PiWeb checks for updates automatically; the pi version and a manual update entry remain in Settings. What runs underneath is native pi. Extension dialogs (select, confirm, input, multi-line editor), notifications, status text, widgets above and below the composer, and injected messages all reach the page, and extension commands can create, fork and switch sessions — the same surface pi exposes in RPC mode. Only what needs a real terminal (custom components, a custom footer, header or editor) has no browser counterpart.
 
 ## Features
 
-- **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown.
-- **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
+- **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown. Input starting with `!` runs in the workspace as a shell command (`!!` keeps its output out of the model context).
+- **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML. The session branch panel lists each question, switches between branches and saves labels shared with pi's `/tree`.
 - **Session import:** Browse and import local history from Claude Code, Codex, Grok, ZCode, dsh and opencode. Search and select across sources, restore archived imports, and leave the original data untouched.
-- **Review changes:** Explore tool trajectories, file diffs and the project growth tree. The file viewer supports content, changes and rendered Markdown, with selection quoting.
+- **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting.
 - **Models and extensions:** Manage built-in and custom providers, models, pi packages and skills; inspect prompt sources and choose Read Only, Workspace Write or Full Access tool presets.
 - **Multiple devices:** Use PiWeb from desktop and mobile browsers, with built-in local-network access or a Cloudflare quick tunnel for remote access.
 
@@ -134,6 +134,10 @@ expose PiWeb over plain HTTP.
 
 Scripts authenticate the same way: `GET /?token=…` once to receive the session cookie, then send that cookie with
 every API request. There is no Basic Auth fallback.
+
+### Proxy
+
+PiWeb honours pi's `httpProxy` setting (Settings → General → Network proxy, or the `settings.json` in your agent directory) and the `HTTP_PROXY` / `HTTPS_PROXY` environment variables, with the environment winning; local addresses go direct by default (override with `NO_PROXY`). Restart `piweb` for a change to take effect. This needs Node.js 24, or 22.21 and above: older versions ignore the switch and the launcher says so explicitly (the `bash` tool's curl / git still see the variables).
 
 ### Use it on your phone: the built-in "Remote access" plugin
 

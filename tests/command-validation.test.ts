@@ -85,4 +85,16 @@ describe("agent command validation", () => {
 		expect(parseAgentCommand({ cmd: "setActiveTools", names: [] }).ok).toBe(false);
 		expect(parseAgentCommand({ cmd: "setActiveTools", names: ["ok", 42] }).ok).toBe(false);
 	});
+
+	it("validates the ! command payload", () => {
+		expect(parseAgentCommand({ cmd: "bash", command: "git status", excludeFromContext: true })).toEqual({
+			ok: true,
+			command: expect.objectContaining({ cmd: "bash", command: "git status", excludeFromContext: true }),
+		});
+		expect(parseAgentCommand({ cmd: "bash" }).ok).toBe(false);
+		expect(parseAgentCommand({ cmd: "bash", command: "   " }).ok).toBe(false);
+		expect(parseAgentCommand({ cmd: "bash", command: 42 }).ok).toBe(false);
+		expect(parseAgentCommand({ cmd: "bash", command: "ls", excludeFromContext: "yes" }).ok).toBe(false);
+		expect(parseAgentCommand({ cmd: "abortBash" }).ok).toBe(true);
+	});
 });

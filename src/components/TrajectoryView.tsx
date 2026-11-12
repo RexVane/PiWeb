@@ -21,10 +21,15 @@ const KIND_NAME: Record<TrajEntry["kind"], string> = {
 	system: "SYSTEM",
 	context: "CONTEXT",
 	user: "USER",
+	custom: "EXTENSION",
+	bash: "SHELL",
 	message: "ASSISTANT",
 	tool: "TOOL",
 	compacted: "COMPACT",
 };
+
+/** 进入模型输入的条目：折叠回合时仍然留着（工具调用和模型回复才被收起） */
+const INPUT_KINDS: ReadonlyArray<TrajEntry["kind"]> = ["system", "context", "user", "custom", "bash", "compacted"];
 
 function fmtTok(value?: number): string {
 	return value == null ? "—" : fmtTokens(value);
@@ -58,6 +63,8 @@ function sourceOf(entry: TrajEntry): string {
 		case "system": return "Pi SDK · AgentSession.systemPrompt";
 		case "context": return `Pi ResourceLoader · ${entry.title || "context"}`;
 		case "user": return "Pi SessionManager · user message";
+		case "custom": return `Pi extension · sendMessage${entry.title ? ` · ${entry.title}` : ""}`;
+		case "bash": return "Pi AgentSession · user shell command";
 		case "message": return "Pi AgentSession · model response";
 		case "tool": return `Pi AgentSession · tool execution${entry.toolName ? ` · ${entry.toolName}` : ""}`;
 		case "compacted": return "Pi SessionManager · compaction";
@@ -178,7 +185,7 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 	const visibleRows = useMemo(
 		() => rows.filter((row) => {
 			if (callsCollapsed && row.entry.kind === "tool") return false;
-			if (turnsCollapsed && !["system", "context", "user", "compacted"].includes(row.entry.kind)) return false;
+			if (turnsCollapsed && !INPUT_KINDS.includes(row.entry.kind)) return false;
 			return matchesQuery(row, normalizedQuery);
 		}).reverse(),
 		[callsCollapsed, normalizedQuery, rows, turnsCollapsed],
