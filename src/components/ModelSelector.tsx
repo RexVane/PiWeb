@@ -48,6 +48,7 @@ export function ModelSelector({
 	const open = !disabled && (openProp ?? openState);
 	const [pane, setPane] = useState<"model" | "effort">("model");
 	const [query, setQuery] = useState("");
+	const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(() => new Set());
 	const [activeKey, setActiveKey] = useState<string | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
@@ -139,11 +140,11 @@ export function ModelSelector({
 	const showDefault = defaultOption && words.every((word) => defaultOption.label.toLowerCase().includes(word));
 	const candidates: Candidate[] = useMemo(() => [
 		...(showDefault ? [{ key: DEFAULT_KEY, model: null, selected: defaultOption!.selected }] : []),
-		...groups.flatMap((group) => group.models.map((entry) => ({
+		...groups.flatMap((group) => collapsedProviders.has(group.provider) ? [] : group.models.map((entry) => ({
 			key: modelKey(entry), model: entry,
 			selected: !defaultOption?.selected && model?.provider === entry.provider && model?.id === entry.id,
 		}))),
-	], [groups, showDefault, defaultOption?.selected, model?.provider, model?.id]);
+	], [groups, collapsedProviders, showDefault, defaultOption?.selected, model?.provider, model?.id]);
 	const active = candidates.find((candidate) => candidate.key === activeKey)
 		?? (!words.length ? candidates.find((candidate) => candidate.selected) : undefined)
 		?? candidates[0];
@@ -167,6 +168,15 @@ export function ModelSelector({
 		if (candidate.model) onSelectModel(candidate.model.provider, candidate.model.id);
 		else defaultOption?.onSelect();
 		closeMenu();
+	};
+	const toggleProvider = (provider: string) => {
+		setCollapsedProviders((previous) => {
+			const next = new Set(previous);
+			if (next.has(provider)) next.delete(provider);
+			else next.add(provider);
+			return next;
+		});
+		setActiveKey(null);
 	};
 	const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
 		if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
@@ -274,7 +284,7 @@ export function ModelSelector({
 									placeholder={t.modelSearchPlaceholder} value={query} autoComplete="off" spellCheck={false}
 									aria-expanded="true" aria-autocomplete="list" aria-controls={`${id}-list`}
 									aria-activedescendant={active ? optionIds.get(active.key) : undefined}
-									onChange={(event) => { setQuery(event.target.value); setActiveKey(null); }} />
+									onChange={(event) => { setQuery(event.target.value); setActiveKey(null); setCollapsedProviders(new Set()); }} />
 								<kbd aria-hidden="true">↑↓</kbd>
 							</div>
 							<div ref={listRef} id={`${id}-list`} className={styles.list} role="listbox" aria-label={t.selectModel}>
@@ -284,14 +294,18 @@ export function ModelSelector({
 									<span className={styles.optionCopy}>{defaultOption!.label}</span>
 									{defaultOption!.selected && <IconCheckOutline14 size={15} />}
 								</button>}
-								{candidates.length === 0 && <p className={styles.empty} role="status">{words.length ? t.modelSearchEmpty : t.emptyModels}</p>}
+								{groups.length === 0 && !showDefault && <p className={styles.empty} role="status">{words.length ? t.modelSearchEmpty : t.emptyModels}</p>}
 								{groups.map((group, groupIndex) => (
 									<section key={group.provider} role="group" aria-labelledby={`${id}-provider-${groupIndex}`} className={styles.group}>
-										<div id={`${id}-provider-${groupIndex}`} className={styles.groupTitle} title={group.label}>
+										<button type="button" id={`${id}-provider-${groupIndex}`} className={styles.groupTitle} title={group.label}
+											aria-label={group.label} aria-expanded={!collapsedProviders.has(group.provider)} aria-controls={`${id}-provider-models-${groupIndex}`}
+											onClick={() => toggleProvider(group.provider)}>
 											<ProviderBrand id={group.provider} name={group.label} size={22} />
 											<span>{group.label}</span><span className={styles.count} aria-hidden="true">{group.models.length}</span>
-										</div>
-										{group.models.map((entry) => {
+											<IconChevronDown14 className={styles.groupChevron} size={13} />
+										</button>
+										<div id={`${id}-provider-models-${groupIndex}`} hidden={collapsedProviders.has(group.provider)}>
+										{!collapsedProviders.has(group.provider) && group.models.map((entry) => {
 											const key = modelKey(entry);
 											const candidate = candidates.find((item) => item.key === key)!;
 											return <button key={key} id={optionIds.get(key)} type="button" role="option" tabIndex={-1}
@@ -304,6 +318,7 @@ export function ModelSelector({
 												{candidate.selected && <IconCheckOutline14 size={15} />}
 											</button>;
 										})}
+										</div>
 									</section>
 								))}
 							</div>

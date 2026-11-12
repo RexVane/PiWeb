@@ -9,6 +9,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { AppShell } from "@/components/AppShell";
 import type { TrajEntry, WebMessage } from "@/lib/types";
 
+const scenario = vi.hoisted(() => ({ hero: false }));
+
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const messages = [
 	{ role: "user", id: "u1", content: [{ type: "text", text: "读一下文件" }], timestamp: 1 },
@@ -38,7 +40,7 @@ vi.mock("@/hooks/usePiWeb", () => ({
 	usePiWeb: () => ({
 		sessions: [{ path: "/session-a", cwd: "/workspace", name: "session-a" }],
 		archivedSessions: [], archivedSessionPaths: [], addedWorkspaces: ["/workspace"], removedWorkspaces: [], workspaceAliases: {},
-		currentPath: "/session-a", currentId: "/session-a",
+		currentPath: scenario.hero ? null : "/session-a", currentId: scenario.hero ? null : "/session-a",
 		models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
 		state: {
 			snapshot: { cwd: "/workspace", model, trajectory, messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
@@ -55,6 +57,7 @@ vi.mock("@/hooks/usePiWeb", () => ({
 }));
 
 beforeEach(() => {
+	scenario.hero = false;
 	localStorage.setItem("piweb.drawerOpen", "1");
 	localStorage.setItem("piweb.drawerSection", "project");
 	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: {} }), text: async () => "" })));
@@ -66,6 +69,21 @@ afterEach(() => {
 });
 
 describe("Ctrl+Shift+E with the trajectory detail open", () => {
+	it("opens and closes the drawer from an unsent new conversation", async () => {
+		scenario.hero = true;
+		localStorage.setItem("piweb.drawerOpen", "0");
+		render(<AppShell />);
+		const toggle = screen.getByRole("button", { name: "右侧抽屉" });
+		expect(toggle.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(toggle);
+		expect(await screen.findByTestId("drawer-panel")).toBeTruthy();
+		expect(toggle.getAttribute("aria-expanded")).toBe("true");
+		fireEvent.click(toggle);
+		await waitFor(() => expect(screen.queryByTestId("drawer-panel")).toBeNull());
+		fireEvent.keyDown(document, { key: "E", ctrlKey: true, shiftKey: true });
+		expect(await screen.findByTestId("drawer-panel")).toBeTruthy();
+	});
+
 	it("brings the project drawer back on the first press", async () => {
 		render(<AppShell />);
 		expect(await screen.findByTestId("drawer-panel")).toBeTruthy();

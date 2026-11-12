@@ -939,6 +939,25 @@ export function AppShell() {
 	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
 	// 最右一列只有一条宽度(rightWidth):详情栏与抽屉合并后不再各占一列。
 	const rightColumnVisible = Boolean(selected) || drawerOpen;
+	const drawerToggle = (
+		<button
+			type="button"
+			className="icon-btn"
+			style={{ width: 30, height: 30, background: drawerOpen && !selected ? "var(--dsw-active)" : undefined }}
+			title={t.drawerPanel}
+			aria-label={t.drawerPanel}
+			aria-expanded={drawerOpen && !selected}
+			data-testid="drawer-toggle"
+			onClick={() => {
+				if (selected) {
+					setSelected(null);
+					toggleDrawer(true);
+				} else toggleDrawer();
+			}}
+		>
+			<IconPanelRightOutline16 size={15} />
+		</button>
+	);
 	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px minmax(0,1fr) ${
 		rightColumnVisible ? `${rightWidth}px` : "0px"}`;
 
@@ -1052,6 +1071,7 @@ export function AppShell() {
 			<div className="pi-main flex min-h-0 min-w-0 flex-col">
 				{!currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
+						<div className="flex shrink-0 justify-end px-5 pt-3">{drawerToggle}</div>
 						<Hero
 							toolPreset={state.toolPreset}
 							onToolPresetChange={setToolPreset}
@@ -1112,25 +1132,7 @@ export function AppShell() {
 										{title}
 									</span>
 									{/* 右侧抽屉的入口与开关 */}
-									<button
-										type="button"
-										className="icon-btn"
-										style={{ width: 30, height: 30, background: drawerOpen && !selected ? "var(--dsw-active)" : undefined }}
-										title={t.drawerPanel}
-										aria-label={t.drawerPanel}
-										data-testid="drawer-toggle"
-										onClick={() => {
-											// 轨迹详情占着这一列时,这个按钮是把抽屉叫回来(否则点了像没反应)
-											if (selected) {
-												setSelected(null);
-												toggleDrawer(true);
-												return;
-											}
-											toggleDrawer();
-										}}
-									>
-										<IconPanelRightOutline16 size={15} />
-									</button>
+									{drawerToggle}
 								</div>
 							{projectTrust?.required && !projectTrust.trusted && (
 								<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: 12.5, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }} role="status">

@@ -88,6 +88,53 @@ describe("searchable model selector", () => {
 		expect(options()).toHaveLength(4);
 	});
 
+	it("starts provider groups expanded and toggles only the clicked group without choosing a model", () => {
+		const config = props();
+		render(<ModelSelector {...config} />);
+		open();
+		const group = screen.getByRole("button", { name: "OpenAI" });
+		expect(group.getAttribute("aria-expanded")).toBe("true");
+		fireEvent.click(group);
+		expect(group.getAttribute("aria-expanded")).toBe("false");
+		expect(screen.queryByRole("option", { name: /^GPT/ })).toBeNull();
+		expect(screen.getByRole("option", { name: /^Claude Work/ })).toBeTruthy();
+		expect(config.onSelectModel).not.toHaveBeenCalled();
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		fireEvent.click(group);
+		expect(group.getAttribute("aria-expanded")).toBe("true");
+		expect(options()).toHaveLength(4);
+	});
+
+	it("skips collapsed models in keyboard selection and expands matching groups for a new search", () => {
+		const config = props();
+		render(<ModelSelector {...config} />);
+		const search = open();
+		fireEvent.click(screen.getByRole("button", { name: "OpenAI" }));
+		for (let i = 0; i < 4; i += 1) {
+			fireEvent.keyDown(search, { key: "ArrowDown" });
+			const option = document.getElementById(search.getAttribute("aria-activedescendant")!);
+			expect(option?.textContent).not.toMatch(/GPT/);
+		}
+		fireEvent.change(search, { target: { value: "gpt mini" } });
+		expect(screen.getByRole("button", { name: "OpenAI" }).getAttribute("aria-expanded")).toBe("true");
+		expect(options()).toHaveLength(1);
+		fireEvent.keyDown(search, { key: "Enter" });
+		expect(config.onSelectModel).toHaveBeenCalledExactlyOnceWith("openai", "gpt-mini");
+	});
+
+	it("keeps provider headings available when every group is collapsed", () => {
+		const config = props();
+		render(<ModelSelector {...config} />);
+		const search = open();
+		for (const label of ["OpenAI", "Anthropic", "Local Lab"]) fireEvent.click(screen.getByRole("button", { name: label }));
+		expect(options()).toHaveLength(0);
+		expect(screen.queryByRole("status")).toBeNull();
+		expect(search.getAttribute("aria-activedescendant")).toBeNull();
+		fireEvent.keyDown(search, { key: "Enter" });
+		expect(config.onSelectModel).not.toHaveBeenCalled();
+		expect(screen.getByRole("dialog")).toBeTruthy();
+	});
+
 	it("keeps search focused while arrows move the candidate and Enter selects it, then restores the trigger", () => {
 		const config = props();
 		render(<ModelSelector {...config} />);
