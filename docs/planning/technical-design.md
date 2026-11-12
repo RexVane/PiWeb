@@ -81,6 +81,7 @@
 
 - 8 个 chunk / **1272KB**（未压缩），其中 **472KB** = highlight.js + react-markdown + remark-gfm + rehype-highlight
 - CSS 370KB：两个 155KB 的字体 CSS，各 239 条 `@font-face`（共 478 个 woff2 / 18.3MB 字体池，按需分片）
+  - 2026-11-13 已移除（#216）：字体族固定为系统字体，两个字体 CSS 与 478 个 woff2 不再进构建；本地实测构建内 CSS 总量 464KB → 155KB（gzip 约 132KB → 31KB）
 - 首屏请求里 `/api/workspaces` 与 `/api/sessions` 返回的 `workspaceRegistry` 完全重复
 
 ### 2.7 dev 模式对照
