@@ -331,7 +331,10 @@ export function sessionDisplayMessages(sm: Pick<SessionManager, "getBranch" | "b
 		const message = entryToWebMessage(entry);
 		return message ? [message] : [];
 	});
-	const messages = [...compactedHistory(sm, context), ...current];
+	return hideImportedTaskNotifications(sm, [...compactedHistory(sm, context), ...current]);
+}
+
+function hideImportedTaskNotifications(sm: Pick<SessionManager, "getBranch">, messages: WebMessage[]): WebMessage[] {
 	// 兼容早期导入：只隐藏 Claude 来源中被误记成用户发言的任务通知，不改会话文件与模型上下文。
 	const importedFromClaude = sm.getBranch().some((entry: any) => entry.type === "custom" && entry.customType === "piweb-import" && entry.data?.source === "claude");
 	return importedFromClaude ? messages.filter((message) => message.role !== "user" || !isClaudeTaskNotification(message.content)) : messages;
@@ -2200,6 +2203,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			const partial = projectMessage(m, m.inflight);
 			if (partial.role === "assistant") messages.push({ ...partial, stopReason: "pending" });
 		}
+		messages = hideImportedTaskNotifications(m.sm, messages);
 		snapSeq = m.seq;
 		const modelObj: any = session.model;
 		if (modelObj) model = { provider: String(modelObj.provider ?? ""), id: String(modelObj.id ?? ""), name: String(modelObj.name ?? modelObj.id ?? "") };

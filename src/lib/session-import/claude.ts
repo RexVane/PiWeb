@@ -238,7 +238,7 @@ export const claudeSource: ImportSourceModule = {
 				const { text: textBlocks, results } = splitUserContent((message as { content?: unknown }).content);
 				const plain = textBlocks.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 				const keepText = textBlocks.filter((block) => block.type !== "text");
-				if (plain && !isSynthetic(plain.trim()) && !isClaudeTaskNotification(plain) && !/^Caveat:/i.test(plain.trim())) {
+				if (plain && !isSynthetic(plain.trim()) && !isClaudeTaskNotification(textBlocks) && !/^Caveat:/i.test(plain.trim())) {
 					entries.push({ type: "message", message: { role: "user", content: [...keepText, { type: "text", text: plain }], timestamp } as ImportedMessage });
 					// 真人发了新消息，之前的回复已经结束：不要再把后面的行合并到它前面去
 					assistantById.clear();

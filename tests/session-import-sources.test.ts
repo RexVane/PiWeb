@@ -75,12 +75,14 @@ describe("Claude Code", () => {
 			{ type: "user", cwd: root, message: { content: "真正的提问" } },
 			{ type: "user", message: { content: [{ type: "text", text: notification }] } },
 			{ type: "user", message: { content: question } },
+			{ type: "user", message: { content: [{ type: "text", text: notification }, { type: "image", source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" } }] } },
 		].map((line) => JSON.stringify(line)).join("\n"));
 		const [summary] = await claudeSource.scan();
 		expect(summary.title).toBe("真正的提问");
 		const imported = (await claudeSource.read(summary))!;
 		expect(messagesOf(imported.entries).map((message) => message.content)).toEqual([
 			[{ type: "text", text: "真正的提问" }], [{ type: "text", text: question }],
+			[{ type: "image", mimeType: "image/png", data: "aW1hZ2U=" }, { type: "text", text: notification }],
 		]);
 		expect(imported.skipped?.join()).toMatch(/2 条合成输入/);
 	});

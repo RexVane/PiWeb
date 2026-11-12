@@ -70,6 +70,28 @@ function terminalWrites(file: string, ...lines: string[]) {
 }
 
 describe("终端 pi 同时写会话", () => {
+	it("keeps legacy Claude task notifications hidden after the session runtime starts", async () => {
+		const file = seed();
+		const sm = pi.SessionManager.open(file);
+		sm.appendCustomEntry("piweb-import", { source: "claude" });
+		const notification = "<task-notification><task-id>task-1</task-id><status>killed</status><summary>Background server stopped</summary></task-notification>";
+		const question = `请解释这段通知：${notification}`;
+		sm.appendMessage(user(notification));
+		sm.appendMessage(user(question));
+		const original = await fs.readFile(file, "utf8");
+		const m = manager.getManaged(file);
+		const cold = await manager.buildSnapshot(m);
+		expect(texts(cold.messages)).not.toContain(notification);
+		expect(texts(cold.messages)).toContain(question);
+		expect(await fs.readFile(file, "utf8")).toBe(original);
+		await manager.ensureSession(m);
+		const started = await fs.readFile(file, "utf8");
+		const warm = await manager.buildSnapshot(m);
+		expect(texts(warm.messages)).toEqual(texts(cold.messages));
+		expect(m.session!.messages.some((message) => message.role === "user" && message.content === notification)).toBe(true);
+		expect(await fs.readFile(file, "utf8")).toBe(started);
+	}, 60_000);
+
 	it("冷读取历史符号链接会话时只规范界面 cwd，保留 SDK cwd 和原始 JSONL", async () => {
 		const link = path.join(root, "read-cli-link");
 		await fs.symlink(cwd, link, process.platform === "win32" ? "junction" : "dir");
