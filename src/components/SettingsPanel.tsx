@@ -32,6 +32,7 @@ import {
 	type CustomProviderSetup,
 } from "@/components/ProviderSetupModal";
 import { RemoteSection } from "@/components/RemoteSection";
+import { ProxySettings } from "@/components/ProxySettings";
 import { CopyCommand } from "@/components/update/CopyCommand";
 import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } from "@/components/update/update-store";
 import { useI18n } from "@/i18n";
@@ -289,20 +290,6 @@ function GeneralSection({
 		if (value === piSettings[field]) return;
 		if (!(await patchPiSettings({ [field]: value }))) setTextDrafts((previous) => ({ ...previous, [field]: piSettings[field] }));
 	};
-	const textInput = (field: "httpProxy", placeholder: string) => (
-		<input
-			type="text"
-			value={textDrafts[field]}
-			placeholder={placeholder}
-			spellCheck={false}
-			disabled={!piSettings || settingsLoading || settingsSaving}
-			onChange={(event) => setTextDrafts((previous) => ({ ...previous, [field]: event.target.value }))}
-			onBlur={() => void commitText(field)}
-			onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-			className="rounded-lg px-2 py-1"
-			style={{ width: 240, fontFamily: "var(--font-mono)", fontSize: 12.5, background: "var(--dsw-hover)" }}
-		/>
-	);
 
 	const commitMaxRetries = async () => {
 		if (!piSettings) return;
@@ -487,7 +474,8 @@ function GeneralSection({
 				/>
 			</Row>
 			<Row title={t.httpProxy} desc={t.httpProxyDesc}>
-				{textInput("httpProxy", "http://127.0.0.1:7890")}
+				<ProxySettings value={textDrafts.httpProxy} disabled={!piSettings || settingsLoading || settingsSaving}
+					onChange={(httpProxy) => setTextDrafts({ httpProxy })} onCommit={() => void commitText("httpProxy")} />
 			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
 				<div className="flex items-center gap-2.5">

@@ -460,7 +460,10 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	const proxySetting = (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env);
 	const hasProxyEnv = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].some((key) => plan.env[key]?.trim());
 	const systemProxy = !proxySetting && !hasProxyEnv ? (dependencies.readSystemProxy ?? readSystemProxy)() : null;
+	plan.env.PIWEB_INHERITED_HTTP_PROXY = (env.http_proxy || env.HTTP_PROXY || "").trim();
+	plan.env.PIWEB_INHERITED_HTTPS_PROXY = (env.https_proxy || env.HTTPS_PROXY || "").trim();
 	const proxy = applyProxyEnv(plan.env, { proxySetting, systemProxy });
+	plan.env.PIWEB_PROXY_SOURCE = proxy.source ?? "none";
 	if (proxy.proxy) {
 		const from = proxy.source === "settings" ? "手动设置" : proxy.source === "system" ? "系统代理" : "环境变量";
 		if (proxy.supported) log(`[piweb] 模型请求走代理 ${redactProxy(proxy.proxy)}（来自${from}）`);
