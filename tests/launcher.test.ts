@@ -8,6 +8,8 @@ import { applyProxyEnv, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, 
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
 
+vi.mock("../scripts/system-proxy.mjs", () => ({ readSystemProxy: vi.fn(() => null) }));
+
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
@@ -433,15 +435,28 @@ describe("proxy environment for the server process", () => {
 		expect(env).toEqual({ PATH: "/usr/bin" });
 	});
 
-	it("lets explicit environment variables win over the setting, in either letter case", () => {
+	it("lets the manual setting override automatic environment proxies, in either letter case", () => {
 		const upper: Record<string, string | undefined> = { HTTPS_PROXY: "http://corp:3128" };
-		expect(applyProxyEnv(upper, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "24.12.0" })).toMatchObject({ proxy: "http://corp:3128", source: "env" });
-		// 只补缺的那一个，已有的不动（与 pi 的 `??=` 一致）
-		expect(upper).toMatchObject({ HTTPS_PROXY: "http://corp:3128", HTTP_PROXY: "http://127.0.0.1:7890", NODE_USE_ENV_PROXY: "1" });
+		expect(applyProxyEnv(upper, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "24.12.0" })).toMatchObject({ proxy: "http://127.0.0.1:7890", source: "settings" });
+		expect(upper).toMatchObject({ HTTPS_PROXY: "http://127.0.0.1:7890", HTTP_PROXY: "http://127.0.0.1:7890", NODE_USE_ENV_PROXY: "1" });
 		// Windows 上变量名不分大小写：小写写法也算已设，不能再补一个只差大小写的重复键
 		const lower: Record<string, string | undefined> = { http_proxy: "http://corp:3128", https_proxy: "http://corp:3128" };
 		applyProxyEnv(lower, { proxySetting: "http://127.0.0.1:7890", nodeVersion: "24.12.0" });
 		expect(Object.keys(lower).sort()).toEqual(["NODE_USE_ENV_PROXY", "NO_PROXY", "http_proxy", "https_proxy"]);
+		expect(lower.https_proxy).toBe("http://127.0.0.1:7890");
+	});
+
+	it("inherits the system proxy only when the setting and environment are empty", () => {
+		const systemProxy = { http: "http://system:8080", https: "http://system:8443", noProxy: "*.internal.example" };
+		const env: Record<string, string | undefined> = {};
+		expect(applyProxyEnv(env, { systemProxy })).toMatchObject({ proxy: systemProxy.https, source: "system" });
+		expect(env).toMatchObject({ HTTP_PROXY: systemProxy.http, HTTPS_PROXY: systemProxy.https, NO_PROXY: "localhost,127.0.0.1,::1,*.internal.example" });
+		const explicit = { https_proxy: "http://env:3128", NO_PROXY: "custom.local" };
+		expect(applyProxyEnv(explicit, { systemProxy })).toMatchObject({ proxy: "http://env:3128", source: "env" });
+		expect(explicit).toMatchObject({ https_proxy: "http://env:3128", NO_PROXY: "custom.local" });
+		const all: Record<string, string | undefined> = {};
+		applyProxyEnv(all, { systemProxy: { ...systemProxy, noProxy: "*" } });
+		expect(all.NO_PROXY).toBe("*");
 	});
 
 	it("respects the user's own NO_PROXY and NODE_USE_ENV_PROXY choices", () => {
@@ -494,5 +509,27 @@ describe("proxy environment for the server process", () => {
 		expect(line).toBeTruthy();
 		expect(line).not.toContain("s3cret");
 		expect(line).not.toContain("alice");
+	});
+
+	it("detects the system proxy at launch and skips detection for a manual override", async () => {
+		const root = await installation();
+		const readSystemProxy = vi.fn(() => ({ http: "http://system:8080", https: "http://system:8080" }));
+		const spawned: Array<Record<string, string | undefined>> = [];
+		const launch = (proxySetting: string | null) => runLauncher({
+			root, args: ["--dev", "--no-open"], env: {},
+			dependencies: {
+				spawn: vi.fn((_command: string, _args: string[], options: { env?: Record<string, string | undefined> }) => {
+					const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+					spawned.push(options.env ?? {}); setImmediate(() => child.emit("exit", 0)); return child;
+				}),
+				probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true),
+				readHttpProxySetting: () => proxySetting, readSystemProxy, log: () => {},
+			},
+		});
+		await launch(null);
+		expect(spawned[0].HTTPS_PROXY).toBe("http://system:8080");
+		await launch("http://manual:7890");
+		expect(spawned[1].HTTPS_PROXY).toBe("http://manual:7890");
+		expect(readSystemProxy).toHaveBeenCalledTimes(1);
 	});
 });

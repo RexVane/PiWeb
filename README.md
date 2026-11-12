@@ -137,7 +137,7 @@ every API request. There is no Basic Auth fallback.
 
 ### Proxy
 
-PiWeb honours pi's `httpProxy` setting (Settings → General → Network proxy, or the `settings.json` in your agent directory) and the `HTTP_PROXY` / `HTTPS_PROXY` environment variables, with the environment winning; local addresses go direct by default (override with `NO_PROXY`). Restart `piweb` for a change to take effect. This needs Node.js 24, or 22.21 and above: older versions ignore the switch and the launcher says so explicitly (the `bash` tool's curl / git still see the variables).
+PiWeb automatically uses `HTTP_PROXY` / `HTTPS_PROXY`, or the current user's enabled Windows HTTP(S) system proxy when those variables are absent. Set `httpProxy` in Settings → General → Network proxy (or your agent directory's `settings.json`) to override both. Leave it blank to return to automatic detection; when no proxy is configured, requests go direct. Local addresses bypass the proxy by default (override with `NO_PROXY`); Windows exact-host and domain-suffix bypass entries are also inherited. PAC/WPAD scripts and Windows-only bypass patterns such as `<local>` or `192.168.*` are not evaluated; use a proxy URL or `NO_PROXY` for those setups. Restart `piweb` after changes. This needs Node.js 24, or 22.21 and above: older versions ignore the switch and the launcher says so explicitly (the `bash` tool's curl / git still see the variables).
 
 ### Use it on your phone: the built-in "Remote access" plugin
 

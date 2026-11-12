@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { assertInstallation, selectProductionBuild } from "./build-output.mjs";
 import { ensureInstallBuild, isProductionOnlyInstall } from "./install-build.mjs";
+import { readSystemProxy } from "./system-proxy.mjs";
 export { isMainModule } from "./entrypoint.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,7 +23,7 @@ const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * @property {{log?: (message: string) => void, probePort?: typeof probePort,
  * isPiWebRunning?: typeof isPiWebRunning, openBrowser?: (url: string) => Promise<void>,
  * warmFirstPaint?: typeof warmFirstPaint, readLaunchToken?: typeof readLaunchToken,
- * readHttpProxySetting?: typeof readHttpProxySetting, warn?: (message: string) => void,
+ * readHttpProxySetting?: typeof readHttpProxySetting, readSystemProxy?: typeof readSystemProxy, warn?: (message: string) => void,
  * spawn?: (command: string, args: string[], options: import('node:child_process').SpawnOptions) => LauncherChild}} [dependencies]
  */
 
@@ -138,30 +139,41 @@ function redactProxy(proxy) {
 /**
  * 给服务进程配代理环境。pi 的 CLI 入口会做这两件事，而 PiWeb 走的是 SDK，得自己做，
  * 否则在 pi 终端里配好的代理到了网页端对模型请求完全不生效：
- *  1. `httpProxy` 设置补进 HTTP_PROXY / HTTPS_PROXY（环境里已经有的不动，与 pi 的 `??=` 一致）；
+ *  1. 手动 `httpProxy` 优先，其次代理环境变量，再跟随 Windows 系统代理；
  *  2. 让 Node 的 fetch / http 认这些变量（NODE_USE_ENV_PROXY）——默认它们是被忽略的。
  * 本机地址默认不走代理（本地 llama.cpp / Ollama），用户自己设了 NO_PROXY 就照他的。
  * @param {Environment} childEnv 就地修改
- * @param {{proxySetting?: string | null, nodeVersion?: string}} [options]
- * @returns {{proxy: string | null, source: 'env' | 'settings' | null, supported: boolean}}
+ * @param {{proxySetting?: string | null, systemProxy?: import('./system-proxy.mjs').SystemProxy | null, nodeVersion?: string}} [options]
+ * @returns {{proxy: string | null, source: 'env' | 'settings' | 'system' | null, supported: boolean}}
  */
-export function applyProxyEnv(childEnv, { proxySetting = null, nodeVersion = process.versions.node } = {}) {
+export function applyProxyEnv(childEnv, { proxySetting = null, systemProxy = null, nodeVersion = process.versions.node } = {}) {
 	// Windows 上环境变量不分大小写，但展开成普通对象后分：两种写法都要查，免得补出一个只差大小写的重复键
 	const current = (name) => String(childEnv[name] ?? childEnv[name.toLowerCase()] ?? "").trim();
 	const fromEnv = current("HTTPS_PROXY") || current("HTTP_PROXY");
+	const set = (name, value) => {
+		if (childEnv[name.toLowerCase()] !== undefined) childEnv[name.toLowerCase()] = value;
+		if (childEnv[name] !== undefined || childEnv[name.toLowerCase()] === undefined) childEnv[name] = value;
+	};
 	if (proxySetting) {
-		if (!current("HTTP_PROXY")) childEnv.HTTP_PROXY = proxySetting;
-		if (!current("HTTPS_PROXY")) childEnv.HTTPS_PROXY = proxySetting;
+		set("HTTP_PROXY", proxySetting);
+		set("HTTPS_PROXY", proxySetting);
+	} else if (!fromEnv && systemProxy) {
+		if (systemProxy.http) set("HTTP_PROXY", systemProxy.http);
+		if (systemProxy.https) set("HTTPS_PROXY", systemProxy.https);
 	}
-	const proxy = fromEnv || proxySetting || null;
+	const proxy = proxySetting || fromEnv || systemProxy?.https || systemProxy?.http || null;
 	if (!proxy) return { proxy: null, source: null, supported: true };
+	const source = proxySetting ? "settings" : fromEnv ? "env" : "system";
 	const supported = nodeSupportsEnvProxy(nodeVersion);
 	if (supported) {
 		// 用户自己表过态（哪怕是 0）就尊重
 		if (!String(childEnv.NODE_USE_ENV_PROXY ?? "").trim()) childEnv.NODE_USE_ENV_PROXY = "1";
-		if (childEnv.NO_PROXY === undefined && childEnv.no_proxy === undefined) childEnv.NO_PROXY = "localhost,127.0.0.1,::1";
+		if (childEnv.NO_PROXY === undefined && childEnv.no_proxy === undefined) {
+			childEnv.NO_PROXY = source === "system" && systemProxy?.noProxy === "*" ? "*"
+				: ["localhost,127.0.0.1,::1", source === "system" ? systemProxy?.noProxy : null].filter(Boolean).join(",");
+		}
 	}
-	return { proxy, source: fromEnv ? "env" : "settings", supported };
+	return { proxy, source, supported };
 }
 
 function mergeHostnames(current, hostname) {
@@ -445,10 +457,12 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	// 内置插件要转发回 PiWeb 自己的端口；端口可能被占而 +1，所以在这里给最终值。
 	plan.env.PIWEB_PORT = String(port);
 	log(`[piweb] 启动 ${url} (${plan.command} 模式)`);
-	// 代理：让 pi 的 httpProxy 设置 / HTTP(S)_PROXY 环境变量对模型请求生效（见 applyProxyEnv）
-	const proxy = applyProxyEnv(plan.env, { proxySetting: (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env) });
+	const proxySetting = (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env);
+	const hasProxyEnv = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].some((key) => plan.env[key]?.trim());
+	const systemProxy = !proxySetting && !hasProxyEnv ? (dependencies.readSystemProxy ?? readSystemProxy)() : null;
+	const proxy = applyProxyEnv(plan.env, { proxySetting, systemProxy });
 	if (proxy.proxy) {
-		const from = proxy.source === "settings" ? "pi 设置 httpProxy" : "环境变量";
+		const from = proxy.source === "settings" ? "手动设置" : proxy.source === "system" ? "系统代理" : "环境变量";
 		if (proxy.supported) log(`[piweb] 模型请求走代理 ${redactProxy(proxy.proxy)}（来自${from}）`);
 		else (dependencies.warn ?? console.warn)(`[piweb] 配了代理（来自${from}），但 Node ${process.versions.node} 不支持按环境变量走代理，模型请求仍是直连。请升级到 Node 24 或 22.21 以上。`);
 	}
