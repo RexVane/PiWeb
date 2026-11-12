@@ -27,16 +27,6 @@ export function* eachJsonLine(text: string): Generator<Record<string, unknown>> 
 	}
 }
 
-/** 从文件头里取第一批记录（扫描用） */
-export function headRecords(text: string, limit = 400): Record<string, unknown>[] {
-	const out: Record<string, unknown>[] = [];
-	for (const record of eachJsonLine(text)) {
-		out.push(record);
-		if (out.length >= limit) break;
-	}
-	return out;
-}
-
 /** 递归列文件，带深度上限与名字过滤 */
 export async function listFiles(root: string, options: { match: (name: string) => boolean; maxDepth?: number }): Promise<string[]> {
 	const out: string[] = [];

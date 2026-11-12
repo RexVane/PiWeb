@@ -17,16 +17,6 @@ export interface ModelDraft {
 	origin?: "override";
 }
 
-/** models.json 里 provider 级的自定义请求头：名字 → 值 */
-export function providerHeadersFromConfig(value: unknown): Record<string, string> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-	const out: Record<string, string> = {};
-	for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
-		if (typeof raw === "string") out[name] = raw;
-	}
-	return out;
-}
-
 /**
  * models.json 里模型的 `input` 字段（pi 用它判断能不能收图）。
  * 没写 → pi 按只文本处理，而且提示语会说是「模型不支持图像」，很容易被当成模型能力问题。

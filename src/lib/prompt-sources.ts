@@ -8,7 +8,6 @@
  * 只读：不改动任何提示词内容，也不影响发给模型的东西。
  */
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { getAgentDir, getResourceLoader, resourceLoaderReady } from "./pi";
 import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./path-security";
@@ -244,9 +243,4 @@ export async function readPromptSource(filePath: string, cwd: string, sourcePath
 	const stat = await fs.stat(authorized);
 	if (sourcePath !== undefined && stat.size > 1024 * 1024) throw new BoundaryError("linked resource exceeds 1 MB");
 	return fs.readFile(authorized, "utf8");
-}
-
-/** 给测试与诊断用：个人目录（提示词文件可能在 ~/.pi/agent 或 ~/.agents 下） */
-export function promptHomeDirs(): string[] {
-	return [getAgentDir(), path.join(os.homedir(), ".agents")];
 }

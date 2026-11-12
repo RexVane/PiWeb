@@ -222,19 +222,6 @@ function start(root: string): Promise<GithubIdentity | null> {
 	return task;
 }
 
-/**
- * 取仓库的 GitHub 身份。命中缓存立刻返回；否则**后台**刷新并返回已过期的旧值（或 null），
- * 不会让调用方等网络。要拿首次结果用 `awaitGithubIdentity`。
- */
-export function githubIdentity(root: string | null): GithubIdentity | null {
-	if (!root) return null;
-	void loadDisk();
-	const hit = memory.get(root);
-	if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
-	void start(root);
-	return hit?.value ?? null;
-}
-
 /** 等首次解析完成（面板刚打开、缓存还冷时用；调用方自己控制超时） */
 export async function awaitGithubIdentity(root: string | null): Promise<GithubIdentity | null> {
 	if (!root) return null;

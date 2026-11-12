@@ -12,7 +12,6 @@ import path from "node:path";
 import { agentDir } from "./web-secret";
 
 export const TOKEN_QUERY = "token";
-export const TOKEN_BYTES = 32;
 
 /** 恒定时间比较；两边任一为空（没配令牌）时一律无效 */
 export function validLaunchToken(candidate: string | undefined, expected: string | undefined): boolean {

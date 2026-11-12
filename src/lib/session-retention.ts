@@ -86,7 +86,6 @@ export async function sweepArchivedSessions({
 }
 
 let started = false;
-let lastSweep = 0;
 
 /** 起一个后台清理器：启动后不久跑一次，之后按间隔重复（幂等，重复调用无副作用） */
 export function startArchivedSessionRetention({
@@ -98,7 +97,6 @@ export function startArchivedSessionRetention({
 	if (started) return;
 	started = true;
 	const run = async () => {
-		lastSweep = Date.now();
 		try {
 			const report = await sweepArchivedSessions({ log, isActive });
 			if (report.deleted.length || report.missing.length) {
@@ -114,9 +112,4 @@ export function startArchivedSessionRetention({
 		repeat.unref?.();
 	}, delayMs);
 	timer.unref?.();
-}
-
-/** 距上次清理是否已经超过一个间隔（供复用现有定时器时判断） */
-export function shouldSweep(now = Date.now(), intervalMs = SWEEP_INTERVAL_MS): boolean {
-	return now - lastSweep >= intervalMs;
 }

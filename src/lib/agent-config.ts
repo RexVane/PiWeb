@@ -127,8 +127,3 @@ export function invalidateJsonFilesNamed(basename: string): void {
 		if (path.basename(key) === basename) cache.delete(key);
 	}
 }
-
-/** 测试与"整目录切换"场景用 */
-export function invalidateAllJsonFiles(): void {
-	cache.clear();
-}
