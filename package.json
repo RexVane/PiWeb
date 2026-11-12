@@ -52,7 +52,6 @@
 		"update:pi": "node scripts/release.mjs --update-pi"
 	},
 	"dependencies": {
-		"@automann/maple-mono-cn": "^7.9.2",
 		"@earendil-works/chord": "1.5.2",
 		"@earendil-works/pi-agent-core": "1.5.2",
 		"@earendil-works/pi-ai": "1.5.2",

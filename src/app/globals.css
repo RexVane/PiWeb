@@ -109,9 +109,9 @@
 	--piweb-chat-font-s: calc(var(--piweb-chat-font-size) * 0.89);
 	--piweb-chat-font-t: calc(var(--piweb-chat-font-size) * 0.86);
 	--piweb-chat-font-xs: calc(var(--piweb-chat-font-size) * 0.82);
-	--font-ui: "Maple Mono CN", ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC",
-		"Microsoft YaHei", monospace;
-	/* 代码字体固定系统等宽，不再提供设置项（见 lib/font.ts） */
+	/* 界面字体固定系统无衬线，代码字体固定系统等宽；字体族不再提供设置项 */
+	--font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+		sans-serif;
 	--font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
 	/* 内容宽轴（缩短 1/5 保持舒适比例） */

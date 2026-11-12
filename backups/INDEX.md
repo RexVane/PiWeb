@@ -87,3 +87,5 @@
 2026-11-11 18:56:58 +08:00 | D:\AIApp\PiWeb\CLAUDE.md | HEAD 44c85b3d9cc6f8118e3cd0492d0eedc535c8029f | 上游 0.3.29 移除该已提交且未修改文件
 2026-11-11 21:11:49 +08:00 | D:\AIApp\PiWeb\.next-releases\active.json | D:\AIApp\PiWeb\backups\files\active-20261111-211149.json | 升级默认启动构建前保留 0.3.25 的旧发布指针
 2026-11-12 21:32:44 +08:00 | Git 本地及远端分支、暂存记录（清理前全部引用） | D:\AIApp\PiWeb\backups\files\piweb-branches-20261112-213239.bundle | 按用户要求整合到 main 并只保留 main 前，保留可独立恢复的完整历史
+2026-11-13 01:20:18 +08:00 | D:\AIApp\PiWeb\src\lib\font.ts | HEAD a95940fa13221906b4b6480e3320b4ec88947a02 | 整理另一位 agent 已完成的字体设置精简；旧模块已移除，可从该提交恢复
+2026-11-13 01:20:18 +08:00 | D:\AIApp\PiWeb\tests\components\settings-font-family.test.tsx | HEAD a95940fa13221906b4b6480e3320b4ec88947a02 | 字体选择测试由 settings-typography.test.tsx 的旧偏好迁移与字号保留测试替代

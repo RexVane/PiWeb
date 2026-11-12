@@ -38,7 +38,6 @@ import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } fr
 import { useI18n } from "@/i18n";
 import { fmtTokens } from "@/lib/format";
 import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
-import { applyFontChoice, FONT_PRESETS, loadFontChoice } from "@/lib/font";
 import {
 	customModelGaps,
 	fillModelFields,
@@ -392,9 +391,6 @@ function GeneralSection({
 			</Row>
 			<Row title={t.fontChatSize} desc={t.fontChatSizeDesc}>
 				<FontSizeStepper value={chatFontSize} onChange={pickChatFont} max={20} />
-			</Row>
-			<Row title={t.fontUiFamily} desc={t.fontUiFamilyDesc}>
-				<FontFamilyPicker />
 			</Row>
 			<Row title={t.enterBehavior} desc={t.enterBehaviorDesc}>
 				<SelectOption
@@ -755,41 +751,6 @@ function FontSizeStepper({ value, onChange, max }: { value: number; onChange: (v
 			>
 				＋
 			</button>
-		</div>
-	);
-}
-
-/** 界面与对话正文字体族选择：三个预设，改动即生效并持久化。
- *  代码字体已固定为系统等宽、不再可配（见 lib/font.ts）。 */
-function FontFamilyPicker() {
-	const { lang } = useI18n();
-	const [stored, setStored] = useState<string | null>(null);
-
-	useEffect(() => {
-		setStored(loadFontChoice());
-	}, []);
-
-	const pick = (v: string) => {
-		setStored(v);
-		applyFontChoice(v);
-	};
-
-	const selectValue = stored ?? FONT_PRESETS[0].id;
-	const presetDescription = FONT_PRESETS.find((preset) => preset.id === selectValue)?.description?.[lang];
-
-	return (
-		<div className="flex flex-col items-end gap-2">
-			<SelectOption
-				value={selectValue}
-				width={220}
-				options={FONT_PRESETS.map((p) => ({ value: p.id, label: p.label[lang] }))}
-				onChange={pick}
-			/>
-			{presetDescription && (
-				<p style={{ maxWidth: 260, fontSize: 12, lineHeight: 1.6, textAlign: "right", color: "var(--dsw-label-tertiary)" }}>
-					{presetDescription}
-				</p>
-			)}
 		</div>
 	);
 }

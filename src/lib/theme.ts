@@ -4,8 +4,6 @@
  * 两者独立持久化：配色 piweb.pebrelTheme，亮暗 piweb.theme。
  */
 
-import { applyAllFonts } from './font';
-
 export type PebrelTheme =
 	| 'silver-steel'
 	| 'limestone-coal'
@@ -112,6 +110,22 @@ function applyFontSize(): void {
 	}
 }
 
+/**
+ * 字体族已不可配：界面固定系统无衬线，代码固定系统等宽（见 globals.css 的 --font-ui / --font-mono）。
+ * 启动时清掉历史偏好与可能残留的内联覆盖——否则旧值与默认值不一致却已无入口可改。
+ */
+export function clearRetiredFontPreferences(): void {
+	try {
+		localStorage.removeItem('piweb.fontUi');
+		localStorage.removeItem('piweb.fontMono');
+		const root = document.documentElement;
+		root.style.removeProperty('--font-ui');
+		root.style.removeProperty('--font-mono');
+	} catch {
+		/* ignore */
+	}
+}
+
 export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 	if (typeof window === 'undefined') return;
 	const effectiveMode = mode ?? loadThemeMode();
@@ -125,7 +139,7 @@ export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 	}
 	applyLightDark(effectiveMode);
 	applyFontSize();
-	applyAllFonts();
+	clearRetiredFontPreferences();
 	try {
 		localStorage.setItem(THEME_KEY, theme);
 		localStorage.setItem(MODE_KEY, effectiveMode);
