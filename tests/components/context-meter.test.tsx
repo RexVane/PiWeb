@@ -57,6 +57,15 @@ describe("上下文圆环弹窗", () => {
 		expect(await screen.findByRole("button", { name: "现在统计" })).toBeTruthy();
 	});
 
+	it("弹窗打开前不读取消息，打开后才通过惰性 getter 取最新内容", () => {
+		const getMessages = vi.fn(() => MESSAGES);
+		render(<ContextMeter percent={12} tokens={24000} contextWindow={200000} source={{ systemChars: 0, getMessages, breakdown: WARM }} />);
+		expect(getMessages).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		expect(getMessages).toHaveBeenCalled();
+		expect(screen.getByText("User Messages")).toBeTruthy();
+	});
+
 	it("没有启动入口（不在会话里）就只列分项，不给按钮", () => {
 		render(meter(COLD));
 		fireEvent.click(screen.getByTitle(USAGE_LABEL));

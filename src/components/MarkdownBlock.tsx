@@ -17,7 +17,7 @@
  *   避免流式代码块每帧重新高亮。
  * - 贴底听对话区的（见 chat/chat-scroll）；回答结束后换成整段渲染。
  */
-import { memo, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -422,13 +422,13 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 	const scroll = useContext(ChatScrollContext);
 	const splitterRef = useRef<{ update: (text: string) => StreamingSplit } | null>(null);
 	if (!splitterRef.current) splitterRef.current = createStreamingSplitter();
-	const [view, setView] = useState<StreamView>(() => ({ shown: text, ...splitterRef.current!.update(text) }));
-
-	// 目标变化：整段跟上，不再排队
-	useEffect(() => {
-		const next: StreamView = { shown: text, ...splitterRef.current!.update(text) };
-		setView(next);
-	}, [text]);
+	// 在渲染阶段直接算出当前视图：旧实现先以旧 view 提交一帧、再由 effect 更新，
+	// 每个 token 批次都多一次整块 reconciliation，而且流式正文会慢一帧。
+	// 切分器对同一前缀幂等（重复调用只会检查没有新增的行），所以 useMemo 重算也安全。
+	const view = useMemo<StreamView>(
+		() => ({ shown: text, ...splitterRef.current!.update(text) }),
+		[text],
+	);
 
 	const settled = !live && view.shown === text;
 
@@ -450,7 +450,7 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 		tailNode = (
 			<>
 				{before.trim() ? <MarkdownContent text={before} /> : null}
-				<div className="md-code-block">
+				<div className="md-code-block" data-lang={lang ? lang.toLowerCase() : undefined}>
 					<div className="md-code-copy"><CopyButton text={code} /></div>
 					<pre><code className={lang ? `hljs language-${lang}` : undefined}>{code}</code></pre>
 				</div>

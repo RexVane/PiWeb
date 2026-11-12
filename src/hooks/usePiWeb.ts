@@ -375,6 +375,38 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 	}
 };
 
+/**
+ * 按帧折叠一批事件。同一消息、同一内容块、同类内容的连续 delta 先拼成一个字符串，
+ * 再交给 foldPiWebEvent。否则 400 条批量上限下，每条 token 都会复制一次 messages
+ * 和 content 数组，长会话里一帧内就是几百次 O(n) 拷贝。
+ *
+ * 只合并相邻事件：中间夹了 message / tool 等事件时保持原顺序，语义与逐条折叠一致。
+ */
+export function foldPiWebEvents(state: PiWebState, events: readonly WebEvent[]): PiWebState {
+	let next = state;
+	for (let i = 0; i < events.length; i += 1) {
+		const event = events[i];
+		if (event.type !== "delta") {
+			next = foldPiWebEvent(next, event);
+			continue;
+		}
+		let delta = event.delta;
+		while (i + 1 < events.length) {
+			const candidate = events[i + 1];
+			if (
+				candidate.type !== "delta" ||
+				candidate.messageId !== event.messageId ||
+				candidate.contentIndex !== event.contentIndex ||
+				candidate.kind !== event.kind
+			) break;
+			delta += candidate.delta;
+			i += 1;
+		}
+		next = foldPiWebEvent(next, delta === event.delta ? event : { ...event, delta });
+	}
+	return next;
+}
+
 function isDialogMethod(method: Extract<WebEvent, { type: "extension_ui" }>["method"]): method is ExtensionDialog["method"] {
 	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "questions";
 }
@@ -900,7 +932,7 @@ export function usePiWeb() {
 		const connect = () => {
 			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
 			const batcher = createEventBatcher<WebEvent>({
-				flush: (events) => setState((s) => events.reduce((acc, evt) => foldPiWebEvent(acc, evt), s)),
+				flush: (events) => setState((s) => foldPiWebEvents(s, events)),
 			});
 			batcherRef.current = batcher;
 			const onOpen = () => {

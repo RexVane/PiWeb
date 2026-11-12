@@ -38,7 +38,7 @@ import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
 import type { ToolCardState } from "@/hooks/usePiWeb";
-import type { ContextResource, TrajEntry, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
+import type { ContextResource, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
 import {
 	classifyModelError,
 	cleanCommand,
@@ -742,13 +742,9 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 // ---------- 叙述：模型在工具之间说的话，作为阶段标题（基线对齐，主色） ----------
 
 const NarrationBlock = memo(function NarrationBlock({ text, live, error }: { text: string; live?: boolean; error?: boolean }) {
-	// 流过的这一段一直交给流式组件：live 结束后它先把还没放出来的字放完，再自己换成整段渲染。
-	// 一结束就换成 <Markdown>，打字机这类慢样式积压的字会一口吐出来。
-	const [streamed, setStreamed] = useState(Boolean(live));
-	if (live && !streamed) setStreamed(true);
 	return (
 		<div className="pw-narr" data-error={error || undefined}>
-			{streamed ? <StreamingMarkdown text={text} live={Boolean(live)} /> : <Markdown text={text} />}
+			{live ? <StreamingMarkdown text={text} live /> : <Markdown text={text} />}
 		</div>
 	);
 });
@@ -1798,8 +1794,6 @@ export function ChatWindow({
 	workingMessage?: string | null;
 	/** 会话统计：工作指示里显示本轮输出 token */
 	stats?: WebStats | null;
-	/** 轨迹条目：用于把工具行链接到轨迹 inspector */
-	trajectory?: TrajEntry[];
 	onOpenTrajectory?: (toolCallId: string) => void;
 	/** 在本机编辑器打开工具行涉及的文件 */
 	onEditMessage?: (entryId: string, text: string) => void;
@@ -1894,16 +1888,40 @@ export function ChatWindow({
 			const top = -TURN_NEAR_MARGIN;
 			const bottom = window.innerHeight + TURN_NEAR_MARGIN;
 			const viewTop = scroller.getBoundingClientRect().top;
+			// 槽按回合顺序挂载，Map 的插入顺序就是视觉顺序（会话切换会重建 ChatWindow）。
+			// 先用二分找到视口附近的第一槽，再只往后扫到视口下方为止：长会话里不再每次滚动
+			// 都排序并测量全部历史回合的几何。
+			const slots = [...slotElsRef.current.entries()];
+			let lo = 0;
+			let hi = slots.length;
+			while (lo < hi) {
+				const mid = (lo + hi) >> 1;
+				if (slots[mid][1].getBoundingClientRect().bottom > top) hi = mid;
+				else lo = mid + 1;
+			}
 			const fresh: number[] = [];
-			let anchor: { index: number; top: number } | null = null;
-			for (const index of [...slotElsRef.current.keys()].sort((a, b) => a - b)) {
-				const rect = slotElsRef.current.get(index)!.getBoundingClientRect();
-				// 视口里第一个槽当锚点：升级只换槽里的内容，槽元素本身不变，位置可以前后对比
-				if (!anchor && rect.bottom > viewTop) anchor = { index, top: rect.top };
-				if (nearTurnsRef.current.has(index) || rect.top > bottom || rect.bottom < top) continue;
+			for (let i = lo; i < slots.length; i += 1) {
+				const [index, el] = slots[i];
+				const rect = el.getBoundingClientRect();
+				if (rect.top > bottom) break;
+				if (nearTurnsRef.current.has(index)) continue;
 				fresh.push(index);
 			}
 			if (!fresh.length) return;
+			// 锚点只在非贴底、且浏览器不支持滚动锚定时才会用到，避免白测一次布局。
+			// 仍按真正的视口上沿找，不看 1800px 的预升级边界：后者只是加载范围，不是阅读位置。
+			let anchor: { index: number; top: number } | null = null;
+			if (!stickToBottom.current && slots.length) {
+				let start = lo;
+				let end = slots.length;
+				while (start < end) {
+					const mid = (start + end) >> 1;
+					if (slots[mid][1].getBoundingClientRect().bottom > viewTop) end = mid;
+					else start = mid + 1;
+				}
+				const entry = slots[start];
+				if (entry) anchor = { index: entry[0], top: entry[1].getBoundingClientRect().top };
+			}
 			anchorRef.current = anchor;
 			setNearTurns((prev) => {
 				const next = new Set(prev);
@@ -2045,6 +2063,9 @@ export function ChatWindow({
 				<div
 					ref={scrollRef}
 					className="min-h-0 flex-1 overflow-y-auto"
+					// Windows 经典滚动条出现/消失会改变正文宽度，整段重新折行；
+					// 预留稳定槽位，流式内容刚超过一屏时不会横向抖一下。
+					style={{ scrollbarGutter: "stable", overscrollBehavior: "contain" }}
 					role="log"
 					aria-live="polite"
 					aria-relevant="additions"

@@ -4,10 +4,10 @@
  * AppShell：三栏网格（对齐 dsh ui-layout 几何）+ 拖拽调宽 + 侧栏窄条 +
  * 头部（对话/轨迹标签 + Session log）+ Hero 新会话页 + 设置弹窗。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
-import { ChatWindow, SessionStatsBar, type RoundBadge } from "@/components/ChatWindow";
+import type { RoundBadge } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices, ExtensionWidgets } from "@/components/ExtensionUI";
 import { AskUserCard } from "@/components/AskUserCard";
 import { UpdateNotice } from "@/components/update/UpdateNotice";
@@ -15,10 +15,24 @@ import dynamic from "next/dynamic";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import type { DrawerSection } from "@/components/DrawerPanel";
 import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
-import { DirectoryPicker } from "@/components/DirectoryPicker";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
+const DirectoryPicker = dynamic(() => import("@/components/DirectoryPicker").then((m) => m.DirectoryPicker), { ssr: false });
+// Hero 页用不到聊天区，却会因为它静态依赖 Diff/高亮/消息渲染而背上整个分块。
+// 只在真正进入会话时加载；空闲时会预取，点击会话通常已经就绪。
+const ChatWindow = dynamic(() => import("@/components/ChatWindow").then((m) => m.ChatWindow), {
+	ssr: false,
+	loading: () => (
+		<div className="flex min-h-0 flex-1 items-center justify-center" aria-label="loading">
+			<span
+				className="piweb-spin"
+				style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid var(--dsw-border-l3)", borderTopColor: "var(--dsw-accent)", display: "inline-block" }}
+			/>
+		</div>
+	),
+});
+const SessionStatsBar = dynamic(() => import("@/components/ChatWindow").then((m) => m.SessionStatsBar), { ssr: false });
 const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
 
 /** 会话/工作区路径比较（Windows 大小写与分隔符差异不该影响判断） */
@@ -62,6 +76,14 @@ const SIDEBAR_COLLAPSED = 56;
 const RIGHT_MIN = 280;
 const RIGHT_MAX = 760;
 const RIGHT_DEFAULT = 360;
+/** 稳定的空队列 / 思考档位兜底：流式期间不能每帧给输入区换新数组 */
+const EMPTY_SESSION_QUEUE: { steering: string[]; followUp: string[] } = { steering: [], followUp: [] };
+const DEFAULT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+/**
+ * 输入区渲染边界：AppShell 仍会随流式消息每帧渲染，但 ChatInput 只在草稿、
+ * 模型、附件、流式状态等真正相关的 props 变化时渲染。所有回调必须保持稳定引用。
+ */
+const MemoChatInput = memo(ChatInput);
 function persist(key: string, value: number) {
 	localStorage.setItem(key, String(value));
 }
@@ -165,7 +187,12 @@ export function AppShell() {
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
+	const sessionUploadError = useCallback((message: string) => failUpload(draftKey, message), [draftKey, failUpload]);
+	const sessionUploadProgress = useCallback((delta: 1 | -1) => trackUpload(draftKey, delta), [draftKey, trackUpload]);
+	const sessionSendPending = useCallback((pending: boolean) => trackSend(draftKey, pending), [draftKey, trackSend]);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	/** 第一次打开后才加载设置分块；关闭时保持挂载，设置页的当前分区不会每次重置。 */
+	const [settingsLoaded, setSettingsLoaded] = useState(false);
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
 	/** 抽屉入口保存在浏览器 */
@@ -328,10 +355,13 @@ export function AppShell() {
 		};
 	}, []);
 
-	// Markdown 分块（react-markdown + highlight.js 常用语言集，实测 472KB）空闲预取：
-	// 首屏不为它付出下载成本，等真正打开会话时通常已经就绪，不会看到正文空窗。
+	// 会话区与 Markdown 分块空闲预取：首屏不下载，等真正打开会话时通常已经就绪。
+	// 两个分块并行取，不阻塞首屏；用户很快点进会话时会由 dynamic() 自己等这同一份请求。
 	useEffect(() => {
-		const timer = setTimeout(() => { void import("@/components/MarkdownBlock"); }, 1200);
+		const timer = setTimeout(() => {
+			void import("@/components/ChatWindow");
+			void import("@/components/MarkdownBlock");
+		}, 1200);
 		return () => clearTimeout(timer);
 	}, []);
 
@@ -475,6 +505,21 @@ export function AppShell() {
 		() => (snapshot?.contextResources ?? []).reduce((sum, r) => sum + (r.content?.length ?? 0), 0),
 		[snapshot?.contextResources],
 	);
+	// 上下文圆环不跟着消息数组换引用：弹窗打开时才通过 getter 读最新消息。
+	// ref 每次渲染更新，getter 与 source 对象保持稳定，输入区因此不会被 token 流击穿。
+	const latestMessagesRef = useRef(state.messages);
+	latestMessagesRef.current = state.messages;
+	const getComposerMessages = useCallback(() => latestMessagesRef.current, []);
+	const loadFullContext = useCallback(() => sendCommand({ cmd: "prepare" }), [sendCommand]);
+	const composerContextSource = useMemo(
+		() => ({
+			systemChars: contextSystemChars,
+			getMessages: getComposerMessages,
+			breakdown: snapshot?.contextBreakdown,
+			loadFull: loadFullContext,
+		}),
+		[contextSystemChars, getComposerMessages, snapshot?.contextBreakdown, loadFullContext],
+	);
 	const isStreaming = snapshot?.isStreaming ?? false;
 	// pi 的选择窗口贴在输入框上方，扩展的 select/confirm/input 仍是居中弹窗
 	const askDialog = state.extensionDialogs.find((dialog) => dialog.method === "questions") ?? null;
@@ -502,7 +547,7 @@ export function AppShell() {
 
 	const doForkSession = useCallback(
 		async (path: string, _cwd: string) => {
-			const targetId = path === currentPath && currentId ? currentId : encodeURIComponent(b64url(path));
+			const targetId = currentPath && samePath(path, currentPath) && currentId ? currentId : encodeURIComponent(b64url(path));
 			const r = await sendCommand({ cmd: "fork" }, targetId);
 			if (r?.success && r.data?.sessionPath) {
 				openSession(r.data.sessionPath);
@@ -587,7 +632,7 @@ export function AppShell() {
 	const closeMobileNav = useCallback(() => setMobileSidebarOpen(false), []);
 	const startNewSessionInCurrentWorkspace = useCallback(() => {
 		// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
-		const cur = sessions.find((s) => s.path === currentPath)?.cwd;
+		const cur = currentPath ? sessions.find((s) => samePath(s.path, currentPath))?.cwd : undefined;
 		setHeroCwd(cur || heroCwd || knownCwds[0] || "");
 		closeSession();
 	}, [sessions, currentPath, heroCwd, knownCwds, closeSession]);
@@ -600,6 +645,7 @@ export function AppShell() {
 		window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank");
 	}, []);
 	const openSettingsFromSidebar = useCallback(() => {
+		setSettingsLoaded(true);
 		setSettingsOpen(true);
 		setMobileSidebarOpen(false);
 	}, []);
@@ -650,7 +696,22 @@ export function AppShell() {
 	};
 	const heroSend = (text: string, images: ImageAttachment[]) => startHeroSession({ cmd: "prompt", text, images });
 
-	const sendPrompt = (text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images });
+	// 输入区是 memo 边界：这些回调在流式期间必须保持同一引用，否则每次 token 都会击穿它。
+	const sendPrompt = useCallback((text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images }), [sendCommand]);
+	const steerPrompt = useCallback((text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" }), [sendCommand]);
+	const followUpPrompt = useCallback((text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" }), [sendCommand]);
+	const abortPrompt = useCallback(() => sendCommand({ cmd: "abort" }), [sendCommand]);
+	const clearQueuePrompt = useCallback(() => sendCommand({ cmd: "clearQueue" }), [sendCommand]);
+	const selectSessionModel = useCallback((provider: string, id: string) => void sendCommand({ cmd: "setModel", provider, modelId: id }), [sendCommand]);
+	const selectSessionLevel = useCallback(
+		(level: string) => {
+			void sendCommand({ cmd: "setThinkingLevel", level }).then((r) => {
+				// 后端按 pi 规则就近钳制；被调整时明确告知，不再“选了没反应”
+				if (r?.success && r.data?.clamped) setError(t.thinkingClamped.replace("{requested}", level).replace("{level}", String(r.data.thinkingLevel)));
+			});
+		},
+		[sendCommand, setError, t],
+	);
 
 	// 稳定引用：ChatWindow 行级 memo 依赖它，内联箭头函数会让 memo 全部失效
 	const handleFork = useCallback(
@@ -723,7 +784,7 @@ export function AppShell() {
 	);
 
 	// 当前会话名 / 工作区标题
-	const currentSession = sessions.find((s) => s.path === currentPath);
+	const currentSession = currentPath ? sessions.find((s) => samePath(s.path, currentPath)) : undefined;
 	const firstUserText = (
 		state.messages
 			.find((m) => m.role === "user")
@@ -1117,7 +1178,6 @@ export function AppShell() {
 									onClearCompaction={clearCompaction}
 									workingMessage={state.workingMessage}
 									stats={snapshot?.stats ?? null}
-									trajectory={snapshot?.trajectory ?? []}
 									cwd={panelCwd}
 									onOpenTrajectory={openToolTrajectory}
 									onOpenFile={openInEditor}
@@ -1132,7 +1192,7 @@ export function AppShell() {
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										{askDialog && <AskUserCard key={askDialog.id} dialog={askDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />}
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
-										<ChatInput
+										<MemoChatInput
 											toolPreset={state.toolPreset}
 											customActiveTools={snapshot?.customActiveTools}
 											onToolPresetChange={setToolPreset}
@@ -1142,42 +1202,37 @@ export function AppShell() {
 											attachmentLayout={askDialog ? "flow" : undefined}
 												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
 												onDraftChange={saveSessionDraft}
-												onUploadError={(message) => failUpload(draftKey, message)}
-												onUploadProgress={(delta) => trackUpload(draftKey, delta)}
+												onUploadError={sessionUploadError}
+												onUploadProgress={sessionUploadProgress}
 												uploadFailure={uploadFailures[draftKey]}
 												pendingUploadCount={uploadCounts[draftKey] ?? 0}
 												pendingSend={pendingSends[draftKey] ?? false}
-												onSendPendingChange={(pending) => trackSend(draftKey, pending)}
+												onSendPendingChange={sessionSendPending}
 											isStreaming={isStreaming}
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
 											contextWindow={snapshot?.contextUsage?.contextWindow ?? null}
-											contextSource={{ systemChars: contextSystemChars, messages: state.messages, breakdown: snapshot?.contextBreakdown, loadFull: () => sendCommand({ cmd: "prepare" }) }}
+											contextSource={composerContextSource}
 											// 首条消息由增量事件写入 state.messages，初次快照可能一直为空。
 											contextVisible={state.messages.length > 0}
 											model={snapshot?.model}
 											routedModel={snapshot?.routedModel}
 											thinkingLevel={snapshot?.thinkingLevel}
-											thinkingLevels={snapshot?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"]}
+											thinkingLevels={snapshot?.thinkingLevels ?? DEFAULT_THINKING_LEVELS}
 											models={modelChoices}
 											providerNames={providerNames}
 											authByProvider={authByProvider}
-											queue={snapshot?.queue ?? { steering: [], followUp: [] }}
+											queue={snapshot?.queue ?? EMPTY_SESSION_QUEUE}
 											commands={slashCommands}
 											cwd={panelCwd}
 											onCommand={runSlashCommand}
 											onSend={sendPrompt}
-											onSteer={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "steer" })}
-											onFollowUp={(text, images) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" })}
-											onAbort={() => sendCommand({ cmd: "abort" })}
-											onSelectModel={(provider, id) => void sendCommand({ cmd: "setModel", provider, modelId: id })}
-											onSelectLevel={(level) =>
-												void sendCommand({ cmd: "setThinkingLevel", level }).then((r) => {
-													// 后端按 pi 规则就近钳制；被调整时明确告知，不再“选了没反应”
-													if (r?.success && r.data?.clamped) setError(t.thinkingClamped.replace("{requested}", level).replace("{level}", String(r.data.thinkingLevel)));
-												})
-											}
-											onClearQueue={() => sendCommand({ cmd: "clearQueue" })}
+											onSteer={steerPrompt}
+											onFollowUp={followUpPrompt}
+											onAbort={abortPrompt}
+											onSelectModel={selectSessionModel}
+											onSelectLevel={selectSessionLevel}
+											onClearQueue={clearQueuePrompt}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="belowEditor" className="mt-1" />
@@ -1242,22 +1297,24 @@ export function AppShell() {
 				<GrowthConsentDialog request={state.growth.consent} onAnswer={(allow) => void answerGrowthConsent(allow)} />
 			)}
 			{/* 只有远程设备（手机走 tailnet）会走到这里：本机仍然用系统原生对话框 */}
-			<DirectoryPicker open={dirPickerOpen} onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />
+			{dirPickerOpen && <DirectoryPicker open onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />}
 			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice}>
 				{/* 每次启动提醒一次有没有新版本（PiWeb / pi），和扩展通知摞在同一处 */}
 				<UpdateNotice />
 			</ExtensionNotices>
-			<SettingsPanel
-				open={settingsOpen}
-				onClose={() => {
-					setSettingsOpen(false);
-					// 模型配置可能在设置里被改动（API key / OAuth / 自定义 provider）：
-					// 关闭时刷新全局模型目录，否则输入卡/新会话页的模型菜单停留在旧目录。
-					void refreshModels();
-				}}
-				onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
-				cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
-			/>
+			{settingsLoaded && (
+				<SettingsPanel
+					open={settingsOpen}
+					onClose={() => {
+						setSettingsOpen(false);
+						// 模型配置可能在设置里被改动（API key / OAuth / 自定义 provider）：
+						// 关闭时刷新全局模型目录，否则输入卡/新会话页的模型菜单停留在旧目录。
+						void refreshModels();
+					}}
+					onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
+					cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
+				/>
+			)}
 			{isNarrow && (
 				<button
 					className="pi-mobile-menu icon-btn fixed left-3 top-3 z-[70]"
@@ -1396,29 +1453,30 @@ function Hero({
 							<div className="popover absolute bottom-9 left-0 z-50 w-56 py-1">
 								{knownCwds.map((c) => {
 									const itemLabel = getWorkspaceName ? getWorkspaceName(c) : basename(c);
+									const active = Boolean(cwd) && samePath(cwd, c);
 									return (
 										<button
 											key={c}
 											className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left transition-colors"
 											style={{
 												fontSize: 13,
-												background: cwd === c ? "var(--dsw-accent-soft)" : "transparent",
-												color: cwd === c ? "var(--dsw-accent)" : "inherit",
+												background: active ? "var(--dsw-accent-soft)" : "transparent",
+												color: active ? "var(--dsw-accent)" : "inherit",
 											}}
 											onMouseEnter={(e) => {
-												if (cwd !== c) e.currentTarget.style.background = "var(--dsw-hover)";
+												if (!active) e.currentTarget.style.background = "var(--dsw-hover)";
 											}}
 											onMouseLeave={(e) => {
-												if (cwd !== c) e.currentTarget.style.background = "transparent";
+												if (!active) e.currentTarget.style.background = "transparent";
 											}}
 											onClick={() => {
 												setCwd(c);
 												setWsMenu(false);
 											}}
 										>
-											<IconFolderClose16 size={14} style={{ flex: "none", color: cwd === c ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)" }} />
+											<IconFolderClose16 size={14} style={{ flex: "none", color: active ? "var(--dsw-accent)" : "var(--dsw-label-tertiary)" }} />
 											<span className="min-w-0 flex-1 truncate">{itemLabel}</span>
-											{cwd === c && <IconCheckOutline14 size={13} style={{ flex: "none" }} />}
+											{active && <IconCheckOutline14 size={13} style={{ flex: "none" }} />}
 										</button>
 									);
 								})}

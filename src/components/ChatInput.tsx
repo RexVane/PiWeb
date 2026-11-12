@@ -6,7 +6,7 @@
  * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
  * 排队中的消息列在输入卡上方，↑（空输入框时）取回编辑。Enter 发送 / Shift+Enter 换行。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	IconAtOutline16,
 	IconCloseOutline14,
@@ -52,6 +52,8 @@ export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [], 
 
 type SendResult = { success: boolean; error?: string };
 const MAX_UPLOAD_FILES = 16;
+/** Hero 会在服务端预渲染；useLayoutEffect 在服务端没有意义，退回 useEffect 避免警告。 */
+const useComposerLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 /** abort / clearQueue 命令的返回：服务端清出来的排队文本，放回输入框用 */
 type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
@@ -105,7 +107,9 @@ export function ChatInput({
 	/** 上下文分段数据源：ContextMeter 弹窗打开时才做字符统计 */
 	contextSource?: {
 		systemChars: number;
-		messages: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; bash?: { command: string; output: string; excludeFromContext?: boolean }; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
+		/** 静态消息；流式会话用 getMessages 惰性读取，避免 source 引用每帧变化 */
+		messages?: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; bash?: { command: string; output: string; excludeFromContext?: boolean }; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
+		getMessages?: () => { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; bash?: { command: string; output: string; excludeFromContext?: boolean }; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
 		breakdown?: import("@/lib/types").ContextBreakdown;
 		loadFull?: () => Promise<unknown> | unknown;
 	};
@@ -203,7 +207,8 @@ export function ChatInput({
 	useEffect(() => {
 		setAttachmentError(uploadFailure ?? "");
 	}, [uploadFailure]);
-	useEffect(() => {
+	// 输入框长高必须和文本同一次绘制完成；放到 useEffect 会先画旧高度、再跳一帧。
+	useComposerLayoutEffect(() => {
 		autoSize();
 	}, [text]);
 

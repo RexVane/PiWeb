@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extensionDialogsFromSnapshot, foldPiWebEvent, type PiWebState } from "../src/hooks/usePiWeb";
+import { extensionDialogsFromSnapshot, foldPiWebEvent, foldPiWebEvents, type PiWebState } from "../src/hooks/usePiWeb";
 import type { WebMessage, WebSnapshot } from "../src/lib/types";
 
 describe("PiWeb SSE event folding", () => {
@@ -62,6 +62,34 @@ describe("PiWeb SSE event folding", () => {
 		expect(state.messages[0].content).toEqual([{ type: "text", text: "hello" }]);
 		state = foldPiWebEvent(state, { type: "message", phase: "end", message: { ...state.messages[0], stopReason: "stop" }, ts: 2 });
 		expect(foldPiWebEvent(state, { type: "delta", messageId: "a", kind: "text", contentIndex: 0, delta: "late", ts: 3 }).messages).toEqual(state.messages);
+	});
+
+	it("coalesces adjacent deltas without changing the folded result", () => {
+		const initial = { messages: [{ role: "assistant", streamId: "a", stopReason: "pending", content: [] }] } as unknown as PiWebState;
+		const events = [
+			{ type: "delta" as const, messageId: "a", kind: "text" as const, contentIndex: 0, delta: "你", ts: 1 },
+			{ type: "delta" as const, messageId: "a", kind: "text" as const, contentIndex: 0, delta: "好", ts: 2 },
+			{ type: "delta" as const, messageId: "a", kind: "text" as const, contentIndex: 0, delta: "！", ts: 3 },
+			// 同类但不同内容块：不能跨块合并
+			{ type: "delta" as const, messageId: "a", kind: "text" as const, contentIndex: 1, delta: "第二块", ts: 4 },
+		];
+		const batched = foldPiWebEvents(initial, events);
+		const sequential = events.reduce(foldPiWebEvent, initial);
+		expect(batched.messages).toEqual(sequential.messages);
+		expect(batched.messages[0].content).toEqual([
+			{ type: "text", text: "你好！" },
+			{ type: "text", text: "第二块" },
+		]);
+	});
+
+	it("keeps event ordering when a non-delta event interrupts a delta run", () => {
+		const initial = { messages: [] } as unknown as PiWebState;
+		const events = [
+			{ type: "delta" as const, messageId: "a", kind: "text" as const, contentIndex: 0, delta: "前", ts: 1 },
+			{ type: "message" as const, message: { role: "user" as const, id: "u", content: [{ type: "text" as const, text: "插话" }] }, phase: "start" as const, ts: 2 },
+			{ type: "delta" as const, messageId: "a", kind: "text" as const, contentIndex: 0, delta: "后", ts: 3 },
+		];
+		expect(foldPiWebEvents(initial, events)).toEqual(events.reduce(foldPiWebEvent, initial));
 	});
 
 	it("preserves completed history when a new end arrives without a start on the legacy protocol", () => {

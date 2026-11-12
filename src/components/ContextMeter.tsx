@@ -19,6 +19,18 @@ type ContextMessage = {
 	summaryKind?: string;
 };
 
+type ContextSource = {
+	systemChars: number;
+	/** 直接传入消息（测试 / 静态场景） */
+	messages?: ContextMessage[];
+	/** 惰性取最新消息：打开弹窗时才读，父组件流式更新不需要换 source 引用 */
+	getMessages?: () => ContextMessage[];
+	breakdown?: ContextBreakdown;
+	loadFull?: () => Promise<unknown> | unknown;
+};
+
+const EMPTY_MESSAGES: ContextMessage[] = [];
+
 /**
  * 消息列表会照常显示压缩前的历史，但模型上下文只从最近一张压缩卡往后算（卡片以上只剩摘要，已计入 compacted）。
  * 保留下来的旧助手消息用量是压缩前那次请求的，也不能当「最近一次输入」。
@@ -36,12 +48,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	model?: { provider: string; id: string } | null;
 	/** 覆盖「上下文估算」这个措辞：拿到真实用量时不该叫估算 */
 	label?: string;
-	source?: {
-		systemChars: number;
-		messages: ContextMessage[];
-		breakdown?: ContextBreakdown;
-		loadFull?: () => Promise<unknown> | unknown;
-	};
+	source?: ContextSource;
 }) {
 	const [open, setOpen] = useState(false);
 	const [counting, setCounting] = useState(false);
@@ -59,7 +66,9 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	}, [open]);
 
 	// 流式期间只在打开弹窗后扫描，分类是实际文本字符数，不是假设的 token 数。
-	const context = useMemo(() => inContext(open ? source?.messages ?? [] : []), [open, source]);
+	// 打开时通过惰性 getter 取最新消息：父组件不必为了圆环每帧更换 source 引用。
+	const messages = open ? source?.getMessages?.() ?? source?.messages ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
+	const context = useMemo(() => inContext(messages), [messages]);
 	const chars = useMemo(() => classifyMessageChars(context.messages), [context]);
 	const lastUsage = useMemo(() => context.messages.findLast((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted" && m.stopReason !== "pending" &&
 		(context.since === undefined || (m.timestamp ?? 0) >= context.since) &&
