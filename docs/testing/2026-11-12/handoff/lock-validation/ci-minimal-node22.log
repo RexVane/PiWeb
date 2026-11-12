@@ -1,0 +1,17 @@
+npm warn EBADENGINE Unsupported engine {
+npm warn EBADENGINE   package: 'jsdom@30.0.1',
+npm warn EBADENGINE   required: { node: '^22.22.2 || ^24.15.0 || >=26.0.0' },
+npm warn EBADENGINE   current: { node: 'v22.19.0', npm: '10.9.3' }
+npm warn EBADENGINE }
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+> @rexvane/piweb@0.3.30 postinstall
+> node scripts/postinstall.mjs
+
+
+added 465 packages, and audited 472 packages in 1m
+
+130 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities

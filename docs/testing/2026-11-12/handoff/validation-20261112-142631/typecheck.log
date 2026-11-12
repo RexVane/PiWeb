@@ -1,0 +1,4 @@
+
+> @rexvane/piweb@0.3.30 typecheck
+> tsc --noEmit
+

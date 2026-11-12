@@ -1,0 +1,23 @@
+
+> @rexvane/piweb@0.3.30 test
+> vitest run
+
+
+ RUN  v5.0.5 D:/AIApp/PiWeb
+
+warning: in the working copy of 'a.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tracked.txt', LF will be replaced by CRLF the next time Git touches it
+(node:14444) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:5708) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ Test Files  158 passed | 3 skipped (161)
+      Tests  1350 passed | 18 skipped (1368)
+   Start at  14:26:53
+   Duration  243.12s (environment 39%, import 34%, tests 27%, transform 1%)
+
+     Import  354 modules were evaluated 713 times · 305.72s total, 34% of tracked time
+             ~24.44s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation
+
