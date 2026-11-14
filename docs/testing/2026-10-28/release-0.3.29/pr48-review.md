@@ -1,5 +1,8 @@
 # PR #48 整合审查
 
+<!-- historical-verification-note -->
+> 历史记录：本文描述标题日期或版本的代码与环境。当前使用方式见[文档导航](../../../README.md)；下述测试结果、权限说明及启动命令不自动适用于当前代码。
+
 2026-10-28。原 PR：`x2410516039:piweb-x2410516039`，原提交 `b7e1a6a1643d2a3f57d3705117468049a139f030`，基于 `26a4d9f`。原 PR 的 Ubuntu / Windows × Node 22.19.0 / 24 四组 GitHub 检查均通过。本地将其整合到 0.3.29 的既有修复，保留原作者提交；唯一合并冲突为 `agent-manager` 的 import，双方导入均保留。
 
 原 PR 增加无须启动 agent 的冷工具目录，并在独立 `web-tool-preferences.json` 中按会话保存 preset / 逐项工具选择，使用设置写入锁和原子替换，不改写 Pi JSONL。

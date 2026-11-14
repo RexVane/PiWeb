@@ -1,5 +1,8 @@
 # Claude handoff verification
 
+<!-- historical-verification-note -->
+> 历史记录：本文描述标题日期或版本的代码与环境。当前使用方式见[文档导航](../../../README.md)；下述测试结果、权限说明及启动命令不自动适用于当前代码。
+
 2026-11-12, Asia/Shanghai. Source based on `49bdf3d` plus the previously uncommitted Pi integration and session branch work. Version remains 0.3.30; this handoff does not authorize merging or publishing.
 
 ## Completed work

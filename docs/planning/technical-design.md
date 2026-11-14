@@ -1,10 +1,51 @@
-# PiWeb 启动与本地配置读取：技术方案
+# PiWeb 技术方案与历史调研
 
-> 调研与实测数据见本文 §1、§2;方案见 §3。所有数字来自本机(Windows / NTFS / Defender 开启,
-> 36 个会话 / 17.5MB JSONL、1 个已认证 provider)生产构建实测,脚本见 §5。
->
-> §6 是**后续待做**的性能项(大会话快照体积),§7 是 2026-10-12 功能与显示走查的发现。
-> 两节都只记录结论与数据,尚未实现。
+## 当前实现概览（2026-11-14）
+
+本节描述当前维护代码。后面的编号章节保留 2026-10-11 至 2026-10-20 的测量、方案和修复经过；其中的版本、行号、耗时、“待做”和验收数字都是当时记录，不是当前待办或性能保证。当前需求见[requirements.md](requirements.md)，验证日期与范围见[进度](../state/progress.md)。
+
+### 启动、认证与网络
+
+- `scripts/launcher.mjs` 选择并校验生产构建，先预热首屏，再打开浏览器。认证默认开启；重复启动通过本机私有 IPC 验证已有实例，再读取受保护的启动凭据。终端仅显示地址和状态，不输出带凭据的登录链接。
+- `scripts/web-auth-protocol.mjs` 与服务端共享 30 天 Cookie 协议；`scripts/http-request-guard.mjs` 在 Next 读取完整正文前处理匿名请求、正文限额与并发限制。登录后仍检查 Host、来源和写入权限，启动令牌不作为通用 API 密钥。
+- `web-secret.ts` 的全设备吊销代次跨进程持久化，严格递增；Cookie 和配对码绑定代次。连续同毫秒登出、时钟回拨和另一实例缓存旧二维码都不能复用旧代凭据。
+- 生产启动自动准备 LAN 代理和 Cloudflare 隧道。连接面板只展示一套动态码，凭据 120 秒、单次使用；公网地址可达后显示。`PIWEB_REMOTE_LAN=0` 供自行管理入口的部署关闭自动准备。开发模式限本机；显式关闭认证时拒绝非回环绑定或公开地址。
+- 二维码的 HTTPS 在 Cloudflare 终结；直连 LAN HTTP 不加密。统一二维码不等于公网中断时自动得到离线 LAN 登录能力。
+
+### 资源、设置与提示词
+
+- 侧栏的技能、扩展、提示词、市场、自动化任务由 `SkillsPluginsViews.tsx` 等工作区视图承载，按所选工作区读取。个人/项目 scope 与本地/package origin 是两个独立维度，不能按路径前缀混为一类。
+- `pi.ts` 与 `resource-fingerprint.ts` 跟踪规则、系统提示词、技能、模板、扩展、配置及受管包资源。读取和执行边界检测变化；会话忙碌时延后重新加载。项目扩展的模型注册保持会话范围。技能开关保留 YAML/BOM；包附带技能不可通过独立技能删除入口移除。
+- Pi SDK 与 Web 设置写入使用共享 JSONC 事务，保留注释和无关字段。Windows 项目设置固定真实祖先目录；已删除工作区的只读查询按缺失处理，写入仍拒绝。
+- 模型目录读取、刷新和会话创建不执行认证命令；实际请求认证仍支持明确配置的 `!command`。模型保存按 revision 检查冲突，短暂文件占用有限重试且每次复核 revision；非合作外部进程不受 PiWeb 锁控制，不能把“检查后替换”说成通用原子比较交换。
+
+### npm 安装事务与可恢复移除
+
+- `npm-install-transaction.ts` 在私有阶段目录准备完整安装树，npm 不执行生命周期脚本。Windows 在异步复制和 npm 执行期间固定祖先目录；提交安装目录与 settings 前持有共同锁。
+- 安装、更新、移除及涉及个人/项目两个安装根的操作保存提交决定和恢复日志。准备失败保留旧树；决定提交后中断由后续任一相关入口完成整组恢复，SDK 解析包前先恢复。旧代 `npm-previous-*` 与 `backups/INDEX.md` 保留。
+- `recoverable-remove.ts` 对会话和允许删除的本地资源先保留恢复副本，再移除原入口；链接不作为递归删除目标的授权。包资源由包管理入口处理。
+- 这不代表扩展代码被隔离：加载的扩展仍在宿主执行，需要用户信任。文件工具、shell 权限与扩展安装是不同边界。
+
+### 会话、权限与自动化
+
+- 同一 JSONL 路径重新打开前等待旧会话关闭钩子及资源释放；后台 shell、扩展命令和清理均计入忙态。冷会话按 LRU 目标限制，并保护正在查看/运行者。
+- Windows 文件写入通过原生目录句柄与同目录原子替换保护目标，不启动命令实例或遍历整个工作区。受限 shell 使用独立 LPAC AppContainer SID 和 Job Object，授权可写根仍拒绝共享硬链接。受限环境清除密钥和宿主 Node 预加载；完全权限保留用户明确选择的本地执行语义。详见[权限说明](../workspace-isolation.md)。
+- 一次授权在会话的实际 write/edit/bash 定义处同步消费，直接调用、codemode、`ctx.executeTool` 共用，避免嵌套调用绕过。
+- `automations/{schedule,store,runner}.ts` 分别负责计划、持久互斥和独立会话生命周期。任务保存到 agent 目录的 `web-automations.json`，使用服务端时区，最多并发四项。跨实例依据 PID 与进程创建身份判断所有者，不因心跳过期抢仍活跃的任务。运行状态等待命令和清理完成；超时/停止加入同一清理过程。
+
+### 构建选择与维护验证
+
+`npm run build` 写 `.next`；`npm run build:release` 准备独立 `.next-releases/<id>`，生成完整文件哈希清单，原子发布选择记录。启动会校验文件和清单，不只检查 `BUILD_ID`。失败或进行中的发布先用记录中的 `previous`，没有 previous 时才尝试完整 `.next`；active JSON 无法解析时可读取独立 `last-ready.json`。每个候选都必须重新验证；无有效回退时明确拒绝，不随意使用目录里的旧包。
+
+文件锁使用 OS 互斥、原子元数据及进程创建身份，不能仅凭锁文件旧或 PID 相同判断所有者。原生依赖通过实际安装根解析；缺失所需能力时给出错误，不静默换成较弱锁。全局应用先构建候选再复制源码，但源码多文件复制不能宣称具有断电原子性。
+
+开发和发布验证在独立检出/暂存目录进行，避免覆盖正在服务的 `.next`。`npm run typecheck`、`npm run test`、`npm run build` 后，还需 `npm run verify:package` 验证真实打包、空目录安装和安装后启动。CI 使用隔离 agent 数据、先准备 SDK 搜索工具，再离线运行用例；覆盖率和跳过门禁独立保留。手工浏览器、真实公网与本地 registry 的插件 API 验收分别记录，不能从其中一项替代其余项。
+
+2026-11-14 清理前修复验收为 2211 passed / 0 failed / 2 approved skips，分支覆盖率 73.03%；最终安装包与 37 项 Chromium 浏览器检查通过。完整范围见[进度](../state/progress.md)。后续删除死代码和整理文件后的结果单独记录，不沿用此快照冒充复验。
+
+## 历史调研（2026 年 10 月）
+
+下列原始测量使用本机 Windows / NTFS / Defender、36 个会话 / 17.5MB JSONL 和 1 个已认证 provider。仅用于理解当时的决策。
 
 ## 1. 结论（一句话）
 
@@ -196,7 +237,7 @@ A = 改前（`PIWEB_SKIP_WARMUP=1` + 摘要索引移开），B = 改后（默认
 
 ---
 
-## 6. 待做:大会话快照体积(`trajectory.detail` 占 92%)
+## 6. 历史待做记录：大会话快照体积（2026-10-12）
 
 > 状态:**只调研、未实现**。触发条件:「打开大会话变慢」或「远程 / 隧道下开会话等待明显」。
 > 当前使用体感正常,按用户决定先记录、后做。
@@ -268,7 +309,7 @@ SSE 首个快照帧 **6,376,665 字节(6.38 MB)**,gzip 后 1.82 MB(29.2%)。
 
 ---
 
-## 7. 待做:数字显示精度与格式统一
+## 7. 历史待做记录：数字显示精度与格式统一（2026-10-12）
 
 > 状态:**只调研、未实现**。诉求(2026-10-12 用户提出):「缓存、tokens 数、输出速度、上下文计算
 > 这些显示的数字,想精确到小数点后两位」。调研结论:**统一到「两位」不是对每个指标都对**,
@@ -731,11 +772,11 @@ Tailwind WASM 包内的 `@emnapi/core` / `@emnapi/runtime` 记录，导致 Linux
 - `.next`：`npm run build` 的产物，本地验证与 dev 对照用。
 - `.next-releases/<id>` + `.next-releases/active.json`：`npm run build:release` 的产物，`piweb` / `npm start` 实际运行的就是它。
 
-选择顺序（`scripts/build-output.mjs` 的 `selectProductionBuild`）：`active.json` 存在且 `state=ready` → 用它指向的目录；`state` 不是 ready **直接拒绝启动**（失败的发布事务不能悄悄回退到旧产物）；没有 `active.json` → 用 `.next`；连 `.next` 也没有 → 退 dev 模式。
+当时的选择顺序（已被 2026-11-14 实现取代）：`active.json` 存在且 `state=ready` → 用它指向的目录；`state` 不是 ready 直接拒绝启动；没有 `active.json` → 用 `.next`；连 `.next` 也没有 → 退 dev 模式。当前版本增加经过重新验证的 previous / last-ready 回退，见本文“构建选择与维护验证”。
 
-因此一次失败的 `build:release` 会留下 `state=failed` 标记，之后**所有**生产启动都会被拒（2026-10-16 踩到过）。恢复：重跑 `npm run build:release`，或确认 `.next` 可用后把该标记移走（本次做法，实体留在 `backups/files/`）。
+2026-10-16 曾因失败的 `build:release` 留下 `state=failed`，后续生产启动被拒。当时通过重建或保留备份后移走标记恢复；这是历史排错记录，不是当前版本手动删除选择清单的操作建议。
 
-清理策略：保留 `active.json` 指向的目录，其余 `.next-releases/*`、`.next`、`.next-dev-webpack*` 都可删（全部可重新生成）。2026-10-17 清掉 31 个旧 release（约 6.8 GB）+ `.next`（454 MB）+ 两个 dev 缓存（610 MB）。
+当前清理要求：先识别 `active.json`、其中的 previous、`last-ready.json`、进程/锁所有者及实际正在使用的构建。它们引用的目录不能按“非 active”直接移除；`.next-releases` 还可能存有审计日志、JSON 证据及失败记录，这些不是可随意再生成的缓存。只对已核实不再使用的具体构建/缓存按项目删除与备份规则处理，保留恢复记录，不能整目录通配清空。历史上 2026-10-17 曾清理 31 个旧 release（约 6.8 GB）、`.next`（454 MB）及两个 dev 缓存（610 MB）；数量仅记当时结果。
 
 **硬约束：服务进程的工作目录必须是项目根目录**，不能用 `next [directory]` 传参替代。Next 把 `path.relative(process.cwd(), projectPath)` 烘焙成 `__NEXT_RELATIVE_PROJECT_DIR`（`build/define-env.js`），请求期再用 `join(process.cwd(), 相对值)` 还原项目目录（`server/route-modules/route-module.js`）。生产构建烘焙的是空串（构建时 cwd 就是项目根），跨盘符时 `path.relative` 又直接返回绝对路径——cwd 一旦不等于项目根，`join` 会拼出 `C:\...\run\D:\...\PiWeb` 这种双份路径，表现为每个请求 `ENOENT ... routes-manifest.json`。代价：Windows 上服务运行时无法替换自身安装目录（npm rename 报 EBUSY），只能先停服务再更新。
 

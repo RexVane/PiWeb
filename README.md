@@ -18,7 +18,9 @@
 
 ## Relationship to pi
 
-PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it is a web shell that bundles the official pi SDK, leaving the separately installed pi CLI untouched. The two **share one set of state** — the same agent directory (`~/.pi/agent`) holds your settings, models and credentials, sessions, skills and packages — so a conversation started in the pi CLI shows up in the browser right away, and the other way round. The bundled pi engine is upgraded with PiWeb releases. Only PiWeb checks for updates automatically; the pi version and a manual update entry remain in Settings. What runs underneath is native pi. Extension dialogs (select, confirm, input, multi-line editor), notifications, status text, widgets above and below the composer, and injected messages all reach the page, and extension commands can create, fork and switch sessions — the same surface pi exposes in RPC mode. Only what needs a real terminal (custom components, a custom footer, header or editor) has no browser counterpart.
+PiWeb is a web shell that bundles the official pi SDK and leaves the separately installed pi CLI untouched. They **share the same agent directory** (`~/.pi/agent` by default, or `PI_CODING_AGENT_DIR`): settings, models and credentials, sessions, skills and packages. The bundled pi engine is upgraded with PiWeb releases. Only PiWeb checks for updates automatically; the pi version and a manual update entry remain in Settings.
+
+Extension dialogs, notifications, status text, text widgets and injected messages reach the page; extension commands can create, fork and switch sessions. Extensions can provide interactive browser panels through the [JSON UI bridge](docs/extension-web-ui.md). Compatible terminal components have a read-only text fallback; terminal keyboard interaction and custom headers, footers or editors are not reproduced.
 
 ## Features
 
@@ -26,8 +28,10 @@ PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it
 - **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
 - **Session import:** Browse and import local history from Claude Code, Codex, Grok, ZCode, dsh and opencode. Search and select across sources, restore archived imports, and leave the original data untouched.
 - **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting.
-- **Models and extensions:** Manage built-in and custom providers, models, pi packages and skills; inspect prompt sources and choose Read Only, Workspace Write or Full Access tool presets.
-- **Multiple devices:** Use PiWeb from desktop and mobile browsers, with built-in local-network access or a Cloudflare quick tunnel for remote access.
+- **Models and resources:** Configure providers and models in Settings. Open Skills, Extensions, Prompts and Marketplace directly from the sidebar, with an explicit workspace selector and resource origin.
+- **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace, model and permission preset, then inspect each run's session. PiWeb must remain running for scheduled work.
+- **Permissions:** Choose Read Only, Workspace Write or Full Access, with one-time approval for a specific blocked action. See the [platform boundaries](docs/workspace-isolation.md).
+- **Multiple devices:** Remote access prepares automatically. Scan one dynamic QR code from the same Wi-Fi or another network.
 
 ## Screenshots
 
@@ -65,9 +69,17 @@ PiWeb and pi are two separate programs, and PiWeb is not another build of pi: it
 
 ### Archives and data
 
-Archived sessions can be viewed or restored from the sidebar. A background cleanup deletes archived sessions after 30 days, counting from the later of the archive time or subsequent activity; sessions currently in use are skipped. Deletion removes the session file, so export anything you need to keep beforehand.
+Archived sessions can be viewed or restored from the sidebar. Background cleanup removes them after 30 days, counting from the later of the archive time or subsequent file activity; sessions managed by the current process are skipped. Removal preserves a recovery copy and appends its location to `backups/INDEX.md` (under `~/.agents/backups` for the default home-directory store). Export important sessions for long-term retention. Set `PI_WEB_ARCHIVE_RETENTION=0` to disable automatic removal.
 
 The project growth tree stores each round of file changes as a commit under `refs/piweb/rounds/…` in the workspace's Git repository, without changing branches or the index. If the workspace is not its own Git repository, PiWeb asks before initializing one; declining disables recording there.
+
+### Skills, extensions and automations
+
+The sidebar entries are separate from Settings. Skills and Extensions show personal/project scope separately from local/package origin. Personal resources normally live in `<agent dir>/skills` and `<agent dir>/extensions`; trusted projects can provide `.pi/skills`, `.pi/extensions`, `.agents/skills` and configured resource paths. Changing the selected workspace changes the project scope being managed.
+
+A package-owned skill can be disabled; removing its package is an explicit action in Extensions. npm package installation, update and removal prepare a separate directory before switching the active installation and settings. Failed preparation keeps the previous installation; interrupted commits are recovered before resources are loaded. Previous generations and their recovery index are retained. npm lifecycle scripts are disabled, but loaded extensions still execute trusted code in the host process.
+
+Automations store their tasks and run history in `<agent dir>/web-automations.json`. Schedules use the server's time zone shown in the editor. Up to four runs may execute concurrently; each uses a separate session and the saved permission preset. Unattended work cannot approve an interactive permission request. Offline occurrences outside the grace period are recorded as skipped rather than all being replayed after startup.
 
 ## Usage
 
@@ -91,7 +103,7 @@ is npm's default tag, so `npm install -g @rexvane/piweb` behaves identically; if
 is a mirror that syncs with a delay, add `--registry=https://registry.npmjs.org` to get a
 release the moment it is published. Restart `piweb` afterwards to serve the new version.
 
-Or install a specific version: `npm install -g @rexvane/piweb@0.3.29`.
+To install a specific release, replace `latest` with its version number.
 
 **Updating from the UI**: every time PiWeb starts it checks PiWeb for new versions in the
 background. When one is available it prints `[更新] 有新版本：…` in the terminal and shows a notice
@@ -116,7 +128,7 @@ This removes PiWeb only — your pi data lives in `~/.pi/agent/` and is left unt
 ```bash
 piweb                    # http://127.0.0.1:30141 (auto-increments if busy)
 piweb -p 30143 --no-open # custom port, don't open the browser
-piweb -H 0.0.0.0         # LAN access (launch-token login is enabled automatically)
+piweb -H 0.0.0.0         # also bind the main server to the LAN (authentication stays on)
 ```
 
 | Option | Description |
@@ -127,40 +139,40 @@ piweb -H 0.0.0.0         # LAN access (launch-token login is enabled automatical
 | `--no-open` | Do not auto-open the browser |
 | `--public-url <url>` | Public address, used for the login link and added to the Host allowlist automatically (env `PI_WEB_PUBLIC_URL`) |
 
-Authentication is opened by `PI_WEB_AUTH=1` (the launcher sets it by default whenever PiWeb may be reachable from
-outside this machine). Login is **launch-token only**: open the printed `…/?token=…` link, which exchanges the token
-for a signed cookie. `PI_WEB_PASSWORD` has been removed — setting it makes the launcher refuse to start. Do not
-expose PiWeb over plain HTTP.
+Authentication is enabled by default (`PI_WEB_AUTH=1`) for all launch modes. On the host, the launcher opens the browser
+with a private login credential; it does not print the credential in terminal output. Run `piweb` again to reopen the
+existing instance and sign in. Other devices use the refreshed connection QR code. Both flows exchange a credential for
+a signed, HttpOnly cookie valid for 30 days. Signing out all devices invalidates existing cookies and pairing codes.
+`PI_WEB_PASSWORD` has been removed — setting it makes the launcher refuse to start.
 
-Scripts authenticate the same way: `GET /?token=…` once to receive the session cookie, then send that cookie with
-every API request. There is no Basic Auth fallback.
+Scripts with an authorized launch credential exchange it through `GET /?token=…`, then send the returned cookie with
+API requests. Tokens in API URLs or `Authorization` headers are not accepted; there is no Basic Auth fallback.
 
 ### Proxy
 
 PiWeb automatically uses `HTTP_PROXY` / `HTTPS_PROXY`, or the current user's enabled Windows HTTP(S) system proxy when those variables are absent. Set `httpProxy` in Settings → General → Network proxy (or your agent directory's `settings.json`) to override both. Leave it blank to return to automatic detection; when no proxy is configured, requests go direct. Local addresses bypass the proxy by default (override with `NO_PROXY`); Windows exact-host and domain-suffix bypass entries are also inherited. PAC/WPAD scripts and Windows-only bypass patterns such as `<local>` or `192.168.*` are not evaluated; use a proxy URL or `NO_PROXY` for those setups. Restart `piweb` after changes. This needs Node.js 24, or 22.21 and above: older versions ignore the switch and the launcher says so explicitly (the `bash` tool's curl / git still see the variables).
 
-### Use it on your phone: the built-in "Remote access" plugin
+### Connect another device
 
-PiWeb ships a built-in plugin for this. Toggle it in **Settings → Remote access**; nothing is installed on the client.
+Open **Settings → Remote access** and scan the single connection QR code. The same code works on the same Wi-Fi
+and from outside the local network. There are no connection switches or network choices, and client devices need
+no additional software. The code and its copyable link use the same 256-bit random credential, valid for 120 seconds
+and one use. The panel updates it automatically after expiry or use, and reuses a valid code across panel openings.
 
-It has two entry points:
+Production startup automatically prepares the local proxy (`0.0.0.0:30142`) and a Cloudflare quick tunnel
+(`cloudflared`). The QR code uses the tunnel's HTTPS address and appears once that address is reachable; it never
+silently changes to a LAN-only address. Short interruptions keep the same address; a persistently unreachable
+tunnel is recreated automatically. Development mode remains local.
 
-**Local network (on by default)** — a reverse proxy that only adds the mobile layout, bound to `0.0.0.0:30142`.
-Any device on the same Wi-Fi can open one of the addresses listed in the panel and gets the phone layout;
-connecting to `127.0.0.1:30141` on this machine still serves the untouched desktop page.
+The local proxy provides the mobile layout; `127.0.0.1:30141` on the host serves the desktop page. Tunnel limitations:
 
-**Public access (off by default)** — turning it on starts a Cloudflare quick tunnel (`cloudflared`).
-Cloudflare assigns an `https://<random>.trycloudflare.com` address that any browser can open with
-**nothing to install on any device**. Two costs:
-
-- the address changes on every start, and takes about fifteen seconds to resolve worldwide
-  (the panel shows "taking effect" meanwhile);
-- TLS terminates at Cloudflare, so that hop sees plaintext. Use a trusted VPN if you need end-to-end encryption.
+- the address can change after a restart or tunnel recreation; DNS and reachability checks must finish before the QR code is ready;
+- the QR address uses HTTPS, with TLS terminating at Cloudflare. Direct LAN HTTP remains unencrypted; using the same QR on Wi-Fi still requires the public tunnel to be reachable.
 
 `cloudflared` is looked up as: `PIWEB_CLOUDFLARED` → `<agent dir>/web-bin/cloudflared{,.exe}` (managed by PiWeb) → `PATH`.
 The panel says so explicitly when it cannot find it.
 
-> Turning public access on makes authentication mandatory. The plugin adds the tunnel hostname to the Host
+> Remote access requires authentication, which is enabled by default. PiWeb adds the tunnel hostname to the Host
 > allowlist once the tunnel is live and removes it when the tunnel stops. The launch token is never accepted
 > on API paths or through the `Authorization` header.
 
@@ -170,7 +182,7 @@ You can front PiWeb yourself instead (Caddy, nginx, a named Cloudflare tunnel, a
 
 - Point the proxy at **`127.0.0.1:30142`** (the local-network entry) to get the mobile layout, or at
   `127.0.0.1:30141` if you only want the desktop page.
-- Set `PI_WEB_AUTH=1`. A loopback bind cannot tell PiWeb that it is exposed, so authentication must be explicit.
+- Keep authentication enabled (the default). `PI_WEB_AUTH=0` disables automatic remote access and is accepted only with a loopback bind and no configured public URL.
 - A reverse proxy passes the external hostname through unchanged, so allowlist it or requests are rejected
   with 403 `untrusted host`:
 
@@ -179,10 +191,22 @@ You can front PiWeb yourself instead (Caddy, nginx, a named Cloudflare tunnel, a
   ```
 
 - Use `--public-url https://your-address/` to tell PiWeb its public address: the hostname joins the allowlist
-  automatically, and the login link printed at startup uses it instead of the loopback address.
+  automatically, and the launcher uses it when opening the login page. Login credentials are not printed.
 
-> Disable the local-network entry with `PIWEB_REMOTE_LAN=0`; disable authentication entirely with `PI_WEB_AUTH=0`
-> (only safe when PiWeb is used strictly on this machine).
+> For a deployment that manages its own network entry, `PIWEB_REMOTE_LAN=0` disables automatic preparation of the built-in LAN proxy and quick tunnel. It is a deployment setting, not a separate network choice in the connection panel.
+
+## Development and verification
+
+Use a separate checkout or staging directory for validation: `npm run build` writes `.next`, so it must not target the directory serving a running instance. Install development dependencies with `npm ci`, then run:
+
+```bash
+npm run typecheck
+npm run test
+npm run build
+npm run verify:package
+```
+
+`verify:package` packs the production build, installs it in an empty prefix and starts that installed copy with temporary data. CI also prepares SDK search tools, checks unexpected skips and enables coverage with `PIWEB_COVERAGE=1`; public tunnel testing is a separate opt-in check. The dated [verification record](docs/state/progress.md) distinguishes source tests, installed-package checks and browser checks. Documentation navigation is in [docs/README.md](docs/README.md).
 
 ## License
 

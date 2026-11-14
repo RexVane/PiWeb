@@ -1,5 +1,8 @@
 # Handoff validation
 
+<!-- historical-verification-note -->
+> 历史记录：本文描述标题日期或版本的代码与环境。当前使用方式见[文档导航](../../../../README.md)；下述测试结果、权限说明及启动命令不自动适用于当前代码。
+
 - Source HEAD: `49bdf3d25830026810c291d6d494fa61467ac39f`, including the existing uncommitted Pi integration changes.
 - Typecheck: passed, exit 0, 3.43 seconds; completed 2026-11-12 14:26:52 +08:00.
 - Full Vitest suite: passed, exit 0, 248.13 seconds; completed 2026-11-12 14:30:57 +08:00.

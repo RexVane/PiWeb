@@ -1,5 +1,8 @@
 # Dependency lock validation
 
+<!-- historical-verification-note -->
+> 历史记录：本文描述标题日期或版本的代码与环境。当前使用方式见[文档导航](../../../../README.md)；下述测试结果、权限说明及启动命令不自动适用于当前代码。
+
 2026-11-12 (Asia/Shanghai).
 
 - Original package-lock: a real isolated npm 10.9.3 ci --ignore-scripts fails with EUSAGE, Missing @emnapi/runtime@1.11.3 from lock file. This original failure used local Node24.12.0; the same npm resolver is shipped with the Node22 CI target.

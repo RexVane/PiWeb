@@ -1,5 +1,8 @@
 # 发布 PR #49 的图片接口回归
 
+<!-- historical-verification-note -->
+> 历史记录：本文描述标题日期或版本的代码与环境。当前使用方式见[文档导航](../../../README.md)；下述测试结果、权限说明及启动命令不自动适用于当前代码。
+
 第一轮同一提交 `84e2f1e` 的 push／PR 两套 CI 共 8 项检查，7 项通过；PR 的 Ubuntu / Node 24 在伪装 PNG 用例中实际返回 500，预期 400。[原始 CI 日志](ci-first-ubuntu24-failure.log)未打印响应正文，因此单凭它不能断定具体错误码。
 
 后续排查确认一个能够产生相同结果的进程竞态：普通目录中的 `git check-ignore` 可以先关闭 stdin，再以 128 退出并写出 `not a git repository`。原 `close` 处理优先抛出管道 EPIPE，掩盖 Git 的真实错误；图片入口因此不能识别普通目录，正常 PNG 也可能失败。

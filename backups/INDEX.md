@@ -89,3 +89,37 @@
 2026-11-12 21:32:44 +08:00 | Git 本地及远端分支、暂存记录（清理前全部引用） | D:\AIApp\PiWeb\backups\files\piweb-branches-20261112-213239.bundle | 按用户要求整合到 main 并只保留 main 前，保留可独立恢复的完整历史
 2026-11-13 01:20:18 +08:00 | D:\AIApp\PiWeb\src\lib\font.ts | HEAD a95940fa13221906b4b6480e3320b4ec88947a02 | 整理另一位 agent 已完成的字体设置精简；旧模块已移除，可从该提交恢复
 2026-11-13 01:20:18 +08:00 | D:\AIApp\PiWeb\tests\components\settings-font-family.test.tsx | HEAD a95940fa13221906b4b6480e3320b4ec88947a02 | 字体选择测试由 settings-typography.test.tsx 的旧偏好迁移与字号保留测试替代
+2026-11-13 17:16:47 +08:00 | D:\AIApp\PiWeb\.next-releases\active.json | D:\AIApp\PiWeb\backups\files\active-20261113-171647.json | 按用户要求以最新源码重新构建并启动 PiWeb 前保留发布配置
+2026-11-13 17:16:47 +08:00 | D:\AIApp\PiWeb\.next-releases\tsconfig.json | D:\AIApp\PiWeb\backups\files\release-tsconfig-20261113-171647.json | 按用户要求以最新源码重新构建并启动 PiWeb 前保留发布配置
+2026-11-14 12:53:54 | D:\AIApp\PiWeb\node_modules\.cache\piweb-metrics\audit-agent\models.json | Windows 回收站（用户批准，缓存不另备份） | 移除旧审计凭证副本
+2026-11-14 15:36:50 +08:00 | D:\AIApp\PiWeb\.next-releases\menu-drawer-20261112-235700 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:51 +08:00 | D:\AIApp\PiWeb\.next-releases\mvbx09xv-8a50bcae-3208-4069-9763-80681dc673f3 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:52 +08:00 | D:\AIApp\PiWeb\.next-releases\mwc51mx1-a059cc29-ee12-4320-9bc3-bb465878b2ab | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:53 +08:00 | D:\AIApp\PiWeb\.next-releases\mwdtqifv-a1a78057-23c2-4123-9fb5-e93a3132aed3 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:53 +08:00 | D:\AIApp\PiWeb\.next-releases\mwerj2pm-1f2e3b01-38ab-46f9-853b-2b3a691d2d09 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:54 +08:00 | D:\AIApp\PiWeb\.next-releases\preview-20261112-234300 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:54 +08:00 | D:\AIApp\PiWeb\.next-releases\proxy-compact-20261113-010500 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:55 +08:00 | D:\AIApp\PiWeb\.next-releases\proxy-diagnostics-20261113-004800 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:55 +08:00 | D:\AIApp\PiWeb\.next-releases\proxy-settings-20261113-002700 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:56 +08:00 | D:\AIApp\PiWeb\.next-releases\ui-cleanup-20261112-213600 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:57 +08:00 | D:\AIApp\PiWeb\.next-releases\ui-compaction-20261112-204500 | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:58 +08:00 | D:\AIApp\PiWeb\.next-dev-webpack | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:36:58 +08:00 | D:\AIApp\PiWeb\node_modules\.cache\tsconfig.tsbuildinfo | Windows 回收站（用户批准，可再生构建/缓存不另备份） | 按 cleanup-plan.md 清理不再使用的构建或缓存；开始回收
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\archive.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\growth-1.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\growth-2.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\import.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\main.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\outline.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\prompts-1.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\prompts-2.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\providers-1.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\providers-2.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\providers-3.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\trace-1.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\trace-2.png | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\trace-3.png | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\trace-4.png | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\viewer-1.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\viewer-2.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
+2026-11-14 | D:\AIApp\PiWeb\src\components\AppShell.tsx | D:\AIApp\PiWeb\.audit-2026-11-14\optimization\baseline-root\AppShell.tsx | 性能优化前的工作区内容对照快照，保留此前未提交修改
