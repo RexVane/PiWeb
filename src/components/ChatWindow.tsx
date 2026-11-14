@@ -1,11 +1,14 @@
 "use client";
 
+import { safeLocalStorage } from "@/lib/browser-storage";
+
 /**
  * 对话视图 —— 过程步骤。
  * 每个回合 = 用户消息 → 过程（叙述句是阶段标题，其下是带图标的步骤列表）→ 最终回答。
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import {
 	IconBranchOutline16,
@@ -15,6 +18,7 @@ import {
 	IconClockOutline16,
 	IconCloseOutline14,
 	IconCopyOutline16,
+	IconDatabaseOutline16,
 	IconDataOutline16,
 	IconEditOutline16,
 	IconFileOutline16,
@@ -26,6 +30,7 @@ import {
 	IconWarningOutline16,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
+import { ErrorToast } from "@/components/ErrorToast";
 import { languageForPath } from "@/lib/highlight";
 import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
 import { isCancelledTool } from "@/lib/chat/cancellation";
@@ -57,6 +62,7 @@ import {
 	type ToolKind,
 } from "@/lib/process-format";
 import { ASK_RESULT_PREFIX, ASK_USER_TOOL } from "@/lib/ask-user";
+import { permissionOutcomeOf, REQUEST_PERMISSION_TOOL } from "@/lib/permission-request";
 
 type Dict = Record<string, string>;
 type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
@@ -98,26 +104,86 @@ const StreamingMarkdown = dynamic(() => import("@/components/MarkdownBlock").the
 });
 
 /** dsh TurnTimePanel 的简化版：耗时胶囊常驻，点击弹层看本回合 token 用量 */
-function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: TrajTokens & { cost?: { total?: number } }; t: Dict }) {
+const useWindowLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+type TurnUsage = TrajTokens & { cost?: { total?: number } };
+
+function TurnMetaPill({ durationMs, usage, provider, model, t }: { durationMs: number; usage?: TurnUsage; provider?: string; model?: string; t: Dict }) {
 	const [open, setOpen] = useState(false);
+	const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const popRef = useRef<HTMLDivElement>(null);
+
 	useEffect(() => {
 		if (!open) return;
-		const h = (e: MouseEvent) => {
-			if (!ref.current?.contains(e.target as Node)) setOpen(false);
+		const onDown = (e: MouseEvent) => {
+			const target = e.target as Node;
+			if (!ref.current?.contains(target) && !popRef.current?.contains(target)) setOpen(false);
 		};
-		document.addEventListener("mousedown", h);
-		return () => document.removeEventListener("mousedown", h);
+		const onKey = (e: globalThis.KeyboardEvent) => {
+			if (e.key === "Escape") {
+				setOpen(false);
+				triggerRef.current?.focus();
+			}
+		};
+		document.addEventListener("mousedown", onDown);
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("mousedown", onDown);
+			document.removeEventListener("keydown", onKey);
+		};
 	}, [open]);
-	const billed = (usage?.input ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
-	const outTokens = usage?.output ?? 0;
-	const cacheRead = usage?.cacheRead ?? 0;
-	const uncachedInput = Math.max(0, billed - cacheRead);
-	const totalTokens = Math.max(1, billed + outTokens);
-	const hasUsage = usage != null && (billed > 0 || outTokens > 0);
+
+	useWindowLayoutEffect(() => {
+		if (!open) {
+			setPos(null);
+			return;
+		}
+		// 挂到 body 并按滚动区可见范围自动上下翻转，防止消息列表底部触发时被 .pw-chat-scroll 裁切
+		const update = () => {
+			const btn = triggerRef.current;
+			if (!btn) return;
+			const rect = btn.getBoundingClientRect();
+			const scrollRect = btn.closest(".pw-chat-scroll")?.getBoundingClientRect();
+			if (scrollRect && scrollRect.height > 0 && rect.height > 0 && (rect.bottom <= scrollRect.top || rect.top >= scrollRect.bottom)) {
+				setOpen(false);
+				return;
+			}
+			const popW = popRef.current?.offsetWidth || 384;
+			const popH = popRef.current?.offsetHeight || 196;
+			const boundTop = Math.max(8, scrollRect?.top ?? 8);
+			const boundBottom = Math.min(window.innerHeight - 8, scrollRect?.bottom ?? window.innerHeight - 8);
+			const spaceBelow = boundBottom - rect.bottom - 6;
+			const spaceAbove = rect.top - boundTop - 6;
+			const openAbove = spaceBelow < popH && spaceAbove > spaceBelow;
+			const rawTop = openAbove ? rect.top - popH - 6 : rect.bottom + 6;
+			const top = Math.max(8, Math.min(window.innerHeight - popH - 8, rawTop));
+			const left = Math.max(8, Math.min(rect.left, window.innerWidth - popW - 8));
+			setPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
+		};
+		update();
+		window.addEventListener("resize", update);
+		window.addEventListener("scroll", update, true);
+		return () => {
+			window.removeEventListener("resize", update);
+			window.removeEventListener("scroll", update, true);
+		};
+	}, [open]);
+
+	const uncachedInput = Math.max(0, (usage?.input ?? 0) + (usage?.cacheWrite ?? 0));
+	const cacheRead = Math.max(0, usage?.cacheRead ?? 0);
+	const outTokens = Math.max(0, usage?.output ?? 0);
+	const billedInput = uncachedInput + cacheRead;
+	const totalTokens = billedInput + outTokens;
+	const hasUsage = usage != null && totalTokens > 0;
+	const cacheReported = cacheRead > 0 || (usage?.cacheWrite ?? 0) > 0;
+	const modelLabel = provider && model ? (model.startsWith(`${provider}/`) ? model : `${provider}/${model}`) : model || provider || "";
+	const exactTokens = (n: number) => `${Math.round(n).toLocaleString("en-US")} tok`;
 	return (
 		<div ref={ref} className="relative">
 			<button
+				ref={triggerRef}
 				type="button"
 				className="flex items-center gap-1 rounded-full px-2"
 				style={{ height: 22, fontSize: "var(--piweb-chat-font-xs)", color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}
@@ -129,53 +195,62 @@ function TurnMetaPill({ durationMs, usage, t }: { durationMs: number; usage?: Tr
 				<IconClockOutline16 size={13} style={{ flex: "none" }} />
 				<span style={{ whiteSpace: "nowrap" }}>{t.turnRanFor.replace("{duration}", formatRunDuration(durationMs, t))}</span>
 			</button>
-			{open && (
-				<div className="popover absolute left-0 top-full z-50 mt-1.5 w-52 p-3" role="dialog" aria-label={t.turnUsageTitle}>
-					<div className="flex flex-col gap-1.5" style={{ fontSize: "var(--piweb-chat-font-t)", color: "var(--dsw-label-secondary)", fontVariantNumeric: "tabular-nums" }}>
-						<div className="flex items-center justify-between gap-2">
-							<span style={{ color: "var(--dsw-label-caption)" }}>{t.duration}</span>
-							<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>{formatRunDuration(durationMs, t)}</span>
+			{open && typeof document !== "undefined" && createPortal(
+				<div
+					ref={popRef}
+					className="popover pw-turn-usage-popover fixed z-[60] w-96 max-w-[calc(100vw-24px)]"
+					style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: -9999, opacity: 0 }}
+					role="dialog"
+					aria-label={t.turnUsageTitle}
+				>
+					<div className="flex flex-col" style={{ fontSize: "var(--piweb-chat-font-s)", color: "var(--dsw-label-primary)", fontVariantNumeric: "tabular-nums" }}>
+						<div className="pw-turn-usage-head flex items-center justify-between gap-4 px-4 py-3" style={{ color: "var(--dsw-label-primary)" }}>
+							<span className="flex items-center gap-2 font-semibold">
+								<IconDatabaseOutline16 size={15} style={{ flex: "none", color: "var(--dsw-label-tertiary)" }} />
+								<span>{t.turnUsageHeading}</span>
+							</span>
+							{hasUsage && <span className="font-semibold whitespace-nowrap">{exactTokens(totalTokens)}</span>}
 						</div>
-						{hasUsage && (
-							<>
-								<div className="pw-turn-token-bar my-1 flex h-2 w-full overflow-hidden rounded-full" aria-hidden="true">
-									{uncachedInput > 0 && <span className="pw-agent-limits-seg flex-none" style={{ width: `${(uncachedInput / totalTokens) * 100}%`, background: "#3b82f6" }} />}
-									{cacheRead > 0 && <span className="pw-agent-limits-seg flex-none" style={{ width: `${(cacheRead / totalTokens) * 100}%`, background: "#10b981" }} />}
-									{outTokens > 0 && <span className="pw-agent-limits-seg flex-none" style={{ width: `${(outTokens / totalTokens) * 100}%`, background: "#8b5cf6" }} />}
+						<div className="flex flex-col gap-2.5 px-4 py-3.5" style={{ color: "var(--dsw-label-secondary)" }}>
+							{modelLabel && (
+								<div className="flex items-center justify-between gap-4">
+									<span className="flex-none" style={{ color: "var(--dsw-label-tertiary)" }}>{t.turnProviderModel}</span>
+									<span className="min-w-0 truncate text-right" title={modelLabel}>{modelLabel}</span>
 								</div>
-								<div className="flex items-center justify-between gap-2">
-									<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-caption)" }}>
-										<span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#3b82f6" }} aria-hidden="true" />
-										{t.inputTokens}
-									</span>
-									<span style={{ fontFamily: "var(--font-mono)" }}>{fmtTokens(billed)}</span>
-								</div>
-								<div className="flex items-center justify-between gap-2">
-									<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-caption)" }}>
-										<span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#8b5cf6" }} aria-hidden="true" />
-										{t.outputTokens}
-									</span>
-									<span style={{ fontFamily: "var(--font-mono)" }}>{fmtTokens(outTokens)}</span>
-								</div>
-								{(usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) > 0 && (
-									<div className="flex items-center justify-between gap-2">
-										<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-caption)" }}>
-											<span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: "#10b981" }} aria-hidden="true" />
-											{t.cacheHits}
-										</span>
-										<span style={{ fontFamily: "var(--font-mono)" }}>{fmtPercent(((usage.cacheRead ?? 0) / Math.max(billed, 1)) * 100)}</span>
+							)}
+							{hasUsage ? (
+								<>
+									{cacheReported && billedInput > 0 && (
+										<div className="flex items-center justify-between gap-4">
+											<span style={{ color: "var(--dsw-label-tertiary)" }}>{t.cacheHits}</span>
+											<span className="whitespace-nowrap">{fmtPercent((cacheRead / billedInput) * 100)}</span>
+										</div>
+									)}
+									<div className="flex items-center justify-between gap-4">
+										<span style={{ color: "var(--dsw-label-tertiary)" }}>{t.turnUncachedInput}</span>
+										<span className="whitespace-nowrap">{exactTokens(uncachedInput)}</span>
 									</div>
-								)}
-							</>
-						)}
-						{usage?.cost?.total != null && usage.cost.total > 0 && (
-							<div className="hairline-t mt-1 flex items-center justify-between gap-2 pt-1.5">
-								<span style={{ color: "var(--dsw-label-caption)" }}>{t.cost}</span>
-								<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500 }}>${usage.cost.total.toFixed(4)}</span>
-							</div>
-						)}
+									{cacheReported && (
+										<div className="flex items-center justify-between gap-4">
+											<span style={{ color: "var(--dsw-label-tertiary)" }}>{t.turnCacheRead}</span>
+											<span className="whitespace-nowrap">{exactTokens(cacheRead)}</span>
+										</div>
+									)}
+									<div className="flex items-center justify-between gap-4">
+										<span style={{ color: "var(--dsw-label-tertiary)" }}>{t.outputTokens}</span>
+										<span className="whitespace-nowrap">{exactTokens(outTokens)}</span>
+									</div>
+								</>
+							) : (
+								<div className="flex items-center justify-between gap-4">
+									<span style={{ color: "var(--dsw-label-tertiary)" }}>{t.duration}</span>
+									<span className="whitespace-nowrap">{formatRunDuration(durationMs, t)}</span>
+								</div>
+							)}
+						</div>
 					</div>
-				</div>
+				</div>,
+				document.body,
 			)}
 		</div>
 	);
@@ -187,6 +262,8 @@ function MessageActions({
 	onEdit,
 	durationMs,
 	usage,
+	provider,
+	model,
 	time,
 	clockStart = false,
 }: {
@@ -196,7 +273,9 @@ function MessageActions({
 	onEdit?: () => void;
 	/** 回合墙钟耗时（最终回答时间戳 − 回合首条用户消息时间戳），dsh runMs 的对应物 */
 	durationMs?: number;
-	usage?: TrajTokens & { cost?: { total?: number } };
+	usage?: TurnUsage;
+	provider?: string;
+	model?: string;
 	/** 消息时间戳，驱动时钟；undefined 时不显示时钟 */
 	time?: number;
 	/** 用户消息时钟在图标左侧（dsh clock=start），助手在行尾（clock=end） */
@@ -253,7 +332,7 @@ function MessageActions({
 					</span>
 				</button>
 			)}
-			{durationMs !== undefined && <TurnMetaPill durationMs={durationMs} usage={usage} t={t} />}
+			{durationMs !== undefined && <TurnMetaPill durationMs={durationMs} usage={usage} provider={provider} model={model} t={t} />}
 			{!clockStart && clock}
 		</div>
 	);
@@ -264,7 +343,6 @@ function MessageActions({
 // 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后每个阶段下的思考与命令折成一行
 // 「思考了 1m 12s，运行了 6 条命令」（Claude Code 的折叠摘要），编辑文件保留 diff；末尾 π 记号做工作指示。没有连线。
 
-const MONO = "var(--font-mono)";
 const RAIL = "⎿";
 /** 命令输出默认露出的行数 */
 const PREVIEW_LINES = 3;
@@ -408,6 +486,7 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
 	}
 	if (state.name === ASK_USER_TOOL) return askPreview(body, t);
+	if (state.name === REQUEST_PERMISSION_TOOL) return permissionPreview(body, t);
 	switch (kind) {
 		case "read": {
 			const lang = langOfPath(str(a?.path ?? a?.file_path) ?? "");
@@ -435,6 +514,15 @@ function askPreview(body: string[], t: Dict): Preview {
 	if (!first.startsWith(ASK_RESULT_PREFIX.answered)) return body.length ? { lines: body.slice(0, 2), hidden: Math.max(0, body.length - 2) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
 	const lines = body.filter((line) => /^\d+\. /.test(line)).map((line) => line.replace(/\(their own words\) /g, ""));
 	return { lines, hidden: 0 };
+}
+
+/** 升权结果：一句话说清批准/拒绝/没应答（结果文本由 permission-request-tool 生成） */
+function permissionPreview(body: string[], t: Dict): Preview {
+	const outcome = permissionOutcomeOf(body.join("\n"));
+	if (outcome === "approved") return { head: t.permissionApprovedOneshot, lines: [], hidden: 0 };
+	if (outcome === "denied") return { head: t.permissionDeniedOneshot, lines: [], hidden: 0 };
+	if (outcome === "unanswered") return { head: t.permissionUnansweredOneshot, lines: [], hidden: 0 };
+	return body.length ? { lines: body.slice(0, 2), hidden: Math.max(0, body.length - 2) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
 }
 
 /** 从工具参数或摘要里提取至多 3 个外部域名（对齐 BoardUI WebSearch 站点徽章） */
@@ -466,6 +554,7 @@ function extractToolDomains(summaryText: string, args: unknown): string[] {
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
 	if (n === ASK_USER_TOOL) return t.stepAsked;
+	if (n === REQUEST_PERMISSION_TOOL) return t.stepPermissionRequested;
 	if (kind === "cmd") return t.stepRan;
 	if (kind === "read") return t.stepRead;
 	if (kind === "search") return t.stepSearched;
@@ -568,9 +657,10 @@ const ToolStep = memo(function ToolStep({
 	const canExpand = hasOutput && !hasDiff && !running;
 	const duration = state?.startedAt && state?.endedAt ? state.endedAt - state.startedAt : 0;
 	const isAskTool = name.toLowerCase() === ASK_USER_TOOL;
+	const isPermissionTool = name.toLowerCase() === REQUEST_PERMISSION_TOOL;
 	// 单行极简模式：已完成的常规工具默认只展示单行（点击该行展开输出或 Diff）；
-	// 运行中、失败、已中止、或用户问答（ask_user_question）保留 ⎿ 结果行。
-	const showPreview = (running || failed || cancelled || isAskTool) && (Boolean(preview.head) || preview.lines.length > 0);
+	// 运行中、失败、已中止、用户问答（ask_user_question）或权限申请保留 ⎿ 结果行。
+	const showPreview = (running || failed || cancelled || isAskTool || isPermissionTool) && (Boolean(preview.head) || preview.lines.length > 0);
 	const lineInteractive = hasDiff || canExpand;
 	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
 	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));
@@ -618,7 +708,7 @@ const ToolStep = memo(function ToolStep({
 				{diffStat && <span className="pw-meta">{diffStat}</span>}
 				{lineInteractive && (
 					<span
-						className={hasDiff ? "pw-meta" : "pw-meta opacity-0 group-hover/tool:opacity-100"}
+						className={hasDiff ? "pw-meta" : "pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"}
 						aria-hidden
 						style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)", opacity: open ? 1 : undefined }}
 					>
@@ -636,7 +726,7 @@ const ToolStep = memo(function ToolStep({
 				{onOpenFile && argPath && (
 					<button
 						type="button"
-						className="icon-btn opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
+						className="icon-btn pw-touch-reveal opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
 						style={{ width: 22, height: 22, flex: "none" }}
 						title={t.fileOpenEditor}
 						aria-label={t.fileOpenEditor}
@@ -651,7 +741,7 @@ const ToolStep = memo(function ToolStep({
 				{onInspectTool && (
 					<button
 						type="button"
-						className="icon-btn opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
+						className="icon-btn pw-touch-reveal opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
 						style={{ width: 22, height: 22, flex: "none" }}
 						title={t.viewInTrajectory}
 						aria-label={t.viewInTrajectory}
@@ -695,7 +785,7 @@ const ToolStep = memo(function ToolStep({
 			{showFullOutput && (
 				<div className="pw-output">
 					{fullCommand && <div className="cmdline">{fullCommand}</div>}
-					{state?.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn)" }}>{t.encodingLossWarning}</p>}
+					{state?.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn-text)" }}>{t.encodingLossWarning}</p>}
 					{output && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{output}</pre>}
 				</div>
 			)}
@@ -797,7 +887,7 @@ function RetryStep({ text }: { text: string }) {
 	return (
 		<Step kind="retry" tone="warn" live>
 			<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-				<span className="pw-verb" style={{ color: "var(--dsw-warn)" }}>{label}</span>
+				<span className="pw-verb" style={{ color: "var(--dsw-warn-text)" }}>{label}</span>
 				{!open && rest.length > 0 && <span className="pw-gist">{rest.join("：")}</span>}
 			</button>
 			{open && <pre className="pw-output pw-think-full">{text}</pre>}
@@ -910,7 +1000,7 @@ function WorkingStep({ startedAt, outputTokens, workingMessage, hasLiveStep }: {
 type Item =
 	| { kind: "think"; key: string; msgIndex: number; text: string; live: boolean; startedAt?: number }
 	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
-	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string }
+	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string; url?: string }
 	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState; nested?: ToolNode[]; badge?: string }
 	| { kind: "custom"; key: string; msgIndex: number; customType: string; text: string }
 	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
@@ -980,7 +1070,7 @@ function buildItems(messages: WebMessage[], k: number, tools: Record<string, Too
 		if (c.type === "thinking" && c.thinking.trim()) items.push({ kind: "think", key, msgIndex: k, text: c.thinking, live: live && i === lastIndex, startedAt: message.timestamp });
 		else if (c.type === "toolCall") items.push({ kind: "tool", key: `${key}-${c.id}`, msgIndex: k, call: c, state: tools[c.id], nested: nestedNodes(tools, c.id) });
 		else if (c.type === "text" && !omitText && c.text.trim()) items.push({ kind: "narr", key, msgIndex: k, text: c.text, live: live && i === lastIndex, error: isError });
-		else if (c.type === "image" && !omitText) items.push({ kind: "image", key, msgIndex: k, data: c.data, mimeType: c.mimeType });
+		else if (c.type === "image" && !omitText) items.push({ kind: "image", key, msgIndex: k, data: c.data, mimeType: c.mimeType, url: (c as { url?: string }).url });
 	});
 	if (isError && (errorCount ?? 1) > 0) items.push({ kind: "error", key: `${k}-err`, msgIndex: k, message: message.errorMessage || message.stopReason || "error", count: errorCount ?? 1 });
 	if (message.stopReason === "aborted") items.push({ kind: "abort", key: `${k}-abort`, msgIndex: k });
@@ -1073,7 +1163,7 @@ function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: 
 		case "image":
 			return (
 				<div className="pw-narr">
-					<PreviewImage image={{ type: "image", mimeType: item.mimeType, data: item.data }} className="my-1 max-h-96 max-w-full rounded-2xl object-contain" />
+					<PreviewImage image={{ type: "image", mimeType: item.mimeType, data: item.data, url: item.url }} className="my-1 max-h-96 max-w-full rounded-2xl object-contain" />
 				</div>
 			);
 		case "tool":
@@ -1091,11 +1181,51 @@ function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: 
 
 // ---------- 最终回答：过程之外、完整 Markdown、带操作行 ----------
 
+function sumTurnUsage(messages: WebMessage[], assistants: number[]): TurnUsage | undefined {
+	let single: TurnUsage | undefined;
+	let count = 0;
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+	let cacheWrite = 0;
+	let costTotal = 0;
+	let hasCost = false;
+	for (const idx of assistants) {
+		const u = messages[idx]?.usage;
+		if (!u) continue;
+		const total = (u.input ?? 0) + (u.output ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+		if (total <= 0 && !(u.cost?.total && u.cost.total > 0)) continue;
+		single = u;
+		count += 1;
+		input += u.input ?? 0;
+		output += u.output ?? 0;
+		cacheRead += u.cacheRead ?? 0;
+		cacheWrite += u.cacheWrite ?? 0;
+		if (u.cost?.total != null && u.cost.total > 0) {
+			costTotal += u.cost.total;
+			hasCost = true;
+		}
+	}
+	if (count === 0) return undefined;
+	if (count === 1) return single;
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		...(hasCost ? { cost: { total: costTotal } } : {}),
+	};
+}
+
 const FinalAnswer = memo(function FinalAnswer({
 	message,
 	onFork,
 	showActions,
 	turnStartMs,
+	turnUsage,
+	turnProvider,
+	turnModel,
+	hasProcessAbove = false,
 	roundBadge,
 	onShowRound,
 }: {
@@ -1103,6 +1233,10 @@ const FinalAnswer = memo(function FinalAnswer({
 	onFork?: (entryId: string) => void;
 	showActions: boolean;
 	turnStartMs?: number;
+	turnUsage?: TurnUsage;
+	turnProvider?: string;
+	turnModel?: string;
+	hasProcessAbove?: boolean;
 	/** 这一轮改了哪些文件（项目生长那一轮的 commit） */
 	roundBadge?: RoundBadge;
 	onShowRound?: (commit: string) => void;
@@ -1114,7 +1248,7 @@ const FinalAnswer = memo(function FinalAnswer({
 		.join("");
 	const images = message.content.filter((c) => c.type === "image");
 	return (
-		<div className="group w-full" style={{ marginTop: 14 }} data-role="assistant">
+		<div className="group w-full" style={{ marginTop: hasProcessAbove ? 8 : 14 }} data-role="assistant">
 			{message.content.map((c, i) => {
 				if (c.type === "text" && c.text.trim()) return <Markdown key={i} text={c.text} />;
 				if (c.type === "image") return <PreviewImage key={i} image={c} images={images} index={images.indexOf(c)} className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
@@ -1126,7 +1260,9 @@ const FinalAnswer = memo(function FinalAnswer({
 						text={textAll.trim()}
 						onFork={message.id && onFork ? () => onFork(message.id!) : undefined}
 						durationMs={(message.endedAt ?? message.timestamp) != null && turnStartMs != null ? Math.max(0, (message.endedAt ?? message.timestamp)! - turnStartMs) : undefined}
-						usage={message.usage}
+						usage={turnUsage ?? message.usage}
+						provider={turnProvider ?? message.provider}
+						model={turnModel ?? message.model}
 						time={message.timestamp}
 					/>
 				</div>
@@ -1144,7 +1280,7 @@ const FinalAnswer = memo(function FinalAnswer({
 						{roundBadge.files ? t.chatRoundChanged.replace("{n}", String(roundBadge.files)) : t.chatRoundNoChanges}
 						{roundBadge.files > 0 && (
 							<>
-								<span style={{ color: "var(--dsw-success)" }}> +{roundBadge.add}</span>
+								<span style={{ color: "var(--dsw-success-text)" }}> +{roundBadge.add}</span>
 								<span style={{ color: "var(--dsw-danger)" }}> −{roundBadge.del}</span>
 							</>
 						)}
@@ -1172,7 +1308,7 @@ function userTextOf(message: WebMessage): string {
 }
 
 /** 用户附带的图片；正常消息与技能消息共用一套排版（靠右、圆角、细描边） */
-function UserImages({ images }: { images: Array<{ type: "image"; data: string; mimeType: string }> }) {
+function UserImages({ images }: { images: Array<{ type: "image"; data: string; mimeType: string; url?: string }> }) {
 	if (!images.length) return null;
 	return (
 		<div className="mb-2 flex max-w-[85%] flex-wrap justify-end gap-2 self-end">
@@ -1421,6 +1557,9 @@ function TurnBlockView({
 		return assistants.length > 0 ? spanOf(assistants[0], finalIdx) : undefined;
 	})();
 
+	const turnUsage = sumTurnUsage(messages, assistants);
+	const lastModelMsg = [...assistants].reverse().map((k) => messages[k]).find((m) => m?.model || m?.provider);
+
 	return (
 		<>
 			{user && !skill && <UserMessage message={user} onEditMessage={onEditMessage} />}
@@ -1475,7 +1614,20 @@ function TurnBlockView({
 					</div>
 				</div>
 			)}
-			{finalIdx >= 0 && <FinalAnswer message={messages[finalIdx]} onFork={onFork} showActions={!isStreaming || !isLast} turnStartMs={user?.timestamp} roundBadge={roundBadge} onShowRound={onShowRound} />}
+			{finalIdx >= 0 && (
+				<FinalAnswer
+					message={messages[finalIdx]}
+					onFork={onFork}
+					showActions={!isStreaming || !isLast}
+					turnStartMs={user?.timestamp}
+					turnUsage={turnUsage}
+					turnProvider={messages[finalIdx]?.provider ?? lastModelMsg?.provider}
+					turnModel={messages[finalIdx]?.model ?? lastModelMsg?.model}
+					hasProcessAbove={showProcess}
+					roundBadge={roundBadge}
+					onShowRound={onShowRound}
+				/>
+			)}
 		</>
 	);
 }
@@ -1660,7 +1812,7 @@ export function SessionStatsBar({
 		// 所以 544px 里被省略号切掉的部分在手机上是滑得到的。
 		<div className="group relative mx-auto mt-1 block w-full px-4 pt-1 text-center">
 			<div
-				className="overflow-hidden text-ellipsis whitespace-nowrap"
+				className="pw-stats-line overflow-hidden text-ellipsis whitespace-nowrap"
 				style={{ fontSize: "var(--dsh-content-font-size-secondary, 13px)", lineHeight: "20px", color: "var(--dsw-label-caption)" }}
 			>
 				{line}
@@ -1826,7 +1978,7 @@ export function ChatWindow({
 	useEffect(() => {
 		const root = rootRef.current;
 		if (!root) return;
-		const saved = Number(localStorage.getItem(CHAT_WIDTH_KEY));
+		const saved = Number(safeLocalStorage.getItem(CHAT_WIDTH_KEY));
 		widthPreference.current = Number.isFinite(saved) && saved >= CHAT_WIDTH_MIN ? saved : null;
 		const syncWidth = () => setChatWidth(root, window.innerWidth <= 840 ? null : widthPreference.current);
 		const observer = new ResizeObserver(syncWidth);
@@ -2006,7 +2158,7 @@ export function ChatWindow({
 					onPointerDown={(event) => {
 						if (event.button !== 0 || !rootRef.current) return;
 						event.preventDefault();
-						const width = widthPreference.current ?? Math.max(544, Math.min(rootRef.current.clientWidth * 0.64, 736));
+						const width = widthPreference.current ?? Math.max(580, Math.min(rootRef.current.clientWidth * 0.66, 760));
 						widthDrag.current = { side, origin: event.clientX, width, pointerId: event.pointerId };
 						event.currentTarget.setPointerCapture(event.pointerId);
 						event.currentTarget.dataset.dragging = "true";
@@ -2029,7 +2181,7 @@ export function ChatWindow({
 						if (rootRef.current) {
 							const width = resolveChatWidth(drag.width, rootRef.current.clientWidth);
 							widthPreference.current = width;
-							localStorage.setItem(CHAT_WIDTH_KEY, String(width));
+							safeLocalStorage.setItem(CHAT_WIDTH_KEY, String(width));
 							setChatWidth(rootRef.current, width);
 						}
 					}}
@@ -2052,7 +2204,7 @@ export function ChatWindow({
 							const delta = event.key === "ArrowRight" ? 24 : -24;
 							const width = resolveChatWidth((widthPreference.current ?? rootRef.current.clientWidth * 0.64) + delta, rootRef.current.clientWidth);
 							widthPreference.current = width;
-							localStorage.setItem(CHAT_WIDTH_KEY, String(width));
+							safeLocalStorage.setItem(CHAT_WIDTH_KEY, String(width));
 							setChatWidth(rootRef.current, width);
 						}
 					}}
@@ -2062,7 +2214,7 @@ export function ChatWindow({
 				<MarkdownActionsProvider value={markdownActions}>
 				<div
 					ref={scrollRef}
-					className="min-h-0 flex-1 overflow-y-auto"
+					className="pw-chat-scroll min-h-0 flex-1 overflow-y-auto"
 					// Windows 经典滚动条出现/消失会改变正文宽度，整段重新折行；
 					// 预留稳定槽位，流式内容刚超过一屏时不会横向抖一下。
 					style={{ scrollbarGutter: "stable", overscrollBehavior: "contain" }}
@@ -2145,15 +2297,9 @@ export function ChatWindow({
 							</div>
 						)}
 						{error && (
-							<button
-								className="pw-toast-stack pw-toast-error mt-3 text-left"
-								style={{ fontSize: "var(--piweb-chat-font-s)" }}
-								onClick={onClearError}
-								role="alert"
-							>
-								<span className="pw-toast-icon" aria-hidden="true">✕</span>
-								<span className="pw-toast-body">{error}</span>
-							</button>
+							<div className="mt-3 flex justify-center">
+								<ErrorToast message={error} onDismiss={onClearError} fontSize="var(--piweb-chat-font-s)" />
+							</div>
 						)}
 					</div>
 				</div>

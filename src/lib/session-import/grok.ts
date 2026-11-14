@@ -5,8 +5,7 @@
  * chat_history 每行 `{type, content, ...}`：system / user / assistant（含 tool_calls[]）/ reasoning / tool_result。
  */
 import path from "node:path";
-import fs from "node:fs/promises";
-import { eachJsonLine, listFiles, readHead, reachedLimit, sortByRecency } from "./files";
+import { eachJsonLine, jsonlImportWarnings, listFiles, readHead, readFileBounded, reachedLimit, sortByRecency } from "./files";
 import { grokRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
 import { cleanTitle, compactBlocks, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
@@ -64,17 +63,18 @@ export const grokSource: ImportSourceModule = {
 		// 先按 chat_history 的 mtime 排序（只 stat，不读内容），再从最近往下读：
 		// summary.json 里有标题/模型/时间/消息数，读它即可，正文只在确认有真实对话时碰一下头部
 		const limit = options?.limit ?? 0;
-		const files = await listFiles(ROOT(), { match: (name) => name === "summary.json" });
-		const candidates = await sortByRecency(files.map((file) => path.join(path.dirname(file), "chat_history.jsonl")));
+		const files = await listFiles(ROOT(), { match: (name) => name === "chat_history.jsonl" });
+		const candidates = await sortByRecency(files);
 		const out: ExternalSessionSummary[] = [];
 		for (const { file: history, mtime } of candidates) {
+			options?.signal?.throwIfAborted();
 			if (reachedLimit(out.length, limit)) break; // 只读最近的若干条
 			const dir = path.dirname(history);
 			let summary: Record<string, unknown>;
 			try {
-				summary = JSON.parse(await fs.readFile(path.join(dir, "summary.json"), "utf8")) as Record<string, unknown>;
+				summary = JSON.parse((await readFileBounded(path.join(dir, "summary.json"), 1024 * 1024)).toString("utf8")) as Record<string, unknown>;
 			} catch {
-				continue;
+				summary = {};
 			}
 			if (mtime === undefined) continue; // 没有正文就没什么可导
 			const info = summary.info as Record<string, unknown> | undefined;
@@ -103,12 +103,12 @@ export const grokSource: ImportSourceModule = {
 	async read(summary: ExternalSessionSummary): Promise<ImportedSession | null> {
 		let text: string;
 		try {
-			text = await fs.readFile(summary.location, "utf8");
+			text = (await readFileBounded(summary.location)).toString("utf8");
 		} catch {
 			return null;
 		}
 		const entries: ImportedEntry[] = [];
-		const skipped: string[] = [];
+		const skipped: string[] = jsonlImportWarnings(text);
 		let encryptedReasoning = 0;
 		let synthetic = 0;
 		let model = summary.model;

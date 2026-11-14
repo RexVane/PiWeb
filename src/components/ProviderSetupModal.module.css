@@ -73,7 +73,6 @@
 }
 
 .input,
-.select,
 .providerTrigger {
 	width: 100%;
 	min-height: 44px;
@@ -88,13 +87,7 @@
 	font-size: 13.5px;
 }
 
-.select {
-	padding: 0 38px 0 13px;
-	font-size: 13.5px;
-}
-
 .input:focus,
-.select:focus,
 .providerTrigger[data-open="true"] {
 	border-color: var(--dsw-accent);
 	box-shadow: 0 0 0 2px var(--dsw-accent-soft);

@@ -55,7 +55,24 @@ describe("GitPanel request isolation", () => {
 		expect(screen.queryByText("stale A result", { exact: false })).toBeNull();
 		expect(screen.getByText("B result", { exact: false })).toBeTruthy();
 		unmount();
-		expect(signals[1].aborted).toBe(true);
+		// B already consumed its body, so the timeout wrapper has released its
+		// forwarding listener; cancelling a completed fetch carries no work.
+		expect(signals[1].aborted).toBe(false);
+	});
+	it("aborts an in-flight diff when unmounted before its response is available", async () => {
+		const pending = deferred<ReturnType<typeof response>>();
+		let signal!: AbortSignal;
+		vi.stubGlobal("fetch", vi.fn((url: string, options: RequestInit) => {
+			if (!url.includes("diff=")) return Promise.resolve(response(info()));
+			signal = options.signal as AbortSignal;
+			return pending.promise;
+		}));
+		const view = render(<GitPanel cwd="/repo" onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByTitle("a.ts"));
+		view.unmount();
+		expect(signal.aborted).toBe(true);
+		await act(async () => pending.resolve(patch("late after unmount")));
+		expect(screen.queryByText("late after unmount", { exact: false })).toBeNull();
 	});
 	it("ignores late status responses after cwd switches", async () => {
 		const old = deferred<ReturnType<typeof response>>();

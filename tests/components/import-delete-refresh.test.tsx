@@ -51,7 +51,7 @@ afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 
 async function open() {
 	const hook = renderHook(() => usePiWeb());
-	render(<SessionImportSection cwd="/ws" />);
+	render(<SessionImportSection />);
 	await screen.findByTestId("import-group-claude");
 	return hook;
 }

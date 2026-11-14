@@ -14,6 +14,7 @@ export interface ModelChoice {
 	reasoning: boolean;
 	thinkingLevels?: string[];
 	contextWindow: number;
+	input?: string[];
 }
 
 type Candidate = { key: string; model: ModelChoice | null; selected: boolean };

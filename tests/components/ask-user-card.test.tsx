@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { AskUserCard } from "@/components/AskUserCard";
+import { ChatInput } from "@/components/ChatInput";
 import type { ExtensionDialog } from "@/hooks/usePiWeb";
 import type { AskQuestion } from "@/lib/ask-user";
 
@@ -20,7 +21,9 @@ describe("AskUserCard", () => {
 	it("submits the picked option only once every question has an answer", () => {
 		const onAnswer = vi.fn();
 		render(<AskUserCard dialog={dialog([DB])} onAnswer={onAnswer} />);
-		expect(screen.getByText("pi 想问你")).toBeTruthy();
+		expect(screen.getByRole("region", { name: "pi 想问你" })).toBeTruthy();
+		expect(screen.queryByText("pi 想问你")).toBeNull();
+		expect(screen.queryByText(/30 分钟内有效/)).toBeNull();
 		expect(screen.getByText("稳")).toBeTruthy();
 		const submit = screen.getByRole("button", { name: "提交" }) as HTMLButtonElement;
 		expect(submit.disabled).toBe(true);
@@ -35,10 +38,24 @@ describe("AskUserCard", () => {
 	it("moves to the next question after a single choice and collects multi-select plus own words", () => {
 		const onAnswer = vi.fn();
 		render(<AskUserCard dialog={dialog([DB, FEATURES])} onAnswer={onAnswer} />);
-		expect(screen.getByText("pi 想问你 2 个问题")).toBeTruthy();
+		expect(screen.getByRole("region", { name: "pi 想问你 2 个问题" })).toBeTruthy();
+		expect(screen.queryByText("pi 想问你 2 个问题")).toBeNull();
+		expect(screen.getByText("1、")).toBeTruthy();
+		expect(screen.getByText("1/2")).toBeTruthy();
+		const prev = screen.getByRole("button", { name: "上一题" }) as HTMLButtonElement;
+		const next = screen.getByRole("button", { name: "下一问题" }) as HTMLButtonElement;
+		expect(prev.disabled).toBe(true);
+		expect(next.disabled).toBe(false);
 		expect(screen.getByRole("button", { name: "下一题" })).toBeTruthy();
+		fireEvent.click(next);
+		expect(screen.getByText("2、")).toBeTruthy();
+		expect(screen.getByText("2/2")).toBeTruthy();
+		expect(screen.getByText("先做哪些功能？")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "上一题" }));
+		expect(screen.getByText("1、")).toBeTruthy();
 		fireEvent.click(screen.getByRole("radio", { name: /Postgres/ }));
 		// 单选点了自动跳到第二题（多选）
+		expect(screen.getByText("2、")).toBeTruthy();
 		expect(screen.getByText("先做哪些功能？")).toBeTruthy();
 		expect(screen.getByText("可多选")).toBeTruthy();
 		fireEvent.click(screen.getByRole("checkbox", { name: /登录/ }));
@@ -92,5 +109,35 @@ describe("AskUserCard", () => {
 		render(<AskUserCard dialog={dialog([DB])} onAnswer={vi.fn()} />);
 		expect(document.activeElement).toBe(input);
 		input.remove();
+	});
+
+	it("renders seamlessly inside ChatInput .isx-composer via topSlot when embedded", () => {
+		const { container } = render(
+			<ChatInput
+				isStreaming={false}
+				contextPercent={null}
+				contextTokens={null}
+				contextWindow={null}
+				model={{ id: "m1", provider: "p", name: "M1" }}
+				thinkingLevels={[]}
+				models={[]}
+				providerNames={{}}
+				authByProvider={{}}
+				queue={{ steering: ["queued item"], followUp: [] }}
+				onSend={vi.fn(async () => ({ success: true }))}
+				onSteer={vi.fn(async () => ({ success: true }))}
+				onAbort={vi.fn()}
+				onSelectModel={vi.fn()}
+				onSelectLevel={vi.fn()}
+				topSlot={<AskUserCard embedded dialog={dialog([DB])} onAnswer={vi.fn()} />}
+			/>,
+		);
+		const composer = container.querySelector(".isx-composer");
+		const card = screen.getByTestId("ask-user-card");
+		const queue = screen.getByTestId("composer-queue");
+		expect(card.getAttribute("data-embedded")).toBe("true");
+		expect(composer?.contains(card)).toBe(true);
+		expect(composer?.contains(queue)).toBe(true);
+		expect(card.nextElementSibling).toBe(queue);
 	});
 });

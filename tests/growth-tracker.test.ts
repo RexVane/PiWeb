@@ -18,15 +18,15 @@ const roundsOf = (events: WebEvent[]): GrowthRound[] => events.flatMap((e) => (e
 
 describe("growth-tracker (real git)", () => {
 	let tempDir = "";
-	beforeEach(async () => {
+	beforeEach(async (ctx) => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-tracker-"));
+		if (!(await isAvailable())) ctx.skip("Git unavailable; no growth-tracker assertions executed");
 	});
 	afterEach(async () => {
 		await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 	});
 
 	it("commits the user's edits before a prompt and exactly one commit per round", async () => {
-		if (!(await isAvailable())) return;
 		const cwd = path.join(tempDir, "work");
 		await fs.mkdir(cwd, { recursive: true });
 		await fs.writeFile(path.join(cwd, "a.txt"), "a\n");
@@ -87,7 +87,6 @@ describe("growth-tracker (real git)", () => {
 	}, 30_000);
 
 	it("retries a failed baseline and clears the visible error after recovery", async () => {
-		if (!(await isAvailable())) return;
 		const cwd = path.join(tempDir, "not-created-yet");
 		const events: WebEvent[] = [];
 		const tracker = createGrowthTracker({ cwd, sessionPath: path.join(tempDir, "recover.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => true });

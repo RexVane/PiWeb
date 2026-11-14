@@ -1,18 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
 vi.mock("@/lib/theme", () => ({ applyPebrelTheme: () => {}, loadPebrelTheme: () => "dsh", loadThemeMode: () => "system" }));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 const originalModel = { id: "test-model", name: "Test model", reasoning: true, input: ["text", "image"], contextWindow: 128000, maxTokens: 16000,
 	compat: { supportsDeveloperRole: false }, thinkingLevelMap: { high: "deep" }, headers: { "x-model": "test" }, cost: { input: 1, output: 2 } };
 const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.invalid", api: "openai-responses", headers: { "x-test": "opaque" }, oauth: { flow: "device" },
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
-function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false, auditMissing = false, refreshFailure = false, outputOnly = false, reorderOnConflict = false }: {
+function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false, auditMissing = false, refreshFailure = false, outputOnly = false, reorderOnConflict = false,
+	requiresSessionReopen = false, onModelsChanged, onApplyCurrentSession, currentSessionBusy = false }: {
 	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean; auditMissing?: boolean; refreshFailure?: boolean; outputOnly?: boolean; reorderOnConflict?: boolean;
+	requiresSessionReopen?: boolean; onModelsChanged?: () => void | Promise<void>; onApplyCurrentSession?: () => Promise<{ success: boolean; error?: string }>; currentSessionBusy?: boolean;
 } = {}) {
 	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
 	if (auditOnly || auditMissing || outputOnly) {
@@ -52,7 +54,7 @@ function setup({ builtin = false, conflict = false, catalog, extraProviders = []
 			if (conflict) return { ok: false, status: 409, json: async () => ({ success: false, error: "Model configuration changed; reload before saving." }) };
 			saved = JSON.parse(body.content);
 			revision = "rev-2";
-			return response({});
+			return response({ requiresSessionReopen });
 		}
 		if (url === "/api/pi-settings") return response({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 20 }, retry: { enabled: true, maxRetries: 3, baseDelayMs: 50 } });
 		if (url === "/api/security") return response({ defaultProjectTrust: "ask" });
@@ -61,14 +63,106 @@ function setup({ builtin = false, conflict = false, catalog, extraProviders = []
 		throw new Error(`unexpected URL ${url}`);
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
+	const panelProps = { cwd: "/test-workspace", onClose: vi.fn(), onModelsChanged, onApplyCurrentSession, currentSessionBusy };
+	const mounted = render(<SettingsPanel open {...panelProps} />);
 	fireEvent.click(screen.getByRole("button", { name: "模型" }));
-	return { writes, keys, fetchMock, saved: () => saved };
+	return { writes, keys, fetchMock, mounted, panelProps, saved: () => saved };
 }
 function response(data: unknown) { return { ok: true, status: 200, json: async () => ({ success: true, data }) }; }
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "编辑" })); }
 
 describe("SettingsPanel model round trip and revision", () => {
+	it("refreshes the outer catalog after saving and keeps the apply notice beyond the toast and across panel changes", async () => {
+		const onModelsChanged = vi.fn();
+		const onApplyCurrentSession = vi.fn(async () => ({ success: true }));
+		const { mounted, panelProps } = setup({ requiresSessionReopen: true, onModelsChanged, onApplyCurrentSession });
+		await edit();
+		vi.useFakeTimers();
+		await act(async () => fireEvent.click(screen.getByRole("button", { name: "保存" })));
+		expect(onModelsChanged).toHaveBeenCalledTimes(1);
+		await act(async () => { vi.advanceTimersByTime(2500); });
+		expect(screen.getByText("模型配置已保存。请应用到当前会话，或重新打开会话后使用。")).toBeTruthy();
+		vi.useRealTimers();
+		fireEvent.click(screen.getByRole("button", { name: "通用设置" }));
+		expect(screen.getByRole("button", { name: "应用到当前会话" })).toBeTruthy();
+		mounted.rerender(<SettingsPanel open={false} {...panelProps} />);
+		mounted.rerender(<SettingsPanel open {...panelProps} />);
+		expect(screen.getByText("模型配置已保存。请应用到当前会话，或重新打开会话后使用。")).toBeTruthy();
+	});
+
+	it("keeps a failed application visible and lets the user retry the current chat", async () => {
+		const onModelsChanged = vi.fn();
+		const onApplyCurrentSession = vi.fn().mockResolvedValueOnce({ success: false, error: "reload failed" }).mockResolvedValueOnce({ success: true });
+		setup({ requiresSessionReopen: true, onModelsChanged, onApplyCurrentSession });
+		await edit();
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(onModelsChanged).toHaveBeenCalledTimes(1));
+		fireEvent.click(screen.getByRole("button", { name: "应用到当前会话" }));
+		expect((await screen.findByRole("alert")).textContent).toContain("配置已保存，但应用当前会话失败：reload failed");
+		expect(screen.getByText("模型配置已保存。请应用到当前会话，或重新打开会话后使用。")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "应用到当前会话" }));
+		await screen.findByText("新模型配置已应用到当前会话。");
+		expect(onApplyCurrentSession).toHaveBeenCalledTimes(2);
+		expect(onModelsChanged).toHaveBeenCalledTimes(2);
+		expect(screen.queryByRole("alert")).toBeNull();
+	});
+
+	it("blocks manual application while the current chat is answering", async () => {
+		const onApplyCurrentSession = vi.fn(async () => ({ success: true }));
+		const { mounted, panelProps } = setup({ onApplyCurrentSession, currentSessionBusy: true });
+		await edit(); fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		const apply = await screen.findByRole("button", { name: "应用到当前会话" });
+		expect((apply as HTMLButtonElement).disabled).toBe(true);
+		fireEvent.click(apply); expect(onApplyCurrentSession).not.toHaveBeenCalled();
+		mounted.rerender(<SettingsPanel open {...panelProps} currentSessionBusy={false} />);
+		fireEvent.click(screen.getByRole("button", { name: "应用到当前会话" }));
+		await screen.findByText("新模型配置已应用到当前会话。");
+		expect(onApplyCurrentSession).toHaveBeenCalledTimes(1);
+	});
+
+	it("retains the saved configuration when the outer catalog refresh fails", async () => {
+		const onModelsChanged = vi.fn(async () => { throw new Error("catalog offline"); });
+		const { saved } = setup({ onModelsChanged });
+		await edit();
+		fireEvent.change(screen.getByDisplayValue("Gateway"), { target: { value: "Saved gateway" } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		expect((await screen.findByRole("alert")).textContent).toContain("配置已保存，但模型目录刷新失败：catalog offline");
+		await waitFor(() => expect(screen.queryByDisplayValue("Saved gateway")).toBeNull());
+		expect(saved().providers.gateway.name).toBe("Saved gateway");
+		expect(screen.getByText(/会话会自动尝试应用/)).toBeTruthy();
+	});
+	it("reports a catalog refresh failure separately after the current chat already applied the changes", async () => {
+		const onModelsChanged = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("catalog offline"));
+		const onApplyCurrentSession = vi.fn(async () => ({ success: true }));
+		setup({ requiresSessionReopen: true, onModelsChanged, onApplyCurrentSession });
+		await edit(); fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(onModelsChanged).toHaveBeenCalledTimes(1));
+		fireEvent.click(screen.getByRole("button", { name: "应用到当前会话" }));
+		await screen.findByText("新模型配置已应用到当前会话。");
+		expect((await screen.findByRole("alert")).textContent).toContain("配置已保存，但模型目录刷新失败：catalog offline");
+		expect(onApplyCurrentSession).toHaveBeenCalledTimes(1);
+	});
+	it("does not show the previous chat's successful application as applied to a newly selected chat", async () => {
+		const onApplyCurrentSession = vi.fn(async () => ({ success: true }));
+		const { mounted, panelProps } = setup({ requiresSessionReopen: true, onApplyCurrentSession });
+		mounted.rerender(<SettingsPanel open {...panelProps} currentSessionKey="a" />);
+		await edit(); fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		fireEvent.click(await screen.findByRole("button", { name: "应用到当前会话" }));
+		await screen.findByText("新模型配置已应用到当前会话。");
+		mounted.rerender(<SettingsPanel open {...panelProps} currentSessionKey="b" />);
+		expect(screen.queryByText("新模型配置已应用到当前会话。")).toBeNull();
+		expect(screen.getByText("模型配置已保存。请应用到当前会话，或重新打开会话后使用。")).toBeTruthy();
+	});
+
+	it.each(["__proto__", "gateway?bad", "existing"])("edits display name %s without renaming or overwriting the provider identity", async (id) => {
+		const { writes, saved } = setup({ extraProviders: [{ id: "existing", name: "Existing", builtIn: true, authReady: false, modelCount: 0 }] });
+		await edit();
+		fireEvent.change(screen.getByPlaceholderText("gateway"), { target: { value: id } });
+		fireEvent.click(screen.getByRole("button", { name: "保存" }));
+		await waitFor(() => expect(writes).toHaveLength(1));
+		expect(Object.keys(saved().providers)).toEqual(["gateway"]);
+		expect(saved().providers.gateway.name).toBe(id);
+	});
 	it("lets the user save the current default output once without changing already configured capabilities", async () => {
 		const { saved, writes } = setup({ outputOnly: true });
 		const useDefaults = await screen.findByRole("button", { name: "使用默认值并保存" });
@@ -186,7 +280,8 @@ describe("SettingsPanel model round trip and revision", () => {
 	});
 
 	it("keeps a conflicting edit visible and does not retry without its revision", async () => {
-		const { writes } = setup({ conflict: true });
+		const onModelsChanged = vi.fn();
+		const { writes } = setup({ conflict: true, onModelsChanged });
 		await edit();
 		fireEvent.change(screen.getByDisplayValue("test-model"), { target: { value: "keep-conflicting-draft" } });
 		fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -194,6 +289,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		expect(screen.getByDisplayValue("keep-conflicting-draft")).toBeTruthy();
 		expect(writes).toHaveLength(1);
 		expect(writes[0].revision).toBe("rev-1");
+		expect(onModelsChanged).not.toHaveBeenCalled();
 	});
 
 	it("allows deleting all builtin overrides without dropping headers, OAuth, or API", async () => {

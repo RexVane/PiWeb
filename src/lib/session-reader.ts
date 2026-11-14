@@ -1,17 +1,18 @@
 /**
  * session-reader：枚举 / 搜索 / 冷读取 ~/.pi/agent/sessions/**.jsonl（pi 零改动）。
  */
-import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { StringDecoder } from "node:string_decoder";
+import { createHash, randomUUID } from "node:crypto";
 import type { SessionSummary, WebMessage } from "./types";
-import { sessionDisplayMessages, syncSessionsFromDisk } from "./agent-manager";
+import { getManaged, getSessionHistory, syncSessionsFromDisk } from "./agent-manager";
+import type { HistoryPage } from "./chat/web-history";
 import { getAgentDir } from "./pi";
 import { BoundaryError, isPathInside } from "./path-security";
 import { promptTitleText } from "./chat/skill-expansion";
 import { canonicalWorkspacePath } from "./workspace-store";
+import { recoverableRemove } from "./recoverable-remove";
 
 function toSummary(info: {
 	path: string;
@@ -55,43 +56,86 @@ function clipFirstMessage(text: string): string {
  * 首行必须是 session 头；名字取最后一条 session_info；messageCount 计全部 message 条目；
  * firstMessage 取首条用户消息的文本块；modified 取用户 / 助手消息的最后活动时间（没有就回落头时间戳、再回落 mtime）。
  */
-async function summarize(filePath: string, stat: { mtime: Date }): Promise<SessionSummary | null> {
+async function summarize(filePath: string, stat: { mtime: Date }, cached?: CachedSummary): Promise<SessionSummary | null> {
 	try {
-		let header: { cwd?: unknown; timestamp?: unknown } | null = null;
-		let name: string | undefined;
-		let messageCount = 0;
-		let firstMessage = "";
-		let lastActivity: number | undefined;
-		const rl = createInterface({ input: createReadStream(filePath, { encoding: "utf8" }), crlfDelay: Infinity });
-		for await (const line of rl) {
-			if (!line.trim()) continue;
+		let resumable = cached?.scan && cached.size <= (await fs.stat(filePath)).size ? cached.scan : undefined;
+		const handle = await fs.open(filePath, "r");
+		let originalMetadata: Awaited<ReturnType<typeof handle.stat>>;
+		try { originalMetadata = await handle.stat(); } catch (error) { await handle.close(); throw error; }
+		const prefixStamp = async (offset: number) => {
+			const first = Buffer.alloc(Math.min(offset, 4096)), last = Buffer.alloc(Math.min(offset, 128));
+			const a = await handle.read(first, 0, first.length, 0);
+			const b = await handle.read(last, 0, last.length, Math.max(0, offset - last.length));
+			return createHash("sha256").update(first.subarray(0, a.bytesRead)).update(last.subarray(0, b.bytesRead)).digest("hex");
+		};
+		try { if (resumable && (!resumable.stamp || await prefixStamp(resumable.offset) !== resumable.stamp)) resumable = undefined; }
+		catch (error) { await handle.close(); throw error; }
+		let header: { cwd?: unknown; timestamp?: unknown } | null = resumable?.header ?? null;
+		let name: string | undefined = resumable?.name;
+		let messageCount = resumable?.messageCount ?? 0;
+		let firstMessage = resumable?.firstMessage ?? "";
+		let lastActivity: number | undefined = resumable?.lastActivity;
+		let offset = resumable?.offset ?? 0;
+		let invalidHeader = false;
+		const accept = (line: string) => {
+			if (!line.trim()) return;
 			let entry: any;
 			try {
 				entry = JSON.parse(line);
 			} catch {
-				continue;
+				return;
 			}
 			if (!header) {
-				if (entry?.type !== "session") return null;
+				if (entry?.type !== "session") { invalidHeader = true; return; }
 				header = entry;
-				continue;
+				return;
 			}
 			if (entry?.type === "session_info") name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : undefined;
-			if (entry?.type !== "message") continue;
+			if (entry?.type !== "message") return;
 			messageCount += 1;
 			const message = entry.message;
-			if (!message || typeof message.role !== "string" || !("content" in message)) continue;
-			if (message.role !== "user" && message.role !== "assistant") continue;
+			if (!message || typeof message.role !== "string" || !("content" in message)) return;
+			if (message.role !== "user" && message.role !== "assistant") return;
 			const at = typeof message.timestamp === "number" ? message.timestamp : new Date(entry.timestamp).getTime();
 			if (isValidTime(at)) lastActivity = Math.max(lastActivity ?? 0, at);
 			if (!firstMessage && message.role === "user") {
 				const content = message.content;
-				firstMessage = promptTitleText(typeof content === "string"
+				firstMessage = clipFirstMessage(promptTitleText(typeof content === "string"
 					? content
-					: Array.isArray(content) ? content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join(" ") : "");
+					: Array.isArray(content) ? content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join(" ") : ""));
 			}
-		}
-		if (!header) return null;
+		};
+		const decoder = new StringDecoder("utf8");
+		let pending = "", pendingBytes = 0;
+		try {
+			const buffer = Buffer.allocUnsafe(64 * 1024);
+			let position = offset;
+			for (;;) {
+				const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+				if (!bytesRead) break;
+				position += bytesRead;
+				let from = 0;
+				const chunk = buffer.subarray(0, bytesRead);
+				for (let at = chunk.indexOf(10); at >= 0; at = chunk.indexOf(10, from)) {
+					const segment = chunk.subarray(from, at);
+					pending += decoder.write(segment); pendingBytes += segment.length;
+					accept(pending + decoder.end());
+					offset += pendingBytes + 1;
+					pending = ""; pendingBytes = 0; from = at + 1;
+				}
+				const remainder = chunk.subarray(from);
+				pending += decoder.write(remainder); pendingBytes += remainder.length;
+			}
+			// A partially appended last record is retried next scan, never cached as complete.
+			// Valid JSON without LF is still retried: the writer may append to this
+			// exact line. A complete snapshot never skips an unfinished delimiter.
+			if (pending) { try { const final = pending + decoder.end(); JSON.parse(final); accept(final); } catch { /* incomplete line */ } }
+			if (cached) {
+				cached.scan = { header, name, messageCount, firstMessage, lastActivity, offset, stamp: await prefixStamp(offset) };
+				cached.ino = originalMetadata.ino;
+			}
+		} finally { await handle.close(); }
+		if (!header || invalidHeader) return null;
 		const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
 		const created = isValidTime(headerTime) ? new Date(headerTime) : stat.mtime;
 		const modified = lastActivity && lastActivity > 0 ? new Date(lastActivity) : created;
@@ -115,11 +159,15 @@ async function summarize(filePath: string, stat: { mtime: Date }): Promise<Sessi
 const summaryCache = new Map<string, CachedSummary>();
 /** 并发列表请求共用一次扫描 */
 let scanning: Promise<SessionSummary[]> | null = null;
+let scanSource: string | null = null;
+let indexLoading: { source: string; promise: Promise<void> } | null = null;
 
 interface CachedSummary {
 	mtimeMs: number;
 	size: number;
 	summary: SessionSummary | null;
+	ino?: number;
+	scan?: { header: { cwd?: unknown; timestamp?: unknown } | null; name?: string; messageCount: number; firstMessage: string; lastActivity?: number; offset: number; stamp?: string };
 }
 
 /**
@@ -133,7 +181,7 @@ interface CachedSummary {
  * 3：技能展开的首条消息还原成 `/skill:name 参数`，旧索引里存的是 `<skill name=…>` 加 SKILL.md 正文
  * 4：头时间戳坏掉的会话不再摘要成 null，旧索引里缓存的 null 要重读才能回到侧栏
  */
-const INDEX_VERSION = 4;
+const INDEX_VERSION = 5;
 const INDEX_FILENAME = "piweb-session-index.json";
 const INDEX_MAX_ENTRIES = 5000;
 const INDEX_SAVE_DELAY_MS = 1500;
@@ -145,22 +193,45 @@ function indexPath(): string {
 	return path.join(getAgentDir(), INDEX_FILENAME);
 }
 
-type IndexEntry = [mtimeMs: number, size: number, summary: SessionSummary | null];
+type IndexEntry = [mtimeMs: number, size: number, summary: SessionSummary | null, scan?: CachedSummary["scan"], ino?: number];
 
 async function loadIndex(): Promise<void> {
-	const target = indexPath();
+	const source = indexPath();
+	if (indexLoadedFrom === source && !indexLoading) return;
+	if (indexLoading?.source === source) return indexLoading.promise;
+	const promise = loadIndexData(source).finally(() => { if (indexLoading?.promise === promise) indexLoading = null; });
+	indexLoading = { source, promise };
+	return promise;
+}
+
+async function loadIndexData(target: string): Promise<void> {
 	if (indexLoadedFrom === target) return;
 	indexLoadedFrom = target;
+	listCache = null;
 	// 会话库换了目录（PI_CODING_AGENT_DIR）就不能再沿用上一个目录的摘要
 	summaryCache.clear();
 	try {
 		const raw = JSON.parse(await fs.readFile(target, "utf8")) as { version?: unknown; entries?: Record<string, unknown> };
 		if (raw?.version !== INDEX_VERSION || !raw.entries || typeof raw.entries !== "object" || Array.isArray(raw.entries)) return;
-		for (const [file, entry] of Object.entries(raw.entries)) {
-			if (!Array.isArray(entry) || entry.length !== 3) continue;
-			const [mtimeMs, size, summary] = entry as IndexEntry;
-			if (typeof mtimeMs !== "number" || typeof size !== "number") continue;
-			summaryCache.set(file, { mtimeMs, size, summary: summary && typeof summary === "object" ? summary : null });
+		for (const [file, entry] of Object.entries(raw.entries).slice(0, INDEX_MAX_ENTRIES)) {
+			if (!Array.isArray(entry) || entry.length < 3 || entry.length > 5) continue;
+			const [mtimeMs, size, summary, scan, ino] = entry as IndexEntry;
+			if (!Number.isFinite(mtimeMs) || !Number.isSafeInteger(size) || size < 0) continue;
+			const validSummary = summary && typeof summary === "object" && summary.path === file && typeof summary.cwd === "string"
+				&& (summary.name === undefined || typeof summary.name === "string")
+				&& typeof summary.created === "string" && !Number.isNaN(Date.parse(summary.created))
+				&& typeof summary.modified === "string" && !Number.isNaN(Date.parse(summary.modified))
+				&& Number.isSafeInteger(summary.messageCount) && summary.messageCount >= 0 && typeof summary.firstMessage === "string";
+			if (summary !== null && !validSummary) continue;
+			const validScan = scan && typeof scan === "object" && scan.header && typeof scan.header === "object"
+				&& (scan.name === undefined || typeof scan.name === "string")
+				&& (scan.lastActivity === undefined || isValidTime(scan.lastActivity))
+				&& typeof scan.stamp === "string" && /^[a-f0-9]{64}$/.test(scan.stamp)
+				&& Number.isSafeInteger(scan.messageCount) && scan.messageCount >= 0 && typeof scan.firstMessage === "string"
+				&& Number.isSafeInteger(scan.offset) && scan.offset >= 0 && scan.offset <= size;
+			if (validSummary) summary.firstMessage = clipFirstMessage(summary.firstMessage);
+			if (validScan) scan.firstMessage = clipFirstMessage(scan.firstMessage);
+			summaryCache.set(file, { mtimeMs, size, summary: validSummary ? summary : null, ...(typeof ino === "number" && Number.isFinite(ino) ? { ino } : {}), ...(validScan ? { scan } : {}) });
 		}
 	} catch {
 		/* 首次运行没有索引，或索引损坏：全量扫描即可 */
@@ -186,11 +257,11 @@ async function saveIndex(): Promise<void> {
 	const entries: Record<string, IndexEntry> = {};
 	// 只留最近改动的若干条，避免索引本身无限长
 	for (const [file, cached] of [...summaryCache.entries()].sort((a, b) => b[1].mtimeMs - a[1].mtimeMs).slice(0, INDEX_MAX_ENTRIES)) {
-		entries[file] = [cached.mtimeMs, cached.size, cached.summary];
+		entries[file] = [cached.mtimeMs, cached.size, cached.summary, cached.scan, cached.ino];
 	}
 	try {
 		await fs.mkdir(path.dirname(target), { recursive: true });
-		const temporary = `${target}.${process.pid}.tmp`;
+		const temporary = target + "." + randomUUID() + ".tmp";
 		try {
 			await fs.writeFile(temporary, JSON.stringify({ version: INDEX_VERSION, entries }), "utf8");
 			await fs.rename(temporary, target);
@@ -228,12 +299,15 @@ async function scanSessions(): Promise<SessionSummary[]> {
 			const stat = await fs.stat(file).catch(() => null);
 			if (!stat?.isFile()) return;
 			const cached = summaryCache.get(file);
-			if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+			if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size && (cached.ino === undefined || cached.ino === stat.ino)) {
 				if (cached.summary) out.push(cached.summary);
 				return;
 			}
-			const summary = await summarize(file, stat);
-			summaryCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, summary });
+			const next: CachedSummary = { mtimeMs: stat.mtimeMs, size: stat.size, summary: null };
+			if (cached && cached.ino === stat.ino && stat.size > cached.size && cached.scan && cached.scan.offset === cached.size) next.scan = cached.scan;
+			const summary = await summarize(file, stat, next);
+			next.summary = summary;
+			summaryCache.set(file, next);
 			changed = true;
 			if (summary) out.push(summary);
 		}));
@@ -249,17 +323,20 @@ async function scanSessions(): Promise<SessionSummary[]> {
 }
 
 /** 列表短缓存：多标签每 3 秒各轮询一次，1.2 秒 TTL 吸收并发请求 */
-let listCache: { at: number; list: SessionSummary[] } | null = null;
+let listCache: { at: number; source: string; list: SessionSummary[] } | null = null;
 
 export async function listSessions(query?: string): Promise<SessionSummary[]> {
+	const source = indexPath();
 	let list: SessionSummary[];
-	if (listCache && Date.now() - listCache.at < 1200) {
+	if (listCache && listCache.source === source && Date.now() - listCache.at < 1200) {
 		list = listCache.list;
 	} else {
+		if (scanning && scanSource !== source) await scanning;
 		await loadIndex();
-		scanning ??= scanSessions().finally(() => { scanning = null; });
+		scanSource = source;
+		scanning ??= scanSessions().finally(() => { scanning = null; scanSource = null; });
 		list = await scanning;
-		listCache = { at: Date.now(), list };
+		listCache = { at: Date.now(), source, list };
 		// 顺带看看开着的会话有没有被终端 pi 写过（见 agent-manager syncWithDisk）
 		syncSessionsFromDisk();
 	}
@@ -273,7 +350,7 @@ export async function listSessions(query?: string): Promise<SessionSummary[]> {
 		);
 	}
 	// 同一时间戳的会话按路径定序：扫描是并发的，顺序不固定会让 ETag 抖动、侧栏顺序跳动
-	list.sort((a, b) => b.modified.localeCompare(a.modified) || a.path.localeCompare(b.path));
+	list = [...list].sort((a, b) => b.modified.localeCompare(a.modified) || a.path.localeCompare(b.path));
 	return list;
 }
 
@@ -290,7 +367,7 @@ export async function deleteSession(sessionPath: string): Promise<void> {
 	});
 	if (realTarget !== target && !isPathInside(realRoot, realTarget)) throw new BoundaryError("session path escapes the Pi session store");
 	try {
-		await fs.unlink(target);
+		await recoverableRemove(target, { reason: "移除 PiWeb 会话，保留恢复副本" });
 	} catch (error) {
 		// 未落盘的惰性会话（还没发过消息）本来就没有文件，删除视为成功
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -302,19 +379,16 @@ export async function readSession(sessionPath: string): Promise<{
 	cwd: string;
 	name: string;
 	messages: WebMessage[];
+	historyPage: Omit<HistoryPage, "messages" | "trajectory">;
 }> {
-	const sm = SessionManager.open(sessionPath);
-	let messages: WebMessage[] = [];
-	try {
-		messages = sessionDisplayMessages(sm);
-	} catch {
-		messages = [];
-	}
+	const managed = getManaged(sessionPath);
+	const { messages, trajectory: _trajectory, ...page } = getSessionHistory(managed);
+	const sm = managed.sm;
 	let name = "";
 	try {
 		name = (sm as unknown as { getSessionName?: () => string }).getSessionName?.() ?? "";
 	} catch {
 		name = "";
 	}
-	return { cwd: await canonicalWorkspacePath(sm.getCwd()), name, messages };
+	return { cwd: await canonicalWorkspacePath(sm.getCwd()), name, messages, historyPage: page };
 }

@@ -10,6 +10,8 @@
 import { createContext, useContext } from "react";
 
 export interface MarkdownActions {
+	/** Document previews may resolve .. within their protected document-source root. */
+	allowDocumentParents?: boolean;
 	/** 用文件查看器打开项目内路径；没有工作区时不给（此时路径只作展示） */
 	openFile?: (path: string) => void;
 	/** A document preview resolves local images from its own directory through the protected API. */

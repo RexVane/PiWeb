@@ -72,6 +72,11 @@ describe("Markdown document references", () => {
 	it("decodes explicit relative paths and strips actual query strings/fragments", () => {
 		expect(relativeMarkdownPath("docs/%E4%B8%AD%E6%96%87%20%23file.md?raw=1#L2")).toBe("docs/中文 #file.md");
 		expect(relativeMarkdownPath("asset%2520name.png")).toBe("asset%20name.png");
+		expect(relativeMarkdownPath("src/../file.ts")).toBe("file.ts");
+		expect(relativeMarkdownPath("../private.md")).toBeNull();
+		expect(relativeMarkdownPath("%2e%2e/private.md")).toBeNull();
+		expect(relativeMarkdownPath("%7e/private.md")).toBeNull();
+		expect(relativeMarkdownPath("../assets/image.png", true)).toBe("../assets/image.png");
 		for (const href of ["https://example.com/a.md", "//example.com/a.png", "mailto:x@y.test", "#section", "?q=1", "/login", "bad%zz.png", "%00.png"]) expect(relativeMarkdownPath(href), href).toBeNull();
 	});
 	it.each(["docs/guide.md", "/workspace/docs/guide.md", "D:/ws/docs/guide.md"])("resolves relative to the document %s", (current) => {

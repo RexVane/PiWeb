@@ -189,7 +189,7 @@ export const FullDiff = memo(function FullDiff({
 									<span>{l.kind === "add" ? "" : String(l.old ?? "").padStart(width)}</span>
 									<span>{l.kind === "del" ? "" : String(l.new ?? "").padStart(width)}</span>
 								</span>
-								<span className="pw-fdiff-sign">{l.kind === "add" ? "+" : l.kind === "del" ? "−" : " "}</span>
+								<span className="pw-fdiff-sign">{l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}</span>
 								<span className="pw-fdiff-text hljs">{h ? <span dangerouslySetInnerHTML={{ __html: h }} /> : l.text}</span>
 							</div>
 						);

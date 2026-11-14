@@ -4,13 +4,13 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 
-/** 两个文件的指纹（大小 + 修改时间，不读内容）：指纹变了才需要重新加载模型目录 */
+/** File identity/change time also catches atomic replacement and same-size rewrites with restored mtime. */
 export function modelFilesFingerprint(agentDir: string): string {
 	return ["models.json", "auth.json"]
 		.map((name) => {
 			try {
-				const stat = statSync(path.join(agentDir, name));
-				return `${name}:${stat.size}:${stat.mtimeMs}`;
+				const stat = statSync(path.join(agentDir, name), { bigint: true });
+				return `${name}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
 			} catch {
 				return `${name}:-`;
 			}

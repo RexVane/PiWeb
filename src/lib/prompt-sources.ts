@@ -9,8 +9,11 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getAgentDir, getResourceLoader, resourceLoaderReady } from "./pi";
+import { getAgentDir, getResourceLoader, refreshResourceLoaderIfStale } from "./pi";
 import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./path-security";
+import { FileSizeLimitError, readFileBounded } from "./read-file-bounded";
+
+export const MAX_PROMPT_SOURCE_BYTES = 1024 * 1024;
 
 /** 提示词来源类别：界面按这个分组 */
 export type PromptSourceKind = "system" | "append" | "agents" | "skill" | "template" | "tool" | "assembled";
@@ -65,8 +68,14 @@ export interface PromptSessionLike {
 		sourceInfo?: { source?: string; origin?: string; scope?: string };
 	}>;
 	/** 会话条目入口：SDK 里字段名有 sm / sessionManager 两种（压缩摘要从这里取） */
-	sm?: { getEntries?: () => unknown[] };
-	sessionManager?: { getEntries?: () => unknown[] };
+	sm?: PromptSessionManagerLike;
+	sessionManager?: PromptSessionManagerLike;
+}
+
+interface PromptSessionManagerLike {
+	buildSessionProjection?: () => { messages: unknown[] };
+	getBranch?: () => unknown[];
+	getEntries?: () => unknown[];
 }
 
 interface SourceInfoLike {
@@ -144,10 +153,19 @@ async function fileSize(filePath: string | undefined): Promise<number | undefine
 	}
 }
 
-/** 最近一次压缩的摘要（与上下文计量同一套取法：从会话条目的最后一条 compaction 往前找） */
+/** 当前模型上下文里的压缩摘要；其他分支的压缩记录不会进入这里。 */
 export function latestCompactionSummary(session: PromptSessionLike): string | undefined {
 	try {
-		const entries = sessionEntries(session);
+		const manager = session.sm ?? session.sessionManager;
+		if (manager?.buildSessionProjection) {
+			const messages = manager.buildSessionProjection().messages;
+			for (let i = messages.length - 1; i >= 0; i -= 1) {
+				const message = messages[i] as { role?: string; summary?: string };
+				if (message?.role === "compactionSummary" && typeof message.summary === "string" && message.summary.trim()) return message.summary;
+			}
+			return undefined;
+		}
+		const entries = manager?.getBranch?.() ?? manager?.getEntries?.() ?? [];
 		for (let i = entries.length - 1; i >= 0; i -= 1) {
 			const entry = entries[i] as { type?: string; summary?: string };
 			if (entry?.type === "compaction" && typeof entry.summary === "string" && entry.summary.trim()) return entry.summary;
@@ -156,12 +174,6 @@ export function latestCompactionSummary(session: PromptSessionLike): string | un
 		/* 条目不可用则跳过 */
 	}
 	return undefined;
-}
-
-/** 会话条目入口在 SDK 里有两个字段名（sm / sessionManager），两种都认 */
-function sessionEntries(session: PromptSessionLike): unknown[] {
-	const s = session as unknown as { sm?: { getEntries?: () => unknown[] }; sessionManager?: { getEntries?: () => unknown[] } };
-	return s.sm?.getEntries?.() ?? s.sessionManager?.getEntries?.() ?? [];
 }
 
 /** 列出当前工作区的全部提示词来源（冷会话也能列全文件类来源） */
@@ -173,7 +185,7 @@ export async function listPromptSources({
 	session?: PromptSessionLike | null;
 }): Promise<PromptSourcesResult> {
 	const resolvedCwd = path.resolve(cwd);
-	await resourceLoaderReady(resolvedCwd);
+	await refreshResourceLoaderIfStale(resolvedCwd);
 	const loader = getResourceLoader(resolvedCwd);
 
 	const raw: Array<Omit<PromptSource, "origin"> & { cwd: string; sourceInfo?: SourceInfoLike; baseName?: string }> = [];
@@ -240,7 +252,9 @@ export async function resolvePromptSourcePath(filePath: string, cwd: string, sou
 
 export async function readPromptSource(filePath: string, cwd: string, sourcePath?: string): Promise<string> {
 	const authorized = await resolvePromptSourcePath(filePath, cwd, sourcePath);
-	const stat = await fs.stat(authorized);
-	if (sourcePath !== undefined && stat.size > 1024 * 1024) throw new BoundaryError("linked resource exceeds 1 MB");
-	return fs.readFile(authorized, "utf8");
+	try { return (await readFileBounded(authorized, MAX_PROMPT_SOURCE_BYTES)).toString("utf8"); }
+	catch (error) {
+		if (error instanceof FileSizeLimitError) throw new BoundaryError("prompt resource exceeds 1 MB");
+		throw error;
+	}
 }

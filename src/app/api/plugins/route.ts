@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { PackageSourceValidationError } from "@/lib/package-manager-safe";
 import {
+	ExtensionToggleError,
+	ResourceRefreshError,
 	installPackage,
 	listLoadedExtensions,
 	listPackages,
@@ -11,6 +14,9 @@ import {
 } from "@/lib/plugins-service";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
 import { APP_ROOT } from "@/lib/app-root";
+import { apiError } from "@/lib/api-error";
+import { NpmTransactionPendingCommitError } from "@/lib/npm-install-transaction";
+import { publicDiagnostic } from "@/lib/public-diagnostic";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +24,9 @@ export async function GET(req: Request) {
 	try {
 		const cwd = await resolveWorkspacePath(new URL(req.url).searchParams.get("cwd") || APP_ROOT);
 		const [packages, extensions] = await Promise.all([listPackages(cwd), listLoadedExtensions(cwd)]);
-		return NextResponse.json({ success: true, data: { packages, extensions } });
-	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: err instanceof BoundaryError ? 400 : 500 });
+		return NextResponse.json({ success: true, data: { packages, extensions: extensions.map((extension) => extension.error ? { ...extension, error: publicDiagnostic(extension.error, "此扩展加载失败，请检查扩展配置后重新载入。") } : extension) } });
+	} catch (err: unknown) {
+		return NextResponse.json({ success: false, ...apiError(err, "读取插件失败，请检查文件权限或稍后重试。") }, { status: err instanceof BoundaryError ? 400 : 500 });
 	}
 }
 
@@ -63,7 +69,7 @@ export async function POST(req: Request) {
 		if (body.action === "remove") {
 			if (!body.source) return NextResponse.json({ success: false, error: "missing source" }, { status: 400 });
 			const removed = await removePackage(body.source, body.local === true, cwd);
-			if (!removed) return NextResponse.json({ success: false, error: `package not found: ${body.source}` }, { status: 404 });
+			if (!removed) return NextResponse.json({ success: false, error: "请求的插件包不存在，请刷新插件列表后重试。" }, { status: 404 });
 			return NextResponse.json({ success: true, data: { removed } });
 		}
 		if (body.action === "update") {
@@ -72,9 +78,13 @@ export async function POST(req: Request) {
 		}
 		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 	} catch (error) {
+		if (error instanceof NpmTransactionPendingCommitError) return NextResponse.json({ success: false, pending: true, error: error.message }, { status: 503, headers: { "Cache-Control": "no-store" } });
+		if (error instanceof ResourceRefreshError) return NextResponse.json({ success: true, data: { applied: true, warning: apiError(error, "插件配置已保存，但刷新失败。请在会话空闲后重新载入插件。").error } });
+		const failure = apiError(error, "插件操作失败，请检查来源和文件权限后重试。", error instanceof ExtensionToggleError || error instanceof PackageSourceValidationError);
+		if (error instanceof ExtensionToggleError && error.message.includes("whole-package")) failure.error = "此扩展属于插件包，请使用整个插件包的开关（whole-package）。";
 		return NextResponse.json(
-			{ success: false, error: error instanceof Error ? error.message : "request failed" },
-			{ status: error instanceof BoundaryError || error instanceof SyntaxError ? 400 : 500 },
+			{ success: false, ...failure },
+			{ status: error instanceof BoundaryError || error instanceof SyntaxError || error instanceof ExtensionToggleError || error instanceof PackageSourceValidationError ? 400 : 500 },
 		);
 	}
 }

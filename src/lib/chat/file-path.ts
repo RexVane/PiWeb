@@ -54,12 +54,20 @@ export function looksLikeFilePath(raw: string): boolean {
 }
 
 /** Explicit Markdown links can name Chinese files, spaces, directories or extensionless files. */
-export function relativeMarkdownPath(href: string): string | null {
+export function relativeMarkdownPath(href: string, allowDocumentParents = false): string | null {
 	if (!href || /^[#?/~\\]/.test(href) || /^[a-z][a-z\d+.-]*:/i.test(href)) return null;
 	const rawPath = href.split(/[?#]/, 1)[0];
 	try {
 		const decoded = decodeURIComponent(rawPath);
-		if (!decoded || /[\u0000-\u001f\u007f\\]/.test(decoded) || decoded.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return null;
+		if (!decoded || /[\u0000-\u001f\u007f\\]/.test(decoded) || /^[\/~]/.test(decoded) || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return null;
+		if (!allowDocumentParents) {
+			const segments: string[] = [];
+			for (const segment of decoded.split("/")) {
+				if (segment === "..") { if (!segments.length) return null; segments.pop(); }
+				else if (segment && segment !== ".") segments.push(segment);
+			}
+			return segments.join("/") + (decoded.endsWith("/") ? "/" : "");
+		}
 		return decoded;
 	} catch {
 		return null;
@@ -78,7 +86,7 @@ export function resolveMarkdownDocumentPath(documentPath: string, href: string):
 
 /** Local preview images use the same authenticated workspace/discovered-source boundary as files. */
 export function markdownDocumentImageUrl(cwd: string, documentPath: string, href: string, sourcePath?: string): string {
-	if (relativeMarkdownPath(href) === null) return href;
+	if (relativeMarkdownPath(href, true) === null) return href;
 	const query = new URLSearchParams({ image: "1", cwd, path: resolveMarkdownDocumentPath(documentPath, href) });
 	if (sourcePath) query.set("sourcePath", sourcePath);
 	return `/api/files?${query}`;

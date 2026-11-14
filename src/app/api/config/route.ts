@@ -14,9 +14,11 @@ export async function GET() {
 			headers: {
 				"Content-Type": "application/json; charset=utf-8",
 				"Content-Disposition": 'attachment; filename="settings.json"',
+				"Cache-Control": "no-store",
 			},
 		});
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		console.error("[config] Could not read configuration:", err);
+		return NextResponse.json({ success: false, error: "configuration is unavailable" }, { status: 500, headers: { "Cache-Control": "no-store" } });
 	}
 }

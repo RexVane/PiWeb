@@ -1,7 +1,9 @@
 "use client";
 
+import { safeLocalStorage } from "@/lib/browser-storage";
+
 /**
- * 右下角的更新提示条：每次服务启动提醒一次（按启动标识记在 localStorage，刷新、多开标签页不重复）。
+ * 右下角的更新提示条：每次服务启动提醒一次（按启动标识记在 safeLocalStorage，刷新、多开标签页不重复）。
  *
  * 只列启动检查时就有新版本的那几项：
  * - 能直接更新的点「更新」，只更新 PiWeb；内置 Pi 随发行版升级；
@@ -22,14 +24,14 @@ const LABEL: Record<UpdateTarget, string> = { piweb: "PiWeb", pi: "Pi" };
 export function UpdateNotice() {
 	const { t } = useI18n();
 	const updates = useUpdates();
-	/** 读过 localStorage 之后才知道这次启动是否已经关掉过（服务端渲染没有 localStorage） */
+	/** 读过 safeLocalStorage 之后才知道这次启动是否已经关掉过（服务端渲染没有 safeLocalStorage） */
 	const [dismissed, setDismissed] = useState<string | null | undefined>(undefined);
 	/** 启动检查时就有新版本的项：提示条只管这些，之后它们变成更新中 / 已更新 / 失败也留在条里 */
 	const [offered, setOffered] = useState<UpdateTarget[] | null>(null);
 
 	useEffect(() => {
 		try {
-			setDismissed(localStorage.getItem(UPDATE_NOTICE_KEY));
+			setDismissed(safeLocalStorage.getItem(UPDATE_NOTICE_KEY));
 		} catch {
 			setDismissed(null);
 		}
@@ -48,7 +50,7 @@ export function UpdateNotice() {
 	const anyUpdated = items.some((item) => item.phase === "updated");
 	const dismiss = () => {
 		try {
-			localStorage.setItem(UPDATE_NOTICE_KEY, startId);
+			safeLocalStorage.setItem(UPDATE_NOTICE_KEY, startId);
 		} catch {
 			/* 存不下就只关这一页 */
 		}

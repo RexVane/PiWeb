@@ -28,15 +28,15 @@ export function PermissionSelector({ value, custom, disabled, disabledReason, sa
 	const { t } = useI18n();
 	const [open, setOpen] = useState(false);
 	const [error, setError] = useState("");
-	const [position, setPosition] = useState<{ left: number; top: number; width: number; maxHeight: number } | null>(null);
+	const [position, setPosition] = useState<{ left: number; top: number; maxWidth: number; maxHeight: number } | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const mounted = useRef(true);
 	const menuId = useId();
 	const options = [
-		{ value: "readonly", label: t.permissionReadonly, description: t.permissionReadonlyDesc },
-		{ value: "standard", label: t.permissionStandard, description: t.permissionStandardDesc },
-		{ value: "full", label: t.permissionFull, description: t.permissionFullDesc },
+		{ value: "readonly", label: t.permissionReadonly },
+		{ value: "workspace", label: t.permissionWorkspace },
+		{ value: "full", label: t.permissionFull },
 	];
 	const selected = options.find((option) => option.value === value)!;
 	const label = custom ? t.permissionCustom : selected.label;
@@ -53,6 +53,11 @@ export function PermissionSelector({ value, custom, disabled, disabledReason, sa
 	useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 	useEffect(() => { setError(""); }, [value, custom]);
 	useEffect(() => {
+		if (!error) return;
+		const timer = setTimeout(() => setError(""), 6000);
+		return () => clearTimeout(timer);
+	}, [error]);
+	useEffect(() => {
 		if (!open) return;
 		const updatePosition = () => {
 			const rect = triggerRef.current?.getBoundingClientRect();
@@ -62,13 +67,14 @@ export function PermissionSelector({ value, custom, disabled, disabledReason, sa
 			const topEdge = (viewport?.offsetTop ?? 0) + 8;
 			const rightEdge = leftEdge + (viewport?.width ?? window.innerWidth) - 16;
 			const bottomEdge = topEdge + (viewport?.height ?? window.innerHeight) - 16;
-			const width = Math.max(0, Math.min(360, rightEdge - leftEdge));
+			const maxWidth = Math.max(0, rightEdge - leftEdge);
+			const width = Math.min(menuRef.current?.offsetWidth || (custom ? 240 : 180), maxWidth);
 			const above = rect.top - topEdge - 8;
 			const below = bottomEdge - rect.bottom - 8;
-			const placeAbove = above >= 240 || above >= below;
+			const placeAbove = above >= 140 || above >= below;
 			const maxHeight = Math.max(80, placeAbove ? above : below);
-			const height = Math.min((menuRef.current?.scrollHeight ?? 260) + 2, maxHeight);
-			setPosition({ left: Math.max(leftEdge, Math.min(rect.left, rightEdge - width)), top: placeAbove ? Math.max(topEdge, rect.top - 8 - height) : rect.bottom + 8, width, maxHeight });
+			const height = Math.min((menuRef.current?.scrollHeight ?? 120) + 2, maxHeight);
+			setPosition({ left: Math.max(leftEdge, Math.min(rect.left, rightEdge - width)), top: placeAbove ? Math.max(topEdge, rect.top - 8 - height) : rect.bottom + 8, maxWidth, maxHeight });
 		};
 		updatePosition();
 		const clickOutside = (event: PointerEvent) => {
@@ -91,7 +97,7 @@ export function PermissionSelector({ value, custom, disabled, disabledReason, sa
 	return <>
 		<button ref={triggerRef} type="button" className={styles.trigger} data-level={custom ? "custom" : value}
 			aria-label={`${t.permissionLabel}: ${label}`} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? menuId : undefined}
-			disabled={disabled || saving} title={saving ? t.permissionSaving : disabledReason || selected.description}
+			disabled={disabled || saving} title={saving ? t.permissionSaving : disabledReason || label}
 			onClick={() => open ? keyboard.closeMenu() : keyboard.openMenu()} onKeyDown={keyboard.onKeyDown} data-testid="permission-trigger">
 			<PermissionShield /><span>{saving ? t.permissionSaving : label}</span><IconChevronDown14 size={11} />
 		</button>
@@ -103,9 +109,9 @@ export function PermissionSelector({ value, custom, disabled, disabledReason, sa
 				{options.map((option, index) => <button key={option.value} ref={(element) => { keyboard.optionRefs.current[index] = element; }}
 					type="button" role="option" aria-selected={!custom && option.value === value} tabIndex={-1}
 					className={styles.option} data-level={option.value} onFocus={() => keyboard.setActiveIndex(index)} onClick={() => keyboard.choose(index)}>
-					<PermissionShield size={16} />
-					<span className={styles.copy}><span className={styles.label}>{option.label}</span><span className={styles.description}>{option.description}</span></span>
-					{!custom && option.value === value && <IconCheckOutline14 size={15} />}
+					<PermissionShield size={14} />
+					<span className={styles.label}>{option.label}</span>
+					{!custom && option.value === value && <IconCheckOutline14 size={14} />}
 				</button>)}
 			</div>
 		</div>, document.body)}

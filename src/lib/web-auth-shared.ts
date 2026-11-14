@@ -7,8 +7,12 @@
  * Cookie 名前缀。完整名字是 前缀 + base64url(sha256(权威))，
  * 所以换域名或换端口后旧 Cookie 自然不再匹配，不需要额外清理。
  */
-export const COOKIE_PREFIX = "piweb_session_";
-export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+export { COOKIE_PREFIX, SESSION_MAX_AGE_SECONDS } from "../../scripts/web-auth-constants.mjs";
+/**
+ * 登录后 cookie 的有效期：30 天。
+ * 与界面文案保持一致（登录页「打开一次后浏览器会记住 30 天」、远程连接页「登录后 30 天内有效」），
+ * 改动这里必须同时看这两处文案与 tests/web-auth.test.ts 里的断言。
+ */
 
 /** 登录后跳转目标白名单：仅同源相对路径，防开放重定向 */
 export function safeNextPath(value: string | null | undefined): string {

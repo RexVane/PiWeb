@@ -1,316 +1,217 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
 
-/**
- * 设置 → 远程连接（内置插件）。
- *
- * 显示一个内置插件「远程连接」，它有两层入口：
- *   - 局域网入口：注入代理，默认就开着；手机连同一个 WiFi 用这个地址，排版是手机版。
- *   - 公网入口：cloudflared 快速隧道，由这里的按钮开关；开了之后任何浏览器都能打开。
- *
- * 公开地址由 Cloudflare 随机分配且每次启动都变；拿到地址后还要十几秒才在全球 DNS 生效，
- * 所以状态里区分「已生成」和「已生效」，没生效时按钮区域给出说明而不是假装好了。
- *
- * 入口链接带启动令牌：手机打开就直接登录，不用再去终端里抄令牌。屏幕上只显示裸地址，
- * 令牌只在链接和复制出来的文本里——截图、共享屏幕时不会露出来。
- */
-import { useCallback, useEffect, useRef, useState } from "react";
+
+/** 一张通用连接二维码，凭据用后或到期自动更新。 */
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
 import { copyText } from "@/lib/clipboard";
+import type { RemoteStatus } from "@/lib/remote/supervisor";
 
-interface LanState {
-	running: boolean;
-	port: number | null;
-	urls: string[];
-	/** 是否在注入手机排版；插件关闭时为 false。旧服务端的响应里可能没有这个字段 */
-	styled?: boolean;
-	error: string | null;
+interface PairData {
+	code: string;
+	url: string;
+	expiresAt: number;
+	remainingMs: number;
+	base: "lan" | "public";
+}
+interface DisplayPair extends PairData {
+	qr: string;
+	displayExpiresAt: number;
 }
 
-interface PublicState {
-	running: boolean;
-	url: string | null;
-	ready: boolean;
-	engine: string | null;
-	engineAvailable: boolean;
-	error: string | null;
-}
-
-interface RemoteStatus {
-	plugin: string;
-	/** 内置插件总开关；关闭后局域网入口仍在（纯转发），但没有手机排版与公网入口。
-	 *  旧服务端的响应里可能没有这个字段，界面按「已启用」处理 */
-	pluginEnabled?: boolean;
-	targetPort: number;
-	/** 非空时服务端拒绝开任何入口（没开认证 / 开发模式） */
-	blocked: "auth" | "dev" | null;
-	lan: LanState;
-	public: PublicState;
-	/** 本次启动的令牌；认证没开时为 null */
-	loginToken: string | null;
-}
-
-/** 带令牌的登录链接。令牌只在根路径的 GET 上被换成 Cookie（见 proxy.ts），所以拼成 <地址>/?token=… */
-export function loginLink(url: string, token: string | null | undefined): string {
-	if (!token) return url;
-	return `${url.replace(/\/+$/, "")}/?token=${encodeURIComponent(token)}`;
-}
-
-/** 状态点：绿=在跑，蓝=过渡中，灰=没开 */
-function Dot({ tone }: { tone: "on" | "pending" | "off" }) {
-	const color = tone === "on" ? "var(--dsw-success)" : tone === "pending" ? "var(--dsw-accent)" : "var(--dsw-label-caption)";
-	return <span className="inline-block h-[7px] w-[7px] flex-none rounded-full" style={{ background: color }} />;
-}
-
-function Row({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-	return (
-		<div className="hairline-b flex flex-wrap items-start justify-between gap-4 pb-5">
-			<div className="min-w-0 flex-1" style={{ minWidth: "45%" }}>
-				<div style={{ fontSize: 14 }}>{title}</div>
-				{hint ? <div style={{ fontSize: 12, color: "var(--dsw-label-caption)", lineHeight: 1.55, marginTop: 2 }}>{hint}</div> : null}
-			</div>
-			<div className="flex-none">{children}</div>
-		</div>
-	);
-}
-
-/** 一个入口地址：显示裸地址，链接和复制的都是带令牌的版本 */
-function EntryLink({ url, token }: { url: string; token: string | null | undefined }) {
-	const { t } = useI18n();
-	const [copied, setCopied] = useState<"" | "ok" | "fail">("");
-	useEffect(() => {
-		if (!copied) return;
-		const timer = setTimeout(() => setCopied(""), 2_000);
-		return () => clearTimeout(timer);
-	}, [copied]);
-	const href = loginLink(url, token);
-	return (
-		<div className="flex items-center gap-2">
-			<a href={href} target="_blank" rel="noreferrer" className="font-mono hover:underline" style={{ fontSize: 12 }}>
-				{url}
-			</a>
-			<button
-				type="button"
-				className="btn-outline"
-				style={{ height: 24, fontSize: 12, paddingInline: 8 }}
-				onClick={() => void copyText(href).then((ok) => setCopied(ok ? "ok" : "fail"))}
-			>
-				{copied === "ok" ? t.remoteLinkCopied : copied === "fail" ? t.copyFailed : t.copy}
-			</button>
-		</div>
-	);
+function Dot({ ready }: { ready: boolean }) {
+	return <span className="inline-block h-[7px] w-[7px] flex-none rounded-full" style={{ background: ready ? "var(--dsw-success)" : "var(--dsw-label-caption)" }} />;
 }
 
 export function RemoteSection() {
 	const { t } = useI18n();
 	const [status, setStatus] = useState<RemoteStatus | null>(null);
-	const [busy, setBusy] = useState(false);
+	const [pair, setPair] = useState<DisplayPair | null>(null);
+	const pairRef = useRef<DisplayPair | null>(null);
+	const [clock, setClock] = useState(() => Date.now());
 	const [error, setError] = useState("");
+	const [refresh, setRefresh] = useState(0);
+	const [copied, setCopied] = useState<"" | "ok" | "fail">("");
+	const [confirmSignOut, setConfirmSignOut] = useState(false);
+	const [devices, setDevices] = useState<Array<{ id: string; deviceType: string; lastSeenAt: number; current: boolean }>>([]);
+	const [deviceRefresh, setDeviceRefresh] = useState(0);
 	const alive = useRef(true);
-
-	const load = useCallback(async () => {
-		try {
-			const response = await fetch("/api/remote", { cache: "no-store" });
-			const result = await response.json();
-			if (!alive.current) return;
-			if (result?.success) {
-				setStatus(result.data as RemoteStatus);
-				setError("");
-			} else {
-				setError(result?.error ?? t.remoteFailed);
-			}
-		} catch {
-			if (alive.current) setError(t.remoteFailed);
-		}
-	}, [t]);
 
 	useEffect(() => {
 		alive.current = true;
-		void load();
-		return () => {
-			alive.current = false;
-		};
-	}, [load]);
+		const timer = setInterval(() => setClock(Date.now()), 1_000);
+		return () => { alive.current = false; clearInterval(timer); };
+	}, []);
 
-	// 运行中持续检查：一次就绪不代表之后不会断线；等待超时后也能检测到恢复。
-	const waiting = Boolean(status?.public.running);
 	useEffect(() => {
-		if (!waiting) return;
-		const timer = setInterval(() => void load(), 5_000);
-		return () => clearInterval(timer);
-	}, [waiting, load]);
+		const controller = new AbortController();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let connected = false;
+		const poll = async () => {
+			let nextPoll = 3_000;
+			const request = async (url: string, body?: object) => {
+				const requestController = new AbortController();
+				const cancel = () => requestController.abort();
+				controller.signal.addEventListener("abort", cancel, { once: true });
+				if (controller.signal.aborted) cancel();
+				const timeout = setTimeout(cancel, 15_000);
+				try {
+					const response = await fetch(url, {
+						cache: "no-store",
+						signal: requestController.signal,
+						...(body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+					});
+					const result = await response.json();
+					if (!response.ok || !result?.success) {
+						const retryAfter = Number(response.headers?.get("retry-after"));
+						if (retryAfter > 0) nextPoll = Math.min(60_000, Math.max(3_000, retryAfter * 1_000));
+						throw new Error(response.status === 429 ? t.pairRetrying : result?.error || t.remoteFailed);
+					}
+					return result.data;
+				} finally {
+					clearTimeout(timeout);
+					controller.signal.removeEventListener("abort", cancel);
+				}
+			};
+			let stopPolling = false;
+			try {
+				let next = await request("/api/remote") as RemoteStatus;
+				if (!next.blocked && !connected) {
+					next = await request("/api/remote", { action: "connect" }) as RemoteStatus;
+					connected = true;
+				}
+				if (controller.signal.aborted) return;
+				setStatus(next);
+				setError("");
+				const publicReady = next.public.running && next.public.ready && Boolean(next.public.url);
+				if (next.blocked) { stopPolling = true; setPair(null); return; }
+				const lanReady = next.lan.running && next.lan.urls.length > 0;
+				if (!publicReady && !lanReady) { setPair(null); return; }
+				const data = await request("/api/remote/pair", { base: publicReady ? "public" : "lan", previousCode: pairRef.current?.code }) as PairData;
+				const previous = pairRef.current;
+				const qr = previous?.url === data.url
+					? previous.qr
+					: await (await import("qrcode")).default.toDataURL(data.url, { margin: 2, width: 240, errorCorrectionLevel: "M" });
+				if (controller.signal.aborted) return;
+				const nextPair = { ...data, qr, displayExpiresAt: Date.now() + Math.max(0, data.remainingMs) };
+				pairRef.current = nextPair;
+				setPair(nextPair);
+				setClock(Date.now());
+			} catch (failure) {
+				if (!controller.signal.aborted) setError(failure instanceof Error && failure.name !== "AbortError" ? failure.message : t.remoteFailed);
+			} finally {
+				if (!controller.signal.aborted && !stopPolling) timer = setTimeout(() => void poll(), nextPoll);
+			}
+		};
+		void poll();
+		return () => { controller.abort(); clearTimeout(timer); };
+	}, [refresh, t.remoteFailed, t.pairRetrying]);
 
-	const act = async (action: "start" | "stop") => {
-		if (busy) return;
-		setBusy(true);
-		setError("");
-		try {
-			const response = await fetch("/api/remote", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action }),
-			});
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(""), 2_000);
+		return () => clearTimeout(timer);
+	}, [copied]);
+	useEffect(() => {
+		const controller = new AbortController();
+		void fetch("/api/web-auth?devices=1", { cache: "no-store", signal: controller.signal }).then(async (response) => {
 			const result = await response.json();
-			if (result?.success) setStatus(result.data as RemoteStatus);
-			else setError(result?.error ?? t.remoteFailed);
-		} catch {
-			setError(t.remoteFailed);
-		} finally {
-			if (alive.current) setBusy(false);
-		}
-	};
-
-	// 「让所有设备重新登录」点两下才生效（第一下只把按钮换成确认文案，4 秒后复原）
-	const [confirmSignOut, setConfirmSignOut] = useState(false);
+			if (!controller.signal.aborted && response.ok && result.success && Array.isArray(result.data?.devices)) setDevices(result.data.devices);
+		}).catch(() => undefined);
+		return () => controller.abort();
+	}, [deviceRefresh]);
 	useEffect(() => {
 		if (!confirmSignOut) return;
 		const timer = setTimeout(() => setConfirmSignOut(false), 4_000);
 		return () => clearTimeout(timer);
 	}, [confirmSignOut]);
+
 	const signOutAll = async () => {
-		if (!confirmSignOut) {
-			setConfirmSignOut(true);
-			return;
-		}
+		if (!confirmSignOut) { setConfirmSignOut(true); return; }
 		setConfirmSignOut(false);
-		setError("");
 		try {
 			const response = await fetch("/api/web-auth?scope=all", { method: "DELETE" });
 			const result = await response.json().catch(() => null);
 			if (!response.ok || !result?.success) throw new Error(result?.error ?? t.remoteFailed);
 			window.location.href = "/login";
-		} catch (e) {
-			if (alive.current) setError(e instanceof Error ? e.message : t.remoteFailed);
+		} catch (failure) {
+			if (alive.current) setError(failure instanceof Error ? failure.message : t.remoteFailed);
 		}
 	};
 
-	const lan = status?.lan;
-	const pub = status?.public;
-	const blocked = status?.blocked ?? null;
-	// 开关未取到状态前按「已启用」显示，避免首帧闪一下「已关闭」
-	const pluginOn = status?.pluginEnabled ?? true;
-	const lanTone: "on" | "off" = lan?.running ? "on" : "off";
-	const pubTone: "on" | "pending" | "off" = pub?.running ? (pub.ready ? "on" : "pending") : "off";
+	const blocked = status?.blocked;
+	const publicReady = Boolean(status?.public.running && status.public.ready && status.public.url);
+	const lanReady = Boolean(status?.lan.running && status.lan.urls.length);
+	const remaining = pair ? Math.max(0, Math.ceil((pair.displayExpiresAt - clock) / 1_000)) : 0;
+	const visiblePair = pair && remaining > 0 && !blocked && (pair.base === "public" ? publicReady : lanReady) ? pair : null;
 
-	/** 切换内置插件总开关；局域网入口照旧（关掉后退化成纯转发），公网入口会一并停掉 */
-	const togglePlugin = async () => {
-		if (busy) return;
-		setBusy(true);
-		setError("");
-		try {
-			const response = await fetch("/api/remote", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action: "set-plugin", enabled: !pluginOn }),
-			});
-			const result = await response.json();
-			if (result?.success) setStatus(result.data as RemoteStatus);
-			else setError(result?.error ?? t.remoteFailed);
-		} catch {
-			setError(t.remoteFailed);
-		} finally {
-			if (alive.current) setBusy(false);
-		}
-	};
-
-	return (
-		<div className="flex flex-col gap-6">
-			{/* 插件抬头 + 总开关 */}
-			<div className="flex items-center gap-2.5">
-				<div style={{ fontSize: 15, fontWeight: 500 }}>{t.setRemote}</div>
-				<span
-					className="rounded-md px-2 py-[2px]"
-					style={{ fontSize: 11, background: "var(--dsw-hover)", color: "var(--dsw-label-secondary)" }}
-				>
-					{t.remoteBuiltin}
-				</span>
-				<div className="flex-1" />
-				<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{pluginOn ? t.remotePluginOn : t.remotePluginOff}</span>
-				<button
-					type="button"
-					className="liq-sw flex-none"
-					data-on={pluginOn ? "true" : undefined}
-					role="switch"
-					aria-checked={pluginOn}
-					aria-label={t.remotePluginToggle}
-					title={t.remotePluginHint}
-					// 被拦住（没开认证 / 开发模式）时入口一律开不出来，开关拨了也没有意义
-					disabled={busy || !status || blocked !== null}
-					onClick={() => void togglePlugin()}
-				>
-					<span className="liq-thumb" />
-				</button>
-			</div>
-			<div style={{ fontSize: 12, color: "var(--dsw-label-secondary)", lineHeight: 1.6, marginTop: -12 }}>{t.remotePluginHint}</div>
-
-			{/* 局域网入口 */}
-			<Row title={t.remoteLanTitle} hint={t.remoteLanHint}>
-				<div className="flex flex-col items-end gap-1.5">
-					<div className="flex items-center gap-2" style={{ fontSize: 13 }}>
-						<Dot tone={lanTone} />
-						<span style={{ color: lan?.running ? "var(--dsw-label-primary)" : "var(--dsw-label-caption)" }}>
-							{lan?.running ? t.remoteRunning : t.remoteStopped}
-						</span>
-						{/* 只在服务端明确回了 styled:false 时才说「纯转发」：
-						    字段缺失（旧服务端、缓存的响应）不能当成关闭，否则会误报 */}
-						{lan?.running && lan.styled === false ? (
-							<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>· {t.remoteLanPlain}</span>
-						) : null}
-					</div>
-					{(lan?.urls ?? []).map((url) => (
-						<EntryLink key={url} url={url} token={status?.loginToken} />
-					))}
-					{lan?.error ? <div style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{lan.error}</div> : null}
-				</div>
-			</Row>
-
-			{/* 公网入口 */}
-			<Row title={t.remotePublicTitle} hint={t.remotePublicHint}>
-				<div className="flex flex-col items-end gap-2">
-					<div className="flex items-center gap-2" style={{ fontSize: 13 }}>
-						<Dot tone={pubTone} />
-						<span style={{ color: pub?.running ? "var(--dsw-label-primary)" : "var(--dsw-label-caption)" }}>
-							{pub?.running ? (pub.ready ? t.remoteRunning : pub.error ? t.remoteUnavailable : t.remotePending) : t.remoteStopped}
-						</span>
-					</div>
-					{pub?.url ? <EntryLink url={pub.url} token={status?.loginToken} /> : null}
-					<div className="flex items-center gap-2">
-						{pub?.running ? (
-							<button className="btn-outline" style={{ height: 30, fontSize: 13 }} disabled={busy} onClick={() => void act("stop")}>
-								{t.remoteStop}
-							</button>
-						) : (
-							<button className="btn-primary-white" style={{ height: 30, fontSize: 13 }} disabled={busy || blocked !== null || !pluginOn} onClick={() => void act("start")}>
-								{busy ? t.remoteWorking : t.remoteStart}
-							</button>
-						)}
-					</div>
-					{!pluginOn ? <div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", textAlign: "right" }}>{t.remotePublicNeedsPlugin}</div> : null}
-				</div>
-			</Row>
-
-			{/* 没开认证就没有登录这回事 */}
-			{status && blocked !== "auth" ? (
-				<Row title={t.remoteSessionsTitle} hint={t.remoteSessionsHint}>
-					<button
-						className="btn-outline"
-						style={{ height: 30, fontSize: 13, color: confirmSignOut ? "var(--dsw-danger)" : undefined }}
-						onClick={() => void signOutAll()}
-					>
-						{confirmSignOut ? t.remoteSignOutAllConfirm : t.remoteSignOutAll}
-					</button>
-				</Row>
-			) : null}
-
-			{blocked ? (
-				<div style={{ fontSize: 12, color: "var(--dsw-label-secondary)", lineHeight: 1.6 }}>
-					{blocked === "auth" ? t.remoteBlockedAuth : t.remoteBlockedDev}
-				</div>
-			) : null}
-			{pub && !pub.engineAvailable ? (
-				<div style={{ fontSize: 12, color: "var(--dsw-danger)", lineHeight: 1.6 }}>{t.remoteEngineMissing}</div>
-			) : null}
-			{pub?.error ? <div style={{ fontSize: 12, color: "var(--dsw-danger)", lineHeight: 1.6 }}>{pub.error}</div> : null}
-			{error ? <div role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{error}</div> : null}
+	return <div className="flex flex-col gap-5">
+		<div>
+			<div style={{ fontSize: 15, fontWeight: 500 }}>{t.setRemote}</div>
+			<p style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>{t.remoteUnifiedHint}</p>
 		</div>
-	);
+
+		{blocked ? <div role="status" style={{ fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>
+			{blocked === "auth" ? t.remoteBlockedAuth : t.remoteBlockedDev}
+		</div> : !status ? <div className="flex items-center gap-3">
+			<div role="status" aria-busy={!error} style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
+				{error ? t.pairRetrying : t.remoteWorking}
+			</div>
+			{error ? <button type="button" className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button> : null}
+		</div> : <div className="flex flex-col items-center gap-4 rounded-xl p-5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+			<div style={{ fontSize: 14, fontWeight: 500 }}>{t.pairTitle}</div>
+			{visiblePair ? <img src={visiblePair.qr} alt={t.pairQrLabel} width={220} height={220}
+				style={{ background: "#fff", padding: 4, borderRadius: 10, maxWidth: "100%", height: "auto" }} />
+				: <div className="flex items-center justify-center rounded-xl" role="status" aria-busy={!error}
+					style={{ width: 220, minHeight: 220, maxWidth: "100%", padding: 20, textAlign: "center", fontSize: 13, color: "var(--dsw-label-caption)", background: "var(--dsw-hover)" }}>
+					{error ? t.pairRetrying : t.pairPreparing}
+				</div>}
+			<div className="flex flex-col items-center gap-1" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
+				<span>{t.pairConnectHint}</span>
+				<span style={{ color: "var(--dsw-label-caption)" }}>{visiblePair ? t.pairAutoExpires.replace("{s}", String(remaining)) : t.pairHint}</span>
+			</div>
+			{visiblePair ? <div className="flex items-center gap-3">
+				<button type="button" className="btn-outline" style={{ height: 30, fontSize: 12 }}
+					onClick={() => void copyText(visiblePair.url).then((ok) => { if (alive.current) setCopied(ok ? "ok" : "fail"); })}>
+					{copied === "ok" ? t.remoteLinkCopied : copied === "fail" ? t.copyFailed : t.pairCopyLink}
+				</button>
+			</div> : error ? <button type="button" className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button> : null}
+		</div>}
+
+		{status && !blocked ? <div className="flex items-center gap-2" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
+			<Dot ready={publicReady || lanReady} />{publicReady || lanReady ? t.remoteConnected : status.public.error || status.lan.error ? t.remoteUnavailable : t.remoteWorking}
+		</div> : null}
+		{status?.public.error && !publicReady && !blocked ? <p role="status" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+			{status.public.engineAvailable ? status.public.error : t.remoteEngineMissing}
+		</p> : null}
+		{error ? <div role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{error}</div> : null}
+		{status?.lan.error && !lanReady && !blocked ? <div role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{status.lan.error}<button className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button></div> : null}
+		{status && blocked !== "auth" ? <div className="flex flex-wrap items-center justify-between gap-3 hairline-b pb-4">
+			<div className="min-w-0 flex-1">
+				<div style={{ fontSize: 14 }}>{t.remoteSessionsTitle}</div>
+				<p style={{ marginTop: 3, fontSize: 12, lineHeight: 1.6, color: "var(--dsw-label-caption)" }}>{t.remoteSessionsHint}</p>
+			</div>
+			<button type="button" className="btn-outline" style={{ height: 30, fontSize: 12, color: confirmSignOut ? "var(--dsw-danger)" : undefined }} onClick={() => void signOutAll()}>
+				{confirmSignOut ? t.remoteSignOutAllConfirm : t.remoteSignOutAll}
+			</button>
+		</div> : null}
+		{devices.length > 0 && <div className="flex flex-col gap-2">
+			{devices.map((device) => <div key={device.id} className="flex items-center gap-3" style={{ fontSize: 12 }}>
+				<span className="flex-1">{device.deviceType}{device.current ? ` · ${t.remoteThisDevice}` : ""} · {new Date(device.lastSeenAt).toLocaleDateString()}</span>
+				<button type="button" className="btn-outline" onClick={() => void (async () => {
+					try {
+						const response = await fetch(`/api/web-auth?device=${encodeURIComponent(device.id)}`, { method: "DELETE" });
+						const result = await response.json();
+						if (!response.ok || !result.success) throw new Error(result.error || t.remoteFailed);
+						if (device.current) window.location.href = "/login"; else setDeviceRefresh((value) => value + 1);
+					} catch (error) { setError(error instanceof Error ? error.message : t.remoteFailed); }
+				})()}>{t.remoteRevokeDevice}</button>
+			</div>)}
+		</div>}
+		{lanReady && <div className="flex items-center gap-2 break-all" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+			<span className="flex-1">{status?.lan.urls[0]}</span><button type="button" className="btn-outline" onClick={() => void copyText(status!.lan.urls[0]).then((ok) => setCopied(ok ? "ok" : "fail"))}>{t.copy}</button>
+		</div>}
+	</div>;
+
 }

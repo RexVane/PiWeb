@@ -178,4 +178,49 @@ describe("session-reader listSessions parity", () => {
 		const changed = await restarted.listSessions();
 		expect(changed[0]).toMatchObject({ messageCount: 2, firstMessage: "first" });
 	}, 20_000);
+	it("scans only an appended tail and retries a partial JSONL record", async () => {
+		vi.resetModules();
+		const { listSessions } = await import("../src/lib/session-reader");
+		const dir = path.join(tempDir, "agent", "sessions", "workspace"); await fs.mkdir(dir, { recursive: true });
+		const file = path.join(dir, "incremental.jsonl");
+		const line = (entry: unknown) => JSON.stringify(entry) + "\n";
+		const header = line({ type: "session", cwd: "/project", timestamp: "2026-09-10T00:00:00Z" });
+		const user = line({ type: "message", message: { role: "user", content: "first", timestamp: 1 } });
+		const assistant = line({ type: "message", message: { role: "assistant", content: "x".repeat(1024 * 1024), timestamp: 2 } });
+		await fs.writeFile(file, header + user + assistant);
+		expect((await listSessions())[0].messageCount).toBe(2);
+		await new Promise((resolve) => setTimeout(resolve, 1300));
+		await fs.appendFile(file, line({ type: "message", message: { role: "user", content: "tail", timestamp: 3 } }));
+		const realOpen = fs.open.bind(fs); let bytesRead = 0;
+		const spy = vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+			const handle = await realOpen(...args as Parameters<typeof fs.open>);
+			if (String(args[0]) === file) {
+				const read = handle.read.bind(handle);
+				handle.read = (async (...input: any[]) => { const result = await (read as any)(...input); bytesRead += result.bytesRead; return result; }) as typeof handle.read;
+			}
+			return handle;
+		});
+		try { expect((await listSessions())[0].messageCount).toBe(3); expect(bytesRead).toBeLessThan(32 * 1024); }
+		finally { spy.mockRestore(); }
+		const partial = line({ type: "message", message: { role: "user", content: "completed", timestamp: 4 } });
+		await fs.appendFile(file, partial.slice(0, -10));
+		await new Promise((resolve) => setTimeout(resolve, 1300));
+		expect((await listSessions())[0].messageCount).toBe(3);
+		await fs.appendFile(file, partial.slice(-10));
+		await new Promise((resolve) => setTimeout(resolve, 1300));
+		expect((await listSessions())[0].messageCount).toBe(4);
+	}, 20_000);
+	it("does not return another agent directory's short-lived list cache", async () => {
+		vi.resetModules();
+		const { listSessions } = await import("../src/lib/session-reader");
+		const put = async (agent: string, title: string) => {
+			const dir = path.join(agent, "sessions", "workspace"); await fs.mkdir(dir, { recursive: true });
+			await fs.writeFile(path.join(dir, "a.jsonl"), JSON.stringify({ type: "session", cwd: title }) + "\n");
+		};
+		const first = path.join(tempDir, "agent"); const second = path.join(tempDir, "another-agent");
+		await put(first, "first"); await put(second, "second");
+		expect((await listSessions())[0].cwd).toBe("first");
+		process.env.PI_CODING_AGENT_DIR = second;
+		expect((await listSessions())[0].cwd).toBe("second");
+	});
 });

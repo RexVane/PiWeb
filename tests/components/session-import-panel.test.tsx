@@ -4,7 +4,7 @@
  * 已导入的行必须禁用，导入结果按成功/跳过/失败给出来源与原因。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SessionImportSection } from "@/components/SessionImportSection";
 import { INITIAL_SCAN_LIMIT, MAX_SCAN_LIMIT, MAX_IMPORT_SELECTION } from "@/lib/session-import/limits";
 
@@ -66,7 +66,7 @@ function setup(options: { sessions?: unknown[]; imported?: string[]; archived?: 
 		throw new Error(`unexpected URL ${url}`);
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	render(<SessionImportSection cwd="/ws" />);
+	render(<SessionImportSection />);
 	return { fetchMock, posts };
 }
 
@@ -88,6 +88,28 @@ function chooseProject(path: string) {
 }
 
 describe("导入会话面板", () => {
+	it("shows streamed progress and source failures before completion", async () => {
+		let controller!: ReadableStreamDefaultController<Uint8Array>;
+		const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+		const streamed = new Response(stream, { headers: { "Content-Type": "application/x-ndjson" } });
+		setup({ imported: [], sessions: [session({ externalId: "c1" }), session({ externalId: "c2" })], importResponse: Promise.resolve(streamed) });
+		await screen.findAllByRole("checkbox"); await waitFor(() => expect((screen.getAllByRole("checkbox")[0] as HTMLInputElement).disabled).toBe(false));
+		for (const checkbox of screen.getAllByRole("checkbox")) fireEvent.click(checkbox);
+		fireEvent.click(screen.getByTestId("import-run"));
+		const encoder = new TextEncoder();
+		await act(async () => controller.enqueue(encoder.encode(JSON.stringify({ type: "progress", done: 1, total: 2, outcome: { source: "claude", externalId: "c1", status: "failed", reason: "源会话已移动" } }) + "\n")));
+		expect(screen.getByTestId("import-progress").textContent).toContain("1 / 2");
+		expect(screen.getByTestId("import-progress").textContent).toContain("源会话已移动"); expect(screen.queryByTestId("import-report")).toBeNull();
+		await act(async () => { controller.enqueue(encoder.encode(JSON.stringify({ type: "result", success: true, data: { imported: 1, skipped: 0, failed: 1, results: [], workspaces: [] } }) + "\n")); controller.close(); });
+		expect(await screen.findByTestId("import-report")).toBeTruthy(); expect(screen.queryByTestId("import-progress")).toBeNull();
+	});
+	it("shows unknown source workspaces but prevents selecting or importing them", async () => {
+		setup({ imported: [], sessions: [session({ externalId: "unknown", title: "Missing source workspace", projectPath: undefined })] });
+		await screen.findByText("Missing source workspace");
+		expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
+		expect(screen.getByText("（无项目目录） · 失败")).toBeTruthy();
+		expect(screen.queryByTestId("import-run")).toBeNull();
+	});
 	it("项目筛选保留已导入状态，批选只勾可用项，跨来源已选可检查并返回全部", async () => {
 		setup({ imported: ["zcode:done"], sessions: [
 			session({ externalId: "a", title: "网页修复", projectPath: "D:\\AIApp\\PiWeb" }),
@@ -181,7 +203,7 @@ describe("导入会话面板", () => {
 		options.hasMore.claude = false;
 		fireEvent.click(screen.getByTestId("import-load-more"));
 		const older = await screen.findByText("更早的部署记录");
-		expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/import?limit=${INITIAL_SCAN_LIMIT * 2}`);
+		expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/import?limit=${INITIAL_SCAN_LIMIT * 2}`, { signal: expect.any(AbortSignal) });
 		expect(screen.getByText("其中 1 条不在当前列表")).toBeTruthy();
 		fireEvent.click(older.closest("label")!.querySelector("input")!);
 		fireEvent.click(screen.getByTestId("import-rescan"));
@@ -197,7 +219,7 @@ describe("导入会话面板", () => {
 		for (const limit of [100, 200, 400, 800, MAX_SCAN_LIMIT]) {
 			fireEvent.click(screen.getByTestId("import-load-more"));
 			await waitFor(() => expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(false));
-			expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/import?limit=${limit}`);
+			expect(fetchMock).toHaveBeenCalledWith(`/api/sessions/import?limit=${limit}`, { signal: expect.any(AbortSignal) });
 		}
 		expect(screen.queryByTestId("import-load-more")).toBeNull();
 		expect(screen.getByText(`每个来源最多查看最近 ${MAX_SCAN_LIMIT} 条会话`)).toBeTruthy();
@@ -285,7 +307,6 @@ describe("导入会话面板", () => {
 		fireEvent.click(screen.getByTestId("import-run"));
 		await waitFor(() => expect(posts).toHaveLength(1));
 		expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(true);
-		expect((screen.getByTestId("import-fallback") as HTMLSelectElement).disabled).toBe(true);
 		expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
 		expect((screen.getByRole("searchbox") as HTMLInputElement).disabled).toBe(true);
 		resolve(response({ imported: 1, skipped: 0, failed: 0, results: [], workspaces: [] }));
@@ -364,7 +385,7 @@ describe("导入会话面板", () => {
 		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
 		fireEvent.click(screen.getByTestId("import-run"));
 		await waitFor(() => expect(posts).toHaveLength(1));
-		expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }, { source: "zcode", externalId: "z1" }], fallbackCwd: "/ws" });
+		expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }, { source: "zcode", externalId: "z1" }] });
 	});
 
 	it("已导入的行被禁用并标出来，来源统计里也计入", async () => {
@@ -387,7 +408,7 @@ describe("导入会话面板", () => {
 		fireEvent.click(run);
 
 		await waitFor(() => expect(posts).toHaveLength(1));
-		expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }], fallbackCwd: "/ws" });
+		expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }] });
 	});
 
 	it("结果条给出成功/跳过/失败，并列出失败原因", async () => {
@@ -414,17 +435,17 @@ describe("导入会话面板", () => {
 		expect(screen.getByTestId("import-run").textContent).toContain("(2)");
 		fireEvent.click(screen.getByTestId("import-run"));
 		await waitFor(() =>
-			expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }, { source: "zcode", externalId: "z1" }], fallbackCwd: "/ws" }),
+			expect(posts[0].body).toEqual({ sessions: [{ source: "claude", externalId: "c1" }, { source: "zcode", externalId: "z1" }] }),
 		);
 	});
 
-	it("兜底工作区是可选项且默认为当前工作区，不允许手输", async () => {
+	it("不再显示导入去向或兜底工作区选择", async () => {
 		setup();
-		const select = (await screen.findByTestId("import-fallback")) as HTMLSelectElement;
-		expect(select.tagName).toBe("SELECT");
-		expect(select.value).toBe("/ws");
-		await waitFor(() => expect(select.options).toHaveLength(2));
-		expect(Array.from(select.options).map((option) => option.value)).toEqual(["/ws", "D:\\AIApp\\PiWeb"]);
+		await screen.findByTestId("import-group-claude");
+		expect(screen.queryByTestId("import-fallback")).toBeNull();
+		expect(screen.queryByText("导入去向")).toBeNull();
+		expect(screen.queryByText("兜底工作区")).toBeNull();
+		expect(screen.getByText(/仅导入到在本机仍存在的原项目目录/)).toBeTruthy();
 	});
 
 	it("某个来源扫描失败时给出提示，其余来源照常可选", async () => {

@@ -126,6 +126,26 @@ export function clearRetiredFontPreferences(): void {
 	}
 }
 
+function syncThemeColorMeta(isDark: boolean): void {
+	if (typeof document === 'undefined' || !document.head) return;
+	const computedBg =
+		typeof getComputedStyle === 'function'
+			? getComputedStyle(document.documentElement).getPropertyValue('--dsw-bg-base').trim()
+			: '';
+	const color = computedBg || (isDark ? '#09090c' : '#ffffff');
+	const metas = document.head.querySelectorAll('meta[name="theme-color"]');
+	if (metas.length > 0) {
+		metas.forEach((meta) => {
+			meta.setAttribute('content', color);
+		});
+		return;
+	}
+	const meta = document.createElement('meta');
+	meta.name = 'theme-color';
+	meta.content = color;
+	document.head.appendChild(meta);
+}
+
 export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 	if (typeof window === 'undefined') return;
 	const effectiveMode = mode ?? loadThemeMode();
@@ -138,6 +158,7 @@ export function applyPebrelTheme(theme: PebrelTheme, mode?: ThemeMode): void {
 		document.body?.setAttribute('data-pebrel-theme', theme);
 	}
 	applyLightDark(effectiveMode);
+	syncThemeColorMeta(getEffectiveMode(effectiveMode) === 'dark');
 	applyFontSize();
 	clearRetiredFontPreferences();
 	try {

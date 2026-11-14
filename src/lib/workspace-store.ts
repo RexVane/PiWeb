@@ -11,6 +11,9 @@ import { StringDecoder } from "node:string_decoder";
 import { getAgentDir } from "./pi";
 import { randomUUID } from "node:crypto";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
+import { createRecoverableCopy } from "./recoverable-remove";
+import { apiError } from "./api-error";
+import { replaceFileAtomically } from "./atomic-file";
 
 interface WorkspaceFile {
 	workspaces: string[];
@@ -22,6 +25,15 @@ interface WorkspaceFile {
 	removedWorkspaces?: string[];
 	/** 项目生长能否在该目录 `git init`（目录还不是仓库根目录时问过用户）：pathKey → 决定 */
 	growthInit?: Record<string, boolean>;
+	recovery?: WorkspaceRegistryRecovery;
+}
+
+export interface WorkspaceRegistryRecovery {
+	at: number;
+	source: "last-good" | "empty";
+	/** 只公开备份文件名，完整恢复位置记录在 backups/INDEX.md。 */
+	backup: string;
+	restored: { workspaces: number; aliases: number; archivedSessions: number; pinnedSessions: number };
 }
 
 export interface WorkspaceRegistrySnapshot {
@@ -30,6 +42,33 @@ export interface WorkspaceRegistrySnapshot {
 	archivedSessions: string[];
 	pinnedSessions: string[];
 	removedWorkspaces: string[];
+	error?: string;
+	errorCode?: string;
+	warning?: string;
+	recovery?: WorkspaceRegistryRecovery;
+}
+class RegistryFormatError extends Error {}
+
+function readRecovery(value: unknown): WorkspaceRegistryRecovery | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const r = value as WorkspaceRegistryRecovery;
+	if (!Number.isFinite(r.at) || r.at <= 0 || !["last-good", "empty"].includes(r.source)
+		|| typeof r.backup !== "string" || !r.backup || r.backup.length > 255 || path.basename(r.backup) !== r.backup || /[\\/\r\n\0]/.test(r.backup)
+		|| !r.restored || ![r.restored.workspaces, r.restored.aliases, r.restored.archivedSessions, r.restored.pinnedSessions]
+			.every((count) => Number.isSafeInteger(count) && count >= 0)) return undefined;
+	return { at: r.at, source: r.source, backup: r.backup, restored: {
+		workspaces: r.restored.workspaces, aliases: r.restored.aliases,
+		archivedSessions: r.restored.archivedSessions, pinnedSessions: r.restored.pinnedSessions,
+	} };
+}
+
+function recoveryNotice(data: WorkspaceFile): Pick<WorkspaceRegistrySnapshot, "warning" | "recovery"> {
+	if (!data.recovery) return {};
+	const r = data.recovery;
+	const warning = r.source === "last-good"
+		? `工作区记录损坏后已从最近有效记录恢复（工作区 ${r.restored.workspaces}、别名 ${r.restored.aliases}、归档 ${r.restored.archivedSessions}、置顶 ${r.restored.pinnedSessions}）；损坏原件已有备份，请核对恢复结果。`
+		: "工作区记录损坏后已重建；原有别名、归档和置顶尚未恢复。损坏原件已有备份，请根据 backups/INDEX.md 核对并恢复。";
+	return { warning, recovery: r };
 }
 
 function file(agentDir = getAgentDir()): string {
@@ -39,7 +78,15 @@ function file(agentDir = getAgentDir()): string {
 async function readFile(target = file()): Promise<WorkspaceFile> {
 	try {
 		const parsed = JSON.parse(await fs.readFile(target, "utf8")) as WorkspaceFile;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid workspace registry");
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new RegistryFormatError("invalid workspace registry");
+		const stringLists = [parsed.workspaces, parsed.archivedSessions, parsed.pinnedSessions, parsed.removedWorkspaces];
+		const record = (value: unknown, valid: (entry: unknown) => boolean) => value === undefined
+			|| (value !== null && typeof value === "object" && !Array.isArray(value) && Object.values(value).every(valid));
+		if (stringLists.some((list) => list !== undefined && (!Array.isArray(list) || !list.every((entry) => typeof entry === "string")))
+			|| !record(parsed.aliases, (entry) => typeof entry === "string")
+			|| !record(parsed.growthInit, (entry) => typeof entry === "boolean")
+			|| !record(parsed.archivedAt, (entry) => typeof entry === "number" && Number.isFinite(entry))
+			|| (parsed.recovery !== undefined && !readRecovery(parsed.recovery))) throw new RegistryFormatError("invalid workspace registry fields");
 		const aliases = Object.fromEntries(
 			Object.entries(typeof parsed.aliases === "object" && parsed.aliases !== null ? parsed.aliases : {})
 				.filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -52,6 +99,7 @@ async function readFile(target = file()): Promise<WorkspaceFile> {
 			Object.entries(typeof parsed.archivedAt === "object" && parsed.archivedAt !== null ? parsed.archivedAt : {})
 				.filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])),
 		);
+		const recovery = readRecovery(parsed.recovery);
 		return {
 			workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter((w) => typeof w === "string") : [],
 			aliases,
@@ -60,6 +108,7 @@ async function readFile(target = file()): Promise<WorkspaceFile> {
 			...(Object.keys(archivedAt).length ? { archivedAt } : {}),
 			removedWorkspaces: Array.isArray(parsed.removedWorkspaces) ? parsed.removedWorkspaces.filter((s) => typeof s === "string") : [],
 			...(Object.keys(growthInit).length ? { growthInit } : {}),
+			...(recovery ? { recovery } : {}),
 		};
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -73,20 +122,26 @@ function pathKey(value: string): string {
 }
 
 /** UI 新增目录与历史 CLI cwd 共用 realpath；离线或已移走的历史目录仍保留原路径。 */
-export async function canonicalWorkspacePath(value: string): Promise<string> {
+const canonicalPaths = new Map<string, { at: number; value: Promise<string> }>();
+export async function canonicalWorkspacePath(value: string, { fresh = false }: { fresh?: boolean } = {}): Promise<string> {
 	if (!value) return value;
 	const resolved = path.resolve(value);
-	return fs.realpath(resolved).catch(() => resolved);
+	const cached = canonicalPaths.get(resolved);
+	if (!fresh && cached && Date.now() - cached.at < 5000) return cached.value;
+	const real = fs.realpath(resolved).catch(() => resolved);
+	canonicalPaths.delete(resolved); canonicalPaths.set(resolved, { at: Date.now(), value: real });
+	while (canonicalPaths.size > 1000) canonicalPaths.delete(canonicalPaths.keys().next().value!);
+	return real;
 }
 
 /** 只规范工作区身份，不改变会话文件路径。去重保留首次出现的位置，读取不改写注册表。 */
-async function normalizeWorkspaces(data: WorkspaceFile): Promise<WorkspaceFile> {
+async function normalizeWorkspaces(data: WorkspaceFile, fresh = false): Promise<WorkspaceFile> {
 	const paths = new Map<string, string>();
 	const values = new Set([
 		...data.workspaces, ...(data.removedWorkspaces ?? []),
 		...Object.keys(data.aliases ?? {}), ...Object.keys(data.growthInit ?? {}),
 	]);
-	await Promise.all([...values].map(async (value) => paths.set(value, await canonicalWorkspacePath(value))));
+	await Promise.all([...values].map(async (value) => paths.set(value, await canonicalWorkspacePath(value, { fresh }))));
 	const canonical = (value: string) => paths.get(value) ?? value;
 	const unique = (values: string[]) => {
 		const seen = new Set<string>();
@@ -120,7 +175,8 @@ async function write(data: WorkspaceFile, target: string): Promise<void> {
 	const temporary = `${target}.${randomUUID()}.tmp`;
 	try {
 		await fs.writeFile(temporary, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
-		await fs.rename(temporary, target);
+		await replaceFileAtomically(temporary, target);
+		lastGood = { path: target, data: structuredClone(data) };
 	} finally {
 		await fs.unlink(temporary).catch(() => undefined);
 	}
@@ -137,6 +193,8 @@ interface Snapshot {
 }
 
 let snapshot: Snapshot | null = null;
+/** 写后缓存失效不会丢掉最后一次完整读取/写入的可恢复记录。 */
+let lastGood: { path: string; data: WorkspaceFile } | null = null;
 
 /** 校验戳：mtime + ctime + 大小 + inode 任一变化就回源（写到一半、被别的进程改写、原子替换都能看出来） */
 function stampOf(stat: { mtimeMs: number; ctimeMs: number; size: number; ino: number }): string {
@@ -165,6 +223,7 @@ async function readCached(target: string): Promise<WorkspaceFile> {
 	if (snapshot && snapshot.path === target && snapshot.stamp === stamp) return snapshot.data;
 	const data = await readFile(target);
 	snapshot = { path: target, stamp, data };
+	lastGood = { path: target, data: structuredClone(data) };
 	return data;
 }
 
@@ -177,7 +236,22 @@ async function mutate<T>(change: (data: WorkspaceFile, target: string) => Promis
 	const target = file(agentDir);
 	return withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
 		try {
-			return await change(await normalizeWorkspaces(await readFile(target)), target);
+			canonicalPaths.clear();
+			let data: WorkspaceFile;
+			try { data = await readFile(target); }
+			catch (error) {
+				if (!(error instanceof SyntaxError || error instanceof RegistryFormatError)) throw error;
+				const saved = await createRecoverableCopy(target, { reason: "修复损坏的工作区记录，保留原文件副本" });
+				const previous = lastGood?.path === target ? lastGood.data : undefined;
+				data = previous ? structuredClone(previous) : emptyRegistry();
+				data.recovery = {
+					at: Date.now(), source: previous ? "last-good" : "empty", backup: path.basename(saved.backup),
+					restored: { workspaces: data.workspaces.length, aliases: Object.keys(data.aliases ?? {}).length,
+						archivedSessions: data.archivedSessions?.length ?? 0, pinnedSessions: data.pinnedSessions?.length ?? 0 },
+				};
+				await write(data, target);
+			}
+			return await change(await normalizeWorkspaces(data, true), target);
 		} finally {
 			// 写完（或失败）都让下一次读重新取戳，避免把内存快照留在旧内容上
 			snapshot = null;
@@ -237,14 +311,35 @@ export async function getPinnedSessions(): Promise<string[]> {
 }
 
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot> {
-	const data = await read();
+	let data: WorkspaceFile;
+	let error: string | undefined;
+	let errorCode: string | undefined;
+	try { data = await read(); }
+	catch (failure) {
+		const corrupt = failure instanceof SyntaxError || failure instanceof RegistryFormatError;
+		error = corrupt ? "工作区记录无法读取，原文件已保留；下一次修改会先备份再恢复记录。"
+			: "工作区记录无法读取，原文件已保留；请检查文件权限或稍后重试。";
+		errorCode = corrupt ? "REGISTRY_CORRUPT" : apiError(failure).errorCode;
+		data = lastGood?.path === file() ? lastGood.data : emptyRegistry();
+	}
 	return {
 		workspaces: data.workspaces,
 		aliases: data.aliases ?? {},
 		archivedSessions: data.archivedSessions ?? [],
 		pinnedSessions: data.pinnedSessions ?? [],
 		removedWorkspaces: data.removedWorkspaces ?? [],
+		...(error ? { error } : {}),
+		...(errorCode ? { errorCode } : {}),
+		...recoveryNotice(data),
 	};
+}
+
+/** 修改接口也返回持久化恢复提示，避免把重建记录当作无损的普通成功。 */
+export async function getWorkspaceRecoveryNotice(): Promise<Pick<WorkspaceRegistrySnapshot, "warning" | "recovery">> {
+	try { return recoveryNotice(await read()); }
+	catch {
+		return lastGood?.path === file() ? recoveryNotice(lastGood.data) : {};
+	}
 }
 
 export async function pinSession(sessionPath: string): Promise<string[]> {
@@ -315,6 +410,20 @@ export async function forgetSession(sessionPath: string, agentDir?: string): Pro
 	}, agentDir);
 }
 
+/** Serialize expiry removal with unarchive/rearchive so a stale sweep cannot delete a restored session. */
+export async function removeArchivedSessionIfUnchanged(sessionPath: string, archivedAt: number, remove: () => Promise<boolean>): Promise<boolean> {
+	const key = pathKey(path.resolve(sessionPath));
+	return mutate(async (data, target) => {
+		if (!data.archivedSessions?.some((entry) => pathKey(entry) === key) || data.archivedAt?.[key] !== archivedAt) return false;
+		if (!(await remove())) return false;
+		data.archivedSessions = data.archivedSessions.filter((entry) => pathKey(entry) !== key);
+		if (data.archivedAt) delete data.archivedAt[key];
+		if (data.pinnedSessions) data.pinnedSessions = data.pinnedSessions.filter((entry) => pathKey(entry) !== key);
+		await write(data, target);
+		return true;
+	});
+}
+
 /**
  * 归档列表连同各自的归档时间。没有归档时间的条目（这个字段出现之前就归档的、或注册表被外部改写过的）
  * 一律按 now 补记并写回——保留期从这一刻起算，而不是拿旧文件的 mtime 一上来就删。
@@ -363,7 +472,7 @@ export async function addWorkspace(dir: string): Promise<{ workspaces: string[];
 /** 自动扫描保留已移除状态；用户主动导入时可重新显示对应工作区。 */
 export async function registerCwds(cwds: string[], { restoreRemoved = false }: { restoreRemoved?: boolean } = {}): Promise<string[]> {
 	const target = file();
-	const normalizedCwds = await Promise.all(cwds.filter((cwd) => typeof cwd === "string" && cwd).map(canonicalWorkspacePath));
+	const normalizedCwds = await Promise.all(cwds.filter((cwd) => typeof cwd === "string" && cwd).map((cwd) => canonicalWorkspacePath(cwd)));
 	// 快路径：侧栏每 3 秒轮询一次，绝大多数时候没有任何新 cwd。
 	// 先在内存快照上判断，没有新增就不取锁、不写盘、不读文件。
 	const current = await normalizeWorkspaces(await readCached(target));

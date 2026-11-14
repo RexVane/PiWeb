@@ -5,7 +5,7 @@
  * 解析 unified diff（含多文件 git diff / git show 输出），按行号渲染红绿；
  * 每行按文件语言做语法高亮（highlight.js），多文件 diff 跟着 +++ 头切换语言。
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { highlightLine, languageForPath } from "@/lib/highlight";
 
 export interface DiffLine {
@@ -87,53 +87,54 @@ export function diffStats(lines: DiffLine[]): { add: number; del: number } {
 }
 
 export function DiffView({ lines, language }: { lines: DiffLine[]; language?: string }) {
-	let maxNo = 1;
-	for (const l of lines) {
-		const n = l.new ?? l.old ?? 0;
-		if (n > maxNo) maxNo = n;
-	}
-	const width = String(maxNo).length;
-	// 逐行高亮：语言来自 prop（单文件）或 diff 里的 +++ 文件头（多文件 git show）
-	const html = useMemo(() => {
-		let lang = language;
-		return lines.map((l) => {
-			if (l.kind === "file") {
-				lang = languageForPath(l.text) ?? language;
-				return null;
-			}
-			if (l.kind === "hunk" || !lang || !l.text.trim()) return null;
-			return highlightLine(l.text, lang);
+	const viewport = useRef<HTMLPreElement>(null);
+	const [scrollTop, setScrollTop] = useState(0);
+	const rowHeight = 18;
+	const virtual = lines.length > 400;
+	const windowSize = Math.ceil(400 / rowHeight) + 40;
+	const from = virtual ? Math.min(Math.max(0, lines.length - windowSize), Math.max(0, Math.floor(scrollTop / rowHeight) - 20)) : 0;
+	const to = virtual ? Math.min(lines.length, from + windowSize) : lines.length;
+	useEffect(() => { setScrollTop(0); if (viewport.current) viewport.current.scrollTop = 0; }, [lines]);
+	const width = useMemo(() => {
+		let maximum = 1;
+		for (const line of lines) maximum = Math.max(maximum, line.new ?? line.old ?? 0);
+		return String(maximum).length;
+	}, [lines]);
+	const languages = useMemo(() => {
+		let current = language;
+		return lines.map((line) => {
+			if (line.kind === "file") current = languageForPath(line.text) ?? language;
+			return current;
 		});
 	}, [lines, language]);
+	const html = useMemo(() => lines.slice(from, to).map((line, index) => {
+		const current = languages[from + index];
+		return line.kind !== "file" && line.kind !== "hunk" && current ? highlightLine(line.text, current) : null;
+	}), [lines, languages, from, to]);
 	return (
-		<pre className="hljs whitespace-pre-wrap" style={{ fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: "18px", margin: 0, background: "transparent" }}>
-			{lines.map((l, i) => {
-				if (l.kind === "file") {
+		<pre ref={viewport} className="hljs whitespace-pre" data-testid="diff-viewport"
+			onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+			style={{ fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: rowHeight + "px", margin: 0, background: "transparent", overflow: "auto", maxHeight: virtual ? 400 : undefined, whiteSpace: "pre" }}>
+			<div style={{ position: "relative", height: lines.length * rowHeight, minWidth: "max-content" }}>
+				{lines.slice(from, to).map((line, index) => {
+					const at = from + index;
+					const sign = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
+					const changed = line.kind === "add" || line.kind === "del";
+					const color = line.kind === "add" ? "var(--dsw-success)" : line.kind === "del" ? "var(--dsw-danger)" : "var(--dsw-label-caption)";
 					return (
-						<div
-							key={i}
-							className="truncate"
-							style={{ margin: i === 0 ? "0 -8px 2px" : "8px -8px 2px", padding: "2px 8px", fontSize: 11.5, fontWeight: 600, color: "var(--dsw-label-secondary)", borderBottom: "0.5px solid var(--dsw-border-l2)" }}
-							title={l.text}
-						>
-							{l.text}
+						<div key={at} className="pw-diff-row" data-kind={line.kind}
+							style={{ position: "absolute", top: at * rowHeight, height: rowHeight, minWidth: "100%", width: "max-content", padding: "0 8px",
+								color: "var(--dsw-label-secondary)", background: changed ? line.kind === "add" ? "rgba(34,197,94,.14)" : "rgba(236,19,19,.12)" : "transparent",
+								boxShadow: changed ? "inset 2px 0 0 " + color : undefined }}>
+							{line.kind === "file" ? <strong title={line.text}>{line.text}</strong> : <>
+								<span aria-hidden style={{ color, userSelect: "none" }}>{line.kind === "hunk" ? "" : String(line.kind === "del" ? line.old ?? "" : line.new ?? "").padStart(width)} </span>
+								<span style={{ color, userSelect: "text" }}>{sign}</span>
+								{html[index] ? <span dangerouslySetInnerHTML={{ __html: html[index]! }} /> : line.text}
+							</>}
 						</div>
 					);
-				}
-				const num = l.kind === "hunk" ? "" : String(l.kind === "del" ? l.old : l.new).padStart(width);
-				const signColor = l.kind === "add" ? "var(--dsw-success)" : l.kind === "del" ? "var(--dsw-danger)" : "var(--dsw-label-caption)";
-				// 新增绿、删除红：底色 + 左侧 2px 色条；正文按语言着色（未高亮时用次级文字色）
-				const bg = l.kind === "add" ? "rgba(34,197,94,.14)" : l.kind === "del" ? "rgba(236,19,19,.12)" : "transparent";
-				const bar = l.kind === "add" ? "inset 2px 0 0 var(--dsw-success)" : l.kind === "del" ? "inset 2px 0 0 var(--dsw-danger)" : undefined;
-				const sign = l.kind === "add" ? "+" : l.kind === "del" ? "-" : " ";
-				const h = html[i];
-				return (
-					<div key={i} style={{ background: bg, boxShadow: bar, color: l.kind === "hunk" ? "var(--dsw-label-caption)" : "var(--dsw-label-secondary)", padding: "0 8px", margin: "0 -8px" }}>
-						<span style={{ color: signColor, userSelect: "none" }}>{num} {sign} </span>
-						{h ? <span dangerouslySetInnerHTML={{ __html: h }} /> : l.text}
-					</div>
-				);
-			})}
+				})}
+			</div>
 		</pre>
 	);
 }

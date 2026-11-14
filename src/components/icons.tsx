@@ -283,7 +283,18 @@ export const IconPersonalizationOutline16 = ({ size = 16, ...rest }: P) => (
 		/>
 	</svg>
 );
-export const IconPluginOutline16 = IconPersonalizationOutline16;
+export const IconPluginOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path
+			d="M2.1 5.7C2.1 5.09 2.59 4.6 3.2 4.6H5.6C6.21 4.6 6.7 5.09 6.7 5.7V9.2H10.2C10.81 9.2 11.3 9.69 11.3 10.3V12.7C11.3 13.31 10.81 13.8 10.2 13.8H3.2C2.59 13.8 2.1 13.31 2.1 12.7V5.7Z"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinejoin="round"
+		/>
+		<path d="M2.1 9.2H6.7V13.8" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+		<rect x="9.3" y="2.0" width="4.6" height="4.6" rx="1.1" stroke="currentColor" strokeWidth="1.25" />
+	</svg>
+);
 /** ic_ds_data_outline_16 — 模型 */
 export const IconDataOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
@@ -303,17 +314,17 @@ export const IconDataOutline16 = ({ size = 16, ...rest }: P) => (
 );
 export const IconModelOutline16 = IconDataOutline16;
 
-/** skill_outline_16 */
+/** skill_outline_16 — 双星闪耀（AI 技能/能力图标） */
 export const IconSkillOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
 		<path
-			d="M12.5113 15.4067C12.4395 15.6249 12.1308 15.6249 12.059 15.4067L11.643 14.1416C11.454 13.567 11.0033 13.1164 10.4288 12.9274L9.16369 12.5113C8.94544 12.4395 8.94544 12.1308 9.16369 12.059L10.4288 11.643C11.0033 11.454 11.454 11.0033 11.643 10.4288L12.059 9.16369C12.1308 8.94544 12.4395 8.94544 12.5113 9.16369L12.9274 10.4288C13.1164 11.0033 13.567 11.454 14.1416 11.643L15.4067 12.059C15.6249 12.1308 15.6249 12.4395 15.4067 12.5113L14.1416 12.9274C13.567 13.1164 13.1164 13.567 12.9274 14.1416L12.5113 15.4067Z"
-			fill="currentColor"
+			d="M6.5 3.6Q7.0 8.1 11.4 8.6Q7.0 9.1 6.5 13.6Q6.0 9.1 1.6 8.6Q6.0 8.1 6.5 3.6Z"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinejoin="round"
 		/>
-		<path
-			d="M9.02246 0.546878C9.9822 0.546878 10.7564 0.545403 11.374 0.612307C12.0042 0.680586 12.5515 0.826244 13.0273 1.17188C13.3052 1.37376 13.5501 1.61868 13.752 1.89649C14.0975 2.37225 14.2432 2.91984 14.3115 3.54981C14.3784 4.16727 14.377 4.94206 14.377 5.90137V8.51367C13.9611 8.29533 13.5071 8.13985 13.0273 8.06055V5.90137C13.0273 4.9121 13.0259 4.22322 12.9688 3.69532C12.9129 3.18044 12.8098 2.89782 12.6592 2.69043C12.5406 2.52724 12.3966 2.38326 12.2334 2.26465C12.026 2.11404 11.7437 2.0109 11.2285 1.95508C10.7005 1.89789 10.0122 1.89649 9.02246 1.89649H6.55371C5.56395 1.89649 4.87569 1.89787 4.34766 1.95508C3.83242 2.01092 3.55022 2.11398 3.34278 2.26465C3.17953 2.38329 3.03564 2.52719 2.91699 2.69043C2.76642 2.89782 2.66325 3.18042 2.60742 3.69532C2.55027 4.22322 2.54883 4.9121 2.54883 5.90137V10.0986C2.54883 11.0878 2.55031 11.7768 2.60742 12.3047C2.66326 12.8196 2.76642 13.1032 2.91699 13.3105C3.03558 13.4736 3.17966 13.6178 3.34278 13.7363C3.5502 13.8869 3.83265 13.9901 4.34766 14.0459C4.87568 14.1031 5.56398 14.1035 6.55371 14.1035H8.08399C8.27443 14.6025 8.55077 15.0585 8.89551 15.4541H6.55371C5.59402 15.4541 4.81976 15.4546 4.20215 15.3877C3.57204 15.3194 3.02468 15.1738 2.54883 14.8281C2.27111 14.6263 2.02606 14.3813 1.82422 14.1035C1.47883 13.6278 1.33293 13.08 1.26465 12.4502C1.19783 11.8327 1.19922 11.0579 1.19922 10.0986V5.90137C1.19922 4.94206 1.1978 4.16727 1.26465 3.54981C1.33295 2.91984 1.47867 2.37225 1.82422 1.89649C2.02613 1.61864 2.27098 1.37379 2.54883 1.17188C3.02472 0.826181 3.57197 0.6806 4.20215 0.612307C4.81976 0.545393 5.594 0.546877 6.55371 0.546878H9.02246ZM9.19629 9.14649H4.5459V7.84571H9.19629V9.14649ZM11.0303 6.10645H4.5459V4.80567H11.0303V6.10645Z"
-			fill="currentColor"
-		/>
+		<path d="M12.2 1.8V5.8M10.2 3.8H14.2" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+		<circle cx="2.9" cy="3.3" r="0.85" fill="currentColor" />
 	</svg>
 );
 
@@ -365,6 +376,40 @@ export const IconClockOutline16 = ({ size = 16, ...rest }: P) => (
 	</svg>
 );
 
+/** 圆柱数据库轮廓（本轮用量弹层标题图标） */
+export const IconDatabaseOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<ellipse cx="8" cy="3.8" rx="5.2" ry="1.8" stroke="currentColor" strokeWidth="1.25" />
+		<path d="M2.8 3.8v4.1c0 1 2.33 1.8 5.2 1.8s5.2-.8 5.2-1.8V3.8" stroke="currentColor" strokeWidth="1.25" />
+		<path d="M2.8 7.9v4.1c0 1 2.33 1.8 5.2 1.8s5.2-.8 5.2-1.8V7.9" stroke="currentColor" strokeWidth="1.25" />
+	</svg>
+);
+
+/** 资源市场 / 商店（雨棚与门廊轮廓） */
+export const IconMarketOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path
+			d="M2.6 2.4H13.4L14.5 5.6Q12.33 8.2 10.17 5.6Q8.0 8.2 5.83 5.6Q3.67 8.2 1.5 5.6L2.6 2.4Z"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinejoin="round"
+		/>
+		<path
+			d="M2.7 6.8V12.5C2.7 13.16 3.24 13.7 3.9 13.7H12.1C12.76 13.7 13.3 13.16 13.3 12.5V6.8"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		/>
+		<path
+			d="M6.3 13.7V10.1C6.3 9.66 6.66 9.3 7.1 9.3H8.9C9.34 9.3 9.7 9.66 9.7 10.1V13.7"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinejoin="round"
+		/>
+	</svg>
+);
+
 /** 文档（折角矩形，文件面板/文件行用；dsh 图标集无此形，自绘同风格轮廓） */
 export const IconFileOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
@@ -375,6 +420,25 @@ export const IconFileOutline16 = ({ size = 16, ...rest }: P) => (
 			strokeLinejoin="round"
 		/>
 		<path d="M9.6875 1.25V4.6875H13.125" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+	</svg>
+);
+
+/** 提示词（带 >_ 提示符的指令气泡轮廓） */
+export const IconPromptOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path
+			d="M3.8 2.2H12.2C13.19 2.2 14.0 3.01 14.0 4.0V9.8C14.0 10.79 13.19 11.6 12.2 11.6H4.9L2.0 13.6V4.0C2.0 3.01 2.81 2.2 3.8 2.2Z"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinejoin="round"
+		/>
+		<path
+			d="M4.8 5.2L6.6 6.9L4.8 8.6M8.1 8.6H11.1"
+			stroke="currentColor"
+			strokeWidth="1.25"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		/>
 	</svg>
 );
 
@@ -483,5 +547,26 @@ export const IconPinFill16 = ({ size = 16, ...rest }: P) => (
 			d="M4 2.5C4 2.22386 4.22386 2 4.5 2H11.5C11.7761 2 12 2.22386 12 2.5V3.5C12 3.77614 11.7761 4 11.5 4H10.5V7.29289L11.8536 8.64645C11.9474 8.74021 12 8.86739 12 9V10C12 10.2761 11.7761 10.5 11.5 10.5H8.6V14.5C8.6 14.7761 8.37614 15 8.1 15C7.82386 15 7.6 14.7761 7.6 14.5V10.5H4.5C4.22386 10.5 4 10.2761 4 10V9C4 8.86739 4.05262 8.74021 4.14645 8.64645L5.5 7.29289V4H4.5C4.22386 4 4 3.77614 4 3.5V2.5Z"
 			fill="currentColor"
 		/>
+	</svg>
+);
+
+/** 代码块换行切换 */
+export const IconWrapTextOutline14 = ({ size = 14, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path d="M2.5 4h11M2.5 8h8a2 2 0 1 1 0 4H9M2.5 12h3.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+		<path d="m10.5 10.5-1.7 1.5 1.7 1.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+	</svg>
+);
+
+/** 对话气泡描边图标（「在会话中创建」等用） */
+export const IconChatBubbleOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path
+			d="M8 1.75C4.27208 1.75 1.25 4.39152 1.25 7.65C1.25 9.1046 1.85296 10.4366 2.85355 11.4664C2.73517 12.2389 2.41615 13.0913 1.98156 13.7848C1.83842 14.0133 2.02096 14.3036 2.28862 14.2739C3.41068 14.1494 4.53359 13.7704 5.39412 13.1904C6.20885 13.4241 7.08703 13.55 8 13.55C11.7279 13.55 14.75 10.9085 14.75 7.65C14.75 4.39152 11.7279 1.75 8 1.75Z"
+			stroke="currentColor"
+			strokeWidth="1.3"
+			strokeLinejoin="round"
+		/>
+		<path d="M5.25 6.8H10.75M5.25 9.1H8.75" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
 	</svg>
 );

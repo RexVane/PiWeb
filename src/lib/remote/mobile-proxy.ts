@@ -76,14 +76,16 @@ export interface MobileProxyOptions {
 	css?: string | null;
 	js?: string | null;
 	log?: (message: string) => void;
+	admitRequest?: (request: http.IncomingMessage, response: http.ServerResponse) => boolean;
 }
 
-export function createMobileProxy({ targetPort, targetHost = "127.0.0.1", css = null, js = null, log = () => {} }: MobileProxyOptions): http.Server {
+export function createMobileProxy({ targetPort, targetHost = "127.0.0.1", css = null, js = null, log = () => {}, admitRequest }: MobileProxyOptions): http.Server {
 	// 转回 PiWeb 的这一跳必须直连。设了 NODE_USE_ENV_PROXY=1 时，Node 默认的 globalAgent 会把它交给
 	// HTTP_PROXY，代理再按原样转发的 Host（局域网地址:入口端口）连回本入口——自己转给自己，直到本机端口耗尽，
 	// 手机和公网隧道只能看到 502。自建的 Agent 不读代理环境变量；参数照抄 Node 的 globalAgent。
 	const agent = new http.Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 });
 	const server = http.createServer((req, res) => {
+		if (admitRequest && !admitRequest(req, res)) return;
 		// 保留原 Host / Origin 原样转发：PiWeb 的 isSafeHost 与 isSafeOrigin 都要看它们，
 		// 改写成回环反而会让写操作被判成跨源。
 		const headers: http.OutgoingHttpHeaders = { ...req.headers };
@@ -148,8 +150,15 @@ export function createMobileProxy({ targetPort, targetHost = "127.0.0.1", css = 
 			clientGone = true;
 			upstream.destroy();
 		});
+		upstream.flushHeaders();
 		req.pipe(upstream);
 	});
+	server.on("checkContinue", (req, res) => {
+		if (admitRequest && !admitRequest(req, res)) return;
+		res.writeContinue();
+		server.emit("request", req, res);
+	});
+	server.on("checkExpectation", (_req, res) => { res.writeHead(417, { connection: "close" }); res.end(); });
 	server.on("close", () => agent.destroy());
 	return server;
 }

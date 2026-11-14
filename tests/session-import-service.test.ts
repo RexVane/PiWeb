@@ -1,8 +1,8 @@
 /**
  * 导入服务：扫描隔离、去向解析、幂等与失败报告。
  *
- * 关键行为：某个来源坏掉不能影响其它来源；源项目目录本机不存在时要落到用户选的兜底工作区，
- * 没兜底就明确失败（不能默默丢掉这条会话）。同样只允许读源数据。
+ * 关键行为：某个来源坏掉不能影响其它来源；只导回本机仍存在的原项目目录，
+ * 原目录不存在或缺失时明确失败（不做工作区兜底，也不默默丢掉）。同样只允许读源数据。
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -22,7 +22,6 @@ vi.mock("../src/lib/session-import/paths", () => ({
 
 import { importSessions, scanAllSources } from "../src/lib/session-import";
 import { claudeSource } from "../src/lib/session-import/claude";
-import { codexSource } from "../src/lib/session-import/codex";
 import { deleteSession, readSession } from "../src/lib/session-reader";
 import { archiveSession, getArchivedSessions, getWorkspaceRegistry, registerCwds, removeWorkspace } from "../src/lib/workspace-store";
 import { sweepArchivedSessions } from "../src/lib/session-retention";
@@ -30,7 +29,7 @@ import { sweepArchivedSessions } from "../src/lib/session-retention";
 let root: string;
 let agentDir: string;
 let project: string;
-let fallback: string;
+let otherWorkspace: string;
 const TS = Date.UTC(2026, 8, 13, 4, 10, 51);
 
 beforeEach(async () => {
@@ -38,11 +37,11 @@ beforeEach(async () => {
 	agentDir = path.join(root, "agent");
 	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 	project = path.join(root, "project");
-	fallback = path.join(root, "fallback");
+	otherWorkspace = path.join(root, "other");
 	for (const key of Object.keys(roots) as Array<keyof typeof roots>) roots[key] = path.join(root, key);
 	await fs.mkdir(agentDir, { recursive: true });
 	await fs.mkdir(project, { recursive: true });
-	await fs.mkdir(fallback, { recursive: true });
+	await fs.mkdir(otherWorkspace, { recursive: true });
 });
 
 afterEach(async () => {
@@ -71,6 +70,20 @@ async function seedCodex(id: string, cwd: string): Promise<void> {
 }
 
 describe("扫描", () => {
+	it("cancels a source scan promptly when the request aborts", async () => {
+		const controller = new AbortController(); let sourceSignal: AbortSignal | undefined;
+		const scanner = vi.spyOn(claudeSource, "scan").mockImplementation(async (options) => {
+			sourceSignal = options?.signal;
+			await new Promise<void>((_resolve, reject) => sourceSignal?.addEventListener("abort", () => reject(sourceSignal?.reason), { once: true }));
+			return [];
+		});
+		try {
+			const pending = scanAllSources(agentDir, { sources: ["claude"], signal: controller.signal });
+			const rejected = expect(pending).rejects.toThrow("request cancelled");
+			await vi.waitFor(() => expect(sourceSignal).toBeDefined()); controller.abort(new Error("request cancelled"));
+			await rejected; expect(sourceSignal?.aborted).toBe(true);
+		} finally { scanner.mockRestore(); }
+	});
 	it("扩大范围可找到更早会话，hasMore 区分截断与恰好全部加载", async () => {
 		const summaries = ["new", "middle", "old"].map((externalId, index) => ({ source: "claude" as const, externalId, location: `${externalId}.jsonl`, updatedAt: TS - index * 1000 }));
 		const scan = vi.spyOn(claudeSource, "scan").mockImplementation(async (options) => options?.limit ? summaries.slice(0, options.limit) : summaries);
@@ -78,11 +91,11 @@ describe("扫描", () => {
 			const first = await scanAllSources(agentDir, { sources: ["claude"], limit: 2 });
 			expect(first.summaries.map((row) => row.externalId)).toEqual(["new", "middle"]);
 			expect(first.hasMore.claude).toBe(true);
-			expect(scan).toHaveBeenLastCalledWith({ limit: 3 });
+			expect(scan).toHaveBeenLastCalledWith({ limit: 3, signal: expect.any(AbortSignal) });
 			const expanded = await scanAllSources(agentDir, { sources: ["claude"], limit: 3 });
 			expect(expanded.summaries.map((row) => row.externalId)).toEqual(["new", "middle", "old"]);
 			expect(expanded.hasMore.claude).toBe(false);
-			expect(scan).toHaveBeenLastCalledWith({ limit: 4 });
+			expect(scan).toHaveBeenLastCalledWith({ limit: 4, signal: expect.any(AbortSignal) });
 			const unlimited = await scanAllSources(agentDir, { sources: ["claude"], limit: 0 });
 			expect(unlimited.summaries).toHaveLength(3);
 			expect(unlimited.hasMore.claude).toBe(false);
@@ -99,7 +112,7 @@ describe("扫描", () => {
 		expect(first.summaries.map((summary) => summary.source).sort()).toEqual(["claude", "codex"]);
 		expect(first.imported).toEqual([]);
 
-		await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });
+		await importSessions([{ source: "claude", externalId: "s1" }], { agentDir });
 		const second = await scanAllSources(agentDir);
 		expect(second.imported).toEqual(["claude:s1"]);
 	});
@@ -131,12 +144,12 @@ describe("扫描", () => {
 	});
 });
 
-describe("去向：源项目还在就导回原工作区，否则用兜底工作区", () => {
+describe("去向：只导回在本机存在的原工作区，不存在或缺失时直接失败", () => {
 	it("explicit imports restore only their project workspace, including retries of an existing import", async () => {
 		await seedClaude("s1", project);
 		await removeWorkspace(project);
-		await removeWorkspace(fallback);
-		await registerCwds([project, fallback]);
+		await removeWorkspace(otherWorkspace);
+		await registerCwds([project, otherWorkspace]);
 		expect((await getWorkspaceRegistry()).workspaces).toEqual([]);
 		const { POST } = await import("../src/app/api/sessions/import/route");
 		const request = () => POST(new Request("http://localhost/api/sessions/import", {
@@ -144,19 +157,19 @@ describe("去向：源项目还在就导回原工作区，否则用兜底工作�
 		}));
 		const first = await (await request()).json();
 		expect(first.data).toMatchObject({ imported: 1, failed: 0 });
-		expect(await getWorkspaceRegistry()).toMatchObject({ workspaces: [project], removedWorkspaces: [fallback] });
+		expect(await getWorkspaceRegistry()).toMatchObject({ workspaces: [project], removedWorkspaces: [otherWorkspace] });
 		const sessionFile = first.data.results[0].path;
 		const original = await fs.readFile(sessionFile, "utf8");
 		await removeWorkspace(project);
 		const retry = await (await request()).json();
 		expect(retry.data).toMatchObject({ imported: 0, skipped: 1, failed: 0, workspaces: [project] });
-		expect(await getWorkspaceRegistry()).toMatchObject({ workspaces: [project], removedWorkspaces: [fallback] });
+		expect(await getWorkspaceRegistry()).toMatchObject({ workspaces: [project], removedWorkspaces: [otherWorkspace] });
 		expect(await fs.readFile(sessionFile, "utf8")).toBe(original);
 	});
 
 	it("源项目目录存在时，会话落在该工作区下", async () => {
 		await seedClaude("s1", project);
-		const report = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });
+		const report = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir });
 		expect(report.imported).toBe(1);
 		expect(report.failed).toBe(0);
 		expect(report.results[0].workspace).toBe(path.resolve(project));
@@ -164,20 +177,36 @@ describe("去向：源项目还在就导回原工作区，否则用兜底工作�
 		expect(await readSession(report.results[0].path as string)).toMatchObject({ cwd: path.resolve(project) });
 	});
 
-	it("源项目目录已不存在时落到兜底工作区，源路径写进来源条目里可追溯", async () => {
+	it("源项目目录已不存在时明确失败（即使请求携带旧兜底参数也不会回落）", async () => {
 		const gone = path.join(root, "deleted-project");
 		await seedClaude("s2", gone);
-		const report = await importSessions([{ source: "claude", externalId: "s2" }], { agentDir, fallbackCwd: fallback });
-		expect(report.results[0].workspace).toBe(path.resolve(fallback));
-		const lines = (await fs.readFile(report.results[0].path as string, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-		expect(lines.find((entry) => entry.customType === "piweb-import")?.data.projectPath).toBe(gone);
-	});
-
-	it("源项目不存在又没有兜底工作区时明确失败，而不是悄悄丢掉", async () => {
-		await seedClaude("s3", path.join(root, "gone"));
-		const report = await importSessions([{ source: "claude", externalId: "s3" }], { agentDir });
+		const report = await importSessions([{ source: "claude", externalId: "s2" }], { agentDir });
+		expect(report.imported).toBe(0);
+		expect(report.failed).toBe(1);
 		expect(report.results[0].status).toBe("failed");
 		expect(report.results[0].reason).toMatch(/源项目目录不存在/);
+		expect(report.workspaces).toEqual([]);
+
+		const { POST } = await import("../src/app/api/sessions/import/route");
+		const response = await POST(new Request("http://localhost/api/sessions/import", {
+			method: "POST",
+			body: JSON.stringify({ sessions: [{ source: "claude", externalId: "s2" }], fallbackCwd: otherWorkspace }),
+		}));
+		const body = await response.json();
+		expect(body.success).toBe(true);
+		expect(body.data).toMatchObject({ imported: 0, failed: 1, workspaces: [] });
+		expect(body.data.results[0].reason).toMatch(/源项目目录不存在/);
+		expect((await getWorkspaceRegistry()).workspaces).toEqual([]);
+	});
+
+	it("源会话没有项目目录时明确失败", async () => {
+		await write(path.join(roots.claude, "-proj", "no-cwd.jsonl"), [
+			{ type: "user", timestamp: new Date(TS).toISOString(), message: { role: "user", content: "无目录会话" } },
+			{ type: "assistant", timestamp: new Date(TS + 1000).toISOString(), message: { role: "assistant", model: "m", content: [{ type: "text", text: "在" }] } },
+		]);
+		const report = await importSessions([{ source: "claude", externalId: "no-cwd" }], { agentDir });
+		expect(report.results[0].status).toBe("failed");
+		expect(report.results[0].reason).toBe("源会话没有项目目录");
 		expect(report.workspaces).toEqual([]);
 	});
 });
@@ -258,8 +287,8 @@ describe("幂等与失败报告", () => {
 
 	it("已导入过的会话再导入是 skipped（不会产生第二个文件）", async () => {
 		await seedClaude("s1", project);
-		const first = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });
-		const second = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir, fallbackCwd: fallback });
+		const first = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir });
+		const second = await importSessions([{ source: "claude", externalId: "s1" }], { agentDir });
 		expect(second).toMatchObject({ imported: 0, skipped: 1, failed: 0 });
 		expect(second.results[0].reason).toMatch(/已经导入过/);
 		const files = await fs.readdir(path.dirname(first.results[0].path as string));
@@ -269,14 +298,14 @@ describe("幂等与失败报告", () => {
 	it("删除已导入文件后不再标为已导入，原会话可重新导入和打开", async () => {
 		await seedClaude("session special", project, "保留的源会话");
 		const selection = { source: "claude" as const, externalId: "session special" };
-		const first = await importSessions([selection], { agentDir, fallbackCwd: fallback });
+		const first = await importSessions([selection], { agentDir });
 		expect((await scanAllSources(agentDir)).imported).toHaveLength(1);
 		await deleteSession(first.results[0].path!);
 		const { GET } = await import("../src/app/api/sessions/import/route");
 		const scan = await (await GET(new Request("http://localhost/api/sessions/import"))).json();
 		expect(scan.data.imported).toEqual([]);
 		expect(scan.data.sessions).toEqual(expect.arrayContaining([expect.objectContaining(selection)]));
-		const second = await importSessions([selection], { agentDir, fallbackCwd: fallback });
+		const second = await importSessions([selection], { agentDir });
 		expect(second).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
 		expect((await readSession(second.results[0].path!)).messages[0].content).toEqual(expect.arrayContaining([expect.objectContaining({ text: "保留的源会话" })]));
 		expect((await scanAllSources(agentDir)).imported).toHaveLength(1);
@@ -286,7 +315,7 @@ describe("幂等与失败报告", () => {
 		await seedClaude("s1", project);
 		const report = await importSessions(
 			[{ source: "claude", externalId: "s1" }, { source: "claude", externalId: "s1" }],
-			{ agentDir, fallbackCwd: fallback },
+			{ agentDir },
 		);
 		expect(report).toMatchObject({ imported: 1, skipped: 1 });
 		expect(report.results[1].reason).toMatch(/重复选择/);
@@ -296,7 +325,7 @@ describe("幂等与失败报告", () => {
 		await seedClaude("s1", project);
 		const report = await importSessions(
 			[{ source: "claude", externalId: "s1" }, { source: "claude", externalId: "not-there" }],
-			{ agentDir, fallbackCwd: fallback },
+			{ agentDir },
 		);
 		expect(report).toMatchObject({ imported: 1, failed: 1 });
 		expect(report.results[1].reason).toMatch(/源会话已不存在/);
@@ -305,7 +334,7 @@ describe("幂等与失败报告", () => {
 	it("读了会话但读不出消息时算失败，不算成功", async () => {
 		// 只有 assistant 的空内容：claude 适配器返回 null
 		await write(path.join(roots.claude, "-proj", "empty.jsonl"), [{ type: "assistant", message: { role: "assistant", content: [] } }]);
-		const report = await importSessions([{ source: "claude", externalId: "empty" }], { agentDir, fallbackCwd: fallback });
+		const report = await importSessions([{ source: "claude", externalId: "empty" }], { agentDir });
 		expect(report.results[0].status).toBe("failed");
 		expect(report.results[0].reason).toMatch(/读不出可导入的消息/);
 	});
@@ -325,7 +354,7 @@ describe("幂等与失败报告", () => {
 		const before = await snapshot();
 		await importSessions(
 			[{ source: "claude", externalId: "s1" }, { source: "codex", externalId: "rollout-1" }],
-			{ agentDir, fallbackCwd: fallback },
+			{ agentDir },
 		);
 		expect(await snapshot()).toEqual(before);
 	});

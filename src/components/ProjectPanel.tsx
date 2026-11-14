@@ -1,4 +1,7 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+import { useConfirmDialog } from "@/components/ConfirmDialog";
+
 
 /**
  * 项目栏:右侧抽屉的「项目」入口(不再独占网格一列)。项目生长 = 每轮一个 git commit。
@@ -11,6 +14,7 @@ import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
+import { useDialog } from "@/hooks/useDialog";
 import type { GitInfo } from "@/lib/git-service";
 import type { TreeNode } from "@/lib/growth-tree";
 import type { GrowthChange, GrowthConsentRequest } from "@/lib/types";
@@ -23,12 +27,13 @@ export function GrowthConsentDialog({ request, onAnswer }: { request: GrowthCons
 	const { t } = useI18n();
 	const [dismissed, setDismissed] = useState(false);
 	const ref = useRef<HTMLDivElement>(null);
+	useDialog({ open: !dismissed, ref, onClose: () => setDismissed(true) });
 	useEffect(() => {
 		setDismissed(false);
 		ref.current?.focus();
 	}, [request.cwd, request.reason]);
 	if (dismissed) return null;
-	const body = request.reason === "nested" ? t.growthConsentNested.replace("{parent}", request.parent ?? "") : t.growthConsentNotGit;
+	const body = request.reason === "existing" ? t.growthConsentExisting : request.reason === "nested" ? t.growthConsentNested.replace("{parent}", request.parent ?? "") : t.growthConsentNotGit;
 	return (
 		<div
 			ref={ref}
@@ -69,11 +74,12 @@ export function GrowthConsentDialog({ request, onAnswer }: { request: GrowthCons
 
 /** 「第 7 轮 · 把保存按钮改成红色」/「你的修改」 */
 export function roundTitle(round: GrowthEntry, t: Record<string, string>): string {
-	if (round.kind !== "round") return t.growthKindUser;
-	const label = t.growthRoundLabel.replace("{n}", String(round.n ?? ""));
+	const shared = round.attribution === "shared" ? ` · ${t.growthSharedChanges ?? "Shared workspace changes"}` : "";
+	if (round.kind !== "round") return t.growthKindUser + shared;
+	const label = t.growthRoundLabel.replace("{n}", String(round.roundNumber ?? round.n ?? ""));
 	// 修好之前记下的轮次，标题是技能展开的首行 `<skill name="x" location="…">`：显示成 /skill:x
 	const title = round.title?.replace(/^<skill\s[^>]*?\bname="([^"]+)"[^>]*>$/, "/skill:$1");
-	return title ? `${label} · ${title}` : label;
+	return (title ? `${label} · ${title}` : label) + shared;
 }
 
 /** 柱的颜色：你的修改为灰；pi 的一轮按主要改动类型（删除为主红、新增为主绿、否则黄） */
@@ -82,8 +88,8 @@ function roundColor(round: GrowthEntry): string {
 	const st = round.stats;
 	if (!st.added && !st.modified && !st.deleted && !st.renamed) return "var(--dsw-border-l3)";
 	if (st.deleted && st.deleted >= st.added && st.deleted >= st.modified) return "var(--dsw-danger)";
-	if (st.added >= st.modified) return "var(--dsw-success)";
-	return "var(--dsw-warn)";
+	if (st.added >= st.modified) return "var(--dsw-success-text)";
+	return "var(--dsw-warn-text)";
 }
 
 /** 这一轮有没有实际改动（轮次列表据此把没改动的轮降成次要色，改过的才显示 +/− 行数） */
@@ -109,6 +115,15 @@ function sumChanges(changes: GrowthChange[]): { files: number; add: number; del:
 		del += c.del ?? 0;
 	}
 	return { files: changes.length, add, del };
+}
+
+function growthFailureMessage(message: string, lang: "zh" | "en"): string {
+	if (/git is not installed/i.test(message)) return lang === "zh" ? "未找到 Git。安装 Git 后可重新开启项目记录。" : "Git is unavailable. Install Git, then enable project recording again.";
+	if (/workspace directory not found/i.test(message)) return lang === "zh" ? "工作区目录不存在，请重新选择工作区。" : "The workspace directory is unavailable. Select the workspace again.";
+	if (/history|历史/.test(message) && /上限|limit|budget/.test(message)) return lang === "zh" ? "项目记录已达到历史容量上限，现有历史已保留。请关闭记录，或导出后管理历史。" : "Project history reached its capacity. Existing history is retained. Turn recording off, or export and manage the history.";
+	if (/candidate limit|candidate files|文件过多/i.test(message)) return lang === "zh" ? "工作区文件过多，已停止记录。请在 .gitignore 中排除生成目录后重新开启记录。" : "The workspace has too many files to record. Exclude generated directories in .gitignore, then enable recording again.";
+	if (/exceeds.*(?:byte|limit)|exceeded.*(?:buffer|limit)/i.test(message)) return lang === "zh" ? "项目记录超过大小限制，上一份快照已保留。请缩小或排除大文件后重新开启记录。" : "Project recording exceeded its size limit. The previous snapshot is retained. Reduce or exclude large files, then enable recording again.";
+	return lang === "zh" ? "项目记录未能完成，请重试或查看错误详情。" : "Project recording could not finish. Retry or review the error details.";
 }
 
 export function ProjectPanel({
@@ -144,12 +159,25 @@ export function ProjectPanel({
 	onClose: () => void;
 	onError: (message: string) => void;
 }) {
-	const { t } = useI18n();
+	const { t, lang } = useI18n();
 	const tt = t as unknown as Record<string, string>;
+	const { confirm, confirmDialog } = useConfirmDialog();
 	const [filter, setFilter] = useState("");
 	const [onlyChanges, setOnlyChanges] = useState(true);
 	const [recording, setRecording] = useState(false);
 	const [notice, setNotice] = useState("");
+	const [recordingEnabled, setRecordingEnabled] = useState<boolean | null>(null);
+	const cwdRef = useRef(cwd); cwdRef.current = cwd;
+	const recordingBusy = useRef(false);
+	const [recordingSettingBusy, setRecordingSettingBusy] = useState(false);
+	useEffect(() => {
+		let active = true;
+		setRecordingEnabled(null); recordingBusy.current = false; setRecordingSettingBusy(false);
+		void fetch(`/api/growth?cwd=${encodeURIComponent(cwd)}&consent=1`, { cache: "no-store" }).then((response) => response.json()).then((result) => {
+			if (active && result.success) setRecordingEnabled(result.data?.consent ?? null);
+		}).catch(() => undefined);
+		return () => { active = false; };
+	}, [cwd]);
 	/** 轮数列表(底部计数点开) */
 	const [roundPickerOpen, setRoundPickerOpen] = useState(false);
 	/** 列表顶部「输入轮号...」已就地把那一行变成输入框 */
@@ -190,7 +218,8 @@ export function ProjectPanel({
 		}
 		return growth.changesReady === false ? null : sumChanges(growth.changes);
 	}, [selected, growth.scope, growth.changes, growth.changesReady]);
-	const piRounds = useMemo(() => rounds.filter((round) => round.kind === "round").length, [rounds]);
+	const recordedRounds = useMemo(() => rounds.filter((round) => round.kind === "round").length, [rounds]);
+	const piRounds = useMemo(() => Math.max(recordedRounds, ...rounds.filter((round) => round.kind === "round").map((round) => round.roundNumber ?? round.n ?? 0)), [rounds, recordedRounds]);
 	const maxLines = useMemo(() => Math.max(1, ...rounds.map(changedLines)), [rounds]);
 	const railRef = useRef<HTMLDivElement>(null);
 	useEffect(() => {
@@ -230,7 +259,7 @@ export function ProjectPanel({
 		const parsed = Number.parseInt(raw.trim(), 10);
 		if (Number.isNaN(parsed) || piRounds === 0) return;
 		const n = Math.max(1, Math.min(piRounds, parsed));
-		const round = rounds.find((item) => item.n === n);
+		const round = rounds.find((item) => item.kind === "round" && (item.roundNumber ?? item.n ?? 0) >= n) ?? rounds.findLast((item) => item.kind === "round");
 		if (!round) return;
 		growth.select(round.commit);
 		setRoundPickerOpen(false);
@@ -266,6 +295,7 @@ export function ProjectPanel({
 	// 会变成贴在窗口最右边的一条多余发丝线,所以这里去掉;背景沿用侧栏填充色即可。
 	return (
 		<div className="pw-project flex h-full min-h-0 flex-1 flex-col" style={{ borderRight: "none" }} data-testid="project-panel">
+			{confirmDialog}
 			{/* 头部 */}
 			<div className="flex items-center gap-1.5 px-3 pt-3 pb-1.5">
 				<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, fontWeight: 600 }} title={cwd}>
@@ -281,8 +311,25 @@ export function ProjectPanel({
 				</button>
 			</div>
 			{/* 生长记录不可用（找不到 git 等）：明确提示 + 已退化为当前目录结构 */}
+			{cwd && hasSession && <div className="flex items-center gap-2 px-3 pb-2" style={{ fontSize: 11.5 }}>
+				<span className="flex-1">{t.growthRecordingSetting}</span>
+				<button type="button" className="pw-chip" aria-pressed={recordingEnabled === true} disabled={recordingSettingBusy} onClick={() => void (async () => {
+					if (recordingBusy.current) return;
+					recordingBusy.current = true; setRecordingSettingBusy(true);
+					const allow = recordingEnabled !== true;
+					try {
+						if (allow && !(await confirm({ title: t.growthRecordingSetting, message: t.growthRecordingConsent, confirmLabel: t.enabled }))) return;
+						if (cwdRef.current !== cwd) return;
+						const response = await fetch("/api/growth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "setRecording", cwd, allow }) });
+						const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
+						if (cwdRef.current === cwd) setRecordingEnabled(allow);
+					} catch (error) { if (cwdRef.current === cwd) onError(error instanceof Error ? error.message : t.toastError); }
+					finally { if (cwdRef.current === cwd) { recordingBusy.current = false; setRecordingSettingBusy(false); } }
+				})()}>{recordingEnabled === true ? t.enabled : t.disabled}</button>
+			</div>}
+			{cwd && hasSession && <div className="px-3 pb-2" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}>{t.growthCapacityHint}</div>}
 			{cwd && hasSession && !growth.available && !growth.loading && (
-				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-warn)", background: "var(--dsw-hover)" }} role="status">
+				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-warn-text)", background: "var(--dsw-hover)" }} role="status">
 					{t.growthUnavailableFallback}
 				</div>
 			)}
@@ -300,8 +347,8 @@ export function ProjectPanel({
 					{git.files.length ? (
 						<span className="min-w-0 flex-1 truncate" title={`${conflicts ? `${t.gitConflict} ${conflicts} · ` : ""}${t.gitStaged} ${staged} · ${t.gitUnstaged} ${unstaged} · ${t.gitUntracked} ${untracked}`}>
 							{conflicts > 0 && <span style={{ color: "var(--dsw-danger)" }}>{t.gitConflict} {conflicts} </span>}
-							{staged > 0 && <span style={{ color: "var(--dsw-success)" }}>{t.gitStaged} {staged} </span>}
-							{unstaged > 0 && <span style={{ color: "var(--dsw-warn)" }}>{t.gitUnstaged} {unstaged} </span>}
+							{staged > 0 && <span style={{ color: "var(--dsw-success-text)" }}>{t.gitStaged} {staged} </span>}
+							{unstaged > 0 && <span style={{ color: "var(--dsw-warn-text)" }}>{t.gitUnstaged} {unstaged} </span>}
 							{untracked > 0 && <span>{t.gitUntracked} {untracked}</span>}
 						</span>
 					) : <span className="min-w-0 flex-1 truncate">{t.gitNoChanges}</span>}
@@ -321,10 +368,10 @@ export function ProjectPanel({
 						{growth.scope === "session" && <span>{t.growthScopeSession}</span>}
 						{totals ? <>
 							<span>{t.growthRoundFiles.replace("{n}", String(totals.files))}</span>
-							<span style={{ color: "var(--dsw-success)" }}>+{totals.add}</span>
+							<span style={{ color: "var(--dsw-success-text)" }}>+{totals.add}</span>
 							<span style={{ color: "var(--dsw-danger)" }}>−{totals.del}</span>
 						</> : <span>—</span>}
-						{statusText && <span style={{ color: "var(--dsw-warn)" }}>{statusText}</span>}
+						{statusText && <span style={{ color: "var(--dsw-warn-text)" }}>{statusText}</span>}
 						<span className="flex-1" />
 						{onJumpToChat && selected.promptIds[0] && (
 							<button type="button" className="pw-chip" onClick={() => onJumpToChat(selected.promptIds[0])}>
@@ -332,6 +379,7 @@ export function ProjectPanel({
 							</button>
 						)}
 					</div>
+					{selected.attribution === "shared" && <div className="mt-1 truncate" style={{ fontSize: 11, color: "var(--dsw-warn-text)" }} title={(selected.concurrentSessions ?? []).join(", ")} data-testid="growth-shared-attribution">{t.growthSharedHint}{selected.concurrentSessions?.length ? ` · ${selected.concurrentSessions.join(", ")}` : ""}</div>}
 				</div>
 			)}
 			{/* 范围 + 只看改动 */}
@@ -369,11 +417,12 @@ export function ProjectPanel({
 			</div>
 			{growth.error && (
 				<div className="mx-3 mb-1 rounded-lg px-2 py-1 break-words" style={{ fontSize: 11, color: "var(--dsw-danger)", background: "var(--dsw-hover)" }} role="alert">
-					{growth.error}
+					{growthFailureMessage(growth.error, lang)}
+					<details><summary>{lang === "zh" ? "错误详情" : "Error details"}</summary>{growth.error}</details>
 				</div>
 			)}
 			{selected?.truncated && growth.scope === "round" && (
-				<div className="mx-3 mb-1 rounded-lg px-2 py-1" style={{ fontSize: 11, color: "var(--dsw-warn)", background: "var(--dsw-hover)" }}>
+				<div className="mx-3 mb-1 rounded-lg px-2 py-1" style={{ fontSize: 11, color: "var(--dsw-warn-text)", background: "var(--dsw-hover)" }}>
 					{t.growthTruncated}
 				</div>
 			)}
@@ -399,6 +448,7 @@ export function ProjectPanel({
 			{/* 时间轴 */}
 			{hasSession && (
 				<div className="pw-timeline hairline-t" data-testid="growth-timeline">
+					{piRounds > recordedRounds && <div className="px-3 pt-1" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}>{t.growthUnrecordedRounds}</div>}
 					{(rounds.length > 0 || running) && (
 						<div ref={railRef} className="pw-tl-rail">
 							{rounds.map((round) => {
@@ -445,7 +495,7 @@ export function ProjectPanel({
 								onClick={() => setRoundPickerOpen((v) => !v)}
 							>
 								{selected?.n
-									? t.growthRoundPosition.replace("{current}", String(selected.n)).replace("{total}", String(piRounds))
+									? t.growthRoundPosition.replace("{current}", String(selected.roundNumber ?? selected.n)).replace("{total}", String(piRounds))
 									: selected
 										? t.growthKindUser
 										: t.growthRoundPosition.replace("{current}", "0").replace("{total}", String(piRounds))}
@@ -524,7 +574,7 @@ export function ProjectPanel({
 													<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5 }}>{roundTitle(round, tt)}</span>
 													{changed && (round.stats.add > 0 || round.stats.del > 0) ? (
 														<span className="flex-none" style={{ fontSize: 11, fontFamily: "var(--font-mono)" }}>
-															<span style={{ color: "var(--dsw-success)" }}>+{round.stats.add}</span> <span style={{ color: "var(--dsw-danger)" }}>−{round.stats.del}</span>
+															<span style={{ color: "var(--dsw-success-text)" }}>+{round.stats.add}</span> <span style={{ color: "var(--dsw-danger)" }}>−{round.stats.del}</span>
 														</span>
 													) : null}
 													<span className="flex-none" style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}>{fmtTime(round.ts)}</span>

@@ -6,19 +6,22 @@ export interface TunnelHealth {
 	error: string | null;
 }
 
-const unavailable = "公网入口暂时不可达，隧道仍在尝试重连。持续失败时请关闭后重新开启，并使用新地址。";
+const unavailable = "连接暂时不可达，正在自动重试。";
 
 export function probeTunnel(url: string, signal: AbortSignal): Promise<TunnelHealth> {
 	return new Promise((resolve) => {
+		// 探测连接随超时或取消释放，沿用启动器的代理设置。
+		const agent = new https.Agent({ proxyEnv: process.env.NODE_USE_ENV_PROXY === "1" ? { ...process.env } : undefined });
 		let settled = false;
 		const finish = (ready: boolean, error: string | null) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			agent.destroy();
 			resolve({ ready, error });
 		};
 		const target = new URL(url);
-		const request = https.request({ host: target.hostname, path: "/api/health", method: "GET", signal }, (response) => {
+		const request = https.request({ host: target.hostname, port: target.port || 443, path: "/api/health", method: "GET", signal, agent }, (response) => {
 			if (response.headers["cf-mitigated"] === "challenge") {
 				finish(false, "Cloudflare 要求浏览器验证，请在访问设备上打开公网地址完成验证。");
 				response.destroy();
@@ -38,7 +41,7 @@ export function probeTunnel(url: string, signal: AbortSignal): Promise<TunnelHea
 				const body = Buffer.concat(chunks).toString("utf8");
 				if (response.statusCode !== 200) {
 					finish(false, /\b1033\b/.test(body)
-						? "Cloudflare 1033：隧道未连接。请确认电脑联网且 PiWeb 正在运行；持续失败时关闭后重新开启，并使用新地址。"
+						? "Cloudflare 1033：隧道未连接，正在自动重试。请保持电脑联网且 PiWeb 正在运行。"
 						: `公网入口返回 HTTP ${response.statusCode ?? "?"}，尚未连通 PiWeb。`);
 					return;
 				}

@@ -1,11 +1,12 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * 抽屉 → 导入会话：把本机其它 AI 编程工具的对话导成 pi 会话。
  *
  * 默认一条都不勾，支持按来源浏览、搜索与跨来源选择，
- * 已导入的会话禁止重复选择，已归档的会话可恢复。写入去向由服务端决定（源项目还在就导回原工作区），
- * 这里只负责在源项目已不在本机时给一个兜底工作区——从已知工作区里选，不允许手输路径。
+ * 已导入的会话禁止重复选择，已归档的会话可恢复。会话只导回在本机仍存在的原项目目录，不做工作区兜底。
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
@@ -44,12 +45,48 @@ interface ImportOutcome {
 }
 
 interface ImportReport {
+	warning?: string;
 	imported: number;
 	restored?: number;
 	skipped: number;
 	failed: number;
 	results: ImportOutcome[];
 	workspaces: string[];
+}
+
+/** Consume bounded NDJSON as it arrives; older servers may still return one JSON report. */
+export async function readImportResponse(response: Response, onProgress: (done: number, total: number, outcome?: ImportOutcome) => void, signal: AbortSignal): Promise<ImportReport> {
+	if (!response.headers?.get("content-type")?.includes("application/x-ndjson")) {
+		const json = await response.json();
+		if (!response.ok || !json.success) throw new Error(json.error || "导入失败");
+		return json.data;
+	}
+	if (!response.ok || !response.body) throw new Error("导入连接不可用");
+	const reader = response.body.getReader(); const decoder = new TextDecoder();
+	let pending = ""; let result: ImportReport | undefined; let failure: string | undefined;
+	const cancel = () => { void reader.cancel(signal.reason).catch(() => undefined); };
+	signal.addEventListener("abort", cancel, { once: true });
+	const consume = (line: string) => {
+		if (!line.trim()) return;
+		const event = JSON.parse(line);
+		if (event.type === "error") failure = event.error || "导入失败";
+		if (event.type === "result" && event.data) result = event.data;
+		if (event.type === "progress" && Number.isSafeInteger(event.done) && Number.isSafeInteger(event.total) && event.done >= 0 && event.total <= MAX_IMPORT_SELECTION && event.done <= event.total) onProgress(event.done, event.total, event.outcome);
+	};
+	try {
+		for (;;) {
+			signal.throwIfAborted();
+			const chunk = await reader.read();
+			pending += chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
+			if (pending.length > 2_000_000) throw new Error("导入进度数据超出限制");
+			let newline: number;
+			while ((newline = pending.indexOf("\n")) >= 0) { consume(pending.slice(0, newline)); pending = pending.slice(newline + 1); }
+			if (chunk.done) { consume(pending); break; }
+		}
+		signal.throwIfAborted();
+		if (!result) throw new Error(failure || "导入连接中断，未收到完成结果。请刷新查看已导入会话。");
+		return failure ? { ...result, warning: failure } : result;
+	} finally { signal.removeEventListener("abort", cancel); await reader.cancel().catch(() => undefined); reader.releaseLock(); }
 }
 
 /** 来源中文名/英文名放在 i18n 里，这里只保留稳定的顺序与徽标色 */
@@ -73,8 +110,10 @@ function projectKey(value?: string): string {
 	return /^[a-z]:|^\/\//i.test(normalized) ? normalized.toLocaleLowerCase() : normalized;
 }
 
-export function SessionImportSection({ cwd }: { cwd: string }) {
+export function SessionImportSection() {
 	const { t } = useI18n();
+	const scanErrorText = useRef(t.toastError);
+	scanErrorText.current = t.toastError;
 	const [summaries, setSummaries] = useState<Summary[]>([]);
 	const [errors, setErrors] = useState<SourceError[]>([]);
 	const [importedKeys, setImportedKeys] = useState<Set<string>>(new Set());
@@ -82,10 +121,9 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [scanning, setScanning] = useState(true);
 	const [importing, setImporting] = useState(false);
+	const [progress, setProgress] = useState<{ done: number; total: number; outcome?: ImportOutcome } | null>(null);
 	const [report, setReport] = useState<ImportReport | null>(null);
 	const [failure, setFailure] = useState<string | null>(null);
-	const [workspaces, setWorkspaces] = useState<string[]>([]);
-	const [fallback, setFallback] = useState(cwd);
 	const [query, setQuery] = useState("");
 	const [projectFilter, setProjectFilter] = useState("");
 	const [selectedOnly, setSelectedOnly] = useState(false);
@@ -93,8 +131,11 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const scanLimitRef = useRef(INITIAL_SCAN_LIMIT);
 	const [hasMore, setHasMore] = useState<Record<string, boolean>>({});
 	const scanInFlight = useRef(false);
+	const mounted = useRef(false);
 	const pendingScanLimit = useRef<number | null>(null);
 	const importInFlight = useRef(false);
+	const scanController = useRef<AbortController | null>(null);
+	const importController = useRef<AbortController | null>(null);
 	const scrollBody = useRef<HTMLDivElement>(null);
 	const pickerRef = useRef<HTMLDivElement>(null);
 	const pickerTrigger = useRef<HTMLButtonElement>(null);
@@ -104,6 +145,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	const [highlightedSource, setHighlightedSource] = useState("");
 
 	const scan = useCallback(async (limit = scanLimitRef.current) => {
+		if (!mounted.current) return;
 		// Keep changes received during a scan: its response may predate a deletion or archive change.
 		scanLimitRef.current = Math.max(scanLimitRef.current, limit);
 		if (scanInFlight.current) {
@@ -117,11 +159,15 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 			do {
 				limit = pendingScanLimit.current ?? scanLimitRef.current;
 				pendingScanLimit.current = null;
+				// StrictMode may abort the previous effect while queuing its replacement.
+				// Each scan owns a fresh signal; canceled work must not overwrite the next result.
+				const controller = new AbortController(); scanController.current = controller;
 				try {
-					const response = await fetch(limit === INITIAL_SCAN_LIMIT ? "/api/sessions/import" : `/api/sessions/import?limit=${limit}`);
+					const response = await fetch(limit === INITIAL_SCAN_LIMIT ? "/api/sessions/import" : `/api/sessions/import?limit=${limit}`, { signal: controller.signal });
 					const json = await response.json();
+					if (!mounted.current || controller.signal.aborted) continue;
 					if (!response.ok || !json.success) {
-						setFailure(json.error || t.toastError);
+						setFailure(json.error || scanErrorText.current);
 						continue;
 					}
 					const nextSummaries: Summary[] = json.data.sessions ?? [];
@@ -136,29 +182,25 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 					const available = new Set(nextSummaries.map((row) => `${row.source}:${row.externalId}`).filter((key) => !nextImported.has(key) || nextArchived.has(key)));
 					setSelected((previous) => new Set([...previous].filter((key) => available.has(key))));
 				} catch (error) {
-					setFailure(error instanceof Error ? error.message : String(error));
+					if (mounted.current && !controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
 				}
-			} while (pendingScanLimit.current !== null);
+			} while (mounted.current && pendingScanLimit.current !== null);
 		} finally {
 			scanInFlight.current = false;
-			setScanning(false);
+			scanController.current = null;
+			if (mounted.current) setScanning(false);
 		}
-	}, [t]);
-
-	// 兜底工作区候选：已知工作区列表（只选不填），默认当前打开的工作区
-	useEffect(() => {
-		void (async () => {
-			try {
-				const json = await (await fetch("/api/workspaces")).json();
-				if (json.success) setWorkspaces(json.data.workspaces ?? []);
-			} catch {
-				// 拿不到候选就把当前工作区当唯一条目，不影响导入
-			}
-		})();
 	}, []);
 
 	useEffect(() => {
+		mounted.current = true;
 		void scan();
+		return () => {
+			mounted.current = false;
+			pendingScanLimit.current = null;
+			scanController.current?.abort();
+			importController.current?.abort();
+		};
 	}, [scan]);
 	useEffect(() => {
 		const refresh = () => void scan();
@@ -175,6 +217,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 
 	const key = (summary: Summary) => `${summary.source}:${summary.externalId}`;
 	const isImported = (summary: Summary) => importedKeys.has(key(summary)) && !archivedKeys.has(key(summary));
+	const canSelect = (summary: Summary) => Boolean(summary.projectPath) || archivedKeys.has(key(summary));
 
 	const groups = useMemo(() => {
 		const bySource = new Map<string, Summary[]>();
@@ -234,7 +277,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		(!projectFilter || projectKey(row.projectPath) === projectFilter) &&
 		(!selectedOnly || selected.has(key(row))),
 	);
-	const availableRows = visibleRows.filter((row) => !isImported(row));
+	const availableRows = visibleRows.filter((row) => !isImported(row) && canSelect(row));
 	const selectedArchived = [...selected].filter((key) => archivedKeys.has(key)).length;
 	const hiddenSelected = selected.size - visibleRows.filter((row) => selected.has(key(row))).length;
 	const filtersActive = Boolean(search || projectFilter || selectedOnly);
@@ -247,7 +290,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 	}, [selected.size]);
 
 	const toggle = (summary: Summary) => {
-		if (isImported(summary) || importInFlight.current || scanInFlight.current) return;
+		if (isImported(summary) || !canSelect(summary) || importInFlight.current || scanInFlight.current) return;
 		setSelected((previous) => {
 			const next = new Set(previous);
 			if (next.has(key(summary))) next.delete(key(summary));
@@ -261,7 +304,7 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		setSelected((previous) => {
 			const next = new Set(previous);
 			for (const row of rows) {
-				if (isImported(row)) continue;
+				if (isImported(row) || !canSelect(row)) continue;
 				if (checked) {
 					if (next.size < MAX_IMPORT_SELECTION) next.add(key(row));
 				} else next.delete(key(row));
@@ -275,26 +318,27 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 		const items = summaries.filter((summary) => selected.has(key(summary)) && !isImported(summary)).map((summary) => ({ source: summary.source, externalId: summary.externalId }));
 		if (!items.length) return;
 		importInFlight.current = true;
+		const controller = new AbortController(); importController.current = controller;
 		setImporting(true);
+		setProgress({ done: 0, total: items.length });
 		setFailure(null);
 		setReport(null);
 		try {
 			const response = await fetch("/api/sessions/import", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ sessions: items, fallbackCwd: fallback || undefined }),
+				headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+				body: JSON.stringify({ sessions: items }),
+				signal: controller.signal,
 			});
-			const json = await response.json();
-			if (!response.ok || !json.success) {
-				setFailure(json.error || t.toastError);
-				return;
-			}
-			setReport(json.data as ImportReport);
+			const report = await readImportResponse(response, (done, total, outcome) => { if (!controller.signal.aborted) setProgress({ done, total, outcome }); }, controller.signal);
+			if (controller.signal.aborted) return;
+			setReport(report);
+			if (report.warning) setFailure(report.warning);
 			if (scrollBody.current) scrollBody.current.scrollTop = 0;
 			setSelected(new Set());
 			notifySessionsChanged(); // 导入状态与其它打开的会话视图一起刷新
 		} catch (error) {
-			setFailure(error instanceof Error ? error.message : String(error));
+			if (!controller.signal.aborted) setFailure(error instanceof Error ? error.message : String(error));
 		} finally {
 			importInFlight.current = false;
 			setImporting(false);
@@ -362,6 +406,11 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 						</details>
 					</div>
 				)}
+				{importing && progress && <div className={styles.report} data-testid="import-progress" role="status" aria-live="polite">
+					<p>{t.importRunning} {progress.done} / {progress.total}</p>
+					{progress.outcome && <p>{sourceLabel(progress.outcome.source)} · {progress.outcome.title || progress.outcome.externalId}{progress.outcome.reason ? ` · ${progress.outcome.reason}` : ""}</p>}
+					<button type="button" onClick={() => importController.current?.abort()}>{t.cancel}</button>
+				</div>}
 
 				<div className={styles.sectionHeading}>
 					<h3><span>1</span>{t.importPickSource}</h3>
@@ -459,11 +508,12 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 											const date = dayOf(row.updatedAt ?? row.createdAt);
 											return (
 												<label key={key(row)} className={styles.row} data-selected={checked} data-imported={done}>
-													<input type="checkbox" checked={checked} disabled={done || scanning || importing || (!checked && selected.size >= MAX_IMPORT_SELECTION)} onChange={() => toggle(row)} />
+													<input type="checkbox" checked={checked} disabled={done || !canSelect(row) || scanning || importing || (!checked && selected.size >= MAX_IMPORT_SELECTION)} onChange={() => toggle(row)} />
 													<div className={styles.rowContent}>
 														<div className={styles.rowTitle}><strong title={row.title}>{row.title || t.importUntitled}</strong>{done && <span className={styles.imported}><IconCheckOutline14 size={11} />{t.importAlready}</span>}{archived && <span className={styles.imported} title={t.importRestoreHint}>{t.importArchived}</span>}</div>
 														{archived && <p className={styles.restoreHint}>{t.importRestoreHint}</p>}
 														<div className={styles.project} title={row.projectPath}><IconFolderOpenOutline16 size={12} /><span>{row.projectPath ? folderName(row.projectPath) : t.importNoProject}</span></div>
+														{!canSelect(row) && <p className={styles.restoreHint}>{t.importNoProject} · {t.importFailed}</p>}
 														<div className={styles.metadata}>
 															{activeSource === "all" && <span>{sourceLabel(row.source)}</span>}
 															{date && <time dateTime={new Date(row.updatedAt ?? row.createdAt!).toISOString()}>{date}</time>}
@@ -481,17 +531,6 @@ export function SessionImportSection({ cwd }: { cwd: string }) {
 						)}
 					</>
 				)}
-				<details className={styles.destination}>
-					<summary><IconFolderOpenOutline16 size={14} /><span>{t.importWhereGoes}<small>{t.importOriginalFirst}</small></span><IconChevronDown14 size={12} /></summary>
-					<div className={styles.destinationOptions}>
-						<label htmlFor="import-fallback-workspace">{t.importFallbackWorkspace}</label>
-						<select id="import-fallback-workspace" value={fallback} onChange={(event) => setFallback(event.target.value)} disabled={importing} aria-label={t.importFallbackWorkspace} data-testid="import-fallback" title={fallback}>
-							{!fallback && <option value="">{t.importChooseWorkspace}</option>}
-							{(workspaces.includes(fallback) || !fallback ? workspaces : [fallback, ...workspaces]).map((workspace) => <option key={workspace} value={workspace}>{workspace}</option>)}
-						</select>
-						<p>{t.importFallbackHint}</p>
-					</div>
-				</details>
 				<details className={styles.help}><summary>{t.importHowItWorks}<IconChevronDown14 size={12} /></summary><p>{t.importDesc}</p></details>
 			</div>
 

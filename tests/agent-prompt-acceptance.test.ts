@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -31,7 +32,7 @@ function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string
 		...extra,
 	};
 	const m = {
-		session, creating: null, disposed: false, promptSubmitting: false, runActive: false,
+		session, creating: null, disposed: false, promptSubmitting: false, runActive: false, toolPreset: "workspace",
 		resourceReloading: false, resourceReloadPending: false, cwd: "test", sessionPath: "test",
 		seq: 0, buffer: [], subscribers: new Set(), lastActive: 0,
 		// 真实会话在 ensureSession 里一定初始化这几项；applyToolPolicy 会读它们，
@@ -55,7 +56,7 @@ vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 afterEach(async () => {
 vi.restoreAllMocks();
 vi.unstubAllEnvs();
-if (agentDir) await fs.rm(agentDir, { recursive: true, force: true });
+if (agentDir) await recycleFixture(agentDir);
 agentDir = null;
 });
 
@@ -208,7 +209,7 @@ describe("prompt acceptance boundary", () => {
 	it("setActiveTools on a cold session saves the allowlist without starting the agent", async () => {
 		const { m } = fixture(async () => {});
 		(m as any).session = null;
-		(m as any).toolPreset = "standard";
+		(m as any).toolPreset = "workspace";
 		expect(await execute(m, { cmd: "setActiveTools", names: ["read", "grep"] })).toMatchObject({ ok: true });
 		expect((m as any).session).toBeNull();
 		expect((m as any).creating).toBeNull();
@@ -260,5 +261,57 @@ describe("prompt acceptance boundary", () => {
 			}
 			m[field] = false;
 		}
+	});
+
+	it("sendQueueNow clears the queue, aborts the running turn, and sends queued text and images immediately", async () => {
+		const order: string[] = [];
+		const image = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+		const { m, session } = fixture(async (_text, opts) => { order.push("prompt"); opts.preflightResult(true); }, {
+			abortBash: vi.fn(() => { order.push("abortBash"); }),
+			abort: vi.fn(async () => { order.push("abort"); session.isStreaming = false; session.isIdle = true; }),
+			clearQueue: vi.fn(() => {
+				order.push("clearQueue");
+				return { steering: ["立刻改方向"], followUp: ["并顺带修好"] };
+			}),
+		});
+		(session.agent as any).steeringQueue = { messages: [{ role: "user", content: [{ type: "text", text: "立刻改方向" }, image] }] };
+		session.isStreaming = true;
+		session.isIdle = false;
+
+		const result = await execute(m, { cmd: "sendQueueNow" });
+		expect(result).toEqual({ ok: true, data: { accepted: true } });
+		expect(order).toEqual(["clearQueue", "abortBash", "abort", "prompt"]);
+		expect(session.prompt).toHaveBeenCalledWith("立刻改方向\n\n并顺带修好", expect.objectContaining({ source: "rpc", images: [image] }));
+		const published = m.buffer.map((frame) => JSON.parse(frame.json));
+		expect(published).toContainEqual(expect.objectContaining({ type: "queue", steering: [], followUp: [] }));
+		expect(m.promptSubmitting).toBe(false);
+	});
+
+	it("sendQueueNow does not abort when the queue was already drained", async () => {
+		const abort = vi.fn(async () => {});
+		const { m, session } = fixture(async () => {}, {
+			abort,
+			clearQueue: vi.fn(() => ({ steering: [], followUp: [] })),
+		});
+		session.isStreaming = true;
+		session.isIdle = false;
+
+		expect(await execute(m, { cmd: "sendQueueNow" })).toEqual({ ok: true, data: { skipped: true } });
+		expect(abort).not.toHaveBeenCalled();
+		expect(session.prompt).not.toHaveBeenCalled();
+	});
+
+	it("sendQueueNow returns cleared queue items when immediate submit rejects", async () => {
+		const { m, session } = fixture(async () => { throw new Error("provider down"); }, {
+			abort: vi.fn(async () => { session.isStreaming = false; session.isIdle = true; }),
+			clearQueue: vi.fn(() => ({ steering: ["保留这条"], followUp: [] })),
+		});
+		session.isStreaming = true;
+		expect(await execute(m, { cmd: "sendQueueNow" })).toEqual({
+			ok: false,
+			error: "provider down",
+			data: { steering: ["保留这条"], followUp: [] },
+		});
+		expect(m.promptSubmitting).toBe(false);
 	});
 });

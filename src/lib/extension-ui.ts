@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { ASK_USER_TIMEOUT_MS, parseAnswers, type AskOutcome, type AskQuestion } from "./ask-user";
-import type { WebEvent, WebExtensionWidget } from "./types";
+import type { WebEvent, WebExtensionWidget, WebUiNode, WebUiResult, WebUiTone } from "./types";
 
 type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
 type UiEvent = Extract<WebEvent, { type: "extension_ui" }>;
@@ -28,6 +28,7 @@ export interface ExtensionUiBridge {
 	getPendingRequests(): UiEvent[];
 	/** 会话销毁：把挂起的对话框全部按取消结束 */
 	dispose(): void;
+	cancelPending(): void;
 	/**
 	 * ask_user_question 的选择窗口。与扩展对话框不同：没有页面在看也挂着等（用户回来打开页面就能答），
 	 * 最多 30 分钟；超时 / 中止 → timeout，用户跳过或会话销毁 → skipped。
@@ -45,6 +46,19 @@ const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 /** 单个 widget 的上限：扩展把整份日志塞进来时不能撑爆快照和 SSE 帧 */
 const WIDGET_MAX_LINES = 200;
 const WIDGET_MAX_LINE_CHARS = 2_000;
+
+// ---------- JSON UI 桥：扩展送树，网页渲染 ----------
+
+/** 树深、节点数、单段文本、列表项、表格规模的上限：扩展给的东西一律当不可信输入 */
+const WEB_UI_MAX_DEPTH = 10;
+const WEB_UI_MAX_NODES = 400;
+const WEB_UI_MAX_TEXT = 4_000;
+const WEB_UI_MAX_CHILDREN = 60;
+const WEB_UI_MAX_ITEMS = 200;
+const WEB_UI_MAX_TABLE_ROWS = 200;
+const WEB_UI_MAX_TABLE_COLS = 12;
+/** 没适配的扩展：终端组件渲染出来的行数上限 */
+const WEB_UI_FALLBACK_LINES = 200;
 
 const plainText = (text: unknown): string => (typeof text === "string" ? text : String(text ?? ""));
 /** 扩展自己用 chalk 之类上的色：Web 不渲染 ANSI，原样显示就是一串乱码，去掉转义序列只留文字 */
@@ -71,9 +85,137 @@ const PLAIN_THEME = {
 	getBashModeBorderColor: () => plainText,
 };
 
-export function createExtensionUiBridge(opts: {
-	publish: (evt: WebEvent) => void;
+const TONES = new Set(["default", "muted", "accent", "success", "warning", "danger"]);
+const NODE_TYPES = new Set(["box", "text", "list", "table", "progress", "code", "form"]);
+
+const clipText = (value: unknown, max = WEB_UI_MAX_TEXT): string => displayText(value).slice(0, max);
+const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
+	const num = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : fallback;
+	return Math.min(max, Math.max(min, num));
+};
+
+interface UiBudget {
+	nodes: number;
+}
+
+/**
+ * 扩展给的树一律当不可信输入：只放行白名单节点，超深/超宽/超长一律截断或丢弃。
+ * 丢弃而不是抛错——扩展写错了不该让整个会话崩掉。
+ */
+function sanitizeUiNode(input: unknown, depth: number, budget: UiBudget): WebUiNode | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	if (depth >= WEB_UI_MAX_DEPTH || budget.nodes >= WEB_UI_MAX_NODES) return undefined;
+	const raw = input as Record<string, unknown>;
+	const type = typeof raw.type === "string" ? raw.type : "";
+	if (!NODE_TYPES.has(type)) return undefined;
+	budget.nodes += 1;
+
+	switch (type) {
+		case "box": {
+			const children = Array.isArray(raw.children)
+				? (raw.children.slice(0, WEB_UI_MAX_CHILDREN).map((child) => sanitizeUiNode(child, depth + 1, budget)).filter(Boolean) as WebUiNode[])
+				: [];
+			return { type: "box", direction: raw.direction === "row" ? "row" : "column", gap: clampInt(raw.gap, 0, 24, 8), children };
+		}
+		case "text": {
+			const tone = typeof raw.tone === "string" && TONES.has(raw.tone) ? (raw.tone as WebUiTone) : undefined;
+			return { type: "text", text: clipText(raw.text), ...(tone ? { tone } : {}), ...(raw.mono === true ? { mono: true } : {}) };
+		}
+		case "list": {
+			const items = Array.isArray(raw.items)
+				? raw.items.slice(0, WEB_UI_MAX_ITEMS).map((item) => {
+					const entry = (item ?? {}) as Record<string, unknown>;
+					return {
+						label: clipText(entry.label, 400),
+						...(typeof entry.description === "string" ? { description: clipText(entry.description, 800) } : {}),
+						...(typeof entry.action === "string" ? { action: clipText(entry.action, 400) } : {}),
+						...(entry.disabled === true ? { disabled: true } : {}),
+					};
+				}).filter((item) => item.label.length > 0)
+				: [];
+			const selected = typeof raw.selected === "number" && Number.isFinite(raw.selected) ? clampInt(raw.selected, 0, Math.max(0, items.length - 1), 0) : undefined;
+			return { type: "list", items, ...(selected !== undefined ? { selected } : {}) };
+		}
+		case "table": {
+			const columns = Array.isArray(raw.columns) ? raw.columns.slice(0, WEB_UI_MAX_TABLE_COLS).map((column) => clipText(column, 120)) : [];
+			const rows = Array.isArray(raw.rows)
+				? raw.rows.slice(0, WEB_UI_MAX_TABLE_ROWS).map((row) => (Array.isArray(row) ? row.slice(0, columns.length || WEB_UI_MAX_TABLE_COLS).map((cell) => clipText(cell, 400)) : []))
+				: [];
+			return { type: "table", columns, rows };
+		}
+		case "progress": {
+			const value = typeof raw.value === "number" && Number.isFinite(raw.value) ? Math.min(1, Math.max(0, raw.value)) : 0;
+			return { type: "progress", value, ...(typeof raw.label === "string" ? { label: clipText(raw.label, 200) } : {}) };
+		}
+		case "code":
+			return { type: "code", text: clipText(raw.text, 8_000), ...(typeof raw.language === "string" ? { language: clipText(raw.language, 40) } : {}) };
+		case "form": {
+			const fields = Array.isArray(raw.fields)
+				? raw.fields.slice(0, 20).map((field) => {
+					const entry = (field ?? {}) as Record<string, unknown>;
+					const kind: "input" | "select" | "confirm" = entry.kind === "select" || entry.kind === "confirm" ? entry.kind : "input";
+					const options = Array.isArray(entry.options) ? entry.options.slice(0, 60).map((option) => clipText(option, 200)) : undefined;
+					return {
+						kind,
+						name: clipText(entry.name, 80),
+						label: clipText(entry.label, 200),
+						...(typeof entry.placeholder === "string" ? { placeholder: clipText(entry.placeholder, 200) } : {}),
+						...(typeof entry.value === "string" ? { value: clipText(entry.value, 400) } : {}),
+						...(kind === "select" && options ? { options } : {}),
+					};
+				}).filter((field) => field.name && field.label)
+				: [];
+			return { type: "form", fields, ...(typeof raw.submitLabel === "string" ? { submitLabel: clipText(raw.submitLabel, 80) } : {}) };
+		}
+		default:
+			return undefined;
+	}
+}
+
+/** 校验并裁剪一棵扩展 UI 树；返回 undefined 表示这不是一棵可渲染的树 */
+export function sanitizeUiTree(input: unknown): WebUiNode | undefined {
+	if (!input || typeof input !== "object") return undefined;
+	return sanitizeUiNode(input, 0, { nodes: 0 });
+}
+
+/** 扩展是不是给了 PiWeb 的树（用来和"终端组件"区分） */
+export function isUiTree(input: unknown): boolean {
+	if (!input || typeof input !== "object") return false;
+	const type = (input as { type?: unknown }).type;
+	return typeof type === "string" && NODE_TYPES.has(type);
+}
+
+/** 终端组件（render(width)）→ 只读文本行：没适配的扩展至少还能看见内容 */
+async function terminalComponentLines(component: unknown, width = 80): Promise<string[] | null> {
+	let instance = component;
+	if (typeof instance === "function") {
+		try {
+			// pi 的 custom(factory) 会拿到 (tui, theme, keybindings, done)；兜底渲染只给前两个真值，
+			// 后两个给空壳，让只用 render() 的组件也能画出来（需要 done() 的交互式组件本来就不适用兜底）。
+			instance = await (instance as (...args: unknown[]) => unknown)(
+				{ requestRender: () => {}, invalidate: () => {}, stop: () => {} },
+				PLAIN_THEME,
+				{},
+				() => {},
+			);
+		} catch {
+			return null;
+		}
+	}
+	const render = (instance as { render?: unknown } | null)?.render;
+	if (typeof render !== "function") return null;
+	try {
+		const lines = (render as (w: number) => unknown).call(instance, width);
+		if (!Array.isArray(lines)) return null;
+		return lines.slice(0, WEB_UI_FALLBACK_LINES).map((line) => clipText(line));
+	} catch {
+		return null;
+	}
+}
+
+export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void;
 	hasViewers: () => boolean;
+	isHeadless?: () => boolean;
 }): ExtensionUiBridge {
 	const pending = new Map<string, PendingUi>();
 	const statuses = new Map<string, string>();
@@ -88,7 +230,8 @@ export function createExtensionUiBridge(opts: {
 		parse: (r: { value?: string; confirmed?: boolean; cancelled?: boolean }) => T,
 	): Promise<T> => {
 		// 没有浏览器在看：不能永远挂着扩展，按 pi 的 noOp 语义立即返回默认值（选择窗口例外，见 askQuestions）
-		if (disposed || (!dialogOpts?.waitForViewer && !opts.hasViewers()) || dialogOpts?.signal?.aborted) return Promise.resolve(fallback);
+		if (opts.isHeadless?.()) { opts.publish({ type: "interaction_unavailable", method: request.method, reason: "headless", ts: Date.now() }); return Promise.resolve(fallback); }
+		if (disposed || dialogOpts?.signal?.aborted || (!opts.hasViewers() && !dialogOpts?.waitForViewer)) return Promise.resolve(fallback);
 		const id = randomUUID();
 		return new Promise<T>((resolve) => {
 			const finish = (r: { value?: string; confirmed?: boolean; cancelled?: boolean } | null) => {
@@ -113,9 +256,43 @@ export function createExtensionUiBridge(opts: {
 		});
 	};
 
+	/**
+	 * PiWeb 专有：扩展直接给一棵界面树，浏览器用自己的组件渲染（不是把终端画面贴进网页）。
+	 * 与 select/confirm 一样走 ask()：等用户答复，答复 JSON 解析成 { action, name, values }。
+	 */
+	const web = (
+		tree: unknown,
+		o?: { title?: string; signal?: AbortSignal; timeout?: number; text?: string },
+	): Promise<WebUiResult | undefined> => {
+		const safeTree = sanitizeUiTree(tree);
+		const fallbackText = typeof o?.text === "string" ? o.text.slice(0, WEB_UI_MAX_TEXT) : undefined;
+		if (!safeTree && !fallbackText) return Promise.resolve(undefined);
+		return ask<WebUiResult | undefined>(
+			{
+				method: "web",
+				title: typeof o?.title === "string" ? displayText(o.title).slice(0, 200) : undefined,
+				...(safeTree ? { tree: safeTree } : {}),
+				...(fallbackText ? { webText: fallbackText } : {}),
+			},
+			{ ...o, waitForViewer: true },
+			undefined,
+			(r) => {
+				if (r.cancelled) return undefined;
+				const raw = typeof r.value === "string" ? r.value : "";
+				if (!raw) return undefined;
+				try {
+					const parsed = JSON.parse(raw) as WebUiResult;
+					return parsed && typeof parsed === "object" ? parsed : { action: raw };
+				} catch {
+					return { action: raw };
+				}
+			},
+		);
+	};
+
 	const uiContext: Record<string, unknown> = {
 		select: (title: string, options: string[], o?: { signal?: AbortSignal; timeout?: number }) =>
-			ask<string | undefined>({ method: "select", title, options }, o, undefined, (r) => (r.cancelled ? undefined : r.value)),
+			ask<string | undefined>({ method: "select", title, options }, { ...o, waitForViewer: true }, undefined, (r) => (r.cancelled ? undefined : r.value)),
 		confirm: (title: string, message: string, o?: { signal?: AbortSignal; timeout?: number }) =>
 			ask<boolean>({ method: "confirm", title, message }, o, false, (r) => (r.cancelled ? false : r.confirmed === true)),
 		input: (title: string, placeholder?: string, o?: { signal?: AbortSignal; timeout?: number }) =>
@@ -126,7 +303,7 @@ export function createExtensionUiBridge(opts: {
 			opts.publish({ type: "extension_ui", id: randomUUID(), method: "notify", message, notifyType: type ?? "info", ts: Date.now() });
 		},
 		setStatus: (key: string, text: string | undefined) => {
-			const shown = text === undefined ? undefined : displayText(text);
+			const shown = text === undefined || text === "" ? undefined : displayText(text);
 			if (shown === undefined) statuses.delete(key);
 			else statuses.set(key, shown);
 			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setStatus", statusKey: key, statusText: shown, ts: Date.now() });
@@ -170,7 +347,18 @@ export function createExtensionUiBridge(opts: {
 		setHiddenThinkingLabel: () => {},
 		setFooter: () => {},
 		setHeader: () => {},
-		custom: async () => undefined,
+		// PiWeb 专有的网页 UI 入口
+		web,
+		/**
+		 * 终端组件（custom）：PiWeb 优先认"界面树"；给的是终端组件就渲染成只读文本，
+		 * 至少让没适配的扩展还能显示内容，而不是像以前那样完全消失。
+		 */
+		custom: async (component: unknown, o?: { title?: string; signal?: AbortSignal; timeout?: number }) => {
+			if (isUiTree(component)) return web(component, o);
+			const lines = await terminalComponentLines(component);
+			if (!lines || lines.length === 0) return undefined;
+			return web({ type: "code", text: lines.join("\n") }, { ...o, text: lines.join("\n") });
+		},
 		// 输入框的内容在浏览器里，服务端同步读不到（RPC 模式同样返回空串）
 		getEditorText: () => "",
 		addAutocompleteProvider: () => {},
@@ -192,6 +380,11 @@ export function createExtensionUiBridge(opts: {
 		getTitle: () => title,
 		askQuestions: async (questions, signal) => {
 			if (disposed) return { status: "unavailable" };
+			if (opts.isHeadless?.()) {
+				opts.publish({ type: "interaction_unavailable", method: "questions", reason: "headless", ts: Date.now() });
+				opts.publish({ type: "extension_ui", id: randomUUID(), method: "notify", message: "自动化需要人工输入，本次询问未得到答复，未批准任何操作。", notifyType: "warning", ts: Date.now() });
+				return { status: "unavailable" };
+			}
 			const outcome = await ask<AskOutcome>(
 				{ method: "questions", title: "", questions },
 				{ signal, timeout: ASK_USER_TIMEOUT_MS, waitForViewer: true },
@@ -215,6 +408,9 @@ export function createExtensionUiBridge(opts: {
 			if (!entry) return false;
 			entry.resolve(response);
 			return true;
+		},
+		cancelPending() {
+			for (const entry of [...pending.values()]) entry.resolve({ cancelled: true });
 		},
 		dispose() {
 			disposed = true;

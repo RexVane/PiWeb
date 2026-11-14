@@ -5,10 +5,9 @@
  * 只读、只取顶层会话（parent_id 为空）：库里的 parent_id 指子代理/侧链会话，本机 ZCode 421 条里有
  * 330 条是这种，导进来只会淹没侧栏；对应用户"只取主链"的要求。
  */
-import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedMessage, ImportedSession, ImportSource, ImportSourceModule, ImportedUsage, ScanOptions } from "./types";
+import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSource, ImportSourceModule, ImportedUsage, ScanOptions } from "./types";
 import { cleanTitle, compactBlocks, outputBlocks, textBlock, toEpochMs } from "./types";
 import { openReadOnly, parseJsonColumn, type ReadOnlyDb } from "./sqlite";
-import { zcodeDb, opencodeDb } from "./paths";
 
 interface FamilyOptions {
 	id: ImportSource;
@@ -149,17 +148,20 @@ function createSource(options: FamilyOptions): ImportSourceModule {
 		id: options.id,
 
 		async scan(scanOptions?: ScanOptions): Promise<ExternalSessionSummary[]> {
+			scanOptions?.signal?.throwIfAborted();
 			const db = await open();
 			if (!db) return [];
 			try {
-				if (!db.hasTable("session") || !db.hasTable("message")) return [];
+				if (!db.hasTable("session") || !db.hasTable("message")) throw new Error("源会话库缺少支持的会话表");
 				// 空会话（只有标题没有消息）与子代理会话直接在 SQL 里排掉，这样 LIMIT 才是"最近 N 条有效会话"
 				const limit = scanOptions?.limit ?? 0;
+				const lifecycle = ["time_deleted", "time_archived"].filter((column) => db.hasColumn("session", column))
+					.map((column) => ` AND COALESCE(s.${column}, 0) = 0`).join("");
 				const rows = db.all(
 					`SELECT s.id AS id, s.title AS title, s.directory AS directory, s.time_created AS created, s.time_updated AS updated,
 					        (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS msg_count
 					 FROM session s
-					 WHERE s.parent_id IS NULL AND (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) > 0
+					 WHERE s.parent_id IS NULL${lifecycle} AND (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) > 0
 					 ORDER BY COALESCE(s.time_updated, s.time_created) DESC${limit > 0 ? " LIMIT ?" : ""}`,
 					limit > 0 ? [limit] : [],
 				);

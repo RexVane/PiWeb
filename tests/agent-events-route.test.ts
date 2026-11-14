@@ -3,11 +3,14 @@
  * 结束后给两次请求之间的空档留「有人在看」的宽限。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Managed } from "../src/lib/agent-manager";
 
 type Send = (seq: number, json: string) => void;
 
 const manager = vi.hoisted(() => {
-	const state = { seq: 0, buffer: [] as { seq: number; json: string }[], subscribers: new Set<Send>() };
+	// Only agent creation and snapshot construction are replaced. Subscription, cursor
+	// validation, replay and viewer grace run the production implementation below.
+	const state = { epoch: "ep", seq: 0, buffer: [] as { seq: number; json: string }[], subscribers: new Set<Send>(), lastActive: 0, viewerGraceUntil: 0, ui: null };
 	return {
 		state,
 		publish(json: string) {
@@ -16,24 +19,16 @@ const manager = vi.hoisted(() => {
 			for (const send of state.subscribers) send(state.seq, json);
 		},
 		getManaged: () => state,
-		parseLastEventId: (_m: unknown, raw: string | null) => {
-			const match = /^ep\.(\d+)$/.exec(raw ?? "");
-			return match ? Number(match[1]) : undefined;
-		},
-		sseEventId: (_m: unknown, seq: number) => `ep.${seq}`,
-		buildSnapshot: async () => ({ seq: state.seq, messages: [] }),
-		subscribe: (_m: unknown, send: Send, last: number) => {
-			if (last > state.seq) return false;
-			state.subscribers.add(send);
-			for (const frame of state.buffer.filter((b) => b.seq > last)) send(frame.seq, frame.json);
-			return true;
-		},
-		unsubscribe: (_m: unknown, send: Send) => { state.subscribers.delete(send); },
+		buildSnapshot: vi.fn(async () => ({ seq: state.seq, messages: [] })),
 		holdViewer: vi.fn(),
 	};
 });
 
-vi.mock("../src/lib/agent-manager", () => manager);
+vi.mock("../src/lib/agent-manager", async (importOriginal) => {
+	const real = await importOriginal<typeof import("../src/lib/agent-manager")>();
+	manager.holdViewer.mockImplementation(real.holdViewer);
+	return { ...real, getManaged: () => manager.state as Managed, buildSnapshot: manager.buildSnapshot, holdViewer: manager.holdViewer };
+});
 vi.mock("../src/lib/path-security", () => ({
 	BoundaryError: class BoundaryError extends Error {},
 	resolveSessionPath: async (id: string) => `/sessions/${id}.jsonl`,
@@ -66,6 +61,8 @@ beforeEach(() => {
 	manager.state.seq = 0;
 	manager.state.buffer = [];
 	manager.state.subscribers.clear();
+	manager.state.lastActive = 0;
+	manager.state.viewerGraceUntil = 0;
 	manager.holdViewer.mockClear();
 });
 
@@ -90,6 +87,20 @@ describe("SSE（局域网 / 本机）", () => {
 	});
 });
 
+describe("快照失败", () => {
+	it("关掉流并收掉心跳与订阅，而不是留一条永远不结束的响应", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		manager.buildSnapshot.mockRejectedValueOnce(new Error("snapshot unavailable"));
+		const { result } = collect(await open());
+		await vi.advanceTimersByTimeAsync(10);
+		expect(result.done).toBe(true);
+		expect(result.text).not.toContain("snapshot");
+		expect(manager.state.subscribers.size).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+		warn.mockRestore();
+	});
+});
+
 describe("长轮询（?poll=1，快速隧道）", () => {
 	it("首次请求发完快照就结束，不发 retry / 心跳；结束后留看客宽限", async () => {
 		const response = await open("?poll=1");
@@ -103,6 +114,7 @@ describe("长轮询（?poll=1，快速隧道）", () => {
 		expect(result.text).not.toContain("retry:");
 		expect(manager.state.subscribers.size).toBe(0);
 		expect(manager.holdViewer).toHaveBeenCalledWith(manager.state, 30_000);
+		expect(manager.state.viewerGraceUntil).toBeGreaterThan(Date.now());
 	});
 
 	it("续传时没有新事件就挂着；来了事件再凑 50ms 一批后结束", async () => {
@@ -135,5 +147,17 @@ describe("长轮询（?poll=1，快速隧道）", () => {
 		expect(result.done).toBe(true);
 		expect(result.text).toBe("");
 		expect(manager.state.subscribers.size).toBe(0);
+	});
+	it("falls back to a snapshot when the cursor belongs to a previous instance or replay has a gap", async () => {
+		manager.publish('{"n":1}');
+		manager.publish('{"n":2}');
+		manager.state.buffer.shift();
+		for (const cursor of ["previous.0", "ep.0"]) {
+			const { result } = collect(await open("?poll=1", cursor));
+			await vi.advanceTimersByTimeAsync(100);
+			expect(result.text).toContain('id: ep.2\ndata: {"type":"snapshot"');
+			expect(result.done).toBe(true);
+			expect(manager.state.subscribers.size).toBe(0);
+		}
 	});
 });

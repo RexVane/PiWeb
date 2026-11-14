@@ -2,16 +2,15 @@
  * files-service：会话工作区的文件浏览（详情栏「文件」面板）。
  * 安全边界：目标路径必须落在工作区根内（realpath 双重校验，防符号链接逃逸）。
  */
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
-import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
+import { BoundaryError, isPathInside, resolveWorkspacePath, samePath } from "./path-security";
 import { getAgentDir } from "./pi";
 import { resolveGitBin } from "./growth-service";
-import { utf8Prefix } from "./text-sanitize";
-
-const exec = promisify(execFile);
+import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
+import { StringDecoder } from "node:string_decoder";
+import { recoverableRemove } from "./recoverable-remove";
 
 export interface FileEntry {
 	name: string;
@@ -42,6 +41,14 @@ const INDEX_LIMIT = 20_000;
 /** 非 git 工作区的退路：只跳过这些明显不该当候选的重目录，其余照常列举 */
 const INDEX_SKIP_DIRS = new Set([".git", "node_modules", ".next", ".next-dev", ".venv", "venv", "__pycache__", "dist", "build", "out", "target", ".turbo", ".cache"]);
 const INDEX_MAX_DEPTH = 12;
+const SAFE_GIT_ARGS = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath="];
+function gitEnvironment(root: string): NodeJS.ProcessEnv {
+	const env = { ...process.env };
+	for (const key of Object.keys(env)) if (/^GIT_(?:DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|CONFIG(?:_|$))/.test(key)) delete env[key];
+	return { ...env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_CEILING_DIRECTORIES: path.dirname(root), LC_ALL: "C" };
+}
+const indexCache = new Map<string, { at: number; stamp: string; promise: Promise<WorkspaceIndex> }>();
+const INDEX_CACHE_MS = 2000;
 
 export interface WorkspaceIndex {
 	/** 工作区根下的相对路径（"/" 分隔）。只给文件：文件夹由前端从文件路径推导 */
@@ -50,6 +57,7 @@ export interface WorkspaceIndex {
 	source: "git" | "disk";
 	/** 候选被上限截断：匹配结果可能不全，界面要说明 */
 	truncated: boolean;
+	warning?: string;
 }
 
 /** `git ls-files -z` 输出 → 相对路径数组（去重） */
@@ -67,63 +75,106 @@ export function parseLsFiles(raw: string): string[] {
 /** 不是仓库（或机器上没有 git）时的退路：广度优先遍历，只收文件 */
 async function walkWorkspaceFiles(root: string): Promise<{ files: string[]; truncated: boolean }> {
 	const files: string[] = [];
+	let truncated = false, visited = 0;
+	const deadline = performance.now() + 5000;
 	let queue: Array<{ rel: string; depth: number }> = [{ rel: "", depth: 0 }];
 	while (queue.length) {
 		const next: typeof queue = [];
 		for (const dir of queue) {
-			const entries = await fs.readdir(path.join(root, dir.rel), { withFileTypes: true }).catch(() => []);
-			for (const entry of entries) {
+			if (++visited > 50_000 || performance.now() >= deadline) return { files, truncated: true };
+			const entries = await fs.opendir(path.join(root, dir.rel)).catch(() => null);
+			if (!entries) { truncated = true; continue; }
+			try { for await (const entry of entries) {
+				if (performance.now() >= deadline) return { files, truncated: true };
 				const rel = dir.rel ? `${dir.rel}/${entry.name}` : entry.name;
 				if (entry.isDirectory()) {
-					if (dir.depth + 1 <= INDEX_MAX_DEPTH && !INDEX_SKIP_DIRS.has(entry.name)) next.push({ rel, depth: dir.depth + 1 });
+					if (INDEX_SKIP_DIRS.has(entry.name)) continue;
+					if (dir.depth + 1 <= INDEX_MAX_DEPTH && next.length < 5000) next.push({ rel, depth: dir.depth + 1 });
+					else truncated = true;
 				} else if (entry.isFile()) {
 					files.push(rel);
 					if (files.length > INDEX_LIMIT) return { files: files.slice(0, INDEX_LIMIT), truncated: true };
 				}
-			}
+			} } catch { truncated = true; }
 		}
 		queue = next;
 	}
-	return { files, truncated: false };
+	return { files, truncated };
 }
 
-/**
- * git 失败时只有「不是仓库」「没装 git」两种该退回遍历——界面会把 disk 来源解释成这两种情况。
- * 其它失败（safe.directory 拒绝、索引损坏、超时）照实报错：退回遍历会把 .gitignore 掉的文件混进候选，还给出错误的解释。
- */
-function gitIndexFailure(error: unknown): "fallback" | Error {
+function ordinaryDiskFallback(error: unknown): boolean {
 	const e = error as NodeJS.ErrnoException & { stderr?: string; killed?: boolean };
-	if (e.code === "ENOENT") return "fallback";
-	const stderr = String(e.stderr ?? "");
-	if (/not a git repository/i.test(stderr)) return "fallback";
-	if (e.killed) return new Error("git ls-files timed out");
-	const fatal = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-	return new Error(`git ls-files failed: ${fatal.find((line) => line.startsWith("fatal:")) ?? fatal[0] ?? e.message}`);
+	return e.code === "ENOENT" || /not a git repository/i.test(String(e.stderr ?? ""));
+}
+
+interface IndexLimits { gitTimeoutMs?: number; gitMaxBytes?: number; fileLimit?: number }
+function streamGitFiles(root: string, git: string, limits: IndexLimits): Promise<{ files: string[]; truncated: boolean }> {
+	const fileLimit = Math.max(1, Math.min(INDEX_LIMIT, limits.fileLimit ?? INDEX_LIMIT));
+	const maxBytes = Math.max(1, Math.min(4 * 1024 * 1024, limits.gitMaxBytes ?? 4 * 1024 * 1024));
+	return new Promise((resolve, reject) => {
+		const child = spawn(git, [...SAFE_GIT_ARGS, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, windowsHide: true, env: gitEnvironment(root), stdio: ["ignore", "pipe", "pipe"] });
+		const decoder = new StringDecoder("utf8");
+		const files = new Set<string>();
+		let pending = "", stderr = "", bytes = 0, truncated = false, timedOut = false;
+		const timer = setTimeout(() => { timedOut = true; child.kill(); }, Math.max(1, Math.min(15_000, limits.gitTimeoutMs ?? 15_000)));
+		child.stdout!.on("data", (chunk: Buffer) => {
+			if (truncated || timedOut) return;
+			const room = maxBytes - bytes;
+			const part = chunk.subarray(0, Math.max(0, room)); bytes += part.length;
+			pending += decoder.write(part);
+			let delimiter: number;
+			while ((delimiter = pending.indexOf("\0")) >= 0) {
+				const candidate = pending.slice(0, delimiter); pending = pending.slice(delimiter + 1);
+				for (const value of parseLsFiles(candidate)) files.add(value);
+				if (files.size >= fileLimit) { truncated = true; break; }
+			}
+			if (chunk.length > room || pending.length > 32 * 1024) truncated = true;
+			if (truncated) child.kill();
+		});
+		child.stderr!.on("data", (chunk: Buffer) => { if (stderr.length < 8192) stderr += chunk.toString("utf8").slice(0, 8192 - stderr.length); });
+		child.once("error", (error) => { clearTimeout(timer); reject(error); });
+		child.once("close", (code) => {
+			clearTimeout(timer);
+			if (timedOut) return reject(Object.assign(new Error("git index timed out"), { code: "ETIMEDOUT" }));
+			if (!truncated && code !== 0) return reject(Object.assign(new Error("git index unavailable"), { stderr }));
+			if (pending || decoder.end()) truncated = true;
+			resolve({ files: [...files], truncated });
+		});
+	});
 }
 
 /**
  * @ 引用的候选清单：git 可见的文件（含未被忽略的未跟踪文件）。
  * `git ls-files` 的路径相对当前目录，所以 cwd 就是工作区根，输出天然是工作区相对路径。
  */
-export async function listWorkspaceIndex(cwdValue: unknown): Promise<WorkspaceIndex> {
+export async function listWorkspaceIndex(cwdValue: unknown, limits?: IndexLimits): Promise<WorkspaceIndex> {
 	const root = await resolveWorkspacePath(cwdValue);
-	const git = await resolveGitBin();
+	if (limits) return computeWorkspaceIndex(root, limits);
+	const stamps = await Promise.all([root, path.join(root, ".git", "index"), path.join(root, ".gitignore")].map(async (target) => {
+		const stat = await fs.stat(target).catch(() => null);
+		return stat ? [stat.mtimeMs, stat.ctimeMs, stat.size, stat.ino].join(":") : "missing";
+	}));
+	const stamp = stamps.join("|");
+	const cached = indexCache.get(root);
+	if (cached && cached.stamp === stamp && Date.now() - cached.at < INDEX_CACHE_MS) return cached.promise;
+	const promise = computeWorkspaceIndex(root);
+	indexCache.delete(root);
+	indexCache.set(root, { at: Date.now(), stamp, promise });
+	while (indexCache.size > 16) indexCache.delete(indexCache.keys().next().value!);
+	void promise.catch(() => { if (indexCache.get(root)?.promise === promise) indexCache.delete(root); });
+	return promise;
+}
+
+async function computeWorkspaceIndex(root: string, limits: IndexLimits = {}): Promise<WorkspaceIndex> {
 	try {
-		const { stdout } = await exec(git, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
-			cwd: root,
-			timeout: 15_000,
-			maxBuffer: 64 * 1024 * 1024,
-			windowsHide: true,
-			// LC_ALL=C：报错固定为英文，「不是仓库」才认得出来（中文界面的 git 会翻译这句）；-z 输出的路径不受影响
-			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
-		});
-		const files = parseLsFiles(stdout).sort((a, b) => a.localeCompare(b));
-		return { files: files.slice(0, INDEX_LIMIT), source: "git", truncated: files.length > INDEX_LIMIT };
+		const result = await streamGitFiles(root, await resolveGitBin(), limits);
+		return { files: result.files.sort((a, b) => a.localeCompare(b)), source: "git", truncated: result.truncated };
 	} catch (error) {
-		const failure = gitIndexFailure(error);
-		if (failure !== "fallback") throw failure;
 		const walked = await walkWorkspaceFiles(root);
-		return { files: walked.files.sort((a, b) => a.localeCompare(b)), source: "disk", truncated: walked.truncated };
+		const ordinary = ordinaryDiskFallback(error);
+		return { files: walked.files.sort((a, b) => a.localeCompare(b)), source: "disk", truncated: walked.truncated || !ordinary,
+			...(!ordinary ? { warning: "Git 文件索引读取失败，已改用有界目录扫描；候选可能不完整，也可能包含 .gitignore 忽略的文件。" } : {}),
+		};
 	}
 }
 
@@ -145,10 +196,10 @@ export function parseCheckIgnore(raw: string): string[] {
  */
 function checkIgnore(root: string, git: string, rels: string[]): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const child = spawn(git, ["check-ignore", "-z", "--stdin"], {
+		const child = spawn(git, [...SAFE_GIT_ARGS, "check-ignore", "-z", "--stdin"], {
 			cwd: root,
 			windowsHide: true,
-			env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+			env: gitEnvironment(root),
 		});
 		let out = "";
 		let err = "";
@@ -238,10 +289,12 @@ export async function listWorkspaceDir(cwdValue: unknown, relPath: unknown, offs
 	});
 	// .gitignore 忽略的条目(node_modules/、.next/ 这些)不进列表:和快照树、@ 引用清单同一口径
 	const relForIgnore = path.relative(root, real).replace(/\\/g, "/");
-	const ignored = await ignoredNames(root, relForIgnore, entries.map((entry) => entry.name));
-	const visible = ignored.size ? entries.filter((entry) => !ignored.has(entry.name)) : entries;
-	const nextOffset = offset + MAX_ENTRIES < visible.length ? offset + MAX_ENTRIES : null;
-	const page = visible.slice(offset, offset + MAX_ENTRIES);
+	// offset is a cursor into the sorted raw names. Only this slice is checked
+	// against ignore rules; an all-ignored page can still have a next cursor.
+	const candidates = entries.slice(offset, offset + MAX_ENTRIES);
+	const ignored = await ignoredNames(root, relForIgnore, candidates.map((entry) => entry.name));
+	const nextOffset = offset + MAX_ENTRIES < entries.length ? offset + MAX_ENTRIES : null;
+	const page = ignored.size ? candidates.filter((entry) => !ignored.has(entry.name)) : candidates;
 	for (let i = 0; i < page.length; i += 64) {
 		await Promise.all(page.slice(i, i + 64).map(async (entry) => {
 			if (entry.kind !== "file" || entry.size !== undefined) return;
@@ -257,26 +310,39 @@ export async function listWorkspaceDir(cwdValue: unknown, relPath: unknown, offs
 	};
 }
 
-export interface FilePreview {
+export interface FilePreview extends DecodedFilePreview {
 	path: string;
 	binary: boolean;
 	truncated: boolean;
 	content: string;
 }
 
-export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Promise<FilePreview> {
-	if (typeof relPath !== "string" || !relPath.trim()) throw new BoundaryError("missing file path");
+/** Pin the validated file handle, then verify its identity and canonical boundary. */
+export async function openWorkspaceFile(cwdValue: unknown, relPath: unknown) {
+	if (typeof relPath !== "string" || !relPath.trim() || relPath.length > 4096 || /[\u0000-\u001f\u007f]/.test(relPath)) throw new BoundaryError("invalid file path");
 	const root = await resolveWorkspacePath(cwdValue);
 	const target = path.resolve(root, relPath.trim().replace(/^[/\\]+/, ""));
 	if (!isPathInside(root, target)) throw new BoundaryError("path escapes the workspace");
-	const real = await fs.realpath(target).catch(() => {
-		throw new BoundaryError("file not found");
+	const real = await fs.realpath(target).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new BoundaryError("file not found");
+		throw error;
 	});
 	if (!isPathInside(root, real)) throw new BoundaryError("path escapes the workspace");
 	const stat = await fs.stat(real);
 	if (!stat.isFile()) throw new BoundaryError("not a file");
-
 	const handle = await fs.open(real, "r");
+	try {
+		const opened = await handle.stat();
+		const checked = await fs.realpath(real);
+		const current = await fs.stat(checked);
+		if (!isPathInside(root, checked) || !opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino
+			|| opened.dev !== current.dev || opened.ino !== current.ino) throw new BoundaryError("file changed while opening");
+		return { handle, size: opened.size, path: toRel(root, real), name: path.basename(real) };
+	} catch (error) { await handle.close(); throw error; }
+}
+
+export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Promise<FilePreview> {
+	const { handle, size, path: relative } = await openWorkspaceFile(cwdValue, relPath);
 	const buffer = Buffer.allocUnsafe(MAX_READ_BYTES + 1);
 	let bytesRead = 0;
 	try {
@@ -288,18 +354,8 @@ export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Pr
 	} finally {
 		await handle.close();
 	}
-	const preview = utf8Prefix(buffer.subarray(0, bytesRead), MAX_READ_BYTES);
-	// 只检查预览范围，绝不为识别二进制而加载整个大文件
-	if (preview.includes(0)) {
-		return { path: toRel(root, real), binary: true, truncated: false, content: "" };
-	}
-	const truncated = stat.size > MAX_READ_BYTES || bytesRead > MAX_READ_BYTES;
-	return {
-		path: toRel(root, real),
-		binary: false,
-		truncated,
-		content: preview.toString("utf8"),
-	}
+	const truncated = size > MAX_READ_BYTES || bytesRead > MAX_READ_BYTES;
+	return { path: relative, truncated, ...decodeFilePreview(buffer.subarray(0, bytesRead), MAX_READ_BYTES, truncated) };
 }
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -357,9 +413,16 @@ export async function readWorkspaceImage(cwdValue: unknown, imagePath: unknown, 
 			if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !/not a git repository/i.test(String((error as Error).message))) throw error;
 		}
 	}
+	const before = await fs.stat(real);
 	const handle = await fs.open(real, "r");
 	try {
 		const stat = await handle.stat();
+		const checked = await fs.realpath(real);
+		const current = await fs.stat(checked);
+		// Pin the same object authorized above. A parent replaced after the ignore
+		// or skill-source checks must not redirect the image read outside its root.
+		if (!samePath(checked, real) || stat.dev !== before.dev || stat.ino !== before.ino
+			|| stat.dev !== current.dev || stat.ino !== current.ino) throw new BoundaryError("image changed while opening");
 		if (!stat.isFile()) throw new BoundaryError("not an image file");
 		if (stat.size > MAX_IMAGE_BYTES) throw new BoundaryError("image exceeds 20 MB");
 		const bytes = Buffer.alloc(Math.min(stat.size + 1, MAX_IMAGE_BYTES + 1));
@@ -449,41 +512,105 @@ function scheduleUploadSweep(): void {
  * （会话被删、或归档过期删除后，它的附件才变成孤儿）；没发出去的草稿留 30 天的余量。
  * 会话目录读不全就整次放弃，宁可不删也不误删。返回删掉的文件名。
  */
-export async function sweepUploads(now = Date.now(), retentionDays = UPLOAD_RETENTION_DAYS): Promise<string[]> {
+export async function sweepUploads(now = Date.now(), retentionDays = UPLOAD_RETENTION_DAYS, limits: { scanByteLimit?: number; sessionLimit?: number; timeoutMs?: number } = {}): Promise<string[]> {
+	if (!Number.isFinite(now) || !Number.isFinite(retentionDays) || retentionDays <= 0 || process.env.PI_WEB_UPLOAD_RETENTION === "0") return [];
+	const scanByteLimit = limits.scanByteLimit ?? 256 * 1024 * 1024;
+	const sessionLimit = limits.sessionLimit ?? 10_000;
+	const timeoutMs = limits.timeoutMs ?? 5_000;
+	const deadline = performance.now() + timeoutMs;
+	if (!Number.isSafeInteger(scanByteLimit) || scanByteLimit <= 0 || !Number.isSafeInteger(sessionLimit) || sessionLimit <= 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return [];
 	const agentDir = getAgentDir();
 	const dir = path.join(agentDir, "web-uploads");
 	const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
-	const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
-	// 文件名 → 在 JSONL 里可能出现的写法（原样 / JSON 转义后）
 	const candidates = new Map<string, string[]>();
-	for (const entry of entries) {
-		if (!entry.isFile()) continue;
-		const stat = await fs.stat(path.join(dir, entry.name)).catch(() => null);
-		if (!stat || stat.mtimeMs > cutoff) continue;
-		candidates.set(entry.name, [entry.name, JSON.stringify(entry.name).slice(1, -1)]);
-	}
-	if (!candidates.size) return [];
-	const sessionsRoot = path.join(agentDir, "sessions");
-	let sessionFiles: string[];
+	const uploadStamps = new Map<string, { ino: number; size: number; mtimeMs: number }>();
+	// Bound both the inventory and comparison work; incomplete evidence never permits a removal.
 	try {
-		sessionFiles = (await fs.readdir(sessionsRoot, { recursive: true })).filter((name) => name.endsWith(".jsonl"));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") return [];
-		sessionFiles = [];
-	}
-	for (const name of sessionFiles) {
-		let text: string;
-		try {
-			text = await fs.readFile(path.join(sessionsRoot, name), "utf8");
-		} catch {
-			return [];
+		let entries = 0;
+		for await (const entry of await fs.opendir(dir)) {
+			if (++entries > 10_000 || performance.now() > deadline) return [];
+			if (!entry.isFile()) continue;
+			const stat = await fs.stat(path.join(dir, entry.name));
+			if (stat.mtimeMs > cutoff) continue;
+			candidates.set(entry.name, [entry.name, JSON.stringify(entry.name).slice(1, -1)]);
+			uploadStamps.set(entry.name, stat);
+			if (candidates.size > 200) return [];
 		}
-		for (const [file, needles] of candidates) if (needles.some((needle) => text.includes(needle))) candidates.delete(file);
-		if (!candidates.size) return [];
-	}
+	} catch { return []; }
+	if (!candidates.size) return [];
+
+	const sessionsRoot = path.join(agentDir, "sessions");
+	const files: string[] = [];
+	const stamps = new Map<string, { ino: number; size: number; mtimeMs: number }>();
+	let bytesRemaining = scanByteLimit;
+	const unchanged = (a: { ino: number; size: number; mtimeMs: number }, b: { ino: number; size: number; mtimeMs: number }) => a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+	try {
+		const enumerate = async (directory: string, depth: number): Promise<void> => {
+			if (depth > 32 || stamps.size > 10_000 || performance.now() > deadline) throw new Error("Upload reference inventory exceeded its limit");
+			stamps.set(directory, await fs.stat(directory));
+			for await (const entry of await fs.opendir(directory)) {
+				if (performance.now() > deadline || stamps.size + files.length > 20_000) throw new Error("Upload reference inventory exceeded its limit");
+				if (entry.isSymbolicLink()) throw new Error("Upload reference inventory contains an unresolved link");
+				const file = path.join(directory, entry.name);
+				if (entry.isDirectory()) {
+					if (entry.name.endsWith(".jsonl")) throw new Error("A session record is not a file");
+					await enumerate(file, depth + 1);
+				}
+				else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+					files.push(file);
+					if (files.length > sessionLimit) throw new Error("Too many session files to establish orphaned uploads");
+				}
+			}
+		};
+		let rootMissing = false;
+		try { await fs.stat(sessionsRoot); }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; rootMissing = true; }
+		if (!rootMissing) await enumerate(sessionsRoot, 0);
+
+		const overlap = Math.max(...[...candidates.values()].flat().map((needle) => needle.length)) - 1;
+		for (const file of files) {
+			const handle = await fs.open(file, "r");
+			try {
+				const metadata = await handle.stat();
+				if (!metadata.isFile() || metadata.size > bytesRemaining) return [];
+				stamps.set(file, metadata);
+				const decoder = new StringDecoder("utf8");
+				const buffer = Buffer.allocUnsafe(64 * 1024);
+				let tail = "";
+				for (;;) {
+					if (performance.now() > deadline) return [];
+					const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+					if (!bytesRead) break;
+					bytesRemaining -= bytesRead;
+					if (bytesRemaining < 0) return [];
+					const text = tail + decoder.write(buffer.subarray(0, bytesRead));
+					for (const [name, needles] of candidates) if (needles.some((needle) => text.includes(needle))) candidates.delete(name);
+					if (!candidates.size) return [];
+					tail = overlap > 0 ? text.slice(-overlap) : "";
+				}
+				const final = tail + decoder.end();
+				for (const [name, needles] of candidates) if (needles.some((needle) => final.includes(needle))) candidates.delete(name);
+				if (!unchanged(metadata, await handle.stat())) return [];
+			} finally { await handle.close(); }
+		}
+		// Concurrent appends, new sessions, and directory replacements invalidate absence evidence.
+		for (const [file, stamp] of stamps) {
+			if (performance.now() > deadline || !unchanged(stamp, await fs.stat(file))) return [];
+		}
+		if (rootMissing && await fs.stat(sessionsRoot).then(() => true, (error: NodeJS.ErrnoException) => {
+			if (error.code !== "ENOENT") throw error;
+			return false;
+		})) return [];
+	} catch { return []; }
 	const removed: string[] = [];
 	for (const file of candidates.keys()) {
-		await fs.unlink(path.join(dir, file)).then(() => removed.push(file), () => undefined);
+		try {
+			const target = path.join(dir, file);
+			const stamp = uploadStamps.get(file)!;
+			if (!unchanged(stamp, await fs.stat(target))) continue;
+			await recoverableRemove(target, { reason: "清理无会话引用的过期上传附件，保留恢复副本" });
+			removed.push(file);
+		} catch { /* Keep the upload when backup or removal cannot be completed. */ }
 	}
 	return removed;
 }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ChatInput, type SlashCommand } from "@/components/ChatInput";
+import { ChatInput, type ChatDraft, type SlashCommand } from "@/components/ChatInput";
 
 afterEach(cleanup);
 
@@ -11,7 +11,7 @@ const commands: SlashCommand[] = [
 	{ name: "skill:probe", desc: "Probe skill", kind: "skill" },
 ];
 
-function renderInput() {
+function renderInput(initialDraft?: ChatDraft, availableCommands = commands) {
 	const onSend = vi.fn(async () => ({ success: true }));
 	const onCommand = vi.fn();
 	render(
@@ -26,7 +26,8 @@ function renderInput() {
 			providerNames={{}}
 			authByProvider={{}}
 			queue={{ steering: [], followUp: [] }}
-			commands={commands}
+			commands={availableCommands}
+			initialDraft={initialDraft}
 			onCommand={onCommand}
 			onSend={onSend}
 			onSteer={vi.fn(async () => ({ success: true }))}
@@ -39,6 +40,36 @@ function renderInput() {
 }
 
 describe("ChatInput slash commands", () => {
+	it.each(["template", "extension"] as const)("typed /%s:name bypasses a builtin name collision and sends only SDK syntax", async (kind) => {
+		const collision: SlashCommand[] = [{ name: "compact", desc: "builtin", kind: "builtin" }, { name: "compact", desc: "resource", kind }];
+		const { textarea, onSend, onCommand } = renderInput(undefined, collision);
+		fireEvent.change(textarea, { target: { value: `/${kind}:COMPACT payload` } });
+		fireEvent.keyDown(textarea, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("/compact payload", []));
+		expect(onCommand).not.toHaveBeenCalled();
+	});
+	it("keyboard selection keeps same-name builtin, template and extension distinct", async () => {
+		const collision: SlashCommand[] = [{ name: "compact", desc: "builtin", kind: "builtin" }, { name: "compact", desc: "template", kind: "template" }, { name: "compact", desc: "extension", kind: "extension" }];
+		const { textarea, onSend, onCommand } = renderInput(undefined, collision);
+		fireEvent.change(textarea, { target: { value: "/compact" } });
+		expect(screen.getAllByRole("option")).toHaveLength(3);
+		fireEvent.keyDown(textarea, { key: "ArrowDown" }); fireEvent.keyDown(textarea, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("/compact", [])); expect(onCommand).not.toHaveBeenCalled();
+	});
+	it("keeps an explicit template namespace while collecting required arguments", async () => {
+		const collision: SlashCommand[] = [{ name: "compact", desc: "builtin", kind: "builtin" }, { name: "compact", desc: "template", kind: "template", argumentHint: "target" }];
+		const { textarea, onSend, onCommand } = renderInput(undefined, collision);
+		fireEvent.change(textarea, { target: { value: "/template:compact" } }); fireEvent.keyDown(textarea, { key: "Enter" });
+		expect(textarea.value).toBe("/template:compact "); expect(onSend).not.toHaveBeenCalled();
+		fireEvent.change(textarea, { target: { value: "/template:compact target" } }); fireEvent.keyDown(textarea, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("/compact target", [])); expect(onCommand).not.toHaveBeenCalled();
+	});
+	it("sends a skill-only draft with references as SDK arguments", async () => {
+		const { textarea, onSend } = renderInput({ text: "", images: [], uploads: [], references: ["README.md"], adopted: commands[2] });
+		fireEvent.keyDown(textarea, { key: "Enter" });
+		await waitFor(() => expect(onSend).toHaveBeenCalledWith("/skill:probe @README.md", []));
+	});
+
 	it.each(["existing draft /", "existing draft\n/", " /"])("opens completion after whitespace in %j", (text) => {
 		const { textarea } = renderInput();
 		fireEvent.change(textarea, { target: { value: text } });

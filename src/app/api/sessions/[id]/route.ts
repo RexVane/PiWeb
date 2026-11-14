@@ -3,6 +3,7 @@ import { deleteSession, readSession } from "@/lib/session-reader";
 import { disposeSessionPath } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
 import { forgetSession } from "@/lib/workspace-store";
+import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -11,11 +12,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 	const { id } = await params;
 	try {
 		const data = await readSession(await resolveSessionPath(id));
-		return NextResponse.json({ success: true, data });
+		return NextResponse.json({ success: true, data }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json(
-			{ success: false, error: error instanceof Error ? error.message : "request failed" },
-			{ status: error instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(error, "会话读取失败，请重试。") },
+			{ status: error instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } },
 		);
 	}
 }
@@ -27,11 +28,11 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 		await disposeSessionPath(sessionPath);
 		await deleteSession(sessionPath);
 		await forgetSession(sessionPath);
-		return NextResponse.json({ success: true });
+		return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json(
-			{ success: false, error: error instanceof Error ? error.message : "request failed" },
-			{ status: error instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(error, "会话移除失败，原件或恢复副本已保留。") },
+			{ status: error instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } },
 		);
 	}
 }

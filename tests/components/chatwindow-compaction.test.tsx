@@ -58,4 +58,16 @@ describe("compaction divider", () => {
 		expect(screen.getByText("分支摘要")).toBeTruthy();
 		expect(screen.queryByText("以上内容模型只看得到摘要")).toBeNull();
 	});
+
+	it("renders errors with selectable text and an explicit close button", () => {
+		const onClearError = vi.fn();
+		render(<ChatWindow messages={[]} tools={{}} isStreaming={false} error="request failed (500)" onClearError={onClearError} />);
+		const alert = screen.getByRole("alert");
+		expect(alert.tagName).toBe("DIV");
+		expect(alert.textContent).toContain("request failed (500)");
+		fireEvent.click(alert);
+		expect(onClearError).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+		expect(onClearError).toHaveBeenCalledTimes(1);
+	});
 });

@@ -10,6 +10,7 @@ import { installPiUpdate, prepareRelease } from "../scripts/release.mjs";
 import { selectProductionBuild } from "../scripts/build-output.mjs";
 
 type CommandOptions = { cwd: string; env?: Record<string, string | undefined>; timeoutMs?: number; signal?: AbortSignal };
+const normalizeArgs = (args: string[]) => args.filter((arg) => arg !== "--ignore-scripts" && !arg.startsWith("--registry=") && !arg.startsWith("--@"));
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
 
@@ -50,7 +51,8 @@ function mockCommands(root: string, fail = "") {
 		const key = command === process.execPath ? "verify" : `${command} ${args.join(" ")}`;
 		const state = await manifest(root);
 		expect(state.state).toBe("building");
-		expect(options.env?.PIWEB_BUILD_DIR).toBe(state.buildDir);
+		if (command === process.execPath || (command === "npm" && args[0] === "run")) expect(options.env?.PIWEB_BUILD_DIR).toBe(state.buildDir);
+		else expect(options.env?.PIWEB_BUILD_DIR).toBeUndefined();
 		if (fail && key.includes(fail)) {
 			// Even a command that leaves a seemingly complete build must not publish on failure.
 			await build(root, state.buildDir, "partial-or-stale");
@@ -70,13 +72,37 @@ function mockCommands(root: string, fail = "") {
 	});
 }
 
+describe("current update proxy settings", () => {
+	it("reads proxy changes for each check while keeping process credentials out of child commands", async () => {
+		const root = await installation(); const agentRoot = path.join(root, "agent");
+		await fs.mkdir(agentRoot);
+		const settings = path.join(agentRoot, "settings.json");
+		const seen: Array<Record<string, string | undefined>> = [];
+		const run = vi.fn(async (command: string, args: string[], options: CommandOptions) => {
+			seen.push(options.env ?? {});
+			if (command === "git" && args[0] === "rev-list") return "0";
+			if (command === "git" && args[0] === "show") return JSON.stringify({ name: "pi-web", version: "1.0.0" });
+			return "";
+		});
+		const service = createUpdateService({ root, run, env: { PI_CODING_AGENT_DIR: agentRoot, PI_WEB_LAUNCH_TOKEN: "do-not-inherit", NODE_OPTIONS: "do-not-inherit", HTTP_PROXY: "http://old-startup:8080", HTTPS_PROXY: "http://old-startup:8080", PIWEB_PROXY_SOURCE: "settings", PIWEB_INHERITED_HTTP_PROXY: "http://inherited:8080", PIWEB_INHERITED_HTTPS_PROXY: "http://inherited:8080" } });
+		await fs.writeFile(settings, JSON.stringify({ httpProxy: "http://current-settings:9090" }));
+		await service.checkForUpdate("piweb");
+		expect(seen[0]).toMatchObject({ HTTP_PROXY: "http://current-settings:9090", HTTPS_PROXY: "http://current-settings:9090" });
+		expect(seen[0]).not.toHaveProperty("PI_WEB_LAUNCH_TOKEN"); expect(seen[0]).not.toHaveProperty("NODE_OPTIONS");
+		seen.length = 0;
+		await fs.writeFile(settings, JSON.stringify({ httpProxy: "" }));
+		await service.checkForUpdate("piweb");
+		expect(seen[0]).toMatchObject({ HTTP_PROXY: "http://inherited:8080", HTTPS_PROXY: "http://inherited:8080" });
+	});
+});
+
 describe("checked staged releases", () => {
 	it("builds without Git, preserves serving output/config and promotes only a fresh complete build", async () => {
 		const root = await installation();
 		const initialConfig = await fs.readFile(path.join(root, "tsconfig.json"), "utf8");
 		const run = mockCommands(root);
 		const result = await prepareRelease({ root, run });
-		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? args[1] : `${command} ${args.join(" ")}`)).toEqual(["--verify-config", "npm run check"]);
+		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? args[1] : `${command} ${normalizeArgs(args).join(" ")}`)).toEqual(["--verify-config", "npm run check"]);
 		expect(result).toMatchObject({ needsRestart: true, buildId: "new-build", version: "1.0.0" });
 		expect(result.buildDir).toMatch(/^\.next-releases\/[A-Za-z0-9_-]+$/);
 		expect(await manifest(root)).toMatchObject({ schema: 1, state: "ready", buildDir: result.buildDir, buildId: "new-build" });
@@ -96,7 +122,7 @@ describe("checked staged releases", () => {
 		const run = vi.fn(async () => "");
 		await expect(prepareRelease({ root, run })).rejects.toThrow();
 		expect((await manifest(root)).state).toBe("failed");
-		expect(() => selectProductionBuild(root)).toThrow(/no stale-build fallback/);
+		expect(selectProductionBuild(root)).toEqual({ buildDir: ".next", buildId: "old-serving-build" });
 		expect(await fs.readFile(path.join(root, ".next", "BUILD_ID"), "utf8")).toBe("old-serving-build");
 	});
 
@@ -127,7 +153,7 @@ describe("checked staged releases", () => {
 		await expect(prepareRelease({ root, run, signal: controller.signal, prepare: async () => { controller.abort(); } })).rejects.toThrow();
 		expect(run).not.toHaveBeenCalled();
 		expect((await manifest(root)).state).toBe("failed");
-		expect(() => selectProductionBuild(root)).toThrow();
+		expect(selectProductionBuild(root)).toEqual({ buildDir: ".next", buildId: "old-serving-build" });
 	});
 
 	it("rejects wrong installation roots and linked release directories before running commands", async () => {
@@ -151,7 +177,7 @@ describe("update service transactions", () => {
 		const idle = vi.fn(async () => {});
 		const result = await service.runUpdate("piweb", { assertIdle: idle });
 		expect(result).toMatchObject({ version: "2.0.0", needsRestart: true, buildId: "new-build" });
-		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? "verify" : `${command} ${args.join(" ")}`)).toEqual([
+		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? "verify" : `${command} ${normalizeArgs(args).join(" ")}`)).toEqual([
 			"git rev-parse --show-toplevel", "git status --porcelain --untracked-files=no", "git pull --ff-only origin main", "npm install --no-audit --no-fund", "verify", "npm run check",
 		]);
 		expect(idle).toHaveBeenCalledTimes(4);
@@ -163,7 +189,7 @@ describe("update service transactions", () => {
 		const run = mockCommands(root);
 		const result = await createUpdateService({ root, run }).runUpdate("pi");
 		expect(result.version).toBe("2.5.0");
-		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? "verify" : `${command} ${args.join(" ")}`)).toEqual([
+		expect(run.mock.calls.map(([command, args]) => command === process.execPath ? "verify" : `${command} ${normalizeArgs(args).join(" ")}`)).toEqual([
 			"npm view @earendil-works/pi-coding-agent@latest version",
 			"npm install --save-exact @earendil-works/pi-coding-agent@2.5.0 @earendil-works/pi-ai@2.5.0 @earendil-works/pi-agent-core@2.5.0 @earendil-works/pi-codemode@2.5.0 @earendil-works/pi-mcp@2.5.0 @earendil-works/pi-telemetry@2.5.0 @earendil-works/pi-tui@2.5.0 @earendil-works/chord@2.5.0 --no-audit --no-fund", "npm run sync:provider-icons", "verify", "npm run check",
 		]);
@@ -184,7 +210,7 @@ describe("update service transactions", () => {
 		await expect(service.runUpdate("piweb")).rejects.toThrow(/simulated/);
 		const failed = await manifest(root);
 		expect(failed.state).toBe("failed");
-		expect(() => selectProductionBuild(root)).toThrow(/no stale-build fallback/);
+		expect(selectProductionBuild(root)).toEqual({ buildDir: previous.buildDir, buildId: previous.buildId });
 		expect(await fs.readFile(path.join(root, previous.buildDir, "BUILD_ID"), "utf8")).toBe("new-build");
 		expect(await fs.readFile(path.join(root, ".next", "BUILD_ID"), "utf8")).toBe("old-serving-build");
 		const recovered = await createUpdateService({ root, run: mockCommands(root) }).runUpdate("piweb");
@@ -256,7 +282,7 @@ describe("npm-installed PiWeb updates from the registry", () => {
 		expect(check).toMatchObject({ current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: canSelfUpdateNpmInstall(process.platform, root) });
 		// 不能原地替换的平台上，界面改显示这条命令
 		expect(check.command).toBe(canSelfUpdateNpmInstall(process.platform, root) ? undefined : "npm install -g @rexvane/piweb@latest");
-		expect(run.mock.calls.map(([, args]) => args.join(" "))).toEqual(["view @rexvane/piweb version"]);
+		expect(run.mock.calls.map(([, args]) => normalizeArgs(args).join(" "))).toEqual(["view @rexvane/piweb version"]);
 	});
 
 	it("falls back to the install command on Windows when serving from inside the installation", async () => {
@@ -309,7 +335,7 @@ describe("npm-installed PiWeb updates from the registry", () => {
 			return "";
 		});
 		const result = await createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("piweb", { assertIdle: async () => {} });
-		expect(calls).toEqual([["install", "-g", "@rexvane/piweb@latest", "--no-audit", "--no-fund"]]);
+		expect(calls.map(normalizeArgs)).toEqual([["install", "-g", "@rexvane/piweb@latest", "--no-audit", "--no-fund"]]);
 		expect(result).toEqual({ buildDir: ".next", buildId: "new-installed-build", version: "2.0.0", needsRestart: true });
 		// 不走 git、也不产生 release 清单：成品包自带构建
 		await expect(fs.access(path.join(root, ".next-releases", "active.json"))).rejects.toThrow();
@@ -362,7 +388,7 @@ describe("npm-installed PiWeb updates from the registry", () => {
 			const root = await npmInstallation();
 			const run = piInstaller(root);
 			const result = await createUpdateService({ root, run, versions, platform: "linux" }).runUpdate("pi", { assertIdle: async () => {} });
-			expect(run.mock.calls.map(([, args]) => args)).toEqual([PI_VIEW, PI_INSTALL]);
+			expect(run.mock.calls.map(([, args]) => normalizeArgs(args))).toEqual([PI_VIEW, PI_INSTALL]);
 			expect(result).toEqual({ buildDir: ".next", buildId: "installed-build", version: "2.5.0", needsRestart: true });
 			await expect(fs.access(path.join(root, ".next-releases", "active.json"))).rejects.toThrow();
 		});

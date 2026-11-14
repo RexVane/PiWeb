@@ -90,6 +90,16 @@ describe("pollEventStream", () => {
 		expect(calls.map((call) => call.lastEventId)).toEqual([undefined, "e1.1", "e1.1", "e1.1", "e1.2"]);
 	});
 
+	it("没有事件的空响应也报一次 onPoll，失败的请求不报", async () => {
+		const { fetchImpl, calls } = scriptedFetch(["", { status: 502 }, "", "id: e1.1\ndata: {}\n\n"]);
+		const handlers = { onOpen: vi.fn(), onMessage: vi.fn(), onError: vi.fn(), onPoll: vi.fn() };
+		const stream = pollEventStream("/api/agent/abc/events", handlers, { fetch: fetchImpl, backoffMs: () => 0 });
+		for (let i = 0; i < 20 && calls.length < 5; i++) await flush();
+		stream.close();
+		expect(handlers.onPoll).toHaveBeenCalledTimes(3);
+		expect(handlers.onMessage).toHaveBeenCalledTimes(1);
+	});
+
 	it("关掉后中止进行中的请求，不再回调", async () => {
 		const { fetchImpl, calls } = scriptedFetch([]);
 		const handlers = { onOpen: vi.fn(), onMessage: vi.fn(), onError: vi.fn() };

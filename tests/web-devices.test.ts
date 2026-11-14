@@ -1,0 +1,92 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSessionCookie, decodeSessionCookie, sessionCookieId, validSessionCookie } from "@/lib/web-auth";
+import { rememberWebDevice, listWebDevices, flushWebDevices } from "@/lib/web-devices";
+import { loadSessionRevocations, resetWebSecretCache, revokeAllSessions } from "@/lib/web-secret";
+import { recycleFixture } from "./lib/sandbox/fixtures";
+import { DELETE, GET } from "@/app/api/web-auth/route";
+const secret = Buffer.alloc(32, 9); let root = "";
+beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-devices-")); vi.stubEnv("PI_CODING_AGENT_DIR", root); vi.stubEnv("PI_WEB_AUTH", "1"); vi.stubEnv("PI_WEB_SECRET", secret.toString("base64url")); resetWebSecretCache(); });
+afterEach(async () => { await flushWebDevices(); vi.restoreAllMocks(); vi.unstubAllEnvs(); resetWebSecretCache(); await recycleFixture(root); });
+const request = (method: string, suffix: string, cookie?: string) => new Request(`http://localhost:30141/api/web-auth${suffix}`, { method, headers: { host: "localhost:30141", ...(cookie ? { cookie } : {}) } });
+describe("individual authenticated devices", () => {
+	it.each(["{}", "null", '"devices"'])("refuses a non-array registry %s without replacing its contents", async (contents) => {
+		const file = path.join(root, "web-devices.json");
+		const cookie = createSessionCookie("localhost:30141", secret), payload = decodeSessionCookie(cookie.value, secret)!;
+		await fs.writeFile(file, contents);
+		await expect(listWebDevices()).rejects.toThrow("invalid device registry");
+		await expect(rememberWebDevice("new-device", payload)).rejects.toThrow("invalid device registry");
+		expect(await fs.readFile(file, "utf8")).toBe(contents);
+		expect((await fs.readdir(root)).filter((name) => name.endsWith(".tmp") || name.endsWith(".lock"))).toEqual([]);
+	});
+	it("retries failed registration immediately and coalesces successful updates for one minute", async () => {
+		const file = path.join(root, "web-devices.json");
+		const cookie = createSessionCookie("localhost:30141", secret);
+		const id = sessionCookieId(cookie.value), payload = decodeSessionCookie(cookie.value, secret)!;
+		await fs.writeFile(file, "{broken");
+		await expect(rememberWebDevice(id, payload)).rejects.toThrow();
+		expect(await fs.readFile(file, "utf8")).toBe("{broken");
+		await fs.writeFile(file, "[]");
+		await rememberWebDevice(id, payload);
+		const first = await fs.readFile(file, "utf8");
+		const now = Date.now(); vi.spyOn(Date, "now").mockReturnValue(now + 1_000);
+		await rememberWebDevice(id, payload);
+		expect(await fs.readFile(file, "utf8")).toBe(first);
+		vi.mocked(Date.now).mockReturnValue(now + 61_000);
+		await rememberWebDevice(id, payload);
+		expect((await listWebDevices())[0].lastSeenAt).toBe(now + 61_000);
+	});
+	it("does not overwrite oversized registries and retains only the newest 200 records", async () => {
+		const file = path.join(root, "web-devices.json");
+		const cookie = createSessionCookie("localhost:30141", secret), payload = decodeSessionCookie(cookie.value, secret)!;
+		await fs.writeFile(file, " ".repeat(1024 * 1024 + 1));
+		await expect(rememberWebDevice("new", payload)).rejects.toThrow("size limit");
+		expect((await fs.stat(file)).size).toBe(1024 * 1024 + 1);
+		await fs.writeFile(file, JSON.stringify(Array.from({ length: 210 }, (_, i) => ({ id: `device-${i}`, createdAt: payload.issuedAt, expiresAt: payload.expiresAt, lastSeenAt: i, deviceType: "fixture" }))));
+		await rememberWebDevice("new", payload);
+		const devices = await listWebDevices();
+		expect(devices).toHaveLength(200); expect(devices[0].id).toBe("new"); expect(devices.some((device) => device.id === "device-0")).toBe(false);
+	});
+	it("filters device metadata using the logout generation as well as its issue time", async () => {
+		const cutoff = Date.now(); await revokeAllSessions(cutoff);
+		const epoch = loadSessionRevocations().notBefore;
+		const stale = createSessionCookie("localhost:30141", secret, epoch + 1, "stale", 0);
+		const current = createSessionCookie("localhost:30141", secret, epoch + 2, "current", epoch);
+		await rememberWebDevice(sessionCookieId(stale.value), decodeSessionCookie(stale.value, secret)!);
+		await rememberWebDevice(sessionCookieId(current.value), decodeSessionCookie(current.value, secret)!);
+		expect((await listWebDevices()).map((device) => device.deviceType)).toEqual(["current"]);
+	});
+	it("shows matching-generation devices when the clock moves behind the logout generation while retaining legacy time checks", async () => {
+		const now = Date.now(); const cutoff = now + 10_000;
+		await revokeAllSessions(cutoff);
+		const epoch = loadSessionRevocations().notBefore;
+		const cookie = createSessionCookie("localhost:30141", secret, now, "current-after-clock-change", epoch);
+		const payload = decodeSessionCookie(cookie.value, secret)!;
+		const currentId = sessionCookieId(cookie.value);
+		expect(validSessionCookie(request("GET", "", `${cookie.name}=${cookie.value}`), secret, now, loadSessionRevocations())).toBe(true);
+		await rememberWebDevice(currentId, payload);
+		await rememberWebDevice("stale-generation", { ...payload, issuedAt: epoch + 1, deviceType: "stale-generation", revocationEpoch: epoch - 1 });
+		await rememberWebDevice("legacy-old", { ...payload, deviceType: "legacy-old", revocationEpoch: undefined });
+		await rememberWebDevice("legacy-new", { ...payload, issuedAt: epoch + 1, deviceType: "legacy-new", revocationEpoch: undefined });
+		expect((await listWebDevices()).map((device) => device.id).sort()).toEqual([currentId, "legacy-new"].sort());
+	});
+	it("creates distinct device cookies in the same millisecond and revokes only the selected device", async () => {
+		const now = Date.now(); const local = createSessionCookie("localhost:30141", secret, now, "电脑浏览器"); const phone = createSessionCookie("localhost:30141", secret, now, "移动设备");
+		expect(local.value).not.toBe(phone.value);
+		await rememberWebDevice(sessionCookieId(local.value), decodeSessionCookie(local.value, secret)!);
+		await rememberWebDevice(sessionCookieId(phone.value), decodeSessionCookie(phone.value, secret)!);
+		const localHeader = `${local.name}=${local.value}`; const phoneHeader = `${phone.name}=${phone.value}`;
+		const listed = await (await GET(request("GET", "?devices=1", localHeader))).json();
+		expect(listed.data.devices).toHaveLength(2); expect(listed.data.devices.find((device: { current: boolean }) => device.current).deviceType).toBe("电脑浏览器");
+		expect((await DELETE(request("DELETE", `?device=${sessionCookieId(phone.value)}`, localHeader))).status).toBe(200);
+		expect(validSessionCookie(request("GET", "", localHeader), secret, Date.now(), loadSessionRevocations())).toBe(true);
+		expect(validSessionCookie(request("GET", "", phoneHeader), secret, Date.now(), loadSessionRevocations())).toBe(false);
+		expect(await listWebDevices()).toHaveLength(1);
+	});
+	it("refuses device enumeration and revocation without a valid session", async () => {
+		expect((await GET(request("GET", "?devices=1"))).status).toBe(401);
+		expect((await DELETE(request("DELETE", "?device=unknown"))).status).toBe(401);
+	});
+});

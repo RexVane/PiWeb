@@ -15,6 +15,9 @@
 import { readFileSync, statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+import { readFileBounded } from "./read-file-bounded";
+import { readJsoncSettingsObjectSync } from "./jsonc-settings-storage";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -32,7 +35,11 @@ function stampOf(stat: { mtimeMs: number; ctimeMs: number; size: number; ino: nu
 }
 
 function parseJsonObject(text: string, file: string): JsonObject {
-	const parsed: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
+	const errors: ParseError[] = [];
+	const clean = text.replace(/^\uFEFF/, "");
+	const parsed: unknown = path.basename(file).toLowerCase() === "settings.json"
+		? parseJsonc(clean, errors, { allowTrailingComma: true }) : JSON.parse(clean);
+	if (errors.length) throw new Error("Settings source must contain valid JSON");
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${file} must contain a JSON object`);
 	return parsed as JsonObject;
 }
@@ -56,7 +63,9 @@ async function readEntry(file: string): Promise<Entry> {
 	if (cached && cached.stamp === stamp) return cached;
 	const entry: Entry = { stamp };
 	try {
-		entry.value = parseJsonObject(await fs.readFile(file, "utf8"), file);
+		const text = path.basename(file).toLowerCase() === "settings.json"
+			? (await readFileBounded(file, 1024 * 1024)).toString("utf8") : await fs.readFile(file, "utf8");
+		entry.value = parseJsonObject(text, file);
 	} catch (error) {
 		entry.error = error as Error;
 	}
@@ -100,7 +109,7 @@ export function readJsonObjectSync(file: string): JsonObject {
 		} else {
 			entry = { stamp };
 			try {
-				entry.value = parseJsonObject(readFileSync(file, "utf8"), file);
+				entry.value = path.basename(file).toLowerCase() === "settings.json" ? readJsoncSettingsObjectSync(file) : parseJsonObject(readFileSync(file, "utf8"), file);
 			} catch (error) {
 				entry.error = error as Error;
 			}

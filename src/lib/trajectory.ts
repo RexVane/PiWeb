@@ -7,6 +7,8 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { TrajEntry, TrajTokens } from "./types";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { isAbortMessage, isCancelledTool } from "./chat/cancellation";
+import { PERMISSION_AUDIT_TYPE } from "./permission-audit";
+import { recentTrajectory } from "./chat/web-history";
 
 /** 只恢复 SDK 已记录的耗时，不从相邻消息时间戳推算。 */
 function storedDuration(value: unknown): number | undefined {
@@ -60,6 +62,27 @@ function customEntry(m: { customType?: unknown; content?: unknown; display?: unk
 		ts,
 		title: m.display === true ? type : `${type} (hidden)`,
 		detail: clipText(textOf(m.content), MESSAGE_TEXT_MAX_CHARS) || undefined,
+	};
+}
+
+/**
+ * 权限审计条目 → 轨迹行。
+ * 申请/决定：`权限：允许一次 · full @ 工作区内修改 · 理由`；用掉：`权限：已用于 <命令>`。
+ * 这里只做展示映射，审计事实本身在会话 JSONL 的 custom entry 里。
+ */
+function permissionAuditEntry(data: unknown): Pick<TrajEntry, "title" | "detail"> {
+	const raw = (data ?? {}) as Record<string, unknown>;
+	const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+	const scope = text(raw.scope) || "?";
+	if (raw.kind === "used") {
+		return { title: `权限：已用于 ${scope}`, detail: text(raw.command) || undefined };
+	}
+	const outcome = text(raw.outcome) === "approved" ? "允许一次" : text(raw.outcome) === "denied" ? "拒绝" : "未应答";
+	const preset = text(raw.preset);
+	const reason = text(raw.reason);
+	return {
+		title: `权限：${outcome}`,
+		detail: [scope, preset ? `@ ${preset}` : "", reason].filter(Boolean).join(" · ") || undefined,
 	};
 }
 
@@ -184,14 +207,23 @@ export class TrajLedger {
 	dirty: TrajEntry[] = [];
 
 	constructor(initialEntries: TrajEntry[] = []) {
-		this.entries = initialEntries.map((entry) => ({ ...entry }));
-		this.nextSeq = Math.max(0, ...this.entries.map((entry) => entry.seq)) + 1;
+		this.entries = recentTrajectory(initialEntries).map((entry) => ({ ...entry }));
+		this.nextSeq = initialEntries.reduce((maximum, entry) => Math.max(maximum, entry.seq), 0) + 1;
 	}
 
 	private push(entry: Omit<TrajEntry, "seq">): TrajEntry {
 		const full: TrajEntry = { ...entry, seq: this.nextSeq++ };
 		this.entries.push(full);
 		this.dirty.push(full);
+		const kept = recentTrajectory(this.entries);
+		const removed = this.entries.length - kept.length;
+		if (removed > 0) {
+			this.entries = kept;
+			for (const [id, index] of this.toolIndex) {
+				if (index < removed) { this.toolIndex.delete(id); this.toolStart.delete(id); this.pendingToolArgs.delete(id); }
+				else this.toolIndex.set(id, index - removed);
+			}
+		}
 		return full;
 	}
 
@@ -402,6 +434,10 @@ export function buildTrajectoryFromEntries(entries: any[]): TrajEntry[] {
 	};
 
 	for (const raw of entries) {
+		if (raw.type === "custom" && raw.customType === PERMISSION_AUDIT_TYPE) {
+			out.push({ seq: seq++, kind: "permission", ts: tsOf(raw.data?.at, raw.timestamp), ...permissionAuditEntry(raw.data) });
+			continue;
+		}
 		if (raw.type === "message") {
 			const m = raw.message;
 			if (!m) continue;

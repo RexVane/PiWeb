@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * 文件查看器：点击项目树里的文件弹出，80vw × 80vh 居中，右上全屏 / 关闭。
@@ -12,7 +14,7 @@ import { MarkdownActionsProvider } from "@/components/chat/markdown-actions";
 import { parseUnifiedDiff, type DiffLine } from "@/components/DiffView";
 import { FullDiff, type FullDiffHandle } from "@/components/FullDiff";
 import { GrowthTree } from "@/components/GrowthTree";
-import { IconAtOutline16, IconChevronDown14, IconChevronUp14, IconCloseOutline14, IconEditOutline16, IconFileOutline16, IconPlusOutline16, IconSearchOutline16 } from "@/components/icons";
+import { IconAtOutline16, IconChevronDown14, IconChevronUp14, IconCloseOutline14, IconFileOutline16, IconPlusOutline16, IconSearchOutline16, IconRefreshOutline14 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import { fileIconSrc } from "@/lib/file-icons";
@@ -23,12 +25,34 @@ import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { highlightCode, languageForPath } from "@/lib/highlight";
 import { markdownDocumentImageUrl, resolveMarkdownDocumentPath } from "@/lib/chat/file-path";
 import { useDialog } from "@/hooks/useDialog";
+import { copyText } from "@/lib/clipboard";
+import { IconCopyOutline16, IconDownloadOutline16 } from "@/components/icons";
+import type { FilePreview } from "@/lib/files-service";
 
 type Mode = "diff" | "content" | "render";
 
-const fetchCache = new Map<string, Promise<unknown>>();
-async function requestJson<T>(url: string): Promise<T> {
-	const r = await fetch(url);
+interface CacheEntry { promise: Promise<unknown>; bytes: number; expires: number }
+const fetchCache = new Map<string, CacheEntry>();
+const CACHE_BYTES = 8 * 1024 * 1024;
+const CACHE_ENTRIES = 32;
+const CACHE_TTL_MS = 60_000;
+let cachedBytes = 0;
+
+function forgetCached(url: string): void {
+	const entry = fetchCache.get(url);
+	if (entry) cachedBytes -= entry.bytes;
+	fetchCache.delete(url);
+}
+function trimCache(): void {
+	for (const [url, entry] of fetchCache) if (entry.expires <= Date.now()) forgetCached(url);
+	while (fetchCache.size > CACHE_ENTRIES || cachedBytes > CACHE_BYTES) {
+		const oldest = fetchCache.keys().next().value;
+		if (oldest === undefined) break;
+		forgetCached(oldest);
+	}
+}
+async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+	const r = await fetch(url, signal ? { signal } : undefined);
 	const j = await r.json();
 	if (!r.ok || !j.success) {
 		const err = new Error(j.error || `request failed (${r.status})`) as Error & { status?: number };
@@ -39,14 +63,38 @@ async function requestJson<T>(url: string): Promise<T> {
 }
 
 function cachedJson<T>(url: string): Promise<T> {
-	let p = fetchCache.get(url) as Promise<T> | undefined;
-	if (!p) {
-		p = requestJson<T>(url);
-		p.catch(() => fetchCache.delete(url));
-		fetchCache.set(url, p);
-		if (fetchCache.size > 200) fetchCache.delete(fetchCache.keys().next().value as string);
+	trimCache();
+	const cached = fetchCache.get(url);
+	if (cached) {
+		fetchCache.delete(url);
+		fetchCache.set(url, cached);
+		return cached.promise as Promise<T>;
 	}
-	return p;
+	const entry: CacheEntry = { promise: Promise.resolve(), bytes: url.length * 2, expires: Date.now() + CACHE_TTL_MS };
+	entry.promise = requestJson<T>(url).then((data) => {
+		if (fetchCache.get(url) === entry) {
+			// UTF-16 size conservatively bounds retained JSON strings, including ASCII.
+			cachedBytes -= entry.bytes;
+			entry.bytes += JSON.stringify(data).length * 2;
+			cachedBytes += entry.bytes;
+			trimCache();
+		}
+		return data;
+	}, (error) => {
+		if (fetchCache.get(url) === entry) forgetCached(url);
+		throw error;
+	});
+	fetchCache.set(url, entry);
+	cachedBytes += entry.bytes;
+	trimCache();
+	return entry.promise as Promise<T>;
+}
+
+function refreshCachedFile(cwd: string, path: string): void {
+	for (const url of fetchCache.keys()) {
+		const query = new URL(url, "http://piweb.local").searchParams;
+		if (query.get("cwd") === cwd && query.get("path") === path) forgetCached(url);
+	}
 }
 
 /** 文件夹预览：一页目录条目（分页；后端已按 .gitignore 过滤） */
@@ -56,10 +104,12 @@ interface DirPage { dir: string; entries: DirEntry[]; nextOffset: number | null;
 interface Loaded {
 	key: string;
 	diff: DiffLine[] | null;
+	patch: string | null;
 	content: string | null;
 	binary: boolean;
 	truncated: boolean;
-	notice: "deleted" | "historical" | "missing" | "disk" | "nochange" | null;
+	encodingUnsupported?: boolean;
+	notice: "deleted" | "historical" | "missing" | "disk" | "nochange" | "metadata" | null;
 	error: string | null;
 }
 
@@ -108,6 +158,7 @@ export function FileViewer({
 	onOpenEditor?: (path: string) => void;
 }) {
 	const { t } = useI18n();
+	const [refreshKey, setRefreshKey] = useState(0);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [mode, setMode] = useState<Mode>("diff");
 	const [modeTouched, setModeTouched] = useState(false);
@@ -120,6 +171,7 @@ export function FileViewer({
 	const [treeFilter, setTreeFilter] = useState("");
 	const [reveal, setReveal] = useState<{ path: string; key: number } | null>(null);
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
+	const [copyStatus, setCopyStatus] = useState<{ key: string | null; ok: boolean } | null>(null);
 	const [dirPage, setDirPage] = useState<(DirPage & { key: string; error?: string }) | null>(null);
 	const diffRef = useRef<FullDiffHandle>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
@@ -133,13 +185,14 @@ export function FileViewer({
 	const change = useMemo(() => (activeTab ? growth.changes.find((c) => c.path === activeTab.path) ?? null : null), [activeTab, growth.changes]);
 	const isMarkdown = Boolean(activeTab && /\.(md|mdx|markdown)$/i.test(activeTab.path));
 	const range = growth.range;
+	const contentKey = activeTab ? `${cwd}|${activeTab.path}|${mode}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}|${refreshKey}` : null;
 
 	// 切页签：模式按是否有改动自动选，用户手动切过才保留
 	useEffect(() => {
 		setModeTouched(false);
 		setDirFallback(null);
 		setLinkError(null);
-	}, [state.active]);
+	}, [state.active, cwd]);
 	useEffect(() => {
 		if (modeTouched || !activeTab) return;
 		setMode(change && !activeTab.lazy ? "diff" : isMarkdown ? "render" : "content");
@@ -151,20 +204,22 @@ export function FileViewer({
 	const isDir = Boolean(dirPath);
 	// @src/ 这类带尾斜杠的引用：列目录时去掉
 	const dirRel = dirPath ? dirPath.replace(/\/+$/, "") : null;
-	const dirKey = dirRel !== null && cwd ? `dir|${cwd}|${dirRel}` : null;
+	const dirKey = dirRel !== null && cwd ? `dir|${cwd}|${dirRel}|${refreshKey}` : null;
 	// 只认当前目录的那一页：从一个文件夹页签切到另一个时，上一个目录的条目不能在新请求回来前冒充新目录
 	// （点上去会拼出不存在的路径），「加载更多」也不能接着上一个目录的偏移拉
 	const page = dirPage && dirPage.key === dirKey ? dirPage : null;
 	// 文件夹：列目录（分页，后端已按 .gitignore 过滤），不读文件内容
 	useEffect(() => {
-		if (dirRel === null || !cwd || !dirKey) {
+		if (!state.open || dirRel === null || !cwd || !dirKey) {
 			setDirPage(null);
 			return;
 		}
 		let alive = true;
+		const controller = new AbortController();
+		setDirPage(null);
 		void (async () => {
 			try {
-				const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(dirRel)}&offset=0`);
+				const data = await requestJson<DirPage>(`/api/files?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(dirRel)}&offset=0`, controller.signal);
 				if (alive) setDirPage({ key: dirKey, ...data });
 			} catch (error) {
 				if (alive) setDirPage({ key: dirKey, dir: dirRel, entries: [], nextOffset: null, truncated: false, error: error instanceof Error ? error.message : t.viewerLoadFailed });
@@ -172,8 +227,9 @@ export function FileViewer({
 		})();
 		return () => {
 			alive = false;
+			controller.abort();
 		};
-	}, [dirRel, dirKey, cwd, t.viewerLoadFailed]);
+	}, [state.open, dirRel, dirKey, cwd, refreshKey, t.viewerLoadFailed]);
 
 	/** 目录还有下一页时接着拉（大目录：node_modules 这种已被忽略，剩下的也不会太多） */
 	const loadMore = useCallback(async () => {
@@ -190,15 +246,17 @@ export function FileViewer({
 
 	// 取数据
 	useEffect(() => {
-		if (!activeTab || activeTab.kind === "dir") {
+		if (!state.open || !activeTab || activeTab.kind === "dir" || !contentKey) {
 			setLoaded(null);
 			return;
 		}
 		const tab = activeTab;
-		const key = `${tab.path}|${mode}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}`;
+		const key = contentKey;
+		setLoaded(null);
+		const controller = new AbortController();
 		let alive = true;
 		const done = (partial: Partial<Loaded>) => {
-			if (alive) setLoaded({ key, diff: null, content: null, binary: false, truncated: false, notice: null, error: null, ...partial });
+			if (alive) setLoaded({ key, diff: null, patch: null, content: null, binary: false, truncated: false, notice: null, error: null, ...partial });
 		};
 		// 静态内容页签（技能文档等）：调用方已带内容，不读磁盘
 		if (tab.staticContent !== undefined) {
@@ -214,15 +272,15 @@ export function FileViewer({
 		const q = `cwd=${encodeURIComponent(cwd)}`;
 		const diskContent = async (notice: Loaded["notice"]) => {
 			try {
-				const data = await requestJson<{ content: string; binary: boolean; truncated: boolean }>(`/api/files?read=1&${q}&path=${encodeURIComponent(tab.path)}`);
-				done({ content: data.content, binary: data.binary, truncated: data.truncated, notice });
+				const data = await requestJson<FilePreview>(`/api/files?read=1&${q}&path=${encodeURIComponent(tab.path)}`, controller.signal);
+				done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
 			} catch (error) {
 				if ((error as { status?: number }).status !== 400) throw error;
 				// 400 有两种：文件不存在 / 路径其实是目录。探一下目录接口，能列出条目就当文件夹打开
 				try {
-					await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`);
+					await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`, controller.signal);
 					done({ notice: null });
-					setDirFallback(tab.path);
+					if (alive) setDirFallback(tab.path);
 					return;
 				} catch {
 					// 目录也列不出来：照旧报「文件不存在」
@@ -232,8 +290,8 @@ export function FileViewer({
 		};
 		const snapshotContent = async (tree: string, notice: Loaded["notice"]) => {
 			try {
-				const data = await cachedJson<{ content: string; binary: boolean; truncated: boolean }>(`/api/growth?${q}&tree=${tree}&path=${encodeURIComponent(tab.path)}&content=1`);
-				done({ content: data.content, binary: data.binary, truncated: data.truncated, notice });
+				const data = await cachedJson<FilePreview>(`/api/growth?${q}&tree=${tree}&path=${encodeURIComponent(tab.path)}&content=1`);
+				done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
 			} catch (error) {
 				if ((error as { status?: number }).status === 404) {
 					// 跟随中的文件可能在本轮后续工具里被删掉；从最近一次涉及它的快照取回最后内容。
@@ -246,8 +304,8 @@ export function FileViewer({
 						: prior?.tree;
 					if (priorTree && priorTree !== tree) {
 						try {
-							const data = await cachedJson<{ content: string; binary: boolean; truncated: boolean }>(`/api/growth?${q}&tree=${priorTree}&path=${encodeURIComponent(tab.path)}&content=1`);
-							done({ content: data.content, binary: data.binary, truncated: data.truncated, notice: "historical" });
+							const data = await cachedJson<FilePreview>(`/api/growth?${q}&tree=${priorTree}&path=${encodeURIComponent(tab.path)}&content=1`);
+							done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice: "historical" });
 							return;
 						} catch (priorError) {
 							if ((priorError as { status?: number }).status !== 404) throw priorError;
@@ -280,10 +338,10 @@ export function FileViewer({
 					}
 					const lines = parseUnifiedDiff(data.patch);
 					if (!lines) {
-						await snapshotContent(range.to, "nochange");
+						await snapshotContent(change.status === "D" ? range.from : range.to, "metadata");
 						return;
 					}
-					done({ diff: lines, truncated: data.truncated, notice: change.status === "D" ? "deleted" : null });
+					done({ diff: lines, patch: data.patch, truncated: data.truncated, notice: change.status === "D" ? "deleted" : null });
 					return;
 				}
 				await snapshotContent(range.to, null);
@@ -293,8 +351,9 @@ export function FileViewer({
 		})();
 		return () => {
 			alive = false;
+			controller.abort();
 		};
-	}, [activeTab, cwd, mode, range, change, growth.rounds, growth.selected, t.viewerLoadFailed]);
+	}, [state.open, activeTab, contentKey, cwd, mode, range, change, growth.rounds, growth.selected, refreshKey, t.viewerLoadFailed]);
 
 	// 键盘：Esc 关（先关快速打开）、Ctrl/⌘+W 关页签、Ctrl/⌘+P 快速打开、[ ] 上一处下一处
 	useEffect(() => {
@@ -393,8 +452,16 @@ export function FileViewer({
 	const stepBadge = roundName
 		? `${roundName}${change ? ` · +${change.add ?? 0} −${change.del ?? 0}` : ""}`
 		: "";
-	const isDiffMode = mode === "diff" && Boolean(loaded?.diff);
-	const noticeText = loaded?.notice === "deleted" ? t.viewerDeleted : loaded?.notice === "historical" ? t.viewerHistorical : loaded?.notice === "missing" ? t.viewerMissing : loaded?.notice === "disk" ? t.viewerNotInSnapshot : loaded?.notice === "nochange" ? t.viewerNoChanges : "";
+	const currentLoaded = loaded?.key === contentKey ? loaded : null;
+	const isDiffMode = mode === "diff" && Boolean(currentLoaded?.diff);
+	const copyLabel = currentLoaded?.patch ? (currentLoaded.truncated ? t.viewerCopyPatchPreview : t.viewerCopyPatch)
+		: currentLoaded?.truncated ? t.viewerCopyPreview : t.viewerCopyAll;
+	const copyCurrent = async () => {
+		const value = currentLoaded?.patch ?? currentLoaded?.content;
+		if (value === null || value === undefined) return;
+		setCopyStatus({ key: contentKey, ok: await copyText(value) });
+	};
+	const noticeText = currentLoaded?.notice === "deleted" ? t.viewerDeleted : currentLoaded?.notice === "historical" ? t.viewerHistorical : currentLoaded?.notice === "missing" ? t.viewerMissing : currentLoaded?.notice === "disk" ? t.viewerNotInSnapshot : currentLoaded?.notice === "nochange" ? t.viewerNoChanges : currentLoaded?.notice === "metadata" ? t.viewerMetadataChanged : "";
 
 	return (
 		<div className="pw-viewer-mask modal-mask fixed inset-0 z-[105] flex items-center justify-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -519,6 +586,25 @@ export function FileViewer({
 									</button>
 								</>
 							)}
+							{activeTab.staticContent === undefined && (
+								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.panelRefresh} aria-label={t.panelRefresh} onClick={() => {
+									refreshCachedFile(cwd, activeTab.path);
+									setRefreshKey((key) => key + 1);
+								}}>
+									<IconRefreshOutline14 size={12} />
+								</button>
+							)}
+							{!isDir && <>
+								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={copyLabel} aria-label={copyLabel}
+									disabled={!currentLoaded || currentLoaded.binary || currentLoaded.encodingUnsupported || (currentLoaded.content === null && currentLoaded.patch === null)} onClick={() => void copyCurrent()}>
+									<IconCopyOutline16 size={13} />
+								</button>
+								{activeTab.staticContent === undefined && <a className="icon-btn" style={{ width: 24, height: 24 }} download
+									title={t.viewerDownloadCurrent} aria-label={t.viewerDownloadCurrent}
+									href={`/api/files/download?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(activeTab.path)}`}>
+									<IconDownloadOutline16 size={13} />
+								</a>}
+							</>}
 							{onReference && (
 								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.fileReference} onClick={() => onReference(activeTab.path)}>
 									<IconAtOutline16 size={13} />
@@ -532,13 +618,15 @@ export function FileViewer({
 						</div>
 
 						{/* 正文 */}
+						{copyStatus?.key === contentKey && <div role={copyStatus.ok ? "status" : "alert"} className="pw-viewer-notice">{copyStatus.ok ? t.updateCopied : t.copyFailed}</div>}
 						{linkError && <div role="alert" className="px-4 py-2" style={{ color: "var(--dsw-danger)", fontSize: 12.5 }}>{linkError}</div>}
 						{noticeText && (
-							<div className="pw-viewer-notice" data-kind={loaded?.notice}>
+							<div className="pw-viewer-notice" data-kind={currentLoaded?.notice}>
 								{noticeText}
 							</div>
 						)}
-						{loaded?.truncated && <div className="pw-viewer-notice" data-kind="warn">{mode === "diff" ? t.viewerPatchTruncated : t.filePreviewTruncated}</div>}
+						{currentLoaded?.truncated && <div className="pw-viewer-notice" data-kind="warn">{mode === "diff" ? t.viewerPatchTruncated : t.filePreviewTruncated}</div>}
+						{currentLoaded?.encodingUnsupported && <div role="status" className="pw-viewer-notice" data-kind="warn">{t.viewerEncodingUnsupported}</div>}
 						{isDir ? (
 							<div className="min-h-0 flex-1 overflow-auto" data-testid="viewer-dir">
 								<div className="px-3 py-2" style={{ fontSize: 11.5, color: page?.error ? "var(--dsw-danger)" : "var(--dsw-label-caption)" }}>
@@ -553,7 +641,7 @@ export function FileViewer({
 											? onOpen(`${dirPath!.replace(/\/+$/, "")}/${entry.name}`, { kind: "dir", lazy: true })
 											: onOpen(`${dirPath!.replace(/\/+$/, "")}/${entry.name}`, { lazy: true }))}
 									>
-										<img className="pw-tree-icon" src={entry.kind === "dir" ? "/file-icons/folder-close.svg" : fileIconSrc(entry.name)} alt="" />
+										<img className="pw-tree-icon" src={entry.kind === "dir" ? "/file-icons/folder.svg" : fileIconSrc(entry.name)} alt="" />
 										<span className="min-w-0 flex-1 truncate" style={{ fontSize: 12.5, fontFamily: entry.kind === "dir" ? "inherit" : "var(--font-mono)" }}>{entry.name}</span>
 										{entry.kind === "file" && entry.size !== undefined && (
 											<span style={{ fontSize: 11, color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}>{fmtBytes(entry.size)}</span>
@@ -564,27 +652,28 @@ export function FileViewer({
 									<button type="button" className="pw-chip mx-3 my-2" onClick={() => void loadMore()}>{t.viewerDirMore}</button>
 								) : null}
 							</div>
-						) : !loaded || loaded.key !== `${activeTab.path}|${mode}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}` ? (
+						) : !currentLoaded || currentLoaded.key !== contentKey ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
-						) : loaded.error ? (
-							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{loaded.error}</div>
-						) : loaded.notice === "missing" ? (
+						) : currentLoaded.error ? (
+							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{currentLoaded.error}</div>
+						) : currentLoaded.notice === "missing" ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.viewerMissing}</div>
-						) : loaded.binary ? (
+						) : currentLoaded.binary ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.fileBinary}</div>
-						) : loaded.diff ? (
-							<FullDiff lines={loaded.diff} language={languageForPath(activeTab.path)} folded={folded} handle={diffRef} initialChange />
-						) : mode === "render" && loaded.content !== null ? (
+						) : currentLoaded.encodingUnsupported ? null : currentLoaded.diff ? (
+							<FullDiff lines={currentLoaded.diff} language={languageForPath(activeTab.path)} folded={folded} handle={diffRef} initialChange />
+						) : mode === "render" && currentLoaded.content !== null ? (
 							<div className="min-h-0 flex-1 overflow-auto px-6 py-4" style={{ fontSize: 14 }}>
 								<MarkdownActionsProvider value={{
+									allowDocumentParents: true,
 									openFile: (href) => void openDocumentLink(href),
 									resolveImage: (href) => markdownDocumentImageUrl(cwd, activeTab.path, href, activeTab.staticContent === undefined ? undefined : activeTab.sourcePath ?? activeTab.path),
 								}}>
-									<MarkdownBlock text={loaded.content} />
+									<MarkdownBlock text={currentLoaded.content} />
 								</MarkdownActionsProvider>
 							</div>
-						) : loaded.content !== null ? (
-							<CodeBlock content={loaded.content} name={activeTab.path} />
+						) : currentLoaded.content !== null ? (
+							<CodeBlock content={currentLoaded.content} name={activeTab.path} />
 						) : null}
 					</>
 				) : (
@@ -599,6 +688,9 @@ export function FileViewer({
 							</span>
 							<button type="button" className="pw-chip" onClick={growth.expandAll}>{t.growthExpandAll}</button>
 							<button type="button" className="pw-chip" onClick={growth.collapseAll}>{t.growthCollapseAll}</button>
+							<button type="button" className="icon-btn" title={t.panelRefresh} aria-label={t.panelRefresh} onClick={() => void growth.refresh()}>
+								<IconRefreshOutline14 size={12} />
+							</button>
 						</div>
 						<GrowthTree
 							tree={growth.tree}
@@ -659,6 +751,7 @@ export function FileViewer({
 								{workspaceFiles.status === "loading" || workspaceFiles.status === "idle" ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.panelLoading}</div> : null}
 								{workspaceFiles.error ? <div role="alert" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{workspaceFiles.error}</div> : null}
 								{workspaceFiles.truncated ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.mentionTruncated}</div> : null}
+								{workspaceFiles.warning ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-warn)" }}>{t.mentionGitFallback}</div> : null}
 								{quickMatches.length === 0 && workspaceFiles.status === "ready" ? (
 									<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "8px 10px" }}>{t.viewerQuickOpenEmpty}</div>
 								) : (

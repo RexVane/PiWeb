@@ -23,7 +23,7 @@ export interface SessionSummary {
  * custom：扩展注入的消息（pi 转成用户内容发给模型）；bash：用户用 `!` 跑的命令。
  * 两者都不是用户发言，不开新的一轮。
  */
-export type TrajKind = "system" | "context" | "user" | "custom" | "bash" | "message" | "tool" | "compacted";
+export type TrajKind = "system" | "context" | "user" | "custom" | "permission" | "bash" | "message" | "tool" | "compacted";
 
 export interface TrajTokens {
 	input?: number;
@@ -61,6 +61,8 @@ export interface TrajEntry {
 
 /** 消息在客户端渲染时的统一形状（pi AgentMessage 的投影） */
 export interface WebMessage {
+	/** Preview was shortened; full content is available in the session export. */
+	truncated?: boolean;
 	id?: string;
 	/** 热会话流的稳定身份；持久 entry id 尚未生成时也可关联 start/delta/end 与快照。 */
 	streamId?: string;
@@ -123,7 +125,7 @@ export interface WebNestedCall {
 
 export type WebContent =
 	| { type: "text"; text: string }
-	| { type: "image"; data: string; mimeType: string }
+	| { type: "image"; data: string; mimeType: string; url?: string }
 	| { type: "thinking"; thinking: string }
 	| { type: "toolCall"; id: string; name: string; arguments: unknown }
 	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string; nestedCalls?: WebNestedCall[] };
@@ -214,11 +216,12 @@ export type WebEvent =
 			/**
 			 * 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input/editor 需要浏览器应答。
 			 * questions 是内置 ask_user_question 工具的选择窗口（输入框上方的卡片），应答 value 为 JSON 答案。
+			 * web 是 PiWeb 专有的 JSON UI：扩展送一棵树过来，浏览器用它自己的组件渲染（见 WebUiNode）。
 			 * 其余（notify / setStatus / setWidget / setTitle / setEditorText / setWorkingMessage）只通知、不等应答。
 			 */
 			type: "extension_ui";
 			id: string;
-			method: "select" | "confirm" | "input" | "editor" | "questions" | "notify" | "setStatus" | "setWidget" | "setTitle" | "setEditorText" | "setWorkingMessage";
+			method: "select" | "confirm" | "input" | "editor" | "questions" | "web" | "notify" | "setStatus" | "setWidget" | "setTitle" | "setEditorText" | "setWorkingMessage";
 			title?: string;
 			message?: string;
 			options?: string[];
@@ -226,6 +229,9 @@ export type WebEvent =
 			placeholder?: string;
 			/** editor：编辑框的初始内容 */
 			prefill?: string;
+			/** web：要渲染的界面树；webText 是没适配扩展的纯文本兜底 */
+			tree?: WebUiNode;
+			webText?: string;
 			notifyType?: "info" | "warning" | "error";
 			statusKey?: string;
 			statusText?: string;
@@ -239,6 +245,7 @@ export type WebEvent =
 			ts: number;
 	  }
 	| { type: "extension_ui_resolved"; id: string; ts: number }
+	| { type: "interaction_unavailable"; method: string; reason: "headless"; ts: number }
 	/**
 	 * 扩展命令换了会话（ctx.newSession / ctx.fork / ctx.switchSession）：PiWeb 一个会话一份文件，
 	 * 「换会话」就是让浏览器打开目标会话。
@@ -294,7 +301,7 @@ export type GrowthRoundStatus = "done" | "aborted" | "error";
 /** 工作区还不是 git 仓库根目录：not-git = 不在任何仓库里；nested = 是 parent 仓库的子目录（会嵌套建一个） */
 export interface GrowthConsentRequest {
 	cwd: string;
-	reason: "not-git" | "nested";
+	reason: "not-git" | "nested" | "existing";
 	parent?: string;
 }
 
@@ -314,6 +321,9 @@ export interface GrowthChange {
  * 变更清单与行数来自 git log --raw --numstat（相对上一个 commit）。
  */
 export interface GrowthRound {
+	roundNumber?: number;
+	attribution?: "shared";
+	concurrentSessions?: string[];
 	commit: string;
 	/** 上一个 commit；链上第一个 commit 为 null */
 	parent: string | null;
@@ -378,6 +388,7 @@ export interface ContextBreakdown {
 
 /** SSE 连接建立时先发的完整快照 */
 export interface WebSnapshot {
+	history?: { total: number; omitted: number };
 	seq: number;
 	sessionPath: string;
 	cwd: string;
@@ -399,7 +410,7 @@ export interface WebSnapshot {
 	/** 资源诊断：扩展加载失败、技能/模板解析警告（来自 pi 资源加载器） */
 	resourceDiagnostics: { kind: "extension" | "skill" | "prompt" | "command"; path?: string; message: string }[];
 	messages: WebMessage[];
-	/** 全部持久用户消息的轮次（含上下文压缩后不再渲染的消息）。 */
+	/** 最近持久用户消息的索引；完整轮次保留在会话与 growth roundNumber 中。 */
 	userTurns: { id: string; ts: number }[];
 	growthError: string | null;
 	/** 等用户回答的建仓库请求；缺省按没有处理（兼容旧服务端） */
@@ -432,9 +443,89 @@ export interface WebSnapshot {
 	externalReload?: { entries: number; at: number };
 }
 
+// ---------- 技能（/api/skills） ----------
+
+/**
+ * pi 的作用域（SDK `SourceInfo.scope`）。user = 个人目录下、所有工作区都能用；project = 工作区自己的。
+ * temporary 只有命令行 `-e` 才会产生，PiWeb 不走那条路 —— 保留是为了照抄 pi 的模型，界面上按需出现。
+ */
+export type SkillScope = "user" | "project" | "temporary";
+
+/** pi 的来源（SDK `SourceInfo.origin`）。top-level = 目录发现或 settings 声明；package = 由 pi 包带入 */
+export type SkillOrigin = "top-level" | "package";
+
+/**
+ * 技能的完整身份。作用域和来源是**两条正交的轴**：包里的技能既可能是个人级也可能是项目级，
+ * 所以不能压成一个"全局 / 项目 / 扩展包"的三选一。
+ */
+export interface SkillView {
+	name: string;
+	description: string;
+	filePath: string;
+	disabled: boolean;
+	scope: SkillScope;
+	origin: SkillOrigin;
+	/** 来源目录的可读形式：`.pi/skills`、`~/.agents/skills`，包则为包名 */
+	sourceLabel: string;
+	baseDir: string;
+}
+
+// ---------- 扩展网页 UI（JSON UI 桥） ----------
+
+/**
+ * 扩展"要画什么"的声明式描述。
+ *
+ * 扩展跑在服务端进程里，只能通过 SSE 送数据过来，所以不能直接给 HTML/React：
+ * 它给的是一棵**白名单节点**的树，PiWeb 用自己的网页组件渲染。好处是三件事：
+ *   1. 样式跟随网页主题（不是把终端画面贴进网页）；
+ *   2. 扩展不需要打包前端、不依赖 React 版本；
+ *   3. 服务端可以校验（节点类型、深度、长度），扩展拿不到任意 DOM 能力。
+ */
+export type WebUiTone = "default" | "muted" | "accent" | "success" | "warning" | "danger";
+
+export interface WebUiListItem {
+	label: string;
+	description?: string;
+	/** 点中后回传给扩展的标识（扩展在 custom() 的返回值里读它） */
+	action?: string;
+	disabled?: boolean;
+}
+
+export interface WebUiFormField {
+	kind: "input" | "select" | "confirm";
+	name: string;
+	label: string;
+	placeholder?: string;
+	value?: string;
+	options?: string[];
+}
+
+export type WebUiNode =
+	| { type: "box"; direction?: "row" | "column"; gap?: number; children: WebUiNode[] }
+	| { type: "text"; text: string; tone?: WebUiTone; mono?: boolean }
+	| { type: "list"; items: WebUiListItem[]; selected?: number }
+	| { type: "table"; columns: string[]; rows: string[][] }
+	| { type: "progress"; value: number; label?: string }
+	| { type: "code"; text: string; language?: string }
+	| { type: "form"; fields: WebUiFormField[]; submitLabel?: string };
+
+/** 扩展在网页 UI 上收到的交互结果 */
+export interface WebUiResult {
+	/** list 点中的项 */
+	action?: string;
+	/** form 提交 */
+	name?: string;
+	values?: Record<string, string | boolean>;
+}
+
 // ---------- 浏览器 → 服务器 命令 ----------
 
-export type ToolPreset = "readonly" | "standard" | "full";
+/**
+ * 权限档位。readonly 只读；workspace 只能改工作区内（写入路径 realpath 校验；shell 仅在
+ * OS 沙箱可用时以受限令牌运行）；
+ * full 不限制。旧值 `standard` 由 lib/tool-preset 的 normalizeToolPreset 归一成 workspace。
+ */
+export type ToolPreset = "readonly" | "workspace" | "full";
 
 export interface ImageAttachment {
 	type: "image";
@@ -462,6 +553,7 @@ export interface AgentCommand {
 		| "setLabel"
 		| "editAndResend"
 		| "clearQueue"
+		| "sendQueueNow"
 		| "setActiveTools"
 		| "extensionUiResponse"
 		| "reload";

@@ -22,6 +22,7 @@ const KIND_NAME: Record<TrajEntry["kind"], string> = {
 	context: "CONTEXT",
 	user: "USER",
 	custom: "EXTENSION",
+	permission: "PERMISSION",
 	bash: "SHELL",
 	message: "ASSISTANT",
 	tool: "TOOL",
@@ -64,6 +65,7 @@ function sourceOf(entry: TrajEntry): string {
 		case "context": return `Pi ResourceLoader · ${entry.title || "context"}`;
 		case "user": return "Pi SessionManager · user message";
 		case "custom": return `Pi extension · sendMessage${entry.title ? ` · ${entry.title}` : ""}`;
+		case "permission": return "PiWeb · permission audit (`piweb_permission` custom entry)";
 		case "bash": return "Pi AgentSession · user shell command";
 		case "message": return "Pi AgentSession · model response";
 		case "tool": return `Pi AgentSession · tool execution${entry.toolName ? ` · ${entry.toolName}` : ""}`;
@@ -185,7 +187,8 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 	const visibleRows = useMemo(
 		() => rows.filter((row) => {
 			if (callsCollapsed && row.entry.kind === "tool") return false;
-			if (turnsCollapsed && !INPUT_KINDS.includes(row.entry.kind)) return false;
+			// 权限审计行是稀疏的安全事实，折叠回合时也留着，免得用户翻不到
+			if (turnsCollapsed && !INPUT_KINDS.includes(row.entry.kind) && row.entry.kind !== "permission") return false;
 			return matchesQuery(row, normalizedQuery);
 		}).reverse(),
 		[callsCollapsed, normalizedQuery, rows, turnsCollapsed],
@@ -275,7 +278,7 @@ export function TrajInspector({ entry, onClose, contextLookup }: { entry: TrajEn
 				{tabs.map((item) => <button key={item.id} type="button" role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)}>{item.label}</button>)}
 			</div>
 			<div className={styles.inspectorBody}>
-				{entry.encodingLoss && <p role="status" style={{ margin: "0 0 14px", color: "var(--dsw-warning, #d5a13b)", fontSize: 13, lineHeight: 1.55 }}>{t.encodingLossWarning}</p>}
+				{entry.encodingLoss && <p role="status" style={{ margin: "0 0 14px", color: "var(--dsw-warn)", fontSize: 13, lineHeight: 1.55 }}>{t.encodingLossWarning}</p>}
 				{tab === "summary" && <>
 					<dl className={styles.summaryList}>
 						<div><dt>{t.trajSource}</dt><dd>{sourceOf(entry)}</dd></div>

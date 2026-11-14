@@ -321,11 +321,14 @@ describe("设置面板改动对已开会话的即时生效", () => {
 		const m = open(sm.getSessionFile()!);
 		const session = await manager.ensureSession(m);
 		expect(session.agent.steeringMode).toBe("one-at-a-time");
+		const { patchPiSettings } = await import("../src/lib/pi-settings");
+		await patchPiSettings({ steeringMode: "all", followUpMode: "all" });
 		expect(manager.applySettingsToSessions({ steeringMode: "all", followUpMode: "all" })).toBeGreaterThanOrEqual(1);
 		expect(session.agent.steeringMode).toBe("all");
 		expect(session.agent.followUpMode).toBe("all");
 		// 没有需要当场生效的字段就不碰任何会话
 		expect(manager.applySettingsToSessions({})).toBe(0);
+		await patchPiSettings({ steeringMode: "one-at-a-time", followUpMode: "one-at-a-time" });
 		expect(manager.applySettingsToSessions({ steeringMode: "one-at-a-time", followUpMode: "one-at-a-time" })).toBeGreaterThanOrEqual(1);
 		expect(session.agent.steeringMode).toBe("one-at-a-time");
 	}, 60_000);
@@ -409,7 +412,7 @@ describe("扩展命令里的会话操作", () => {
 		const sm = await newSession();
 		sm.appendMessage(user("原会话", 1000));
 		const m = open(sm.getSessionFile()!);
-		m.toolPreset = "standard";
+		m.toolPreset = "workspace";
 		await manager.ensureSession(m);
 		let replaced: unknown;
 		const result = await commandContext(m).newSession({
@@ -425,7 +428,7 @@ describe("扩展命令里的会话操作", () => {
 		// 目标会话已经热启动，扩展预置的内容在里面，权限档位跟着来源会话
 		expect(target.session).toBeTruthy();
 		expect(visible((await manager.buildSnapshot(target)).messages).map(textOf)).toEqual(["扩展预置的第一句"]);
-		expect(target.toolPreset).toBe("standard");
+		expect(target.toolPreset).toBe("workspace");
 		expect(replaced).toBeTruthy();
 	}, 90_000);
 

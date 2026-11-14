@@ -56,23 +56,23 @@ describe("agent command validation", () => {
 		if (!result.ok) expect(result.error).toContain("at most 20");
 	});
 
-	it("rejects a single image over 20MB (28MB base64, maxImageBytes)", () => {
-		const over = parseAgentCommand({ cmd: "prompt", images: [image("A".repeat(28_000_001))] });
+	it("rejects a single image above the compressed 2 MiB budget", () => {
+		const over = parseAgentCommand({ cmd: "prompt", images: [image("A".repeat(2_796_205))] });
 		expect(over.ok).toBe(false);
-		const edge = parseAgentCommand({ cmd: "prompt", images: [image("A".repeat(28_000_000))] });
+		const edge = parseAgentCommand({ cmd: "prompt", images: [image("A".repeat(2_796_204))] });
 		expect(edge.ok).toBe(true);
 	});
 
-	it("rejects images totaling over 200MB (268MB base64, maxMessageImageBytes)", () => {
-		// 20 张 × 13.4MB base64 = 268,000,000 恰好在界内（> 才拒绝）
-		const atCap = parseAgentCommand({ cmd: "prompt", images: Array.from({ length: 20 }, () => image("A".repeat(13_400_000))) });
+	it("rejects images above the shared request image budget", () => {
+		// 20 张 × 400KB base64 = 8,000,000 恰好在界内（> 才拒绝）
+		const atCap = parseAgentCommand({ cmd: "prompt", images: Array.from({ length: 20 }, () => image("A".repeat(400_000))) });
 		expect(atCap.ok).toBe(true);
-		// 19 张 13.4MB + 1 张 13,400,001 → 总量 268,000,001 越界
+		// 19 张 400KB + 1 张 400,001 → 总量 8,000,001 越界
 		const over = parseAgentCommand({
 			cmd: "prompt",
 			images: [
-				...Array.from({ length: 19 }, () => image("A".repeat(13_400_000))),
-				image("A".repeat(13_400_001)),
+				...Array.from({ length: 19 }, () => image("A".repeat(400_000))),
+				image("A".repeat(400_001)),
 			],
 		});
 		expect(over.ok).toBe(false);
@@ -95,6 +95,16 @@ describe("agent command validation", () => {
 		expect(parseAgentCommand({ cmd: "bash", command: "   " }).ok).toBe(false);
 		expect(parseAgentCommand({ cmd: "bash", command: 42 }).ok).toBe(false);
 		expect(parseAgentCommand({ cmd: "bash", command: "ls", excludeFromContext: "yes" }).ok).toBe(false);
+		// 新会话页选模型时带的 fresh 不能在 HTTP 边界被丢掉
+		expect(parseAgentCommand({ cmd: "setModel", provider: "a", modelId: "m", fresh: true })).toEqual({
+			ok: true,
+			command: expect.objectContaining({ cmd: "setModel", fresh: true }),
+		});
+		expect(parseAgentCommand({ cmd: "setModel", provider: "a", modelId: "m", fresh: "yes" }).ok).toBe(false);
 		expect(parseAgentCommand({ cmd: "abortBash" }).ok).toBe(true);
+		expect(parseAgentCommand({ cmd: "sendQueueNow" })).toEqual({
+			ok: true,
+			command: expect.objectContaining({ cmd: "sendQueueNow" }),
+		});
 	});
 });

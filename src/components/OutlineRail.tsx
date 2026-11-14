@@ -112,6 +112,25 @@ export function OutlineRail({ scrollRef, revision }: { scrollRef: React.RefObjec
 		listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
 	}, [open, active]);
 
+	const railRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!open) return;
+		const onPointerDown = (event: PointerEvent) => {
+			if (event.target instanceof Node && railRef.current?.contains(event.target)) return;
+			setOpen(false);
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setOpen(false);
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [open]);
+
 	if (items.length < MIN_ITEMS) return null;
 
 	const jump = (item: OutlineItem) => {
@@ -119,10 +138,14 @@ export function OutlineRail({ scrollRef, revision }: { scrollRef: React.RefObjec
 		if (!root) return;
 		const top = item.el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - 16;
 		root.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+		if (typeof window !== "undefined" && window.matchMedia?.("(hover: none), (pointer: coarse)").matches) {
+			setOpen(false);
+		}
 	};
 
 	return (
 		<div
+			ref={railRef}
 			className="outline-rail absolute right-2 top-1/2 z-20 -translate-y-1/2"
 			onMouseEnter={() => setOpen(true)}
 			onMouseLeave={() => setOpen(false)}
@@ -165,7 +188,13 @@ export function OutlineRail({ scrollRef, revision }: { scrollRef: React.RefObjec
 					})}
 				</div>
 			) : (
-				<div className="flex flex-col items-end gap-[6px] py-2 pl-3 pr-1">
+				<button
+					type="button"
+					className="outline-rail-trigger flex flex-col items-end gap-[6px] py-2 pl-3 pr-1 cursor-pointer bg-transparent border-0"
+					aria-label={t.outlineToggle}
+					aria-expanded={false}
+					onClick={() => setOpen(true)}
+				>
 					{items.slice(0, 40).map((item, i) => (
 						<span
 							key={item.key}
@@ -180,7 +209,7 @@ export function OutlineRail({ scrollRef, revision }: { scrollRef: React.RefObjec
 							}}
 						/>
 					))}
-				</div>
+				</button>
 			)}
 		</div>
 	);

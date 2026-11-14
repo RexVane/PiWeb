@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getManaged } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
 import { buildSessionTree } from "@/lib/session-tree";
+import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -19,11 +20,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 				userMessages: tree.nodes.map((node) => ({ entryId: node.entryId, ts: node.ts, text: node.text, depth: node.indent, label: node.label })),
 				activeUserId: tree.nodes.find((node) => node.current)?.entryId ?? "",
 			},
-		});
+		}, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json(
-			{ success: false, error: error instanceof Error ? error.message : "request failed" },
-			{ status: error instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(error, "会话分支读取失败，请重试。") },
+			{ status: error instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } },
 		);
 	}
 }

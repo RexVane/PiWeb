@@ -33,7 +33,7 @@ import { codexSource } from "../src/lib/session-import/codex";
 import { grokSource } from "../src/lib/session-import/grok";
 import { dshSource, decodeCwdDir } from "../src/lib/session-import/dsh";
 import { createOcFamilySource } from "../src/lib/session-import/oc-family";
-import { decodeZstdFrames } from "../src/lib/session-import/dsh-zstd";
+import { decodeZstdFrames, readZstdHead } from "../src/lib/session-import/dsh-zstd";
 import type { ImportedEntry, ImportedMessage } from "../src/lib/session-import/types";
 
 let root: string;
@@ -232,6 +232,19 @@ describe("Codex CLI", () => {
 });
 
 describe("Grok CLI", () => {
+	it("retains a valid history when summary.json is missing or malformed", async () => {
+		for (const [id, summary] of [["missing-summary", undefined], ["broken-summary", "{unfinished"]] as const) {
+			const dir = path.join(roots.grok, "D%3A%5CAIApp%5CPiWeb", id);
+			await write(path.join(dir, "chat_history.jsonl"), JSON.stringify({ type: "user", content: id }));
+			if (summary) await write(path.join(dir, "summary.json"), summary);
+		}
+		const summaries = await grokSource.scan();
+		expect(summaries.map((item) => item.externalId).sort()).toEqual(["broken-summary", "missing-summary"]);
+		for (const summary of summaries) {
+			expect(summary.projectPath).toBe("D:\\AIApp\\PiWeb");
+			expect(messagesOf((await grokSource.read(summary))!.entries)).toHaveLength(1);
+		}
+	});
 	async function fixture() {
 		const dir = path.join(roots.grok, "D%3A%5CAIApp%5CPiWeb", "01a0a4d5-728e-76d0-92d6-ba247553e656");
 		await write(path.join(dir, "summary.json"), JSON.stringify({ session_summary: "整理索引", current_model_id: "grok-4", num_messages: 4, created_at: TS, updated_at: TS + 500, info: { cwd: "D:\\AIApp\\PiWeb" } }));
@@ -280,6 +293,32 @@ describe("Grok CLI", () => {
 		await write(path.join(dir, "chat_history.jsonl"), JSON.stringify({ type: "user", content: "hi" }));
 		const [summary] = await grokSource.scan();
 		expect(summary.projectPath).toBe("D:\\AIApp\\PiWeb");
+	});
+});
+
+describe("import source failure boundaries", () => {
+	it.each([claudeSource, codexSource, grokSource, dshSource])("%s keeps good records and reports malformed JSON lines", async (source) => {
+		const user = source.id === "claude" ? { type: "user", cwd: root, message: { role: "user", content: "keep me" } }
+			: source.id === "codex" ? { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "keep me" }] } }
+				: source.id === "grok" ? { type: "user", content: "keep me" }
+					: { type: "user/message", time: TS, data: { content: [{ type: "text", text: "keep me" }], source: { kind: "user" }, role: "user" } };
+		const records = [JSON.stringify({ type: "session", cwd: root, createdAt: TS }), "{truncated", JSON.stringify(user)];
+		const file = path.join(root, `${source.id}-broken.jsonl`);
+		await fs.writeFile(file, source.id === "dsh" ? multiFrame(records) : records.join("\n"));
+		const imported = await source.read({ source: source.id, externalId: "broken", projectPath: root, location: file });
+		expect(messagesOf(imported!.entries)).toHaveLength(1);
+		expect(imported!.skipped?.join()).toContain("1 行损坏");
+	});
+	it.each([claudeSource, codexSource, grokSource, dshSource])("%s handles a source removed after scanning without throwing", async (source) => {
+		expect(await source.read({ source: source.id, externalId: "gone", projectPath: root, location: path.join(root, "no-longer-exists") })).toBeNull();
+	});
+	it("does not certify a truncated compressed history as an empty complete session", async () => {
+		const raw = multiFrame([JSON.stringify({ type: "session", cwd: root }), JSON.stringify({ type: "user/message", data: { content: "hello" } })], 1);
+		const truncated = raw.subarray(0, raw.length - 5);
+		const file = path.join(root, "truncated.jsonl.zstd"); await fs.writeFile(file, truncated);
+		expect(() => decodeZstdFrames(truncated)).toThrow("无法解压");
+		expect((await readZstdHead(file)).complete).toBe(false);
+		expect(await dshSource.read({ source: "dsh", externalId: "truncated", projectPath: root, location: file })).toBeNull();
 	});
 });
 
@@ -453,6 +492,32 @@ describe("ZCode / opencode（同一套表结构）", () => {
 });
 
 describe("只扫最近的若干条（界面默认每组 15 条）", () => {
+	it("lists a Codex session whose first user message follows a large instruction block", async () => {
+		const file = path.join(roots.codex, "rollout-large-prompt.jsonl");
+		await write(file, [
+			JSON.stringify({ type: "session_meta", payload: { cwd: "D:\\ws" } }),
+			JSON.stringify({ type: "response_item", payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "x".repeat(100_000) }] } }),
+			JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "real question" }] } }),
+		].join("\n"));
+		expect((await codexSource.scan()).map((item) => item.externalId)).toContain("rollout-large-prompt");
+	});
+	it("rejects zstd output over a cumulative limit before constructing the final buffer", () => {
+		const raw = Buffer.concat([zlib.zstdCompressSync(Buffer.alloc(128, 65)), zlib.zstdCompressSync(Buffer.alloc(128, 66))]);
+		expect(() => decodeZstdFrames(raw, 200)).toThrow("大小上限");
+	});
+	it("reports a corrupt SQLite source instead of an empty successful scan", async () => {
+		const file = path.join(root, "corrupt.sqlite"); await fs.writeFile(file, "not a database");
+		await expect(createOcFamilySource("zcode", () => file).scan()).rejects.toThrow("源会话库");
+	});
+	it("filters soft deleted and archived SQLite sessions while retaining zero-valued lifecycle fields", async () => {
+		const { DatabaseSync } = await import("node:sqlite"); const file = path.join(root, "lifecycle.sqlite"); const db = new DatabaseSync(file);
+		db.exec("CREATE TABLE session (id TEXT, parent_id TEXT, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER, time_deleted INTEGER, time_archived INTEGER); CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)");
+		for (const [id, deleted, archived] of [["active", 0, 0], ["deleted", TS, 0], ["archived", 0, TS]] as const) {
+			db.prepare("INSERT INTO session VALUES (?, NULL, ?, ?, ?, ?, ?, ?)").run(id, "D:\\ws", id, TS, TS, deleted, archived);
+			db.prepare("INSERT INTO message VALUES (?, ?, ?)").run(`${id}-m`, id, "{}");
+		}
+		db.close(); expect((await createOcFamilySource("zcode", () => file).scan()).map((item) => item.externalId)).toEqual(["active"]);
+	});
 	/** 造 count 条 claude 会话，mtime 依次递增：s01 最旧、s20 最新 */
 	async function many(count: number) {
 		for (let i = 1; i <= count; i += 1) {

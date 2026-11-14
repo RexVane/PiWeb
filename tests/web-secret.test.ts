@@ -1,9 +1,14 @@
 import fs from "node:fs";
+import fsAsync from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { launchTokenFile, publishLaunchToken } from "../src/lib/web-launch-token";
 import { REVOCATIONS_FILENAME, SECRET_BYTES, decodeSecret, encodeSecret, loadSessionRevocations, loadWebSecret, resetWebSecretCache, revokeAllSessions, revokeSessionCookie, secretFilePath } from "../src/lib/web-secret";
+import { createSessionCookie, validSessionCookie } from "../src/lib/web-auth";
+import { validCookieValue as validProtocolCookie } from "../scripts/web-auth-protocol.mjs";
+import { issuePairCode, resetPairingState, verifyPairCode } from "../src/lib/remote/pairing";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 const ENV_NAMES = ["PI_WEB_SECRET_FILE", "PI_WEB_SECRET", "PI_CODING_AGENT_DIR"] as const;
 const saved = new Map<string, string | undefined>(ENV_NAMES.map((name) => [name, process.env[name]]));
@@ -18,14 +23,16 @@ beforeEach(() => {
 	resetWebSecretCache();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	vi.restoreAllMocks();
 	for (const name of ENV_NAMES) {
 		const value = saved.get(name);
 		if (value === undefined) delete process.env[name];
 		else process.env[name] = value;
 	}
 	resetWebSecretCache();
-	fs.rmSync(dir, { recursive: true, force: true });
+	resetPairingState();
+	await recycleFixture(dir);
 });
 
 describe("web secret", () => {
@@ -93,35 +100,74 @@ describe("session revocations", () => {
 		process.env.PI_CODING_AGENT_DIR = path.join(dir, "agent");
 	});
 
-	it("starts empty and remembers a revoked cookie until it would have expired", () => {
+	it("retains prior revocations when a reader briefly blocks replacing the file", async () => {
+		await revokeSessionCookie("kept", 9_000, 1_000);
+		const sharingError = Object.assign(new Error("Reader holds the revocations file"), { code: "EPERM" });
+		const syncRename = fs.renameSync.bind(fs);
+		const asyncRename = fsAsync.rename.bind(fsAsync);
+		vi.spyOn(fs, "renameSync").mockImplementationOnce(() => { throw sharingError; }).mockImplementation(syncRename);
+		vi.spyOn(fsAsync, "rename").mockRejectedValueOnce(sharingError).mockImplementation(asyncRename);
+		await revokeAllSessions(5_000);
+		resetWebSecretCache();
+		expect(loadSessionRevocations().notBefore).toBe(5_000);
+		expect(loadSessionRevocations().revoked.get("kept")).toBe(9_000);
+	});
+
+	it("starts empty and remembers a revoked cookie until it would have expired", async () => {
 		expect(loadSessionRevocations()).toMatchObject({ notBefore: 0 });
 		expect(loadSessionRevocations().revoked.size).toBe(0);
-		revokeSessionCookie("old", 1_500, 1_000);
-		revokeSessionCookie("kept", 9_000, 1_000);
+		await revokeSessionCookie("old", 1_500, 1_000);
+		await revokeSessionCookie("kept", 9_000, 1_000);
 		expect([...loadSessionRevocations().revoked.keys()].sort()).toEqual(["kept", "old"]);
 		// 过期的记录在下一次写入时被清掉
-		revokeSessionCookie("new", 9_000, 2_000);
+		await revokeSessionCookie("new", 9_000, 2_000);
 		expect([...loadSessionRevocations().revoked.keys()].sort()).toEqual(["kept", "new"]);
 		// 落盘了：清缓存再读还在
 		resetWebSecretCache();
 		expect(loadSessionRevocations().revoked.get("kept")).toBe(9_000);
 	});
 
-	it("moves the not-before line forward only, and clears single revocations with it", () => {
-		revokeSessionCookie("a", 9_000, 1_000);
-		revokeAllSessions(5_000);
+	it("moves the not-before line forward and retains unexpired individual revocations", async () => {
+		await revokeSessionCookie("a", 9_000, 1_000);
+		await revokeAllSessions(5_000);
 		expect(loadSessionRevocations().notBefore).toBe(5_000);
-		expect(loadSessionRevocations().revoked.size).toBe(0);
-		revokeAllSessions(4_000);
-		expect(loadSessionRevocations().notBefore).toBe(5_000);
+		expect(loadSessionRevocations().revoked.get("a")).toBe(9_000);
+		await revokeAllSessions(4_000);
+		expect(loadSessionRevocations().notBefore).toBe(5_001);
+	});
+	it("advances each logout generation at a fixed or backwards clock without blocking a new login", async () => {
+		const clock = vi.spyOn(Date, "now").mockReturnValue(5_000);
+		const secret = Buffer.alloc(32, 7);
+		await revokeAllSessions();
+		const first = loadSessionRevocations();
+		expect(first.notBefore).toBe(5_001);
+		const cookie = createSessionCookie("localhost", secret, Date.now(), "fixture", first.notBefore);
+		const pair = issuePairCode(Date.now(), first.notBefore);
+		const request = new Request("http://localhost/", { headers: { cookie: `${cookie.name}=${cookie.value}` } });
+		expect(validSessionCookie(request, secret, Date.now(), first)).toBe(true);
+		expect(validProtocolCookie(cookie.value, "localhost", secret, Date.now(), first)).toBe(true);
+		await revokeAllSessions();
+		const second = loadSessionRevocations();
+		expect(second.notBefore).toBe(5_002);
+		expect(validSessionCookie(request, secret, Date.now(), second)).toBe(false);
+		expect(validProtocolCookie(cookie.value, "localhost", secret, Date.now(), second)).toBe(false);
+		expect(verifyPairCode(pair.code, Date.now(), second.notBefore)).toMatchObject({ ok: false });
+		clock.mockReturnValue(4_000);
+		await revokeAllSessions();
+		const third = loadSessionRevocations();
+		expect(third.notBefore).toBe(5_003);
+		const fresh = createSessionCookie("localhost", secret, Date.now(), "fixture", third.notBefore);
+		expect(validSessionCookie(new Request("http://localhost/", { headers: { cookie: `${fresh.name}=${fresh.value}` } }), secret, Date.now(), third)).toBe(true);
+		expect(validProtocolCookie(fresh.value, "localhost", secret, Date.now(), third)).toBe(true);
+		const nextPair = issuePairCode(Date.now(), third.notBefore);
+		expect(verifyPairCode(nextPair.code, Date.now(), third.notBefore)).toEqual({ ok: true });
 	});
 
-	it("treats a corrupt file as no revocations rather than locking everyone out", () => {
+	it("fails closed on a corrupt revocation file while retaining its original bytes", async () => {
 		fs.mkdirSync(path.join(dir, "agent"), { recursive: true });
 		fs.writeFileSync(path.join(dir, "agent", REVOCATIONS_FILENAME), "{oops");
-		expect(loadSessionRevocations()).toMatchObject({ notBefore: 0 });
-		// 再写一次就修好了
-		revokeAllSessions(7_000);
-		expect(loadSessionRevocations().notBefore).toBe(7_000);
+		expect(loadSessionRevocations()).toMatchObject({ unavailable: true });
+		await expect(revokeAllSessions(7_000)).rejects.toThrow("unavailable");
+		expect(fs.readFileSync(path.join(dir, "agent", REVOCATIONS_FILENAME), "utf8")).toBe("{oops");
 	});
 });

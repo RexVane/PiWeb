@@ -1,4 +1,8 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+import { savedSessionLocation, storeSessionLocation } from "@/lib/chat/session-location";
+import { MAX_VISIBLE_TOOLS, previewMessage, recentMessages, recentTrajectory } from "@/lib/chat/web-history";
+
 
 /**
  * 中央状态：会话列表轮询、当前会话 SSE 订阅、事件折叠（快照→增量）、命令发送。
@@ -7,14 +11,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import { notifySessionsChanged } from "@/lib/session-change-events";
+import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "@/lib/tool-preset";
 import type { AskQuestion } from "@/lib/ask-user";
 import type {
 	GrowthConsentRequest,
 	GrowthRound,
 	SessionSummary,
-	TrajEntry,
 	WebEvent,
 	WebExtensionWidget,
+	WebUiNode,
 	WebMessage,
 	WebNestedCall,
 	WebSnapshot,
@@ -46,7 +51,7 @@ export interface ToolCardState {
  */
 export interface ExtensionDialog {
 	id: string;
-	method: "select" | "confirm" | "input" | "editor" | "questions";
+	method: "select" | "confirm" | "input" | "editor" | "questions" | "web";
 	title: string;
 	message?: string;
 	options?: string[];
@@ -54,6 +59,9 @@ export interface ExtensionDialog {
 	placeholder?: string;
 	/** editor：编辑框的初始内容 */
 	prefill?: string;
+	/** web：扩展给的界面树；webText 是终端组件的纯文本兜底 */
+	tree?: WebUiNode;
+	webText?: string;
 	timeout?: number;
 	ts: number;
 }
@@ -103,7 +111,7 @@ export interface SessionListItem extends SessionSummary {
 	lastStep?: string;
 }
 
-export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
+const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 	const s = { ...state };
 	switch (evt.type) {
 		case "delta": {
@@ -139,6 +147,7 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				m.content = content;
 				msgs[i] = m;
 			}
+			msgs[i] = previewMessage(msgs[i]);
 			s.messages = msgs;
 			return s;
 		}
@@ -303,7 +312,7 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 				if (s.extensionDialogs.some((dialog) => dialog.id === evt.id)) return s;
 				s.extensionDialogs = [
 					...s.extensionDialogs,
-					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, questions: evt.questions, placeholder: evt.placeholder, prefill: evt.prefill, timeout: evt.timeout, ts: evt.ts },
+					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, questions: evt.questions, placeholder: evt.placeholder, prefill: evt.prefill, tree: evt.tree, webText: evt.webText, timeout: evt.timeout, ts: evt.ts },
 				];
 			} else if (evt.method === "notify") {
 				s.extensionNotices = [...s.extensionNotices.slice(-4), { id: evt.id, message: evt.message ?? "", type: evt.notifyType ?? "info", ts: evt.ts }];
@@ -375,6 +384,23 @@ export const foldPiWebEvent = (state: PiWebState, evt: WebEvent): PiWebState => 
 	}
 };
 
+export const foldPiWebEvent = (state: PiWebState, event: WebEvent): PiWebState => {
+	const evt = event.type === "message" ? { ...event, message: previewMessage(event.message) } : event;
+	const next = foldEvent(state, evt);
+	if (next.messages !== state.messages) {
+		const messages = recentMessages(next.messages);
+		if (messages !== next.messages && next.snapshot) next.snapshot = { ...next.snapshot, history: { total: Math.max(next.snapshot.history?.total ?? 0, next.messages.length), omitted: (next.snapshot.history?.omitted ?? 0) + next.messages.length - messages.length } };
+		next.messages = messages;
+	}
+	if (next.tools !== state.tools && Object.keys(next.tools).length > MAX_VISIBLE_TOOLS) {
+		const entries = Object.entries(next.tools);
+		const keep = new Set(entries.slice(-MAX_VISIBLE_TOOLS).map(([id]) => id));
+		next.tools = Object.fromEntries(entries.filter(([id]) => keep.has(id)));
+	}
+	if (evt.type === "traj" && next.snapshot) next.snapshot = { ...next.snapshot, trajectory: recentTrajectory(next.snapshot.trajectory) };
+	return next;
+};
+
 /**
  * 按帧折叠一批事件。同一消息、同一内容块、同类内容的连续 delta 先拼成一个字符串，
  * 再交给 foldPiWebEvent。否则 400 条批量上限下，每条 token 都会复制一次 messages
@@ -408,12 +434,13 @@ export function foldPiWebEvents(state: PiWebState, events: readonly WebEvent[]):
 }
 
 function isDialogMethod(method: Extract<WebEvent, { type: "extension_ui" }>["method"]): method is ExtensionDialog["method"] {
-	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "questions";
+	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "questions" || method === "web";
 }
 
 export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: ExtensionDialog[] = []): ExtensionDialog[] {
 	// undefined 仅用于兼容旧服务端；新快照的空数组必须清除已答/取消的旧对话框。
 	if (snapshot.extensionUiRequests === undefined) return previous;
+	if (!Array.isArray(snapshot.extensionUiRequests)) return [];
 	const dialogs = new Map<string, ExtensionDialog>();
 	for (const request of snapshot.extensionUiRequests) {
 		if (isDialogMethod(request.method)) {
@@ -425,19 +452,19 @@ export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: Ex
 
 function storedToolPreset(): ToolPreset | null {
 	if (typeof window === "undefined") return null;
-	const saved = localStorage.getItem("piweb.toolPreset");
-	return saved === "readonly" || saved === "standard" || saved === "full" ? saved : null;
+	// 旧版本存的是 `standard`：归一成 workspace，否则切档时会拿一个不存在的档位去比对
+	return normalizeToolPreset(localStorage.getItem("piweb.toolPreset")) ?? null;
 }
 
 function savedToolPreset(): ToolPreset {
-	return storedToolPreset() ?? "standard";
+	return storedToolPreset() ?? DEFAULT_TOOL_PRESET;
 }
 
 function toolsFromMessages(messages: WebMessage[], streaming = false): Record<string, ToolCardState> {
 	const tools: Record<string, ToolCardState> = {};
 	const resolved = new Set<string>();
-	for (const message of messages) {
-		for (const content of message.content) {
+	for (const message of Array.isArray(messages) ? messages : []) {
+		for (const content of Array.isArray(message?.content) ? message.content : []) {
 			if (content.type === "toolCall") {
 				tools[content.id] = { name: content.name, args: content.arguments, state: "done" };
 			} else if (content.type === "toolResult" && content.toolCallId && tools[content.toolCallId]) {
@@ -485,7 +512,7 @@ function linkNestedCalls(tools: Record<string, ToolCardState>, parentId: string,
 	}
 }
 
-const emptyState = (toolPreset: ToolPreset = "standard"): PiWebState => ({
+const emptyState = (toolPreset: ToolPreset = DEFAULT_TOOL_PRESET): PiWebState => ({
 	snapshot: null,
 	messages: [],
 	tools: {},
@@ -514,13 +541,21 @@ function pathKey(value: string): string {
 export function usePiWeb() {
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
 	const [sessionListError, setSessionListError] = useState<string | null>(null);
+	const [workspaceRegistryWarning, setWorkspaceRegistryWarning] = useState<string | null>(null);
 	const [sessionListRetryNonce, setSessionListRetryNonce] = useState(0);
+	const [sessionSearch, setSessionSearch] = useState("");
+	const [sessionPageLimit, setSessionPageLimit] = useState(200);
+	const [hasMoreSessions, setHasMoreSessions] = useState(false);
+	const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
+	const searchSessions = useCallback((query: string) => { setSessionSearch(query); setSessionPageLimit(200); }, []);
+	const loadMoreSessions = useCallback(() => { setSessionsLoadingMore(true); setSessionPageLimit((limit) => limit + 200); }, []);
 	const [currentId, setCurrentId] = useState<string | null>(null);
 	const [currentPath, setCurrentPath] = useState<string | null>(null);
 	const [state, setState] = useState<PiWebState>(emptyState);
 	/** 当前 SSE 连接的增量批量器：按帧合并事件，避免每个 token 一次整树渲染 */
 	const batcherRef = useRef<EventBatcher<WebEvent> | null>(null);
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
+	const [modelCwd, setModelCwd] = useState("");
 	const [addedWorkspaces, setAddedWorkspaces] = useState<string[]>([]);
 	const [removedWorkspaces, setRemovedWorkspaces] = useState<string[]>([]);
 	/** 应用内目录浏览器：是否打开，以及等待用户选择的那次调用 */
@@ -545,6 +580,8 @@ export function usePiWeb() {
 	/** 扩展命令换会话（session_navigate 事件）时打开目标会话；SSE 处理器定义在 openSession 之前 */
 	const openSessionRef = useRef<((path: string) => void) | null>(null);
 	const subscribedSessionRef = useRef<string | null>(null);
+	const idleMismatchRef = useRef(0);
+	const lastReconcileRef = useRef(0);
 	const retrySessionList = useCallback(() => setSessionListRetryNonce((value) => value + 1), []);
 	const clearCompaction = useCallback(() => setState((current) => ({ ...current, compaction: null })), []);
 	useEffect(() => {
@@ -565,18 +602,18 @@ export function usePiWeb() {
 
 	// 视图偏好持久化
 	useEffect(() => {
-		const g = localStorage.getItem("piweb.groupBy");
+		let g: string | null = null, o: string | null = null;
+		try { g = localStorage.getItem("piweb.groupBy"); o = localStorage.getItem("piweb.orderBy"); } catch { /* storage may be disabled */ }
 		if (g === "flat" || g === "workspace") setGroupByState(g);
-		const o = localStorage.getItem("piweb.orderBy");
 		if (o === "updated" || o === "manual") setOrderByState(o);
 	}, []);
 	const setGroupBy = useCallback((v: "workspace" | "flat") => {
 		setGroupByState(v);
-		localStorage.setItem("piweb.groupBy", v);
+		try { localStorage.setItem("piweb.groupBy", v); } catch { /* preference remains in memory */ }
 	}, []);
 	const setOrderBy = useCallback((v: "updated" | "manual") => {
 		setOrderByState(v);
-		localStorage.setItem("piweb.orderBy", v);
+		try { localStorage.setItem("piweb.orderBy", v); } catch { /* preference remains in memory */ }
 	}, []);
 
 	const [workspaceAliases, setWorkspaceAliases] = useState<Record<string, string>>({});
@@ -590,6 +627,7 @@ export function usePiWeb() {
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (j.success) {
+				setWorkspaceRegistryWarning(typeof j.data.error === "string" ? j.data.error : typeof j.data.warning === "string" ? j.data.warning : null);
 				if (Array.isArray(j.data.workspaces)) setAddedWorkspaces(j.data.workspaces);
 				if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
 				if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
@@ -625,6 +663,7 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (j.data?.aliases) setWorkspaceAliases(j.data.aliases);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to rename workspace";
@@ -642,6 +681,7 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
 			const key = pathKey(sessionPath);
 			setPinnedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
@@ -662,6 +702,7 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
 			notifySessionsChanged();
 		} catch (error) {
@@ -680,6 +721,7 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (Array.isArray(j.data?.pinnedSessions)) setPinnedSessionPaths(j.data.pinnedSessions);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to pin session";
@@ -697,6 +739,7 @@ export function usePiWeb() {
 			});
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (Array.isArray(j.data?.pinnedSessions)) setPinnedSessionPaths(j.data.pinnedSessions);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to unpin session";
@@ -833,6 +876,16 @@ export function usePiWeb() {
 		let controller: AbortController | undefined;
 		// 上一次列表的 ETag：内容没变服务端答 304，跳过解析与 setState（侧栏不会每 3 秒白白重渲染一次）
 		let lastEtag: string | null = null;
+		let lastRunning: Record<string, { streaming: boolean; lastStep?: string }> = {};
+		const reconcile = () => {
+			const current = liveStateRef.current.snapshot;
+			if (current?.isStreaming && lastRunning[current.sessionPath]?.streaming !== true) {
+				idleMismatchRef.current += 1;
+				if (idleMismatchRef.current >= 2 && Date.now() - lastReconcileRef.current > 30_000) {
+					lastReconcileRef.current = Date.now(); idleMismatchRef.current = 0; setResyncNonce((n) => n + 1);
+				}
+			} else idleMismatchRef.current = 0;
+		};
 		const schedule = () => {
 			if (!alive || document.visibilityState !== "visible") return;
 			timer = setTimeout(() => void load(false), 3000);
@@ -841,20 +894,34 @@ export function usePiWeb() {
 			if (!alive || (!force && document.visibilityState !== "visible")) return;
 			controller = new AbortController();
 			try {
-				const r = await fetch("/api/sessions", { signal: controller.signal, headers: lastEtag ? { "If-None-Match": lastEtag } : undefined });
+				const r = await fetch(`/api/sessions?limit=${Math.min(sessionPageLimit, 500)}${sessionSearch ? `&q=${encodeURIComponent(sessionSearch)}` : ""}`, { signal: controller.signal, headers: lastEtag ? { "If-None-Match": lastEtag } : undefined });
 				if (r.status === 304) {
-					if (alive) setSessionListError(null);
+					if (alive) { setSessionListError(null); reconcile(); }
 					return;
 				}
 				const j = await r.json();
 				if (!alive) return;
 				if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 				setSessionListError(null);
-				lastEtag = r.headers.get("etag");
+				let page: SessionSummary[] = Array.isArray(j.data.sessions) ? j.data.sessions : [];
+				let nextOffset = j.data.nextOffset;
+				while (typeof nextOffset === "number" && page.length < sessionPageLimit) {
+					const more = await fetch(`/api/sessions?limit=${Math.min(500, sessionPageLimit - page.length)}&offset=${nextOffset}${sessionSearch ? `&q=${encodeURIComponent(sessionSearch)}` : ""}`, { signal: controller.signal });
+					const result = await more.json();
+					if (!more.ok || !result.success) throw new Error(result.error || "session list request failed");
+					page = [...page, ...result.data.sessions]; nextOffset = result.data.nextOffset;
+				}
+				if (!alive) return;
+				setHasMoreSessions(nextOffset !== null && nextOffset !== undefined);
+				setSessionsLoadingMore(false);
+				lastEtag = sessionPageLimit <= 500 ? r.headers.get("etag") : null;
 				const running: Record<string, { streaming: boolean; lastStep?: string }> = j.data.running ?? {};
+				lastRunning = running;
+				reconcile();
 				const registry = j.data.workspaceRegistry;
 				if (registry) {
 					workspaceRegistryLoaded.current = true;
+					setWorkspaceRegistryWarning(typeof registry.error === "string" ? registry.error : typeof registry.warning === "string" ? registry.warning : null);
 					if (Array.isArray(registry.workspaces)) setAddedWorkspaces(registry.workspaces);
 					if (Array.isArray(registry.removedWorkspaces)) setRemovedWorkspaces(registry.removedWorkspaces);
 					if (registry.aliases && typeof registry.aliases === "object") setWorkspaceAliases(registry.aliases);
@@ -862,7 +929,7 @@ export function usePiWeb() {
 					if (Array.isArray(registry.pinnedSessions)) setPinnedSessionPaths(registry.pinnedSessions);
 				}
 				setSessions(
-					(j.data.sessions as SessionSummary[]).map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
+					page.map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
 				);
 			} catch (error) {
 				if (alive && !(error instanceof DOMException && error.name === "AbortError")) {
@@ -871,6 +938,7 @@ export function usePiWeb() {
 					void refreshWorkspacesFallback();
 				}
 			} finally {
+				if (alive) setSessionsLoadingMore(false);
 				controller = undefined;
 				schedule();
 			}
@@ -889,21 +957,59 @@ export function usePiWeb() {
 			controller?.abort();
 			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
-	}, [sessionListRetryNonce, refreshWorkspacesFallback]);
+	}, [sessionListRetryNonce, refreshWorkspacesFallback, sessionSearch, sessionPageLimit]);
 
 	// 模型目录
-	const refreshModels = useCallback(async () => {
-		try {
-			const r = await fetch("/api/models");
-			const j = await r.json();
-			if (j.success) setModels({ providers: j.data.providers, models: j.data.models });
-		} catch {
-			/* ignore */
-		}
-	}, []);
+	const modelRequestRef = useRef(0);
+	const pendingModelRequest = useRef<{
+		key: string;
+		controller: AbortController;
+		promise: Promise<{ success: boolean; error?: string }>;
+	} | null>(null);
+	const modelCwdRef = useRef(modelCwd);
+	modelCwdRef.current = modelCwd;
+	const refreshModels = useCallback(async ({ reusePending = false }: { reusePending?: boolean } = {}) => {
+		if (activeSessionRef.current !== currentId) return { success: false, error: "会话已切换，请重新刷新模型目录。" };
+		const cwd = modelCwdRef.current;
+		const key = JSON.stringify([currentId, cwd]);
+		const previous = pendingModelRequest.current;
+		// Initial selection and its SSE snapshot need the same catalog. Explicit
+		// saves/resources changes still replace a request that may predate them.
+		if (reusePending && previous?.key === key && !previous.controller.signal.aborted) return previous.promise;
+		pendingModelRequest.current = null;
+		previous?.controller.abort();
+		const controller = new AbortController();
+		const request = ++modelRequestRef.current;
+		const promise = (async () => {
+			try {
+				const r = await fetch(`/api/models${currentId ? `?session=${encodeURIComponent(currentId)}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ""}` : cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`, { signal: controller.signal });
+				const j = await r.json();
+				if (controller.signal.aborted || activeSessionRef.current !== currentId || request !== modelRequestRef.current) return { success: false, error: "模型目录已重新刷新，请使用当前列表。" };
+				if (!r.ok || !j.success) throw new Error(j.error || `Model catalog request failed (${r.status})`);
+				setModels({ providers: j.data.providers, models: j.data.models });
+				return { success: true };
+			} catch (error) {
+				if (controller.signal.aborted) return { success: false, error: "模型目录已重新刷新，请使用当前列表。" };
+				const message = error instanceof Error ? error.message : "模型目录刷新失败，请重试。";
+				if (activeSessionRef.current === currentId && request === modelRequestRef.current) setState((current) => ({ ...current, error: message }));
+				return { success: false, error: message };
+			} finally {
+				if (pendingModelRequest.current?.controller === controller) pendingModelRequest.current = null;
+			}
+		})();
+		pendingModelRequest.current = { key, controller, promise };
+		return promise;
+	}, [currentId]);
 	useEffect(() => {
-		refreshModels();
-	}, [refreshModels]);
+		setModels(null);
+		void refreshModels({ reusePending: true });
+		return () => {
+			modelRequestRef.current += 1;
+			const pending = pendingModelRequest.current;
+			pendingModelRequest.current = null;
+			pending?.controller.abort();
+		};
+	}, [refreshModels, modelCwd]);
 
 	// SSE 订阅当前会话（resyncNonce 变化时强制重连取新快照）
 	useEffect(() => {
@@ -920,6 +1026,8 @@ export function usePiWeb() {
 			? { ...current, connected: false }
 			: { ...emptyState(savedToolPreset()), connected: false });
 		let retryDelayMs = 2000;
+		let lastFrameAt = Date.now();
+		let disposed = false;
 		const eventsUrl = `/api/agent/${currentId}/events`;
 		// 同一次重载既有 external_reload 事件、又会出现在随后若干快照里：按重载时间只提示一次
 		const reloadNotice = (reload?: { entries: number; at: number }): PiWebNotice | null => {
@@ -930,16 +1038,22 @@ export function usePiWeb() {
 			return { id: `external-reload-${reload.at}`, message: "", type: "info", ts: Date.now(), code: "external_reload", count: reload.entries };
 		};
 		const connect = () => {
+			if (disposed) return;
+			lastFrameAt = Date.now();
 			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
 			const batcher = createEventBatcher<WebEvent>({
 				flush: (events) => setState((s) => foldPiWebEvents(s, events)),
 			});
 			batcherRef.current = batcher;
 			const onOpen = () => {
+				if (disposed) return;
+				lastFrameAt = Date.now();
 				retryDelayMs = 2000;
 				setState((s) => ({ ...s, connected: true }));
 			};
 			const onMessage = (data: string) => {
+				if (disposed || activeSessionRef.current !== currentId) return;
+				lastFrameAt = Date.now();
 				let parsed: any;
 				try {
 					parsed = JSON.parse(data);
@@ -966,10 +1080,13 @@ export function usePiWeb() {
 					return;
 				}
 				if (parsed.type === "snapshot" && parsed.snapshot) {
+					void refreshModels({ reusePending: true });
 					// 快照是权威状态：之前缓冲的增量已经过时，直接丢弃
 					batcher.cancel();
 					retryDelayMs = 2000;
-					const snap = parsed.snapshot as WebSnapshot;
+					const receivedMessages = Array.isArray(parsed.snapshot.messages) ? parsed.snapshot.messages.map((message: WebMessage) => previewMessage(message)) : [];
+					const visibleMessages = recentMessages(receivedMessages);
+					const snap = { ...parsed.snapshot, sessionPath: parsed.snapshot.sessionPath ?? currentPath, messages: visibleMessages, trajectory: recentTrajectory(Array.isArray(parsed.snapshot.trajectory) ? parsed.snapshot.trajectory : []), history: { total: parsed.snapshot.history?.total ?? receivedMessages.length, omitted: (parsed.snapshot.history?.omitted ?? 0) + receivedMessages.length - visibleMessages.length } } as WebSnapshot;
 					const notice = reloadNotice(snap.externalReload);
 					setSnapshotEpoch((epoch) => epoch + 1);
 					setState((prev) => ({
@@ -994,6 +1111,7 @@ export function usePiWeb() {
 						growth: { ...prev.growth, error: snap.growthError ?? null, consent: snap.growthConsent ?? null },
 					}));
 				} else {
+					if (parsed.type === "resources" || parsed.type === "model") void refreshModels();
 					batcher.push(parsed as WebEvent);
 				}
 			};
@@ -1004,12 +1122,15 @@ export function usePiWeb() {
 					onOpen,
 					onMessage,
 					onError: () => setState((s) => ({ ...s, connected: false })),
+					// 空闲时每次轮询 25 秒后空着返回：也算活着，否则看门狗会反复整份重连
+					onPoll: () => { lastFrameAt = Date.now(); },
 				});
 				return;
 			}
 			const es = new EventSource(eventsUrl);
 			esRef.current = es;
 			es.onopen = onOpen;
+			es.addEventListener?.("ping", () => { lastFrameAt = Date.now(); });
 			es.onerror = () => {
 				setState((s) => ({ ...s, connected: false }));
 				if (esRef.current !== es) return;
@@ -1030,14 +1151,31 @@ export function usePiWeb() {
 		};
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		connect();
+		const reconnect = () => {
+			if (disposed) return;
+			setState((s) => ({ ...s, connected: false }));
+			batcherRef.current?.cancel();
+			esRef.current?.close();
+			esRef.current = null;
+			clearTimeout(retryTimer);
+			connect();
+		};
+		const watchdog = setInterval(() => { if (Date.now() - lastFrameAt > 45_000) reconnect(); }, 5_000);
+		const offline = () => setState((s) => ({ ...s, connected: false }));
+		window.addEventListener("online", reconnect);
+		window.addEventListener("offline", offline);
 		return () => {
+			disposed = true;
+			clearInterval(watchdog);
+			window.removeEventListener("online", reconnect);
+			window.removeEventListener("offline", offline);
 			batcherRef.current?.cancel();
 			batcherRef.current = null;
 			if (retryTimer) clearTimeout(retryTimer);
 			esRef.current?.close();
 			esRef.current = null;
 		};
-	}, [currentId, resyncNonce]);
+	}, [currentId, resyncNonce, refreshModels]);
 
 	const sendCommand = useCallback(async (cmd: Record<string, unknown>, id?: string, options?: { shouldReportError?: () => boolean }): Promise<any> => {
 		const target = id ?? currentId;
@@ -1045,7 +1183,9 @@ export function usePiWeb() {
 			setState((s) => ({ ...s, error: "no session" }));
 			return { success: false, error: "no session" };
 		}
-		const isPrompt = cmd.cmd === "prompt";
+		const isPrompt = cmd.cmd === "prompt" || cmd.cmd === "sendQueueNow";
+		// Active-session composer sends show acceptance errors inline in ChatInput; keep state.error for Hero (explicit id) and other commands.
+		const reportError = () => options?.shouldReportError ? options.shouldReportError() : !(id === undefined && isPrompt);
 		if (isPrompt && promptRequestsRef.current.has(target)) return { success: false, error: "prompt acceptance pending" };
 		if (isPrompt) promptRequestsRef.current.add(target);
 		try {
@@ -1055,11 +1195,11 @@ export function usePiWeb() {
 				body: JSON.stringify(cmd),
 			});
 			const result = await r.json();
-			if ((!r.ok || !result.success) && options?.shouldReportError?.() !== false) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
+			if ((!r.ok || !result.success) && reportError()) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
 			return result;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "request failed";
-			if (options?.shouldReportError?.() !== false) setState((s) => ({ ...s, error: message }));
+			if (reportError()) setState((s) => ({ ...s, error: message }));
 			return { success: false, error: message };
 		} finally {
 			if (isPrompt) promptRequestsRef.current.delete(target);
@@ -1097,7 +1237,7 @@ export function usePiWeb() {
 				setCurrentPath(p);
 				setCurrentId(id);
 				try {
-					localStorage.setItem("piweb.currentSession", p);
+					storeSessionLocation(p);
 				} catch {
 					/* ignore */
 				}
@@ -1117,7 +1257,7 @@ export function usePiWeb() {
 			setCurrentId(idOf(path));
 			// 持久化当前会话：刷新页面时恢复到这里，而不是回到新会话草稿
 			try {
-				localStorage.setItem("piweb.currentSession", path);
+				storeSessionLocation(path);
 			} catch {
 				/* ignore */
 			}
@@ -1131,30 +1271,36 @@ export function usePiWeb() {
 		setCurrentId(null);
 		setCurrentPath(null);
 		try {
-			localStorage.removeItem("piweb.currentSession");
+			storeSessionLocation(null);
 		} catch {
 			/* ignore */
 		}
 	}, []);
 
-	// 刷新恢复：会话列表首次加载后，若刷新前有打开的会话且仍存在，则重新打开
+	// 直接恢复地址中的会话；服务端校验路径，不能以侧栏第一页决定是否存在。
 	const restoredRef = useRef(false);
 	useEffect(() => {
-		if (restoredRef.current || !sessions.length) return;
+		if (restoredRef.current) return;
 		restoredRef.current = true;
 		try {
-			const saved = localStorage.getItem("piweb.currentSession");
+			const saved = savedSessionLocation();
 			if (saved) {
-				if (sessions.some((s) => s.path === saved)) {
-					// 标记本次 currentPath 来自刷新恢复：侧栏据此跳过"自动展开其工作区"
-					sessionStorage.setItem("piweb.sessionRestored", "1");
-					openSession(saved);
-				} else localStorage.removeItem("piweb.currentSession");
+				try { sessionStorage.setItem("piweb.sessionRestored", "1"); } catch { /* optional UI preference */ }
+				openSession(saved);
 			}
 		} catch {
 			/* ignore */
 		}
-	}, [sessions, openSession]);
+	}, [openSession]);
+	useEffect(() => {
+		const navigate = () => {
+			const path = savedSessionLocation(false);
+			storeSessionLocation(path, false);
+			setCurrentPath(path); setCurrentId(path ? idOf(path) : null);
+		};
+		window.addEventListener("popstate", navigate);
+		return () => window.removeEventListener("popstate", navigate);
+	}, [idOf]);
 
 	const setToolPreset = useCallback(
 		async (preset: ToolPreset): Promise<{ success: boolean; error?: string }> => {
@@ -1268,8 +1414,13 @@ export function usePiWeb() {
 	}, [sessions, archivedSessionPaths]);
 
 	return {
-		sessions: visibleSessions,
+		sessions: sessionSearch ? sessions : visibleSessions,
+		searchSessions,
+		loadMoreSessions,
+		hasMoreSessions,
+		sessionsLoadingMore,
 		sessionListError,
+		workspaceRegistryWarning,
 		retrySessionList,
 		archivedSessions,
 		/** 原始归档路径列表（含被豁免的当前会话，供菜单显示真实归档态） */
@@ -1301,6 +1452,7 @@ export function usePiWeb() {
 		cancelDirPicker,
 		removeWorkspace,
 		refreshModels,
+		setModelCwd,
 		sendCommand,
 		newSession,
 		openSession,

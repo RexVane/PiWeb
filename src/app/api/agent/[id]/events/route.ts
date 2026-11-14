@@ -55,7 +55,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const stream = new ReadableStream<Uint8Array>({
 		async start(controller) {
 			const write = (chunk: string) => {
-				if (!closed) controller.enqueue(encoder.encode(chunk));
+				if (closed) return;
+				try {
+					controller.enqueue(encoder.encode(chunk));
+				} catch {
+					// 流已经被对端关掉 / 出错：收尾退订，别让异常顺着 publish 抛回会话
+					close();
+				}
 			};
 			const close = () => {
 				if (closed) return;
@@ -75,7 +81,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
 			if (poll) pollTimer = setTimeout(close, POLL_HOLD_MS);
 			else {
-				ping = setInterval(() => write(`: ping\n\n`), 15_000);
+				ping = setInterval(() => write(`event: ping\ndata: {"ts":${Date.now()}}\n\n`), 15_000);
 				write(`retry: 2000\n\n`);
 			}
 
@@ -83,16 +89,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
 			// 自动重连优先从环形缓冲续放；缓冲断档时才回退到完整快照。
 			if (lastEventId !== undefined && subscribe(m, send, lastEventId)) return;
-			const snap = await buildSnapshot(m);
-			if (closed) return;
-			send(snap.seq, JSON.stringify({ type: "snapshot", snapshot: snap, ts: Date.now() }));
-			// send 里可能已经关了流：这时再订阅就是一个永远不退订的死订阅者，会话也永远回收不掉
-			if (closed) return;
-			if (!subscribe(m, send, snap.seq)) {
-				const latest = await buildSnapshot(m);
+			try {
+				const snap = await buildSnapshot(m);
 				if (closed) return;
-				send(latest.seq, JSON.stringify({ type: "snapshot", snapshot: latest, ts: Date.now() }));
-				if (!closed) subscribe(m, send, latest.seq);
+				send(snap.seq, JSON.stringify({ type: "snapshot", snapshot: snap, ts: Date.now() }));
+				// send 里可能已经关了流：这时再订阅就是一个永远不退订的死订阅者，会话也永远回收不掉
+				if (closed) return;
+				if (!subscribe(m, send, snap.seq)) {
+					const latest = await buildSnapshot(m);
+					if (closed) return;
+					send(latest.seq, JSON.stringify({ type: "snapshot", snapshot: latest, ts: Date.now() }));
+					if (!closed) subscribe(m, send, latest.seq);
+				}
+			} catch (error) {
+				// 快照建不出来：定时器、订阅都要收掉，流也要关；浏览器按断线重连
+				console.warn("[piweb] Session snapshot failed", error instanceof Error ? error.message : String(error));
+				close();
 			}
 		},
 		cancel() {

@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * @ 引用的候选文件：打开候选菜单时拉一次全量清单，之后每个字符都在本地匹配。
@@ -14,6 +16,7 @@ export interface WorkspaceFiles {
 	source: "git" | "disk" | null;
 	truncated: boolean;
 	error: string | null;
+	warning?: string | null;
 }
 
 /** 清单多久算过期：agent 刚写出来的新文件也要能被引用到，所以不能一直用内存里那份 */
@@ -24,6 +27,7 @@ interface CachedIndex {
 	candidates: PathCandidate[];
 	source: "git" | "disk";
 	truncated: boolean;
+	warning?: string;
 }
 
 const cache = new Map<string, CachedIndex>();
@@ -33,12 +37,13 @@ async function fetchIndex(cwd: string): Promise<CachedIndex> {
 	const response = await fetch(`/api/files?index=1&cwd=${encodeURIComponent(cwd)}`, { cache: "no-store" });
 	const payload = await response.json();
 	if (!response.ok || !payload.success) throw new Error(payload.error || `request failed (${response.status})`);
-	const data = payload.data as { files: string[]; source: "git" | "disk"; truncated: boolean };
+	const data = payload.data as { files: string[]; source: "git" | "disk"; truncated: boolean; warning?: string };
 	const entry: CachedIndex = {
 		at: Date.now(),
 		candidates: buildCandidates(data.files, dirsOfPaths(data.files)),
 		source: data.source,
 		truncated: data.truncated,
+		warning: typeof data.warning === "string" ? data.warning : undefined,
 	};
 	cache.set(cwd, entry);
 	return entry;
@@ -70,7 +75,7 @@ export function useWorkspaceFiles(cwd: string, enabled: boolean): WorkspaceFiles
 		const cached = cache.get(cwd);
 		if (cached) {
 			// 有旧清单就先显示（旧的总比空白好），过期只在后台补
-			setState({ status: "ready", candidates: cached.candidates, source: cached.source, truncated: cached.truncated, error: null });
+			setState({ status: "ready", candidates: cached.candidates, source: cached.source, truncated: cached.truncated, error: null, warning: cached.warning ?? null });
 			if (Date.now() - cached.at < TTL_MS) return () => controller.abort();
 		} else {
 			setState({ status: "loading", candidates: [], source: null, truncated: false, error: null });
@@ -78,7 +83,7 @@ export function useWorkspaceFiles(cwd: string, enabled: boolean): WorkspaceFiles
 
 		void loadIndex(cwd).then(
 			(entry) => {
-				if (isCurrent()) setState({ status: "ready", candidates: entry.candidates, source: entry.source, truncated: entry.truncated, error: null });
+				if (isCurrent()) setState({ status: "ready", candidates: entry.candidates, source: entry.source, truncated: entry.truncated, error: null, warning: entry.warning ?? null });
 			},
 			(error: unknown) => {
 				// 有旧清单时忽略这次失败：刷新失败不该把可用候选变成错误页

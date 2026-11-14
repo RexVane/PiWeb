@@ -3,7 +3,7 @@
  * 只读：porcelain v2 状态、最近提交、单文件差异、单次提交内容；不做任何写操作。
  * 所有 git 命令以仓库根为 cwd 运行，因为 porcelain 输出的路径都相对仓库根。
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -62,10 +62,39 @@ const EMPTY: GitInfo = {
 
 /** 单次差异输出上限：超过则截断并标记（详情栏不是完整的 diff 工具） */
 const MAX_DIFF_BYTES = 400 * 1024;
+const SAFE_GIT_ARGS = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=", "-c", "i18n.logOutputEncoding=UTF-8", "-c", "core.pager=cat", "-c", "core.quotePath=false"];
+function gitEnvironment(cwd: string): NodeJS.ProcessEnv {
+	const environment = { ...process.env };
+	for (const key of Object.keys(environment)) if (/^GIT_(?:DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|CONFIG(?:_|$))/.test(key)) delete environment[key];
+	return { ...environment, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_CEILING_DIRECTORIES: path.dirname(cwd), LC_ALL: "C" };
+}
 
 /** 与生长记录共用解析出的 git（macOS 从 GUI / launchd 启动时 PATH 里常常没有 Homebrew 的 git） */
 async function runGit(cwd: string, args: string[], maxBuffer = 4 * 1024 * 1024): Promise<string> {
-	return exec(await resolveGitBin(), args, { cwd, timeout: 15_000, maxBuffer, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" } }).then((r) => r.stdout);
+	return exec(await resolveGitBin(), [...SAFE_GIT_ARGS, ...args], { cwd, timeout: 15_000, maxBuffer, windowsHide: true, env: gitEnvironment(cwd) }).then((r) => r.stdout);
+}
+
+/** Drain the whole command while retaining only a bounded preview. Large diffs cannot fill execFile's buffer. */
+async function runGitPatch(cwd: string, args: string[]): Promise<{ patch: string; truncated: boolean }> {
+	const git = await resolveGitBin();
+	return new Promise((resolve, reject) => {
+		const child = spawn(git, [...SAFE_GIT_ARGS, ...args], { cwd, windowsHide: true, env: gitEnvironment(cwd), stdio: ["ignore", "pipe", "pipe"] });
+		const chunks: Buffer[] = [];
+		let retained = 0, total = 0, stderr = "", settled = false;
+		const finish = (error?: Error) => {
+			if (settled) return; settled = true; clearTimeout(timer);
+			if (error) reject(error);
+			else resolve({ patch: utf8Prefix(Buffer.concat(chunks, retained), MAX_DIFF_BYTES).toString("utf8"), truncated: total > MAX_DIFF_BYTES });
+		};
+		const timer = setTimeout(() => { child.kill(); finish(new Error("git diff timed out")); }, 15_000);
+		child.stdout.on("data", (chunk: Buffer) => {
+			total += chunk.length;
+			if (retained < MAX_DIFF_BYTES + 4) { const part = chunk.subarray(0, MAX_DIFF_BYTES + 4 - retained); chunks.push(part); retained += part.length; }
+		});
+		child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-8192); });
+		child.on("error", (error) => finish(error));
+		child.on("close", (code) => finish(code === 0 ? undefined : new Error(stderr.trim() || "git diff exited with " + code)));
+	});
 }
 
 function kindOf(x: string, y: string): GitFileEntry["kind"] {
@@ -81,12 +110,14 @@ function kindOf(x: string, y: string): GitFileEntry["kind"] {
 export async function repoRoot(cwd: string): Promise<{ available: boolean; root: string | null }> {
 	try {
 		const out = (await runGit(cwd, ["rev-parse", "--show-toplevel"])).trim();
-		return { available: true, root: out ? path.resolve(out) : null };
+		const root = out ? path.resolve(out) : null;
+		return { available: true, root: root && isPathInside(cwd, root) ? root : null };
 	} catch (error) {
 		const code = (error as NodeJS.ErrnoException).code;
 		if (code === "ENOENT") return { available: false, root: null };
-		// exit 128：不是仓库
-		return { available: true, root: null };
+		const stderr = String((error as { stderr?: unknown }).stderr ?? "");
+		if (/not a git repository/i.test(stderr)) return { available: true, root: null };
+		throw new Error(stderr.trim() || (error instanceof Error ? error.message : String(error)));
 	}
 }
 
@@ -105,7 +136,7 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 	const files: GitFileEntry[] = [];
 	try {
 		// porcelain v2 是结构化输出，不依赖 "No branch" 这类措辞；-z 让含空格/非 ASCII 的路径也稳定
-		const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "-z"]);
+		const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]);
 		const records = status.split("\0");
 		for (let i = 0; i < records.length; i += 1) {
 			const line = records[i];
@@ -215,11 +246,6 @@ async function fullDiffStats(root: string, args: string[], noIndex = false): Pro
 }
 
 /** 按字节截断时退到字符边界：直接 subarray 会把多字节字符切成半个，patch 末尾多出一个 U+FFFD */
-function truncate(patch: string, stats: GitDiffResult["stats"]): GitDiffResult {
-	if (Buffer.byteLength(patch) <= MAX_DIFF_BYTES) return { patch, truncated: false, binary: false, stats };
-	return { patch: utf8Prefix(Buffer.from(patch), MAX_DIFF_BYTES).toString("utf8"), truncated: true, binary: false, stats };
-}
-
 function assertRepoRelative(root: string, relPath: unknown): string {
 	if (typeof relPath !== "string" || !relPath.trim()) throw new BoundaryError("missing path");
 	const abs = path.resolve(root, relPath);
@@ -267,13 +293,13 @@ export async function gitDiff(cwdValue: unknown, relPath: unknown, mode: unknown
 			stats,
 		};
 	}
-	const scope = mode === "staged" ? ["--cached"] : [];
+	const scope = mode === "staged" ? ["--cached"] : ["--ours"];
 	const [out, counts] = await Promise.all([
-		runGit(root, ["diff", ...scope, "--no-color", "--no-ext-diff", "--no-textconv", "--", rel], 8 * 1024 * 1024),
+		runGitPatch(root, ["diff", ...scope, "--no-color", "--no-ext-diff", "--no-textconv", "--", rel]),
 		fullDiffStats(root, ["diff", ...scope, "--no-ext-diff", "--no-textconv", "--numstat", "-z", "--", rel]),
 	]);
 	if (counts.binary) return { patch: "", truncated: false, binary: true, stats: counts.stats };
-	return truncate(out, counts.stats);
+	return { ...out, binary: false, stats: counts.stats };
 }
 
 /** 单次提交的内容（含各文件 patch） */
@@ -284,8 +310,8 @@ export async function gitShow(cwdValue: unknown, hash: unknown): Promise<GitDiff
 	if (typeof hash !== "string" || !/^[0-9a-f]{4,40}$/i.test(hash)) throw new BoundaryError("invalid commit hash");
 	const title = (await runGit(root, ["log", "-1", "--pretty=%h %s%n%an · %cr", hash])).trim();
 	const [out, counts] = await Promise.all([
-		runGit(root, ["show", "--no-color", "--no-ext-diff", "--no-textconv", "--format=", "--patch", hash], 8 * 1024 * 1024),
-		fullDiffStats(root, ["show", "--no-ext-diff", "--no-textconv", "--format=", "--numstat", "-z", hash]),
+		runGitPatch(root, ["show", "--diff-merges=first-parent", "--no-color", "--no-ext-diff", "--no-textconv", "--format=", "--patch", hash]),
+		fullDiffStats(root, ["show", "--diff-merges=first-parent", "--no-ext-diff", "--no-textconv", "--format=", "--numstat", "-z", hash]),
 	]);
-	return { title, ...truncate(out, counts.stats), binary: counts.binary && !out.includes("@@ ") };
+	return { title, ...out, stats: counts.stats, binary: counts.binary && !out.patch.includes("@@ ") };
 }

@@ -5,7 +5,7 @@
  * 第一下被当成「已停在项目入口 → 收起」，要按第二下才叫回来。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AppShell } from "@/components/AppShell";
 import type { TrajEntry, WebMessage } from "@/lib/types";
 
@@ -29,7 +29,7 @@ vi.mock("@/hooks/useGrowth", () => ({
 	}),
 }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: () => null }));
-vi.mock("@/components/DrawerPanel", () => ({ DrawerPanel: ({ section }: { section: string }) => <div data-testid="drawer-panel">{section}</div> }));
+vi.mock("@/components/DrawerPanel", () => ({ DrawerPanel: ({ section }: { section: string }) => <div data-testid="drawer-panel">{section}<input aria-label="drawer draft" /></div> }));
 vi.mock("@/components/TrajectoryView", () => ({ TrajInspector: () => <div data-testid="traj-inspector" /> }));
 vi.mock("@/components/ExtensionUI", () => ({
 	ExtensionDialogHost: () => null,
@@ -43,7 +43,7 @@ vi.mock("@/hooks/usePiWeb", () => ({
 		currentPath: scenario.hero ? null : "/session-a", currentId: scenario.hero ? null : "/session-a",
 		models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
 		state: {
-			snapshot: { cwd: "/workspace", model, trajectory, messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
+			snapshot: { sessionPath: "/session-a", cwd: "/workspace", model, trajectory, messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
 			messages, tools: { t1: { name: "read", args: { path: "src/a.ts" }, state: "done", result: "ok" } }, growth: { rounds: [], error: null },
 			extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true,
 		},
@@ -69,6 +69,38 @@ afterEach(() => {
 });
 
 describe("Ctrl+Shift+E with the trajectory detail open", () => {
+	it("keeps the open drawer and its draft when crossing the mobile breakpoint", async () => {
+		const listeners = new Set<() => void>();
+		const narrow = {
+			matches: false,
+			media: "(max-width: 840px)",
+			addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+			removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+		};
+		const originalMatchMedia = window.matchMedia;
+		vi.stubGlobal("matchMedia", (query: string) => query === narrow.media ? narrow : originalMatchMedia(query));
+		render(<AppShell />);
+		const input = await screen.findByRole("textbox", { name: "drawer draft" });
+		fireEvent.change(input, { target: { value: "keep this unsaved text" } });
+		const sidebar = document.getElementById("piweb-session-sidebar")!;
+		const menu = document.querySelector(".pi-mobile-menu")!;
+
+		act(() => { narrow.matches = true; listeners.forEach((listener) => listener()); });
+		expect(screen.getAllByTestId("drawer-panel")).toHaveLength(1);
+		expect(screen.getByRole("textbox", { name: "drawer draft" })).toBe(input);
+		expect((input as HTMLInputElement).value).toBe("keep this unsaved text");
+		expect(sidebar.hasAttribute("inert")).toBe(true);
+		fireEvent.click(menu);
+		expect(sidebar.hasAttribute("inert")).toBe(false);
+		expect(menu.getAttribute("aria-expanded")).toBe("true");
+
+		act(() => { narrow.matches = false; listeners.forEach((listener) => listener()); });
+		expect(sidebar.hasAttribute("inert")).toBe(false);
+		expect(menu.getAttribute("aria-expanded")).toBe("false");
+		expect(screen.getByRole("textbox", { name: "drawer draft" })).toBe(input);
+		expect((input as HTMLInputElement).value).toBe("keep this unsaved text");
+	});
+
 	it("opens and closes the drawer from an unsent new conversation", async () => {
 		scenario.hero = true;
 		localStorage.setItem("piweb.drawerOpen", "0");

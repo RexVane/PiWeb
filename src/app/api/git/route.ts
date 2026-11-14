@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/api-error";
 import { BoundaryError } from "@/lib/path-security";
 import { gitDiff, gitInfo, gitShow } from "@/lib/git-service";
 
 export const dynamic = "force-dynamic";
+const headers = { "Cache-Control": "private, no-store" };
 
 /**
  * 工作区 Git 只读接口：
@@ -16,17 +18,17 @@ export async function GET(req: Request) {
 	try {
 		const diff = url.searchParams.get("diff");
 		if (diff !== null) {
-			return NextResponse.json({ success: true, data: await gitDiff(cwd, diff, url.searchParams.get("mode") ?? "worktree") });
+			return NextResponse.json({ success: true, data: await gitDiff(cwd, diff, url.searchParams.get("mode") ?? "worktree") }, { headers });
 		}
 		const show = url.searchParams.get("show");
 		if (show !== null) {
-			return NextResponse.json({ success: true, data: await gitShow(cwd, show) });
+			return NextResponse.json({ success: true, data: await gitShow(cwd, show) }, { headers });
 		}
-		return NextResponse.json({ success: true, data: await gitInfo(cwd) });
+		return NextResponse.json({ success: true, data: await gitInfo(cwd) }, { headers });
 	} catch (err: any) {
 		return NextResponse.json(
-			{ success: false, error: String(err?.message ?? err) },
-			{ status: err instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(err) },
+			{ status: err instanceof BoundaryError ? 400 : 500, headers },
 		);
 	}
 }

@@ -21,11 +21,15 @@ import {
 } from "../src/lib/growth-service";
 
 /** 测试里的临时目录都不是仓库：一律当作用户已同意建仓库（不同意的情况单独测） */
-const INIT = { allowInit: true };
+const INIT = { allowInit: true, allowRecording: true };
 
 const git = (cwd: string, args: string[], input?: string) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", windowsHide: true, input });
 
 describe("growth-service parsers", () => {
+	it("reads persisted chat ordinals while ignoring malformed round trailers", () => {
+		expect(parseRoundMessage("question\n\nPiweb-Kind: round\nPiweb-Round: 7\n").roundNumber).toBe(7);
+		for (const value of ["0", "-1", "2.5", "NaN"]) expect(parseRoundMessage(`question\n\nPiweb-Round: ${value}\n`).roundNumber).toBeUndefined();
+	});
 	it("parses name-status with renames", () => {
 		const raw = ["A", "src/new.ts", "M", "README.md", "D", "old.txt", "R087", "a.ts", "b.ts", "T", "link", ""].join("\0");
 		expect(parseNameStatus(raw)).toEqual([
@@ -93,21 +97,62 @@ describe("growth-service parsers", () => {
 describe("growth-service rounds (real git)", () => {
 	let tempDir = "";
 	let work = "";
-	let available = false;
-
-	beforeEach(async () => {
+	beforeEach(async (ctx) => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-"));
 		work = path.join(tempDir, "work");
 		await fs.mkdir(work, { recursive: true });
-		available = await isAvailable();
+		if (!(await isAvailable())) ctx.skip("Git unavailable; no workspace-history assertions executed");
 	});
 
 	afterEach(async () => {
 		await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 	});
 
+	it("decodes BOM text and rejects malformed encodings in snapshot previews", async () => {
+		const text = "中文历史文件😀\n";
+		const fixtures = [
+			{ name: "utf16le.txt", bytes: Buffer.concat([Buffer.from([255, 254]), Buffer.from(text, "utf16le")]), encoding: "utf-16le" },
+			{ name: "utf16be.txt", bytes: Buffer.concat([Buffer.from([254, 255]), Buffer.from(text, "utf16le").swap16()]), encoding: "utf-16be" },
+			{ name: "utf8.txt", bytes: Buffer.from(text), encoding: "utf-8" },
+			{ name: "utf8-bom.txt", bytes: Buffer.concat([Buffer.from([239, 187, 191]), Buffer.from(text)]), encoding: "utf-8" },
+		];
+		const malformed = [
+			{ name: "invalid-utf8.txt", bytes: Buffer.from([195, 40]) },
+			{ name: "invalid-utf16.txt", bytes: Buffer.from([255, 254, 65]) },
+			{ name: "invalid-surrogate.txt", bytes: Buffer.from([255, 254, 0, 216]) },
+			{ name: "utf32.txt", bytes: Buffer.from([255, 254, 0, 0, 65, 0, 0, 0]) },
+		];
+		await Promise.all([...fixtures, ...malformed, { name: "binary.bin", bytes: Buffer.from([0, 1, 2, 3]) }]
+			.map(({ name, bytes }) => fs.writeFile(path.join(work, name), bytes)));
+		const round = await recordWorkspaceChanges(work, path.join(tempDir, "encodings.jsonl"), INIT);
+		for (const { name, bytes, encoding } of fixtures) {
+			expect(await fileContent(work, round!.tree, name)).toEqual({ content: text, encoding, binary: false, truncated: false, size: bytes.length });
+		}
+		for (const { name, bytes } of malformed) {
+			expect(await fileContent(work, round!.tree, name)).toEqual({ content: "", binary: false, encodingUnsupported: true, truncated: false, size: bytes.length });
+		}
+		expect(await fileContent(work, round!.tree, "binary.bin")).toEqual({ content: "", binary: true, truncated: false, size: 4 });
+	}, 20_000);
+
+	it("keeps truncated UTF8 and UTF16 snapshot previews on character boundaries", async () => {
+		const maximum = 256 * 1024;
+		const utf8Prefix = "a".repeat(maximum - 1);
+		const utf16Prefix = "a".repeat((maximum - 4) / 2);
+		const fixtures = [
+			{ name: "utf16le.txt", bytes: Buffer.concat([Buffer.from([255, 254]), Buffer.from(`${utf16Prefix}😀tail`, "utf16le")]), content: utf16Prefix, encoding: "utf-16le" },
+			{ name: "utf16be.txt", bytes: Buffer.concat([Buffer.from([254, 255]), Buffer.from(`${utf16Prefix}😀tail`, "utf16le").swap16()]), content: utf16Prefix, encoding: "utf-16be" },
+			{ name: "utf8.txt", bytes: Buffer.from(`${utf8Prefix}中tail`), content: utf8Prefix, encoding: "utf-8" },
+		];
+		await Promise.all(fixtures.map(({ name, bytes }) => fs.writeFile(path.join(work, name), bytes)));
+		const round = await recordWorkspaceChanges(work, path.join(tempDir, "encoding-boundaries.jsonl"), INIT);
+		for (const { name, bytes, content, encoding } of fixtures) {
+			const { content: actual, ...metadata } = await fileContent(work, round!.tree, name);
+			expect(actual === content, `${name}: preview must preserve complete characters`).toBe(true);
+			expect(metadata).toEqual({ encoding, binary: false, truncated: true, size: bytes.length });
+		}
+	}, 20_000);
+
 	it("commits one round per call with trailers, records user edits separately and serves diffs", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "s1.jsonl");
 		await fs.writeFile(path.join(work, "README.md"), "# hi\nline2\n");
 		await fs.mkdir(path.join(work, "node_modules", "x"), { recursive: true });
@@ -166,7 +211,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 30_000);
 
 	it("reads the same timeline back from git log in a fresh process", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "fresh.jsonl");
 		await fs.writeFile(path.join(work, "a.txt"), "a\nb\n");
 		await fs.writeFile(path.join(work, "old.txt"), "keep me\n");
@@ -202,7 +246,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 30_000);
 
 	it("re-parents onto a head another process committed first", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "race.jsonl");
 		await fs.writeFile(path.join(work, "a.txt"), "a\n");
 		const base = await recordWorkspaceChanges(work, session, INIT);
@@ -220,7 +263,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("never creates a repository just to read", async () => {
-		if (!available) return;
 		await fs.writeFile(path.join(work, "a.txt"), "a\n");
 		expect(await readRounds(work, path.join(tempDir, "s.jsonl"))).toEqual([]);
 		expect(await fs.stat(path.join(work, ".git")).catch(() => null)).toBeNull();
@@ -231,7 +273,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("indexes a workspace across multiple bounded batches", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "large.jsonl");
 		const files = Array.from({ length: 300 }, (_, index) => `file-${String(index).padStart(4, "0")}.txt`);
 		for (let offset = 0; offset < files.length; offset += 100) {
@@ -246,12 +287,11 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("initializes a non-git workspace only with consent and keeps HEAD unborn", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "init.jsonl");
 		await fs.writeFile(path.join(work, "a.txt"), "a\n");
 		expect(await fs.stat(path.join(work, ".git")).catch(() => null)).toBeNull();
 		// 没同意：不建仓库，抛 needs-consent 并说明原因
-		await expect(recordWorkspaceChanges(work, session)).rejects.toMatchObject({ code: "needs-consent", target: { reason: "not-git" } });
+		await expect(recordWorkspaceChanges(work, session, { allowRecording: true })).rejects.toMatchObject({ code: "needs-consent", target: { reason: "not-git" } });
 		await expect(commitRound(work, { kind: "round", session })).rejects.toMatchObject({ code: "needs-consent" });
 		expect(await fs.stat(path.join(work, ".git")).catch(() => null)).toBeNull();
 
@@ -268,7 +308,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("nested-initializes a workspace that is a subdirectory of another repository", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "nested.jsonl");
 		const parent = path.join(tempDir, "parent-repo");
 		const sub = path.join(parent, "sub");
@@ -279,7 +318,7 @@ describe("growth-service rounds (real git)", () => {
 		await fs.writeFile(path.join(sub, "inner.txt"), "inner\n");
 		await fs.writeFile(path.join(parent, "outer.txt"), "outer\n");
 		// 子目录同样要先同意，并告诉界面外层仓库在哪
-		const refused = await recordWorkspaceChanges(sub, session).catch((error: unknown) => error);
+		const refused = await recordWorkspaceChanges(sub, session, { allowRecording: true }).catch((error: unknown) => error);
 		expect(refused).toMatchObject({ code: "needs-consent", target: { reason: "nested" } });
 		expect(path.relative(await fs.realpath(parent), (refused as { target: { parent: string } }).target.parent)).toBe("");
 		expect(await fs.stat(path.join(sub, ".git")).catch(() => null)).toBeNull();
@@ -295,7 +334,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("preserves the workspace Git index across non-empty file/directory replacements", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "type-replacements.jsonl");
 		const target = path.join(work, "p");
 		await fs.writeFile(target, "original file\n");
@@ -343,7 +381,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 30_000);
 
 	it("removes all type conflicts before adding paths across multiple batches", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "type-batches.jsonl");
 		const names = Array.from({ length: 300 }, (_, index) => `p-${String(index).padStart(4, "0")}`);
 		for (const name of names) await fs.writeFile(path.join(work, name), `original ${name}\n`);
@@ -366,7 +403,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 90_000);
 
 	it("force-removes tracked paths replaced by symbolic links", async (context) => {
-		if (!available) return;
 		const session = path.join(tempDir, "symlink-replacement.jsonl");
 		const outside = path.join(tempDir, "outside.txt");
 		const target = path.join(work, "p.txt");
@@ -391,7 +427,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("removes a file replaced by a linked directory without snapshotting its target", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "junction-replacement.jsonl");
 		const outside = path.join(tempDir, "outside");
 		const target = path.join(work, "p");
@@ -408,7 +443,6 @@ describe("growth-service rounds (real git)", () => {
 	}, 20_000);
 
 	it("removes tracked content when a file becomes a directory", async () => {
-		if (!available) return;
 		const session = path.join(tempDir, "type-change.jsonl");
 		const target = path.join(work, "tracked.txt");
 		await fs.writeFile(target, "original\n");
@@ -420,4 +454,16 @@ describe("growth-service rounds (real git)", () => {
 		expect(changed?.changes).toEqual([{ status: "D", path: "tracked.txt", add: 0, del: 1 }]);
 		expect(await listTree(work, changed!.tree)).toEqual([]);
 	}, 20_000);
+	it("requires consent before recording in an existing repository", async () => {
+		execFileSync("git", ["init", "--quiet", work]);
+		await expect(recordWorkspaceChanges(work, "consent.jsonl")).rejects.toMatchObject({ code: "needs-consent" });
+		expect(execFileSync("git", ["-C", work, "for-each-ref", "refs/piweb"], { encoding: "utf8" })).toBe("");
+	});
+	it("retains the prior snapshot when a recorded file grows past the file limit", async () => {
+		await fs.writeFile(path.join(work, "growing.txt"), "small");
+		const base = await recordWorkspaceChanges(work, "large.jsonl", INIT);
+		await fs.writeFile(path.join(work, "growing.txt"), Buffer.alloc(1024 * 1024 + 1));
+		await expect(commitRound(work, { kind: "round", session: "large.jsonl" }, INIT)).rejects.toMatchObject({ code: "too-large" });
+		expect((await listTree(work, base!.tree)).map((item) => item.path)).toContain("growing.txt");
+	});
 });

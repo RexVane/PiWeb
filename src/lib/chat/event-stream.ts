@@ -48,6 +48,8 @@ export interface EventPollHandlers {
 	onMessage(data: string): void;
 	/** 一次请求失败；之后按退避自动重试 */
 	onError(): void;
+	/** 每次请求成功返回都调（没有事件的空响应也算）：调用方据此判断连接还活着 */
+	onPoll?(): void;
 }
 
 export interface EventPollOptions {
@@ -67,39 +69,48 @@ export function pollEventStream(url: string, handlers: EventPollHandlers, { fetc
 	const pollUrl = `${url}${url.includes("?") ? "&" : "?"}poll=1`;
 
 	const sleep = (ms: number) => new Promise<void>((resolve) => {
-		const timer = setTimeout(resolve, ms);
-		controller.signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+		const done = () => { clearTimeout(timer); controller.signal.removeEventListener("abort", done); resolve(); };
+		const timer = setTimeout(done, ms);
+		controller.signal.addEventListener("abort", done, { once: true });
 	});
 
 	void (async () => {
 		while (!closed) {
 			let frames: SseFrame[];
+			const request = new AbortController();
+			const cancel = () => request.abort();
+			controller.signal.addEventListener("abort", cancel, { once: true });
+			const timeout = setTimeout(cancel, 30_000);
 			try {
 				const response = await fetchImpl(pollUrl, {
 					headers: lastEventId ? { "Last-Event-ID": lastEventId } : {},
 					cache: "no-store",
-					signal: controller.signal,
+						signal: request.signal,
 				});
 				if (!response.ok) throw new Error(`events poll failed (${response.status})`);
 				frames = parseSseText(await response.text());
 			} catch {
 				if (closed) return;
 				open = false;
-				handlers.onError();
+				try { handlers.onError(); } catch { /* error reporting must not stop reconnection */ }
 				failures += 1;
 				await sleep(backoffMs(failures));
 				continue;
-			}
+			} finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancel); }
 			if (closed) return;
-			failures = 0;
-			if (!open) {
-				open = true;
-				handlers.onOpen();
-			}
-			for (const frame of frames) {
-				if (closed) return;
-				handlers.onMessage(frame.data);
-				if (frame.id !== undefined) lastEventId = frame.id;
+			try {
+				if (!open) { open = true; handlers.onOpen(); }
+				handlers.onPoll?.();
+				for (const frame of frames) {
+					if (closed) return;
+					handlers.onMessage(frame.data);
+					if (frame.id !== undefined) lastEventId = frame.id;
+				}
+				failures = 0;
+			} catch {
+				open = false;
+				try { handlers.onError(); } catch { /* keep the poll loop alive */ }
+				await sleep(backoffMs(++failures));
 			}
 		}
 	})();

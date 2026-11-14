@@ -42,7 +42,8 @@ describe("update API input and maintenance guard", () => {
 		mocks.activeStatus.mockReturnValue({ a: { streaming: false }, b: { streaming: true } });
 		const response = await POST(request({ target: "piweb", action: "update" }));
 		expect(response.status).toBe(409);
-		expect(await response.json()).toMatchObject({ success: false, error: expect.stringContaining("maintenance window") });
+		expect(await response.json()).toMatchObject({ success: false, error: expect.stringContaining("会话"), errorCode: "UPDATE_BUSY" });
+		expect(response.headers.get("cache-control")).toBe("no-store");
 		expect(mocks.runUpdate).not.toHaveBeenCalled();
 	});
 
@@ -58,7 +59,8 @@ describe("update API input and maintenance guard", () => {
 		mocks.runUpdate.mockRejectedValueOnce(new Error("build failed"));
 		const failed = await POST(request({ target: "piweb", action: "update" }));
 		expect(failed.status).toBe(500);
-		expect(await failed.json()).toEqual({ success: false, error: "build failed" });
+		expect(await failed.json()).toEqual({ success: false, error: "更新失败，请检查网络和安装状态后重试。", errorCode: "REQUEST_FAILED" });
+		expect(failed.headers.get("cache-control")).toBe("no-store");
 		const ready = await POST(request({ target: "piweb", action: "update" }));
 		expect(ready.status).toBe(200);
 		expect(await ready.json()).toMatchObject({ success: true, data: { needsRestart: true, buildDir: ".next-releases/test", buildId: "new" } });
@@ -74,6 +76,20 @@ describe("update API input and maintenance guard", () => {
 });
 
 describe("startup update results", () => {
+	it("returns a safe noncached failure when reading startup results fails", async () => {
+		mocks.ensureStartupCheck.mockRejectedValueOnce(new Error("private-server C:\\private-server\\auth.json secret-token npm --config=private-server"));
+		const response = await GET();
+		expect(response.status).toBe(500);
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(await response.json()).toEqual({ success: false, error: "更新状态暂时无法读取，请稍后重试。", errorCode: "REQUEST_FAILED" });
+	});
+	it("retains OS error categories without exposing failed update commands or paths", async () => {
+		mocks.checkForUpdate.mockRejectedValueOnce(Object.assign(new Error("npm failed at C:\\private-server\\config secret-token"), { code: "EACCES" }));
+		const response = await POST(request({ target: "pi", action: "check" }));
+		expect(response.status).toBe(500);
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(await response.json()).toEqual({ success: false, error: "没有权限访问请求的资源。", errorCode: "EACCES" });
+	});
 	it("GET returns the startup check (waiting for it) and is never cached", async () => {
 		mocks.ensureStartupCheck.mockResolvedValue({ startId: "start-1", results: { piweb: { current: "1.0.0", latest: "2.0.0", canUpdate: true, selfUpdate: true } } });
 		const response = await GET();

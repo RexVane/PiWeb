@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 import { useEffect, useRef, useState } from "react";
 import { IconCheckOutline14, IconRefreshOutline14, IconWarningOutline16 } from "@/components/icons";
@@ -47,7 +49,7 @@ export function ProxySettings({ value, disabled, onChange, onCommit }: {
 	const errors: Record<ProxyTestCode, string> = { no_proxy: t.proxyNone, invalid: t.proxyInvalid, unsupported: t.proxyUnsupported, timeout: t.proxyTimeout, unreachable: t.proxyUnreachable, http: t.proxyHttpError, failed: t.proxyTestFailed };
 	return <div className="flex min-w-0 flex-col gap-2" style={{ width: 320, maxWidth: "100%" }}>
 		<div className="flex items-center gap-2">
-			<input type="text" aria-label={t.httpProxy} value={draft ?? (value || address || "")} spellCheck={false} disabled={disabled}
+			<input type="text" aria-label={t.httpProxy} value={draft ?? value} placeholder={address || ""} spellCheck={false} disabled={disabled}
 				onChange={(event) => { setDraft(event.target.value); onChange(event.target.value); }}
 				onBlur={(event) => { if (!(event.relatedTarget instanceof HTMLElement && event.relatedTarget.dataset.proxyTest)) { setDraft(null); onCommit(); } }}
 				onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}

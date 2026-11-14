@@ -48,7 +48,7 @@ vi.mock("@/hooks/usePiWeb", () => ({
 		currentPath: "/session-a", currentId: "/session-a",
 		models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
 		state: {
-			snapshot: { cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
+			snapshot: { sessionPath: "/session-a", cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
 			messages: [answer], tools: {}, growth: { rounds: [], error: null },
 			extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true,
 		},

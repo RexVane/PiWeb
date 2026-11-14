@@ -180,7 +180,7 @@ it("冷树也能快速打开索引中的深层文件，加载期间按下箭头�
 	await screen.findByText("GitPanel.tsx");
 	fireEvent.keyDown(input, { key: "Enter" });
 	expect(onOpen).toHaveBeenCalledWith("src/components/GitPanel.tsx");
-	expect(fetchMock).toHaveBeenCalledWith("/api/files?index=1&cwd=%2Fcold-quick-open", { cache: "no-store" });
+	expect(fetchMock).toHaveBeenCalledWith("/api/files?index=1&cwd=%2Fcold-quick-open", expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }));
 });
 
 it("快速打开索引失败时显示错误，不冒充无匹配", async () => {

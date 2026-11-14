@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -63,6 +63,11 @@ describe("SDK package and extension persistence", () => {
 		await fs.mkdir(path.dirname(projectFile), { recursive: true });
 		await fs.writeFile(file, JSON.stringify({ packages: ["example-package"], extensions: ["existing.ts"], theme: "dark" }));
 		await fs.writeFile(projectFile, "{}");
+		await fs.mkdir(path.join(agentDir, "extensions"), { recursive: true });
+		await fs.mkdir(path.join(cwd, ".pi", "extensions"), { recursive: true });
+		await fs.writeFile(path.join(agentDir, "extensions", "sample.ts"), "export default () => {};");
+		await fs.writeFile(path.join(cwd, ".pi", "extensions", "sample.ts"), "export default () => {};");
+		await fs.writeFile(path.join(cwd, ".pi", "extensions", "x.ts"), "export default () => {};");
 		vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 		mode = "ok";
 		manager = SettingsManager.fromStorage({
@@ -74,6 +79,7 @@ describe("SDK package and extension persistence", () => {
 				if (mode === "ok") writeFileSync(target, next, "utf8");
 			},
 		});
+		manager.setProjectTrusted(true);
 		mocks.getSettingsManager.mockReset().mockReturnValue(manager);
 		// Package operations are mocked: no package download/install/uninstall ever occurs.
 		mocks.installAndPersist.mockReset().mockImplementation(async (source: string, { local }: { local: boolean }) => {
@@ -91,7 +97,11 @@ describe("SDK package and extension persistence", () => {
 			else manager.setPackages(packages);
 			return true;
 		});
-		mocks.getPackageManager.mockReset().mockReturnValue({ installAndPersist: mocks.installAndPersist, removeAndPersist: mocks.removeAndPersist });
+		const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager: manager });
+		mocks.getPackageManager.mockReset().mockReturnValue({
+			installAndPersist: mocks.installAndPersist, removeAndPersist: mocks.removeAndPersist,
+			resolve: packageManager.resolve.bind(packageManager),
+		});
 		mocks.reloadAllLoaders.mockClear();
 		mocks.reloadSessionsForCwd.mockClear();
 	});
@@ -119,12 +129,14 @@ describe("SDK package and extension persistence", () => {
 
 	it("treats project extension paths case-sensitively except on Windows", async () => {
 		const upper = path.join(path.dirname(cwd), path.basename(cwd).toUpperCase(), ".pi", "extensions", "x.ts");
+		if (process.platform !== "win32") {
+			await expect(toggleExtension(upper, true, cwd)).rejects.toThrow("no longer configured");
+			expectNoResourceReload();
+			return;
+		}
 		await toggleExtension(upper, true, cwd);
 		const projectPatterns = JSON.parse(await fs.readFile(projectFile, "utf8")).extensions ?? [];
-		const globalPatterns = JSON.parse(await fs.readFile(file, "utf8")).extensions ?? [];
-		// Windows 上 PROJECT 就是 project 目录；其他系统上它是另一个目录，排除规则只能写进全局
-		if (process.platform === "win32") expect(projectPatterns.some((p: string) => p.startsWith("-"))).toBe(true);
-		else expect(globalPatterns.some((p: string) => p.startsWith("-"))).toBe(true);
+		expect(projectPatterns.some((p: string) => p.startsWith("-"))).toBe(true);
 	});
 
 	it("refreshes stale global arrays before updating and flushes the extension exclusion", async () => {
@@ -210,7 +222,7 @@ describe("SDK package and extension persistence", () => {
 			body: JSON.stringify({ action: "toggle", kind: "extension", path: path.join(agentDir, "extensions", "sample.ts"), disabled: true, cwd }),
 		}));
 		expect(response.status).toBe(500);
-		expect(await response.json()).toMatchObject({ success: false, error: expect.stringContaining("EACCES") });
+		expect(await response.json()).toMatchObject({ success: false, errorCode: "EACCES", error: "没有权限访问请求的资源。" });
 		expectNoResourceReload();
 	});
 });

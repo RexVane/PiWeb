@@ -2,17 +2,20 @@
  * models-service：pi 模型目录 / 认证状态 / API key 管理 / 自定义 provider（models.json）。
  */
 import fs from "node:fs/promises";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import dns from "node:dns/promises";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { request as httpRequest, Agent as HttpAgent } from "node:http";
+import { request as httpsRequest, Agent as HttpsAgent } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { applyEdits, modify, getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { filterModelsByPiScope } from "./models/model-scope";
 import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
-import { getAgentDir, getModelRuntime, modelRuntimeVersion, refreshModelRuntime, refreshModelRuntimeIfFilesChanged } from "./pi";
+import { getAgentDir, getModelRuntime, getResourceLoader, modelRuntimeVersion, refreshModelRuntime, refreshModelRuntimeIfFilesChanged, refreshResourceLoaderIfStale, resourceLoaderReady, resourceLoaderVersion, resolveProjectTrust, withResourceLock } from "./pi";
+import { modelFilesFingerprint } from "./model-files";
+import { createSessionModelRuntime, releaseSessionModelRuntime } from "./session-model-runtime";
 import { getEnabledModelPatterns } from "./pi-settings";
 import { refreshSessionModels, reloadSessionsForCwd } from "./agent-manager";
 import { withContextWindow } from "./model-draft";
@@ -21,7 +24,8 @@ import {
 	type AuthInteraction, type AuthPrompt, type AuthType,
 } from "@earendil-works/pi-ai";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
-import { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, type BalanceAmount, type BalanceDetailKey, type BalanceUsage, type ProviderUsage, type QuotaUsage, type QuotaWindow, type XaiUsage } from "./provider-usage";
+import { replaceFileAtomically } from "./atomic-file";
+import { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, type BalanceAmount, type BalanceUsage, type ProviderUsage, type QuotaUsage, type QuotaWindow, type XaiUsage } from "./provider-usage";
 // 用量的纯类型/纯函数拆在 provider-usage（客户端安全：设置面板按值导入它们）；这里重导出，路由与测试的导入不变。
 export { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, quotaWindowKind, supportsUsageProbe } from "./provider-usage";
 export type { BalanceAmount, BalanceDetailKey, BalanceUsage, ProviderUsage, QuotaUsage, QuotaWindow, QuotaWindowKind, XaiUsage } from "./provider-usage";
@@ -53,6 +57,8 @@ export interface ProviderView {
 	authFastPath: boolean;
 	resolvedAuthSource?: string;
 	authError?: string;
+	/** Authentication executes a configured command; status views must not auto-probe it. */
+	authCommand?: boolean;
 	keyManaged: boolean;
 	/** auth.json 里已存凭证的类型：OAuth 条目才有专门的删除入口与文案 */
 	storedAuthType?: "api_key" | "oauth";
@@ -95,6 +101,7 @@ function catalogReasoning(value: Record<string, unknown>): boolean | undefined {
 	const capabilities = isRecord(value.capabilities) ? value.capabilities : undefined;
 	const fromCapabilities = capabilities?.reasoning;
 	if (typeof fromCapabilities === "boolean") return fromCapabilities;
+	if (isRecord(fromCapabilities) && typeof fromCapabilities.supported === "boolean") return fromCapabilities.supported;
 	const thinking = isRecord(capabilities?.thinking) ? capabilities.thinking : undefined;
 	if (typeof thinking?.supported === "boolean") return thinking.supported;
 	if (Array.isArray(value.supported_parameters)) {
@@ -122,16 +129,26 @@ export function catalogCapabilities(value: Record<string, unknown>): Pick<Discov
 			? modalities.input
 			: undefined;
 	const topProvider = isRecord(value.top_provider) ? value.top_provider : undefined;
+	const capabilities = isRecord(value.capabilities) ? value.capabilities : undefined;
+	const limit = isRecord(value.limit) ? value.limit : undefined;
 	const contextWindow = positiveInt(value.context_window)
 		?? positiveInt(value.context_length)
 		?? positiveInt(value.max_input_tokens)
-		?? positiveInt(architecture?.context_length);
+		?? positiveInt(architecture?.context_length)
+		?? positiveInt(value.contextWindow)
+		?? positiveInt(capabilities?.max_context_tokens)
+		?? positiveInt(limit?.context);
 	const maxTokens = positiveInt(value.max_output_tokens)
 		?? positiveInt(value.max_completion_tokens)
-		?? positiveInt(topProvider?.max_completion_tokens);
+		?? positiveInt(topProvider?.max_completion_tokens)
+		?? positiveInt(value.maxTokens)
+		?? positiveInt(capabilities?.max_output_tokens)
+		?? positiveInt(value.max_tokens)
+		?? positiveInt(limit?.output);
 	const vision = inputList
-		? inputList.some((item) => typeof item === "string" && item.toLowerCase() === "image")
-		: undefined;
+		? inputList.some((item) => typeof item === "string" && /^(?:image|image\/[^/\s]+)$/i.test(item))
+		: typeof value.vision === "boolean" ? value.vision : typeof capabilities?.vision === "boolean" ? capabilities.vision
+			: typeof capabilities?.image_input === "boolean" ? capabilities.image_input : undefined;
 	const reasoning = catalogReasoning(value);
 	return {
 		...(contextWindow === undefined ? {} : { contextWindow }),
@@ -157,9 +174,82 @@ let listedGeneration = -1;
 const authCheckCache = new Map<string, { at: number; ready: boolean; source?: string; error?: string }>();
 const AUTH_CHECK_TTL_MS = 60_000;
 
+type ModelCatalog = { providers: ProviderView[]; models: ModelView[] };
+type WorkspaceCatalogContext = {
+	scope: string; cwd: string; agentDir: string; sourceAgentDir: string;
+	inputs: string; resources: string; modelsVersion: number; resourcesVersion: number; epoch: number;
+};
+type WorkspaceCatalogEntry = { context: WorkspaceCatalogContext; at: number; bytes: number; value: ModelCatalog };
+const WORKSPACE_CATALOG_LIMIT = 32;
+const WORKSPACE_CATALOG_BYTES = 16 * 1024 * 1024;
+const WORKSPACE_CATALOG_JOBS = 4;
+const workspaceCatalogs = new Map<string, WorkspaceCatalogEntry>();
+const workspaceCatalogJobs = new Map<string, Promise<WorkspaceCatalogEntry>>();
+const workspaceResourceInputs = new WeakMap<object, string>();
+let workspaceCatalogBytes = 0;
+let workspaceCatalogEpoch = 0;
+class CatalogChangedDuringRead extends Error {}
+
+function catalogFileStamp(file: string): string {
+	try {
+		const stat = statSync(file, { bigint: true });
+		return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+		throw error;
+	}
+}
+
+function workspaceCatalogInputs(cwd: string, agentDir: string): { inputs: string; resources: string } {
+	const trust = resolveProjectTrust(cwd);
+	const resources = JSON.stringify([
+		catalogFileStamp(path.join(agentDir, "settings.json")), catalogFileStamp(path.join(agentDir, "trust.json")),
+		catalogFileStamp(path.join(cwd, ".pi", "settings.json")), trust.required, trust.trusted,
+	]);
+	return { resources, inputs: JSON.stringify([resources, modelFilesFingerprint(agentDir), catalogFileStamp(path.join(agentDir, "models-store.json"))]) };
+}
+
+function workspaceCatalogCurrent(context: WorkspaceCatalogContext): boolean {
+	return context.epoch === workspaceCatalogEpoch
+		&& context.sourceAgentDir === path.resolve(getAgentDir())
+		&& context.modelsVersion === modelRuntimeVersion()
+		&& context.resourcesVersion === resourceLoaderVersion(context.cwd)
+		&& context.inputs === workspaceCatalogInputs(context.cwd, context.agentDir).inputs;
+}
+
+function removeWorkspaceCatalog(scope: string): void {
+	const previous = workspaceCatalogs.get(scope);
+	if (previous) { workspaceCatalogBytes -= previous.bytes; workspaceCatalogs.delete(scope); }
+}
+
+function cacheWorkspaceCatalog(entry: WorkspaceCatalogEntry): void {
+	removeWorkspaceCatalog(entry.context.scope);
+	if (entry.bytes > WORKSPACE_CATALOG_BYTES) return;
+	workspaceCatalogs.set(entry.context.scope, entry);
+	workspaceCatalogBytes += entry.bytes;
+	while (workspaceCatalogs.size > WORKSPACE_CATALOG_LIMIT || workspaceCatalogBytes > WORKSPACE_CATALOG_BYTES) {
+		removeWorkspaceCatalog(workspaceCatalogs.keys().next().value!);
+	}
+}
+
+/** No live runtime or credential object enters the cache; consumers cannot mutate another request's snapshot. */
+function freezeCatalog(value: ModelCatalog): ModelCatalog {
+	for (const model of value.models) {
+		Object.freeze(model.thinkingLevels); Object.freeze(model.input);
+		if (model.cost) Object.freeze(model.cost);
+		Object.freeze(model);
+	}
+	for (const provider of value.providers) { Object.freeze(provider.authTypes); Object.freeze(provider.apis); Object.freeze(provider); }
+	Object.freeze(value.models); Object.freeze(value.providers);
+	return Object.freeze(value);
+}
+
 export function invalidateModelList(): void {
 	listCache = null;
 	authCheckCache.clear();
+	workspaceCatalogEpoch += 1;
+	workspaceCatalogs.clear();
+	workspaceCatalogBytes = 0;
 	// 凭证/自定义 provider 变了，auth.json 的读盘缓存也要作废（按文件名作废：这里不该去解析 agent 目录）
 	invalidateJsonFilesNamed("auth.json");
 }
@@ -223,17 +313,107 @@ export async function listModels(): Promise<{
 }
 
 /** 对话里的模型选择器遵循 pi 的 enabledModels；设置页仍用完整目录 */
-export async function listModelsForPiWeb(): Promise<{ providers: ProviderView[]; models: ModelView[] }> {
-	const data = await listModels();
+export async function listModelsForPiWeb(runtime?: ModelRuntime): Promise<{ providers: ProviderView[]; models: ModelView[] }> {
+	if (runtime) await refreshModelRuntimeIfFilesChanged();
+	const data = runtime ? await listModelsUncached(runtime) : await listModels();
 	const patterns = await getEnabledModelPatterns();
+	return filterPiWebModelCatalog(data, patterns, runtime ?? await getModelRuntime());
+}
+
+async function filterPiWebModelCatalog(data: ModelCatalog, patterns: string[] | null, rt: ModelRuntime): Promise<ModelCatalog> {
 	if (!patterns?.length) return data;
-	const models = await filterModelsByPiScope(data.models, patterns, await getModelRuntime());
+	const safeScopeRuntime = Object.create(rt) as ModelRuntime;
+	// Scope matching must not execute a credential command merely to render a picker.
+	safeScopeRuntime.getAvailable = async () => rt.getAvailableSnapshot();
+	const models = await filterModelsByPiScope(data.models, patterns, safeScopeRuntime);
 	const counts = new Map<string, number>();
 	for (const model of models) counts.set(model.provider, (counts.get(model.provider) ?? 0) + 1);
 	return {
 		models,
 		providers: data.providers.map((provider) => ({ ...provider, modelCount: counts.get(provider.id) ?? 0 })),
 	};
+}
+
+/** Discover the target workspace's declared providers without starting a session or MCP servers. */
+export async function listWorkspaceModelsForPiWeb(cwd: string): Promise<{ providers: ProviderView[]; models: ModelView[] }> {
+	const sourceAgentDir = path.resolve(getAgentDir());
+	const canonical = async (value: string) => fs.realpath(path.resolve(value)).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return path.resolve(value);
+		throw error;
+	});
+	const [canonicalCwd, agentDir] = await Promise.all([canonical(cwd), canonical(sourceAgentDir)]);
+	const fold = (value: string) => process.platform === "win32" ? value.toLowerCase() : value;
+	const scope = JSON.stringify([fold(agentDir), fold(canonicalCwd)]);
+	for (let attempt = 0; attempt < 3; attempt += 1) {
+		let job = workspaceCatalogJobs.get(scope);
+		// Bound distinct expensive builds without evicting an in-flight request and
+		// starting its duplicate. Same-scope readers always join the existing work.
+		while (!job && workspaceCatalogJobs.size >= WORKSPACE_CATALOG_JOBS) {
+			await Promise.race([...workspaceCatalogJobs.values()].map((pending) => pending.catch(() => undefined)));
+			job = workspaceCatalogJobs.get(scope);
+		}
+		if (!job) {
+			job = readWorkspaceModelCatalog(canonicalCwd, agentDir, sourceAgentDir, scope);
+			workspaceCatalogJobs.set(scope, job);
+			const current = job;
+			void job.finally(() => { if (workspaceCatalogJobs.get(scope) === current) workspaceCatalogJobs.delete(scope); }).catch(() => undefined);
+		}
+		try {
+			const entry = await job;
+			if (!workspaceCatalogCurrent(entry.context)) continue;
+			cacheWorkspaceCatalog(entry);
+			return entry.value;
+		} catch (error) {
+			if (!(error instanceof CatalogChangedDuringRead)) throw error;
+		}
+	}
+	throw new Error("模型或工作区配置正在变更，请稍后重试。");
+}
+
+async function readWorkspaceModelCatalog(cwd: string, agentDir: string, sourceAgentDir: string, scope: string): Promise<WorkspaceCatalogEntry> {
+	const before = workspaceCatalogInputs(cwd, agentDir);
+	await resourceLoaderReady(cwd);
+	const loader = getResourceLoader(cwd);
+	await refreshResourceLoaderIfStale(cwd, { fresh: workspaceResourceInputs.get(loader) !== before.resources });
+	workspaceResourceInputs.set(loader, before.resources);
+	await refreshModelRuntimeIfFilesChanged();
+	const baseline = await getModelRuntime();
+	const context: WorkspaceCatalogContext = {
+		scope, cwd, agentDir, sourceAgentDir, ...before, epoch: workspaceCatalogEpoch,
+		modelsVersion: modelRuntimeVersion(), resourcesVersion: resourceLoaderVersion(cwd),
+	};
+	if (!workspaceCatalogCurrent(context)) throw new CatalogChangedDuringRead();
+	const previous = workspaceCatalogs.get(scope);
+	if (previous && workspaceCatalogCurrent(previous.context) && Date.now() >= previous.at && Date.now() - previous.at < LIST_TTL_MS) return previous;
+	const patterns = await getEnabledModelPatterns();
+	const definitions = await withResourceLock(async () => {
+		const runtime = getResourceLoader(cwd).getExtensions().runtime;
+		return {
+			providers: [...runtime.pendingProviderRegistrations],
+			native: [...runtime.pendingNativeProviderRegistrations],
+			virtual: [...runtime.pendingVirtualModelRegistrations],
+		};
+	});
+	const runtime = await createSessionModelRuntime(baseline);
+	try {
+		// Discovery queues registrations until a session binds them. Apply copies to
+		// this private catalog; consuming the discovery queue would affect later reads.
+		for (const definition of definitions.providers) {
+			try { runtime.registerProvider(definition.name, definition.config); } catch { /* SDK skips invalid declarations too */ }
+		}
+		for (const definition of definitions.native) {
+			try { runtime.registerNativeProvider(definition.provider); } catch { /* invalid declaration */ }
+		}
+		for (const definition of definitions.virtual) {
+			try { runtime.registerVirtualModel(definition.definition); } catch { /* invalid declaration */ }
+		}
+		await runtime.refresh({ allowNetwork: false });
+		const value = freezeCatalog(await filterPiWebModelCatalog(await listModelsUncached(runtime), patterns, runtime));
+		if (!workspaceCatalogCurrent(context)) throw new CatalogChangedDuringRead();
+		return { context, value, at: Date.now(), bytes: Buffer.byteLength(JSON.stringify(value)) };
+	} finally {
+		await releaseSessionModelRuntime(runtime);
+	}
 }
 
 /**
@@ -269,13 +449,26 @@ async function readStoredAuthTypes(): Promise<Map<string, "api_key" | "oauth">> 
 	return out;
 }
 
-async function listModelsUncached(): Promise<{
+async function listModelsUncached(sessionRuntime?: ModelRuntime): Promise<{
 	providers: ProviderView[];
 	models: ModelView[];
 }> {
-	const rt = await getModelRuntime();
+	const rt = sessionRuntime ?? await getModelRuntime();
+	const catalogError = rt.getError?.();
+	if (catalogError) throw new Error(`模型目录配置无效：${catalogError}`);
 	const builtInCatalog = await getBuiltInCatalog();
 	const providers = rt.getProviders() as any[];
+	const commandProviderIds = new Set<string>();
+	try {
+		const source = await fs.readFile(path.join(getAgentDir(), "models.json"), "utf8");
+		for (const [id, config] of Object.entries(parseCustomProviders(source).providers)) {
+			if ([config.apiKey, ...Object.values(isRecord(config.headers) ? config.headers : {})].some((value) => typeof value === "string" && value.trim().startsWith("!"))) commandProviderIds.add(id);
+		}
+	} catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+	const storedCredentials = await readJsonObjectSafe(path.join(getAgentDir(), "auth.json"));
+	for (const [id, credential] of Object.entries(storedCredentials ?? {})) {
+		if (isRecord(credential) && credential.type === "api_key" && typeof credential.key === "string" && credential.key.startsWith("!")) commandProviderIds.add(id);
+	}
 	const storedAuthTypes = await readStoredAuthTypes();
 	const out: ProviderView[] = [];
 	const models: ModelView[] = [];
@@ -294,8 +487,12 @@ async function listModelsUncached(): Promise<{
 			let authReady = false;
 			let resolvedAuthSource: string | undefined;
 			let authError: string | undefined;
-			if (auth?.configured === true || authFastPath) {
-				const cached = authCheckCache.get(pid);
+			if (commandProviderIds.has(pid)) {
+				authReady = authFastPath;
+				authError = "此提供方通过命令读取凭证；打开目录不会执行该命令，连接时再验证。";
+			} else if (auth?.configured === true || authFastPath) {
+				// Provider IDs can refer to different extension definitions in different sessions.
+				const cached = sessionRuntime ? undefined : authCheckCache.get(pid);
 				if (cached && Date.now() - cached.at < AUTH_CHECK_TTL_MS) {
 					authReady = cached.ready;
 					resolvedAuthSource = cached.source;
@@ -308,7 +505,7 @@ async function listModelsUncached(): Promise<{
 					} catch (error) {
 						authError = error instanceof Error ? error.message : String(error);
 					}
-					authCheckCache.set(pid, { at: Date.now(), ready: authReady, source: resolvedAuthSource, error: authError });
+					if (!sessionRuntime && !authError) authCheckCache.set(pid, { at: Date.now(), ready: authReady, source: resolvedAuthSource });
 				}
 			}
 			return { pid, p, auth, authFastPath, authReady, resolvedAuthSource, authError };
@@ -335,6 +532,7 @@ async function listModelsUncached(): Promise<{
 			authFastPath,
 			resolvedAuthSource,
 			authError,
+			authCommand: commandProviderIds.has(pid),
 			keyManaged: auth?.source === "stored",
 			storedAuthType: auth?.source === "stored" ? storedAuthTypes.get(pid) : undefined,
 			modelCount: list.length,
@@ -347,7 +545,7 @@ async function listModelsUncached(): Promise<{
 				api: String(mm.api ?? ""),
 				baseUrl: typeof mm.baseUrl === "string" ? mm.baseUrl : undefined,
 				reasoning: mm.reasoning === true,
-				thinkingLevels: getSupportedThinkingLevels(mm),
+				thinkingLevels: [...getSupportedThinkingLevels(mm)],
 				contextWindow: Number(mm.contextWindow ?? 0),
 				input: Array.isArray(mm.input) ? mm.input.map(String) : ["text"],
 				cost: mm.cost ? { input: mm.cost.input, output: mm.cost.output } : null,
@@ -364,10 +562,11 @@ async function listModelsUncached(): Promise<{
  * account/gateway ID）：首个文本提示用调用方给的 key 应答，其余提示经
  * pendingLogin 桥接到浏览器轮询（loginState/answerLogin/cancelLogin）。
  */
-export async function setApiKey(providerId: string, apiKey: string): Promise<void> {
+export async function setApiKey(providerId: string, apiKey: string, options?: { background?: boolean }): Promise<void> {
 	const pl = createPendingLogin(providerId);
 	const rt = await getLoginRuntime(pl);
-	await runLogin(pl, rt, "api_key", apiKey);
+	if (options?.background) void runLogin(pl, rt, "api_key", apiKey).catch(() => undefined);
+	else await runLogin(pl, rt, "api_key", apiKey);
 }
 
 export async function removeApiKey(providerId: string): Promise<void> {
@@ -473,11 +672,21 @@ async function requestModelCatalog(endpoint: URL, headers: Record<string, string
 	if (!allowed && literalFamily && !isPublicModelDiscoveryAddress(endpoint.hostname.replace(/^\[|\]$/g, ""))) {
 		throw new Error("模型目录地址指向本机或私有网络；勾选「允许访问本机/私有网络地址」后重试，或设置 PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1");
 	}
+	if (!allowed && !literalFamily) {
+		const addresses = await dns.lookup(endpoint.hostname, { all: true });
+		if (!addresses.length || addresses.some(({ address }) => !isPublicModelDiscoveryAddress(address))) {
+			throw new Error("模型目录地址指向本机或私有网络；勾选「允许访问本机/私有网络地址」后重试，或设置 PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY=1");
+		}
+	}
 	return new Promise<Response>((resolve, reject) => {
+		const proxyEnv = process.env.NODE_USE_ENV_PROXY === "1" ? { ...process.env } : undefined;
+		const agent = endpoint.protocol === "https:" ? new HttpsAgent({ proxyEnv }) : new HttpAgent({ proxyEnv });
+		// A proxy may resolve target hosts itself. Check the target before opening
+		// the proxy connection too; request lookup still pins the direct connection.
 		const request = (endpoint.protocol === "https:" ? httpsRequest : httpRequest)(endpoint, {
 			headers,
 			signal,
-			agent: false,
+			agent,
 			lookup: allowed ? undefined : (hostname, options, callback) => {
 				void dns.lookup(hostname, { all: true }).then((addresses) => {
 					const publicAddress = addresses.find(({ address }) => isPublicModelDiscoveryAddress(address));
@@ -519,6 +728,7 @@ async function requestModelCatalog(endpoint: URL, headers: Record<string, string
 			});
 			response.on("end", () => resolve(new Response(status === 204 || status === 205 || status === 304 ? null : Buffer.concat(chunks, size), { status })));
 		});
+		request.once("close", () => agent.destroy());
 		request.on("error", reject);
 		request.end();
 	});
@@ -627,6 +837,7 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 				if (typeof candidate === "string") return { id: candidate };
 				if (!candidate || typeof candidate !== "object") return null;
 				const value = candidate as Record<string, unknown>;
+				if (typeof value.type === "string" && !["chat", "language", "text", "text-generation"].includes(value.type.toLowerCase())) return null;
 				const id = typeof value.id === "string" ? value.id.trim() : "";
 				if (!id) return null;
 				const name = typeof value.name === "string" && value.name.trim() ? value.name.trim() : undefined;
@@ -707,7 +918,7 @@ async function fetchUsageJson(url: string, init: RequestInit, timeoutMs = USAGE_
 			void response.body?.cancel().catch(() => {});
 			return undefined;
 		}
-		return await response.json();
+		return await readModelCatalog(response);
 	} catch {
 		return undefined;
 	} finally {
@@ -1292,7 +1503,7 @@ export function loginState(providerId: string): {
 } {
 	purgeFinishedLogins();
 	const pl = pendingLogins.get(providerId);
-	if (!pl) return { prompt: null, notifyLog: [], done: true };
+	if (!pl) return { prompt: null, notifyLog: [], done: true, error: "Login session expired or was not started; start authentication again." };
 	return {
 		prompt: pl.prompt
 			? {
@@ -1366,24 +1577,63 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function isSecretProviderHeader(name: string, value: unknown): boolean {
+	return /auth|cookie|token|key|secret|credential|password|passwd/i.test(name)
+		|| (typeof value === "string" && value.startsWith("!"));
+}
+
+function modelHeaderOwners(provider: Record<string, unknown>): Map<string, Record<string, unknown>> {
+	const owners = new Map<string, Record<string, unknown>>([["provider", provider]]);
+	const counts = new Map<string, number>();
+	for (const model of Array.isArray(provider.models) ? provider.models : []) {
+		if (isRecord(model) && typeof model.id === "string") {
+			const index = counts.get(model.id) ?? 0; counts.set(model.id, index + 1);
+			owners.set(`model:${model.id}:${index}`, model);
+		}
+	}
+	for (const [id, override] of Object.entries(isRecord(provider.modelOverrides) ? provider.modelOverrides : {})) {
+		if (isRecord(override)) owners.set(`override:${id}`, override);
+	}
+	return owners;
+}
+
 export function redactCustomProviderSecrets(content: string): { content: string; secretProviderIds: string[] } {
 	const parsed = parseCustomProviders(content);
 	const secretProviderIds: string[] = [];
 	for (const [id, provider] of Object.entries(parsed.providers)) {
-		if (!Object.prototype.hasOwnProperty.call(provider, "apiKey")) continue;
-		delete provider.apiKey;
-		secretProviderIds.push(id);
+		let secret = false;
+		if (Object.prototype.hasOwnProperty.call(provider, "apiKey")) { delete provider.apiKey; secret = true; }
+		for (const owner of modelHeaderOwners(provider).values()) {
+			if (!isRecord(owner.headers)) continue;
+			const headers = { ...owner.headers };
+			for (const [name, value] of Object.entries(headers)) {
+				if (isSecretProviderHeader(name, value)) { delete headers[name]; secret = true; }
+			}
+			owner.headers = headers;
+		}
+		if (secret) secretProviderIds.push(id);
 	}
 	return { content: JSON.stringify(parsed, null, 2), secretProviderIds };
 }
 
 function mergeCustomProviderApiKeys(parsed: CustomProvidersFile, previous: CustomProvidersFile): void {
 	for (const [id, provider] of Object.entries(parsed.providers)) {
+		const previousProvider = previous.providers[id];
+		const previousOwners = modelHeaderOwners(previousProvider ?? {});
+		for (const [key, owner] of modelHeaderOwners(provider)) {
+			const previousHeaders = previousOwners.get(key)?.headers;
+			if (owner.headers === null) { delete owner.headers; continue; }
+			if (!isRecord(previousHeaders)) continue;
+			const headers = isRecord(owner.headers) ? owner.headers : {};
+			for (const [name, value] of Object.entries(previousHeaders)) {
+				if (headers[name] === undefined && isSecretProviderHeader(name, value)) headers[name] = value;
+			}
+			owner.headers = headers;
+		}
 		// 字段缺失（包括 JSON.stringify 省略的 undefined）保留旧密钥；只有显式 null 删除。
 		if (provider.apiKey === null) {
 			delete provider.apiKey;
 		} else if (provider.apiKey === undefined) {
-			const previousProvider = previous.providers[id];
 			if (previousProvider && Object.prototype.hasOwnProperty.call(previousProvider, "apiKey")) {
 				provider.apiKey = previousProvider.apiKey;
 			}
@@ -1477,16 +1727,35 @@ async function replaceCustomProvidersFile(
 		}
 		prepare?.(old);
 		validateTokenLimits(next);
-		await fs.writeFile(temporary, JSON.stringify(next, null, 2), {
+		const output = previous.content === undefined ? JSON.stringify(next, null, 2) : preserveJsoncLayout(previous.content, old, next);
+		await fs.writeFile(temporary, output, {
 			encoding: "utf8", flag: previous.content === undefined ? "wx" : "w", mode: 0o600,
 		});
 		await validateStagedCustomProviders(temporary);
 		// Also detect non-cooperating writers that changed the file during validation.
-		if ((await readCustomProvidersSnapshot(file)).revision !== previous.revision) throw new CustomProvidersConflictError();
-		await fs.rename(temporary, file);
+		await replaceFileAtomically(temporary, file, async () => {
+			if ((await readCustomProvidersSnapshot(file)).revision !== previous.revision) throw new CustomProvidersConflictError();
+		});
 	} finally {
 		await fs.rm(temporary, { force: true }).catch(() => undefined);
 	}
+}
+
+/** Apply changed leaves to the original JSONC so unrelated comments/BOM survive a form save. */
+function preserveJsoncLayout(original: string, before: unknown, after: unknown): string {
+	const bom = original.startsWith("\uFEFF") ? "\uFEFF" : "";
+	let content = original.replace(/^\uFEFF/, "");
+	const patch = (pathParts: Array<string | number>, value: unknown) => { content = applyEdits(content, modify(content, pathParts, value, { formattingOptions: { insertSpaces: true, tabSize: 2, eol: original.includes("\r\n") ? "\r\n" : "\n" } })); };
+	const walk = (oldValue: unknown, value: unknown, pathParts: Array<string | number>) => {
+		if (JSON.stringify(oldValue) === JSON.stringify(value)) return;
+		if (isRecord(oldValue) && isRecord(value)) {
+			for (const key of Object.keys(oldValue)) if (!Object.prototype.hasOwnProperty.call(value, key)) patch([...pathParts, key], undefined);
+			for (const [key, child] of Object.entries(value)) walk(oldValue[key], child, [...pathParts, key]);
+		} else if (Array.isArray(oldValue) && Array.isArray(value) && oldValue.length === value.length) value.forEach((child, index) => walk(oldValue[index], child, [...pathParts, index]));
+		else patch(pathParts, value);
+	};
+	walk(before, after, []);
+	return bom + content;
 }
 
 export async function writeCustomProviders(content: string, revision?: string): Promise<void> {
@@ -1504,8 +1773,8 @@ export async function writeCustomProviders(content: string, revision?: string): 
 	}));
 	await refreshModelRuntime();
 	invalidateModelList();
-	// 会话与共享 runtime 是同一个实例，刷新后目录已是新的；再让活跃会话重载一次，
-	// 把当前模型对象换成新配置（改了 baseUrl / contextWindow 等字段时生效）
+	// Refresh each active session's private runtime and current model object;
+	// busy sessions defer this until the current round finishes.
 	await reloadSessionsForCwd();
 }
 

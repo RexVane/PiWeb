@@ -6,8 +6,7 @@
  * 靠 tool_use_id 与前面的 tool_use 配对（这一步交给 writer 兜底修复）。
  */
 import path from "node:path";
-import fs from "node:fs/promises";
-import { eachJsonLine, listFiles, readHead, reachedLimit, sortByRecency } from "./files";
+import { eachJsonLine, jsonlImportWarnings, listFiles, readHead, readFileBounded, reachedLimit, sortByRecency } from "./files";
 import { claudeRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedMessage, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
 import { cleanTitle, compactBlocks, outputBlocks, textBlock, toEpochMs } from "./types";
@@ -139,6 +138,7 @@ export const claudeSource: ImportSourceModule = {
 		const candidates = await sortByRecency(await listFiles(ROOT(), { match: (name) => name.endsWith(".jsonl") }));
 		const out: ExternalSessionSummary[] = [];
 		for (const { file, mtime } of candidates) {
+			options?.signal?.throwIfAborted();
 			if (reachedLimit(out.length, limit)) break; // 只读最近的若干条：后面的文件根本不打开
 			if (isSubagentTranscript(file)) continue; // 主代理派给子代理的活不算会话
 			let head: string;
@@ -168,12 +168,12 @@ export const claudeSource: ImportSourceModule = {
 	async read(summary: ExternalSessionSummary): Promise<ImportedSession | null> {
 		let text: string;
 		try {
-			text = await fs.readFile(summary.location, "utf8");
+			text = (await readFileBounded(summary.location)).toString("utf8");
 		} catch {
 			return null;
 		}
 		const entries: ImportedEntry[] = [];
-		const skipped: string[] = [];
+		const skipped: string[] = jsonlImportWarnings(text);
 		let sidechains = 0;
 		let synthetic = 0;
 		let projectPath = summary.projectPath;

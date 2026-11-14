@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { gitDiff, gitInfo, gitShow } from "../src/lib/git-service";
+import { gitDiff, gitInfo, gitShow, repoRoot } from "../src/lib/git-service";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 import { BoundaryError } from "../src/lib/path-security";
 
 describe("Git status failures", () => {
@@ -82,6 +83,28 @@ describe("complete Git line counts", () => {
 });
 
 describe("truncated patches with multi-byte text", () => {
+	it("shows non-ASCII file names verbatim in patch headers", async () => {
+		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-names-"));
+		try {
+			const git = (...args: string[]) => execFileSync("git", ["-C", temporary, "-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+			git("init", "-q");
+			const name = "中文 文件.txt";
+			await fs.writeFile(path.join(temporary, name), "base");
+			git("add", ".");
+			git("commit", "-q", "-m", "base");
+			await fs.writeFile(path.join(temporary, name), "changed");
+			expect((await gitInfo(temporary)).files.map((file) => file.path)).toEqual([name]);
+			const worktree = await gitDiff(temporary, name, "worktree");
+			expect(worktree.patch).toContain(`b/${name}`);
+			expect(worktree.patch).not.toContain("\\344");
+			git("commit", "-qam", "change");
+			const shown = await gitShow(temporary, git("rev-parse", "HEAD").toString().trim());
+			expect(shown.patch).toContain(`b/${name}`);
+		} finally {
+			await recycleFixture(temporary);
+		}
+	}, 30_000);
+
 	it("cuts on a character boundary instead of leaving a U+FFFD at the end", async () => {
 		// 回归：按 400KB 直接 subarray，边界落在汉字中间时末尾多出一个替换字符（预览里的乱码方块）
 		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-utf8-"));
@@ -130,5 +153,60 @@ describe("untracked Git diffs", () => {
 		} finally {
 			await fs.rm(temporary, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("Git audit regressions", () => {
+	it("renders merge commits and unresolved conflicts as ordinary unified patches", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-merge-"));
+		const git = (...args: string[]) => execFileSync("git", ["-C", root, "-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+		try {
+			git("init", "-q"); await fs.writeFile(path.join(root, "a.txt"), "base\n"); git("add", "."); git("commit", "-q", "-m", "base");
+			const main = git("branch", "--show-current").toString().trim();
+			git("checkout", "-q", "-b", "side"); await fs.writeFile(path.join(root, "a.txt"), "side\n"); git("commit", "-qam", "side");
+			git("checkout", "-q", main); await fs.writeFile(path.join(root, "a.txt"), "main\n"); git("commit", "-qam", "main");
+			try { git("merge", "side"); } catch { /* expected conflict */ }
+			const conflict = await gitDiff(root, "a.txt", "worktree");
+			expect(conflict.patch).toContain("@@ -"); expect(conflict.patch).not.toContain("@@@");
+			expect(conflict.patch).toContain("<<<<<<<"); expect(conflict.stats.add).toBeGreaterThan(0);
+			await fs.writeFile(path.join(root, "a.txt"), "merged\n"); git("add", "."); git("commit", "-q", "-m", "merge");
+			const merge = await gitShow(root, git("rev-parse", "HEAD").toString().trim());
+			expect(merge.patch).toContain("@@ -"); expect(merge.patch).not.toContain("@@@");
+			expect(merge.patch).toContain("+merged");
+		} finally { await recycleFixture(root); }
+	});
+	it("retains a bounded preview for a diff larger than execFile's former 8 MiB limit", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-stream-"));
+		const git = (...args: string[]) => execFileSync("git", ["-C", root, "-c", "core.autocrlf=false", "-c", "user.name=test", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+		try {
+			git("init", "-q"); await fs.writeFile(path.join(root, "large.txt"), "before\n"); git("add", "."); git("commit", "-q", "-m", "base");
+			await fs.writeFile(path.join(root, "large.txt"), "x".repeat(9 * 1024 * 1024) + "\n");
+			const diff = await gitDiff(root, "large.txt", "worktree");
+			expect(diff.truncated).toBe(true); expect(Buffer.byteLength(diff.patch)).toBeLessThanOrEqual(400 * 1024);
+			expect(diff.stats).toEqual({ add: 1, del: 1 });
+		} finally { await recycleFixture(root); }
+	});
+	it("lists untracked files individually and never discovers a parent repository", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-ceiling-"));
+		try {
+			execFileSync("git", ["init", "-q", root], { windowsHide: true });
+			const child = path.join(root, "nested"); await fs.mkdir(child);
+			await fs.writeFile(path.join(child, "new.txt"), "new");
+			expect((await gitInfo(root)).files.map((file) => file.path)).toContain("nested/new.txt");
+			expect(await repoRoot(child)).toEqual({ available: true, root: null });
+			await expect(gitDiff(child, "../outside.txt", "worktree")).rejects.toThrow("not a git repository");
+		} finally { await recycleFixture(root); }
+	});
+	it("does not execute a repository-provided fsmonitor command", async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-fsmonitor-"));
+		try {
+			execFileSync("git", ["init", "-q", root], { windowsHide: true });
+			const marker = path.join(root, "called.txt");
+			const script = path.join(root, "monitor.cjs");
+			await fs.writeFile(script, 'require("node:fs").writeFileSync(' + JSON.stringify(marker) + ',"called");');
+			execFileSync("git", ["-C", root, "config", "core.fsmonitor", '"' + process.execPath.replaceAll("\\", "/") + '" "' + script.replaceAll("\\", "/") + '"'], { windowsHide: true });
+			expect((await gitInfo(root)).isRepo).toBe(true);
+			await expect(fs.access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+		} finally { await recycleFixture(root); }
 	});
 });

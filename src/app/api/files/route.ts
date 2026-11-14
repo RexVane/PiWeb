@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/api-error";
 import { BoundaryError } from "@/lib/path-security";
 import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readWorkspaceFile, readWorkspaceImage, saveUploadStream } from "@/lib/files-service";
 
 export const dynamic = "force-dynamic";
+const headers = { "Cache-Control": "private, no-store" };
 
 /** 工作区文件浏览：?cwd=&path=（目录）；?read=1（文本）；?image=1（受保护图片）；?index=1（引用候选）。 */
 export async function GET(req: Request) {
@@ -20,16 +22,16 @@ export async function GET(req: Request) {
 			} });
 		}
 		if (url.searchParams.get("read") === "1") {
-			return NextResponse.json({ success: true, data: await readWorkspaceFile(url.searchParams.get("cwd"), url.searchParams.get("path")) });
+			return NextResponse.json({ success: true, data: await readWorkspaceFile(url.searchParams.get("cwd"), url.searchParams.get("path")) }, { headers });
 		}
 		if (url.searchParams.get("index") === "1") {
-			return NextResponse.json({ success: true, data: await listWorkspaceIndex(url.searchParams.get("cwd")) });
+			return NextResponse.json({ success: true, data: await listWorkspaceIndex(url.searchParams.get("cwd")) }, { headers });
 		}
-		return NextResponse.json({ success: true, data: await listWorkspaceDir(url.searchParams.get("cwd"), url.searchParams.get("path"), url.searchParams.get("offset")) });
+		return NextResponse.json({ success: true, data: await listWorkspaceDir(url.searchParams.get("cwd"), url.searchParams.get("path"), url.searchParams.get("offset")) }, { headers });
 	} catch (err: any) {
 		return NextResponse.json(
-			{ success: false, error: String(err?.message ?? err) },
-			{ status: err instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(err) },
+			{ status: err instanceof BoundaryError ? 400 : 500, headers },
 		);
 	}
 }
@@ -45,7 +47,7 @@ export async function POST(req: Request) {
 			if (declared !== null && contentLength !== null && parseUploadLength(contentLength) !== expectedSize) {
 				throw new BoundaryError("conflicting upload sizes");
 			}
-			return NextResponse.json({ success: true, data: await saveUploadStream(url.searchParams.get("name"), req.body, expectedSize) });
+			return NextResponse.json({ success: true, data: await saveUploadStream(url.searchParams.get("name"), req.body, expectedSize) }, { headers });
 		}
 		const reader = req.body?.getReader();
 		if (!reader) throw new BoundaryError("missing request body");
@@ -63,15 +65,17 @@ export async function POST(req: Request) {
 			await reader.cancel().catch(() => undefined);
 			reader.releaseLock();
 		}
-		const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { action?: string; cwd?: unknown; path?: unknown; line?: unknown; name?: unknown };
+		const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new BoundaryError("expected an object body");
+		const body = parsed as { action?: string; cwd?: unknown; path?: unknown; line?: unknown; name?: unknown };
 		if (body.action === "open") {
-			return NextResponse.json({ success: true, data: await openInEditor(body.cwd, body.path, body.line) });
+			return NextResponse.json({ success: true, data: await openInEditor(body.cwd, body.path, body.line) }, { headers });
 		}
-		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
+		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400, headers });
 	} catch (err: any) {
 		return NextResponse.json(
-			{ success: false, error: String(err?.message ?? err) },
-			{ status: err instanceof BoundaryError || err instanceof SyntaxError ? 400 : 500 },
+			{ success: false, ...apiError(err) },
+			{ status: err instanceof BoundaryError || err instanceof SyntaxError ? 400 : 500, headers },
 		);
 	}
 }

@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 import {
 	addWorkspace,
 	archiveSession,
@@ -31,12 +32,14 @@ describe("PiWeb workspace registry", () => {
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-workspaces-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
+		vi.spyOn(os, "homedir").mockReturnValue(tempDir);
 	});
 
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		await fs.rm(tempDir, { recursive: true, force: true });
+		await recycleFixture(tempDir);
 	});
 
 	it("serializes independent registry mutations without losing fields", async () => {
@@ -222,7 +225,7 @@ describe("PiWeb workspace registry", () => {
 		await addWorkspace(first);
 		const registryPath = path.join(tempDir, "web-workspaces.json");
 		const original = await fs.readFile(registryPath, "utf8");
-		const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("replacement denied"), { code: "EACCES" }));
+		const rename = vi.spyOn(fs, "rename").mockRejectedValue(Object.assign(new Error("replacement denied"), { code: "EACCES" }));
 		try {
 			await expect(addWorkspace(path.join(tempDir, "second"))).rejects.toThrow("replacement denied");
 		} finally {
@@ -230,6 +233,17 @@ describe("PiWeb workspace registry", () => {
 		}
 		expect(await fs.readFile(registryPath, "utf8")).toBe(original);
 		expect((await fs.readdir(tempDir)).filter((name) => name.endsWith(".tmp") || name.endsWith(".lock"))).toEqual([]);
+	});
+
+	it("commits a registry change after a transient sharing failure", async () => {
+		const first = path.join(tempDir, "first");
+		const second = path.join(tempDir, "second");
+		await addWorkspace(first);
+		const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("occupied"), { code: "EBUSY" }));
+		await addWorkspace(second);
+		expect(rename).toHaveBeenCalledTimes(2);
+		const stored = JSON.parse(await fs.readFile(path.join(tempDir, "web-workspaces.json"), "utf8"));
+		expect(stored.workspaces).toEqual([first, second]);
 	});
 
 	it("reads the latest registry after another process releases its lock", async () => {
@@ -273,13 +287,83 @@ process.send("locked");`;
 		}
 	}, 15_000);
 
-	it("does not overwrite a malformed workspace registry", async () => {
+	it("keeps read access available and backs up a malformed registry before the next mutation repairs it", async () => {
 		const registryPath = path.join(tempDir, "web-workspaces.json");
 		await fs.writeFile(registryPath, "{malformed", "utf8");
 
 		await expect(listAdded()).rejects.toThrow();
-		await expect(addWorkspace(path.join(tempDir, "new-workspace"))).rejects.toThrow();
+		expect((await getWorkspaceRegistry()).error).toContain("原文件已保留");
 		expect(await fs.readFile(registryPath, "utf8")).toBe("{malformed");
+		const next = path.join(tempDir, "new-workspace");
+		await addWorkspace(next);
+		expect(await listAdded()).toEqual([next]);
+		const recovered = await getWorkspaceRegistry();
+		expect(recovered.warning).toContain("原有别名、归档和置顶尚未恢复");
+		expect(recovered.recovery).toMatchObject({ source: "empty", restored: { workspaces: 0, aliases: 0, archivedSessions: 0, pinnedSessions: 0 } });
+		expect(recovered.error).toBeUndefined();
+		expect(recovered.recovery!.backup).not.toContain(path.sep);
+		expect(JSON.parse(await fs.readFile(registryPath, "utf8")).recovery).toEqual(recovered.recovery);
+		const index = await fs.readFile(path.join(tempDir, ".agents", "backups", "INDEX.md"), "utf8");
+		const backup = index.trim().split(" | ")[2];
+		expect(await fs.readFile(backup, "utf8")).toBe("{malformed");
+	});
+
+	it("recovers the last successful write with aliases, archive timestamps and pins even before another poll", async () => {
+		const original = path.join(tempDir, "original");
+		const archived = path.join(tempDir, "archived.jsonl");
+		const pinned = path.join(tempDir, "pinned.jsonl");
+		await addWorkspace(original);
+		await setAlias(original, "Preserved alias");
+		await archiveSession(archived);
+		await pinSession(pinned);
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		const previous = JSON.parse(await fs.readFile(registryPath, "utf8"));
+		await fs.writeFile(registryPath, "[]", "utf8");
+		const added = path.join(tempDir, "after-recovery");
+		await addWorkspace(added);
+		const result = await getWorkspaceRegistry();
+		expect(result.workspaces).toEqual([original, added]);
+		expect(result.aliases).toEqual(previous.aliases);
+		expect(result.archivedSessions).toEqual([archived]);
+		expect(result.pinnedSessions).toEqual([pinned]);
+		expect(JSON.parse(await fs.readFile(registryPath, "utf8")).archivedAt).toEqual(previous.archivedAt);
+		expect(result.recovery).toMatchObject({ source: "last-good", restored: { workspaces: 1, aliases: 1, archivedSessions: 1, pinnedSessions: 1 } });
+		expect(result.warning).toContain("请核对恢复结果");
+	});
+
+	it("keeps I/O failures distinct from corrupt JSON and never rebuilds a denied registry", async () => {
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		await addWorkspace(path.join(tempDir, "preserved"));
+		const original = await fs.readFile(registryPath, "utf8");
+		const read = fs.readFile;
+		const denied = vi.spyOn(fs, "readFile").mockImplementation(async (...args) => {
+			if (args[0] === registryPath) throw Object.assign(new Error("denied"), { code: "EACCES" });
+			return Reflect.apply(read, fs, args);
+		});
+		try {
+			await expect(addWorkspace(path.join(tempDir, "new"))).rejects.toMatchObject({ code: "EACCES" });
+			const result = await getWorkspaceRegistry();
+			expect(result.errorCode).toBe("EACCES");
+			expect(result.error).toContain("权限");
+			expect(result.workspaces).toEqual([path.join(tempDir, "preserved")]);
+		} finally { denied.mockRestore(); }
+		expect(await fs.readFile(registryPath, "utf8")).toBe(original);
+		await expect(fs.stat(path.join(tempDir, ".agents", "backups", "INDEX.md"))).rejects.toMatchObject({ code: "ENOENT" });
+	});
+
+	it("treats invalid known field types as corruption instead of silently discarding metadata", async () => {
+		const preserved = path.join(tempDir, "preserved");
+		await addWorkspace(preserved);
+		await setAlias(preserved, "Original alias");
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		const original = '{"workspaces":[42],"aliases":"invalid"}';
+		await fs.writeFile(registryPath, original);
+		expect((await getWorkspaceRegistry()).errorCode).toBe("REGISTRY_CORRUPT");
+		expect(await fs.readFile(registryPath, "utf8")).toBe(original);
+		await addWorkspace(path.join(tempDir, "new"));
+		const recovered = await getWorkspaceRegistry();
+		expect(recovered.aliases).toEqual({ [process.platform === "win32" ? preserved.toLowerCase() : preserved]: "Original alias" });
+		expect(recovered.recovery?.source).toBe("last-good");
 	});
 
 	it("pins, unpins and forgets pinned sessions", async () => {

@@ -144,7 +144,7 @@ export function DrawerPanel({
 							</button>
 						</div>
 						<div className="min-h-0 flex-1">
-							<SessionImportSection cwd={cwd} />
+							<SessionImportSection />
 						</div>
 					</>
 				) : section === "project" ? (

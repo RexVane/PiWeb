@@ -1,5 +1,25 @@
 /** 文件类来源的公共读取：扫描时只读文件头（避免为了列表把几百 MB 全读进来），导入时才整读 */
 import fs from "node:fs/promises";
+import { MAX_SOURCE_BYTES } from "./limits";
+
+/** Read in bounded chunks; a growing source file cannot bypass the size guard. */
+export async function readFileBounded(file: string, limit = MAX_SOURCE_BYTES): Promise<Buffer> {
+	const handle = await fs.open(file, "r");
+	try {
+		if ((await handle.stat()).size > limit) throw new Error(`源会话超过 ${Math.round(limit / 1024 / 1024)}MB 读取上限`);
+		const parts: Buffer[] = [];
+		let total = 0;
+		for (;;) {
+			const buffer = Buffer.alloc(Math.min(64 * 1024, limit + 1 - total));
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, total);
+			if (!bytesRead) break;
+			total += bytesRead;
+			if (total > limit) throw new Error("源会话在读取时超过大小上限");
+			parts.push(buffer.subarray(0, bytesRead));
+		}
+		return Buffer.concat(parts, total);
+	} finally { await handle.close(); }
+}
 
 /** 读文件开头若干字节（不切 UTF-8 字符：按行切分后只取完整行） */
 export async function readHead(file: string, bytes = 64 * 1024): Promise<string> {
@@ -14,7 +34,7 @@ export async function readHead(file: string, bytes = 64 * 1024): Promise<string>
 }
 
 /** 逐行解析 JSONL；单行坏掉只跳过该行，不放弃整个文件 */
-export function* eachJsonLine(text: string): Generator<Record<string, unknown>> {
+export function* eachJsonLine(text: string, diagnostics?: { invalidLines: number }): Generator<Record<string, unknown>> {
 	for (const line of text.split("\n")) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
@@ -22,9 +42,17 @@ export function* eachJsonLine(text: string): Generator<Record<string, unknown>> 
 			const parsed = JSON.parse(trimmed);
 			if (parsed && typeof parsed === "object") yield parsed as Record<string, unknown>;
 		} catch {
-			// 单行损坏（写入中断等）：跳过
+			if (diagnostics) diagnostics.invalidLines += 1;
 		}
 	}
+}
+
+export function jsonlImportWarnings(text: string): string[] {
+	const diagnostics = { invalidLines: 0 }; for (const _record of eachJsonLine(text, diagnostics)) { /* Validate all source rows once. */ }
+	const warnings: string[] = [];
+	if (diagnostics.invalidLines) warnings.push(`跳过 ${diagnostics.invalidLines} 行损坏或未完成的 JSON 记录`);
+	if (text.includes("\uFFFD")) warnings.push("源文本包含无法解码的字符，已保留替换标记，请核对原会话");
+	return warnings;
 }
 
 /** 递归列文件，带深度上限与名字过滤 */

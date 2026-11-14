@@ -14,6 +14,8 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
+import { replaceFileAtomically } from "./atomic-file";
 
 export const SECRET_BYTES = 32;
 /** 存盘的文件名，位于 agent 目录下 */
@@ -116,6 +118,8 @@ export function resetWebSecretCache(): void {
 export const REVOCATIONS_FILENAME = "web-revocations.json";
 
 export interface SessionRevocations {
+	/** Damaged revocation storage must reject old cookies instead of silently undoing logout. */
+	unavailable?: boolean;
 	notBefore: number;
 	revoked: ReadonlyMap<string, number>;
 }
@@ -127,41 +131,45 @@ function revocationsPath(): string {
 	return path.join(agentDir(), REVOCATIONS_FILENAME);
 }
 
-/** 读不懂的文件按「没有吊销」处理：它只会由下面的原子写产生，坏掉时不能把所有人锁在门外（启动令牌也换不进来） */
+/** Unreadable revocations fail closed; retain the original bytes for recovery. */
 export function loadSessionRevocations(): SessionRevocations {
 	const file = revocationsPath();
 	let stamp: string;
 	try {
 		const stat = fs.statSync(file);
 		stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
-	} catch {
-		return NO_REVOCATIONS;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? NO_REVOCATIONS : { notBefore: Number.MAX_SAFE_INTEGER, revoked: new Map(), unavailable: true };
 	}
 	if (revocationCache?.file === file && revocationCache.stamp === stamp) return revocationCache.value;
 	let value = NO_REVOCATIONS;
 	try {
 		const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { notBefore?: unknown; revoked?: unknown };
+		if (!parsed || Array.isArray(parsed) || typeof parsed !== "object"
+			|| (parsed.notBefore !== undefined && (!Number.isSafeInteger(parsed.notBefore) || (parsed.notBefore as number) < 0))
+			|| (parsed.revoked !== undefined && (!parsed.revoked || typeof parsed.revoked !== "object" || Array.isArray(parsed.revoked)))) throw new Error("Invalid revocation storage");
 		const revoked = new Map<string, number>();
 		if (parsed.revoked && typeof parsed.revoked === "object") {
 			for (const [id, expiresAt] of Object.entries(parsed.revoked)) {
-				if (typeof expiresAt === "number" && Number.isFinite(expiresAt)) revoked.set(id, expiresAt);
+				if (!Number.isSafeInteger(expiresAt) || (expiresAt as number) < 0) throw new Error("Invalid revocation record");
+				revoked.set(id, expiresAt as number);
 			}
 		}
 		value = { notBefore: typeof parsed.notBefore === "number" && Number.isFinite(parsed.notBefore) ? parsed.notBefore : 0, revoked };
 	} catch {
-		/* 见函数说明 */
+		value = { notBefore: Number.MAX_SAFE_INTEGER, revoked: new Map(), unavailable: true };
 	}
 	revocationCache = { file, stamp, value };
 	return value;
 }
 
-function writeSessionRevocations(value: SessionRevocations): void {
+async function writeSessionRevocations(value: SessionRevocations): Promise<void> {
 	const file = revocationsPath();
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
 	try {
 		fs.writeFileSync(temporary, `${JSON.stringify({ notBefore: value.notBefore, revoked: Object.fromEntries(value.revoked) }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-		fs.renameSync(temporary, file);
+		await replaceFileAtomically(temporary, file);
 	} finally {
 		fs.rmSync(temporary, { force: true });
 		revocationCache = null;
@@ -169,14 +177,33 @@ function writeSessionRevocations(value: SessionRevocations): void {
 }
 
 /** 撤销一张 Cookie（id 见 web-auth 的 sessionCookieId），记到它本来过期为止；顺手清掉已经过期的记录 */
-export function revokeSessionCookie(id: string, expiresAt: number, now = Date.now()): void {
-	const current = loadSessionRevocations();
-	const revoked = new Map([...current.revoked].filter(([, until]) => until > now));
-	revoked.set(id, expiresAt);
-	writeSessionRevocations({ notBefore: current.notBefore, revoked });
+async function updateSessionRevocations(update: (current: SessionRevocations) => SessionRevocations): Promise<void> {
+	const file = revocationsPath();
+	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
+		// Another PiWeb process may have replaced the file while we waited for its lock.
+		revocationCache = null;
+		const current = loadSessionRevocations();
+		if (current.unavailable) throw new Error("Session revocation storage is unavailable; existing records were retained");
+		await writeSessionRevocations(update(current));
+	}));
 }
 
-/** 让此刻之前签发的所有 Cookie 失效（所有设备都要重新用启动令牌登录）；单张记录随之没用了，一并清空 */
-export function revokeAllSessions(now = Date.now()): void {
-	writeSessionRevocations({ notBefore: Math.max(now, loadSessionRevocations().notBefore), revoked: new Map() });
+export async function revokeSessionCookie(id: string, expiresAt: number, now = Date.now()): Promise<void> {
+	await updateSessionRevocations((current) => {
+		const revoked = new Map([...current.revoked].filter(([, until]) => until > now));
+		revoked.set(id, Math.max(expiresAt, revoked.get(id) ?? 0));
+		return { notBefore: current.notBefore, revoked };
+	});
+}
+
+/** 让此刻之前签发的 Cookie 失效；保留未过期的单张吊销，覆盖等待锁期间新签发后又退出的 Cookie。 */
+export async function revokeAllSessions(now?: number): Promise<void> {
+	await updateSessionRevocations((current) => {
+		// Legacy cookies use the time cutoff; new credentials bind this strictly
+		// increasing generation, including when the wall clock stalls or moves back.
+		const cutoff = now ?? Date.now() + 1;
+		const notBefore = Math.max(cutoff, current.notBefore + 1);
+		if (!Number.isSafeInteger(notBefore)) throw new Error("Session revocation generation is exhausted; existing records were retained");
+		return { notBefore, revoked: new Map([...current.revoked].filter(([, expiresAt]) => expiresAt > cutoff)) };
+	});
 }

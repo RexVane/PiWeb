@@ -8,8 +8,10 @@ export interface ParsedVersion {
 }
 
 export function parseVersion(value: string): ParsedVersion | null {
-	const m = value.trim().replace(/^v/i, "").match(/^(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?/);
+	const m = value.trim().replace(/^v/i, "").match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
 	if (!m) return null;
+	if (m.slice(1, 4).some((part) => part !== undefined && !Number.isSafeInteger(Number(part)))) return null;
+	if (m[4]?.split(".").some((part) => /^0\d+$/.test(part))) return null;
 	return { nums: [Number(m[1]), Number(m[2]), Number(m[3] ?? 0)], pre: m[4] ? m[4].split(".") : [] };
 }
 
@@ -29,7 +31,7 @@ export function isNewer(a: string, b: string): boolean {
 		const nx = /^\d+$/.test(x);
 		const ny = /^\d+$/.test(y);
 		if (nx && ny) {
-			if (Number(x) !== Number(y)) return Number(x) > Number(y);
+			if (BigInt(x) !== BigInt(y)) return BigInt(x) > BigInt(y);
 			continue;
 		}
 		if (nx !== ny) return ny;

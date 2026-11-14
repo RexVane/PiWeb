@@ -1,3 +1,4 @@
+import { clientFetch as fetch } from "@/lib/client-fetch";
 import { useSyncExternalStore } from "react";
 
 /**

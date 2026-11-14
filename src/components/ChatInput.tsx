@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * 输入卡（对齐 dsh ui-conversation InputBar 结构）：
@@ -6,17 +8,20 @@
  * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
  * 排队中的消息列在输入卡上方，↑（空输入框时）取回编辑。Enter 发送 / Shift+Enter 换行。
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-	IconAtOutline16,
 	IconCloseOutline14,
+	IconEditOutline16,
 	IconFileOutline16,
 	IconFolderClose16,
 	IconSendArrowUp14,
 	IconStopFill16,
+	IconRefreshOutline14,
 	IconTerminalOutline14,
+	IconTrashOutline16,
 } from "@/components/icons";
 import { ContextMeter } from "@/components/ContextMeter";
+import { ErrorToast } from "@/components/ErrorToast";
 import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
 import { ComposerFiles } from "@/components/composer/ComposerFiles";
 import { PermissionSelector, type PermissionChangeResult } from "@/components/composer/PermissionSelector";
@@ -27,6 +32,8 @@ import { fmtBytes } from "@/lib/format";
 import { otherBehavior, useEnterBehavior } from "@/lib/enter-behavior";
 import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/workspace-index";
 import { slashCommandToken } from "@/lib/slash-command-token";
+import { composePrompt } from "@/lib/chat/compose-prompt";
+import { prepareImageAttachment, MAX_IMAGE_BYTES, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "@/lib/chat/image-attachment";
 import type { ImageAttachment, ToolPreset } from "@/lib/types";
 
 export interface SlashCommand {
@@ -36,6 +43,10 @@ export interface SlashCommand {
 	kind: "builtin" | "skill" | "template" | "extension";
 	/** 提示模板的参数提示（frontmatter argument-hint） */
 	argumentHint?: string;
+}
+
+function qualifiedCommandName(command: SlashCommand): string {
+	return command.kind === "template" || command.kind === "extension" ? `${command.kind}:${command.name}` : command.name;
 }
 
 export interface ChatDraft {
@@ -52,11 +63,13 @@ export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [], 
 
 type SendResult = { success: boolean; error?: string };
 const MAX_UPLOAD_FILES = 16;
+/** 服务端同一时刻只收一个上传（多出来的直接 503）：一次选了多个文件就排队逐个发；切会话重挂载也共用这一条队 */
+let uploadQueue: Promise<void> = Promise.resolve();
 /** Hero 会在服务端预渲染；useLayoutEffect 在服务端没有意义，退回 useEffect 避免警告。 */
 const useComposerLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-/** abort / clearQueue 命令的返回：服务端清出来的排队文本，放回输入框用 */
-type QueueResult = { success?: boolean; data?: { steering?: string[]; followUp?: string[] } };
+/** abort / clearQueue / sendQueueNow 命令的返回：服务端清出来的排队文本，放回输入框用 */
+type QueueResult = { success?: boolean; error?: string; data?: { steering?: string[]; followUp?: string[]; images?: ImageAttachment[] } };
 
 export function ChatInput({
 	disabled,
@@ -84,10 +97,12 @@ export function ChatInput({
 	onSelectModel,
 	onSelectLevel,
 	onClearQueue,
+	onSendQueueNow,
 	draft,
 	initialDraft,
 	onDraftChange,
 	onUploadError,
+	onClearUploadError,
 	onUploadProgress,
 	uploadFailure,
 	pendingUploadCount = 0,
@@ -98,6 +113,7 @@ export function ChatInput({
 	customActiveTools,
 	onToolPresetChange,
 	permissionChanging = false,
+	topSlot,
 }: {
 	disabled?: boolean;
 	isStreaming: boolean;
@@ -137,11 +153,14 @@ export function ChatInput({
 	onSelectLevel: (level: string) => void;
 	/** 清空队列并返回被清掉的文本（取回编辑 / 丢弃都走它） */
 	onClearQueue?: () => Promise<QueueResult | void> | void;
+	/** 打断当前回复并立即发送队列里的待发消息 */
+	onSendQueueNow?: () => Promise<QueueResult | void> | void;
 	/** Parent-owned, session-scoped draft. Async work always updates this same target. */
 	draft?: ChatDraft;
 	initialDraft?: ChatDraft;
 	onDraftChange?: (update: ChatDraftUpdate) => void;
 	onUploadError?: (message: string) => void;
+	onClearUploadError?: () => void;
 	onUploadProgress?: (delta: 1 | -1) => void;
 	uploadFailure?: string;
 	pendingUploadCount?: number;
@@ -153,6 +172,8 @@ export function ChatInput({
 	customActiveTools?: string[] | null;
 	onToolPresetChange?: (preset: ToolPreset) => Promise<PermissionChangeResult>;
 	permissionChanging?: boolean;
+	/** 问题卡等直接融进输入卡顶部的组件（与 .pw-queue 共用外框、描边与圆角） */
+	topSlot?: ReactNode;
 }) {
 	const [localDraft, setLocalDraft] = useState<ChatDraft>(initialDraft ?? EMPTY_CHAT_DRAFT);
 	const currentDraft = draft ?? localDraft;
@@ -173,11 +194,15 @@ export function ChatInput({
 	const inFlightUploads = useRef(0);
 	const mountedRef = useRef(true);
 	const sendingRef = useRef(false);
+	const queueSendingRef = useRef(false);
+	const stoppingRef = useRef(false);
+	const [stopping, setStopping] = useState(false);
 	const [sending, setSending] = useState(false);
+	const [queueSending, setQueueSending] = useState(false);
 	const [attachmentError, setAttachmentError] = useState("");
 	const [uploadCount, setUploadCount] = useState(0);
 	const uploadBusy = uploadCount > 0 || pendingUploadCount > 0;
-	const sendBusy = sending || pendingSend;
+	const sendBusy = sending || pendingSend || stopping;
 	const [dragActive, setDragActive] = useState(false);
 	/** 引用 chip 超过 COLLAPSE_AT 就先折叠：手机上折行会把输入框顶掉（图片的折叠在 ComposerImages 里） */
 	const [refsExpanded, setRefsExpanded] = useState(false);
@@ -200,6 +225,11 @@ export function ChatInput({
 	const queuedCount = queue.steering.length + queue.followUp.length;
 	const [restoreTick, setRestoreTick] = useState(0);
 
+	const clearAttachmentError = useCallback(() => {
+		setAttachmentError("");
+		onClearUploadError?.();
+	}, [onClearUploadError]);
+
 	useEffect(() => {
 		mountedRef.current = true;
 		return () => { mountedRef.current = false; };
@@ -207,6 +237,11 @@ export function ChatInput({
 	useEffect(() => {
 		setAttachmentError(uploadFailure ?? "");
 	}, [uploadFailure]);
+	useEffect(() => {
+		if (!attachmentError) return;
+		const timer = setTimeout(clearAttachmentError, 6000);
+		return () => clearTimeout(timer);
+	}, [attachmentError, clearAttachmentError]);
 	// 输入框长高必须和文本同一次绘制完成；放到 useEffect 会先画旧高度、再跳一帧。
 	useComposerLayoutEffect(() => {
 		autoSize();
@@ -216,7 +251,7 @@ export function ChatInput({
 	const commandToken = slashCommandToken(text, commandCaret);
 	const slash = commandToken?.query ?? "";
 	const typedCommandMode = !adopted && !!commands?.length && !!commandToken && !cmdDismissed;
-	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.toLowerCase()));
+	const filteredCommands = (commands ?? []).filter((c) => c.name.toLowerCase().startsWith(slash.toLowerCase()) || qualifiedCommandName(c).toLowerCase().startsWith(slash.toLowerCase()));
 	const visibleCommands = filteredCommands;
 	const commandMode = typedCommandMode;
 
@@ -320,12 +355,13 @@ export function ChatInput({
 
 	// 行内扩展命令（如 /fast）自己执行：不能为了切换它把周围的草稿、图片或引用一起发出去
 	const runInlineExtension = async (entry: SlashCommand) => {
-		if (disabled || isBlocked || sendingRef.current || pendingSend || permissionChanging || uploadBusy) return;
+		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || permissionChanging || uploadBusy) return;
 		const original = text;
 		const remaining = withoutCommandToken();
 		sendingRef.current = true;
 		setSending(true);
 		onSendPendingChange?.(true);
+		clearAttachmentError();
 		setText(remaining);
 		setCommandCaret(remaining.length);
 		setCmdDismissed(true);
@@ -361,7 +397,7 @@ export function ChatInput({
 			else adoptCommand(entry);
 			return;
 		}
-		const args = slash.slice(entry.name.length).trim();
+		const args = commandToken ? text.slice(commandToken.tokenEnd).trim() : slash.slice(entry.name.length).trim();
 		if (entry.kind === "builtin" && entry.name === "model") {
 			setModelOpen(true);
 			setText("");
@@ -372,13 +408,13 @@ export function ChatInput({
 			onCommand?.(entry.name, args);
 		} else if (entry.kind === "template" && entry.argumentHint && !args) {
 			// 模板要参数：把 /name 留在输入框里等用户补参数，而不是直接发空参数
-			setText(`/${entry.name} `);
+			setText(`/${qualifiedCommandName(entry)} `);
 			setCmdDismissed(true);
 			requestAnimationFrame(() => taRef.current?.focus());
 			return;
 		} else {
 			// 技能 / 模板 / 扩展命令：交给 pi 展开执行（SDK 的 prompt() 会识别 /skill:x、/template、扩展命令）
-			doSend(undefined, `/${entry.name}${args ? ` ${args}` : ""}`);
+			doSend(undefined, `/${qualifiedCommandName(entry)}${args ? ` ${args}` : ""}`);
 			return;
 		}
 		setText("");
@@ -386,32 +422,52 @@ export function ChatInput({
 		setCmdDismissed(false);
 	};
 
-	// 自动高度：上限 14 行（约 336px）
+	// 自动高度：上限 14 行（约 336px）；清空后恢复自然单行高度，避免被弹性容器拉伸后的 scrollHeight 自锁
 	const autoSize = () => {
 		const ta = taRef.current;
 		if (!ta) return;
+		if (!ta.value) {
+			ta.style.height = "";
+			return;
+		}
 		ta.style.height = "auto";
 		ta.style.height = `${Math.min(ta.scrollHeight, 336)}px`;
 	};
+	useEffect(() => {
+		const resize = () => autoSize();
+		window.addEventListener("resize", resize);
+		return () => window.removeEventListener("resize", resize);
+	}, []);
 
 	const doSend = (override?: "steer" | "followUp", forcedText?: string) => {
-		if (disabled || isBlocked || sendingRef.current || pendingSend || permissionChanging || uploadBusy) return;
+		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || permissionChanging || uploadBusy) return;
 		sendingRef.current = true;
 		setSending(true);
 		onSendPendingChange?.(true);
 		const raw = (forcedText ?? draftRef.current.text).trim();
 		const refs = [...(draftRef.current.references ?? [])];
-		const trimmed = adopted ? `/${adopted.name}${raw ? ` ${raw}` : ""}` : raw;
+		const trimmed = adopted ? `/${qualifiedCommandName(adopted)}${raw ? ` ${raw}` : ""}` : raw;
 		void (async () => {
 			try {
 				if (pendingReads.current.length) await Promise.allSettled(pendingReads.current);
 				const submitted = draftRef.current;
 				const attachments = [...submitted.images];
 				const files = [...submitted.uploads];
+				if (attachments.length > 20 || attachments.reduce((total, image) => total + image.data.length, 0) > MAX_IMAGES_BASE64) { setAttachmentError(t.restoredImagesTooLarge); return; }
 				if (!trimmed && attachments.length === 0 && files.length === 0 && refs.length === 0) return;
+				clearAttachmentError();
+				if (trimmed.length > MAX_MESSAGE_CHARS) { setAttachmentError(t.messageTooLarge); return; }
+				if (attachments.length && models.find((item) => item.provider === model?.provider && item.id === model?.id)?.input?.includes("image") === false) {
+					setAttachmentError(t.modelNoImages); return;
+				}
+				const explicit = /^\/(template|extension):([^\s]+)/.exec(trimmed);
+				const explicitEntry = explicit ? (commands ?? []).find((command) => command.kind === explicit[1] && command.name.toLowerCase() === explicit[2].toLowerCase()) : undefined;
+				if (explicit && !explicitEntry) {
+					setAttachmentError(t.commandNotAvailable); return;
+				}
 				if (trimmed.startsWith("/") && attachments.length === 0 && files.length === 0 && refs.length === 0) {
 					const [head, ...rest] = trimmed.slice(1).split(/\s+/);
-					const builtin = (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
+					const builtin = !explicit && (commands ?? []).find((c) => c.kind === "builtin" && c.name.toLowerCase() === head.toLowerCase());
 					if (builtin) {
 						if (builtin.name === "model") setModelOpen(true);
 						else onCommand?.(builtin.name, rest.join(" "));
@@ -422,17 +478,18 @@ export function ChatInput({
 				}
 				// 引用 chip 在发送时拼成 @路径 行(和 pi 的 @ 语法一致),显示与正文分开互不干扰
 				const compose = (base: string) => {
-					const parts = [base];
+					const parts: string[] = [];
 					if (refs.length) parts.push(refs.map((path) => `@${path}`).join("\n"));
 					if (files.length) parts.push(files.map((f) => t.attachmentLine.replace("{path}", f.path).replace("{size}", fmtUploadSize(f.size))).join("\n"));
-					return parts.filter(Boolean).join("\n\n");
+					return composePrompt(base, parts);
 				};
+				const wireText = explicit && explicitEntry ? `/${explicitEntry.name}${trimmed.slice(explicit[0].length)}` : trimmed;
 				let result: SendResult;
 				if (isStreaming) {
 					const mode = override ?? (enterBehavior === "steer" ? "steer" : "followUp");
-					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(trimmed), attachments);
-					else result = await onSteer(compose(trimmed), attachments);
-				} else result = await onSend(compose(trimmed), attachments);
+					if (mode === "followUp" && onFollowUp) result = await onFollowUp(compose(wireText), attachments);
+					else result = await onSteer(compose(wireText), attachments);
+				} else result = await onSend(compose(wireText), attachments);
 				if (!result?.success) {
 					if (forcedText) setText(forcedText);
 					if (result?.error && mountedRef.current) setAttachmentError(result.error);
@@ -462,8 +519,12 @@ export function ChatInput({
 	/** 把服务端清出来的排队文本放回输入框（接在已有草稿前面；pi 终端 Esc / Alt+Up、Claude Code ↑ 同款） */
 	const restoreQueued = (r: QueueResult | void) => {
 		const texts = [...(r?.data?.steering ?? []), ...(r?.data?.followUp ?? [])];
-		if (!texts.length) return;
-		setText((prev) => [texts.join("\n\n"), prev].filter((s) => s.trim()).join("\n\n"));
+		const restoredImages = r?.data?.images ?? [];
+		if (!texts.length && !restoredImages.length) return;
+		changeDraft((previous) => ({ ...previous, text: [texts.join("\n\n"), previous.text].filter((s) => s.trim()).join("\n\n"), images: [...restoredImages, ...previous.images] }));
+		// Keep every recovered attachment; an over-budget draft remains editable
+		// and cannot be submitted until the user reduces it.
+		if (mountedRef.current && (draftRef.current.images.length > 20 || draftRef.current.images.reduce((total, image) => total + image.data.length, 0) > MAX_IMAGES_BASE64)) setAttachmentError(t.restoredImagesTooLarge);
 		setCmdDismissed(true);
 		setRestoreTick((n) => n + 1);
 	};
@@ -473,29 +534,62 @@ export function ChatInput({
 		taRef.current?.focus();
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [restoreTick]);
-	const stopAndRestore = async () => restoreQueued(await onAbort());
-	const pullQueue = async () => restoreQueued(await onClearQueue?.());
+	const stopAndRestore = async () => {
+		if (stoppingRef.current) return;
+		stoppingRef.current = true;
+		setStopping(true);
+		try {
+			const result = await onAbort();
+			restoreQueued(result);
+			if (result?.success === false && result.error) setAttachmentError(result.error);
+		} catch (error) { setAttachmentError(error instanceof Error ? error.message : String(error)); }
+		finally { stoppingRef.current = false; if (mountedRef.current) setStopping(false); }
+	};
+	const pullQueue = async () => {
+		try { const result = await onClearQueue?.(); restoreQueued(result); if (result?.success === false && result.error) setAttachmentError(result.error); }
+		catch (error) { setAttachmentError(error instanceof Error ? error.message : String(error)); }
+	};
+	const sendQueueNow = async () => {
+		if (!onSendQueueNow || queueSendingRef.current) return;
+		queueSendingRef.current = true;
+		setQueueSending(true);
+		clearAttachmentError();
+		try {
+			const result = await onSendQueueNow();
+			if (result && result.success === false) {
+				restoreQueued(result);
+				if (mountedRef.current && result.error) setAttachmentError(result.error);
+			}
+		} catch (error) {
+			if (mountedRef.current) setAttachmentError(error instanceof Error ? error.message : String(error));
+		} finally {
+			queueSendingRef.current = false;
+			if (mountedRef.current) setQueueSending(false);
+		}
+	};
 
 	const pickFiles = (files: FileList | File[] | null) => {
-		if (!files || disabled || isBlocked || sendingRef.current || pendingSend) return;
+		if (!files) return;
+		if (disabled || isBlocked || sendingRef.current || pendingSend) { setAttachmentError(t.attachmentBusy); return; }
 		for (const f of Array.from(files)) {
 			if (["image/jpeg", "image/png", "image/webp", "image/gif"].includes(f.type)) {
+				if (draftRef.current.images.length + pendingReads.current.length >= 20) { setAttachmentError(t.imageCountLimit); continue; }
+				if (f.type === "image/gif" && f.size > MAX_IMAGE_BYTES) { setAttachmentError(t.imageGifTooLarge); continue; }
 				if (f.size > 20 * 1024 * 1024) {
 					setAttachmentError(t.imageTooLarge);
 					continue;
 				}
-					const read = new Promise<void>((resolve) => {
-						const reader = new FileReader();
-						reader.onload = () => {
-							const dataUrl = String(reader.result);
-							const image: ImageAttachment = { type: "image", data: dataUrl.slice(dataUrl.indexOf(",") + 1), mimeType: f.type };
-							changeDraft((previous) => previous.images.length >= 20 ? previous : { ...previous, images: [...previous.images, image] });
-							resolve();
-						};
-						reader.onerror = () => resolve();
-						reader.onabort = () => resolve();
-						reader.readAsDataURL(f);
-					});
+					// Reserve the count before decoding, and prepare one bitmap at a time.
+					// The parent callback retains this draft's owner across workspace changes.
+					const previousRead = pendingReads.current.at(-1) ?? Promise.resolve();
+					const read = previousRead.then(() => prepareImageAttachment(f)).then((image) => {
+						changeDraft((previous) => {
+							if (previous.images.length >= 20 || previous.images.reduce((sum, item) => sum + item.data.length, image.data.length) > MAX_IMAGES_BASE64) {
+								if (mountedRef.current) setAttachmentError(t.imageCountLimit); return previous;
+							}
+							return { ...previous, images: [...previous.images, image] };
+						});
+					}).catch(() => { if (mountedRef.current) setAttachmentError(t.imageReadFailed); });
 					pendingReads.current.push(read);
 					void read.finally(() => { pendingReads.current = pendingReads.current.filter((pending) => pending !== read); });
 				} else {
@@ -516,13 +610,16 @@ export function ChatInput({
 		inFlightUploads.current += 1;
 		onUploadProgress?.(1);
 		setUploadCount((count) => count + 1);
-		setAttachmentError("");
+		clearAttachmentError();
 		try {
-			const r = await fetch(`/api/files?action=upload&name=${encodeURIComponent(f.name)}`, {
+			const send = () => fetch(`/api/files/upload?name=${encodeURIComponent(f.name)}`, {
 				method: "POST",
 				headers: { "Content-Type": "application/octet-stream", "x-upload-size": String(f.size) },
 				body: f,
 			});
+			const request = uploadQueue.then(send, send);
+			uploadQueue = request.then(() => undefined, () => undefined);
+			const r = await request;
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || "upload failed");
 			if (j.data?.size !== f.size) throw new Error("upload size mismatch");
@@ -592,53 +689,9 @@ export function ChatInput({
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
-			{/* 排队中的消息（高质感浮动拟态胶囊 dock：左侧消息与彩色药丸徽标，右侧快捷键微胶囊按钮） */}
-			{queuedCount > 0 && (
-				<div className="pw-queue" role="status" aria-live="polite">
-					<div className="pw-queue-list">
-						{queue.steering.map((q, i) => (
-							<div key={`s${i}`} className="pw-queue-row" title={q}>
-								<span className="pw-queue-tag pw-queue-tag-steer">
-									<span className="pw-queue-dot" />
-									{t.modeSteer}
-								</span>
-								<span className="pw-queue-text">{q}</span>
-							</div>
-						))}
-						{queue.followUp.map((q, i) => (
-							<div key={`f${i}`} className="pw-queue-row" title={q}>
-								<span className="pw-queue-tag pw-queue-tag-queue">
-									<span className="pw-queue-dot" />
-									{t.modeQueue}
-								</span>
-								<span className="pw-queue-text">{q}</span>
-							</div>
-						))}
-					</div>
-					<div className="pw-queue-foot">
-						<button
-							type="button"
-							className="pw-queue-btn pw-queue-btn-pull"
-							onClick={() => void pullQueue()}
-							title="↑"
-						>
-							<span className="pw-queue-kbd">↑</span>
-							<span>{t.queueEdit.replace(/^[↑\s]+/, "") || t.queueEdit}</span>
-						</button>
-						<button
-							type="button"
-							className="pw-queue-btn pw-queue-btn-drop"
-							onClick={() => void onClearQueue?.()}
-						>
-							{t.queueDrop}
-						</button>
-					</div>
-				</div>
-			)}
 			{attachmentError && (
-				<div className="pw-toast-card pw-toast-error mb-2" role="alert">
-					<span className="pw-toast-icon" aria-hidden="true">✕</span>
-					<span className="pw-toast-body">{attachmentError}</span>
+				<div className="mb-2 flex justify-center">
+					<ErrorToast message={attachmentError} onDismiss={clearAttachmentError} />
 				</div>
 			)}
 			{/* @ 引用候选（与斜杠菜单同一处锚点：输入卡上方） */}
@@ -654,10 +707,11 @@ export function ChatInput({
 					<div className="flex items-center gap-2 px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
 						<span>{t.mentionFiles}</span>
 						{files.truncated && <span style={{ color: "var(--dsw-warn)" }}>{t.mentionTruncated}</span>}
-						{files.source === "disk" && <span title={t.mentionDiskSourceHint}>{t.mentionDiskSource}</span>}
+						{files.source === "disk" && <span title={files.warning ? t.mentionGitFallback : t.mentionDiskSourceHint}>{t.mentionDiskSource}</span>}
 						<span className="flex-1" />
 						<span>{t.mentionHint}</span>
 					</div>
+					{files.warning && <div role="status" className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-warn)" }}>{t.mentionGitFallback}</div>}
 					{files.status === "loading" && (
 						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
 					)}
@@ -674,7 +728,8 @@ export function ChatInput({
 							role="option"
 							aria-selected={i === effectiveMentionIdx}
 							data-active={i === effectiveMentionIdx ? "true" : undefined}
-							className="isx-menu-item mx-1.5 flex w-[calc(100%-12px)] items-center gap-2 px-3 py-1.5 text-left"
+							className="isx-menu-item mx-1.5 flex w-[calc(100%-12px)] items-center gap-2 rounded-lg px-3 py-1.5 text-left"
+							style={{ padding: "6px 12px" }}
 							onMouseEnter={() => setMentionIdx(i)}
 							onClick={() => applyMention(candidate)}
 							title={candidateText(candidate)}
@@ -710,9 +765,11 @@ export function ChatInput({
 						<button
 							key={`${c.kind}:${c.name}`}
 							role="option"
+							title={`/${qualifiedCommandName(c)}`}
 							aria-selected={i === effectiveIdx}
 							data-active={i === effectiveIdx ? "true" : undefined}
-							className="isx-menu-item mx-1.5 flex w-[calc(100%-12px)] items-baseline gap-3 px-3 py-2 text-left"
+							className="isx-menu-item mx-1.5 flex w-[calc(100%-12px)] items-baseline gap-3 rounded-lg px-3 py-2 text-left"
+							style={{ padding: "8px 12px" }}
 							onMouseEnter={() => setCmdIdx(i)}
 							onClick={() => runEntry(c)}
 						>
@@ -803,6 +860,66 @@ export function ChatInput({
 
 			{/* 卡片（Iconsax .isx-composer：24px 圆角 + 聚焦高对比描边 + 底部流光短横条 + 运行中环绕虹彩流光轨道）—— 拖放由 document 级监听统一接管 */}
 			<div className="isx-composer relative w-full" data-streaming={isStreaming ? "true" : undefined}>
+				{topSlot}
+				{/* 排队 / 插话消息：贴合输入卡顶部的一体式轻量状态条，避免独立悬空盒与多层套框 */}
+				{queuedCount > 0 && (
+					<div className="pw-queue" role="status" aria-live="polite" data-testid="composer-queue">
+						<div className="pw-queue-list">
+							{queue.steering.map((q, i) => (
+								<div key={`s${i}`} className="pw-queue-row" title={q}>
+									<span className="pw-queue-tag pw-queue-tag-steer">
+										<span className="pw-queue-dot" />
+										{t.modeSteer}
+									</span>
+									<span className="pw-queue-text">{q}</span>
+								</div>
+							))}
+							{queue.followUp.map((q, i) => (
+								<div key={`f${i}`} className="pw-queue-row" title={q}>
+									<span className="pw-queue-tag pw-queue-tag-queue">
+										<span className="pw-queue-dot" />
+										{t.modeQueue}
+									</span>
+									<span className="pw-queue-text">{q}</span>
+								</div>
+							))}
+						</div>
+						<div className="pw-queue-foot">
+							<button
+								type="button"
+								className="pw-queue-btn pw-queue-btn-pull"
+								disabled={queueSending}
+								onClick={() => void pullQueue()}
+								title={t.queueEdit}
+								aria-label={t.queueEdit}
+							>
+								<IconEditOutline16 size={14} aria-hidden="true" />
+							</button>
+							<button
+								type="button"
+								className="pw-queue-btn pw-queue-btn-drop"
+								disabled={queueSending}
+								onClick={() => void onClearQueue?.()}
+								title={t.queueDrop}
+								aria-label={t.queueDrop}
+							>
+								<IconTrashOutline16 size={14} aria-hidden="true" />
+							</button>
+							{onSendQueueNow && (
+								<button
+									type="button"
+									className="pw-queue-btn pw-queue-btn-send"
+									disabled={sendBusy || queueSending}
+									onClick={() => void sendQueueNow()}
+									title={isStreaming ? t.queueSendNow : t.queueSendNowIdle}
+									aria-label={isStreaming ? t.queueSendNow : t.queueSendNowIdle}
+								>
+									<IconSendArrowUp14 size={14} aria-hidden="true" />
+								</button>
+							)}
+						</div>
+					</div>
+				)}
 				<div className="px-4 pt-3 flex flex-col items-stretch gap-1.5">
 					{adopted && (
 						<button
@@ -935,6 +1052,9 @@ export function ChatInput({
 								void pullQueue();
 								return;
 							}
+							if (e.key === "Escape" && isStreaming && !e.nativeEvent.isComposing) {
+								e.preventDefault(); void stopAndRestore(); return;
+							}
 							if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
 								e.preventDefault();
 								// Ctrl / ⌘ + Enter：用设置之外的另一种方式发（只在运行中有区别）
@@ -996,10 +1116,13 @@ export function ChatInput({
 						<button
 							className="btn-primary-circle isx-btn-stop"
 							data-streaming="true"
-							title={t.stop}
+							title={stopping ? t.stopping : t.stop}
+							aria-label={stopping ? t.stopping : t.stop}
+							aria-busy={stopping}
+							disabled={stopping}
 							onClick={() => void stopAndRestore()}
 						>
-							<IconStopFill16 size={16} />
+							{stopping ? <IconRefreshOutline14 size={16} className="piweb-spin" /> : <IconStopFill16 size={16} />}
 						</button>
 					) : (
 						<>
@@ -1007,10 +1130,13 @@ export function ChatInput({
 								<button
 									className="btn-ghost-circle isx-btn-stop"
 									data-streaming="true"
-									title={t.stop}
+									title={stopping ? t.stopping : t.stop}
+									aria-label={stopping ? t.stopping : t.stop}
+									aria-busy={stopping}
+									disabled={stopping}
 									onClick={() => void stopAndRestore()}
 								>
-									<IconStopFill16 size={14} />
+									{stopping ? <IconRefreshOutline14 size={14} className="piweb-spin" /> : <IconStopFill16 size={14} />}
 								</button>
 							)}
 							<button

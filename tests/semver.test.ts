@@ -26,4 +26,9 @@ describe("semver", () => {
 		expect(isNewer("latest", "0.4.0")).toBe(false);
 		expect(isNewer("0.4.0", "")).toBe(false);
 	});
+	it("rejects suffix garbage, empty segments, leading zeros and oversized core numbers", () => {
+		for (const raw of ["2.0.0junk", "2.0.0-beta..1", "2.0.0-beta.01", "02.0.0", "2.0.0+build..1", "999999999999999999.0.0"]) expect(parseVersion(raw)).toBeNull();
+		expect(parseVersion("2.0.0+build.1")).toEqual({ nums: [2, 0, 0], pre: [] });
+		expect(isNewer("2.0.0-999999999999999999999", "2.0.0-999999999999999999998")).toBe(true);
+	});
 });

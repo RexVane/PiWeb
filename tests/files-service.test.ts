@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 import { isSafeWindowsEditorArgument, listWorkspaceDir, listWorkspaceIndex, parseLsFiles, readWorkspaceFile } from "../src/lib/files-service";
 import { utf8Prefix } from "../src/lib/text-sanitize";
 
@@ -31,7 +32,7 @@ it("paginates a large directory without dropping files", async () => {
 	} finally {
 		vi.restoreAllMocks();
 		if (path.dirname(cwd).toLowerCase() === os.tmpdir().toLowerCase() && path.basename(cwd).startsWith("piweb-files-page-")) {
-			await fs.rm(cwd, { recursive: true, force: true });
+			await recycleFixture(cwd);
 		}
 	}
 }, 20_000);
@@ -66,7 +67,7 @@ it("目录列举跳过 .gitignore 忽略的条目，和快照树一个口径", a
 		// backups/ 目录本身没被忽略（只忽略它里面的实体）：进得去，里面只剩 INDEX.md
 		expect((await listWorkspaceDir(cwd, "backups", 0)).entries.map((entry) => entry.name)).toEqual(["INDEX.md"]);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 }, 20_000);
 
@@ -79,7 +80,7 @@ it("不是 git 仓库时不过滤（宁可多显示，不能藏用户的项目�
 		const names = (await listWorkspaceDir(cwd, "", 0)).entries.map((entry) => entry.name).sort();
 		expect(names).toEqual([".gitignore", "keep.txt", "node_modules"]);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 }, 20_000);
 
@@ -92,7 +93,7 @@ it("limits large file previews to 256 KiB", async () => {
 		expect(preview.truncated).toBe(true);
 		expect(preview.content).toHaveLength(256 * 1024);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 });
 
@@ -107,7 +108,7 @@ it("cuts a truncated preview on a character boundary, not in the middle of a UTF
 		expect(preview.content).not.toContain("�");
 		expect(preview.content).toBe(`ab${"中".repeat(87_380)}`);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 	// 4 字节字符同理
 	expect(utf8Prefix(Buffer.from("x😀"), 3).toString("utf8")).toBe("x");
@@ -127,7 +128,7 @@ it("sorts directory junctions with directories before paged files", async () => 
 			{ name: "file.txt", kind: "file", size: 7 },
 		]);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 });
 
@@ -151,11 +152,11 @@ it("indexes git-visible files for @ references, honoring .gitignore", async () =
 		expect(index.files).toEqual([".gitignore", "src/app/main.ts", "tracked.txt", "untracked.txt"]);
 		expect(index.files.some((file) => file.includes("node_modules"))).toBe(false);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 }, 30_000);
 
-it("surfaces git failures other than 'not a repository' instead of silently walking the disk", async () => {
+it("falls back visibly after a broken Git index and warns that ignore semantics cannot be retained", async () => {
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-broken-"));
 	try {
 		execFileSync("git", ["init", "-q", cwd], { windowsHide: true });
@@ -164,9 +165,16 @@ it("surfaces git failures other than 'not a repository' instead of silently walk
 		expect((await listWorkspaceIndex(cwd)).files).toEqual(["中文 文件.txt"]);
 
 		await fs.writeFile(path.join(cwd, ".git", "index"), "not an index");
-		await expect(listWorkspaceIndex(cwd)).rejects.toThrow(/^git ls-files failed: fatal: .*index/);
+		await fs.writeFile(path.join(cwd, ".gitignore"), "ignored.txt\n");
+		await fs.writeFile(path.join(cwd, "ignored.txt"), "ignored");
+		const fallback = await listWorkspaceIndex(cwd);
+		expect(fallback.source).toBe("disk");
+		expect(fallback.truncated).toBe(true);
+		expect(fallback.warning).toContain(".gitignore");
+		expect(fallback.files).toContain("ignored.txt");
+		expect(fallback.files).toContain("中文 文件.txt");
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 }, 30_000);
 
@@ -187,11 +195,40 @@ it("falls back to a directory walk outside git, skipping heavy directories and c
 		expect(index.files.some((file) => file.includes("node_modules"))).toBe(false);
 		expect(index.files).not.toContain(`${Array.from({ length: 14 }, (_, i) => `d${i}`).join("/")}/too-deep.ts`);
 	} finally {
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 	}
 }, 30_000);
 
 it("parses ls-files output into safe workspace-relative paths", () => {
 	expect(parseLsFiles("b.ts\0a.ts\0b.ts\0src\\win.ts\0../escape.ts\0/etc/passwd\0")).toEqual(["b.ts", "a.ts", "src/win.ts"]);
 	expect(parseLsFiles("")).toEqual([]);
+});
+
+it("checks ignore rules for only the requested page, including all-ignored pages", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-ignored-page-"));
+	try {
+		execFileSync("git", ["init", "-q", cwd], { windowsHide: true });
+		await fs.writeFile(path.join(cwd, ".gitignore"), "ignored-*\n");
+		await Promise.all(Array.from({ length: 2100 }, (_, index) => fs.writeFile(path.join(cwd, "ignored-" + String(index).padStart(4, "0")), "")));
+		await fs.writeFile(path.join(cwd, "visible.txt"), "visible");
+		const first = await listWorkspaceDir(cwd, "", 0);
+		expect(first.nextOffset).toBe(2000);
+		expect(first.entries.map((entry) => entry.name)).not.toContain("visible.txt");
+		const second = await listWorkspaceDir(cwd, "", first.nextOffset);
+		expect(second.entries).toEqual([{ name: "visible.txt", kind: "file", size: 7 }]);
+		expect(second.nextOffset).toBeNull();
+	} finally { await recycleFixture(cwd); }
+}, 30_000);
+
+it("reuses a stable non-Git file index while refreshing after root metadata changes", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-index-cache-"));
+	try {
+		await fs.writeFile(path.join(cwd, "first.txt"), "first");
+		const first = await listWorkspaceIndex(cwd);
+		const readdir = vi.spyOn(fs, "readdir");
+		try { expect(await listWorkspaceIndex(cwd)).toBe(first); expect(readdir).not.toHaveBeenCalled(); }
+		finally { readdir.mockRestore(); }
+		await fs.writeFile(path.join(cwd, "second.txt"), "second");
+		expect((await listWorkspaceIndex(cwd)).files).toEqual(["first.txt", "second.txt"]);
+	} finally { await recycleFixture(cwd); }
 });

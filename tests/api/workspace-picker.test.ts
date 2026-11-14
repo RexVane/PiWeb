@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/workspaces/route";
 import { getWorkspaceRegistry } from "@/lib/workspace-store";
 
+const pickerAppRoot = vi.hoisted(() => ({ value: process.cwd() }));
+vi.mock("@/lib/app-root", () => ({ get APP_ROOT() { return pickerAppRoot.value; } }));
+
 // 真正启动本机选择器子进程、校验路径并写入临时注册表；只替换外部对话框程序。
-describe.skipIf(process.platform === "win32")("workspace picker API and native process", () => {
+describe("workspace picker API and native process", () => {
 	let root: string;
 	let project: string;
 	let fixture: string;
@@ -20,8 +23,23 @@ describe.skipIf(process.platform === "win32")("workspace picker API and native p
 		const bin = path.join(root, "bin");
 		await fs.mkdir(project);
 		await fs.mkdir(bin);
-		const executable = path.join(bin, process.platform === "darwin" ? "osascript" : "zenity");
-		await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require("node:fs");\nconst data = JSON.parse(fs.readFileSync(process.env.PIWEB_PICKER_FIXTURE_FILE, "utf8"));\nfs.writeFileSync(data.called, "yes");\nprocess.stdout.write(data.stdout || "");\nprocess.stderr.write(data.stderr || "");\nprocess.exitCode = data.code;\n`, { mode: 0o755 });
+		pickerAppRoot.value = root;
+		if (process.platform === "win32") {
+			await fs.mkdir(path.join(root, "scripts"));
+			// Invoke real PowerShell with the production flags and script location,
+			// replacing only the interactive dialog with deterministic output.
+			await fs.writeFile(path.join(root, "scripts", "pick-folder.ps1"), [
+				"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+				"$data = Get-Content -LiteralPath $env:PIWEB_PICKER_FIXTURE_FILE -Raw -Encoding UTF8 | ConvertFrom-Json",
+				"[System.IO.File]::WriteAllText([string]$data.called, 'yes')",
+				"[Console]::Out.Write([string]$data.stdout)",
+				"[Console]::Error.Write([string]$data.stderr)",
+				"exit ([int]$data.code)",
+			].join("\n"));
+		} else {
+			const executable = path.join(bin, process.platform === "darwin" ? "osascript" : "zenity");
+			await fs.writeFile(executable, `#!${process.execPath}\nconst fs = require("node:fs");\nconst data = JSON.parse(fs.readFileSync(process.env.PIWEB_PICKER_FIXTURE_FILE, "utf8"));\nfs.writeFileSync(data.called, "yes");\nprocess.stdout.write(data.stdout || "");\nprocess.stderr.write(data.stderr || "");\nprocess.exitCode = data.code;\n`, { mode: 0o755 });
+		}
 		vi.stubEnv("PI_CODING_AGENT_DIR", path.join(root, "agent"));
 		vi.stubEnv("PIWEB_PICKER_FIXTURE_FILE", fixture);
 		vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH ?? ""}`);
@@ -29,6 +47,7 @@ describe.skipIf(process.platform === "win32")("workspace picker API and native p
 
 	afterEach(async () => {
 		vi.unstubAllEnvs();
+		pickerAppRoot.value = process.cwd();
 		await fs.rm(root, { recursive: true, force: true });
 	});
 
@@ -48,7 +67,7 @@ describe.skipIf(process.platform === "win32")("workspace picker API and native p
 	});
 
 	it("treats native cancellation as cancellation without opening another picker", async () => {
-		const response = await pick({ code: 1, stderr: process.platform === "darwin" ? "0:17: execution error: 用户已取消。 (-128)\n" : "" });
+		const response = await pick({ code: process.platform === "win32" ? 0 : 1, stderr: process.platform === "darwin" ? "0:17: execution error: 用户已取消。 (-128)\n" : "" });
 		expect(response.status).toBe(200);
 		expect(await response.json()).toEqual({ success: true, data: { path: null, canceled: true } });
 		expect((await getWorkspaceRegistry()).workspaces).toEqual([]);

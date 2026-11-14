@@ -111,6 +111,21 @@ describe("PiWeb SSE event folding", () => {
 		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [] } as unknown as WebSnapshot, dialogs)).toEqual([]);
 	});
 
+	it("keeps a JSON UI panel from events and snapshots instead of dropping it", () => {
+		// 回归：web 是后加的对话框方法，漏在 isDialogMethod 白名单里就会整条事件被吞掉，
+		// 表现是扩展一直等答复（会话 busy），界面上什么都不出现。
+		const tree = { type: "text", text: "待办 1/2" } as const;
+		const request = { type: "extension_ui", id: "w1", method: "web", title: "待办", tree, ts: 1 } as const;
+		let state = { extensionDialogs: [] } as unknown as PiWebState;
+		state = foldPiWebEvent(state, request);
+		expect(state.extensionDialogs).toEqual([expect.objectContaining({ id: "w1", method: "web", tree })]);
+		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [request] } as unknown as WebSnapshot)).toEqual([
+			expect.objectContaining({ id: "w1", method: "web", tree }),
+		]);
+		state = foldPiWebEvent(state, { type: "extension_ui_resolved", id: "w1", ts: 2 });
+		expect(state.extensionDialogs).toEqual([]);
+	});
+
 	it("keeps pi's question window from events and snapshots, questions included", () => {
 		// 选择窗口和扩展对话框走同一条桥：实时事件和刷新后的快照都要带出题目
 		const questions = [{ question: "Which DB?", header: "DB", options: [{ label: "Postgres", description: "solid" }, { label: "SQLite" }] }];
@@ -185,7 +200,7 @@ describe("PiWeb SSE event folding", () => {
 
 describe("扩展面与 ! 命令的事件折叠", () => {
 	const base = (overrides: Partial<PiWebState> = {}): PiWebState => ({
-		snapshot: null, messages: [], tools: {}, toolPreset: "standard", connected: true, error: null, compaction: null, retryNotice: null,
+		snapshot: null, messages: [], tools: {}, toolPreset: "workspace", connected: true, error: null, compaction: null, retryNotice: null,
 		extensionDialogs: [], extensionNotices: [], extensionStatuses: {}, extensionWidgets: {}, extensionTitle: null, editorText: null,
 		workingMessage: null, growth: { rounds: [], error: null, consent: null },
 		...overrides,

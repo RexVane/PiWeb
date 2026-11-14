@@ -3,12 +3,14 @@
  * （压缩 / 自动重试 / 缓存预热 / 排队投递方式 / 代理）。
  * 与项目信任同一个外科手术式 JSON patch 方式：只动点名的字段，其余原样留着。
  */
-import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { invalidateJsonFile, readJsonObject, readJsonObjectFresh } from "./agent-config";
-import { getAgentDir, reloadSettingsManagers } from "./pi";
-import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
+import { invalidateJsonFile } from "./agent-config";
+import { getAgentDir, reloadSettingsManagers, resolveProjectTrust } from "./pi";
+import { readFileBounded } from "./read-file-bounded";
+import { withSettingsWriteLock } from "./settings-write-lock";
+import { mutateJsoncSettingsFileSync, readJsoncSettingsObjectSync } from "./jsonc-settings-storage";
+import { resolveWorkspacePath } from "./path-security";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 export interface CompactionSettings {
 	enabled: boolean;
@@ -35,6 +37,9 @@ export interface PiSettings {
 	followUpMode: QueueMode;
 	/** 空串 = 没设 */
 	httpProxy: string;
+	/** Project editor values may differ from the currently trusted session settings. */
+	effective?: PiSettings;
+	projectTrusted?: boolean;
 }
 
 /** 写入用的补丁：没出现的字段不动，未在面板开放的 pi 配置交给 SDK 管理。 */
@@ -65,8 +70,18 @@ function settingsFile(): string {
 	return path.join(getAgentDir(), "settings.json");
 }
 
+async function readSettingsObject(file: string): Promise<Record<string, unknown>> {
+	const text = await readFileBounded(file, 1024 * 1024).then((bytes) => bytes.toString("utf8")).catch((error) => { if (error.code === "ENOENT") return "{}"; throw error; });
+	const errors: ParseError[] = [];
+	const parsed = parseJsonc(text.replace(/^\uFEFF/, ""), errors, { allowTrailingComma: true });
+	if (errors.length || !parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new PiSettingsValidationError("Settings file is not a valid object");
+	return parsed as Record<string, unknown>;
+}
 async function readSettingsFileStrict(): Promise<Record<string, unknown>> {
-	return readJsonObject(settingsFile());
+	return readSettingsObject(settingsFile());
+}
+function mergedSettings(global: Record<string, unknown>, project: Record<string, unknown>): Record<string, unknown> {
+	return { ...global, ...project, compaction: { ...objectOf(global.compaction), ...objectOf(project.compaction) }, retry: { ...objectOf(global.retry), ...objectOf(project.retry) }, httpProxy: global.httpProxy, cacheWarming: global.cacheWarming };
 }
 
 /** enabledModels 是 pi 的模型范围；没写或写错就不过滤 PiWeb 的选择器 */
@@ -82,8 +97,7 @@ function objectOf(value: unknown): Record<string, unknown> {
 
 const isTokenCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-export async function getPiSettings(): Promise<PiSettings> {
-	const raw = await readSettingsFileStrict();
+function normalizedSettings(raw: Record<string, unknown>): PiSettings {
 	const c = objectOf(raw.compaction);
 	const r = objectOf(raw.retry);
 	const num = (v: unknown, d: number) => (isTokenCount(v) ? v : d);
@@ -106,7 +120,21 @@ export async function getPiSettings(): Promise<PiSettings> {
 	};
 }
 
+export async function getPiSettings(cwd?: string): Promise<PiSettings> {
+	const global = await readSettingsFileStrict();
+	if (!cwd) return normalizedSettings(global);
+	const projectRoot = await resolveWorkspacePath(cwd);
+	const project = readJsoncSettingsObjectSync(path.join(projectRoot, ".pi", "settings.json"), { projectRoot });
+	const trusted = resolveProjectTrust(cwd).trusted;
+	return { ...normalizedSettings(mergedSettings(global, project)), effective: normalizedSettings(trusted ? mergedSettings(global, project) : global), projectTrusted: trusted };
+}
+
 export class PiSettingsValidationError extends Error {}
+export class PiSettingsRefreshError extends Error {
+	constructor(public readonly patch: PiSettingsPatch, cause: unknown) {
+		super("设置已保存，但部分活动会话未能刷新。", { cause });
+	}
+}
 
 // 函数声明而不是箭头函数：TS 只对有显式声明的 never 函数做控制流收窄
 function fail(message: string): never {
@@ -169,32 +197,39 @@ export function validatePiSettingsPatch(value: unknown): PiSettingsPatch {
 	return result;
 }
 
-export async function patchPiSettings(value: unknown): Promise<PiSettingsPatch> {
+export async function patchPiSettings(value: unknown, cwd?: string): Promise<PiSettingsPatch> {
 	const patch = validatePiSettingsPatch(value);
-	const file = settingsFile();
-	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
-		const raw = await readJsonObjectFresh(file);
-		if (patch.compaction) raw.compaction = { ...objectOf(raw.compaction), ...patch.compaction };
-		if (patch.retry) raw.retry = { ...objectOf(raw.retry), ...patch.retry };
-		for (const key of ["cacheWarming", "steeringMode", "followUpMode"] as const) {
-			if (patch[key] !== undefined) raw[key] = patch[key];
-		}
-		// 清空 = 删掉键，回到 pi 的默认行为（不留空字符串）
-		if (patch.httpProxy !== undefined) {
-			if (patch.httpProxy) raw.httpProxy = patch.httpProxy;
-			else delete raw.httpProxy;
-		}
-		await fs.mkdir(path.dirname(file), { recursive: true });
-		const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-		try {
-			await fs.writeFile(temporary, JSON.stringify(raw, null, "\t"), "utf8");
-			await fs.rename(temporary, file);
-		} finally {
-			await fs.rm(temporary, { force: true }).catch(() => undefined);
+	if (cwd && (patch.httpProxy !== undefined || patch.cacheWarming !== undefined)) throw new PiSettingsValidationError("Network proxy and cache warming are global settings");
+	const projectRoot = cwd ? await resolveWorkspacePath(cwd) : undefined;
+	const file = projectRoot ? path.join(projectRoot, ".pi", "settings.json") : settingsFile();
+	await withSettingsWriteLock(file, async () => {
+		for (let attempt = 0; ; attempt++) {
+			try {
+				mutateJsoncSettingsFileSync(file, (raw) => {
+					if (patch.compaction) raw.compaction = { ...objectOf(raw.compaction), ...patch.compaction };
+					if (patch.retry) raw.retry = { ...objectOf(raw.retry), ...patch.retry };
+					for (const key of ["cacheWarming", "steeringMode", "followUpMode"] as const) {
+						if (patch[key] !== undefined) raw[key] = patch[key];
+					}
+					// 清空 = 删掉键，回到 pi 的默认行为（不留空字符串）
+					if (patch.httpProxy !== undefined) {
+						if (patch.httpProxy) raw.httpProxy = patch.httpProxy;
+						else delete raw.httpProxy;
+					}
+					return raw;
+				}, { projectRoot });
+				break;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ELOCKED" || attempt >= 19) throw error;
+				// The synchronous SDK contract cannot await, but this HTTP action can.
+				// No filesystem lock or protected directory handle survives this await.
+				await new Promise((resolve) => setTimeout(resolve, Math.min(20 * (attempt + 1), 100)));
+			}
 		}
 		invalidateJsonFile(file);
-	}));
+	});
 	// 正在运行的会话每次压缩/重试都从 SettingsManager 读：让它们重新读盘，改动立即生效
-	await reloadSettingsManagers();
+	try { await reloadSettingsManagers(); }
+	catch (error) { throw new PiSettingsRefreshError(patch, error); }
 	return patch;
 }

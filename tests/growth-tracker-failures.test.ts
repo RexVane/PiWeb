@@ -8,9 +8,50 @@ vi.mock("../src/lib/growth-service", async (importOriginal) => {
 	return { ...actual, commitRound: vi.fn(), recordWorkspaceChanges: vi.fn() };
 });
 
-import { GrowthError, commitRound, recordWorkspaceChanges } from "../src/lib/growth-service";
+import { GrowthError, commitRound, recordWorkspaceChanges, finishGrowthRun } from "../src/lib/growth-service";
 import { createGrowthTracker } from "../src/lib/growth-tracker";
 import type { WebEvent } from "../src/lib/types";
+
+it("releases active attribution when recording is declined or a terminal failure disables it", async () => {
+	for (const terminal of [false, true]) {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-release-"));
+		const session = path.join(cwd, "session.jsonl");
+		const tracker = createGrowthTracker({ cwd, sessionPath: session, publish: () => {}, entries: () => [], consent: async () => true });
+		try {
+			tracker.onEvent({ type: "agent_start" } as never);
+			if (terminal) { vi.mocked(recordWorkspaceChanges).mockRejectedValueOnce(new GrowthError("too large", "too-large")); await tracker.prepare(); }
+			else await tracker.consentAnswered(false);
+			expect(finishGrowthRun(cwd, session)).toEqual({});
+		} finally { tracker.dispose(); await fs.rm(cwd, { recursive: true, force: true }); vi.resetAllMocks(); }
+	}
+});
+
+it("reenables background trackers without taking duplicate baselines", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-enable-"));
+	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: () => {}, entries: () => [], consent: async () => true });
+	try {
+		await tracker.consentAnswered(false); await tracker.consentAnswered(true, false);
+		expect(recordWorkspaceChanges).not.toHaveBeenCalled();
+		vi.mocked(recordWorkspaceChanges).mockResolvedValueOnce(null); await tracker.prepare();
+		expect(recordWorkspaceChanges).toHaveBeenCalledOnce();
+	} finally { tracker.dispose(); await fs.rm(cwd, { recursive: true, force: true }); vi.resetAllMocks(); }
+});
+
+it("keeps real chat round numbers after a previous snapshot failed", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-ordinal-"));
+	const entries: Array<{ type: string; id: string; message: { role: string; content: string } }> = [];
+	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: () => {}, entries: () => entries, consent: async () => true });
+	try {
+		vi.mocked(commitRound).mockRejectedValueOnce(new GrowthError("temporary snapshot failure", "failed")).mockResolvedValue(null);
+		vi.mocked(recordWorkspaceChanges).mockResolvedValue(null);
+		for (let i = 1; i <= 2; i++) {
+			tracker.onEvent({ type: "agent_start" } as never);
+			entries.push({ type: "message", id: `u${i}`, message: { role: "user", content: `question ${i}` } });
+			tracker.onEvent({ type: "agent_settled" } as never); await tracker.prepare();
+		}
+		expect(vi.mocked(commitRound).mock.calls.map((call) => call[1].roundNumber)).toEqual([1, 2]);
+	} finally { tracker.dispose(); await fs.rm(cwd, { recursive: true, force: true }); vi.resetAllMocks(); }
+});
 
 it("reports a terminal size error even after a recent transient failure and stops committing", async () => {
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-failure-"));
@@ -82,9 +123,9 @@ it("asks once before creating a repository, records nothing meanwhile, and takes
 		await tracker.prepare();
 		// 只问一次；没回答之前不再去探测仓库，也不报错
 		const asks = events.filter((event) => event.type === "growth_consent");
-		expect(asks).toEqual([{ type: "growth_consent", request: { cwd, reason: "nested", parent: "/outer" }, ts: expect.any(Number) }]);
-		expect(tracker.getConsentRequest()).toMatchObject({ reason: "nested" });
-		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(1);
+		expect(asks).toEqual([{ type: "growth_consent", request: { cwd, reason: "existing" }, ts: expect.any(Number) }]);
+		expect(tracker.getConsentRequest()).toMatchObject({ reason: "existing" });
+		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(0);
 		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
 		expect(events.some((event) => event.type === "growth_error")).toBe(false);
 		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "needs-consent" });
@@ -114,7 +155,7 @@ it("stops tracking quietly when the workspace owner declined", async () => {
 		tracker.onEvent({ type: "agent_start" } as never);
 		tracker.onEvent({ type: "agent_settled" } as never);
 		await tracker.prepare();
-		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(0);
 		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
 		expect(events).toEqual([]);
 		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "unavailable" });

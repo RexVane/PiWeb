@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { parse } from "jsonc-parser";
 import lockfile from "proper-lockfile";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
@@ -55,6 +56,30 @@ async function expectOnlyConfig() {
 }
 
 describe("JSONC model configuration", () => {
+	it("allows an emptied builtin overlay after restoring its hidden credential", async () => {
+		await fs.writeFile(file, JSON.stringify({ providers: { openai: { baseUrl: "https://gateway.example/v1", apiKey: "retained-key" } } }));
+		await writeCustomProviders(JSON.stringify({ providers: { openai: {} } }));
+		expect(JSON.parse(await fs.readFile(file, "utf8")).providers.openai).toEqual({ apiKey: "retained-key" });
+	});
+	it("redacts and restores model-level credential headers by model identity across reordering", () => {
+		const original = JSON.stringify({ providers: { gateway: { ...provider, models: [{ id: "first", headers: { "X-Credential": "model-secret", Accept: "application/json" } }, { id: "second" }], modelOverrides: { builtin: { headers: { Authorization: "override-secret" } } } } } });
+		const redacted = redactCustomProviderSecrets(original);
+		expect(redacted.content).not.toContain("model-secret"); expect(redacted.content).not.toContain("override-secret");
+		const next = JSON.parse(redacted.content); next.providers.gateway.models.reverse();
+		const restored = JSON.parse(preserveCustomProviderApiKeys(JSON.stringify(next), original));
+		expect(restored.providers.gateway.models[1].headers).toEqual({ "X-Credential": "model-secret", Accept: "application/json" });
+		expect(restored.providers.gateway.modelOverrides.builtin.headers.Authorization).toBe("override-secret");
+	});
+	it("redacts sensitive custom headers and preserves them when a safe form edit is saved", async () => {
+		await fs.writeFile(file, JSON.stringify({ providers: { gateway: { ...provider, headers: { Authorization: "Bearer secret", "x-api-key": "secret-key", "X-Credential": "credential-secret", "x-password": "password-secret", "x-command": "!never-run", "x-custom": "safe" } } } }));
+		const read = await readCustomProviders();
+		expect(read.content).not.toContain("Bearer secret"); expect(read.content).not.toContain("secret-key"); expect(read.content).not.toContain("never-run");
+		expect(read.content).not.toContain("credential-secret"); expect(read.content).not.toContain("password-secret");
+		const incoming = JSON.parse(read.content); incoming.providers.gateway.name = "Changed";
+		await writeCustomProviders(JSON.stringify(incoming), read.revision);
+		const saved = JSON.parse(await fs.readFile(file, "utf8"));
+		expect(saved.providers.gateway.headers).toEqual({ Authorization: "Bearer secret", "x-api-key": "secret-key", "X-Credential": "credential-secret", "x-password": "password-secret", "x-command": "!never-run", "x-custom": "safe" });
+	});
 	it("the explicit default-completion values match the installed SDK's effective defaults", async () => {
 		await fs.writeFile(file, JSON.stringify({ providers: { gateway: provider } }));
 		const runtime = await ModelRuntime.create({ modelsPath: file, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
@@ -94,7 +119,10 @@ describe("JSONC model configuration", () => {
 		incoming.providers.gateway.name = "New display name";
 		const create = vi.spyOn(ModelRuntime, "create");
 		await writeCustomProviders(JSON.stringify(incoming), read.revision);
-		const saved = JSON.parse(await fs.readFile(file, "utf8"));
+		const rawSaved = await fs.readFile(file, "utf8");
+		const saved = parse(rawSaved.replace(/^\uFEFF/, ""), [], { allowTrailingComma: true });
+		expect(rawSaved.startsWith("\uFEFF")).toBe(true);
+		expect(rawSaved).toContain("// existing");
 		expect(saved.opaque).toEqual({ keep: [1, 2] });
 		expect(saved.providers.gateway).toMatchObject({
 			apiKey: "!must-not-execute", name: "New display name", unknownProvider: { keep: true },
@@ -208,7 +236,7 @@ describe("JSONC model configuration", () => {
 	it("keeps the original file and cleans staging files when rename fails", async () => {
 		const original = '{"providers":{}}';
 		await fs.writeFile(file, original);
-		vi.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("rename denied"), { code: "EACCES" }));
+		vi.spyOn(fs, "rename").mockRejectedValue(Object.assign(new Error("rename denied"), { code: "EACCES" }));
 		await expect(writeCustomProviders(JSON.stringify({ providers: { gateway: provider } }))).rejects.toThrow("rename denied");
 		expect(await fs.readFile(file, "utf8")).toBe(original);
 		expect(mocks.refreshModelRuntime).not.toHaveBeenCalled();
@@ -217,6 +245,27 @@ describe("JSONC model configuration", () => {
 });
 
 describe("configuration revision and route contract", () => {
+	it("retries a transient sharing failure without losing the requested model configuration", async () => {
+		await fs.writeFile(file, '{"providers":{}}');
+		const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(Object.assign(new Error("occupied"), { code: "EPERM" }));
+		await writeCustomProviders(JSON.stringify({ providers: { gateway: provider } }));
+		expect(rename).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(await fs.readFile(file, "utf8")).providers.gateway.models[0].id).toBe("model-a");
+		await expectOnlyConfig();
+	});
+	it("refuses to overwrite an external edit made while waiting to replace the configuration", async () => {
+		await fs.writeFile(file, '{"providers":{}}');
+		const external = '{"providers":{},"external":true}';
+		const rename = vi.spyOn(fs, "rename").mockImplementationOnce(async () => {
+			await fs.writeFile(file, external);
+			throw Object.assign(new Error("occupied"), { code: "EBUSY" });
+		});
+		await expect(writeCustomProviders(JSON.stringify({ providers: { gateway: provider } }))).rejects.toThrow(CustomProvidersConflictError);
+		expect(rename).toHaveBeenCalledTimes(1);
+		expect(await fs.readFile(file, "utf8")).toBe(external);
+		expect(mocks.refreshModelRuntime).not.toHaveBeenCalled();
+		await expectOnlyConfig();
+	});
 	it("leaves model-catalog compression to the HTTP layer so the Next adapter receives valid JSON", async () => {
 		const runtime = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
 		mocks.getModelRuntime.mockResolvedValue(runtime);
@@ -287,10 +336,10 @@ describe("configuration revision and route contract", () => {
 		expect(await fs.readFile(file, "utf8")).toBe('{"providers":{}}');
 	});
 
-	it("retains the existing successful-save response with a revision", async () => {
+	it("returns a successful revisioned save without requiring the session to reopen", async () => {
 		const response = await post(JSON.stringify({ providers: { gateway: provider } }), "missing");
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ success: true, data: { requiresSessionReopen: true } });
+		expect(await response.json()).toEqual({ success: true, data: { requiresSessionReopen: false } });
 	});
 
 	it("returns a GET failure for a corrupt file before requesting the application model runtime", async () => {

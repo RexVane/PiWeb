@@ -1,22 +1,33 @@
 "use client";
+import { safeLocalStorage } from "@/lib/browser-storage";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * AppShell：三栏网格（对齐 dsh ui-layout 几何）+ 拖拽调宽 + 侧栏窄条 +
  * 头部（对话/轨迹标签 + Session log）+ Hero 新会话页 + 设置弹窗。
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import shellStyles from "./AppShell.module.css";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
+import { ErrorToast } from "@/components/ErrorToast";
 import type { RoundBadge } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices, ExtensionWidgets } from "@/components/ExtensionUI";
 import { AskUserCard } from "@/components/AskUserCard";
 import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
-import { SessionSidebar } from "@/components/SessionSidebar";
+import { SessionSidebar, type WorkspaceView } from "@/components/SessionSidebar";
 import type { DrawerSection } from "@/components/DrawerPanel";
+import type { MarketplaceCategory } from "@/lib/plugins-marketplace";
 import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
+const SkillsWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.SkillsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
+const PluginsWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.PluginsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
+const PromptsWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.PromptsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
+const MarketWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.MarketWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
+const AutomationsWorkspaceView = dynamic(() => import("@/components/workspace/AutomationsWorkspaceView").then((m) => m.AutomationsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
 const DirectoryPicker = dynamic(() => import("@/components/DirectoryPicker").then((m) => m.DirectoryPicker), { ssr: false });
 // Hero 页用不到聊天区，却会因为它静态依赖 Diff/高亮/消息渲染而背上整个分块。
@@ -33,11 +44,15 @@ const ChatWindow = dynamic(() => import("@/components/ChatWindow").then((m) => m
 	),
 });
 const SessionStatsBar = dynamic(() => import("@/components/ChatWindow").then((m) => m.SessionStatsBar), { ssr: false });
+const SessionHistory = dynamic(() => import("@/components/SessionHistory").then((m) => m.SessionHistory), { ssr: false });
 const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
 
 /** 会话/工作区路径比较（Windows 大小写与分隔符差异不该影响判断） */
-const samePath = (a: string, b: string): boolean =>
-	a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+function canonicalDraftPath(value: string): string {
+	const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+	return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized;
+}
+const samePath = (a: string, b: string): boolean => canonicalDraftPath(a) === canonicalDraftPath(b);
 const DrawerPanel = dynamic(() => import("@/components/DrawerPanel").then((m) => m.DrawerPanel), { ssr: false });
 const GrowthConsentDialog = dynamic(() => import("@/components/ProjectPanel").then((m) => m.GrowthConsentDialog), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
@@ -63,6 +78,11 @@ import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import { promptTitleText } from "@/lib/chat/skill-expansion";
 import type { ImageAttachment, ToolPreset, TrajEntry, WebSnapshot } from "@/lib/types";
 
+function WorkspaceViewLoading() {
+	const { t } = useI18n();
+	return <div className="flex min-h-0 flex-1 items-center justify-center p-4" role="status">{t.panelLoading}</div>;
+}
+
 /** 补全需要的资源清单；新会话页与冷会话都能从服务端单独发现，不必等快照 */
 type WorkspaceCommands = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensionCommands">;
 
@@ -85,10 +105,10 @@ const DEFAULT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhi
  */
 const MemoChatInput = memo(ChatInput);
 function persist(key: string, value: number) {
-	localStorage.setItem(key, String(value));
+	safeLocalStorage.setItem(key, String(value));
 }
 function restore(key: string, fallback: number): number {
-	const v = parseInt(localStorage.getItem(key) ?? "", 10);
+	const v = parseInt(safeLocalStorage.getItem(key) ?? "", 10);
 	return Number.isNaN(v) ? fallback : v;
 }
 /**
@@ -99,18 +119,23 @@ function restore(key: string, fallback: number): number {
  */
 function restoreRightWidth(): number {
 	for (const key of ["piweb.drawerW", "piweb.detailsW"]) {
-		const v = parseInt(localStorage.getItem(key) ?? "", 10);
+		const v = parseInt(safeLocalStorage.getItem(key) ?? "", 10);
 		if (!Number.isNaN(v)) return Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, v));
 	}
 	return RIGHT_DEFAULT;
 }
 
 export function AppShell() {
-	const { t } = useI18n();
+	const { t, lang } = useI18n();
 	const {
 		sessions,
 		sessionListError,
+		workspaceRegistryWarning,
 		retrySessionList,
+		searchSessions,
+		loadMoreSessions,
+		hasMoreSessions,
+		sessionsLoadingMore,
 		archivedSessions,
 		archivedSessionPaths,
 		pinnedSessionPaths,
@@ -120,7 +145,6 @@ export function AppShell() {
 		models,
 		addedWorkspaces,
 		removedWorkspaces,
-		workspaceAliases,
 		getWorkspaceName,
 		renameWorkspace,
 		patchSessionName,
@@ -140,6 +164,7 @@ export function AppShell() {
 		cancelDirPicker,
 		removeWorkspace,
 		refreshModels,
+		setModelCwd,
 		sendCommand,
 		newSession,
 		openSession,
@@ -164,17 +189,76 @@ export function AppShell() {
 	const sessionDraftKeys = useRef(new Map<string, string>());
 	const draftSequence = useRef(0);
 	const [heroDraftKey, setHeroDraftKey] = useState("__hero__:0");
+	const heroStorage = useRef({ key: "__hero__:0", cwd: "" });
+	const draftStorageWarning = useRef(false);
 	const [draftVersion, setDraftVersion] = useState(0);
 	void draftVersion;
-	const draftKey = currentPath ? sessionDraftKeys.current.get(currentPath) ?? currentPath : heroDraftKey;
+	const sessionDraftPath = currentPath ? canonicalDraftPath(currentPath) : null;
+	const draftKey = sessionDraftPath ? sessionDraftKeys.current.get(sessionDraftPath) ?? sessionDraftPath : heroDraftKey;
 	const [uploadCounts, setUploadCounts] = useState<Record<string, number>>({});
 	const [uploadFailures, setUploadFailures] = useState<Record<string, string>>({});
 	const [pendingSends, setPendingSends] = useState<Record<string, boolean>>({});
 	const updateDraft = useCallback((key: string, update: ChatDraftUpdate) => {
 		const previous = composerDrafts.current.get(key) ?? EMPTY_CHAT_DRAFT;
+		composerDrafts.current.delete(key);
 		composerDrafts.current.set(key, typeof update === "function" ? update(previous) : update);
 		setDraftVersion((version) => version + 1);
 	}, []);
+	useEffect(() => {
+		try {
+			const raw = sessionStorage.getItem("piweb.drafts") ?? "[]";
+			if (raw.length > 10_000_000) throw new Error("Saved drafts exceed the restore limit");
+			const saved = JSON.parse(raw);
+			const items = Array.isArray(saved) ? saved : saved?.version === 1 && Array.isArray(saved.drafts) ? saved.drafts : [];
+			for (const item of items) {
+				// Queue recovery can merge several valid messages beyond the per-send limits.
+				// Restore their editable contents within the total storage budget; doSend enforces submission limits.
+				if (!Array.isArray(item) || typeof item[0] !== "string" || !item[1] || typeof item[1].text !== "string" || !Array.isArray(item[1].images) || !Array.isArray(item[1].uploads) || item[1].uploads.length > 16) continue;
+				if (item[1].images.some((image: ImageAttachment) => image?.type !== "image" || typeof image.data !== "string" || image.data.length > 2_796_204 || typeof image.mimeType !== "string")) continue;
+				if (item[1].uploads.some((upload: { path?: unknown; name?: unknown }) => typeof upload?.path !== "string" || typeof upload.name !== "string")) continue;
+				if (item[1].references && (!Array.isArray(item[1].references) || item[1].references.length > 200 || item[1].references.some((ref: unknown) => typeof ref !== "string" || ref.length > 16_384))) continue;
+				composerDrafts.current.set(canonicalDraftPath(item[0]), item[1]);
+			}
+			if (saved?.version === 1 && typeof saved.heroKey === "string" && /^__hero__:\d+$/.test(saved.heroKey)) {
+				setHeroDraftKey(saved.heroKey);
+				if (typeof saved.heroCwd === "string") setHeroCwd(saved.heroCwd);
+				draftSequence.current = Number(saved.heroKey.split(":").pop()) || 0;
+			}
+			setDraftVersion((version) => version + 1);
+		} catch { /* drafts stay usable without storage */ }
+	}, []);
+	const persistDrafts = useCallback(() => {
+		try {
+			const aliases = new Map([...sessionDraftKeys.current].map(([session, key]) => [key, session]));
+			const drafts: string[] = [];
+			const prefix = JSON.stringify({ version: 1, heroKey: heroStorage.current.key, heroCwd: heroStorage.current.cwd }).slice(0, -1) + ',"drafts":[';
+			let total = prefix.length + 2;
+			for (const [key, draft] of composerDrafts.current) {
+				// Empty/sent drafts must never displace unsent text or attachments.
+				if (!draft.text && !draft.images.length && !draft.uploads.length && !draft.references?.length) continue;
+				const minimum = key.length + draft.text.length + draft.images.reduce((size, image) => size + image.data.length, 0)
+					+ draft.uploads.reduce((size, upload) => size + upload.path.length + upload.name.length, 0)
+					+ (draft.references ?? []).reduce((size, reference) => size + reference.length, 0);
+				if (minimum > 10_000_000 - total) throw new Error("Draft storage limit exceeded");
+				const entry = JSON.stringify([aliases.get(key) ?? key, draft]);
+				total += entry.length + 1;
+				if (total > 10_000_000) throw new Error("Draft storage limit exceeded");
+				drafts.push(entry);
+			}
+			sessionStorage.setItem("piweb.drafts", prefix + drafts.join(",") + "]}");
+			draftStorageWarning.current = false;
+		} catch {
+			if (!draftStorageWarning.current) { draftStorageWarning.current = true; setError(t.draftPersistFailed); }
+		}
+	}, [setError, t.draftPersistFailed]);
+	useEffect(() => {
+		const timer = setTimeout(persistDrafts, 300);
+		return () => clearTimeout(timer);
+	}, [draftVersion, persistDrafts]);
+	useEffect(() => {
+		window.addEventListener("pagehide", persistDrafts);
+		return () => { window.removeEventListener("pagehide", persistDrafts); persistDrafts(); };
+	}, [persistDrafts]);
 	const trackUpload = useCallback((key: string, delta: 1 | -1) => {
 		if (delta === 1) setUploadFailures((current) => ({ ...current, [key]: "" }));
 		setUploadCounts((current) => ({ ...current, [key]: Math.max(0, (current[key] ?? 0) + delta) }));
@@ -182,24 +266,32 @@ export function AppShell() {
 	const failUpload = useCallback((key: string, message: string) => {
 		setUploadFailures((current) => ({ ...current, [key]: message }));
 	}, []);
+	const clearUploadError = useCallback((key: string) => {
+		setUploadFailures((current) => current[key] ? { ...current, [key]: "" } : current);
+	}, []);
 	const trackSend = useCallback((key: string, pending: boolean) => {
 		setPendingSends((current) => ({ ...current, [key]: pending }));
 	}, []);
 	const saveSessionDraft = useCallback((update: ChatDraftUpdate) => updateDraft(draftKey, update), [draftKey, updateDraft]);
 	const saveHeroDraft = useCallback((update: ChatDraftUpdate) => updateDraft(heroDraftKey, update), [heroDraftKey, updateDraft]);
 	const sessionUploadError = useCallback((message: string) => failUpload(draftKey, message), [draftKey, failUpload]);
+	const clearSessionUploadError = useCallback(() => clearUploadError(draftKey), [draftKey, clearUploadError]);
+	const clearHeroUploadError = useCallback(() => clearUploadError(heroDraftKey), [heroDraftKey, clearUploadError]);
 	const sessionUploadProgress = useCallback((delta: 1 | -1) => trackUpload(draftKey, delta), [draftKey, trackUpload]);
 	const sessionSendPending = useCallback((pending: boolean) => trackSend(draftKey, pending), [draftKey, trackSend]);
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	const [historySessionId, setHistorySessionId] = useState<string | null>(null);
 	/** 第一次打开后才加载设置分块；关闭时保持挂载，设置页的当前分区不会每次重置。 */
 	const [settingsLoaded, setSettingsLoaded] = useState(false);
+	const [activeView, setActiveView] = useState<WorkspaceView>("chat");
+	const [marketCategory, setMarketCategory] = useState<MarketplaceCategory>("all");
 	const [selected, setSelected] = useState<TrajEntry | null>(null);
 	/** 抽屉当前入口(由这里持有:轨迹详情关掉后要回到同一个入口) */
 	/** 抽屉入口保存在浏览器 */
 	const [drawerSection, setDrawerSection] = useState<DrawerSection>("project");
 	const chooseDrawerSection = useCallback((section: DrawerSection) => {
 		setDrawerSection(section);
-		localStorage.setItem("piweb.drawerSection", section);
+		safeLocalStorage.setItem("piweb.drawerSection", section);
 	}, []);
 	/** 右侧抽屉(最右一列):入口列表 + 内容 */
 	const [drawerOpen, setDrawerOpen] = useState(false);
@@ -208,6 +300,7 @@ export function AppShell() {
 	/** useGrowth 的"落到最新轮":它在 AppShell 里、不随抽屉卸载,所以必须显式调用 */
 	const growthSelectLatest = useRef<() => void>(() => {});
 	const [heroCwd, setHeroCwd] = useState("");
+	heroStorage.current = { key: heroDraftKey, cwd: heroCwd };
 	const [heroModel, setHeroModel] = useState<{ provider: string; id: string } | null>(null);
 	/** 当前工作区的新会话默认值（pi 的初始模型规则 + 设置里的思考档位），切换工作区时重新取 */
 	const [heroDefaults, setHeroDefaults] = useState<NewSessionDefaults | null>(null);
@@ -220,11 +313,11 @@ export function AppShell() {
 	useEffect(() => {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
 		setRightWidth(restoreRightWidth());
-		setSidebarCollapsed(localStorage.getItem("piweb.sidebarCollapsed") === "1");
-		setDrawerOpen(localStorage.getItem("piweb.drawerOpen") === "1");
-		const section = localStorage.getItem("piweb.drawerSection");
+		setSidebarCollapsed(safeLocalStorage.getItem("piweb.sidebarCollapsed") === "1");
+		setDrawerOpen(safeLocalStorage.getItem("piweb.drawerOpen") === "1");
+		const section = safeLocalStorage.getItem("piweb.drawerSection");
 		if (["project", "prompts", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
-		else if (section === "tree") localStorage.setItem("piweb.drawerSection", "project");
+		else if (section === "tree") safeLocalStorage.setItem("piweb.drawerSection", "project");
 	}, []);
 	/** 新会话时加载用户之前的选择；没有记住的，等 /api/models/defaults 回来用 pi 设置里的建议模型兜底 */
 	useEffect(() => {
@@ -233,7 +326,7 @@ export function AppShell() {
 			return;
 		}
 		// 优先这个工作区自己记住的模型；没有就先留空，交给下面的建议模型兜底
-		setHeroModel(readRememberedHeroModel(localStorage, heroCwd));
+		setHeroModel(readRememberedHeroModel(safeLocalStorage, heroCwd));
 	}, [heroCwd]);
 	/**
 	 * 兜底：这个工作区没记住过选择时，用 pi 设置里的建议模型（defaults.model，服务端按
@@ -264,6 +357,7 @@ export function AppShell() {
 		? sessions.find((session) => samePath(session.path, currentPath ?? ""))?.cwd ??
 			(state.snapshot?.sessionPath && samePath(state.snapshot.sessionPath, currentPath ?? "") ? state.snapshot.cwd : "")
 		: heroCwd;
+	useEffect(() => { setModelCwd?.(resourceCwd); }, [resourceCwd, setModelCwd]);
 	// 补全不能等历史快照或 session_start/MCP：按工作区单独发现并缓存，切会话/改设置时后台刷新。
 	useEffect(() => {
 		if (!resourceCwd) return;
@@ -288,7 +382,7 @@ export function AppShell() {
 		preserveChatReadingPosition();
 		setDrawerOpen((cur) => {
 			const v = next ?? !cur;
-			localStorage.setItem("piweb.drawerOpen", v ? "1" : "0");
+			safeLocalStorage.setItem("piweb.drawerOpen", v ? "1" : "0");
 			return v;
 		});
 	}, []);
@@ -380,7 +474,7 @@ export function AppShell() {
 			const norm = cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 			return Boolean(norm) && !removed.has(norm);
 		};
-		return Array.from(new Set([...addedWorkspaces, ...sessions.map((s) => s.cwd)].filter(keep)));
+		return Array.from(new Set([...addedWorkspaces].reverse().concat(sessions.map((s) => s.cwd)).filter(keep)));
 	}, [addedWorkspaces, sessions, removedWorkspaces]);
 
 	// 模型目录派生值：数百个模型对象的映射只在目录变化时重算，
@@ -402,7 +496,8 @@ export function AppShell() {
 				name: m.name,
 				reasoning: m.reasoning,
 				thinkingLevels: m.thinkingLevels,
-				contextWindow: m.contextWindow,
+					contextWindow: m.contextWindow,
+					input: m.input,
 			})),
 		[models],
 	);
@@ -412,9 +507,16 @@ export function AppShell() {
 		[heroModel, modelChoices],
 	);
 	const heroModelLevels = useMemo(
-		() => heroChoice?.thinkingLevels ?? ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+		() => heroChoice?.thinkingLevels ?? ["off"],
 		[heroChoice],
 	);
+	useEffect(() => {
+		if (!models || !heroCwd || !heroModel || heroChoice) return;
+		const suggested = heroDefaults?.model;
+		const fallback = modelChoices.find((item) => suggested && item.provider === suggested.provider && item.id === suggested.id)
+			?? modelChoices.find((item) => authByProvider[item.provider]);
+		setHeroModel(fallback ? { provider: fallback.provider, id: fallback.id } : null);
+	}, [models, heroCwd, heroModel, heroChoice, heroDefaults, modelChoices, authByProvider]);
 	/**
 	 * 新会话实际会用的思考档位：用户显式选过才算选择（下发时才带上）；界面平时只显示这里算出的生效值，
 	 * 不把它当作选择发给服务端。
@@ -424,7 +526,7 @@ export function AppShell() {
 		return newSessionThinkingLevel({
 			supported: heroModelLevels,
 			requested: heroThinking,
-			modelOverride: choice ? heroDefaults?.modelThinkingLevels[`${choice.provider}/${choice.id}`] : undefined,
+			modelOverride: choice ? heroDefaults?.modelThinkingLevels?.[`${choice.provider}/${choice.id}`] : undefined,
 			defaultLevel: heroDefaults?.defaultThinkingLevel,
 		});
 	}, [heroChoice, heroModelLevels, heroThinking, heroDefaults]);
@@ -475,11 +577,11 @@ export function AppShell() {
 		preserveChatReadingPosition();
 		const next = !sidebarCollapsed;
 		setSidebarCollapsed(next);
-		localStorage.setItem("piweb.sidebarCollapsed", next ? "1" : "0");
+		safeLocalStorage.setItem("piweb.sidebarCollapsed", next ? "1" : "0");
 	}, [sidebarCollapsed]);
 
 	// ---------- 会话操作 ----------
-	const snapshot = state.snapshot;
+	const snapshot = state.snapshot?.sessionPath && currentPath && samePath(state.snapshot.sessionPath, currentPath) ? state.snapshot : null;
 	const trajectoryRef = useRef(snapshot?.trajectory ?? []);
 	useEffect(() => {
 		trajectoryRef.current = snapshot?.trajectory ?? [];
@@ -521,7 +623,23 @@ export function AppShell() {
 		[contextSystemChars, getComposerMessages, snapshot?.contextBreakdown, loadFullContext],
 	);
 	const isStreaming = snapshot?.isStreaming ?? false;
-	// pi 的选择窗口贴在输入框上方，扩展的 select/confirm/input 仍是居中弹窗
+	const archiveActivePathRef = useRef(currentPath);
+	archiveActivePathRef.current = currentPath;
+	const modelApplySessionRef = useRef(currentId);
+	modelApplySessionRef.current = currentId;
+	const refreshModelConfiguration = useCallback(async () => {
+		setResourcesVersion((version) => version + 1);
+		const result = await refreshModels();
+		if (result && !result.success) throw new Error(result.error || t.modelCatalogRefreshFailed);
+	}, [refreshModels, t.modelCatalogRefreshFailed]);
+	const applyModelConfiguration = useCallback(async () => {
+		if (!currentId || isStreaming) return { success: false, error: t.modelApplyWait };
+		const target = currentId;
+		const result = await sendCommand({ cmd: "reload" }, target);
+		if (modelApplySessionRef.current !== target) return { success: false, error: t.modelApplySessionChanged };
+		return result;
+	}, [currentId, isStreaming, sendCommand, t.modelApplyWait, t.modelApplySessionChanged]);
+	// pi 的选择窗口嵌在输入框顶部，扩展的 select/confirm/input 仍是居中弹窗
 	const askDialog = state.extensionDialogs.find((dialog) => dialog.method === "questions") ?? null;
 	const modalDialog = state.extensionDialogs.find((dialog) => dialog.method !== "questions") ?? null;
 
@@ -578,14 +696,10 @@ export function AppShell() {
 
 	const doArchiveSession = useCallback(
 		async (path: string) => {
-			try {
-				await archiveSession(path);
-			} catch {
-				// usePiWeb exposes the request failure in the shared error banner.
-			}
+			await archiveSession(path);
 			// 归档后会话立刻离开工作区列表（服务端同时让它收工）。正在看的会话被归档时
 			// 必须切走：先取同一工作区的另一个可见会话，没有就回到空态（工作区仍留在侧栏）。
-			if (!currentPath || !samePath(path, currentPath)) return;
+			if (!currentPath || !samePath(path, currentPath) || !archiveActivePathRef.current || !samePath(path, archiveActivePathRef.current)) return;
 			const cwd = sessions.find((s) => samePath(s.path, currentPath))?.cwd;
 			const next =
 				sessions.find((s) => !samePath(s.path, path) && cwd && samePath(s.cwd, cwd)) ??
@@ -612,7 +726,7 @@ export function AppShell() {
 			// 失败时让异常继续抛给侧栏的确认框显示（usePiWeb 同时写入共享错误横幅）
 			await deleteSession(path);
 			// 正在看的会话被物理删除后必须切走：逻辑同归档（同工作区另一个会话优先，没有就回空态）
-			if (!currentPath || !samePath(path, currentPath)) return;
+			if (!currentPath || !samePath(path, currentPath) || !archiveActivePathRef.current || !samePath(path, archiveActivePathRef.current)) return;
 			const cwd = sessions.find((s) => samePath(s.path, currentPath))?.cwd;
 			const next =
 				sessions.find((s) => !samePath(s.path, path) && cwd && samePath(s.cwd, cwd)) ??
@@ -627,20 +741,50 @@ export function AppShell() {
 	// 流式期间 state.messages 每 16ms 换引用，AppShell 整树重渲染时侧栏不再跟着空转
 	const openSessionAndCloseMobileNav = useCallback((path: string) => {
 		openSession(path);
+		setActiveView("chat");
 		setMobileSidebarOpen(false);
 	}, [openSession]);
 	const closeMobileNav = useCallback(() => setMobileSidebarOpen(false), []);
+	const selectWorkspaceView = useCallback((view: Exclude<WorkspaceView, "chat">) => {
+		if (view === "market") setMarketCategory("all");
+		setActiveView(view);
+		setMobileSidebarOpen(false);
+	}, []);
+	const openMarket = useCallback((category: MarketplaceCategory = "all") => {
+		setMarketCategory(category);
+		setActiveView("market");
+		setMobileSidebarOpen(false);
+	}, []);
 	const startNewSessionInCurrentWorkspace = useCallback(() => {
 		// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
 		const cur = currentPath ? sessions.find((s) => samePath(s.path, currentPath))?.cwd : undefined;
 		setHeroCwd(cur || heroCwd || knownCwds[0] || "");
 		closeSession();
+		setActiveView("chat");
+		setMobileSidebarOpen(false);
 	}, [sessions, currentPath, heroCwd, knownCwds, closeSession]);
 	const startNewSessionInWorkspace = useCallback((cwd: string) => {
 		// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
 		setHeroCwd(cwd);
 		closeSession();
+		setActiveView("chat");
+		setMobileSidebarOpen(false);
 	}, [closeSession]);
+	const startNewSessionWithPrompt = useCallback(
+		(cwd: string, prefillText: string) => {
+			const targetCwd = cwd || heroCwd || knownCwds[0] || "";
+			if (targetCwd) setHeroCwd(targetCwd);
+			closeSession();
+			const nextKey = `__hero__:${draftSequence.current + 1}`;
+			draftSequence.current += 1;
+			composerDrafts.current.set(nextKey, { ...EMPTY_CHAT_DRAFT, text: prefillText });
+			setHeroDraftKey(nextKey);
+			setDraftVersion((v) => v + 1);
+			setActiveView("chat");
+			setMobileSidebarOpen(false);
+		},
+		[heroCwd, knownCwds, closeSession],
+	);
 	const exportSessionFile = useCallback((path: string) => {
 		window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank");
 	}, []);
@@ -690,7 +834,7 @@ export function AppShell() {
 		if (!p) return { success: false };
 		// Bind before the new-session render. In-flight ChatInput callbacks still own
 		// this same key; a failed acceptance keeps the original text and attachments.
-		sessionDraftKeys.current.set(p, heroDraftKey);
+		sessionDraftKeys.current.set(canonicalDraftPath(p), heroDraftKey);
 		setHeroDraftKey(`__hero__:${++draftSequence.current}`);
 		return sendCommand(command, encodeURIComponent(b64url(p)));
 	};
@@ -702,6 +846,7 @@ export function AppShell() {
 	const followUpPrompt = useCallback((text: string, images: ImageAttachment[]) => sendCommand({ cmd: "prompt", text, images, behavior: "followUp" }), [sendCommand]);
 	const abortPrompt = useCallback(() => sendCommand({ cmd: "abort" }), [sendCommand]);
 	const clearQueuePrompt = useCallback(() => sendCommand({ cmd: "clearQueue" }), [sendCommand]);
+	const sendQueueNowPrompt = useCallback(() => sendCommand({ cmd: "sendQueueNow" }), [sendCommand]);
 	const selectSessionModel = useCallback((provider: string, id: string) => void sendCommand({ cmd: "setModel", provider, modelId: id }), [sendCommand]);
 	const selectSessionLevel = useCallback(
 		(level: string) => {
@@ -726,9 +871,11 @@ export function AppShell() {
 		[sendCommand, openSession, resync],
 	);
 
-	const commandResources = currentId && snapshot?.sessionPath && samePath(snapshot.sessionPath, currentPath ?? "")
-		? snapshot
-		: workspaceResources[resourceCwd];
+	const cachedCommands = workspaceResources[resourceCwd];
+	const commandResources = useMemo(() => currentId && snapshot?.sessionPath && samePath(snapshot.sessionPath, currentPath ?? "")
+		? { skills: snapshot.skills ?? cachedCommands?.skills, promptTemplates: snapshot.promptTemplates ?? cachedCommands?.promptTemplates, extensionCommands: snapshot.extensionCommands ?? cachedCommands?.extensionCommands }
+		: cachedCommands,
+		[currentId, currentPath, snapshot?.sessionPath, snapshot?.skills, snapshot?.promptTemplates, snapshot?.extensionCommands, cachedCommands]);
 	// 斜杠命令：Web 内置 + pi 的技能 / 提示模板 / 扩展命令（后三类原样交给 SDK 展开或执行）
 	const slashCommands = useMemo(() => {
 		const list: { name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }[] = [
@@ -938,7 +1085,7 @@ export function AppShell() {
 	// 抽屉里的一个入口,不再单独占一列,所以是 3 列而不是 4 列。
 	// JSX 里各列的渲染顺序必须与这里严格一致,否则网格会把内容摆错列。
 	// 最右一列只有一条宽度(rightWidth):详情栏与抽屉合并后不再各占一列。
-	const rightColumnVisible = Boolean(selected) || drawerOpen;
+	const rightColumnVisible = activeView === "chat" && (Boolean(selected) || drawerOpen);
 	const drawerToggle = (
 		<button
 			type="button"
@@ -958,23 +1105,12 @@ export function AppShell() {
 			<IconPanelRightOutline16 size={15} />
 		</button>
 	);
-	const gridCols = isNarrow ? "minmax(0,1fr)" : `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px minmax(0,1fr) ${
-		rightColumnVisible ? `${rightWidth}px` : "0px"}`;
-
 	// 最右一列(宽屏是网格列,窄屏是贴左右的 fixed 覆盖层):轨迹详情 ⇄ 抽屉互斥。
 	// selected(点对话里的工具行)优先——它临时接管这一列;关掉后自动回落回抽屉,
 	// 并回到抽屉原本选中的入口(入口状态在 drawerSection,不随锁定/解锁重置)。
 	const rightColumn = (
 		<div
-			className="flex min-h-0 flex-col overflow-hidden"
-			style={isNarrow ? {
-				position: "fixed",
-				inset: "0 0 0 auto",
-				width: "min(92vw, 640px)",
-				zIndex: 90,
-				background: "var(--dsw-sidebar-fill)",
-				boxShadow: "var(--dsw-elevation-prominent)",
-			} : { background: "var(--dsw-sidebar-fill)", borderLeft: "0.5px solid var(--dsw-border-l2)" }}
+			className={`${shellStyles.rightColumn} flex min-h-0 flex-col overflow-hidden`}
 		>
 			{selected ? (
 				<TrajInspector entry={selected} onClose={() => setSelected(null)} contextLookup={contextLookup} />
@@ -1006,32 +1142,31 @@ export function AppShell() {
 
 	return (
 		<div
-			className="pw-app-shell grid w-screen overflow-hidden"
+			className={`pw-app-shell ${shellStyles.shell} grid w-screen overflow-hidden`}
 			style={{
-				gridTemplateColumns: gridCols,
+				"--pw-sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarWidth}px`,
+				"--pw-right-width": rightColumnVisible ? `${rightWidth}px` : "0px",
 				// 收起/展开不做过渡：grid-template-columns 是布局属性，动画它会让浏览器逐帧
 				// 重排整棵布局树，而聊天列 minmax(0,1fr) 的宽度逐帧变化，正文/代码块每帧
 				// 重新折行，长对话必然掉帧。瞬时切换只付一次重排；拖动改宽原本也是 none。
-				background: "var(--dsw-bg-base)",
-			}}
+			} as CSSProperties}
 		>
 			{/* 侧栏 */}
 			<div
-				className="min-h-0 overflow-hidden"
-				style={isNarrow ? {
-					position: "fixed",
-					inset: "0 auto 0 0",
-					width: "min(86vw, 340px)",
-					zIndex: 90,
-					background: "var(--dsw-sidebar-fill)",
-					transform: mobileSidebarOpen ? "translateX(0)" : "translateX(-105%)",
-					transition: "transform var(--ds-duration-normal) var(--ds-ease-in-out)",
-					boxShadow: mobileSidebarOpen ? "var(--dsw-elevation-prominent)" : "none",
-				} : { background: "var(--dsw-sidebar-fill)" }}
+				id="piweb-session-sidebar"
+				className={`${shellStyles.sidebar} min-h-0 overflow-hidden`}
+				data-mobile-open={mobileSidebarOpen}
+				inert={isNarrow && !mobileSidebarOpen}
+				aria-hidden={isNarrow && !mobileSidebarOpen ? true : undefined}
 			>
 				<SessionSidebar
 					sessions={sessions}
+					onSearchQuery={searchSessions}
+					onLoadMore={loadMoreSessions}
+					hasMore={hasMoreSessions}
+					loadingMore={sessionsLoadingMore}
 					sessionListError={sessionListError}
+					workspaceRegistryWarning={workspaceRegistryWarning}
 					onRetrySessionList={retrySessionList}
 					archivedSessions={archivedSessions}
 					archivedPaths={archivedSessionPaths}
@@ -1061,15 +1196,54 @@ export function AppShell() {
 					onDeleteWorkspace={doDeleteWorkspace}
 					onOpenSettings={openSettingsFromSidebar}
 					onAddWorkspace={addWorkspaceFromSidebar}
-					draftCwd={!currentId ? heroCwd || null : null}
+					draftCwd={activeView === "chat" && !currentId ? heroCwd || null : null}
+					activeView={activeView}
+					onSelectView={selectWorkspaceView}
 				/>
 			</div>
 
 			{/* 三列网格:侧栏 | 会话区 | 最右一列(项目栏已进抽屉,不再有独立的项目列) */}
 
-			{/* 会话区 */}
+			{/* 会话区 / 顶部工作区页面（技能 / 插件 / 自动化任务） */}
 			<div className="pi-main flex min-h-0 min-w-0 flex-col">
-				{!currentId ? (
+				{activeView === "skills" ? (
+					<SkillsWorkspaceView
+						knownCwds={knownCwds}
+						defaultCwd={panelCwd}
+						getWorkspaceName={getWorkspaceName}
+						onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
+					/>
+				) : activeView === "plugins" ? (
+					<PluginsWorkspaceView
+						knownCwds={knownCwds}
+						defaultCwd={panelCwd}
+						getWorkspaceName={getWorkspaceName}
+						onOpenMarket={() => openMarket("all")}
+					/>
+				) : activeView === "prompts" ? (
+					<PromptsWorkspaceView
+						knownCwds={knownCwds}
+						defaultCwd={panelCwd}
+						getWorkspaceName={getWorkspaceName}
+						onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
+					/>
+				) : activeView === "market" ? (
+					<MarketWorkspaceView
+						knownCwds={knownCwds}
+						defaultCwd={panelCwd}
+						getWorkspaceName={getWorkspaceName}
+						initialCategory={marketCategory}
+					/>
+				) : activeView === "automations" ? (
+					<AutomationsWorkspaceView
+						knownCwds={knownCwds}
+						defaultCwd={panelCwd}
+						getWorkspaceName={getWorkspaceName}
+						models={modelChoices}
+						onOpenSession={openSessionAndCloseMobileNav}
+						onCreateInSession={startNewSessionWithPrompt}
+					/>
+				) : !currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
 						<div className="flex shrink-0 justify-end px-5 pt-3">{drawerToggle}</div>
 						<Hero
@@ -1079,6 +1253,7 @@ export function AppShell() {
 								draft={composerDrafts.current.get(heroDraftKey) ?? EMPTY_CHAT_DRAFT}
 								onDraftChange={saveHeroDraft}
 								onUploadError={(message) => failUpload(heroDraftKey, message)}
+								onClearUploadError={clearHeroUploadError}
 								onUploadProgress={(delta) => trackUpload(heroDraftKey, delta)}
 								uploadFailure={uploadFailures[heroDraftKey]}
 								pendingUploadCount={uploadCounts[heroDraftKey] ?? 0}
@@ -1100,7 +1275,7 @@ export function AppShell() {
 								const choice = { provider, id };
 								setHeroModel(choice);
 								// 只记在当前工作区名下
-								if (heroCwd) writeRememberedHeroModel(localStorage, heroCwd, choice);
+								if (heroCwd) writeRememberedHeroModel(safeLocalStorage, heroCwd, choice);
 								const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
 								if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
 							}}
@@ -1108,18 +1283,10 @@ export function AppShell() {
 							heroEffectiveThinking={heroEffectiveThinking}
 							onSelectHeroThinking={setHeroThinking}
 						/>
-						{/* 草稿阶段的错误行内显示（Bencho ToastStack 层叠通知卡风格） */}
+						{/* 草稿阶段的错误行内显示 */}
 						{state.error && (
-							<div className="px-4 pb-3">
-								<button
-									className="pw-toast-stack pw-toast-error mx-auto flex w-full max-w-md items-center gap-2.5 text-left"
-									style={{ fontSize: 12.5 }}
-									onClick={clearError}
-									role="alert"
-								>
-									<span className="pw-toast-icon" aria-hidden="true">✕</span>
-									<span className="pw-toast-body">{state.error}</span>
-								</button>
+							<div className="flex justify-center px-4 pb-3">
+								<ErrorToast message={state.error} onDismiss={clearError} className="max-w-md" />
 							</div>
 						)}
 					</div>
@@ -1150,7 +1317,7 @@ export function AppShell() {
 						{/* 内容：只有对话区，轨迹按需在详情栏查看 */}
 						{!snapshot ? (
 								// 切换会话时快照未到：居中加载指示，避免空白/占位符闪现
-								<div className="flex min-h-0 flex-1 items-center justify-center">
+								<div className="flex min-h-0 flex-1 flex-col gap-3 items-center justify-center" role="status">
 									<span
 										className="piweb-spin"
 										style={{
@@ -1163,9 +1330,11 @@ export function AppShell() {
 										}}
 										aria-label="loading"
 									/>
+									{!state.connected ? <><span style={{ color: "var(--dsw-label-secondary)", fontSize: 13 }}>{t.connectionLost}</span><button className="btn-outline" onClick={resync}>{t.retry}</button></> : null}
 								</div>
 							) : (
 							<div className="flex min-h-0 flex-1 flex-col justify-end">
+								{(snapshot?.history?.omitted ?? 0) > 0 && <button type="button" className="btn-outline mx-auto my-1" onClick={() => setHistorySessionId(currentId)}>{lang === "en" ? "View earlier messages" : "查看更早的聊天记录"} ({snapshot?.history?.omitted})</button>}
 								<ChatWindow
 									key={currentId ?? "none"}
 									messages={state.messages}
@@ -1192,9 +1361,9 @@ export function AppShell() {
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
-										{askDialog && <AskUserCard key={askDialog.id} dialog={askDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />}
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
 										<MemoChatInput
+											topSlot={askDialog ? <AskUserCard key={askDialog.id} dialog={askDialog} embedded onAnswer={(id, response) => void answerExtensionDialog(id, response)} /> : undefined}
 											toolPreset={state.toolPreset}
 											customActiveTools={snapshot?.customActiveTools}
 											onToolPresetChange={setToolPreset}
@@ -1205,6 +1374,7 @@ export function AppShell() {
 												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
 												onDraftChange={saveSessionDraft}
 												onUploadError={sessionUploadError}
+												onClearUploadError={clearSessionUploadError}
 												onUploadProgress={sessionUploadProgress}
 												uploadFailure={uploadFailures[draftKey]}
 												pendingUploadCount={uploadCounts[draftKey] ?? 0}
@@ -1235,6 +1405,7 @@ export function AppShell() {
 											onSelectModel={selectSessionModel}
 											onSelectLevel={selectSessionLevel}
 											onClearQueue={clearQueuePrompt}
+											onSendQueueNow={sendQueueNowPrompt}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="belowEditor" className="mt-1" />
@@ -1252,31 +1423,27 @@ export function AppShell() {
 				)}
 			</div>
 
-			{/* 宽屏:最右一列(轨迹详情优先,否则抽屉);关闭时补占位列。
-			    网格列数与顺序是固定的三列,少一个 item 会让后面的元素落错列。 */}
-			{!isNarrow && (rightColumnVisible ? rightColumn : <div aria-hidden="true" />)}
+			{/* 同一个抽屉在宽屏占列、窄屏覆盖；改变屏宽不会卸载其中的表单。 */}
+			{rightColumnVisible ? rightColumn : <div className={shellStyles.rightPlaceholder} aria-hidden="true" />}
 
 			{/* 拖拽手柄 */}
-			{!isNarrow && !sidebarCollapsed && (
+			{!sidebarCollapsed && (
 				<div
-					className="fixed top-0 h-full w-2 cursor-col-resize"
+					className={`${shellStyles.desktopResizeHandle} fixed top-0 h-full w-2 cursor-col-resize`}
 					style={{ left: sidebarWidth - 4, zIndex: 40 }}
 					onPointerDown={onDrag("sidebar")}
 				/>
 			)}
-			{!isNarrow && rightColumnVisible && (
+			{rightColumnVisible && (
 				<div
-					className="fixed top-0 h-full w-2 cursor-col-resize"
+					className={`${shellStyles.desktopResizeHandle} fixed top-0 h-full w-2 cursor-col-resize`}
 					style={{ left: `calc(100vw - ${rightWidth}px - 4px)`, zIndex: 40 }}
 					onPointerDown={onDrag("right")}
 				/>
 			)}
 			{/* 窄屏最右一列:贴右边滑出(轨迹详情与抽屉共用,遮罩关闭回到对话) */}
-			{isNarrow && rightColumnVisible && (
-				<>
-					<button className="fixed inset-0 z-[85]" style={{ background: "var(--dsw-mask)" }} onClick={() => (selected ? setSelected(null) : toggleDrawer(false))} aria-label={t.close} />
-					{rightColumn}
-				</>
+			{rightColumnVisible && (
+				<button className={`${shellStyles.mobileBackdrop} fixed inset-0 z-[85]`} style={{ background: "var(--dsw-mask)" }} onClick={() => (selected ? setSelected(null) : toggleDrawer(false))} aria-label={t.close} />
 			)}
 			{viewer.state.open && (
 				<FileViewer
@@ -1294,6 +1461,7 @@ export function AppShell() {
 			)}
 
 			<ExtensionDialogHost dialog={modalDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			{historySessionId && <SessionHistory sessionId={historySessionId} onClose={() => setHistorySessionId(null)} />}
 			{/* 扩展对话框和选择窗口优先：它们在阻塞 pi，建仓库的询问可以等（否则弹窗会盖住输入框上方的问题卡） */}
 			{state.growth.consent && !state.extensionDialogs.length && (
 				<GrowthConsentDialog request={state.growth.consent} onAnswer={(allow) => void answerGrowthConsent(allow)} />
@@ -1307,29 +1475,40 @@ export function AppShell() {
 			{settingsLoaded && (
 				<SettingsPanel
 					open={settingsOpen}
+					cwd={panelCwd}
+					onModelsChanged={refreshModelConfiguration}
+					onApplyCurrentSession={currentId ? applyModelConfiguration : undefined}
+					currentSessionBusy={isStreaming}
+					currentSessionKey={currentId ?? undefined}
 					onClose={() => {
 						setSettingsOpen(false);
 						// 模型配置可能在设置里被改动（API key / OAuth / 自定义 provider）：
 						// 关闭时刷新全局模型目录，否则输入卡/新会话页的模型菜单停留在旧目录。
 						void refreshModels();
 					}}
-					onOpenFileContent={(p, content) => viewer.openStatic(p, content)}
-					cwd={snapshot?.cwd || heroCwd || knownCwds[0] || ""}
 				/>
 			)}
-			{isNarrow && (
+			<button
+				className={`${shellStyles.mobileMenu} pi-mobile-menu icon-btn fixed z-[70]`}
+				style={{
+					width: 30,
+					height: 30,
+					borderRadius: 999,
+					left: "calc(env(safe-area-inset-left, 0px) + 12px)",
+					top: "calc(env(safe-area-inset-top, 0px) + 12px)",
+					background: "var(--dsw-bg-elevated)",
+					boxShadow: "var(--dsw-elevation-soft)",
+				}}
+				onClick={() => setMobileSidebarOpen(true)}
+				aria-label={t.workspaces}
+				aria-expanded={mobileSidebarOpen}
+				aria-controls="piweb-session-sidebar"
+			>
+				<IconPanelLeftOutline16 size={16} />
+			</button>
+			{mobileSidebarOpen && (
 				<button
-					className="pi-mobile-menu icon-btn fixed left-3 top-3 z-[70]"
-					style={{ width: 34, height: 34, background: "var(--dsw-bg-elevated)", boxShadow: "var(--dsw-elevation-soft)" }}
-					onClick={() => setMobileSidebarOpen(true)}
-					aria-label={t.workspaces}
-				>
-					<IconPanelLeftOutline16 size={17} />
-				</button>
-			)}
-			{isNarrow && mobileSidebarOpen && (
-				<button
-					className="fixed inset-0 z-[80]"
+					className={`${shellStyles.mobileBackdrop} fixed inset-0 z-[80]`}
 					style={{ background: "var(--dsw-mask)" }}
 					onClick={() => setMobileSidebarOpen(false)}
 					aria-label={t.close}
@@ -1358,6 +1537,7 @@ function Hero({
 	draft,
 	onDraftChange,
 	onUploadError,
+	onClearUploadError,
 	onUploadProgress,
 	uploadFailure,
 	pendingUploadCount,
@@ -1386,6 +1566,7 @@ function Hero({
 	draft: ChatDraft;
 	onDraftChange: (update: ChatDraftUpdate) => void;
 	onUploadError: (message: string) => void;
+	onClearUploadError: () => void;
 	onUploadProgress: (delta: 1 | -1) => void;
 	uploadFailure?: string;
 	pendingUploadCount: number;
@@ -1484,7 +1665,7 @@ function Hero({
 	const currentLabel = cwd ? (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) : t.startWith;
 
 	return (
-		<div ref={heroRef} className="flex h-full min-h-0 flex-col items-center justify-center px-6">
+		<div ref={heroRef} className="flex min-h-0 flex-1 flex-col items-center justify-center px-6">
 			{/* 品牌行：仅 π 标 */}
 			<div className="mb-5 flex items-center justify-center gap-3">
 				<PiMark size={40} />
@@ -1563,6 +1744,7 @@ function Hero({
 					draft={draft}
 					onDraftChange={onDraftChange}
 					onUploadError={onUploadError}
+					onClearUploadError={onClearUploadError}
 					onUploadProgress={onUploadProgress}
 					uploadFailure={uploadFailure}
 					pendingUploadCount={pendingUploadCount}

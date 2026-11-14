@@ -5,14 +5,13 @@
 import path from "node:path";
 import { PIWEB_EXECUTION_GUIDANCE } from "./execution-guidance";
 import fs from "node:fs";
-import { readJsonObjectSync } from "./agent-config";
+import { JsoncSettingsStorage, readJsoncSettingsObjectSync } from "./jsonc-settings-storage";
 import {
 	type ModelRuntime as PiModelRuntime,
 	type SettingsManager,
 	type InlineExtension,
 	DefaultPackageManager,
 	DefaultResourceLoader,
-	ModelRuntime,
 	ProjectTrustStore,
 	SessionManager,
 	SettingsManager as SettingsManagerClass,
@@ -26,6 +25,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { modelFilesFingerprint, reloadStoredCredentials } from "./model-files";
+import { refreshSessionModelRuntimes } from "./session-model-runtime";
+import { createPiWebModelRuntime } from "./model-runtime-safe";
+import { securePackageManager } from "./package-manager-safe";
 
 export { createAgentSession, getAgentDir, loadProjectContextFiles, SessionManager };
 
@@ -34,7 +36,8 @@ process.env.PYTHONUTF8 ??= "1";
 process.env.PYTHONIOENCODING ??= "utf-8";
 
 let modelRuntimePromise: Promise<PiModelRuntime> | null = null;
-/** 共享运行时每创建一次、每刷新一次就加一：模型列表缓存据此作废（见 models-service） */
+let modelRuntimeRefresh: Promise<void> | null = null;
+/** 共享运行时每创建一次、每刷新结束一次就加一：模型列表缓存据此作废（见 models-service） */
 let modelRuntimeGeneration = 0;
 /** 上一次加载目录时 models.json / auth.json 的指纹 */
 let modelFilesSeen: string | null = null;
@@ -43,7 +46,7 @@ export function getModelRuntime(): Promise<PiModelRuntime> {
 	if (!modelRuntimePromise) {
 		modelFilesSeen = modelFilesFingerprint(getAgentDir());
 		modelRuntimeGeneration += 1;
-		modelRuntimePromise = ModelRuntime.create().catch((err) => {
+		modelRuntimePromise = createPiWebModelRuntime().catch((err) => {
 			modelRuntimePromise = null;
 			throw err;
 		});
@@ -56,28 +59,51 @@ export function modelRuntimeVersion(): number {
 }
 
 /**
- * models.json 落盘后调用：就地刷新共享的 ModelRuntime，让目录与认证立即生效。
- * 不能换一个新实例 —— 活跃会话、扩展注册的 provider 都挂在旧实例上，换掉后会话里
- * 选新 provider 的模型会报 "No API key"，扩展 provider 也会从目录里消失。
+ * models.json 落盘后调用：就地刷新公共目录及每个会话的 ModelRuntime。
+ * 持久化配置和凭据共享，扩展注册的 provider 只保留在所属会话中。
  * 只读本地配置不联网；刷新失败才退回整体重建。手改的 auth.json 也在这里重读（SDK 的存储会缓存它）。
  */
 export async function refreshModelRuntime(): Promise<void> {
+	if (modelRuntimeRefresh) {
+		// Another waiter can begin the next revision as the previous one settles.
+		// Follow that handoff instead of treating its in-flight work as applied.
+		do { await modelRuntimeRefresh; } while (modelRuntimeRefresh);
+		// A settings save may arrive after the current refresh already read its
+		// files. That save must wait for its own revision, not just the older work.
+		if (modelFilesFingerprint(getAgentDir()) === modelFilesSeen) return;
+		return refreshModelRuntime();
+	}
 	const pending = modelRuntimePromise;
 	if (!pending) return;
-	// 先记指纹再刷新：刷新期间又改的文件，下一次检查还能发现
-	modelFilesSeen = modelFilesFingerprint(getAgentDir());
-	modelRuntimeGeneration += 1;
-	try {
-		const runtime = await pending;
-		reloadStoredCredentials(runtime);
-		await runtime.refresh({ allowNetwork: false });
-	} catch {
-		if (modelRuntimePromise === pending) modelRuntimePromise = null;
-	}
+	// Capture the revision before reading, but publish it only after all runtimes
+	// have applied it. A write during this refresh remains detectable afterwards.
+	const refreshingFiles = modelFilesFingerprint(getAgentDir());
+	const refresh = (async () => {
+		try {
+			const runtime = await pending;
+			reloadStoredCredentials(runtime);
+			await runtime.refresh({ allowNetwork: false });
+			await refreshSessionModelRuntimes(runtime);
+			modelFilesSeen = refreshingFiles;
+		} catch (error) {
+			if (modelRuntimePromise === pending) modelRuntimePromise = null;
+			modelFilesSeen = null;
+			throw error;
+		} finally {
+			// Failure also invalidates data cached from the discarded runtime.
+			modelRuntimeGeneration += 1;
+		}
+	})();
+	modelRuntimeRefresh = refresh;
+	try { await refresh; }
+	finally { if (modelRuntimeRefresh === refresh) modelRuntimeRefresh = null; }
 }
 
 /** 读目录的入口调用：models.json / auth.json 的指纹变了才刷新（两次 stat，不读内容）。返回是否刷新过。 */
 export async function refreshModelRuntimeIfFilesChanged(): Promise<boolean> {
+	// A different workspace may already be refreshing this same credential store.
+	// Do not read its new generation until that refresh has actually completed.
+	while (modelRuntimeRefresh) await modelRuntimeRefresh;
 	if (!modelRuntimePromise) return false;
 	if (modelFilesFingerprint(getAgentDir()) === modelFilesSeen) return false;
 	await refreshModelRuntime();
@@ -180,7 +206,7 @@ function rememberedProjectTrust(cwd: string): boolean | null {
 
 function readDefaultProjectTrust(): "ask" | "always" | "never" {
 	// 同步读且被 getSettingsManager / 资源指纹反复调用：走统一缓存（文件没变就不重新读盘解析）
-	const raw = readJsonObjectSync(path.join(getAgentDir(), "settings.json")) as { defaultProjectTrust?: string };
+	const raw = readJsoncSettingsObjectSync(path.join(getAgentDir(), "settings.json")) as { defaultProjectTrust?: string };
 	return raw.defaultProjectTrust === "always" || raw.defaultProjectTrust === "never" ? raw.defaultProjectTrust : "ask";
 }
 
@@ -246,7 +272,7 @@ export function getSettingsManager(cwd: string): SettingsManager {
 	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
 	let sm = settingsCache.get(key);
 	if (!sm) {
-		sm = SettingsManagerClass.create(resolved, getAgentDir(), { projectTrusted: resolveProjectTrust(resolved).trusted });
+		sm = SettingsManagerClass.fromStorage(new JsoncSettingsStorage(resolved, getAgentDir()), { projectTrusted: resolveProjectTrust(resolved).trusted });
 		settingsCache.set(key, sm);
 		settingsCwds.set(key, resolved);
 	}
@@ -261,9 +287,24 @@ interface LoaderEntry {
 	/** 发现缓存的版本；每个热会话分别追踪自己已应用的版本。 */
 	version: number;
 	fingerprint: string;
+	packageRoots: string[];
 }
 
+import { resourceFingerprint as fingerprintResources } from "./resource-fingerprint";
+
 const loaderCache = new Map<string, LoaderEntry>();
+
+const nonInstallingManagers = new WeakSet<object>();
+/** The installed SDK has no loader-level missing-source option; scope its public resolver to this loader. */
+function disableImplicitPackageInstall(loader: DefaultResourceLoader): void {
+	const manager = Reflect.get(loader, "packageManager") as DefaultPackageManager | undefined;
+	if (!manager || typeof manager.resolve !== "function") throw new Error("The SDK resource loader cannot disable implicit package installation; use a supported SDK version.");
+	securePackageManager(manager);
+	if (nonInstallingManagers.has(manager)) return;
+	const resolve = manager.resolve.bind(manager);
+	manager.resolve = () => resolve(async () => "skip");
+	nonInstallingManagers.add(manager);
+}
 
 let resourceLock: Promise<void> = Promise.resolve();
 /** 资源加载/重载（含 AgentSession.reload）全局排队：SDK 的扩展模块缓存是进程级且按 cwd 切换时清空，不能交错 */
@@ -300,6 +341,7 @@ export async function createSessionResourceLoader(cwd: string, settingsOverride?
 	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: [...BUILTIN_EXTENSIONS, ...sessionExtensions],
 		appendSystemPromptOverride: (base) => [...base, PIWEB_EXECUTION_GUIDANCE],
 	});
+	disableImplicitPackageInstall(loader);
 	const reload = loader.reload.bind(loader);
 	loader.reload = async (options) => {
 		settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
@@ -325,7 +367,8 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd), extensionFactories: BUILTIN_EXTENSIONS,
 			appendSystemPromptOverride: (base) => [...base, PIWEB_EXECUTION_GUIDANCE],
 		});
-		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "" };
+		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "", packageRoots: [] };
+		disableImplicitPackageInstall(loader);
 		loaderCache.set(key, entry);
 		queueLoaderReload(cwd, entry);
 	}
@@ -333,13 +376,22 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 }
 
 function queueLoaderReload(cwd: string, entry: LoaderEntry): Promise<void> {
+	fingerprintChecks.delete(entry);
 	const run = withResourceLock(async () => {
 		getSettingsManager(cwd).setProjectTrusted(resolveProjectTrust(cwd).trusted);
 		// 发现缓存从未被会话绑定；替换前释放它自己的 event-bus 订阅。
 		entry.loader.getExtensions().runtime.invalidate();
-		const fingerprint = resourceFingerprint(cwd);
-		await entry.loader.reload();
-		entry.fingerprint = fingerprint;
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const before = resourceFingerprint(cwd);
+			await entry.loader.reload();
+			entry.packageRoots = getPackageManager(cwd).listConfiguredPackages()
+				.map((pkg) => pkg.installedPath).filter((root): root is string => typeof root === "string");
+			// New sources or a concurrent edit require another read. Never mark a newer
+			// on-disk revision as loaded just because it was observed after reload.
+			entry.fingerprint = before;
+			if (before === resourceFingerprint(cwd)) break;
+			if (attempt === 0) entry.loader.getExtensions().runtime.invalidate();
+		}
 		entry.version += 1;
 	});
 	entry.ready = run;
@@ -358,54 +410,33 @@ export async function resourceLoaderReady(cwd: string): Promise<void> {
 	await loaderCache.get(loaderKey(cwd))!.ready;
 }
 
-/** 用户可能随手新建 .md / SKILL.md 的目录：全局与项目的 prompts、skills、extensions */
-function watchedResourceDirs(cwd: string): string[] {
-	const agentDir = getAgentDir();
-	const project = path.join(path.resolve(cwd), ".pi");
-	return [
-		path.join(agentDir, "prompts"),
-		path.join(agentDir, "skills"),
-		path.join(agentDir, "extensions"),
-		path.join(project, "prompts"),
-		path.join(project, "skills"),
-		path.join(project, "extensions"),
-	];
-}
-
 function resourceFingerprint(cwd: string): string {
-	const records: string[] = [String(resolveProjectTrust(cwd).trusted)];
-	const visit = (file: string, depth: number) => {
-		try {
-			const stat = fs.statSync(file);
-			records.push(`${file}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`);
-			if (stat.isDirectory() && depth < 2) {
-				for (const entry of fs.readdirSync(file, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-					if (entry.name !== "node_modules") visit(path.join(file, entry.name), depth + 1);
-				}
-			}
-		} catch {
-			records.push(`${file}:missing`);
-		}
-	};
-	for (const dir of watchedResourceDirs(cwd)) visit(dir, 0);
-	for (const file of [path.join(getAgentDir(), "settings.json"), path.join(cwd, ".pi", "settings.json")]) visit(file, 2);
-	return records.join("\n");
+	const entry = loaderCache.get(loaderKey(cwd));
+	return fingerprintResources({ cwd, agentDir: getAgentDir(), trusted: resolveProjectTrust(cwd).trusted,
+		loader: entry?.loader, packageRoots: entry?.packageRoots });
 }
 
 /**
  * 资源目录里有比上次加载更新的文件（用户刚新建了 prompt / 技能 / 扩展）就重载一次。
- * 只 stat 几个目录，不递归项目；返回是否真的重载了。
+ * 只遍历 SDK 资源发现目录并校验实际来源，不递归整个工作区；返回是否真的重载了。
  */
-export function resourceLoaderIsStale(cwd: string): boolean {
+export function resourceLoaderIsStale(cwd: string, { fresh = false }: { fresh?: boolean } = {}): boolean {
 	const entry = loaderCache.get(loaderKey(cwd));
-	return !entry || resourceFingerprint(cwd) !== entry.fingerprint;
+	if (!entry) return true;
+	const cached = fingerprintChecks.get(entry);
+	if (!fresh && cached && Date.now() - cached.at < 2_000) return cached.fingerprint !== entry.fingerprint;
+	const fingerprint = resourceFingerprint(cwd);
+	fingerprintChecks.set(entry, { at: Date.now(), fingerprint });
+	return fingerprint !== entry.fingerprint;
 }
 
-export async function refreshResourceLoaderIfStale(cwd: string): Promise<boolean> {
+const fingerprintChecks = new WeakMap<LoaderEntry, { at: number; fingerprint: string }>();
+
+export async function refreshResourceLoaderIfStale(cwd: string, options: { fresh?: boolean } = {}): Promise<boolean> {
 	await resourceLoaderReady(cwd);
 	const entry = loaderCache.get(loaderKey(cwd));
 	if (!entry) return false;
-	if (resourceFingerprint(cwd) === entry.fingerprint) return false;
+	if (!resourceLoaderIsStale(cwd, options)) return false;
 	await reloadLoader(cwd);
 	return true;
 }
@@ -427,42 +458,42 @@ export async function reloadLoader(cwd: string): Promise<void> {
 
 /** 让所有已缓存的 SettingsManager 就地重新读盘（活跃会话持有的就是这些实例） */
 export async function reloadSettingsManagers(): Promise<void> {
+	const failures: unknown[] = [];
 	for (const sm of settingsCache.values()) {
+		// Previous diagnostics are not evidence that this reload failed.
+		sm.drainErrors();
 		try {
 			await sm.reload();
-		} catch {
-			/* ignore */
+			for (const issue of sm.drainErrors()) failures.push(issue.error);
+		} catch (error) {
+			failures.push(error);
 		}
 	}
-}
-
-/** 保留活跃加载器持有的 SettingsManager，重新读盘而不是留下脱离缓存的实例。 */
-export function invalidateSettingsManagers(): void {
-	for (const sm of settingsCache.values()) void sm.reload().catch(() => undefined);
-	packageManagerCache.clear();
+	if (failures.length) throw new AggregateError(failures, "Some settings could not refresh; saved changes remain on disk.");
 }
 
 /** 热重载全部已缓存加载器（对应 pi 的 /reload）；就地刷新，不清缓存；返回重载过的 cwd 键 */
 export async function reloadAllLoaders(): Promise<string[]> {
 	// 先让 SettingsManager 重新读盘（加载器 reload 内部也会 reload 同一个实例），包缓存清掉
-	for (const sm of settingsCache.values()) {
-		try {
-			await sm.reload();
-		} catch {
-			/* ignore */
-		}
-	}
+	const failures: unknown[] = [];
+	try { await reloadSettingsManagers(); }
+	catch (error) { failures.push(...(error instanceof AggregateError ? error.errors : [error])); }
 	packageManagerCache.clear();
 	const reloaded: string[] = [];
 	for (const [key, entry] of loaderCache) {
 		try {
 			// 用原始目录：小写键会让资源指纹对不上（每次都多重载一轮），信任查找也会出错
 			await queueLoaderReload(entry.cwd, entry);
+			const extensionErrors = entry.loader.getExtensions().errors;
+			if (extensionErrors.length) throw new AggregateError(extensionErrors.map((issue) => new Error(issue.error)), "Some extensions could not refresh");
+			const settingsErrors = getSettingsManager(entry.cwd).drainErrors();
+			if (settingsErrors.length) throw new AggregateError(settingsErrors.map((issue) => issue.error), "Some settings could not refresh");
 			reloaded.push(key);
-		} catch {
-			/* 单个失败不影响其他 */
+		} catch (error) {
+			failures.push(error);
 		}
 	}
+	if (failures.length) throw new AggregateError(failures, `${failures.length} resource loader(s) could not refresh; saved changes remain applied.`);
 	return reloaded;
 }
 
@@ -473,11 +504,11 @@ export function getPackageManager(cwd: string): DefaultPackageManager {
 	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
 	let packageManager = packageManagerCache.get(key);
 	if (!packageManager) {
-		packageManager = new DefaultPackageManager({
+		packageManager = securePackageManager(new DefaultPackageManager({
 			cwd: resolved,
 			agentDir: getAgentDir(),
 			settingsManager: getSettingsManager(resolved),
-		});
+		}));
 		packageManagerCache.set(key, packageManager);
 	}
 	return packageManager;
@@ -501,10 +532,18 @@ export function openSessionManager(sessionPath: string): SessionManager {
 	return SessionManager.open(sessionPath);
 }
 
-/** 工具预设 → pi 工具白名单（ask_user_question 只是问用户、不碰文件，各档都放行） */
-export const TOOL_PRESETS: Record<"readonly" | "standard" | "full", string[]> = {
-	readonly: ["read", "grep", "find", "ls", "ask_user_question"],
-	standard: ["read", "grep", "find", "ls", "bash", "edit", "write", "codemode", "tool_search", "ask_user_question"],
+/**
+ * 工具预设 → pi 工具白名单（ask_user_question 只是问用户、不碰文件，各档都放行）。
+ *
+ * 这里只是「哪些工具对模型可见」，不是安全边界：路径与 shell 的强制在 lib/permission-gate
+ * 与 agent-manager 的执行期闸门里，两道一起才成立。workspace 档刻意不给 manage_automation 与 powershell
+ * （能创建更高权限任务或绕过 bash 沙箱）；bash 仅在有 OS 沙箱后端时实际开放。
+ */
+export const TOOL_PRESETS: Record<"readonly" | "workspace" | "full", string[]> = {
+	// readonly 也放行 bash：命令在只读沙箱里跑（写全被内核拒），只读检查类命令因此可用。
+	// bash 与 request_permission 都只在有沙箱后端时真正生效，见 agent-manager 的运行时检查。
+	readonly: ["read", "grep", "find", "ls", "bash", "ask_user_question", "request_permission"],
+	workspace: ["read", "grep", "find", "ls", "edit", "write", "bash", "codemode", "tool_search", "ask_user_question", "request_permission"],
 	full: [], // 空 = 不限制（全部可用工具）
 };
 
@@ -517,9 +556,10 @@ export function isMcpToolName(name: string): boolean {
 
 /**
  * 档位是否放行某个工具（只是上限，开不开由 SDK / 扩展决定）。
- * standard 另外放行 MCP 工具：服务器是用户自己在 mcp.json 里配的；readonly 不放，MCP 工具能写盘、调外部服务。
+ * workspace 另外放行 MCP 工具：服务器是用户自己在 mcp.json 里配的；readonly 不放，MCP 工具能写盘、调外部服务。
+ * MCP 里能写盘的那些由执行期闸门再筛一遍（只放 readOnlyHint 的）。
  */
 export function presetAllowsTool(preset: keyof typeof TOOL_PRESETS, name: string): boolean {
 	if (preset === "full") return true;
-	return TOOL_PRESETS[preset].includes(name) || (preset === "standard" && isMcpToolName(name));
+	return TOOL_PRESETS[preset].includes(name) || isMcpToolName(name);
 }

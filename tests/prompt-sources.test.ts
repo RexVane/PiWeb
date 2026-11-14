@@ -7,7 +7,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildPromptSources, classifyPromptOrigin, latestCompactionSummary, listPromptSources, readPromptSource } from "../src/lib/prompt-sources";
+import { buildPromptSources, classifyPromptOrigin, latestCompactionSummary, listPromptSources, MAX_PROMPT_SOURCE_BYTES, readPromptSource } from "../src/lib/prompt-sources";
 import { readWorkspaceImage } from "../src/lib/files-service";
 
 const prior = process.env.PI_CODING_AGENT_DIR;
@@ -70,6 +70,17 @@ describe("buildPromptSources（纯函数）", () => {
 });
 
 describe("listPromptSources / readPromptSource（真实资源加载器）", () => {
+	it("bounds both discovered prompt bodies and linked documents to 1 MiB", async () => {
+		const body = path.join(ws, "AGENTS.md");
+		await write(body, "x".repeat(MAX_PROMPT_SOURCE_BYTES + 1));
+		await expect(readPromptSource(body, ws)).rejects.toThrow("exceeds 1 MB");
+		const skill = path.join(agentDir, "skills", "global-skill", "SKILL.md");
+		const linked = path.join(path.dirname(skill), "references", "large.md");
+		await write(linked, "x".repeat(MAX_PROMPT_SOURCE_BYTES + 1));
+		await expect(readPromptSource(linked, ws, skill)).rejects.toThrow("exceeds 1 MB");
+		await write(linked, "x".repeat(MAX_PROMPT_SOURCE_BYTES));
+		expect((await readPromptSource(linked, ws, skill)).length).toBe(MAX_PROMPT_SOURCE_BYTES);
+	});
 	it("列出项目与个人两边的提示词来源", async () => {
 		const { sources } = await listPromptSources({ cwd: ws });
 		expect(names(sources, "agents")).toEqual(["AGENTS.md"]);
@@ -167,6 +178,21 @@ describe("listPromptSources / readPromptSource（真实资源加载器）", () =
 });
 
 describe("上下文里会影响模型的内容都要如实列出", () => {
+	it("切换分支后只显示当前投影中的压缩摘要", async () => {
+		const { SessionManager } = await import("../src/lib/pi");
+		const sm = SessionManager.inMemory(ws);
+		const rootId = sm.appendMessage({ role: "user", content: "Root", timestamp: 1 });
+		sm.appendCompaction("Only in branch A", rootId, 100);
+		const session = { systemPrompt: "x", getAllTools: () => [], sessionManager: sm };
+		expect(latestCompactionSummary(session)).toBe("Only in branch A");
+		sm.branch(rootId);
+		const branchB = sm.appendMessage({ role: "user", content: "Branch B", timestamp: 2 });
+		expect(latestCompactionSummary(session)).toBeUndefined();
+		expect((await listPromptSources({ cwd: ws, session })).compactedSummary).toBeUndefined();
+		sm.appendCompaction("Current branch B", branchB, 50);
+		expect(latestCompactionSummary(session)).toBe("Current branch B");
+	});
+
 	it("系统提示词就是完整生效版本，不做任何过滤", async () => {
 		const full = [
 			"你是 pi。",

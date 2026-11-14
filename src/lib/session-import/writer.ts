@@ -13,7 +13,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ImportedBlock, ImportedEntry, ImportedMessage, ImportedSession, ImportSource } from "./types";
+import type { ImportedBlock, ImportedMessage, ImportedSession, ImportSource } from "./types";
 import { fallbackTitle } from "./types";
 
 /** 来源前缀：标题里标出来源，侧栏一眼能看出是导入的 */
@@ -32,7 +32,8 @@ const entryId = () => randomUUID().replace(/-/g, "").slice(0, 8);
 
 /** 会话目录编码：与 SDK 的 SessionManager 完全一致（--D--AIApp-PiWeb--） */
 export function encodeSessionDir(cwd: string): string {
-	return `--${path.resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+	const normalized = cwd.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
+	return `--${path.resolve(normalized).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
 function safeId(value: string): string {
@@ -158,7 +159,7 @@ function repairToolPairing(messages: ImportedMessage[]): { messages: ImportedMes
 }
 
 export interface WriteImportedOptions {
-	/** 目标工作区目录（必须真实存在——调用方负责校验与兜底） */
+	/** 目标工作区目录（必须真实存在——调用方负责校验） */
 	cwd: string;
 	agentDir: string;
 	now?: number;
@@ -240,9 +241,13 @@ export async function writeImportedSession(session: ImportedSession, options: Wr
 	const dir = path.join(options.agentDir, "sessions", encodeSessionDir(options.cwd));
 	await fs.mkdir(dir, { recursive: true });
 	const target = path.join(dir, importedFileName(summary.source, summary.externalId, createdAt));
-	const temporary = `${target}.${process.pid}.tmp`;
-	await fs.writeFile(temporary, `${lines.join("\n")}\n`, "utf8");
-	await fs.rename(temporary, target);
+	const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(temporary, `${lines.join("\n")}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+		// link is an atomic create-if-absent; concurrent imports cannot replace a
+		// session to which the user may already have appended conversation data.
+		await fs.link(temporary, target);
+	} finally { await fs.unlink(temporary).catch(() => undefined); }
 	return { path: target, messageCount: messages.messages.length, skipped };
 }
 

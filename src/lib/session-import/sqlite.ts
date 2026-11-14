@@ -8,6 +8,7 @@
  * 这两个来源报错，文件类的四个来源照常可用——scanAllSources 会把单来源失败隔离掉。
  */
 import type { DatabaseSync } from "node:sqlite";
+import fs from "node:fs/promises";
 
 export interface ReadOnlyDb {
 	all(sql: string, params?: Array<string | number | null>): Record<string, unknown>[];
@@ -18,13 +19,17 @@ export interface ReadOnlyDb {
 }
 
 export async function openReadOnly(file: string): Promise<ReadOnlyDb | null> {
+	try { await fs.access(file); } catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw new Error("源会话库无法访问", { cause: error });
+	}
 	const DatabaseSyncClass = await loadDriver();
-	if (!DatabaseSyncClass) return null;
+	if (!DatabaseSyncClass) throw new Error("当前 Node 运行时不支持 SQLite 会话导入");
 	let db: DatabaseSync;
 	try {
 		db = new DatabaseSyncClass(file, { readOnly: true });
-	} catch {
-		return null; // 文件不存在 / 不是 SQLite / 被占用到无法只读打开
+	} catch (error) {
+		throw new Error("源会话库无法只读打开，请检查文件是否损坏或被锁定", { cause: error });
 	}
 	try {
 		db.exec("PRAGMA query_only = 1");
@@ -33,9 +38,16 @@ export async function openReadOnly(file: string): Promise<ReadOnlyDb | null> {
 	}
 	const all = (sql: string, params: Array<string | number | null> = []) => {
 		try {
-			return db.prepare(sql).all(...params) as Record<string, unknown>[];
-		} catch {
-			return [];
+			const rows: Record<string, unknown>[] = [];
+			let bytes = 0;
+			for (const row of db.prepare(sql).iterate(...params)) {
+				bytes += Buffer.byteLength(JSON.stringify(row));
+				if (rows.length >= 50_000 || bytes > 200 * 1024 * 1024) throw new Error("源会话库结果超过导入上限");
+				rows.push(row as Record<string, unknown>);
+			}
+			return rows;
+		} catch (error) {
+			throw new Error("读取源会话库失败，源文件未被修改", { cause: error });
 		}
 	};
 	return {
@@ -45,8 +57,8 @@ export async function openReadOnly(file: string): Promise<ReadOnlyDb | null> {
 		hasColumn: (table, column) => {
 			try {
 				return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((row) => row.name === column);
-			} catch {
-				return false;
+			} catch (error) {
+				throw new Error("无法读取源会话库结构", { cause: error });
 			}
 		},
 		close: () => {

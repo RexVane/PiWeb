@@ -19,18 +19,20 @@ beforeEach(() => {
 
 describe("导入扫描范围", () => {
 	it("默认范围和是否还有更早会话由 API 返回，内部路径不泄露", async () => {
-		const response = await GET(new Request("http://localhost/api/sessions/import"));
+		const request = new Request("http://localhost/api/sessions/import");
+		const response = await GET(request);
 		expect(response.status).toBe(200);
-		expect(mocks.scan).toHaveBeenCalledWith("/test-agent", { limit: INITIAL_SCAN_LIMIT });
+		expect(mocks.scan).toHaveBeenCalledWith("/test-agent", { limit: INITIAL_SCAN_LIMIT, signal: request.signal });
 		const body = await response.json();
 		expect(body.data).toMatchObject({ limit: INITIAL_SCAN_LIMIT, hasMore: { claude: true } });
 		expect(body.data.sessions[0]).not.toHaveProperty("location");
 	});
 
 	it("扩大扫描只接受边界内的整数", async () => {
-		const response = await GET(new Request(`http://localhost/api/sessions/import?limit=${MAX_SCAN_LIMIT}`));
+		const request = new Request(`http://localhost/api/sessions/import?limit=${MAX_SCAN_LIMIT}`);
+		const response = await GET(request);
 		expect(response.status).toBe(200);
-		expect(mocks.scan).toHaveBeenCalledWith("/test-agent", { limit: MAX_SCAN_LIMIT });
+		expect(mocks.scan).toHaveBeenCalledWith("/test-agent", { limit: MAX_SCAN_LIMIT, signal: request.signal });
 	});
 
 	it.each(["", "0", "-1", "1.5", "NaN", "Infinity", "abc", String(MAX_SCAN_LIMIT + 1)])("拒绝无效范围 %j，不启动扫描", async (limit) => {

@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * useGrowth：项目生长视图的状态（每轮一个 git commit）。
@@ -87,7 +89,10 @@ function mergeRounds(fetched: GrowthRound[], live: GrowthRound[]): GrowthRound[]
 /** 去掉工作区基线，给 pi 的轮次编号（「你的修改」不占号） */
 export function numberRounds(rounds: GrowthRound[]): GrowthEntry[] {
 	let n = 0;
-	return rounds.filter((round) => round.kind !== "baseline").map((round) => ({ ...round, n: round.kind === "round" ? (n += 1) : null }));
+	return rounds.filter((round) => round.kind !== "baseline").map((round) => {
+		if (round.kind === "round") n = round.roundNumber && Number.isSafeInteger(round.roundNumber) && round.roundNumber > 0 ? round.roundNumber : n + 1;
+		return { ...round, n: round.kind === "round" ? n : null };
+	});
 }
 
 const REVEAL_LIMIT = 200;
@@ -166,6 +171,7 @@ export function useGrowth({
 	const key = JSON.stringify([cwdKey(cwd), sessionPath ?? ""]);
 	const requestScope = useMemo(() => ({
 		key,
+		identity: Symbol("growth-request-scope"),
 		active: true,
 		controllers: new Set<AbortController>(),
 		loadingDirs: new Map<string, AbortController>(),
@@ -184,9 +190,13 @@ export function useGrowth({
 		requestScope.active = true;
 		return () => {
 			requestScope.active = false;
-			for (const controller of requestScope.controllers) controller.abort();
+			const controllers = [...requestScope.controllers];
+			// AbortError stacks can retain the render that canceled a request. Drop
+			// transport references before aborting so old scopes cannot form a chain.
+			requestScope.refresh = null;
 			requestScope.controllers.clear();
 			requestScope.loadingDirs.clear();
+			for (const controller of controllers) controller.abort();
 		};
 	}, [requestScope]);
 	const [fetched, setFetched] = useState<{ key: string; rounds: GrowthRound[]; available: boolean; error: string | null }>({ key: "", rounds: [], available: true, error: null });
@@ -198,14 +208,16 @@ export function useGrowth({
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const [expansionReset, setExpansionReset] = useState(0);
 	const [fresh, setFresh] = useState<Set<string>>(() => new Set());
-	const [lazyState, setLazyState] = useState(() => ({ scope: requestScope, children: new Map<string, TreeNode[]>() }));
-	const lazyChildren = useMemo(() => lazyState.scope === requestScope ? lazyState.children : new Map<string, TreeNode[]>(), [lazyState, requestScope]);
+	// Rendered directory state only needs generation identity, not the scope's
+	// controllers and their cancellation reasons from previous renders.
+	const [lazyState, setLazyState] = useState(() => ({ scope: requestScope.identity, children: new Map<string, TreeNode[]>() }));
+	const lazyChildren = useMemo(() => lazyState.scope === requestScope.identity ? lazyState.children : new Map<string, TreeNode[]>(), [lazyState, requestScope]);
 	const lazyChildrenRef = useRef(lazyChildren);
 	lazyChildrenRef.current = lazyChildren;
 	const updateLazy = useCallback((controller: AbortController, update: (previous: Map<string, TreeNode[]>) => Map<string, TreeNode[]>) => {
 		if (!isCurrent(controller)) return;
 		setLazyState((previous) => isCurrent(controller)
-			? { scope: requestScope, children: update(previous.scope === requestScope ? previous.children : new Map()) }
+			? { scope: requestScope.identity, children: update(previous.scope === requestScope.identity ? previous.children : new Map()) }
 			: previous);
 	}, [isCurrent, requestScope]);
 	const listingCache = useRef(new Map<string, TreeFile[]>());
@@ -229,7 +241,7 @@ export function useGrowth({
 		setSelectedCommit(null);
 		setFresh(new Set());
 		setLoading(false);
-		setLazyState({ scope: requestScope, children: new Map() });
+		setLazyState({ scope: requestScope.identity, children: new Map() });
 		if (freshTimer.current) clearTimeout(freshTimer.current);
 		lastRevealed.current = "";
 	}, [requestScope]);
@@ -237,13 +249,18 @@ export function useGrowth({
 	const refresh = useCallback(async () => {
 		const controller = beginRequest();
 		if (!isCurrent(controller)) return;
-		requestScope.refresh?.abort();
+		const previous = requestScope.refresh;
 		requestScope.refresh = controller;
+		if (previous) {
+			requestScope.controllers.delete(previous);
+			previous.abort();
+		}
 		if (!cwd) {
 			setFetched({ key, rounds: [], available: true, error: null });
 			updateLazy(controller, () => new Map());
 			setLoading(false);
 			requestScope.controllers.delete(controller);
+			if (requestScope.refresh === controller) requestScope.refresh = null;
 			return;
 		}
 		setLoading(true);
@@ -285,13 +302,21 @@ export function useGrowth({
 		} finally {
 			if (isCurrent(controller)) setLoading(false);
 			requestScope.controllers.delete(controller);
+			if (requestScope.refresh === controller) requestScope.refresh = null;
 		}
 	}, [cwd, sessionPath, key, active, beginRequest, isCurrent, requestScope, updateLazy]);
 
 	const watching = active || watchRounds;
 	useEffect(() => {
 		if (watching) void refresh();
-		return () => requestScope.refresh?.abort();
+		return () => {
+			const controller = requestScope.refresh;
+			requestScope.refresh = null;
+			if (controller) {
+				requestScope.controllers.delete(controller);
+				controller.abort();
+			}
+		};
 	}, [watching, refresh, requestScope]);
 	useEffect(() => {
 		if (watching && connected && !previousConnected.current) void refresh();

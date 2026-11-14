@@ -45,7 +45,7 @@ async function throughProxy(limit?: number) {
 it("preserves an 11 MiB upload through Next's configured body cloning layer", async () => {
 	const configured = nextConfig(PHASE_PRODUCTION_BUILD).experimental?.proxyClientMaxBodySize;
 	const limit = typeof configured === "number" ? configured : Number.parseInt(String(configured), 10) * 1024 * 1024;
-	expect(limit).toBeGreaterThanOrEqual(268_000_000 + 1_000_000);
+	expect(limit).toBe(12 * 1024 * 1024);
 	const { response, source } = await throughProxy(limit);
 	expect(response.status).toBe(200);
 	const result = await response.json();

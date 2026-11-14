@@ -11,6 +11,9 @@ import { NextResponse } from "next/server";
 import { configuredTrustedHosts, isSafeHost, isSafeOrigin } from "@/lib/auth";
 import { authEnabled, clearSessionCookie, clearedCookieOptions, sessionCookieFromRequest, validSessionCookie } from "@/lib/web-auth";
 import { loadSessionRevocations, loadWebSecret, revokeAllSessions, revokeSessionCookie } from "@/lib/web-secret";
+import { listWebDevices } from "@/lib/web-devices";
+import { invalidateLaunchTokens } from "@/lib/web-launch-token";
+import { invalidatePairCodes } from "@/lib/remote/pairing";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +32,11 @@ export async function GET(request: Request) {
 	if (blocked) return blocked;
 	const enabled = authEnabled();
 	const authenticated = !enabled || validSessionCookie(request, loadWebSecret(), Date.now(), loadSessionRevocations());
+	if (new URL(request.url).searchParams.get("devices") === "1") {
+		if (!authenticated || !enabled) return NextResponse.json({ success: false, error: "authentication required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
+		const current = sessionCookieFromRequest(request, loadWebSecret())?.id;
+		return NextResponse.json({ success: true, data: { enabled, authenticated, devices: (await listWebDevices()).map((device) => ({ ...device, current: device.id === current })) } }, { headers: { "Cache-Control": "no-store" } });
+	}
 	return NextResponse.json(
 		{ success: true, data: { enabled, authenticated } },
 		{ headers: { "Cache-Control": "no-store" } },
@@ -40,7 +48,7 @@ export async function POST(request: Request) {
 	const blocked = untrusted(request);
 	if (blocked) return blocked;
 	return NextResponse.json(
-		{ success: false, error: "password login has been removed; use the launch token link printed at startup" },
+		{ success: false, error: "password login has been removed; run the PiWeb launcher on its host to open the login page" },
 		{ status: 410, headers: { "Cache-Control": "no-store" } },
 	);
 }
@@ -51,20 +59,28 @@ export async function DELETE(request: Request) {
 	if (authEnabled()) {
 		const secret = loadWebSecret();
 		const all = new URL(request.url).searchParams.get("scope") === "all";
+		const deviceId = new URL(request.url).searchParams.get("device");
 		// 「所有设备」只能由一个仍然有效的会话发起（DELETE 走不到 proxy 的拦截：/api/web-auth 是公开路径）
-		if (all && !validSessionCookie(request, secret, Date.now(), loadSessionRevocations())) {
+		if ((all || deviceId) && !validSessionCookie(request, secret, Date.now(), loadSessionRevocations())) {
 			return NextResponse.json({ success: false, error: "authentication required" }, { status: 401, headers: { "Cache-Control": "no-store" } });
 		}
 		try {
-			if (all) revokeAllSessions();
-			else {
+			if (deviceId) {
+				const device = (await listWebDevices()).find((entry) => entry.id === deviceId);
+				if (!device) return NextResponse.json({ success: false, error: "device not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
+				await revokeSessionCookie(device.id, device.expiresAt);
+				const current = sessionCookieFromRequest(request, secret)?.id;
+				if (current !== device.id) return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
+			}
+			if (all) { await revokeAllSessions(); invalidatePairCodes(); invalidateLaunchTokens(loadSessionRevocations().notBefore); }
+			else if (!deviceId) {
 				const cookie = sessionCookieFromRequest(request, secret);
-				if (cookie && cookie.payload.expiresAt > Date.now()) revokeSessionCookie(cookie.id, cookie.payload.expiresAt);
+				if (cookie && cookie.payload.expiresAt > Date.now()) await revokeSessionCookie(cookie.id, cookie.payload.expiresAt);
 			}
 		} catch (error) {
 			// 吊销没记下来就别报「已退出」：Cookie 的副本还能用
 			return NextResponse.json(
-				{ success: false, error: `could not revoke the session: ${error instanceof Error ? error.message : String(error)}` },
+				{ success: false, error: "could not revoke the session; please try again" },
 				{ status: 500, headers: { "Cache-Control": "no-store" } },
 			);
 		}

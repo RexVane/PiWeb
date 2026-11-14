@@ -78,6 +78,24 @@ afterEach(async () => {
 });
 
 describe("cancelable SDK authentication", () => {
+	it("acknowledges background key authentication before later user prompts finish", async () => {
+		apiKeyLogin.mockImplementation(async (interaction) => {
+			const key = await interaction.prompt({ type: "secret", message: "Key" });
+			const account = await interaction.prompt({ type: "text", message: "Account" });
+			return { type: "api_key", key, env: { ACCOUNT: account } };
+		});
+		await setApiKey(providerId, "provided-key", { background: true });
+		await vi.waitFor(() => expect(loginState(providerId).prompt?.message).toBe("Account"));
+		expect(loginState(providerId).done).toBe(false);
+		expect(await credentials.read(providerId)).toBeUndefined();
+		expect(answerLogin(providerId, "test-account")).toBe(true);
+		await vi.waitFor(() => expect(loginState(providerId).done).toBe(true));
+		expect(await credentials.read(providerId)).toMatchObject({ type: "api_key", key: "provided-key", env: { ACCOUNT: "test-account" } });
+	});
+
+	it("does not report a nonexistent login job as successful", () => {
+		expect(loginState("never-started-probe")).toMatchObject({ done: true, error: expect.stringContaining("not started") });
+	});
 	it("aborts a device flow and prevents a late credential or callback from reviving it", async () => {
 		const completion = deferred<OAuthCredential>();
 		oauth.mockImplementation(() => completion.promise); // deliberately ignores abort

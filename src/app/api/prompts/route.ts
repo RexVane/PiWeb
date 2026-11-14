@@ -3,6 +3,7 @@ import { listPromptSources, readPromptSource } from "@/lib/prompt-sources";
 import { getManaged } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 import { APP_ROOT } from "@/lib/app-root";
+import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export const dynamic = "force-dynamic";
  * - POST { action: "read", filePath }：按需读取单个来源的内容
  * 只读，不改动任何提示词内容。
  */
-async function hotSession(cwd: string, sessionId: string | null) {
+async function hotSession(sessionId: string | null) {
 	if (!sessionId) return null;
 	try {
 		// sessionId 是客户端已有的 base64url 编码 id（与 /api/agent/<id> 同一套），不要再编码一次
@@ -30,23 +31,22 @@ export async function GET(req: Request) {
 		const url = new URL(req.url);
 		const cwd = await resolveWorkspacePath(url.searchParams.get("cwd") || APP_ROOT);
 		const sessionId = url.searchParams.get("session");
-		const data = await listPromptSources({ cwd, session: await hotSession(cwd, sessionId) });
-		return NextResponse.json({ success: true, data });
+		const data = await listPromptSources({ cwd, session: await hotSession(sessionId) });
+		return NextResponse.json({ success: true, data }, { headers: { "Cache-Control": "no-store" } });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		return NextResponse.json({ success: false, error: message }, { status: err instanceof BoundaryError ? 400 : 500 });
+		return NextResponse.json({ success: false, ...apiError(err, "提示词来源读取失败，请检查配置后重试。") }, { status: err instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } });
 	}
 }
 
 export async function POST(req: Request) {
 	try {
 		const body = (await req.json()) as { action?: string; filePath?: string; cwd?: string; sourcePath?: string };
+		if (!body || typeof body !== "object" || Array.isArray(body)) throw new BoundaryError("请提供有效的提示词读取参数。");
 		if (body.action !== "read") return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
 		if (!body.filePath) return NextResponse.json({ success: false, error: "missing filePath" }, { status: 400 });
 		const cwd = await resolveWorkspacePath(body.cwd || APP_ROOT);
-		return NextResponse.json({ success: true, data: { content: await readPromptSource(body.filePath, cwd, body.sourcePath) } });
+		return NextResponse.json({ success: true, data: { content: await readPromptSource(body.filePath, cwd, body.sourcePath) } }, { headers: { "Cache-Control": "no-store" } });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : "request failed";
-		return NextResponse.json({ success: false, error: message }, { status: err instanceof BoundaryError ? 400 : 500 });
+		return NextResponse.json({ success: false, ...apiError(err, "提示词正文读取失败，请检查文件后重试。") }, { status: err instanceof BoundaryError || err instanceof SyntaxError ? 400 : 500, headers: { "Cache-Control": "no-store" } });
 	}
 }

@@ -24,6 +24,16 @@ const userEdit: GrowthEntry = { ...piRound, commit: h("c"), parent: h("b"), tree
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("ProjectPanel rounds", () => {
+	it("marks shared edits and preserves missing chat round numbers", () => {
+		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
+		const shared: GrowthEntry = { ...piRound, roundNumber: 3, n: 3, attribution: "shared", concurrentSessions: ["a.jsonl", "b.jsonl"] };
+		render(<ProjectPanel growth={{ ...growth, rounds: [shared], selected: shared, changes: shared.changes }} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		expect(screen.getByTestId("growth-round-summary").textContent).toContain("第 3 轮");
+		expect(screen.getByTestId("growth-shared-attribution").textContent).toContain("a.jsonl, b.jsonl");
+		expect(screen.getByTestId("growth-round-picker").textContent).toContain("第 3/3 轮");
+		expect(screen.getByTestId("growth-timeline").textContent).toContain("缺号");
+		expect(screen.getByText(/2000 条历史或 1 GiB/)).toBeTruthy();
+	});
 	it("summarizes the selected round and links back to the chat", () => {
 		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
 		const onJumpToChat = vi.fn();

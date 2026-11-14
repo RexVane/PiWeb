@@ -1,9 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveUpload, saveUploadStream, sweepUploads } from "../src/lib/files-service";
 import { POST } from "../src/app/api/files/route";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 /** 拖拽上传的限额与安全（dsh 语义：原样字节保存 + 路径引用） */
 describe("files-service saveUpload", () => {
@@ -14,15 +15,24 @@ describe("files-service saveUpload", () => {
 		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-uploads-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
+		vi.spyOn(os, "homedir").mockReturnValue(tempDir);
 	});
 
 	afterEach(async () => {
+		vi.restoreAllMocks();
 		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-		await fs.rm(tempDir, { recursive: true, force: true });
+		await recycleFixture(tempDir);
 	});
 
 	const b64 = (bytes: number) => Buffer.alloc(bytes, 7).toString("base64");
+	it.each([null, [], true, 4, "text"].map((body) => ({ body })))("rejects a non-object file action body $body without opening anything", async ({ body }) => {
+		const open = vi.spyOn(fs, "open");
+		const response = await POST(new Request("http://localhost/api/files", { method: "POST", body: JSON.stringify(body) }));
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ success: false, error: "expected an object body", errorCode: "VALIDATION_ERROR" });
+		expect(open).not.toHaveBeenCalled();
+	});
 
 	it("sweeps only old uploads that no session mentions any more", async () => {
 		const uploads = path.join(tempDir, "web-uploads");
@@ -38,6 +48,28 @@ describe("files-service saveUpload", () => {
 
 		expect(await sweepUploads()).toEqual(["orphan.zip"]);
 		expect((await fs.readdir(uploads)).sort()).toEqual(["fresh-orphan.zip", "kept-by-session.zip"]);
+		const index = await fs.readFile(path.join(tempDir, ".agents", "backups", "INDEX.md"), "utf8");
+		const backup = index.split("\n").find((line) => line.includes("orphan.zip"))!.split(" | ")[2];
+		expect(await fs.readFile(backup, "utf8")).toBe("x");
+	});
+
+	it("keeps attachments whose UTF-8 filename reference spans scan chunks and preserves all files on budget exhaustion", async () => {
+		const uploads = path.join(tempDir, "web-uploads");
+		const sessions = path.join(tempDir, "sessions", "workspace");
+		await fs.mkdir(uploads, { recursive: true });
+		await fs.mkdir(sessions, { recursive: true });
+		const name = "跨界附件.zip";
+		const target = path.join(uploads, name);
+		await fs.writeFile(target, "original");
+		const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+		await fs.utimes(target, old, old);
+		const record = path.join(sessions, "reference.jsonl");
+		await fs.writeFile(record, Buffer.concat([Buffer.alloc(65535, 32), Buffer.from(name)]));
+		expect(await sweepUploads()).toEqual([]);
+		expect(await fs.readFile(target, "utf8")).toBe("original");
+		await fs.writeFile(record, "x".repeat(2048));
+		expect(await sweepUploads(Date.now(), 30, { scanByteLimit: 1024 })).toEqual([]);
+		expect(await fs.readFile(target, "utf8")).toBe("original");
 	});
 
 	it("keeps every upload when a session file cannot be read", async () => {

@@ -27,5 +27,5 @@ export function projectedContextUsage(
 	const tokens = lastUsage && lastUsage.branchIndex > invalidatingIndex
 		? lastUsage.tokens + projection.messages.slice(lastUsage.messageIndex + 1).reduce((sum, message) => sum + estimateTokens(message), 0)
 		: projection.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
-	return { tokens, contextWindow, percent: tokens / contextWindow * 100 };
+	return { tokens, contextWindow, percent: Math.max(0, Math.min(100, tokens / contextWindow * 100)) };
 }

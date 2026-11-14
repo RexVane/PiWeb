@@ -7,8 +7,234 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { IconShieldOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
+import { useDialog } from "@/hooks/useDialog";
 import type { ExtensionDialog, PiWebNotice } from "@/hooks/usePiWeb";
-import type { WebExtensionWidget } from "@/lib/types";
+import type { WebExtensionWidget, WebUiFormField, WebUiNode, WebUiResult } from "@/lib/types";
+
+const TONE_COLOR: Record<string, string> = {
+	default: "var(--dsw-label-primary)",
+	muted: "var(--dsw-label-caption)",
+	accent: "var(--dsw-accent)",
+	success: "var(--dsw-success)",
+	warning: "var(--dsw-warn)",
+	danger: "var(--dsw-danger)",
+};
+
+/**
+ * 扩展送来的 JSON UI 树 → 网页组件。
+ *
+ * 扩展跑在服务端，只能给数据；这里负责把它画成和 PiWeb 一致的界面（不是贴一块终端）。
+ * 树已经在服务端过了一遍白名单与长度限制，这里仍然只按类型渲染，不注入 HTML。
+ */
+function WebUiForm({ fields, submitLabel, onAction }: { fields: WebUiFormField[]; submitLabel?: string; onAction: (result: WebUiResult) => void }) {
+	const { t } = useI18n();
+	const [values, setValues] = useState<Record<string, string | boolean>>(() => {
+		const initial: Record<string, string | boolean> = {};
+		for (const field of fields) {
+			initial[field.name] = field.kind === "confirm" ? false : field.value ?? (field.kind === "select" ? field.options?.[0] ?? "" : "");
+		}
+		return initial;
+	});
+	const inputStyle = {
+		height: 32,
+		padding: "0 10px",
+		fontSize: 12.5,
+		borderRadius: 8,
+		background: "var(--dsw-hover)",
+		border: "0.5px solid var(--dsw-border-l2)",
+		color: "var(--dsw-label-primary)",
+		outline: "none",
+		width: "100%",
+	} as const;
+	return (
+		<form
+			className="flex flex-col gap-3"
+			onSubmit={(event) => {
+				event.preventDefault();
+				onAction({ values });
+			}}
+		>
+			{fields.map((field) => (
+				<label key={field.name} className="flex flex-col gap-1.5">
+					<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{field.label}</span>
+					{field.kind === "confirm" ? (
+						<span className="flex items-center gap-2" style={{ height: 24 }}>
+							<input
+								type="checkbox"
+								checked={values[field.name] === true}
+								onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.checked }))}
+								style={{ accentColor: "var(--dsw-accent)" }}
+							/>
+						</span>
+					) : field.kind === "select" ? (
+						<select
+							value={String(values[field.name] ?? "")}
+							onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.value }))}
+							style={inputStyle}
+						>
+							{(field.options ?? []).map((option) => (
+								<option key={option} value={option}>{option}</option>
+							))}
+						</select>
+					) : (
+						<input
+							value={String(values[field.name] ?? "")}
+							placeholder={field.placeholder}
+							onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.value }))}
+							style={inputStyle}
+						/>
+					)}
+				</label>
+			))}
+			<div className="flex justify-end">
+				<button type="submit" className="btn-primary-white" style={{ height: 30, padding: "0 14px", fontSize: 12.5 }}>
+					{submitLabel || t.confirm}
+				</button>
+			</div>
+		</form>
+	);
+}
+
+/** 一个列表项：标签在左、说明在右，选中项左侧一条强调色 */
+function WebUiRow({ item, selected, onAction }: {
+	item: { label: string; description?: string; action?: string; disabled?: boolean };
+	selected: boolean;
+	onAction: (result: WebUiResult) => void;
+}) {
+	return (
+		<button
+			type="button"
+			role="option"
+			aria-selected={selected}
+			aria-disabled={item.disabled === true}
+			disabled={item.disabled === true}
+			className="flex w-full items-center gap-3 text-left transition-colors hover:bg-[var(--dsw-hover)] disabled:cursor-default disabled:opacity-45"
+			style={{
+				padding: "8px 12px",
+				background: selected ? "var(--dsw-active)" : "transparent",
+				borderLeft: selected ? "2px solid var(--dsw-accent)" : "2px solid transparent",
+			}}
+			onClick={() => onAction(item.action ? { action: item.action } : { values: { selected: item.label } })}
+		>
+			<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}>
+				{item.label}
+			</span>
+			{item.description && (
+				<span className="flex-none" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{item.description}</span>
+			)}
+		</button>
+	);
+}
+
+function WebUiNodeView({ node, onAction }: { node: WebUiNode; onAction: (result: WebUiResult) => void }) {
+	switch (node.type) {
+		case "box": {
+			const row = node.direction === "row";
+			return (
+				<div
+					className="flex min-w-0"
+					style={{ flexDirection: row ? "row" : "column", gap: node.gap ?? 10, flexWrap: row ? "wrap" : "nowrap", alignItems: row ? "center" : "stretch" }}
+				>
+					{node.children.map((child, index) => (
+						<WebUiNodeView key={index} node={child} onAction={onAction} />
+					))}
+				</div>
+			);
+		}
+		case "text":
+			return (
+				<div
+					className="whitespace-pre-wrap break-words"
+					style={{
+						fontSize: node.mono ? 11.5 : 13,
+						lineHeight: 1.6,
+						fontFamily: node.mono ? "var(--font-mono)" : "inherit",
+						color: TONE_COLOR[node.tone ?? "default"],
+					}}
+				>
+					{node.text}
+				</div>
+			);
+		case "list":
+			return (
+				<div
+					className="flex flex-col overflow-hidden rounded-[10px]"
+					style={{ border: "0.5px solid var(--dsw-border-l2)" }}
+					role="listbox"
+				>
+					{node.items.map((item, index) => (
+						<div key={`${index}-${item.label}`} style={index > 0 ? { borderTop: "0.5px solid var(--dsw-border-l1)" } : undefined}>
+							<WebUiRow item={item} selected={node.selected === index} onAction={onAction} />
+						</div>
+					))}
+				</div>
+			);
+		case "table":
+			return (
+				<div className="overflow-x-auto rounded-[10px]" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+					<table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+						<thead>
+							<tr style={{ background: "var(--dsw-hover)" }}>
+								{node.columns.map((column) => (
+									<th key={column} className="text-left" style={{ padding: "7px 12px", color: "var(--dsw-label-caption)", fontWeight: 500, fontSize: 11.5 }}>
+										{column}
+									</th>
+								))}
+							</tr>
+						</thead>
+						<tbody>
+							{node.rows.map((row, rowIndex) => (
+								<tr key={rowIndex} style={{ borderTop: "0.5px solid var(--dsw-border-l1)" }}>
+									{row.map((cell, cellIndex) => (
+										<td key={cellIndex} style={{ padding: "7px 12px", color: "var(--dsw-label-secondary)" }}>{cell}</td>
+									))}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			);
+		case "progress": {
+			const percent = Math.round(node.value * 100);
+			return (
+				<div className="flex flex-col gap-1.5">
+					{node.label && (
+						<div className="flex items-baseline justify-between" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+							<span>{node.label}</span>
+							<span className="tabular-nums">{percent}%</span>
+						</div>
+					)}
+					<div className="overflow-hidden rounded-full" style={{ height: 5, background: "var(--dsw-hover)" }}>
+						<div style={{ width: `${percent}%`, height: "100%", background: "var(--dsw-accent)", borderRadius: 99 }} />
+					</div>
+				</div>
+			);
+		}
+		case "code":
+			return (
+				<pre
+					className="overflow-auto rounded-[10px]"
+					style={{
+						fontSize: 11.5,
+						lineHeight: 1.55,
+						fontFamily: "var(--font-mono)",
+						background: "var(--dsw-hover)",
+						color: "var(--dsw-label-secondary)",
+						margin: 0,
+						padding: "10px 12px",
+						whiteSpace: "pre-wrap",
+						maxHeight: 260,
+					}}
+				>
+					{node.text}
+				</pre>
+			);
+		case "form":
+			return <WebUiForm fields={node.fields} submitLabel={node.submitLabel} onAction={onAction} />;
+		default:
+			return null;
+	}
+}
 
 /** message 若全是 "key : value" 行（权限对话框的常见形态），解析成键值表渲染 */
 function parseKeyValueRows(message: string): { key: string; value: string }[] | null {
@@ -34,6 +260,7 @@ export function ExtensionDialogHost({
 	const [text, setText] = useState("");
 	const [idx, setIdx] = useState(0);
 	const dialogRef = useRef<HTMLDivElement>(null);
+	useDialog({ open: !!dialog, ref: dialogRef, onClose: () => { if (dialog) onAnswer(dialog.id, { cancelled: true }); } });
 	const isPermission = /permission|approve|allow/i.test(dialog?.title ?? "");
 	const kvRows = useMemo(() => (dialog?.message ? parseKeyValueRows(dialog.message) : null), [dialog?.message, dialog?.id]);
 	const isEditor = dialog?.method === "editor";
@@ -74,7 +301,7 @@ export function ExtensionDialogHost({
 				}
 			}}
 		>
-			<div className="popover flex flex-col gap-3 p-5" style={{ width: isEditor ? "min(92vw,640px)" : "min(92vw,480px)", background: "var(--dsw-glass-modal)" }}>
+			<div className="popover flex flex-col gap-3 p-5" style={{ width: isEditor ? "min(92vw,640px)" : dialog.method === "web" ? "min(92vw,540px)" : "min(92vw,480px)", background: "var(--dsw-glass-modal)" }}>
 				<div className="flex items-start gap-2.5">
 					{isPermission && (
 						<span className="flex-none flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "color-mix(in srgb, var(--dsw-warn) 15%, transparent)" }}>
@@ -150,6 +377,15 @@ export function ExtensionDialogHost({
 						className="rounded-xl px-3 py-2"
 						style={{ fontSize: 13, minHeight: 180, maxHeight: "52vh", fontFamily: "var(--font-mono)", lineHeight: 1.6, background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)", resize: "vertical" }}
 					/>
+				)}
+				{dialog.method === "web" && (
+					<div style={{ maxHeight: "58vh", overflowY: "auto", margin: "0 -2px", padding: "0 2px" }}>
+						<WebUiNodeView
+							key={dialog.id}
+							node={dialog.tree ?? { type: "code", text: dialog.webText ?? "" }}
+							onAction={(result) => onAnswer(dialog.id, { value: JSON.stringify(result) })}
+						/>
+					</div>
 				)}
 				<div className="flex justify-end gap-2">
 					<button className="btn-outline" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { cancelled: true })}>{t.cancel}</button>

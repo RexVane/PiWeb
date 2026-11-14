@@ -11,7 +11,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getAgentDir } from "./pi";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
+import { normalizeToolPreset } from "./tool-preset";
 import type { ToolPreset } from "./types";
+import { readFileBounded } from "./read-file-bounded";
 
 export interface ToolPreference {
 toolPreset: ToolPreset;
@@ -23,8 +25,10 @@ updatedAt?: number;
 interface ToolPreferencesFile {
 version: 2;
 /** pathKey(sessionPath) → 该会话自己的偏好 */
-sessions: Record<string, ToolPreference>;
+sessions: Record<string, unknown>;
 }
+
+export class ToolPreferencesValidationError extends Error {}
 
 function file(): string {
 return path.join(getAgentDir(), "web-tool-preferences.json");
@@ -35,40 +39,39 @@ const resolved = path.resolve(target);
 return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-function isPreset(value: unknown): value is ToolPreset {
-return value === "readonly" || value === "standard" || value === "full";
-}
-
-function sanitize(value: unknown): ToolPreference | undefined {
-if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+function sanitize(value: unknown): ToolPreference {
+const invalid = () => { throw new ToolPreferencesValidationError("Saved tool permissions are invalid; the original record was retained"); };
+if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
 const raw = value as Record<string, unknown>;
-if (!isPreset(raw.toolPreset)) return undefined;
-const custom = Array.isArray(raw.customActiveTools)
-? [...new Set(raw.customActiveTools.filter((name): name is string => typeof name === "string" && name.length > 0))]
-: undefined;
+// 旧文件里的 `standard` 在这里归一成 workspace：读进来就是新语义，写回去只有新 id。
+const toolPreset = normalizeToolPreset(raw.toolPreset);
+if (!toolPreset) return invalid();
+if (raw.customActiveTools !== undefined && (!Array.isArray(raw.customActiveTools) || raw.customActiveTools.length > 1000
+|| raw.customActiveTools.some((name) => typeof name !== "string" || !name.trim() || name.length > 512))) return invalid();
+if (raw.updatedAt !== undefined && (typeof raw.updatedAt !== "number" || !Number.isSafeInteger(raw.updatedAt) || raw.updatedAt < 0)) return invalid();
+const custom = raw.customActiveTools === undefined ? undefined : [...new Set(raw.customActiveTools as string[])];
 return {
-toolPreset: raw.toolPreset,
+toolPreset,
 ...(custom ? { customActiveTools: custom } : {}),
 ...(typeof raw.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? { updatedAt: raw.updatedAt } : {}),
 };
 }
 
-function readSessions(value: unknown): Record<string, ToolPreference> {
-const out: Record<string, ToolPreference> = {};
-if (!value || typeof value !== "object" || Array.isArray(value)) return out;
-for (const [key, entry] of Object.entries(value)) {
-const preference = sanitize(entry);
-if (preference) out[key] = preference;
-}
-return out;
+function readSessions(value: unknown): Record<string, unknown> {
+if (!value || typeof value !== "object" || Array.isArray(value)) throw new ToolPreferencesValidationError("Saved tool permission records are invalid");
+// Preserve other sessions byte-for-byte in value terms, including invalid rows.
+// Reading one bad row fails closed; saving another session must not silently drop it.
+return value as Record<string, unknown>;
 }
 
 async function readFile(): Promise<ToolPreferencesFile> {
 try {
-const parsed = JSON.parse(await fs.readFile(file(), "utf8")) as unknown;
+const parsed = JSON.parse((await readFileBounded(file(), 16 * 1024 * 1024)).toString("utf8").replace(/^\uFEFF/, "")) as unknown;
 if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid tool preferences");
 const raw = parsed as Record<string, unknown>;
 // v1 曾按工作区保存，无法可靠映射回会话（工作区里可能有多个会话），直接忽略。
+if (raw.version === 1) return { version: 2, sessions: {} };
+if (raw.version !== 2) throw new ToolPreferencesValidationError("Unsupported saved tool permissions version");
 return { version: 2, sessions: readSessions(raw.sessions) };
 } catch (error) {
 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -90,18 +93,19 @@ await fs.rm(temporary, { force: true }).catch(() => undefined);
 /** 读取某会话的工具偏好；没有保存过返回 null。 */
 export async function readToolPreference(sessionPath: string): Promise<ToolPreference | null> {
 const data = await readFile();
-return data.sessions[pathKey(sessionPath)] ?? null;
+const key = pathKey(sessionPath);
+return Object.hasOwn(data.sessions, key) ? sanitize(data.sessions[key]) : null;
 }
 
 /** 保存某会话的工具偏好（原子替换 + 与 pi 的设置写入共用锁协议）。 */
 export async function saveToolPreference(sessionPath: string, preference: ToolPreference): Promise<void> {
 const target = file();
 const key = pathKey(sessionPath);
-const value: ToolPreference = {
+const value = sanitize({
 toolPreset: preference.toolPreset,
 ...(preference.customActiveTools ? { customActiveTools: [...preference.customActiveTools] } : {}),
 updatedAt: Date.now(),
-};
+});
 await withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
 const data = await readFile();
 data.sessions[key] = value;

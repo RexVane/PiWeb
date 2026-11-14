@@ -80,6 +80,7 @@ export interface ImportedSession {
 }
 
 export interface ScanOptions {
+	signal?: AbortSignal;
 	/**
 	 * 每个来源最多返回多少条（按最近活动倒序）。界面只列最近的若干条，所以扫描阶段就该停手：
 	 * 文件类的来源按 mtime 排序后只读前若干个头，SQLite 类的直接 LIMIT，不把上千个会话全读一遍。

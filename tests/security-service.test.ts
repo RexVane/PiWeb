@@ -137,7 +137,7 @@ describe("SDK trust persistence", () => {
 			body: JSON.stringify({ defaultProjectTrust: "never" }),
 		}));
 		expect(response.status).toBe(500);
-		expect(await response.json()).toMatchObject({ success: false, error: expect.stringContaining("EACCES") });
+		expect(await response.json()).toMatchObject({ success: false, errorCode: "EACCES", error: expect.stringContaining("权限") });
 		expect(await getSecurity()).toEqual({ defaultProjectTrust: "always" });
 		expectNoResourceReload();
 	});

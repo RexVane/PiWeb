@@ -2,10 +2,11 @@
  * agent-manager：AgentSession 池 + pi 事件 → Web 事件翻译 + SSE 订阅管理。
  * 打开会话即惰性冷启动（createAgentSession），空闲回收，事件先快照后增量。
  */
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
-import type { AgentSession, AgentSessionEvent, ExtensionCommandContextActions, SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, CreateAgentSessionOptions, ExtensionCommandContextActions, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import {
 ExtensionRunner,
 ModelRegistry,
@@ -27,7 +28,6 @@ import {
 	resourceLoaderIsStale,
 	getSettingsManager,
 	getAgentDir,
-	loadProjectContextFiles,
 	peekResourceLoader,
 	refreshResourceLoaderIfStale,
 	resolveProjectTrust,
@@ -40,18 +40,32 @@ import {
 	getModelRuntime,
 	refreshModelRuntime,
 	openSessionManager,
+	encodeSessionId,
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
 import { createAskUserTool } from "./ask-user-tool";
+import { createManageAutomationTool } from "./automations/agent-tool";
+import { createSessionModelRuntime, clearSessionModelProviders, releaseSessionModelRuntime } from "./session-model-runtime";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
+import { historyPage, previewMessage, recentTrajectory, MAX_VISIBLE_MESSAGES, type HistoryPage } from "./chat/web-history";
+import { recycleTemporaryDirectory } from "./recycle-temporary";
 import { projectedContextUsage } from "./session/metrics";
 import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview, toTrajTokens } from "./trajectory";
 import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
 import { isAbortMessage, isCancellationError } from "./chat/cancellation";
 import { isClaudeTaskNotification } from "./chat/task-notification";
-import { BoundaryError } from "./path-security";
+import { SessionDiskTracker } from "./session-disk-sync";
+import { BoundaryError, resolveSessionPath } from "./path-security";
+import { WRITE_PATH_FIELDS, permissionDenial, resolveModelPath } from "./permission-gate";
+import { permissionActionKey, permissionActionDescription, type PermissionAction } from "./permission-action";
+import { createConfinedFileOperations } from "./confined-file-operations";
+import { readSandboxConfig } from "./sandbox/config";
+import { sandboxSupported, releaseSandbox, probeSandboxSupport } from "./sandbox/manager";
+import { createSandboxBashOperations, type EscalationScope } from "./sandbox/bash-operations";
+import { createPermissionRequestTool } from "./permission-request-tool";
+import { appendPermissionAudit } from "./permission-audit";
 import { newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { readToolPreference, saveToolPreference, type ToolPreference } from "./tool-preferences";
@@ -73,6 +87,8 @@ import type {
 
 const IDLE_MS = 10 * 60 * 1000;
 const MAX_ACTIVE = 6;
+const MAX_COLD_SESSIONS = 64;
+const MAX_HOT_SESSIONS = 24;
 const BUFFER_CAP = 400;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 /** 外来写入重载后，这么久之内连上的快照都带着提示 */
@@ -84,8 +100,9 @@ const TOOLCALL_ARG_PREVIEW_CHARS = 2_000;
 /** `!` 命令的输出增量：攒到这么久再推一次，避免刷屏的命令每行一帧 */
 const BASH_OUTPUT_FLUSH_MS = 80;
 
-interface Managed {
+export interface Managed {
 	viewerAvailable?: () => boolean;
+	headless?: boolean;
 	sessionPath: string;
 	cwd: string;
 	sm: SessionManager;
@@ -109,6 +126,20 @@ interface Managed {
 	ledger: TrajLedger;
 	lastActive: number;
 	toolPreset: ToolPreset;
+	/**
+	 * 用户刚批准的一次性升权（`request_permission` 工具）。
+	 * 对下一条越权操作（bash 命令或 write/edit 写入）生效，用完即清。
+	 */
+	escalation?: { scope: EscalationScope; remaining: number; actionKey: string; action: PermissionAction; expiresAt: number };
+	deniedActions?: Map<string, PermissionAction>;
+	lastDeniedAction?: PermissionAction;
+	stopping?: Promise<boolean>;
+	stopFailed?: boolean;
+	/** 会话还在冷启动时用户就点了停止：这次提交在交给 SDK 之前放弃 */
+	submissionCancelled?: boolean;
+	commandRunning?: boolean;
+	/** `tool_call` 已消耗一次性升权并放行的 write/edit toolCallId，供紧随其后的 `guardToolExecution` 放行。 */
+	escalatedCallIds?: Set<string>;
 	/** 显式逐项选择优先于 preset；保留失效名称以便资源重新启用后恢复用户选择。 */
 	customActiveTools?: string[];
 	/**
@@ -139,6 +170,7 @@ interface Managed {
 	growth: GrowthTracker | null;
 	/** JSONL 已核对到的字节位置（总在整行末尾）；之后多出来的行要看是不是别的进程写的（见 externalEntryCount） */
 	diskSize: number;
+	diskTracker?: SessionDiskTracker;
 	/** 已发现、还没重载进来的外来条目数（终端 pi 同时在写这个会话） */
 	externalEntries: number;
 	/** 这一份是因外来写入从磁盘重载出来的：快照带上，前端提示一次 */
@@ -334,6 +366,25 @@ export function sessionDisplayMessages(sm: Pick<SessionManager, "getBranch" | "b
 	return hideImportedTaskNotifications(sm, [...compactedHistory(sm, context), ...current]);
 }
 
+function imagePreviewUrl(m: Managed, message: WebMessage): ((part: number) => string) | undefined {
+	if (!message.id) return undefined;
+	const base = `/api/sessions/${encodeURIComponent(Buffer.from(m.sessionPath).toString("base64url"))}/images?entry=${encodeURIComponent(message.id)}`;
+	return (part) => `${base}&part=${part}`;
+}
+
+export function getSessionHistory(m: Managed, options: { before?: number; after?: number; limit?: number } = {}): HistoryPage {
+	return historyPage(sessionDisplayMessages(m.sm), options, (message) => previewMessage(message, imagePreviewUrl(m, message)));
+}
+
+export function readSessionImage(m: Managed, entryId: string, part: number): { data: Buffer; mimeType: string } {
+	const entry = m.sm.getEntries().find((item) => item.id === entryId);
+	const message = entryToWebMessage(entry);
+	const image = message?.content[part];
+	if (image?.type !== "image" || !/^image\/(?:png|jpe?g|gif|webp|avif|bmp)$/i.test(image.mimeType)) throw new Error("Image not found");
+	if (image.data.length > 28_000_000 || !/^[a-zA-Z0-9+/]*={0,2}$/.test(image.data)) throw new Error("Image exceeds the preview limit");
+	return { data: Buffer.from(image.data, "base64"), mimeType: image.mimeType };
+}
+
 function hideImportedTaskNotifications(sm: Pick<SessionManager, "getBranch">, messages: WebMessage[]): WebMessage[] {
 	// 兼容早期导入：只隐藏 Claude 来源中被误记成用户发言的任务通知，不改会话文件与模型上下文。
 	const importedFromClaude = sm.getBranch().some((entry: any) => entry.type === "custom" && entry.customType === "piweb-import" && entry.data?.source === "claude");
@@ -436,13 +487,26 @@ export function captureWriteBase(cwd: string, sessionPath: string, toolCallId: s
 	const { target, content } = writeArgsOf(args);
 	if (!target) return;
 	try {
-		const abs = path.isAbsolute(target) ? target : path.resolve(cwd, target);
-		const stat = statSync(abs);
-		if (!stat.isFile() || stat.size > WRITE_BASE_MAX_BYTES) return;
-		const previous = readFileSync(abs, "utf8");
+		const abs = resolveModelPath(target, cwd);
+		const fd = openSync(abs, "r");
+		let previous: string;
+		try {
+			const stat = fstatSync(fd);
+			if (!stat.isFile() || stat.size > WRITE_BASE_MAX_BYTES) return;
+			const buffer = Buffer.alloc(WRITE_BASE_MAX_BYTES + 1);
+			let total = 0;
+			while (total < buffer.length) {
+				const bytesRead = readSync(fd, buffer, total, Math.min(64 * 1024, buffer.length - total), total);
+				if (!bytesRead) break;
+				total += bytesRead;
+			}
+			if (total > WRITE_BASE_MAX_BYTES) return;
+			previous = buffer.subarray(0, total).toString("utf8");
+		} finally { closeSync(fd); }
 		if (previous.includes("\u0000")) return; // 二进制不做行级 diff
 		// 只淘汰最早的一条：整表清空会把其它会话里正在执行的 write 的旧内容一起丢掉
-		if (writeBases.size >= 256) writeBases.delete(writeBases.keys().next().value!);
+		const sessionKeys = [...writeBases.keys()].filter((key) => key.startsWith(`${sessionPath}\u0000`));
+		if (sessionKeys.length >= 256) writeBases.delete(sessionKeys[0]);
 		writeBases.set(`${sessionPath}\u0000${toolCallId}`, { previous, target, content });
 	} catch {
 		/* 新文件或读不到：没有旧内容，走全绿兜底 */
@@ -450,7 +514,7 @@ export function captureWriteBase(cwd: string, sessionPath: string, toolCallId: s
 }
 
 /** args 省略时用开始时存下的那份（结束事件里没有 args）；显式传入的优先 */
-export function takeWritePatch(cwd: string, sessionPath: string, toolCallId: string, args?: unknown): string | undefined {
+export function takeWritePatch(_cwd: string, sessionPath: string, toolCallId: string, args?: unknown): string | undefined {
 	const key = `${sessionPath}\u0000${toolCallId}`;
 	const base = writeBases.get(key);
 	writeBases.delete(key);
@@ -488,6 +552,23 @@ interface QueuedPublish {
 }
 
 const publishQueues = new WeakMap<Managed, QueuedPublish[]>();
+const internalListeners = new WeakMap<Managed, Set<(evt: WebEvent) => void>>();
+
+/**
+ * Subscribe to translated WebEvents without counting as a UI viewer (`hasViewers`).
+ * Used by background automation runs so headless extension UI prompts keep using defaults.
+ */
+export function observeManagedEvents(m: Managed, listener: (evt: WebEvent) => void): () => void {
+	let listeners = internalListeners.get(m);
+	if (!listeners) {
+		listeners = new Set();
+		internalListeners.set(m, listeners);
+	}
+	listeners.add(listener);
+	return () => {
+		listeners?.delete(listener);
+	};
+}
 
 function flushPublishes(m: Managed): void {
 	const queue = publishQueues.get(m);
@@ -500,8 +581,15 @@ function flushPublishes(m: Managed): void {
 
 function publishImmediate(m: Managed, evt: WebEvent): void {
 	if (m.disposed) return;
+	if (evt.type === "message") evt = { ...evt, message: previewMessage(evt.message, imagePreviewUrl(m, evt.message)) };
+	let json: string;
+	try { json = JSON.stringify(evt); }
+	catch (error) {
+		console.warn("[piweb] Event serialization failed", error);
+		evt = { type: "error", message: "An event could not be displayed; reconnect to refresh the session.", ts: Date.now() };
+		json = JSON.stringify(evt);
+	}
 	m.seq += 1;
-	const json = JSON.stringify(evt);
 	m.buffer.push({ seq: m.seq, json });
 	if (m.buffer.length > BUFFER_CAP) m.buffer.shift();
 	for (const send of m.subscribers) {
@@ -509,6 +597,16 @@ function publishImmediate(m: Managed, evt: WebEvent): void {
 			send(m.seq, json);
 		} catch {
 			m.subscribers.delete(send);
+		}
+	}
+	const internal = internalListeners.get(m);
+	if (internal) {
+		for (const listener of [...internal]) {
+			try {
+				listener(evt);
+			} catch {
+				/* background observers must never break main event streaming */
+			}
 		}
 	}
 }
@@ -526,9 +624,17 @@ function deferPublish(m: Managed, events: () => WebEvent[]): void {
 	queue.push(entry);
 	publishQueues.set(m, queue);
 	queueMicrotask(() => {
-		entry.events = events();
-		flushPublishes(m);
+		try { entry.events = events(); }
+		catch (error) {
+			console.warn("[piweb] Deferred event failed", error);
+			entry.events = [{ type: "error", message: "An event could not be displayed; subsequent events will continue.", ts: Date.now() }];
+		} finally { flushPublishes(m); }
 	});
+}
+
+function safeThinkingLevels(session: AgentSession): string[] {
+	try { return session.getAvailableThinkingLevels() as unknown as string[]; }
+	catch { return []; }
 }
 
 /** 模型/档位变化统一广播：同时带上新模型支持的档位，前端菜单据此刷新 */
@@ -540,7 +646,7 @@ function publishModelState(m: Managed, session: AgentSession): void {
 		provider: model ? String(model.provider ?? "") : undefined,
 		model: model ? String(model.id ?? "") : undefined,
 		thinkingLevel: String(session.thinkingLevel ?? ""),
-		thinkingLevels: session.getAvailableThinkingLevels() as unknown as string[],
+		thinkingLevels: safeThinkingLevels(session),
 		routedModel: routedModelOf(session),
 		ts: Date.now(),
 	});
@@ -575,7 +681,7 @@ function routedModelEvent(m: Managed, session: AgentSession): WebEvent | null {
 		provider: session.model ? String(session.model.provider ?? "") : undefined,
 		model: session.model ? String(session.model.id ?? "") : undefined,
 		thinkingLevel: String(session.thinkingLevel ?? ""),
-		thinkingLevels: session.getAvailableThinkingLevels() as unknown as string[],
+		thinkingLevels: safeThinkingLevels(session),
 		routedModel: routed,
 		ts: Date.now(),
 	};
@@ -601,7 +707,7 @@ function applyNewSessionThinking(m: Managed, session: AgentSession): void {
 	if (!model) return;
 	const settings = getSettingsManager(m.cwd);
 	const level = newSessionThinkingLevel({
-		supported: session.getAvailableThinkingLevels() as unknown as string[],
+		supported: safeThinkingLevels(session),
 		modelOverride: settings.getModelThinkingLevel(model.provider, model.id),
 		defaultLevel: settings.getDefaultThinkingLevel(),
 	});
@@ -924,6 +1030,9 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			break;
 		case "agent_settled":
 			m.runActive = false;
+			if (!m.commandRunning && !m.bashActive && m.session?.isIdle) m.stopFailed = false;
+			// 未消耗的一次性升权不能跨轮留到下一次用户消息，本轮收尾时清掉
+			clearEscalation(m);
 			// SDK 1.3 的显示队列按非空文字匹配消费记录，纯图片消息会残留 ""。
 			// 只在实际发送队列已空时清理；中断后仍待发送的消息必须保留供用户取回。
 			if (m.session && !m.session.agent.hasQueuedMessages() && m.session.pendingMessageCount > 0) m.session.clearQueue();
@@ -932,7 +1041,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			publishUsage(m, true);
 			if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
 			// 扩展命令调了 ctx.shutdown()：本轮收尾后才回收，回收中途不能掐掉正在写的东西
-			if (m.shutdownRequested) queueMicrotask(() => void shutdownFromExtensionCommand(m));
+			if (m.shutdownRequested) queueMicrotask(() => requestExtensionShutdown(m));
 			break;
 		case "queue_update":
 			publish(m, {
@@ -1032,9 +1141,15 @@ export async function growthConsent(m: Managed, allow: boolean): Promise<GrowthR
 	await setGrowthInitConsent(m.cwd, allow);
 	const same = (p: string) => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
 	for (const other of sessions.values()) {
-		if (other !== m && other.growth?.getConsentRequest() && same(other.cwd) === same(m.cwd)) void other.growth.consentAnswered(allow).catch(() => undefined);
+		if (other !== m && other.growth && same(other.cwd) === same(m.cwd)) await other.growth.consentAnswered(allow, false);
 	}
 	return growthOf(m).consentAnswered(allow);
+}
+
+/** 工作区开关同时更新已创建的 tracker，不依赖面板是否带当前会话。 */
+export async function updateRecordingForWorkspace(cwd: string, allow: boolean): Promise<void> {
+	const key = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+	for (const m of sessions.values()) if (m.growth && key(m.cwd) === key(cwd)) await m.growth.consentAnswered(allow, false);
 }
 
 // ---------- 会话生命周期 ----------
@@ -1050,15 +1165,17 @@ const warmedResourceCwds = new Set<string>();
  * 140ms；侧栏一拿到会话列表就把最可能被点开的那个工作区先发现掉，用户点开时直接命中缓存。
  * 每个 cwd 只做一次，最多两个（别把一堆工作区的扩展全加载起来），失败静默。
  */
-export function warmSessionResources(cwds: string[]): void {
+export async function warmSessionResources(cwds: string[]): Promise<void> {
+	const pending: Promise<void>[] = [];
 	for (const cwd of cwds) {
-		if (!cwd || warmedResourceCwds.size >= 2) return;
+		if (!cwd || warmedResourceCwds.size >= 2) break;
 		const key = process.platform === "win32" ? cwd.toLowerCase() : cwd;
 		if (warmedResourceCwds.has(key)) continue;
 		warmedResourceCwds.add(key);
 		if (peekResourceLoader(cwd)) continue;
-		void resourceLoaderReady(cwd).catch(() => undefined);
+		pending.push(resourceLoaderReady(cwd).catch(() => undefined));
 	}
+	await Promise.all(pending);
 }
 
 export function getManaged(sessionPath: string): Managed {
@@ -1073,42 +1190,20 @@ export function getManaged(sessionPath: string): Managed {
 	return m;
 }
 
+/** Model discovery must not start a cold session or run project extensions. */
+export function peekSessionModelRuntime(sessionPath: string): AgentSession["modelRuntime"] | undefined {
+	return sessions.get(sessionPath)?.session?.modelRuntime;
+}
+
 /**
- * 数出 JSONL 里自上次核对以来、不是本进程写的新条目。
- * 自己的条目在 SessionManager._appendEntry 里先进内存索引再落盘，所以索引里找不到 id 的行就是外来的
- * （终端 pi 同时打开了这个会话）。只读新增的字节；文件变短（被整体重写）就从头核对；没写完的最后一行留到下次。
+ * 核对 JSONL 的追加与重写；同 ID / 同尺寸改写也需要刷新。
+ * 未改变时只 stat，追加按有界块增量扫描；半行与超预算行留到下一次。
  */
 function externalEntryCount(m: Managed): number {
-	let size: number;
-	try {
-		size = statSync(m.sessionPath).size;
-	} catch {
-		return 0; // 还没落盘
-	}
-	if (size === m.diskSize) return 0;
-	const from = size < m.diskSize ? 0 : m.diskSize;
-	let buf = Buffer.alloc(size - from);
-	let fd: number | undefined;
-	try {
-		fd = openSync(m.sessionPath, "r");
-		buf = buf.subarray(0, readSync(fd, buf, 0, buf.length, from));
-	} catch {
-		return 0;
-	} finally {
-		if (fd !== undefined) closeSync(fd);
-	}
-	const end = buf.lastIndexOf(0x0a);
-	m.diskSize = from + end + 1;
-	let count = 0;
-	for (const line of buf.subarray(0, Math.max(0, end)).toString("utf8").split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			const entry = JSON.parse(line);
-			if (entry?.type !== "session" && typeof entry?.id === "string" && !m.sm.getEntry(entry.id)) count += 1;
-		} catch {
-			/* 从行中间读起的半行、写坏的行都不算 */
-		}
-	}
+	// 已有进程的开发热更新状态可能尚无 tracker；从头作一次有界核对。
+	m.diskTracker ??= new SessionDiskTracker(m.sessionPath, 0);
+	const count = m.diskTracker.check((id) => m.sm.getEntry(id));
+	m.diskSize = m.diskTracker.checkedThrough;
 	return count;
 }
 
@@ -1151,6 +1246,8 @@ function reopenManaged(m: Managed): Managed {
 	const fresh = registerManaged(m.sessionPath, sm.getCwd() || m.cwd, sm);
 	// 核对位置沿用旧的（整行末尾）：打开时恰好没写完的那行，写完后还会被认作外来的
 	fresh.diskSize = m.diskSize;
+	fresh.diskTracker = m.diskTracker;
+	fresh.diskTracker?.adopt(sm.getEntries().map((entry) => entry.id));
 	fresh.toolPreset = m.toolPreset;
 	fresh.customActiveTools = m.customActiveTools;
 	fresh.desiredThinkingLevel = m.desiredThinkingLevel;
@@ -1214,9 +1311,11 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		disposed: false,
 		messageIds: new WeakMap(),
 		diskSize: fileSize(sessionPath),
+		diskTracker: new SessionDiskTracker(sessionPath, undefined, sm.getEntries().map((entry) => entry.id)),
 		externalEntries: 0,
 	};
 	sessions.set(sessionPath, m);
+	trimColdSessions(m);
 	return m;
 }
 
@@ -1227,26 +1326,29 @@ function ensureToolPreference(m: Managed): Promise<void> {
 		m.toolPreset = preference.toolPreset;
 		m.customActiveTools = preference.customActiveTools;
 		m.toolPreferenceSaved = true;
-	}).catch(() => {
-		/* 偏好文件坏掉 / 读不了：本次按默认档位跑，不影响会话本身 */
+	}).catch((error) => {
+		m.toolPreset = "readonly";
+		m.customActiveTools = undefined;
+		m.toolPreferenceSaved = true;
+		publish(m, { type: "error", message: `工具偏好无法读取，本会话暂用仅可查看：${String(error?.message ?? error)}`, ts: Date.now() });
 	});
 	return m.toolPreferenceLoaded;
 }
 
 /**
- * 工具选择只在服务端按会话持久化，不写会话 JSONL。保存失败不阻断本次切换，
- * 但仍把 `toolPreferenceSaved` 置真，避免前端反复用 localStorage 覆盖用户刚做的选择。
+ * 显式选择先保存候选值，再应用到运行时。保存失败保留原权限。
  */
-async function persistToolPreference(m: Managed): Promise<void> {
-	const preference: ToolPreference = {
+async function persistToolPreference(m: Managed, candidate?: ToolPreference): Promise<void> {
+	const preference: ToolPreference = candidate ?? {
 		toolPreset: m.toolPreset,
 		...(m.customActiveTools ? { customActiveTools: m.customActiveTools } : {}),
 	};
-	m.toolPreferenceSaved = true;
 	try {
 		await saveToolPreference(m.sessionPath, preference);
-	} catch {
-		/* 只影响下次重启恢复；当前会话已按新选择生效 */
+		m.toolPreferenceSaved = true;
+	} catch (error) {
+		publish(m, { type: "error", message: candidate ? "权限保存失败，保留原来的选择，请重试。" : "权限已在当前会话生效，但保存失败。重启后可能恢复旧选择，请重试保存。", ts: Date.now() });
+		throw error;
 	}
 }
 
@@ -1263,8 +1365,79 @@ const BUILTIN_TOOL_DEFINITIONS = [
 ];
 
 /** PiWeb 的 SDK 自定义工具：构造定义不会执行工具或启动会话。冷热路径共用，避免目录漏项。 */
-function sessionCustomTools(m: Managed) {
-	return [createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })))];
+type CustomTools = NonNullable<CreateAgentSessionOptions["customTools"]>;
+
+/** 取走一次升权：批准只覆盖下一条命令，读完即用完；用到哪条命令也进审计 */
+const ESCALATABLE_TOOLS = new Set(["bash", ...WRITE_PATH_FIELDS.keys()]);
+const MAX_PERMISSION_RECHECKS = 4;
+const UNSTABLE_PERMISSION = "The permission configuration changed repeatedly during this action. Retry after the permission settings stop changing.";
+
+function clearEscalation(m: Managed): void {
+	m.escalation = undefined;
+	m.escalatedCallIds = undefined;
+}
+
+const executionApprovals = new AsyncLocalStorage<{ managed: Managed; scope: EscalationScope; preset: ToolPreset; command?: string; used?: boolean } | undefined>();
+
+function widenPreset(current: ToolPreset, scope: EscalationScope): ToolPreset {
+	if (current === "full" || scope === "full") return "full";
+	return "workspace";
+}
+
+function consumeEscalation(m: Managed, command: string): EscalationScope | null {
+	const approval = executionApprovals.getStore();
+	if (!approval || approval.managed !== m || approval.used || approval.preset !== m.toolPreset || approval.command !== command) return null;
+	approval.used = true;
+	appendPermissionAudit(m.sm, { kind: "used", scope: approval.scope, preset: m.toolPreset, command, at: Date.now() });
+	return approval.scope;
+}
+
+function sessionCustomTools(m: Managed): CustomTools {
+	const settings = getSettingsManager(m.cwd);
+	const commandPrefix = settings.getShellCommandPrefix();
+	const fileOperations = createConfinedFileOperations({ sessionPath: m.sessionPath, cwd: m.cwd, preset: () => {
+		const approval = executionApprovals.getStore();
+		if (approval?.managed === m) {
+			if (approval.preset !== m.toolPreset) throw new Error("blocked: the permission preset changed before the file operation");
+			return widenPreset(m.toolPreset, approval.scope);
+		}
+		return m.toolPreset;
+	} });
+	return [
+		guardCustomToolDefinition(m, createWriteToolDefinition(m.cwd, { operations: fileOperations }) as unknown as CustomTools[number]),
+		guardCustomToolDefinition(m, createEditToolDefinition(m.cwd, { operations: fileOperations }) as unknown as CustomTools[number]),
+		createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" }))),
+		createPermissionRequestTool({
+			ask: (questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })),
+			deniedAction: (id) => id ? m.deniedActions?.get(id) : m.lastDeniedAction,
+			grant: (scope, action) => {
+				clearEscalation(m);
+				m.escalation = { scope, remaining: 1, actionKey: permissionActionKey(action), action, expiresAt: Date.now() + 5 * 60_000 };
+			},
+			preset: () => m.toolPreset,
+			record: (event) => appendPermissionAudit(m.sm, event),
+		}),
+		createManageAutomationTool({
+			defaultCwd: m.cwd,
+			onMutated: () => {
+				void import("./automations/runner").then((mod) => mod.ensureAutomationSchedulerStarted());
+			},
+		}),
+		// 同名覆盖 SDK 内置 bash：只换「怎么起进程」，schema / 截断 / 渲染 / 临时脚本仍是 pi 的。
+		// shellPath、commandPrefix 跟着 settings 走，保持与内置定义一致。
+		// 断言是因为 bash 定义的泛型（schema / render state）比 customTools 的擦除类型更具体。
+		guardCustomToolDefinition(m, createBashToolDefinition(m.cwd, {
+			operations: createSandboxBashOperations({
+				sessionPath: m.sessionPath,
+				cwd: m.cwd,
+				preset: () => m.toolPreset,
+				shellPath: settings.getShellPath(),
+				consumeGrant: (command: string) => consumeEscalation(m, command),
+			}),
+			commandPrefix,
+			shellPath: settings.getShellPath(),
+		}) as unknown as CustomTools[number], commandPrefix),
+	];
 }
 
 interface CatalogTool {
@@ -1272,13 +1445,21 @@ interface CatalogTool {
 	description?: string;
 	exposure?: string;
 	defaultActive?: boolean;
+	readOnly?: boolean;
 }
+
+const coldToolCatalogCache = new WeakMap<Managed, { version: number; settings: string; catalog: CatalogTool[] }>();
 
 /**
  * 冷会话的工具全集：SDK 内置定义直接构造；扩展工具取加载器已注册的 definition
  * （资源发现本来就已加载，不会触发 session_start）。同名扩展工具覆盖内置定义，与 SDK 顺序一致。
  */
 function toolCatalog(m: Managed): CatalogTool[] {
+	const version = resourceLoaderVersion(m.cwd);
+	const settingsManager = getSettingsManager(m.cwd);
+	const settings = `${settingsManager.getShellPath() ?? ""}\n${settingsManager.getShellCommandPrefix() ?? ""}`;
+	const cached = coldToolCatalogCache.get(m);
+	if (cached?.version === version && cached.settings === settings) return cached.catalog;
 	const catalog = new Map<string, CatalogTool>();
 	for (const create of BUILTIN_TOOL_DEFINITIONS) {
 		try {
@@ -1307,6 +1488,7 @@ function toolCatalog(m: Managed): CatalogTool[] {
 					description: definition.description,
 					exposure: definition.exposure,
 					defaultActive: definition.defaultActive,
+					readOnly: definition.annotations?.readOnlyHint === true,
 				});
 			}
 		}
@@ -1322,14 +1504,19 @@ function toolCatalog(m: Managed): CatalogTool[] {
 			defaultActive: definition.defaultActive,
 		});
 	}
-	return [...catalog.values()];
+	const result = [...catalog.values()];
+	coldToolCatalogCache.set(m, { version, settings, catalog: result });
+	return result;
 }
 
 /** 冷会话按与热会话相同的档位 / 逐项策略算出激活集。 */
 function coldActiveToolNames(m: Managed, catalog: CatalogTool[]): string[] {
-	const allowed = catalog.filter((tool) => m.customActiveTools
-		? m.customActiveTools.includes(tool.name)
-		: presetAllowsTool(m.toolPreset, tool.name));
+	// 与热路径的 toolPolicyDenial 一致：受限档的 bash 依赖 OS 沙箱，机器上没有后端就不列出来，
+	// 否则冷快照里有 bash、会话一启动它又消失
+	const noShell = m.toolPreset !== "full" && !sandboxSupported();
+	const allowed = catalog.filter((tool) => (presetAllowsTool(m.toolPreset, tool.name) || tool.readOnly === true)
+		&& !(noShell && tool.name === "bash")
+		&& (!m.customActiveTools || m.customActiveTools.includes(tool.name)));
 	if (m.customActiveTools) return allowed.map((tool) => tool.name);
 	// 热启动把 SDK 初始激活集记入 requestedTools；冷路径直接读取同一份已合并的设置。
 	// 显式点名的 defaultActive:false 工具也要展示为启用，档位与逐项白名单仍优先。
@@ -1511,6 +1698,25 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 	if (m.creating) return m.creating;
 	if (m.session) return m.session;
 	m.creating = (async () => {
+		const previousDisposal = pathDisposals.get(m.sessionPath);
+		if (previousDisposal) {
+			await previousDisposal;
+			if (m.disposed) throw new Error("session is disposed");
+			// Shutdown hooks may append to the file. Reopen only after they finish.
+			m.sm = openSessionManager(m.sessionPath);
+			m.diskTracker = new SessionDiskTracker(m.sessionPath, 0);
+		}
+		const occupied = [...sessions.values()].filter((item) => item !== m && !item.disposed && (item.session || item.creating));
+		if (occupied.length >= MAX_HOT_SESSIONS) {
+			const candidate = occupied.filter((item) => item.session && !item.creating && !isManagedBusy(item) && !hasViewers(item)).sort((a, b) => a.lastActive - b.lastActive)[0];
+			if (candidate) {
+				await disposeSessionPath(candidate.sessionPath);
+				if ([...sessions.values()].filter((item) => item !== m && !item.disposed && (item.session || item.creating)).length >= MAX_HOT_SESSIONS) throw new Error("运行中的会话过多，请稍后重试。");
+			}
+			else throw new Error("运行中的会话过多，请关闭一个空闲会话后重试。");
+		}
+		// 能力探测要尽早：workspace 档能不能给 bash 取决于它，策略在下面就会算
+		await probeSandboxSupport();
 		// 恢复服务端保存的工具选择必须在创建 session 之前完成，SDK 的初始激活集随后即被策略覆盖
 		await ensureToolPreference(m);
 		await resourceLoaderReady(m.cwd);
@@ -1520,21 +1726,28 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			factory: (api) => {
 				// SDK tool_call covers top-level calls and ctx.executeTool / codemode nested calls.
 				// Read the current choice at execution time, including tools registered later.
-				api.on("tool_call", (event) => {
+				api.on("tool_call", async (event) => {
 					if (m.session) guardToolExecution(m, m.session);
-					const reason = toolPolicyDenial(m, event.toolName);
-					if (reason) return { block: true, reason };
+					return evaluateToolCallGate(m, event);
 				});
 			},
 		}]);
 		let created: AgentSession | undefined;
+		let modelRuntime: AgentSession["modelRuntime"] | undefined;
 		try {
 			if (m.disposed) throw new Error("session is disposed");
+			modelRuntime = await createSessionModelRuntime(await getModelRuntime());
+			const ownedRuntime = modelRuntime;
+			const reloadResources = loader.reload.bind(loader);
+			loader.reload = async (options) => {
+				await reloadResources(options);
+				await clearSessionModelProviders(ownedRuntime);
+			};
 			const { session } = await createAgentSession({
 				cwd: m.cwd,
 				agentDir: getAgentDir(),
 				sessionManager: m.sm,
-				modelRuntime: await getModelRuntime(),
+				modelRuntime,
 				resourceLoader: loader,
 				settingsManager,
 				// 扩展命令换出来的会话：session_start 要带上来由和上一个会话（否则扩展只能看到 "startup"）
@@ -1550,8 +1763,12 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			m.requestedTools = new Set(session.getActiveToolNames());
 			installSessionPolicy(m, session);
 			applyToolPolicy(m, session);
-			session.subscribe((evt) => { if (!m.disposed) translate(m, evt); });
-			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m) });
+			session.subscribe((evt) => {
+				if (m.disposed) return;
+				try { translate(m, evt); }
+				catch (error) { console.warn("[piweb] Session event failed", error); publish(m, { type: "error", message: "An event could not be displayed; reconnect to refresh the session.", ts: Date.now() }); }
+			});
+			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true });
 			m.ui = ui;
 			await session.bindExtensions({
 				mode: "rpc",
@@ -1562,7 +1779,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				shutdownHandler: () => {
 					// ctx.shutdown()：pi 终端是退出进程；Web 里进程还要服务别的会话，等价动作是让这份会话收工
 					m.shutdownRequested = true;
-					setImmediate(() => void shutdownFromExtensionCommand(m));
+					setImmediate(() => requestExtensionShutdown(m));
 				},
 				onError: (error) => {
 					publish(m, { type: "error", message: `扩展 ${error.extensionPath.split(/[\\/]/).pop()} 在 ${error.event} 出错：${error.error}`, ts: Date.now() });
@@ -1582,8 +1799,11 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			m.ui = null;
 			// session_start 可能已经跑过（MCP 在连服务器）：先发 session_shutdown 收尾，再废掉扩展 runtime
 			const runtime = loader.getExtensions().runtime;
-			if (created) void shutdownSession(created).finally(() => runtime.invalidate());
-			else runtime.invalidate();
+			if (created) await shutdownSession(created).finally(() => runtime.invalidate());
+			else {
+				runtime.invalidate();
+				if (modelRuntime) await releaseSessionModelRuntime(modelRuntime).catch((cleanupError) => console.warn("[piweb] Model cleanup failed", cleanupError));
+			}
 			m.session = null;
 			throw error;
 		}
@@ -1595,12 +1815,97 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 }
 
 function isManagedBusy(m: Managed): boolean {
-	return m.promptSubmitting || m.resourceReloading || m.runActive || m.bashActive === true || !!(m.session && !m.session.isIdle);
+	return m.promptSubmitting || m.resourceReloading || m.runActive || m.commandRunning === true || !!m.stopping || m.stopFailed === true || m.bashActive === true || !!(m.session && !m.session.isIdle);
 }
 
-function toolPolicyDenial(m: Managed, name: string): string | undefined {
+async function evaluateToolCallGate(
+	m: Managed,
+	event: { toolCallId?: string; toolName: string; input: unknown },
+	recheck = 0,
+): Promise<{ block: true; reason: string } | undefined> {
+	if (recheck >= MAX_PERMISSION_RECHECKS) return { block: true, reason: UNSTABLE_PERMISSION };
+	const presetAtStart = m.toolPreset;
+	const customAtStart = m.customActiveTools;
+	const isWriteTool = WRITE_PATH_FIELDS.has(event.toolName);
+	const needsExtraRoots = isWriteTool && (m.toolPreset === "workspace" || (m.toolPreset === "readonly" && m.escalation?.scope === "workspace"));
+	const additionalWritableRoots = needsExtraRoots ? (await readSandboxConfig()).additionalWritableRoots : undefined;
+	const shellAvailable = sandboxSupported();
+	const readOnlyHint = m.session?.getToolDefinition(event.toolName)?.annotations?.readOnlyHint;
+
+	const basePolicyReason = toolPolicyDenial(m, event.toolName);
+	const gateRequest = {
+		preset: m.toolPreset,
+		cwd: m.cwd,
+		toolName: event.toolName,
+		input: event.input,
+		readOnlyHint,
+		shellAvailable,
+		additionalWritableRoots,
+	};
+	// 档位的第二道锁：白名单只管「哪些工具」，这里管「这次调用到底会碰到哪儿」。
+	// 写入路径要 realpath 后比较（挡 ../、软链接、盘符大小写、UNC），所以是异步的。
+	const baseDenial = basePolicyReason
+		? { block: true as const, reason: basePolicyReason }
+		: await permissionDenial(gateRequest);
+	if (m.toolPreset !== presetAtStart || m.customActiveTools !== customAtStart) return evaluateToolCallGate(m, event, recheck + 1);
+	if (!baseDenial) return undefined;
+	const reject = (denial = baseDenial) => {
+		if (ESCALATABLE_TOOLS.has(event.toolName)) {
+			const action = structuredClone(event);
+			m.lastDeniedAction = action;
+			if (event.toolCallId) {
+				const denied = m.deniedActions ??= new Map();
+				if (denied.size >= 32) denied.delete(denied.keys().next().value!);
+				denied.set(event.toolCallId, action);
+			}
+		}
+		appendPermissionAudit(m.sm, { kind: "blocked", preset: m.toolPreset, toolName: event.toolName, command: permissionActionDescription(event), reason: denial.reason, at: Date.now() });
+		return denial;
+	};
+
+	const grantSnapshot = m.escalation;
+	if (!grantSnapshot || grantSnapshot.remaining <= 0 || grantSnapshot.expiresAt < Date.now() || !ESCALATABLE_TOOLS.has(event.toolName) || grantSnapshot.actionKey !== permissionActionKey(event)) {
+		return reject();
+	}
+	const grantedScope = grantSnapshot.scope;
+	const escalatedPreset = widenPreset(m.toolPreset, grantedScope);
+	if (m.customActiveTools ? !m.customActiveTools.includes(event.toolName) : !presetAllowsTool(escalatedPreset, event.toolName)) {
+		return reject();
+	}
+
+	if (event.toolName === "bash") {
+		// bash 的 m.escalation 由 bash-operations.ts 在 exec() 真正启动前 consumeGrant()
+		if (escalatedPreset === "full" || (escalatedPreset === "workspace" && shellAvailable)) return undefined;
+		return reject();
+	}
+
+	const escalatedDenial = escalatedPreset === "full"
+		? undefined
+		: await permissionDenial({ ...gateRequest, preset: escalatedPreset });
+	if (escalatedDenial) return reject(escalatedDenial);
+
+	// await 之后同步再确认一次授权未被并发调用或切档消耗
+	const currentGrant = m.escalation;
+	if (m.toolPreset !== presetAtStart || m.customActiveTools !== customAtStart) return evaluateToolCallGate(m, event, recheck + 1);
+	if (currentGrant !== grantSnapshot || currentGrant.remaining <= 0) return reject();
+	// Consumption happens in the execution wrapper, after its final argument/policy check.
+	return undefined;
+}
+
+function toolPolicyDenial(m: Managed, name: string, options?: { allowEscalation?: boolean }): string | undefined {
 	if (m.disposed) return "Session is disposed";
-	const allowed = m.customActiveTools ? m.customActiveTools.includes(name) : presetAllowsTool(m.toolPreset, name);
+	// workspace / readonly 档的 bash 依赖 OS 级沙箱：机器上没有后端时（非 Windows / koffi 缺失），
+	// 与「这一档没有 shell」保持一致，把工具整个剔出去，而不是留一个必然失败的入口；
+	// 只有用户通过 request_permission 明确批准一次 full 升权时才放行当次 bash。
+	const escalation = options?.allowEscalation ? m.escalation : undefined;
+	if (name === "bash" && (m.toolPreset === "workspace" || m.toolPreset === "readonly") && !sandboxSupported()) {
+		if (escalation?.scope !== "full") {
+			return `Tool "bash" is blocked: ${m.toolPreset} has no OS-level sandbox on this machine, so shell commands are unavailable. Switch to 完全权限 (full) if the user approves.`;
+		}
+	}
+	const effectivePreset = escalation && ESCALATABLE_TOOLS.has(name) ? widenPreset(m.toolPreset, escalation.scope) : m.toolPreset;
+	const presetAllowed = presetAllowsTool(effectivePreset, name) || m.session?.getToolDefinition?.(name)?.annotations?.readOnlyHint === true;
+	const allowed = presetAllowed && (!m.customActiveTools || m.customActiveTools.includes(name));
 	if (!allowed) return `Tool "${name}" is blocked by the current permission level (${m.customActiveTools ? "custom" : m.toolPreset}).`;
 }
 
@@ -1631,17 +1936,63 @@ function policyToolNames(m: Managed, session: AgentSession): string[] {
 const rawSetActiveTools = new WeakMap<AgentSession, (names: string[]) => void>();
 const guardedTools = new WeakSet<object>();
 
+/**
+ * Consume grants at the session-local definition, not only agent.state.tools.
+ * The SDK uses its callable registry for codemode / ctx.executeTool and can clone
+ * declared tools when preparing a loadout. Both paths retain this execute function.
+ */
+function guardCustomToolDefinition(m: Managed, tool: CustomTools[number], commandPrefix?: string): CustomTools[number] {
+	const execute = tool.execute;
+	tool.execute = async (...args) => {
+		const action = { toolCallId: args[0], toolName: tool.name, input: args[1] };
+		let preset: ToolPreset;
+		let custom: string[] | undefined;
+		let rechecks = 0;
+		do {
+			if (rechecks++ >= MAX_PERMISSION_RECHECKS) throw new Error(UNSTABLE_PERMISSION);
+			preset = m.toolPreset;
+			custom = m.customActiveTools;
+			const denial = await evaluateToolCallGate(m, action);
+			if (denial) throw new Error(denial.reason);
+		} while (preset !== m.toolPreset || custom !== m.customActiveTools);
+		const grant = m.escalation;
+		if (grant && grant.expiresAt >= Date.now() && grant.remaining > 0 && grant.actionKey === permissionActionKey(action) && m.toolPreset !== "full") {
+			// No await between matching and taking the grant: concurrent identical
+			// calls cannot both inherit its wider scope.
+			clearEscalation(m);
+			const rawCommand = (args[1] as { command?: unknown })?.command;
+			const command = tool.name === "bash" && typeof rawCommand === "string" ? (commandPrefix ? `${commandPrefix}\n${rawCommand}` : rawCommand) : undefined;
+			if (tool.name !== "bash") appendPermissionAudit(m.sm, { kind: "used", scope: grant.scope, preset: m.toolPreset, command: permissionActionDescription(action), at: Date.now() });
+			return executionApprovals.run({ managed: m, scope: grant.scope, preset: m.toolPreset, command }, () => execute.call(tool, ...args));
+		}
+		// A separate nested action must never inherit another action's file scope.
+		return executionApprovals.run(undefined, () => execute.call(tool, ...args));
+	};
+	return tool;
+}
+
 function guardToolExecution(m: Managed, session: AgentSession): void {
 	// Guard the SDK's per-session execution objects. Extension definitions can be
 	// shared by their factories; modifying those would leak one session's policy.
 	for (const tool of session.agent.state.tools) {
 		if (guardedTools.has(tool)) continue;
 		const execute = tool.execute;
-		tool.execute = (...args) => {
+		tool.execute = async (...args) => {
 			// Parallel batches may prepare calls before any execute. Check once more at the
 			// actual invocation, so a prepared or nested call cannot retain an old permission.
-			const reason = toolPolicyDenial(m, tool.name);
-			if (reason) throw new Error(reason);
+			if (m.disposed) throw new Error("Session is disposed");
+			const callId = typeof args[0] === "string" ? args[0] : undefined;
+			const action = { toolCallId: callId, toolName: tool.name, input: args[1] };
+			let currentPreset: ToolPreset;
+			let currentCustom: string[] | undefined;
+			let rechecks = 0;
+			do {
+				if (rechecks++ >= MAX_PERMISSION_RECHECKS) throw new Error(UNSTABLE_PERMISSION);
+				currentPreset = m.toolPreset;
+				currentCustom = m.customActiveTools;
+				const denial = await evaluateToolCallGate(m, action);
+				if (denial) throw new Error(denial.reason);
+			} while (currentPreset !== m.toolPreset || currentCustom !== m.customActiveTools);
 			return execute.call(tool, ...args);
 		};
 		guardedTools.add(tool);
@@ -1681,13 +2032,14 @@ function shutdownSession(session: AgentSession): Promise<void> {
 		timer = setTimeout(resolve, SHUTDOWN_TIMEOUT_MS);
 		timer.unref?.();
 	});
-	const done = Promise.race([shutdown.then(() => undefined, () => undefined), timeout]).finally(() => {
+	const done = Promise.race([shutdown.then(() => undefined, (error) => console.warn("[piweb] Extension shutdown failed", error)), timeout]).finally(async () => {
 		clearTimeout(timer);
 		try {
 			session.dispose();
-		} catch {
-			/* ignore */
+		} catch (error) {
+			console.warn("[piweb] Session disposal failed", error instanceof Error ? error.name : "UnknownError");
 		}
+		await releaseSessionModelRuntime(session.modelRuntime).catch((error) => console.warn("[piweb] Model runtime cleanup failed", error));
 	});
 	shuttingDown.set(session, done);
 	return done;
@@ -1710,6 +2062,37 @@ function publishTools(m: Managed, session: AgentSession | null): void {
 /** installSessionPolicy 包装前的原始 reload / 扩展命令专用的重载入口（见 performReload） */
 const rawReloads = new WeakMap<AgentSession, AgentSession["reload"]>();
 const commandReloads = new WeakMap<AgentSession, () => Promise<void>>();
+const reloadTasks = new WeakMap<Managed, Promise<void>>();
+
+/** Wait briefly if an active performReload task is finishing before accepting user input. */
+async function waitWhileReloading(m: Managed, ownSubmission = false): Promise<string | null> {
+	const task = reloadTasks.get(m);
+	if (task) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			task.catch(() => undefined),
+			new Promise<void>((resolve) => {
+				timer = setTimeout(resolve, 3000);
+				timer.unref?.();
+			}),
+		]);
+		clearTimeout(timer);
+	}
+	return (!ownSubmission && m.promptSubmitting) || m.resourceReloading ? "session is busy accepting another command" : null;
+}
+
+/** Reserve before waiting on any reload or session creation. */
+async function claimSubmission(m: Managed): Promise<string | null> {
+	if (m.promptSubmitting || m.commandRunning || m.bashActive || m.stopping || m.stopFailed || (m.resourceReloading && !reloadTasks.has(m))) return "session is busy accepting another command";
+	m.promptSubmitting = true;
+	m.submissionCancelled = false;
+	const busy = m.resourceReloading ? await waitWhileReloading(m, true) : null;
+	if (busy || m.disposed) {
+		m.promptSubmitting = false;
+		return busy ?? "session is disposed";
+	}
+	return null;
+}
 
 /**
  * session.reload 的统一实现。扩展命令处理器就在一次 prompt 提交里跑，它自己要重载不算「忙」，
@@ -1725,27 +2108,33 @@ async function performReload(
 	if (!rawReload) throw new Error("session is not ready");
 	if (fromCommand ? m.resourceReloading || m.runActive || !session.isIdle : isManagedBusy(m)) throw new Error("session is busy");
 	m.resourceReloading = true;
-	try {
-		await withResourceLock(async () => {
-			if (m.disposed || m.runActive || !session.isIdle) throw new Error("session is busy");
-			await rawReload({ beforeSessionStart: async () => {
-				// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
-				for (const name of listActiveTools(session)) m.requestedTools.add(name);
-				applyToolPolicy(m, session);
-				await options?.beforeSessionStart?.();
-				applyToolPolicy(m, session);
-			} });
-		});
-		m.resourceVersion = resourceLoaderVersion(m.cwd);
-	} finally {
-		applyToolPolicy(m, session);
-		m.resourceReloading = false;
-		if (!m.disposed) {
-			publishTools(m, session);
-			publishEnvironmentTrajectory(m, session);
-			publishResources(m);
+	let task!: Promise<void>;
+	task = (async () => {
+		try {
+			await withResourceLock(async () => {
+				if (m.disposed || m.runActive || !session.isIdle) throw new Error("session is busy");
+				await rawReload({ beforeSessionStart: async () => {
+					// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
+					for (const name of listActiveTools(session)) m.requestedTools.add(name);
+					applyToolPolicy(m, session);
+					await options?.beforeSessionStart?.();
+					applyToolPolicy(m, session);
+				} });
+			});
+			m.resourceVersion = resourceLoaderVersion(m.cwd);
+		} finally {
+			m.resourceReloading = false;
+			if (reloadTasks.get(m) === task) reloadTasks.delete(m);
+			applyToolPolicy(m, session);
+			if (!m.disposed) {
+				publishTools(m, session);
+				publishEnvironmentTrajectory(m, session);
+				publishResources(m);
+			}
 		}
-	}
+	})();
+	reloadTasks.set(m, task);
+	await task;
 }
 
 /** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界收敛到服务端选择。 */
@@ -1882,7 +2271,7 @@ function extensionCommandActions(m: Managed, session: AgentSession): ExtensionCo
 			return { cancelled: result.cancelled };
 		},
 		switchSession: async (sessionPath, options) => {
-			const target = getManaged(path.resolve(sessionPath));
+			const target = getManaged(await resolveSessionPath(encodeSessionId(path.resolve(sessionPath))));
 			if (await emitBeforeSwitch(session, "resume", target.sessionPath)) return { cancelled: true };
 			if (target === m) await options?.withSession?.(session.createReplacedSessionContext());
 			else await adoptReplacement(m, target, "resume", { withSession: options?.withSession });
@@ -1899,30 +2288,37 @@ function extensionCommandActions(m: Managed, session: AgentSession): ExtensionCo
  */
 async function shutdownFromExtensionCommand(m: Managed, attempt = 0): Promise<void> {
 	if (!m.shutdownRequested || m.disposed) return;
-	if (m.creating || m.resourceReloading || m.runActive || m.bashActive || (m.session && !m.session.isIdle)) {
+	if (m.creating || m.resourceReloading || m.runActive || m.commandRunning || m.bashActive || (m.session && !m.session.isIdle)) {
 		// 没有下一轮 agent_settled 可以依赖时自己重试；最多等约 10 秒，之后放弃（下次命令/回收还会收）
-		if (attempt < 40) setTimeout(() => void shutdownFromExtensionCommand(m, attempt + 1), 250).unref?.();
+		if (attempt < 40) setTimeout(() => requestExtensionShutdown(m, attempt + 1), 250).unref?.();
 		return;
 	}
 	m.shutdownRequested = false;
 	await disposeSessionPath(m.sessionPath);
 }
 
-export function disposeSession(m: Managed): void {
-	if (m.disposed) return;
+function requestExtensionShutdown(m: Managed, attempt = 0): void {
+	void shutdownFromExtensionCommand(m, attempt).catch((error) => {
+		console.warn("[piweb] Extension shutdown failed", error);
+		if (!m.disposed) publish(m, { type: "error", message: "会话未能完成关闭，请稍后重试。", ts: Date.now() });
+	});
+}
+
+const disposalTasks = new WeakMap<Managed, Promise<void>>();
+const pathDisposals = new Map<string, Promise<void>>();
+
+export function disposeSession(m: Managed): Promise<void> {
+	const existing = disposalTasks.get(m);
+	if (existing) return existing;
+	if (m.disposed) return Promise.resolve();
 	m.disposed = true;
+	for (const key of writeBases.keys()) {
+		if (key.startsWith(`${m.sessionPath}\u0000`)) writeBases.delete(key);
+	}
 	m.ui?.dispose();
 	m.ui = null;
 	m.growth?.dispose();
 	m.growth = null;
-	if (m.session) void shutdownSession(m.session);
-	// 正在创建中的会话：创建完成后立即销毁，否则它会挂在已被移出池的
-	// Managed 上，订阅与句柄永久泄漏（同一 JSONL 还会出现双活跃会话）。
-	if (m.creating) {
-		void m.creating
-			.then((session) => (session ? shutdownSession(session) : undefined))
-			.catch(() => undefined);
-	}
 	for (const send of m.subscribers) {
 		try {
 			send(m.seq, JSON.stringify({ type: "status", isStreaming: false, state: "disposed", ts: Date.now() }));
@@ -1931,7 +2327,23 @@ export function disposeSession(m: Managed): void {
 		}
 	}
 	m.subscribers.clear();
-	sessions.delete(m.sessionPath);
+	if (sessions.get(m.sessionPath) === m) sessions.delete(m.sessionPath);
+	const predecessor = pathDisposals.get(m.sessionPath);
+	const creating = m.creating;
+	const session = m.session;
+	const task = (async () => {
+		await predecessor;
+		const created = creating ? await creating.catch(() => null) : null;
+		if (session) await shutdownSession(session);
+		if (created && created !== session) await shutdownSession(created);
+		await releaseSandbox(m.sessionPath);
+	})();
+	disposalTasks.set(m, task);
+	pathDisposals.set(m.sessionPath, task);
+	void task.then(() => {
+		if (pathDisposals.get(m.sessionPath) === task) pathDisposals.delete(m.sessionPath);
+	}, (error) => console.warn("[piweb] Session cleanup failed", error));
+	return task;
 }
 
 /**
@@ -1941,10 +2353,20 @@ export function disposeSession(m: Managed): void {
  */
 export async function disposeSessionPath(sessionPath: string): Promise<void> {
 	const m = sessions.get(sessionPath);
-	if (!m) return;
+	if (!m) { await pathDisposals.get(sessionPath); await releaseSandbox(sessionPath); return; }
 	const session = m.session ?? (m.creating ? await m.creating.catch(() => null) : null);
-	if (session?.isStreaming) await session.abort().catch(() => undefined);
-	disposeSession(m);
+	if (session && (session.isStreaming || m.runActive || m.commandRunning || m.bashActive)) {
+		// 停不下来（工具不响应中止）也照常回收：删除 / 归档是这种会话唯一的出口，
+		// 不回收的话 stopFailed 会一直挡住提交和空闲回收，只能重启服务。shutdownSession 自带收尾上限。
+		if (!(await stopManagedRun(m, session))) console.warn("[piweb] Stop did not finish; disposing the session anyway");
+	}
+	await disposeSession(m);
+}
+
+function trimColdSessions(keep?: Managed): void {
+	const cold = [...sessions.values()].filter((m) => !m.session && !m.creating && !m.disposed);
+	const evictable = cold.filter((m) => m !== keep && !isManagedBusy(m) && !hasViewers(m)).sort((a, b) => a.lastActive - b.lastActive);
+	for (const m of evictable.slice(0, Math.max(0, cold.length - MAX_COLD_SESSIONS))) void disposeSession(m);
 }
 
 /** 空闲回收 + 活跃数上限（LRU） */
@@ -1961,6 +2383,7 @@ export function reap(): void {
 			.sort((a, b) => a.lastActive - b.lastActive);
 		for (const m of evictable.slice(0, active.length - MAX_ACTIVE)) disposeSession(m);
 	}
+	trimColdSessions();
 }
 
 // 定时器挂 globalThis：开发热重载会重新求值本模块，不清掉旧的就会一份份叠加
@@ -2107,22 +2530,27 @@ export function refreshSessionModels(provider: string, id: string): number {
  * 设置面板改了排队投递方式 / 缓存预热：SDK 只在创建会话时把它们读进 agent，
  * settings.json 重新读盘不会改到已经开着的会话，这里当场给它们换上。
  */
-export function applySettingsToSessions(patch: { steeringMode?: "all" | "one-at-a-time"; followUpMode?: "all" | "one-at-a-time"; cacheWarming?: "off" | "streaming" | "idle" }): number {
+export function applySettingsToSessions(patch: { steeringMode?: "all" | "one-at-a-time"; followUpMode?: "all" | "one-at-a-time"; cacheWarming?: "off" | "streaming" | "idle" }, cwd?: string): number {
 	if (!patch.steeringMode && !patch.followUpMode && !patch.cacheWarming) return 0;
 	let n = 0;
+	const failures: unknown[] = [];
 	for (const m of sessions.values()) {
+		const key = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+		if (cwd && key(m.cwd) !== key(cwd)) continue;
 		const session = m.session;
 		if (!session) continue;
 		try {
-			if (patch.steeringMode) session.agent.steeringMode = patch.steeringMode;
-			if (patch.followUpMode) session.agent.followUpMode = patch.followUpMode;
+			const settings = getSettingsManager(m.cwd);
+			if (patch.steeringMode) session.agent.steeringMode = settings.getSteeringMode();
+			if (patch.followUpMode) session.agent.followUpMode = settings.getFollowUpMode();
 			// 预热器要被通知一声才会按新模式重排定时器（顺带把同一个值再写一次，无害）
-			if (patch.cacheWarming) session.setCacheWarmingMode(patch.cacheWarming);
+			if (patch.cacheWarming) session.setCacheWarmingMode(settings.getCacheWarmingMode());
 			n += 1;
-		} catch {
-			/* 单个会话失败不影响其它；它下次冷启动会读到新设置 */
+		} catch (error) {
+			failures.push(error);
 		}
 	}
+	if (failures.length) throw new AggregateError(failures, `${failures.length} session(s) could not apply the saved settings; reopen those chats to retry.`);
 	return n;
 }
 
@@ -2290,7 +2718,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	const resources = session && !m.creating ? collectResources(m) : await loadWorkspaceResources(m.cwd);
 
 	const baseTrajectory = m.ledger.entries.length ? m.ledger.entries : coldTrajectory(m);
-	const trajectory = [...environmentTrajectory(m, session, contextResourcesLoaded ? contextResources : undefined), ...baseTrajectory];
+	const trajectory = recentTrajectory([...environmentTrajectory(m, session, contextResourcesLoaded ? contextResources : undefined), ...baseTrajectory]);
+	const history = historyPage(messages, { limit: MAX_VISIBLE_MESSAGES }, (message) => previewMessage(message, imagePreviewUrl(m, message)));
 
 	return {
 		seq: snapSeq ?? m.seq,
@@ -2302,8 +2731,9 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		contextResources,
 		contextBreakdown,
 		...resources,
-		messages,
-		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]),
+		messages: history.messages,
+		history: { total: history.total, omitted: history.pageStart },
+		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]).slice(-MAX_VISIBLE_MESSAGES),
 		growthError: m.growth?.getError?.() ?? null,
 		growthConsent: m.growth?.getConsentRequest?.() ?? null,
 		model,
@@ -2401,10 +2831,13 @@ export interface CommandResult {
  * 5s 内没完成就放行，快照后台补拍（工具结束后照常记步，外部修改兜底）。
  */
 async function prepareGrowthBriefly(m: Managed): Promise<void> {
-	await Promise.race([
-		growthOf(m).prepare().catch(() => undefined),
-		new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-	]);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await Promise.race([
+			growthOf(m).prepare().catch(() => undefined),
+			new Promise<void>((resolve) => { timer = setTimeout(resolve, 5000); timer.unref?.(); }),
+		]);
+	} finally { clearTimeout(timer); }
 }
 
 type PromptImages = NonNullable<NonNullable<Parameters<AgentSession["prompt"]>[1]>["images"]>;
@@ -2418,6 +2851,67 @@ function userMessageImages(session: AgentSession, entryId: string): PromptImages
 	);
 }
 
+/** 排队消息里附带的图片：立即发送时连图一起重投，不悄悄丢图 */
+function queuedMessageImages(session: AgentSession): PromptImages {
+	const agent = session.agent as unknown as {
+		steeringQueue?: { messages?: Array<{ content?: unknown }> };
+		followUpQueue?: { messages?: Array<{ content?: unknown }> };
+	} | undefined;
+	const queued = [...(agent?.steeringQueue?.messages ?? []), ...(agent?.followUpQueue?.messages ?? [])];
+	const images: PromptImages = [];
+	for (const msg of queued) {
+		if (!Array.isArray(msg?.content)) continue;
+		for (const block of msg.content) {
+			if (block && typeof block === "object" && "type" in block && block.type === "image") {
+				const img = block as { data?: unknown; mimeType?: unknown };
+				if (typeof img.data === "string" && typeof img.mimeType === "string") {
+					images.push({ type: "image", data: img.data, mimeType: img.mimeType });
+				}
+			}
+		}
+	}
+	return images;
+}
+
+/** 中止正在跑的回合并等待 SDK 回到空闲（最多等 5 秒），避免紧接着 prompt 被判成忙或误入排队 */
+async function abortRunAndWaitIdle(m: Managed, session: AgentSession): Promise<void> {
+	if (!session.isStreaming && !m.runActive && !m.commandRunning && !m.bashActive && session.isIdle !== false) return;
+	if (!(await stopManagedRun(m, session))) throw new Error("停止尚未完成，未启动新的提问。请等待当前操作结束。");
+}
+
+function stopManagedRun(m: Managed, session: AgentSession): Promise<boolean> {
+	if (m.stopping) return m.stopping;
+	m.stopFailed = false;
+	m.ui?.cancelPending?.();
+	session.abortBash?.();
+	publish(m, { type: "status", isStreaming: true, state: "stopping", ts: Date.now() });
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const stopped = Promise.resolve().then(() => session.abort()).then(async () => {
+		for (let i = 0; i < 50 && (!session.isIdle || m.commandRunning || m.bashActive); i += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+		if (!session.isIdle || m.commandRunning || m.bashActive) return false;
+		m.runActive = false;
+		return true;
+	}, (error) => { console.warn("[piweb] Stop failed", error); return false; });
+	const done = Promise.race([stopped, new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), SHUTDOWN_TIMEOUT_MS); timer.unref?.(); })]).then((ok) => {
+		m.stopFailed = !ok;
+		if (!ok) publish(m, { type: "error", message: "停止尚未完成。本会话暂时禁止继续执行，当前操作结束后会自动恢复。", ts: Date.now() });
+		return ok;
+	}).finally(() => {
+		clearTimeout(timer);
+		m.stopping = undefined;
+		publish(m, { type: "status", isStreaming: m.stopFailed === true || isManagedBusy(m), state: m.stopFailed ? "stop_failed" : "aborted", ts: Date.now() });
+	});
+	m.stopping = done;
+	void stopped.then((ok) => {
+		if (!ok || m.disposed) return;
+		m.stopFailed = false;
+		if (!m.stopping) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: "aborted", ts: Date.now() });
+	});
+	return done;
+}
+
+const abortRequests = new WeakMap<Managed, Promise<CommandResult>>();
+
 /** 交给 SDK，并在「受理」那一刻返回，而不是等整轮跑完；受理之后的错误经 SSE 可见 */
 function submitPrompt(
 	m: Managed,
@@ -2427,6 +2921,12 @@ function submitPrompt(
 ): Promise<CommandResult> {
 	return new Promise<CommandResult>((resolve) => {
 		let accepted = false;
+		const commandName = text.startsWith("/") ? text.slice(1).split(/\s/, 1)[0] : "";
+		const extensionCommand = !!commandName && !!session.extensionRunner.getCommand?.(commandName);
+		if (extensionCommand) {
+			m.commandRunning = true;
+			publish(m, { type: "status", isStreaming: true, state: "running", ts: Date.now() });
+		}
 		const run = session.prompt(text, {
 			...options,
 			source: "rpc",
@@ -2437,6 +2937,15 @@ function submitPrompt(
 				}
 			},
 		});
+		if (extensionCommand) {
+			accepted = true;
+			resolve({ ok: true, data: { accepted: true, command: true } });
+			void run.finally(() => {
+				m.commandRunning = false;
+				if (session.isIdle && !m.bashActive) m.stopFailed = false;
+				publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
+			}).catch(() => undefined);
+		}
 		// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
 		void run.then(() => {
 			// 上一轮的 agent_settled 还没发完时，SDK 不拒绝提问，而是把它挂进 deferredSettledActions，
@@ -2523,8 +3032,8 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const text = (cmd.text ?? "").trim();
 				if (!text && !cmd.images?.length) return { ok: false, error: "empty prompt" };
 				// 在第一个 await 前占位，两个并发请求不能都看见 idle 后启动/误排队。
-				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
-				m.promptSubmitting = true;
+				const busy = await claimSubmission(m);
+				if (busy) return { ok: false, error: busy };
 				try {
 					const session = await ensureSession(m);
 					if (m.disposed) throw new Error("session is disposed");
@@ -2532,20 +3041,25 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
 					if (!session.isStreaming) await prepareGrowthBriefly(m);
 					if (m.disposed) throw new Error("session is disposed");
+					if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
 					return await submitPrompt(m, session, text, { images: cmd.images, streamingBehavior: cmd.behavior });
 				} finally {
 					m.promptSubmitting = false;
+					m.submissionCancelled = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
 					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
 				}
 			}
 			case "steer":
 			case "followUp": {
-				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
-				const session = await ensureSession(m);
-				if (m.promptSubmitting || m.resourceReloading || !session.isStreaming) return { ok: false, error: "session is not accepting queued messages" };
-				await session[cmd.cmd](cmd.text ?? "", cmd.images);
-				return { ok: true };
+				const busy = await claimSubmission(m);
+				if (busy) return { ok: false, error: busy };
+				try {
+					const session = await ensureSession(m);
+					if (m.resourceReloading || !session.isStreaming) return { ok: false, error: "session is not accepting queued messages" };
+					await session[cmd.cmd](cmd.text ?? "", cmd.images);
+					return { ok: true };
+				} finally { m.promptSubmitting = false; }
 			}
 			case "clearQueue": {
 				if (!m.session) return { ok: true, data: { steering: [], followUp: [] } };
@@ -2553,16 +3067,50 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				publish(m, { type: "queue", steering: [], followUp: [], ts: Date.now() });
 				return { ok: true, data: cleared };
 			}
+			case "sendQueueNow": {
+				// 立即发送排队消息：先从队列取出内容与图片并通知前端收起队列条，再中止当前回合并等回到空闲后立刻发送。
+				const busy = await claimSubmission(m);
+				if (busy) return { ok: false, error: busy };
+				let cleared: { steering: string[]; followUp: string[]; images?: PromptImages } | undefined;
+				try {
+					const session = await ensureSession(m);
+					if (m.disposed) throw new Error("session is disposed");
+					if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
+					const images = queuedMessageImages(session);
+					cleared = { ...session.clearQueue(), ...(images.length ? { images } : {}) };
+					publish(m, { type: "queue", steering: [], followUp: [], ts: Date.now() });
+					const text = [...cleared.steering, ...cleared.followUp].map((s) => s.trim()).filter(Boolean).join("\n\n");
+					if (!text && images.length === 0) return { ok: true, data: { skipped: true } };
+					await abortRunAndWaitIdle(m, session);
+					if (m.disposed) throw new Error("session is disposed");
+					await prepareGrowthBriefly(m);
+					if (m.disposed) throw new Error("session is disposed");
+					const result = await submitPrompt(m, session, text, images.length ? { images } : {});
+					return result.ok ? result : { ...result, data: cleared };
+				} catch (error) {
+					if (cleared) return { ok: false, error: String((error as Error)?.message ?? error), data: cleared };
+					throw error;
+				} finally {
+					m.promptSubmitting = false;
+					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
+					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+				}
+			}
 			case "abort": {
-				if (!m.session) return { ok: true, data: { steering: [], followUp: [] } };
+				// 冷启动还没完成就点了停止：先记下来让等在后面的提交放弃，等会话建好再按正常路径停
+				if (!m.session && m.creating && m.promptSubmitting) m.submissionCancelled = true;
+				if (!m.session && m.creating) await m.creating.catch(() => null);
+				if (!m.session || m.disposed) return { ok: true, data: { steering: [], followUp: [] } };
 				// 先清队列再中止（pi 终端 Esc 同款）：Agent.abort() 不清队列，而 agent 循环每次开跑都先取走 steering 队列，
 				// 不清的话「已取消」的排队消息会在下一次提问时冒出来。清出来的文本交给前端放回输入框
-				const cleared = m.session.clearQueue();
-				// 用户的 `!` 命令不属于 agent 回合，abort() 管不到它，单独停
-				m.session.abortBash();
-				await m.session.abort();
-				publish(m, { type: "status", isStreaming: false, state: "aborted", ts: Date.now() });
-				return { ok: true, data: cleared };
+				const pending = abortRequests.get(m);
+				if (pending) return pending;
+				const images = queuedMessageImages(m.session);
+				const cleared = { ...m.session.clearQueue(), ...(images.length ? { images } : {}) };
+				publish(m, { type: "queue", steering: [], followUp: [], ts: Date.now() });
+				const request = stopManagedRun(m, m.session).then((ok) => ({ ok, ...(ok ? {} : { error: "停止尚未完成，已保留执行保护。" }), data: cleared })).finally(() => abortRequests.delete(m));
+				abortRequests.set(m, request);
+				return request;
 			}
 			case "bash": {
 				const command = (cmd.command ?? "").trim();
@@ -2597,8 +3145,21 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				return { ok: true };
 			}
 			case "setModel": {
+				if (!m.session && !m.creating) {
+					const { listWorkspaceModelsForPiWeb } = await import("./models-service");
+					const model = (await listWorkspaceModelsForPiWeb(m.cwd)).models.find((item) => item.provider === cmd.provider && item.id === cmd.modelId);
+					if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
+					if (m.session || m.creating) return execute(m, cmd);
+					m.sm.appendModelChange(model.provider, model.id);
+					const settings = getSettingsManager(m.cwd);
+					const requested = m.desiredThinkingLevel ?? (cmd.fresh ? newSessionThinkingLevel({ supported: model.thinkingLevels, modelOverride: settings.getModelThinkingLevel(model.provider, model.id), defaultLevel: settings.getDefaultThinkingLevel() }) : m.sm.buildSessionContext().thinkingLevel);
+					const effective = clampThinkingLevel(model as any, requested as any);
+					m.sm.appendThinkingLevelChange(effective);
+					publish(m, { type: "model", provider: model.provider, model: model.id, thinkingLevel: effective, thinkingLevels: model.thinkingLevels, ts: Date.now() });
+					return { ok: true, data: { thinkingLevel: effective, thinkingLevels: model.thinkingLevels } };
+				}
 				const session = await ensureSession(m);
-				const rt = await getModelRuntime();
+				const rt = session.modelRuntime;
 				const model = rt.getModels(cmd.provider).find((x) => x.id === cmd.modelId) as any;
 				if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
 				await session.setModel(model, { persist: false });
@@ -2608,9 +3169,20 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				usageCache.delete(m); // 换模型 = contextWindow 变了，旧 usage 缓存作废
 				publishModelState(m, session);
 				publishUsage(m, true);
-				return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: session.getAvailableThinkingLevels() } };
+					return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: safeThinkingLevels(session) } };
 			}
 			case "setThinkingLevel": {
+				if (!m.session && !m.creating) {
+					const requested = String(cmd.level ?? "medium");
+					const context = m.sm.buildSessionContext();
+					const { listWorkspaceModelsForPiWeb } = await import("./models-service");
+					const model = context.model ? (await listWorkspaceModelsForPiWeb(m.cwd)).models.find((item) => item.provider === context.model!.provider && item.id === context.model!.modelId) : undefined;
+					if (m.session || m.creating) return execute(m, cmd);
+					const effective = model ? clampThinkingLevel(model as any, requested as any) : "off";
+					m.desiredThinkingLevel = requested; m.sm.appendThinkingLevelChange(effective);
+					publish(m, { type: "model", provider: context.model?.provider, model: context.model?.modelId, thinkingLevel: effective, thinkingLevels: model?.thinkingLevels ?? ["off"], ts: Date.now() });
+					return { ok: true, data: { requested, thinkingLevel: effective, clamped: requested !== effective } };
+				}
 				const session = await ensureSession(m);
 				const requested = String(cmd.level ?? "medium");
 				// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
@@ -2631,18 +3203,20 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
 					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复保存的档位，
 					// 若这里 ensureSession，光是浏览历史会话就会跑一遍扩展的 session_start。
+					await persistToolPreference(m, { toolPreset: preset });
 					m.toolPreset = preset;
 					m.customActiveTools = undefined;
-					await persistToolPreference(m);
+					clearEscalation(m);
 					publishTools(m, null);
 					return { ok: true };
 				}
 				const session = await ensureSession(m);
 				if (m.disposed) return { ok: false, error: "session is disposed" };
+				await persistToolPreference(m, { toolPreset: preset });
 				m.toolPreset = preset;
 				m.customActiveTools = undefined;
+				clearEscalation(m);
 				applyToolPolicy(m, session);
-				await persistToolPreference(m);
 				publishEnvironmentTrajectory(m, session);
 				publishTools(m, session);
 				return { ok: true };
@@ -2655,12 +3229,13 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const all = session ? listAllToolNames(session) : toolCatalog(m).map((tool) => tool.name);
 				const next = [...new Set(wanted)].filter((name) => all.includes(name));
 				if (next.length === 0) return { ok: false, error: "cannot disable all tools" };
+				await persistToolPreference(m, { toolPreset: m.toolPreset, customActiveTools: next });
 				m.customActiveTools = next;
+				clearEscalation(m);
 				if (session) {
 					applyToolPolicy(m, session);
 					publishEnvironmentTrajectory(m, session);
 				}
-				await persistToolPreference(m);
 				publishTools(m, session);
 				return { ok: true, data: { active: session ? listActiveTools(session) : coldActiveToolNames(m, toolCatalog(m)) } };
 			}
@@ -2700,18 +3275,13 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const text = (cmd.text ?? "").trim();
 				if (!entryId) return { ok: false, error: "missing entryId" };
 				if (!text) return { ok: false, error: "empty prompt" };
-				if (m.promptSubmitting || m.resourceReloading) return { ok: false, error: "session is busy accepting another command" };
-				m.promptSubmitting = true;
+				const busy = await claimSubmission(m);
+				if (busy) return { ok: false, error: busy };
 				try {
 					const session = await ensureSession(m);
 					if (m.disposed) throw new Error("session is disposed");
-					if (session.isStreaming || m.runActive) {
-						await session.abort().catch(() => undefined);
-						// 等 SDK 真正回到空闲（abort 是异步的；最多等 5 秒，超时就按当前状态继续）
-						for (let i = 0; i < 50 && !m.disposed && (session.isStreaming || m.runActive); i += 1) {
-							await new Promise((resolve) => setTimeout(resolve, 100));
-						}
-					}
+					if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
+					await abortRunAndWaitIdle(m, session);
 					if (m.disposed) throw new Error("session is disposed");
 					// 回到消息之前先取它带的图片：客户端只发改过的文字，不取的话重发出去图就没了
 					const images = userMessageImages(session, entryId);
@@ -2822,9 +3392,13 @@ export async function exportSession(
 	}
 	const session = await ensureSession(m);
 	// exportToHtml 返回的是写入磁盘的路径，不是内容；读回后删掉临时副本
-	const outPath = await session.exportToHtml();
-	const { readFile, rm } = await import("node:fs/promises");
-	const content = await readFile(outPath, "utf8");
-	await rm(outPath, { force: true }).catch(() => undefined);
-	return { filename: base.replace(/\.jsonl$/, ".html"), content, contentType: "text/html" };
+	const { readFile, mkdtemp } = await import("node:fs/promises");
+	const { tmpdir } = await import("node:os");
+	const temporary = await mkdtemp(path.join(tmpdir(), "piweb-export-"));
+	try {
+		const outPath = await session.exportToHtml(path.join(temporary, "session.html"));
+		return { filename: base.replace(/\.jsonl$/, ".html"), content: await readFile(outPath, "utf8"), contentType: "text/html" };
+	} finally {
+		await recycleTemporaryDirectory(temporary).catch((error) => console.warn("[piweb] Temporary export was retained because recycling failed", error));
+	}
 }

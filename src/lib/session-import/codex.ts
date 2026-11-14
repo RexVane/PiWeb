@@ -7,7 +7,7 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { eachJsonLine, listFiles, readHead, reachedLimit, sortByRecency } from "./files";
+import { eachJsonLine, jsonlImportWarnings, listFiles, readHead, readFileBounded, reachedLimit, sortByRecency } from "./files";
 import { codexRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
 import { cleanTitle, compactBlocks, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
@@ -116,6 +116,7 @@ export const codexSource: ImportSourceModule = {
 		const candidates = await sortByRecency(await listFiles(ROOT(), { match: (name) => name.startsWith("rollout-") && name.endsWith(".jsonl") }));
 		const out: ExternalSessionSummary[] = [];
 		for (const { file, mtime } of candidates) {
+			options?.signal?.throwIfAborted();
 			if (reachedLimit(out.length, limit)) break; // 只读最近的若干条
 			let head: string;
 			try {
@@ -127,7 +128,9 @@ export const codexSource: ImportSourceModule = {
 			const meta = metaFrom(records);
 			if (meta.subagent) continue; // 主代理派给子代理的活，不算会话
 			const hasMessage = records.some((record) => record.type === "response_item");
-			if (!hasMessage) continue;
+			// A large injected instruction block may fill the whole scan prefix.
+			// Only an entirely read file proves that there are no messages.
+			if (!hasMessage && (await fs.stat(file)).size <= Buffer.byteLength(head)) continue;
 			out.push({
 				source: "codex",
 				externalId: path.basename(file, ".jsonl"),
@@ -146,12 +149,12 @@ export const codexSource: ImportSourceModule = {
 	async read(summary: ExternalSessionSummary): Promise<ImportedSession | null> {
 		let text: string;
 		try {
-			text = await fs.readFile(summary.location, "utf8");
+			text = (await readFileBounded(summary.location)).toString("utf8");
 		} catch {
 			return null;
 		}
 		const entries: ImportedEntry[] = [];
-		const skipped: string[] = [];
+		const skipped: string[] = jsonlImportWarnings(text);
 		let synthetic = 0;
 		let reasoningSkipped = 0;
 		let meta: Meta = { cwd: summary.projectPath, createdAt: summary.createdAt, model: summary.model, provider: summary.provider };

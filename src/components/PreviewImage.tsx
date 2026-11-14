@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { ImageViewer, imageSource, type PreviewImageSource } from "@/components/ImageViewer";
 import { useI18n } from "@/i18n";
@@ -17,13 +17,15 @@ export function PreviewImage({ image, images = [image], index = 0, alt = "", tit
 }) {
 	const { t } = useI18n();
 	const [preview, setPreview] = useState<number | null>(null);
+	const source = imageSource(image);
+	useEffect(() => { setPreview(null); }, [source]);
 	return <>
-		<button type="button" className="pw-chat-image-preview" title={title ?? t.imagePreview} aria-label={alt ? `${t.imagePreview}: ${alt}` : t.imagePreview} onClick={(event) => {
+		<button type="button" className="pw-chat-image-preview" disabled={!source} title={title ?? t.imagePreview} aria-label={alt ? `${t.imagePreview}: ${alt}` : t.imagePreview} onClick={(event) => {
 			event.preventDefault();
 			event.stopPropagation();
 			setPreview(index);
 		}}>
-			<img src={imageSource(image)} alt={alt} title={title} className={className} style={style} draggable={false} />
+			<img src={source || undefined} alt={alt} title={title} className={className} style={style} draggable={false} loading="lazy" decoding="async" />
 		</button>
 		{preview !== null && images[preview] && createPortal(
 			<ImageViewer images={images} index={preview} onIndex={setPreview} onClose={() => setPreview(null)} />,

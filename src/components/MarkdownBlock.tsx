@@ -25,7 +25,7 @@ import { ChatScrollContext } from "@/components/chat/chat-scroll";
 import { PreviewImage } from "@/components/PreviewImage";
 import { useMarkdownActions } from "@/components/chat/markdown-actions";
 import { looksLikeFilePath, relativeMarkdownPath } from "@/lib/chat/file-path";
-import { IconCheckOutline14, IconCopyOutline16 } from "@/components/icons";
+import { IconCheckOutline14, IconChevronDown14, IconChevronUp14, IconCopyOutline16, IconWrapTextOutline14 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
 
@@ -139,7 +139,7 @@ function FilePathLabel({ path }: { path: string }) {
 
 function MarkdownLink({ href, children, node, ...props }: { href?: string; children?: React.ReactNode; node?: MarkdownTextNode } & Record<string, unknown>) {
 	const actions = useMarkdownActions();
-	const filePath = href ? relativeMarkdownPath(href) : null;
+	const filePath = href ? relativeMarkdownPath(href, actions.allowDocumentParents) : null;
 	if (filePath !== null && actions.openFile) {
 		const labelText = markdownNodeText(node) || (typeof children === "string" ? children : "");
 		const pathLabel = labelText === filePath || labelText === href;
@@ -196,6 +196,80 @@ function MarkdownLink({ href, children, node, ...props }: { href?: string; child
 	);
 }
 
+const CODE_COLLAPSE_THRESHOLD = 28;
+
+function countCodeLines(text: string): number {
+	if (!text) return 0;
+	const trimmed = text.endsWith("\n") ? text.slice(0, -1) : text;
+	return trimmed ? trimmed.split("\n").length : 0;
+}
+
+function MarkdownCodeBlock({
+	codeText,
+	lang,
+	collapsible = true,
+	children,
+}: {
+	codeText: string;
+	lang?: string;
+	collapsible?: boolean;
+	children: React.ReactNode;
+}) {
+	const { t } = useI18n();
+	const [wrapped, setWrapped] = useState(false);
+	const lineCount = useMemo(() => countCodeLines(codeText), [codeText]);
+	const canCollapse = collapsible && lineCount >= CODE_COLLAPSE_THRESHOLD;
+	const [collapsed, setCollapsed] = useState(true);
+	const showCollapsed = canCollapse && collapsed;
+
+	return (
+		<div
+			className="md-code-block"
+			data-lang={lang}
+			data-wrapped={wrapped ? "true" : undefined}
+			data-collapsed={showCollapsed ? "true" : undefined}
+		>
+			<div className="md-code-copy">
+				<button
+					type="button"
+					className="icon-btn"
+					data-active={wrapped ? "true" : undefined}
+					title={wrapped ? t.codeWrapDisable : t.codeWrapEnable}
+					aria-label={wrapped ? t.codeWrapDisable : t.codeWrapEnable}
+					aria-pressed={wrapped}
+					onClick={() => setWrapped((prev) => !prev)}
+				>
+					<IconWrapTextOutline14 size={13} />
+				</button>
+				<CopyButton text={codeText} />
+			</div>
+			{children}
+			{canCollapse && (
+				<div className="md-code-fold-bar">
+					<button
+						type="button"
+						className="md-code-fold-btn"
+						aria-expanded={!collapsed}
+						onClick={() => setCollapsed((prev) => !prev)}
+					>
+						{collapsed ? (
+							<>
+								<IconChevronDown14 size={12} />
+								<span>{t.codeExpandLines.replace("{n}", String(lineCount))}</span>
+							</>
+						) : (
+							<>
+								<IconChevronUp14 size={12} />
+								<span>{t.codeCollapse}</span>
+							</>
+						)}
+					</button>
+				</div>
+			)}
+		</div>
+	);
+}
+
 const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
 	const actions = useMarkdownActions();
 	return (
@@ -205,13 +279,17 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 			components={{
 				a: ({ node, ...props }) => <MarkdownLink node={node} {...props} />,
 				img: ({ src, alt, title }) => <SafeImage src={src} alt={alt} title={title} />,
+				table: ({ node: _node, children, ...props }) => (
+					<div className="md-table-wrap">
+						<table {...props}>{children}</table>
+					</div>
+				),
 				pre: ({ node, children, ...props }) => {
 					const lang = extractCodeLang(node);
 					return (
-						<div className="md-code-block" data-lang={lang}>
-							<div className="md-code-copy"><CopyButton text={markdownNodeText(node)} /></div>
+						<MarkdownCodeBlock codeText={markdownNodeText(node)} lang={lang}>
 							<pre {...props}>{children}</pre>
-						</div>
+						</MarkdownCodeBlock>
 					);
 				},
 				// 文件引用显示短名称；完整路径留在悬停提示、打开动作与辅助名称中。
@@ -450,10 +528,9 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 		tailNode = (
 			<>
 				{before.trim() ? <MarkdownContent text={before} /> : null}
-				<div className="md-code-block" data-lang={lang ? lang.toLowerCase() : undefined}>
-					<div className="md-code-copy"><CopyButton text={code} /></div>
+				<MarkdownCodeBlock codeText={code} lang={lang ? lang.toLowerCase() : undefined} collapsible={false}>
 					<pre><code className={lang ? `hljs language-${lang}` : undefined}>{code}</code></pre>
-				</div>
+				</MarkdownCodeBlock>
 			</>
 		);
 	} else {

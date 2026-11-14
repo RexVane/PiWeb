@@ -14,6 +14,7 @@ import { isNewer } from "./semver";
 import { samePath } from "./path-security";
 import { getRuntimeVersions } from "./version";
 import { APP_ROOT } from "./app-root";
+import { exactRegistryVersion, isolatedCommandEnv, OFFICIAL_REGISTRY_ARGS, readHttpProxySetting } from "../../scripts/update-environment.mjs";
 
 export type UpdateTarget = "piweb" | "pi";
 
@@ -86,14 +87,16 @@ function isNpmInstall(root: string): boolean {
  * @param {NodeJS.Platform} [platform]
  * @param {string} [installation] 安装目录；不传时无法核对，按平台保守判断
  */
-export function canSelfUpdateNpmInstall(platform: NodeJS.Platform = process.platform, installation?: string): boolean {
-	if (platform !== "win32") return true;
+export function canSelfUpdateNpmInstall(_platform: NodeJS.Platform = process.platform, installation?: string): boolean {
 	if (!installation) return false;
 	try {
 		const cwd = realpathSync(process.cwd());
 		const root = realpathSync(installation);
 		const relative = path.relative(root, cwd);
-		return relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative));
+		if (relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))) return false;
+		const runtime = realpathSync(APP_ROOT);
+		const runtimeRelative = path.relative(root, runtime);
+		return runtimeRelative === ".." || runtimeRelative.startsWith(`..${path.sep}`) || path.isAbsolute(runtimeRelative);
 	} catch {
 		return false;
 	}
@@ -105,13 +108,30 @@ export const PIWEB_INSTALL_COMMAND = `npm install -g ${PIWEB_PACKAGE}@latest`;
 async function readPackageVersion(filePath: string): Promise<string> {
 	const raw = JSON.parse(await fs.readFile(filePath, "utf8")) as { version?: unknown };
 	if (typeof raw.version !== "string" || !raw.version) throw new Error(`no version field in ${filePath}`);
-	return raw.version;
+	return exactRegistryVersion(raw.version);
 }
 
 /** Injectable process runner/root: tests never contact registries or update this checkout. */
 export function createUpdateService({ root = APP_ROOT, run = runCommand, versions = getRuntimeVersions, env = process.env, platform = process.platform }: UpdateServiceOptions = {}) {
 	let updateRunning = false;
-	const commandEnv = { ...env };
+	function currentCommandEnv(): Record<string, string | undefined> {
+		const commandEnv = isolatedCommandEnv(env);
+		// The settings page may change this after the service was started. An
+		// installer is a new process, so it can use the current setting immediately.
+		if (env.PIWEB_PROXY_SOURCE === "settings") {
+			for (const [lower, upper, inherited] of [["http_proxy", "HTTP_PROXY", "PIWEB_INHERITED_HTTP_PROXY"], ["https_proxy", "HTTPS_PROXY", "PIWEB_INHERITED_HTTPS_PROXY"]]) {
+				delete commandEnv[lower]; delete commandEnv[upper];
+				if (env[inherited]?.trim()) commandEnv[lower] = commandEnv[upper] = env[inherited]!.trim();
+			}
+		}
+		const proxy = readHttpProxySetting(env);
+		if (proxy) {
+			const parsed = new URL(proxy);
+			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("更新所用的代理地址必须是 HTTP 或 HTTPS。");
+			commandEnv.http_proxy = commandEnv.HTTP_PROXY = commandEnv.https_proxy = commandEnv.HTTPS_PROXY = proxy;
+		}
+		return commandEnv;
+	}
 
 	async function checkedRoot(): Promise<string> {
 		return assertInstallation(root);
@@ -121,15 +141,16 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		assertTarget(target);
 		if (updateRunning) throw new UpdateBusyError("an update is already running");
 		const installation = await checkedRoot();
+		const commandEnv = currentCommandEnv();
 		const command = (cmd: string, args: string[], timeoutMs: number) => run(cmd, args, { cwd: installation, env: commandEnv, timeoutMs });
 		const { piWeb, piEngine } = await versions();
 		if (target === "pi") {
-			const latest = (await command("npm", ["view", PI_PACKAGE, "version"], 30_000)).trim().split(/\r?\n/)[0];
+			const latest = exactRegistryVersion(await command("npm", ["view", PI_PACKAGE, "version", ...OFFICIAL_REGISTRY_ARGS], 30_000));
 			return { current: piEngine, latest, canUpdate: isNewer(latest, piEngine), selfUpdate: true };
 		}
 		if (isNpmInstall(installation)) {
 			// npm 安装对着 registry（用户自己的 registry 配置）比版本，没有「落后几个提交」的概念。
-			const latest = (await command("npm", ["view", PIWEB_PACKAGE, "version"], 30_000)).trim().split(/\r?\n/)[0];
+			const latest = exactRegistryVersion(await command("npm", ["view", PIWEB_PACKAGE, "version", ...OFFICIAL_REGISTRY_ARGS], 30_000));
 			if (!latest) throw new Error(`cannot read the published version of ${PIWEB_PACKAGE}`);
 			const selfUpdate = canSelfUpdateNpmInstall(platform, installation);
 			return { current: piWeb, latest, canUpdate: isNewer(latest, piWeb), selfUpdate, ...(selfUpdate ? {} : { command: PIWEB_INSTALL_COMMAND }) };
@@ -139,6 +160,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		if (!Number.isSafeInteger(behind) || behind < 0) throw new Error("invalid upstream commit count");
 		const remotePkg = JSON.parse(await command("git", ["show", "origin/main:package.json"], 15_000)) as { name?: string; version?: string };
 		if (!["piweb", "pi-web", "@rexvane/piweb"].includes(String(remotePkg.name)) || typeof remotePkg.version !== "string" || !remotePkg.version) throw new Error("upstream is not a PiWeb package");
+		exactRegistryVersion(remotePkg.version);
 		// Do not advertise a tag version that `git pull origin main` will never install.
 		return { current: piWeb, latest: remotePkg.version, behind, canUpdate: isNewer(remotePkg.version, piWeb) || behind > 0, selfUpdate: true };
 	}
@@ -155,17 +177,18 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 			throw new Error(`This PiWeb cannot replace itself while serving. Stop piweb, then run: ${PIWEB_INSTALL_COMMAND}`);
 		}
 		await assertIdle();
+		const commandEnv = currentCommandEnv();
 		const command = (args: string[], timeoutMs: number) => run("npm", args, { cwd: installation, env: commandEnv, timeoutMs });
 		const manifestPath = path.join(installation, "package.json");
 		const before = await readPackageVersion(manifestPath);
-		await command(["install", "-g", `${PIWEB_PACKAGE}@latest`, "--no-audit", "--no-fund"], 600_000);
+		await command(["install", "-g", `${PIWEB_PACKAGE}@latest`, "--no-audit", "--no-fund", "--ignore-scripts", ...OFFICIAL_REGISTRY_ARGS], 600_000);
 		await assertIdle();
 		assertInstallation(installation);
 		const version = await readPackageVersion(manifestPath);
 		if (version === before) {
 			// Either already current, or this PiWeb is not the copy the global prefix owns
 			// (e.g. a project dependency): say so instead of reporting a no-op as success.
-			const latest = (await command(["view", `${PIWEB_PACKAGE}@latest`, "version"], 30_000)).trim().split(/\r?\n/)[0];
+			const latest = exactRegistryVersion(await command(["view", `${PIWEB_PACKAGE}@latest`, "version", ...OFFICIAL_REGISTRY_ARGS], 30_000));
 			if (isNewer(latest, before)) {
 				throw new Error(`npm updated a different copy of ${PIWEB_PACKAGE}; this installation is not the global package. Update it the way it was installed.`);
 			}
@@ -181,6 +204,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 	 * 图标不用同步：成品包自带 public/provider-icons，清单也和 pi 版本无关。
 	 */
 	async function installPiIntoPackage(installation: string, assertIdle: () => Promise<void>): Promise<UpdateResult> {
+		const commandEnv = currentCommandEnv();
 		await installPiRuntime({ root: installation, env: commandEnv, run }, { omitDev: true, assertIdle });
 		await assertIdle();
 		assertInstallation(installation);
@@ -194,6 +218,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		updateRunning = true;
 		try {
 			const installation = await checkedRoot();
+			const commandEnv = currentCommandEnv();
 			// npm 安装：装发布好的成品即可——不需要 Git，也不需要本地构建（成品包自带 .next）；
 			// 单独更新 pi 只换依赖，同样不重建。
 			if (isNpmInstall(installation)) {
@@ -201,7 +226,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 			}
 			let version = "";
 			const release = await prepareRelease({
-				root: installation, env, run,
+				root: installation, env: { ...env, ...commandEnv }, run,
 				beforePrepare: async () => {
 					await assertIdle();
 					if (target === "piweb") {
@@ -218,7 +243,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 				},
 				prepare: async (context) => {
 					const { env: releaseEnv, signal } = context;
-					const command = (cmd: string, args: string[], timeoutMs: number) => run(cmd, args, { cwd: installation, env: releaseEnv, timeoutMs, signal });
+					const command = (cmd: string, args: string[], timeoutMs: number) => context.run(cmd, args, { cwd: installation, env: isolatedCommandEnv(releaseEnv), timeoutMs, signal });
 					if (target === "pi") {
 						version = await installPiUpdate(context, assertIdle);
 					} else {
@@ -226,7 +251,7 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 						await command("git", ["pull", "--ff-only", "origin", "main"], 120_000);
 						assertInstallation(installation);
 						await assertIdle();
-						await command("npm", ["install", "--no-audit", "--no-fund"], 600_000);
+						await command("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", ...OFFICIAL_REGISTRY_ARGS], 600_000);
 						version = await readPackageVersion(path.join(installation, "package.json"));
 					}
 				},

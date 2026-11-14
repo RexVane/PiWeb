@@ -228,5 +228,7 @@ export async function awaitGithubIdentity(root: string | null): Promise<GithubId
 	await loadDisk();
 	const hit = memory.get(root);
 	if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
-	return start(root);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try { return await Promise.race([start(root), new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 10_000); })]); }
+	finally { clearTimeout(timer); }
 }

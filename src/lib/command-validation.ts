@@ -1,4 +1,6 @@
-import type { AgentCommand, ImageAttachment, ToolPreset } from "./types";
+import type { AgentCommand, ImageAttachment } from "./types";
+import { normalizeToolPreset } from "./tool-preset";
+import { MAX_IMAGE_BASE64, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "./chat/image-attachment";
 
 const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"prepare",
@@ -20,18 +22,16 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"setLabel",
 	"editAndResend",
 	"clearQueue",
+	"sendQueueNow",
 	"extensionUiResponse",
 	"reload",
 ]);
-const TOOL_PRESETS = new Set<ToolPreset>(["readonly", "standard", "full"]);
 const STREAMING_BEHAVIORS = new Set(["steer", "followUp"]);
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const MAX_TEXT = 1_000_000;
+const MAX_TEXT = MAX_MESSAGE_CHARS;
 /** 会话树书签（标签）的长度上限 */
 const MAX_LABEL = 80;
 const MAX_IMAGES = 20;
-const MAX_IMAGE_BASE64 = 28_000_000; // dsh: 单图 20MB
-const MAX_IMAGES_BASE64 = 268_000_000; // dsh: 单条消息图片总量 200MB
 
 export type CommandParseResult = { ok: true; command: AgentCommand } | { ok: false; error: string };
 
@@ -80,8 +80,10 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		};
 
 		if (raw.preset !== undefined) {
-			if (typeof raw.preset !== "string" || !TOOL_PRESETS.has(raw.preset as ToolPreset)) throw new Error("invalid tool preset");
-			command.preset = raw.preset as ToolPreset;
+			// 旧客户端 localStorage 里可能还是 "standard"，归一成 workspace，别再让它流到服务端状态里。
+			const preset = normalizeToolPreset(raw.preset);
+			if (!preset) throw new Error("invalid tool preset");
+			command.preset = preset;
 		}
 		if (raw.behavior !== undefined) {
 			if (typeof raw.behavior !== "string" || !STREAMING_BEHAVIORS.has(raw.behavior)) throw new Error("invalid streaming behavior");
@@ -104,6 +106,10 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (raw.excludeFromContext !== undefined) {
 			if (typeof raw.excludeFromContext !== "boolean") throw new Error("excludeFromContext must be a boolean");
 			command.excludeFromContext = raw.excludeFromContext;
+		}
+		if (raw.fresh !== undefined) {
+			if (typeof raw.fresh !== "boolean") throw new Error("fresh must be a boolean");
+			command.fresh = raw.fresh;
 		}
 		if (raw.value !== undefined) command.value = optionalText(raw.value, "value");
 		if (raw.confirmed !== undefined) {

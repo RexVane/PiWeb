@@ -15,7 +15,8 @@ describe("proxy settings", () => {
 			? { automatic, test: { proxy: automatic, ok: true, latencyMs: 123, status: 204 } } : automatic));
 		vi.stubGlobal("fetch", fetchMock);
 		render(<ProxySettings {...props} />);
-		await waitFor(() => expect((screen.getByRole("textbox", { name: "网络代理" }) as HTMLInputElement).value).toBe(automatic.https));
+		await waitFor(() => expect((screen.getByRole("textbox", { name: "网络代理" }) as HTMLInputElement).placeholder).toBe(automatic.https));
+		expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
 		expect(props.onChange).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 		expect((await screen.findByRole("status")).textContent).toContain("外网连通 · 123 ms");
@@ -44,7 +45,8 @@ describe("proxy settings", () => {
 		vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => init?.method === "POST"
 			? new Promise((resolve) => { finish = resolve; }) : response(automatic)));
 		const view = render(<ProxySettings {...props} />);
-		await waitFor(() => expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe(automatic.https));
+		await waitFor(() => expect((screen.getByRole("textbox") as HTMLInputElement).placeholder).toBe(automatic.https));
+		expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("");
 		fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 		expect(screen.getByRole("button", { name: "正在测试…" }).hasAttribute("disabled")).toBe(true);
 		view.rerender(<ProxySettings {...props} value="http://changed:8080" />);
@@ -52,7 +54,7 @@ describe("proxy settings", () => {
 		await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
 	});
 
-	it("keeps an empty draft editable and restores the automatic address on blur", async () => {
+	it("keeps an empty draft editable and the automatic address as a placeholder after blur", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => response(automatic)));
 		const onCommit = vi.fn();
 		function Editable() {
@@ -65,7 +67,8 @@ describe("proxy settings", () => {
 		fireEvent.change(input, { target: { value: "" } });
 		expect(input.value).toBe("");
 		fireEvent.blur(input);
-		expect(input.value).toBe(automatic.https);
+		expect(input.value).toBe("");
+		expect(input.placeholder).toBe(automatic.https);
 		expect(onCommit).toHaveBeenCalledOnce();
 	});
 

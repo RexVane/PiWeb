@@ -8,14 +8,22 @@ export async function registerNode() {
 	// 构建期也会实例化服务，别在构建机上开监听
 	if (process.env.NEXT_PHASE === "phase-production-build") return;
 
+	// 直接使用 Next 启动时也常设认证；启动器已经提供的凭据保持不变。
+	if (!process.env.PI_WEB_AUTH?.trim()) process.env.PI_WEB_AUTH = "1";
 	// 再次运行启动器时要能找回本实例的登录链接（见 publishLaunchToken）
 	const { authEnabled } = await import("./lib/web-auth");
-	if (authEnabled()) (await import("./lib/web-launch-token")).publishLaunchToken();
+	if (authEnabled()) {
+		process.env.PI_WEB_LAUNCH_TOKEN ||= (await import("node:crypto")).randomBytes(32).toString("base64url");
+		(await import("./lib/web-launch-token")).publishLaunchToken();
+	}
 
 	// 每次启动检查一次 PiWeb / pi 有没有新版本：不等结果，查到了在终端打一行，页面右下角也会提醒
 	void (await import("./lib/update/startup-check")).ensureStartupCheck().catch(() => {});
 
-	const { remoteBlocked, remoteLanEnabled, startLan } = await import("./lib/remote/supervisor");
+	// 自动化任务调度器：按调度规则在后台为启用任务拉起独立会话执行
+	(await import("./lib/automations/runner")).startAutomationScheduler();
+
+	const { remoteBlocked, remoteLanEnabled, ensureRemoteAccess } = await import("./lib/remote/supervisor");
 	if (!remoteLanEnabled()) return;
 
 	// 局域网入口会把 PiWeb 暴露给同网段的所有设备：没认证、或是开发模式，都绝不能开。
@@ -29,10 +37,10 @@ export async function registerNode() {
 		return;
 	}
 
-	const state = await startLan();
-	if (state.running) {
-		console.log(`[远程连接] 局域网入口已就绪：${state.urls.join("  ")}`);
+	const state = await ensureRemoteAccess();
+	if (state.lan.running) {
+		console.log(`[远程连接] 局域网已就绪，公网正在自动准备：${state.lan.urls.join("  ")}`);
 	} else {
-		console.warn(`[远程连接] 局域网入口启动失败：${state.error}`);
+		console.warn(`[远程连接] 局域网入口启动失败：${state.lan.error}`);
 	}
 }

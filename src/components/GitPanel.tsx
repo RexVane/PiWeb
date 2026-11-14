@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * Git 面板（详情栏）：分支 / 上游 / ahead-behind、按状态分组的变更文件、最近提交；
@@ -10,6 +12,8 @@ import { DiffView, diffStats, parseUnifiedDiff } from "@/components/DiffView";
 import { languageForPath } from "@/lib/highlight";
 import { IconChevronLeft14, IconCloseOutline14, IconFileOutline16, IconGitOutline16, IconRefreshOutline14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
+import { copyText } from "@/lib/clipboard";
+import { IconCopyOutline16 } from "@/components/icons";
 
 interface GitFileEntry {
 	path: string;
@@ -90,6 +94,7 @@ export function GitPanel({
 	const [diffError, setDiffError] = useState("");
 	const [view, setView] = useState<View | null>(null);
 	const [diff, setDiff] = useState<DiffResult | null>(null);
+	const [copiedDiff, setCopiedDiff] = useState<DiffResult | null>(null);
 	const [diffLoading, setDiffLoading] = useState(false);
 	const statusRequest = useRef<{ version: number; controller?: AbortController }>({ version: 0 });
 	const diffRequest = useRef<{ version: number; controller?: AbortController }>({ version: 0 });
@@ -271,6 +276,9 @@ export function GitPanel({
 								</span>
 							)}
 							{diff?.truncated && <span style={{ color: "var(--dsw-warn)" }}>{t.gitDiffTruncated}</span>}
+							{diff?.patch && <button type="button" className="icon-btn" title={diff.truncated ? t.viewerCopyPatchPreview : t.viewerCopyPatch} aria-label={diff.truncated ? t.viewerCopyPatchPreview : t.viewerCopyPatch}
+								onClick={() => void copyText(diff.patch).then((ok) => { if (ok) setCopiedDiff(diff); else setDiffError(t.copyFailed); })}><IconCopyOutline16 size={12} /></button>}
+							{copiedDiff && copiedDiff === diff && <span role="status">{t.updateCopied}</span>}
 						</div>
 						{diffLoading && !diff && <div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "4px 2px" }}>{t.panelLoading}</div>}
 						{diff?.binary && <div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "4px 2px" }}>{t.gitBinary}</div>}

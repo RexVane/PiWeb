@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { installPiRuntime, piRuntimeSpecs, verifyPiRuntimePins } from "../../scripts/runtime/pi-packages.mjs";
+import { OFFICIAL_REGISTRY_ARGS } from "../../scripts/update-environment.mjs";
 
 const names = [
 	"@earendil-works/pi-coding-agent", "@earendil-works/pi-ai",
@@ -44,8 +45,8 @@ describe("coordinated Pi runtime upgrades", () => {
 		const ctx = context();
 		expect(await installPiRuntime(ctx)).toBe("1.2.0");
 		expect(ctx.run.mock.calls.map(([, args]) => args)).toEqual([
-			["view", "@earendil-works/pi-coding-agent@latest", "version"],
-			["install", "--save-exact", ...names.map((name) => name + "@1.2.0"), "--no-audit", "--no-fund"],
+			["view", "@earendil-works/pi-coding-agent@latest", "version", ...OFFICIAL_REGISTRY_ARGS],
+			["install", "--save-exact", ...names.map((name) => name + "@1.2.0"), "--no-audit", "--no-fund", "--ignore-scripts", ...OFFICIAL_REGISTRY_ARGS],
 		]);
 	});
 
@@ -64,7 +65,7 @@ describe("coordinated Pi runtime upgrades", () => {
 
 	it.each(["", "latest", "^1.2.0", "1.2.0\n1.3.0", "1.2.0 --force"])("rejects invalid registry versions before install: %s", async (version) => {
 		const ctx = context(version);
-		await expect(installPiRuntime(ctx)).rejects.toThrow(/exact version/);
+		await expect(installPiRuntime(ctx)).rejects.toThrow(/invalid package version/);
 		expect(ctx.run).toHaveBeenCalledTimes(1);
 	});
 

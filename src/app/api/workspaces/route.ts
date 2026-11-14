@@ -3,9 +3,9 @@ import {
 	addWorkspace,
 	archiveSession,
 	forgetSession,
-	getPinnedSessions,
 	getRemovedWorkspaces,
 	getWorkspaceRegistry,
+	getWorkspaceRecoveryNotice,
 	pickFolderNative,
 	pinSession,
 	registerCwds,
@@ -17,8 +17,19 @@ import { encodeSessionId } from "@/lib/pi";
 import { disposeSessionPath } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 import { isLoopbackHostname } from "@/lib/auth";
+import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
+
+function json(body: unknown, init: ResponseInit = {}) {
+	const headers = new Headers(init.headers);
+	headers.set("Cache-Control", "private, no-store");
+	return NextResponse.json(body, { ...init, headers });
+}
+
+async function mutationResponse(data: Record<string, unknown>) {
+	return json({ success: true, data: { ...data, ...await getWorkspaceRecoveryNotice() } });
+}
 
 /**
  * 请求是否来自本机回环。
@@ -33,9 +44,9 @@ function isLoopbackRequest(req: Request): boolean {
 
 export async function GET() {
 	try {
-		return NextResponse.json({ success: true, data: await getWorkspaceRegistry() });
+		return json({ success: true, data: await getWorkspaceRegistry() });
 	} catch (err: any) {
-		return NextResponse.json({ success: false, error: String(err?.message ?? err) }, { status: 500 });
+		return json({ success: false, ...apiError(err, "工作区记录读取失败，请重试。") }, { status: 500 });
 	}
 }
 
@@ -56,73 +67,79 @@ export async function POST(req: Request) {
 			name?: string;
 			cwds?: string[];
 		};
+		if (!body || typeof body !== "object" || Array.isArray(body)
+			|| (body.path !== undefined && typeof body.path !== "string")
+			|| (body.name !== undefined && typeof body.name !== "string")
+			|| (body.cwds !== undefined && (!Array.isArray(body.cwds) || body.cwds.some((cwd) => typeof cwd !== "string")))) {
+			return json({ success: false, error: "invalid workspace action", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+		}
 		if (body.action === "pick") {
 			if (!isLoopbackRequest(req)) {
 				// 远程设备：不弹主机上的对话框，让前端改用应用内目录浏览器。
-				return NextResponse.json({ success: true, data: { path: null, canceled: false, remote: true } });
+				return json({ success: true, data: { path: null, canceled: false, remote: true } });
 			}
 			let r;
 			try {
 				r = await pickFolderNative();
 			} catch {
 				// 无可用原生对话框或超时：保留在页面里选目录的入口。
-				return NextResponse.json({ success: true, data: { path: null, canceled: false, browse: true } });
+				return json({ success: true, data: { path: null, canceled: false, browse: true } });
 			}
 			const registry = r.path ? await addWorkspace(await resolveWorkspacePath(r.path)) : null;
-			return NextResponse.json({ success: true, data: { ...r, ...(registry ?? {}) } });
+			return registry ? mutationResponse({ ...r, ...registry }) : json({ success: true, data: r });
 		}
 		if (body.action === "add") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
-			return NextResponse.json({ success: true, data: await addWorkspace(await resolveWorkspacePath(body.path)) });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+			return mutationResponse(await addWorkspace(await resolveWorkspacePath(body.path)));
 		}
 		if (body.action === "remove") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const r = await removeWorkspace(body.path);
-			return NextResponse.json({ success: true, data: r });
+			return mutationResponse(r);
 		}
 		if (body.action === "rename") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const aliases = await setAlias(body.path, body.name ?? "");
-			return NextResponse.json({ success: true, data: { aliases } });
+			return mutationResponse({ aliases });
 		}
 		if (body.action === "archiveSession") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			// 归档即收工：会话随即从工作区消失，不能让它继续在后台跑（看不见却仍消耗 token）。
 			// 只影响这一个会话，其它运行中的会话不受影响。
 			await disposeSessionPath(sessionPath);
 			const archivedSessions = await archiveSession(sessionPath);
-			return NextResponse.json({ success: true, data: { archivedSessions } });
+			return mutationResponse({ archivedSessions });
 		}
 		if (body.action === "forgetSession") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const archivedSessions = await forgetSession(sessionPath);
-			return NextResponse.json({ success: true, data: { archivedSessions } });
+			return mutationResponse({ archivedSessions });
 		}
 		if (body.action === "pinSession") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const pinnedSessions = await pinSession(sessionPath);
-			return NextResponse.json({ success: true, data: { pinnedSessions } });
+			return mutationResponse({ pinnedSessions });
 		}
 		if (body.action === "unpinSession") {
-			if (!body.path) return NextResponse.json({ success: false, error: "missing path" }, { status: 400 });
+			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const pinnedSessions = await unpinSession(sessionPath);
-			return NextResponse.json({ success: true, data: { pinnedSessions } });
+			return mutationResponse({ pinnedSessions });
 		}
 		if (body.action === "registerCwds") {
-			if (!Array.isArray(body.cwds)) return NextResponse.json({ success: false, error: "missing cwds" }, { status: 400 });
+			if (!Array.isArray(body.cwds)) return json({ success: false, error: "missing cwds", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const workspaces = await registerCwds(body.cwds);
 			const removedWorkspaces = await getRemovedWorkspaces();
-			return NextResponse.json({ success: true, data: { workspaces, removedWorkspaces } });
+			return mutationResponse({ workspaces, removedWorkspaces });
 		}
-		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
+		return json({ success: false, error: "unknown action", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 	} catch (err: any) {
-		return NextResponse.json(
-			{ success: false, error: String(err?.message ?? err) },
-			{ status: err instanceof BoundaryError ? 400 : 500 },
+		return json(
+			{ success: false, ...apiError(err, "工作区修改失败，请重试。") },
+			{ status: err instanceof BoundaryError || err instanceof SyntaxError ? 400 : 500 },
 		);
 	}
 }

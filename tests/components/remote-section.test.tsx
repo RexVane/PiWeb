@@ -1,123 +1,181 @@
 // @vitest-environment jsdom
-/**
- * 设置 → 远程连接：入口链接带启动令牌，手机打开就直接登录。
- * 改前链接是裸地址，手机打开只能看到「这个实例用启动令牌登录」，还得去终端里抄令牌。
- * 屏幕上仍只显示裸地址：截图、共享屏幕时令牌不能露出来。
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { loginLink, RemoteSection } from "@/components/RemoteSection";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { RemoteSection } from "@/components/RemoteSection";
 
-const TOKEN = "tok-123_ABC";
-const status = {
-	plugin: "builtin-remote",
-	targetPort: 30141,
-	blocked: null,
-	lan: { running: true, port: 30142, urls: ["http://192.168.5.44:30142"], error: null },
-	public: { running: true, url: "https://abc-def.trycloudflare.com", ready: true, engine: "cloudflared", engineAvailable: true, error: null as string | null },
-	loginToken: TOKEN,
+const qr = vi.hoisted(() => vi.fn(async (url: string) => `data:image/png;base64,${btoa(url)}`));
+vi.mock("qrcode", () => ({ default: { toDataURL: qr } }));
+const lanOrigin = "http://192.168.5.44:30142";
+const publicOrigin = "https://abc-def.trycloudflare.com";
+const initial = {
+	plugin: "builtin-remote", pluginEnabled: true, targetPort: 30141, blocked: null as "auth" | "dev" | null,
+	lan: { running: true, port: 30142, urls: [lanOrigin], styled: true, error: null as string | null },
+	public: { running: true, url: publicOrigin, ready: true, engine: "cloudflared", engineAvailable: true, error: null as string | null },
 };
-
+let current: typeof initial;
+let serial: number;
+let expiresAt: number;
+let consumed: boolean;
+const code = () => String(serial).padStart(43, "a");
 const writeText = vi.fn(async (_text: string) => {});
+const fetcher = vi.fn();
+const json = (data: unknown) => ({ ok: true, status: 200, headers: new Headers(), json: async () => ({ success: true, data }) });
 
 beforeEach(() => {
+	vi.useFakeTimers();
+	vi.setSystemTime(new Date("2026-11-13T07:00:00Z"));
+	current = structuredClone(initial);
+	serial = 1;
+	expiresAt = Date.now() + 120_000;
+	consumed = false;
+	qr.mockReset().mockImplementation(async (url: string) => `data:image/png;base64,${btoa(url)}`);
 	writeText.mockClear();
-	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: status }) })));
+	fetcher.mockReset().mockImplementation(async (url: string, options?: RequestInit) => {
+		if (url === "/api/remote") return json(current);
+		if (url === "/api/remote/pair") {
+			const body = JSON.parse(String(options?.body));
+			const base = body.base === "lan" ? "lan" : "public";
+			if (consumed || Date.now() >= expiresAt) { serial += 1; expiresAt = Date.now() + 120_000; consumed = false; }
+			return json({ code: code(), base, url: `${base === "public" ? publicOrigin : lanOrigin}/pair?code=${code()}`, expiresAt, remainingMs: expiresAt - Date.now() });
+		}
+		throw new Error(`unexpected request: ${url}`);
+	});
+	vi.stubGlobal("fetch", fetcher);
 	Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
 });
-afterEach(() => {
-	cleanup();
-	vi.useRealTimers();
-	vi.unstubAllGlobals();
-});
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+const mount = async () => { await act(async () => { render(<RemoteSection />); }); };
+const advance = async (ms: number) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
+const href = () => atob(screen.getByRole("img").getAttribute("src")!.split(",")[1]);
 
-describe("remote entry links", () => {
-	it("keeps checking after readiness, shows 1033 and clears it when the tunnel recovers", async () => {
-		vi.useFakeTimers();
-		let current = status;
-		const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: current }) }));
-		vi.stubGlobal("fetch", fetcher);
-		await act(async () => { render(<RemoteSection />); });
-		expect(screen.getAllByText("运行中")).toHaveLength(2);
-		current = { ...status, public: { ...status.public, ready: false, error: "Cloudflare 1033：隧道未连接" } };
-		await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-		expect(screen.getByText("连接暂不可用，正在重试…")).toBeTruthy();
-		expect(screen.getByText(/1033/)).toBeTruthy();
-		current = status;
-		await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-		expect(screen.getAllByText("运行中")).toHaveLength(2);
-		expect(screen.queryByText(/1033/)).toBeNull();
-		expect(fetcher).toHaveBeenCalledTimes(3);
+describe("automatic remote QR connection", () => {
+	it("prepares the entries and displays a public QR without start switches or generation clicks", async () => {
+		await mount();
+		expect(screen.getByRole("img", { name: "连接二维码" })).toBeTruthy();
+		expect(screen.queryByRole("switch")).toBeNull();
+		expect(screen.queryByRole("combobox")).toBeNull();
+		expect(screen.queryByRole("button", { name: "开启远程连接" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "生成二维码" })).toBeNull();
+		expect(fetcher).toHaveBeenCalledWith("/api/remote", expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "connect" }) }));
+		expect(href()).toBe(`${publicOrigin}/pair?code=${code()}`);
+		expect(screen.getByText(/同一 Wi-Fi 或外网都扫这个码/)).toBeTruthy();
+		await act(async () => { fireEvent.click(screen.getByRole("button", { name: "复制连接链接" })); });
+		expect(writeText).toHaveBeenCalledWith(href());
+		expect(href()).not.toContain("token=");
+		expect(document.body.textContent).not.toContain(code());
 	});
 
-	it("builds a root login link and leaves bare addresses alone without a token", () => {
-		expect(loginLink("http://192.168.5.44:30142", "a b")).toBe("http://192.168.5.44:30142/?token=a%20b");
-		expect(loginLink("https://abc.trycloudflare.com/", TOKEN)).toBe(`https://abc.trycloudflare.com/?token=${TOKEN}`);
-		expect(loginLink("http://192.168.5.44:30142", null)).toBe("http://192.168.5.44:30142");
+	it("keeps a usable QR when the public connection fails and LAN is ready", async () => {
+		await mount();
+		current.public.ready = false;
+		current.public.error = "Cloudflare 1033";
+		await advance(3_000);
+		expect(href()).toContain(lanOrigin);
+		expect(screen.queryByRole("link")).toBeNull();
+		expect(screen.getByText("Cloudflare 1033")).toBeTruthy();
+		current.public.ready = true;
+		current.public.error = null;
+		await advance(3_000);
+		expect(href()).toContain(publicOrigin);
 	});
 
-	it("links and copies the tokened address but only shows the bare one", async () => {
+	it("refreshes after use and expiry but retains the same image during ordinary polling", async () => {
+		await mount();
+		const first = href();
+		await advance(9_000);
+		expect(href()).toBe(first);
+		expect(qr).toHaveBeenCalledTimes(1);
+		consumed = true;
+		await advance(3_000);
+		const second = href();
+		expect(second).not.toBe(first);
+		await advance(120_000);
+		expect(href()).not.toBe(second);
+		expect(qr).toHaveBeenCalledTimes(3);
+	});
+
+	it("never opens entries or issues a QR while authentication or development restrictions block them and stops polling", async () => {
+		current.blocked = "auth";
+		await mount();
+		expect(screen.getByText(/认证没开，远程连接不可用/)).toBeTruthy();
+		expect(screen.queryByRole("img")).toBeNull();
+		expect(fetcher.mock.calls.every(([, options]) => !options?.method)).toBe(true);
+		const callsWhenBlocked = fetcher.mock.calls.length;
+		await advance(9_000);
+		expect(fetcher).toHaveBeenCalledTimes(callsWhenBlocked);
+	});
+
+	it("does not flash the QR placeholder card before initial status resolves", async () => {
+		let resolveStatus!: (value: unknown) => void;
+		fetcher.mockImplementationOnce(() => new Promise((resolve) => { resolveStatus = resolve; }));
 		render(<RemoteSection />);
-		const lan = await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
-		expect(lan.getAttribute("href")).toBe(`http://192.168.5.44:30142/?token=${TOKEN}`);
-		const pub = screen.getByRole("link", { name: "https://abc-def.trycloudflare.com" });
-		expect(pub.getAttribute("href")).toBe(`https://abc-def.trycloudflare.com/?token=${TOKEN}`);
-		// 令牌不出现在页面文字里
-		expect(document.body.textContent).not.toContain(TOKEN);
-
-		fireEvent.click(screen.getAllByRole("button", { name: "复制" })[0]);
-		await waitFor(() => expect(writeText).toHaveBeenCalledWith(`http://192.168.5.44:30142/?token=${TOKEN}`));
-		expect(await screen.findByRole("button", { name: "已复制（含令牌）" })).toBeTruthy();
+		expect(screen.queryByText("正在准备连接二维码…")).toBeNull();
+		expect(screen.getByText("启动中…")).toBeTruthy();
+		await act(async () => { resolveStatus(json(current)); });
 	});
 
-	/**
-	 * 插件开关与「纯转发」标注。
-	 * 关键：字段缺失（旧服务端、缓存的响应）不能被当成「插件已关闭」——那会在界面上误报纯转发。
-	 */
-	it("does not claim plain forwarding when the response has no styled flag", async () => {
-		// 上面那份 status 就没有 styled / pluginEnabled，正是旧响应的形状
-		render(<RemoteSection />);
-		await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
-		// 只看状态标注（形如「· 纯转发（未注入手机排版）」）：说明文案里本来就有「纯转发」三个字
-		expect(document.body.textContent).not.toContain("· 纯转发");
-		// 开关按「已启用」处理：断言开关本身（aria-checked），比匹配文字更稳
-		const toggle = screen.getByRole("switch", { name: "启用内置远程连接插件" });
-		expect(toggle.getAttribute("aria-checked")).toBe("true");
-		// 公网入口按钮不被插件开关拦住
-		expect((screen.getByText("关闭").closest("button") as HTMLButtonElement).disabled).toBe(false);
+	it("waits for a usable network and then generates the QR automatically", async () => {
+		current.lan.running = false;
+		current.lan.urls = [];
+		current.public.ready = false;
+		await mount();
+		expect(screen.queryByRole("img")).toBeNull();
+		expect(fetcher.mock.calls.some(([url]) => url === "/api/remote/pair")).toBe(false);
+		current.public.ready = true;
+		await advance(3_000);
+		expect(href()).toContain(publicOrigin);
 	});
 
-	it("locks the plugin switch while remote entries are blocked", async () => {
-		vi.stubGlobal("fetch", vi.fn(async () => ({
-			ok: true, status: 200,
-			json: async () => ({ success: true, data: { ...status, blocked: "auth", loginToken: null, lan: { ...status.lan, running: false, urls: [] }, public: { ...status.public, running: false, ready: false, url: null } } }),
-		})));
-		render(<RemoteSection />);
-		const toggle = screen.getByRole("switch", { name: "启用内置远程连接插件" }) as HTMLButtonElement;
-		await waitFor(() => expect(screen.getByText("开启远程连接").closest("button")?.disabled).toBe(true));
-		expect(toggle.disabled).toBe(true);
+	it("shows LAN and missing-engine failures and recovers through the retry action", async () => {
+		current.lan.running = false;
+		current.lan.urls = [];
+		current.lan.error = "局域网监听端口已被占用";
+		current.public.running = false;
+		current.public.ready = false;
+		current.public.engineAvailable = false;
+		current.public.error = "missing cloudflared";
+		await mount();
+		expect(screen.getByRole("alert").textContent).toContain(current.lan.error);
+		expect(screen.queryByText("启动中…")).toBeNull();
+		expect(screen.queryByRole("img")).toBeNull();
+		expect(screen.getByText(/cloudflared/)).toBeTruthy();
+		current.lan.running = true;
+		current.lan.urls = [lanOrigin];
+		current.lan.error = null;
+		await act(async () => { fireEvent.click(screen.getByRole("button", { name: "重试连接" })); });
+		expect(href()).toContain(lanOrigin);
+		expect(screen.queryByRole("alert")).toBeNull();
 	});
 
-	it("marks the LAN entry as plain forwarding only when the server says so", async () => {
-		vi.stubGlobal("fetch", vi.fn(async () => ({
-			ok: true, status: 200,
-			json: async () => ({
-				success: true,
-				data: {
-					...status,
-					pluginEnabled: false,
-					lan: { ...status.lan, styled: false },
-					// 公网入口没开，才渲染「开启远程连接」这个按钮
-					public: { ...status.public, running: false, ready: false, url: null },
-				},
-			}),
-		})));
-		render(<RemoteSection />);
-		await screen.findByRole("link", { name: "http://192.168.5.44:30142" });
-		expect(document.body.textContent).toContain("· 纯转发");
-		expect(document.body.textContent).toContain("已关闭");
-		// 插件关闭时公网入口不可开，按钮置灰并说明原因
-		expect((screen.getByText("开启远程连接").closest("button") as HTMLButtonElement).disabled).toBe(true);
-		expect(document.body.textContent).toContain("需要先启用内置插件");
+	it("discards a stale QR rendering result when the connection page is reopened", async () => {
+		let release!: (value: string) => void;
+		qr.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve; }));
+		await mount();
+		expect(qr).toHaveBeenCalledTimes(1);
+		cleanup();
+		await mount();
+		expect(href()).toContain(publicOrigin);
+		await act(async () => { release("data:image/png;base64,stale"); });
+		expect(href()).toContain(publicOrigin);
+		expect(screen.getByRole("img").getAttribute("src")).not.toContain("stale");
+	});
+
+	it("stops polling after the connection page is closed", async () => {
+		await mount();
+		const count = fetcher.mock.calls.length;
+		cleanup();
+		await advance(12_000);
+		expect(fetcher).toHaveBeenCalledTimes(count);
+	});
+
+	it("retries after a stalled request instead of leaving the QR stuck forever", async () => {
+		fetcher.mockImplementationOnce((_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
+			options.signal!.addEventListener("abort", () => reject(Object.assign(new Error("timed out"), { name: "AbortError" })), { once: true });
+		}));
+		await mount();
+		await advance(15_000);
+		expect(screen.getByRole("alert").textContent).toBe("操作失败");
+		await advance(3_000);
+		expect(screen.getByRole("img", { name: "连接二维码" })).toBeTruthy();
 	});
 });

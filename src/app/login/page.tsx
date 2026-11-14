@@ -26,6 +26,9 @@ function LoginNotice() {
 	const router = useRouter();
 	const params = useSearchParams();
 	const next = safeNextPath(params.get("next"));
+	// 扫码兑换失败时 /pair 带着原因跳到这里：说清楚为什么没登录上
+	const pair = params.get("pair");
+	const pairNotice = pair === "expired" ? t.loginPairExpired : pair === "unknown" ? t.loginPairUnknown : null;
 
 	// 认证未启用 / 已登录：不用停留
 	useEffect(() => {
@@ -51,6 +54,7 @@ function LoginNotice() {
 				<div className="flex flex-col items-center gap-2">
 					<PiMark size={40} />
 					<div style={{ fontSize: 16, fontWeight: 600 }}>{t.loginTokenTitle}</div>
+					{pairNotice && <div className="text-center" role="alert" style={{ fontSize: 12.5, color: "var(--dsw-danger)", lineHeight: 1.55 }}>{pairNotice}</div>}
 					<div className="text-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", lineHeight: 1.55 }}>{t.loginTokenDesc}</div>
 				</div>
 			</div>

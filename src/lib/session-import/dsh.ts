@@ -10,8 +10,7 @@
  *    压缩摘要），pi 端会注入自己的那一套，导入时跳过并计数。
  */
 import path from "node:path";
-import fs from "node:fs/promises";
-import { listFiles, reachedLimit, sortByRecency } from "./files";
+import { jsonlImportWarnings, listFiles, reachedLimit, sortByRecency } from "./files";
 import { dshRoot } from "./paths";
 import { readZstdHead, readZstdJsonl } from "./dsh-zstd";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
@@ -139,6 +138,7 @@ export const dshSource: ImportSourceModule = {
 		const candidates = await sortByRecency(pickPerSession(files));
 		const out: ExternalSessionSummary[] = [];
 		for (const { file, mtime } of candidates) {
+			options?.signal?.throwIfAborted();
 			if (reachedLimit(out.length, limit)) break; // 只解压最近的若干条：其余的连 zstd 都不碰
 			let head: { text: string; complete: boolean };
 			try {
@@ -170,7 +170,7 @@ export const dshSource: ImportSourceModule = {
 				source: "dsh",
 				externalId: sessionDir || header.id,
 				title,
-				projectPath: header.cwd ?? decodeCwdDir(path.basename(path.dirname(path.dirname(file)))),
+				projectPath: header.cwd,
 				provider,
 				model,
 				createdAt: header.createdAt ?? mtime,
@@ -248,7 +248,7 @@ export const dshSource: ImportSourceModule = {
 		}
 
 		if (!entries.some((entry) => entry.type === "message")) return null;
-		const skipped: string[] = [];
+		const skipped: string[] = jsonlImportWarnings(text);
 		if (injected) skipped.push(`跳过 ${injected} 条运行时注入消息（沙箱策略 / AGENTS.md 快照 / 压缩摘要）`);
 		return {
 			summary: { ...summary, title, provider, model, projectPath: header.cwd ?? summary.projectPath },

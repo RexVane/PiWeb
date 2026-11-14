@@ -26,7 +26,7 @@ class EventSourceFixture {
 }
 const userMessage = { role: "user", id: "u1", content: [{ type: "text", text: "首条消息" }], timestamp: 1 };
 const snapshot = (messages: unknown[] = []) => ({
-	cwd: "/workspace", model, messages, trajectory: [], userTurns: [], toolPreset: "standard",
+	cwd: "/workspace", model, messages, trajectory: [], userTurns: [], toolPreset: "workspace",
 	queue: { steering: [], followUp: [] }, tools: { active: [], all: [] }, isStreaming: false,
 	contextUsage: null,
 });

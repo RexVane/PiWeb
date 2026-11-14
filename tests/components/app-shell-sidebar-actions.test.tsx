@@ -15,6 +15,11 @@ const hooks = vi.hoisted(() => ({
 	patchSessionName: vi.fn(),
 	unarchiveSession: vi.fn(async () => {}),
 	removeWorkspace: vi.fn(async () => {}),
+	archiveSession: vi.fn(async () => {}),
+	deleteSession: vi.fn(async () => {}),
+	openSession: vi.fn(),
+	closeSession: vi.fn(),
+	currentPath: "/sessions/current.jsonl",
 	sidebarProps: null as null | Record<string, (...args: string[]) => Promise<void> | void>,
 }));
 
@@ -47,16 +52,16 @@ vi.mock("@/hooks/usePiWeb", () => ({
 			{ path: "/sessions/cold.jsonl", cwd: "/other", name: "cold" },
 		],
 		archivedSessions: [], archivedSessionPaths: [], addedWorkspaces: ["/workspace", "/other"], removedWorkspaces: [], workspaceAliases: {},
-		currentPath: "/sessions/current.jsonl", currentId: "current-id",
+		currentPath: hooks.currentPath, currentId: "current-id",
 		models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
 		state: {
-			snapshot: { cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
+			snapshot: { sessionPath: "/session-a", cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: { steering: [], followUp: [] } },
 			messages: [], tools: {}, growth: { rounds: [], error: null },
 			extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true,
 		},
 		getWorkspaceName: (cwd: string) => cwd, sendCommand: hooks.sendCommand,
-		newSession: async () => null, openSession: noop, closeSession: noop,
-		renameWorkspace: noop, patchSessionName: hooks.patchSessionName, archiveSession: noop, unarchiveSession: hooks.unarchiveSession, resync: hooks.resync,
+		newSession: async () => null, openSession: hooks.openSession, closeSession: hooks.closeSession,
+		renameWorkspace: noop, patchSessionName: hooks.patchSessionName, archiveSession: hooks.archiveSession, deleteSession: hooks.deleteSession, unarchiveSession: hooks.unarchiveSession, resync: hooks.resync,
 		setGroupBy: noop, setOrderBy: noop, addWorkspaceByPicker: noop, removeWorkspace: hooks.removeWorkspace, refreshModels: noop,
 		setToolPreset: noop, clearError: noop, clearCompaction: noop, setError: noop,
 		answerExtensionDialog: noop, dismissExtensionNotice: noop,
@@ -64,6 +69,9 @@ vi.mock("@/hooks/usePiWeb", () => ({
 }));
 
 beforeEach(() => {
+	hooks.currentPath = "/sessions/current.jsonl";
+	hooks.archiveSession.mockReset().mockResolvedValue(undefined);
+	hooks.deleteSession.mockReset().mockResolvedValue(undefined);
 	vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: {} }), text: async () => "" })));
 });
 afterEach(() => {
@@ -75,6 +83,34 @@ afterEach(() => {
 });
 
 describe("sidebar actions leave the open conversation alone", () => {
+	it("does not navigate from B when deletion of A finishes late", async () => {
+		let resolve!: () => void;
+		hooks.deleteSession.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+		const view = render(<AppShell />);
+		let pending!: Promise<void> | void;
+		act(() => { pending = hooks.sidebarProps!.onDelete("/sessions/current.jsonl"); });
+		hooks.currentPath = "/sessions/cold.jsonl";
+		view.rerender(<AppShell />);
+		await act(async () => { resolve(); await pending; });
+		expect(hooks.openSession).not.toHaveBeenCalled(); expect(hooks.closeSession).not.toHaveBeenCalled();
+	});
+	it("propagates an archive failure without navigating away", async () => {
+		hooks.archiveSession.mockRejectedValueOnce(new Error("archive failed"));
+		render(<AppShell />);
+		await act(async () => { await expect(hooks.sidebarProps!.onArchive("/sessions/current.jsonl")).rejects.toThrow("archive failed"); });
+		expect(hooks.openSession).not.toHaveBeenCalled(); expect(hooks.closeSession).not.toHaveBeenCalled();
+	});
+	it("does not navigate from B when the archive of A finishes late", async () => {
+		let resolve!: () => void;
+		hooks.archiveSession.mockImplementationOnce(() => new Promise<void>((done) => { resolve = done; }));
+		const view = render(<AppShell />);
+		let pending!: Promise<void> | void;
+		act(() => { pending = hooks.sidebarProps!.onArchive("/sessions/current.jsonl"); });
+		hooks.currentPath = "/sessions/cold.jsonl";
+		view.rerender(<AppShell />);
+		await act(async () => { resolve(); await pending; });
+		expect(hooks.openSession).not.toHaveBeenCalled(); expect(hooks.closeSession).not.toHaveBeenCalled();
+	});
 	it("renames a cold session, unarchives and deletes a workspace without resyncing the current session", async () => {
 		render(<AppShell />);
 		await waitFor(() => expect(hooks.sidebarProps).not.toBeNull());

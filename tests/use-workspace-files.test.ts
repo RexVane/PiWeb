@@ -31,9 +31,10 @@ describe("useWorkspaceFiles", () => {
 		const first = renderHook(() => useWorkspaceFiles("/ws-shared", true));
 		const second = renderHook(() => useWorkspaceFiles("/ws-shared", true));
 		expect(calls).toHaveLength(1);
-		expect(calls[0].init?.signal).toBeUndefined();
+		expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
 
 		first.unmount();
+		expect(calls[0].init?.signal?.aborted).toBe(false);
 		await act(async () => calls[0].resolve(["src/a.ts"]));
 		await waitFor(() => expect(second.result.current.status).toBe("ready"));
 		expect(second.result.current.candidates.map((candidate) => candidate.path).sort()).toEqual(["src", "src/a.ts"]);
@@ -44,5 +45,14 @@ describe("useWorkspaceFiles", () => {
 		renderHook(() => useWorkspaceFiles("/ws-idle", false));
 		renderHook(() => useWorkspaceFiles("", true));
 		expect(calls).toHaveLength(0);
+	});
+	it("keeps a Git-fallback warning when another input reuses the cached disk candidates", async () => {
+		const fetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { files: ["ignored.txt"], source: "disk", truncated: true, warning: "Git failed; .gitignore may not apply" } }) }));
+		vi.stubGlobal("fetch", fetch);
+		const first = renderHook(() => useWorkspaceFiles("/ws-fallback-warning", true));
+		await waitFor(() => expect(first.result.current.status).toBe("ready"));
+		expect(first.result.current.warning).toContain(".gitignore"); expect(first.result.current.truncated).toBe(true);
+		const second = renderHook(() => useWorkspaceFiles("/ws-fallback-warning", true));
+		await waitFor(() => expect(second.result.current.warning).toContain(".gitignore")); expect(fetch).toHaveBeenCalledTimes(1);
 	});
 });

@@ -8,6 +8,11 @@ import { DELETE, GET, POST } from "../src/app/api/web-auth/route";
 import { GET as health } from "../src/app/api/health/route";
 import { AUTH_THROTTLE_RESET_AFTER_MS, backoffDelayMs, createAuthThrottleState, getAuthRetryAfterMs, recordAuthFailure, recordAuthSuccess, resetAuthThrottle } from "../src/lib/auth-throttle";
 import { cookieNameForAuthority } from "../src/lib/web-auth";
+import { currentLaunchToken, resetLaunchTokenState } from "../src/lib/web-launch-token";
+import { flushWebDevices } from "../src/lib/web-devices";
+import { issuePairCode, resetPairingState } from "../src/lib/remote/pairing";
+import { GET as pair } from "../src/app/pair/route";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 // NextRequest 会把 127.0.0.1 归一成 localhost，权威必须按归一后的值断言
 const HOST = "localhost:30141";
@@ -27,16 +32,19 @@ beforeEach(() => {
 	delete process.env.PI_WEB_TRUSTED_HOSTS;
 	delete process.env.PI_WEB_ALLOWED_HOSTS;
 	resetAuthThrottle();
+	resetLaunchTokenState();
+	resetPairingState();
 });
 
-afterEach(() => {
+afterEach(async () => {
+	await flushWebDevices();
 	for (const name of ENV_NAMES) {
 		const value = saved.get(name);
 		if (value === undefined) delete process.env[name];
 		else process.env[name] = value;
 	}
 	resetAuthThrottle();
-	fs.rmSync(agentDir, { recursive: true, force: true });
+	await recycleFixture(agentDir);
 });
 
 function pageRequest(path: string, headers: Record<string, string> = {}) {
@@ -51,7 +59,8 @@ function apiRequest(path: string, init: RequestInit = {}) {
 
 /** 唯一的登录路径：根路径 GET 带启动令牌换一张会话 Cookie */
 function sessionCookie(): string {
-	const response = proxy(pageRequest(`/?token=${LAUNCH_TOKEN}`));
+	const token = currentLaunchToken() ?? LAUNCH_TOKEN;
+	const response = proxy(pageRequest(`/?token=${token}`));
 	expect(response.status).toBe(303);
 	const match = /^(piweb_session_[A-Za-z0-9_-]+=[^;]+)/.exec(response.headers.get("set-cookie") ?? "");
 	expect(match).not.toBeNull();
@@ -60,14 +69,14 @@ function sessionCookie(): string {
 
 describe("proxy authentication gate", () => {
 	it("passes everything through when authentication is disabled", () => {
-		delete process.env.PI_WEB_AUTH;
+		process.env.PI_WEB_AUTH = "0";
 		const response = proxy(pageRequest("/"));
 		expect(response.status).toBe(200);
 		expect(response.headers.get("x-middleware-next")).toBe("1");
 	});
 
 	it("enforces the Host allowlist even when authentication is disabled", () => {
-		delete process.env.PI_WEB_AUTH;
+		process.env.PI_WEB_AUTH = "0";
 		expect(proxy(pageRequest("/", { host: "attacker.test" })).status).toBe(403);
 		expect(proxy(pageRequest("/", { host: "pi.example.com" })).status).toBe(403);
 		process.env.PI_WEB_TRUSTED_HOSTS = "pi.example.com";
@@ -210,7 +219,7 @@ describe("launch token exchange", () => {
 	});
 
 	it("does not exchange tokens when authentication is disabled", () => {
-		delete process.env.PI_WEB_AUTH;
+		process.env.PI_WEB_AUTH = "0";
 		const response = proxy(pageRequest(`/?token=${LAUNCH_TOKEN}`));
 		expect(response.headers.get("x-middleware-next")).toBe("1");
 	});
@@ -234,7 +243,7 @@ describe("web-auth route", () => {
 	});
 
 	it("reports enabled:false when authentication is off", async () => {
-		delete process.env.PI_WEB_AUTH;
+		process.env.PI_WEB_AUTH = "0";
 		const response = await GET(apiRequest("/api/web-auth"));
 		expect(await response.json()).toEqual({ success: true, data: { enabled: false, authenticated: true } });
 	});
@@ -248,7 +257,7 @@ describe("web-auth route", () => {
 		expect(response.status).toBe(410);
 		expect(await response.json()).toEqual({
 			success: false,
-			error: "password login has been removed; use the launch token link printed at startup",
+			error: "password login has been removed; run the PiWeb launcher on its host to open the login page",
 		});
 	});
 
@@ -287,6 +296,7 @@ describe("web-auth route", () => {
 	it("signs out every device on request from a live session, and only from one", async () => {
 		const mine = sessionCookie();
 		const phone = sessionCookie();
+		const pending = issuePairCode();
 		const anonymous = await DELETE(apiRequest("/api/web-auth?scope=all", { method: "DELETE" }));
 		expect(anonymous.status).toBe(401);
 		expect(proxy(pageRequest("/", { cookie: phone })).status).toBe(200);
@@ -296,6 +306,9 @@ describe("web-auth route", () => {
 		expect(response.status).toBe(200);
 		expect(proxy(pageRequest("/", { cookie: mine })).status).toBe(307);
 		expect(proxy(pageRequest("/", { cookie: phone })).status).toBe(307);
+		const paired = await pair(apiRequest(`/pair?code=${pending.code}`));
+		expect(paired.headers.get("set-cookie")).toBeNull();
+		expect(paired.headers.get("location")).toMatch(/^\/login\?pair=/);
 		// 启动令牌仍然能换一张新的
 		await new Promise((resolve) => setTimeout(resolve, 5));
 		expect(proxy(pageRequest("/", { cookie: sessionCookie() })).status).toBe(200);

@@ -9,6 +9,17 @@ import type { TrajEntry } from "../src/lib/types";describe("trajectory timing", 
 
 		expect(ledger.entries.map((entry) => entry.seq)).toEqual([7, 8]);
 	});
+	it("bounds restored and live records while preserving unique sequences and recent tool updates", () => {
+		const ledger = new TrajLedger(Array.from({ length: 2000 }, (_, index) => ({ seq: index + 1, kind: "user", ts: index })));
+		expect(ledger.entries.length).toBe(1000);
+		ledger.onEvent({ type: "tool_execution_start", toolCallId: "active", toolName: "read", args: { path: "file" } } as any, 2100);
+		ledger.onEvent({ type: "tool_execution_end", toolCallId: "active", toolName: "read", result: { content: [{ type: "text", text: "result" }] }, isError: false } as any, 2200);
+		const tool = ledger.entries.find((entry) => entry.toolCallId === "active");
+		expect(tool?.seq).toBe(2001);
+		expect(tool?.detail).toContain("result");
+		expect(ledger.entries.length).toBe(1000);
+		expect(new Set(ledger.entries.map((entry) => entry.seq)).size).toBe(1000);
+	});
 
 	it("records model duration, TTFT, and decoding time from Pi events", () => {
 		const ledger = new TrajLedger();
@@ -230,5 +241,36 @@ describe("轨迹里的扩展消息与 ! 命令", () => {
 		expect(nested[0].timing).toEqual({ durationMs: 12 });
 		expect(nested[1].isError).toBe(true);
 		expect(nested[1].detail).toContain("oldText not found");
+	});
+});
+
+describe("permission audit entries", () => {
+	const custom = (data: unknown, timestamp = "2026-11-13T09:00:00.000Z") => ({ type: "custom", customType: "piweb_permission", timestamp, data });
+
+	it("renders decisions and grants as their own trajectory rows", () => {
+		const entries = buildTrajectoryFromEntries([
+			custom({ kind: "decision", approved: true, outcome: "approved", scope: "full", preset: "workspace", reason: "需要写 worktree 的 .git", at: 1_700_000_000_000 }),
+			custom({ kind: "used", scope: "full", preset: "workspace", command: "git worktree add ../wt", at: 1_700_000_000_001 }),
+		]);
+		expect(entries.map((entry) => entry.kind)).toEqual(["permission", "permission"]);
+		expect(entries[0].title).toBe("权限：允许一次");
+		expect(entries[0].detail).toContain("full");
+		expect(entries[0].detail).toContain("需要写 worktree 的 .git");
+		expect(entries[0].ts).toBe(1_700_000_000_000);
+		expect(entries[1].title).toBe("权限：已用于 full");
+		expect(entries[1].detail).toBe("git worktree add ../wt");
+	});
+
+	it("labels declined and unanswered requests", () => {
+		const entries = buildTrajectoryFromEntries([
+			custom({ kind: "decision", approved: false, outcome: "denied", scope: "workspace", preset: "readonly", reason: "x", at: 1 }),
+			custom({ kind: "decision", approved: false, outcome: "unanswered", scope: "workspace", preset: "readonly", reason: "y", at: 2 }),
+		]);
+		expect(entries.map((entry) => entry.title)).toEqual(["权限：拒绝", "权限：未应答"]);
+	});
+
+	it("ignores other custom entries so extension data stays out of the timeline", () => {
+		const entries = buildTrajectoryFromEntries([{ type: "custom", customType: "some_extension", data: {}, timestamp: "2026-11-13T09:00:00.000Z" }]);
+		expect(entries).toEqual([]);
 	});
 });

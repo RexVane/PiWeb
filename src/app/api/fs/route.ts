@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { BoundaryError } from "@/lib/path-security";
+import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
+const headers = { "Cache-Control": "private, no-store" };
 
 /**
  * 只读的目录枚举，供应用内的工作区选择器用（手机等远程设备）。
@@ -15,6 +17,11 @@ export const dynamic = "force-dynamic";
 
 /** 单个目录最多返回多少条，避免在手机上拉一个几万项的目录 */
 const MAX_ENTRIES = 2000;
+async function bounded<T>(operation: Promise<T>, fallback: T, timeoutMs = 2000): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try { return await Promise.race([operation, new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), timeoutMs); })]); }
+	finally { clearTimeout(timer); }
+}
 
 interface FsEntry {
 	name: string;
@@ -35,7 +42,7 @@ async function listRoots(): Promise<FsEntry[]> {
 	if (process.platform === "win32") {
 		// 26 个盘符一起探：断开的网络盘、没插卡的读卡器一个就能卡上几秒，逐个探会把等待叠加起来
 		const drives = Array.from({ length: 26 }, (_, i) => `${String.fromCharCode(65 + i)}:\\`);
-		const present = await Promise.all(drives.map(isDirectory));
+		const present = await Promise.all(drives.map((drive) => bounded(isDirectory(drive), false)));
 		return drives.filter((_, i) => present[i]).map((drive) => ({ name: drive, path: drive }));
 	}
 	if (process.platform === "darwin") {
@@ -50,12 +57,11 @@ async function listRoots(): Promise<FsEntry[]> {
 	return roots;
 }
 
-function directoryError(error: unknown): BoundaryError {
+function directoryError(error: unknown): Error {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	if (code === "ENOENT") return new BoundaryError("目录不存在");
-	if (code === "EACCES" || code === "EPERM") return new BoundaryError("没有权限读取此目录");
 	if (code === "ENOTDIR") return new BoundaryError("这不是一个目录");
-	return new BoundaryError(error instanceof Error ? error.message : String(error));
+	return error instanceof Error ? error : new Error("directory read failed");
 }
 
 async function listDirectory(target: unknown) {
@@ -99,21 +105,21 @@ export async function POST(req: Request) {
 	let body: unknown;
 	try {
 		body = await req.json();
-	} catch {
-		return NextResponse.json({ success: false, error: "invalid JSON body" }, { status: 400 });
+	} catch (error) {
+		return NextResponse.json({ success: false, ...apiError(error) }, { status: error instanceof SyntaxError ? 400 : 500, headers });
 	}
 	if (!body || typeof body !== "object" || Array.isArray(body)) {
-		return NextResponse.json({ success: false, error: "expected an object body" }, { status: 400 });
+		return NextResponse.json({ success: false, error: "expected an object body", errorCode: "VALIDATION_ERROR" }, { status: 400, headers });
 	}
 	const { action, path: target } = body as { action?: unknown; path?: unknown };
 	try {
-		if (action === "roots") return NextResponse.json({ success: true, data: { roots: await listRoots() } });
-		if (action === "list") return NextResponse.json({ success: true, data: await listDirectory(target) });
-		return NextResponse.json({ success: false, error: "unknown action" }, { status: 400 });
+		if (action === "roots") return NextResponse.json({ success: true, data: { roots: await listRoots() } }, { headers });
+		if (action === "list") return NextResponse.json({ success: true, data: await listDirectory(target) }, { headers });
+		return NextResponse.json({ success: false, error: "unknown action", errorCode: "VALIDATION_ERROR" }, { status: 400, headers });
 	} catch (error) {
 		return NextResponse.json(
-			{ success: false, error: error instanceof Error ? error.message : String(error) },
-			{ status: error instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(error, "目录暂时无法读取，请稍后重试。") },
+			{ status: error instanceof BoundaryError ? 400 : 500, headers },
 		);
 	}
 }

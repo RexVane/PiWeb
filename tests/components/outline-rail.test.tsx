@@ -56,4 +56,25 @@ describe("outline rail", () => {
 		expect(labels).toEqual(["问题 1", "标题 1", "问题 2", "标题 2", "问题 3", "标题 3"]);
 		expect(labels.some((label) => label?.includes("16:49"))).toBe(false);
 	});
+
+	it("supports tap/click toggle and closes on Escape or outside pointerdown", async () => {
+		const { container } = render(<Harness />);
+		act(() => loadMarkdown());
+		await waitFor(() => expect(container.querySelector(".outline-rail-trigger")).not.toBeNull());
+
+		const trigger = container.querySelector(".outline-rail-trigger") as HTMLButtonElement;
+		expect(trigger.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(trigger);
+
+		const headingBtn = await screen.findByRole("button", { name: "标题 2" });
+		expect(headingBtn).toBeTruthy();
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		await waitFor(() => expect(container.querySelector(".outline-rail-trigger")).not.toBeNull());
+
+		fireEvent.click(container.querySelector(".outline-rail-trigger")!);
+		await screen.findByRole("button", { name: "问题 1" });
+		fireEvent.pointerDown(document.body);
+		await waitFor(() => expect(container.querySelector(".outline-rail-trigger")).not.toBeNull());
+	});
 });

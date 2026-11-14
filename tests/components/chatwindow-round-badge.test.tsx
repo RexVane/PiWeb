@@ -8,7 +8,7 @@
  * 光靠跑起来看是验证不到的。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatWindow, SessionStatsBar } from "@/components/ChatWindow";
 import type { RoundBadge } from "@/components/ChatWindow";
 import type { WebMessage, WebStats } from "@/lib/types";
@@ -140,5 +140,69 @@ describe("round badge placement", () => {
 	it("hides the badge while the turn is still streaming", () => {
 		renderWindow({ badge: { commit: "abc1234", files: 3, add: 1, del: 1 }, isStreaming: true });
 		expect(screen.queryByTestId("round-badge")).toBeNull();
+	});
+});
+
+describe("turn duration popover positioning", () => {
+	it("portals outside .pw-chat-scroll and flips upward when triggered near the scroll bottom", () => {
+		const { container } = renderWindow();
+		const scrollEl = container.querySelector(".pw-chat-scroll") as HTMLElement;
+		const pill = screen.getByRole("button", { name: /耗时 22 秒/ });
+
+		vi.spyOn(scrollEl, "getBoundingClientRect").mockReturnValue({
+			top: 50, bottom: 520, left: 0, right: 800, width: 800, height: 470, x: 0, y: 50, toJSON: () => ({}),
+		} as DOMRect);
+		vi.spyOn(pill, "getBoundingClientRect").mockReturnValue({
+			top: 490, bottom: 512, left: 180, right: 270, width: 90, height: 22, x: 180, y: 490, toJSON: () => ({}),
+		} as DOMRect);
+
+		fireEvent.click(pill);
+		const dialog = screen.getByRole("dialog", { name: "本回合用量" });
+		// 挂在 body 上而非被 overflow-y:auto 的 .pw-chat-scroll 包裹，底部触发时向上翻转避免被截断
+		expect(scrollEl.contains(dialog)).toBe(false);
+		expect(document.body.contains(dialog)).toBe(true);
+		expect(parseFloat(dialog.style.top)).toBeLessThan(490);
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByRole("dialog", { name: "本回合用量" })).toBeNull();
+	});
+
+	it("renders clean turn usage rows matching the detailed token breakdown without color bars", () => {
+		const stepTool = {
+			role: "assistant",
+			id: "assistant-step",
+			content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }],
+			provider: "magpie-responses/grok",
+			model: "grok-4.7-build-fast@500k",
+			usage: { input: 3000, cacheRead: 90000, cacheWrite: 0, output: 500 },
+			stopReason: "toolUse",
+			timestamp: 10_000,
+		} as unknown as WebMessage;
+		const answerWithUsage = {
+			...finalAnswer,
+			provider: "magpie-responses/grok",
+			model: "grok-4.7-build-fast@500k",
+			usage: { input: 5396, cacheRead: 100976, cacheWrite: 0, output: 681, cost: { total: 0.0976 } },
+		} as unknown as WebMessage;
+
+		render(<ChatWindow messages={[userMessage, stepTool, answerWithUsage]} tools={{}} isStreaming={false} />);
+		fireEvent.click(screen.getByRole("button", { name: /耗时 22 秒/ }));
+
+		const dialog = screen.getByRole("dialog", { name: "本回合用量" });
+		expect(dialog.classList.contains("pw-turn-usage-popover")).toBe(true);
+		expect(dialog.querySelector(".pw-turn-token-bar")).toBeNull();
+		const text = dialog.textContent ?? "";
+		expect(text).toContain("本轮用量");
+		expect(text).toContain("200,553 tok");
+		expect(text).toContain("提供方 / 模型");
+		expect(text).toContain("magpie-responses/grok/grok-4.7-build-fast@500k");
+		expect(text).toContain("缓存命中");
+		expect(text).toContain("95.79%");
+		expect(text).toContain("未缓存输入");
+		expect(text).toContain("8,396 tok");
+		expect(text).toContain("缓存读取");
+		expect(text).toContain("190,976 tok");
+		expect(text).toContain("输出");
+		expect(text).toContain("1,181 tok");
 	});
 });

@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 /**
  * 提示词面板：把"发给模型的提示词从哪来"集中列出来，点某一项查看原文。
  *

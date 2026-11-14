@@ -43,7 +43,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals(); });
 
 const snapshot = (extra: Partial<WebSnapshot> = {}) => ({
-	cwd: "/workspace", messages: [], trajectory: [], userTurns: [], toolPreset: "standard",
+	cwd: "/workspace", messages: [], trajectory: [], userTurns: [], toolPreset: "workspace",
 	tools: { active: ["read"], all: [{ name: "read" }, { name: "bash" }] },
 	queue: { steering: [], followUp: [] }, isStreaming: false, contextUsage: null,
 	...extra,
@@ -58,19 +58,22 @@ async function open(hook: ReturnType<typeof renderHook<ReturnType<typeof usePiWe
 	return stream;
 }
 
-it("pins an explicit matching legacy preset before another browser can replace it", async () => {
+it("migrates a legacy `standard` preset to workspace before another browser can replace it", async () => {
+	// 0.3.31 之前中间档叫 standard，带 shell；现在归一成 workspace（无 shell、写入受限）
 	localStorage.setItem("piweb.toolPreset", "standard");
 	const first = renderHook(() => usePiWeb());
 	await open(first, "/old.jsonl", snapshot({ toolPreferenceSaved: false }));
-	await waitFor(() => expect(serverPreferences.get("/old.jsonl")).toEqual({ toolPreset: "standard", toolPreferenceSaved: true, customActiveTools: null }));
-	expect(commands).toEqual([{ path: "/old.jsonl", cmd: "setToolPreset", preset: "standard" }]);
+	await waitFor(() => expect(serverPreferences.get("/old.jsonl")).toEqual({ toolPreset: "workspace", toolPreferenceSaved: true, customActiveTools: null }));
+	expect(commands).toEqual([{ path: "/old.jsonl", cmd: "setToolPreset", preset: "workspace" }]);
 	first.unmount();
 	// A different browser has an older Full access default, but this session is already migrated.
 	localStorage.clear();
+	sessionStorage.clear();
+	window.history.replaceState(null, "", "/");
 	localStorage.setItem("piweb.toolPreset", "full");
 	const second = renderHook(() => usePiWeb());
 	await open(second, "/old.jsonl", snapshot(serverPreferences.get("/old.jsonl")));
-	expect(second.result.current.state.toolPreset).toBe("standard");
+	expect(second.result.current.state.toolPreset).toBe("workspace");
 	expect(commands).toHaveLength(1);
 });
 
@@ -87,9 +90,9 @@ it("keeps each saved session's preset and explicit tool list over the browser de
 	const hook = renderHook(() => usePiWeb());
 	await open(hook, "/a.jsonl", snapshot({ toolPreset: "readonly", toolPreferenceSaved: true }));
 	expect(hook.result.current.state.toolPreset).toBe("readonly");
-	await open(hook, "/b.jsonl", snapshot({ toolPreset: "standard", toolPreferenceSaved: true, customActiveTools: ["read"] }));
+	await open(hook, "/b.jsonl", snapshot({ toolPreset: "workspace", toolPreferenceSaved: true, customActiveTools: ["read"] }));
 	expect(hook.result.current.state.snapshot?.customActiveTools).toEqual(["read"]);
-	expect(hook.result.current.state.toolPreset).toBe("standard");
+	expect(hook.result.current.state.toolPreset).toBe("workspace");
 	expect(commands).toEqual([]);
 });
 

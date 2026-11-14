@@ -2,7 +2,7 @@
  * 「远程连接」内置插件的控制面。它管两个监听：
  *
  *   1. 局域网入口 —— 手机排版注入代理，绑 0.0.0.0。默认就该有，手机连同一个 WiFi 就能用。
- *   2. 公网入口 —— cloudflared 快速隧道，指向局域网入口。由设置页的按钮开关。
+ *   2. 公网入口 —— cloudflared 快速隧道，指向局域网入口。随服务自动准备，失败后后台重试。
  *
  * 引擎（隧道实现）刻意做成可替换的：`startPublic` 只依赖「起一个进程 + 从输出里抓到
  * https 地址」这两件事，换 ngrok / frp 时改这一个函数即可。
@@ -19,16 +19,25 @@ import { authEnabled } from "../web-auth";
 import { agentDir } from "../web-secret";
 import { createMobileProxy, MOBILE_FIT_CSS, MOBILE_FIT_JS } from "./mobile-proxy";
 import { probeTunnel } from "./tunnel-health";
+import { terminateProcessTree } from "../../../scripts/process-runner.mjs";
+import { isolatedCommandEnv } from "../../../scripts/update-environment.mjs";
+import { createRequestGuard } from "../../../scripts/http-request-guard.mjs";
+import { APP_ROOT } from "../app-root";
 
 export const PLUGIN_ID = "builtin-remote";
 export const DEFAULT_LAN_PORT = 30142;
 /** cloudflared 快速隧道给的地址长这样 */
 const PUBLIC_URL_PATTERN = /https:\/\/[a-z0-9][a-z0-9-]*\.trycloudflare\.com/;
 const TUNNEL_TIMEOUT_MS = 45_000;
+/** 新域名注册后先等解析传播，避免本机代理把过早得到的不存在结果缓存住。 */
+const TUNNEL_DNS_GRACE_MS = 15_000;
 /** 拿到地址后等它就绪的上限：快速隧道的域名要十几秒才在全球 DNS 生效 */
 const TUNNEL_READY_TIMEOUT_MS = 60_000;
 const TUNNEL_READY_POLL_MS = 2_500;
 const TUNNEL_HEALTH_INTERVAL_MS = 5_000;
+const REMOTE_RETRY_MS = 30_000;
+/** 持续不可达时重建隧道，避免进程还活着却永远无法出码。短暂掉线仍复用原地址。 */
+const TUNNEL_STALLED_TIMEOUT_MS = 120_000;
 
 /**
  * 从 cloudflared 的输出里抓公网地址，**只认第一个**。
@@ -68,6 +77,7 @@ export async function refreshPublicStatus(force = false): Promise<void> {
 	const current = state();
 	const tunnel = current.tunnel;
 	if (!tunnel?.url) return;
+	if (tunnel.probeAllowed === false) return;
 	if (tunnel.checking) return tunnel.checking;
 	if (!force && tunnel.checkedAt !== undefined && Date.now() - tunnel.checkedAt < TUNNEL_HEALTH_INTERVAL_MS) return;
 	const controller = tunnel.controller ??= new AbortController();
@@ -76,12 +86,21 @@ export async function refreshPublicStatus(force = false): Promise<void> {
 		tunnel.ready = health.ready;
 		tunnel.checkedAt = Date.now();
 		current.publicError = health.error;
+		if (health.ready) {
+			tunnel.unhealthySince = undefined;
+		} else {
+			tunnel.unhealthySince ??= tunnel.checkedAt;
+			if (current.automaticRetry && tunnel.checkedAt - tunnel.unhealthySince >= TUNNEL_STALLED_TIMEOUT_MS) {
+				current.publicRetryAt = Date.now() + REMOTE_RETRY_MS;
+				dropTunnel(tunnel.child);
+			}
+		}
 	}).finally(() => { if (tunnel.checking === checking) tunnel.checking = undefined; });
 	tunnel.checking = checking;
 	return checking;
 }
 
-/** 启动时等一次；超时后由状态页继续检测，网络恢复时不必重启或换地址。 */
+/** 启动时等一次；超时后继续检测，短暂故障恢复后复用原地址，持续不可达则自动重建。 */
 async function waitForTunnelReady(tunnel: ManagedTunnel): Promise<void> {
 	const deadline = Date.now() + TUNNEL_READY_TIMEOUT_MS;
 	for (;;) {
@@ -119,7 +138,7 @@ export type RemoteBlocked = "auth" | "dev";
 
 export interface RemoteStatus {
 	plugin: typeof PLUGIN_ID;
-	/** 内置插件是否启用。关掉后局域网入口仍在（纯转发），但没有手机排版与公网入口 */
+	/** 兼容旧配置的手机排版开关；不影响统一连接入口。 */
 	pluginEnabled: boolean;
 	/** PiWeb 自己的端口（局域网入口的转发目标） */
 	targetPort: number;
@@ -133,9 +152,12 @@ interface ManagedTunnel {
 	child: ChildProcess;
 	url: string | null;
 	ready: boolean;
+	/** 注册及解析传播完成前，状态轮询也不能提前触发域名查询。 */
+	probeAllowed?: boolean;
 	/** 可选以兼容 Next 热重载之前创建的状态。 */
 	controller?: AbortController;
 	checkedAt?: number;
+	unhealthySince?: number;
 	checking?: Promise<void>;
 }
 
@@ -143,6 +165,9 @@ interface SupervisorState {
 	lan: { server: http.Server; port: number; styled: boolean } | null;
 	tunnel: ManagedTunnel | null;
 	generation?: number;
+	lanGeneration?: number;
+	lanStopping?: Promise<void>;
+	tunnelStopping?: Set<Promise<void>>;
 	/** 正在启动中的那一次：并发调用复用它，不能起两个监听 / 两个 cloudflared */
 	lanStarting?: Promise<LanState> | null;
 	publicStarting?: Promise<PublicState> | null;
@@ -150,6 +175,8 @@ interface SupervisorState {
 	publicError: string | null;
 	enginePath: string | null;
 	engineChecked: boolean;
+	automaticRetry?: ReturnType<typeof setInterval>;
+	publicRetryAt?: number;
 }
 
 /**
@@ -325,7 +352,7 @@ export function markEngineMissing(): void {
 }
 
 /**
- * 内置插件是否启用。关闭后**局域网入口照旧可用**，只是不再注入手机排版、也不提供公网隧道——
+ * 内置手机排版是否启用。关闭后两个入口照旧可用，只是不再注入手机排版——
  * 这样用户可以用自己写的插件或自建反代接手远程访问，而手机在同一个 WiFi 下仍然连得上。
  *
  * 存 `<agentDir>/remote-plugin.json`，与 web-secret 同一目录。读不到就按启用处理（默认开）。
@@ -362,6 +389,7 @@ export function setRemotePluginEnabled(enabled: boolean): void {
  */
 export function startLan(port = remoteLanPort(), host = "0.0.0.0", targetPort = piwebPort()): Promise<LanState> {
 	const current = state();
+	if (current.lanStopping) return current.lanStopping.then(() => startLan(port, host, targetPort));
 	if (current.lan) return Promise.resolve(remoteStatus().lan);
 	if (current.lanStarting) return current.lanStarting;
 	const starting = listenLan(port, host, targetPort).finally(() => {
@@ -371,12 +399,46 @@ export function startLan(port = remoteLanPort(), host = "0.0.0.0", targetPort = 
 	return starting;
 }
 
+/** 自动准备两个入口。局域网可用后立即返回，公网在后台建连，不阻塞服务启动。 */
+export async function ensureRemoteAccess(): Promise<RemoteStatus> {
+	if (remoteBlocked() !== null || !remoteLanEnabled()) return remoteStatus();
+	const current = state();
+	enableAutomaticRetry();
+	const generation = current.generation;
+	await startLan();
+	if (generation !== current.generation) {
+		await stopLan();
+		return remoteStatus();
+	}
+	if (!current.lan) return remoteStatus();
+	if (!current.tunnel && !current.publicStarting && Date.now() >= (current.publicRetryAt ?? 0)) {
+		current.publicRetryAt = Date.now() + REMOTE_RETRY_MS;
+		// 安装好引擎后无需重启 PiWeb；下一次重试重新查找。
+		if (!current.enginePath) current.engineChecked = false;
+		void startPublic().catch((error) => { current.publicError = String(error?.message ?? error); });
+	} else if (current.tunnel?.url) {
+		void refreshPublicStatus().catch((error) => { current.publicError = String(error?.message ?? error); });
+	}
+	return remoteStatus();
+}
+
+function enableAutomaticRetry(): void {
+	const current = state();
+	if (current.automaticRetry) return;
+	current.automaticRetry = setInterval(() => {
+		void ensureRemoteAccess().catch((error) => { current.publicError = String(error?.message ?? error); });
+	}, REMOTE_RETRY_MS);
+	current.automaticRetry.unref?.();
+}
+
 async function listenLan(port: number, host: string, targetPort: number): Promise<LanState> {
 	const current = state();
+	const generation = current.lanGeneration ?? 0;
 	current.lanError = null;
 	const styled = remotePluginEnabled();
 	const server = createMobileProxy({
 		targetPort,
+		admitRequest: createRequestGuard({ env: process.env }),
 		// 关掉插件就不注入：仍是同一个端口、同一套转发，只是页面上不再有手机排版补丁
 		css: styled ? MOBILE_FIT_CSS : null,
 		js: styled ? MOBILE_FIT_JS : null,
@@ -384,25 +446,49 @@ async function listenLan(port: number, host: string, targetPort: number): Promis
 	});
 	try {
 		await new Promise<void>((resolve, reject) => {
-			server.once("error", reject);
-			server.listen(port, host, resolve);
+			const failed = (error: Error) => { server.off("listening", ready); reject(error); };
+			const ready = () => { server.off("error", failed); resolve(); };
+			server.once("error", failed);
+			server.once("listening", ready);
+			server.listen(port, host);
 		});
 	} catch (error) {
 		current.lanError = error instanceof Error ? error.message : String(error);
 		server.close();
 		return remoteStatus().lan;
 	}
+	if ((current.lanGeneration ?? 0) !== generation) {
+		server.closeAllConnections?.();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+		return remoteStatus().lan;
+	}
 	current.lan = { server, port, styled };
+	server.on("error", (error) => {
+		if (current.lan?.server !== server) return;
+		current.lanError = error.message;
+		current.lan = null;
+		server.closeAllConnections?.();
+		server.close();
+		if (current.tunnel) { current.publicError = "本地连接入口中断，正在自动重试。"; void dropTunnel(current.tunnel.child); }
+	});
 	return remoteStatus().lan;
 }
 
 export async function stopLan(): Promise<void> {
 	const current = state();
-	const lan = current.lan;
-	current.lan = null;
-	if (!lan) return;
-	lan.server.closeAllConnections?.();
-	await new Promise<void>((resolve) => lan.server.close(() => resolve()));
+	if (current.lanStopping) return current.lanStopping;
+	current.lanGeneration = (current.lanGeneration ?? 0) + 1;
+	const pending = current.lanStarting;
+	const stopping = (async () => {
+		await pending?.catch(() => {});
+		const lan = current.lan;
+		current.lan = null;
+		if (!lan) return;
+		lan.server.closeAllConnections?.();
+		await new Promise<void>((resolve) => lan.server.close(() => resolve()));
+	})();
+	current.lanStopping = stopping;
+	try { await stopping; } finally { if (current.lanStopping === stopping) current.lanStopping = undefined; }
 }
 
 /**
@@ -412,6 +498,7 @@ export async function stopLan(): Promise<void> {
  */
 export function startPublic(): Promise<PublicState> {
 	const current = state();
+	if (remoteBlocked() === null && remoteLanEnabled()) enableAutomaticRetry();
 	if (current.publicStarting) return current.publicStarting;
 	if (current.tunnel) return Promise.resolve(remoteStatus().public);
 	const starting = spawnTunnel().finally(() => {
@@ -422,7 +509,7 @@ export function startPublic(): Promise<PublicState> {
 }
 
 /** 把一条隧道彻底收掉：摘白名单、清状态、杀进程（只动传进来的这一条） */
-function dropTunnel(child: ChildProcess): void {
+function dropTunnel(child: ChildProcess): Promise<void> {
 	const current = state();
 	const active = current.tunnel;
 	if (active?.child === child) {
@@ -430,7 +517,10 @@ function dropTunnel(child: ChildProcess): void {
 		disallowTunnelHost(active.url);
 		current.tunnel = null;
 	}
-	if (child.exitCode === null && !child.killed) child.kill();
+	if (child.exitCode !== null || child.killed) return Promise.resolve();
+	const stopping = terminateProcessTree(child).finally(() => current.tunnelStopping?.delete(stopping));
+	(current.tunnelStopping ??= new Set()).add(stopping);
+	return stopping;
 }
 
 async function spawnTunnel(): Promise<PublicState> {
@@ -447,17 +537,20 @@ async function spawnTunnel(): Promise<PublicState> {
 		return remoteStatus().public;
 	}
 
-	const binary = tunnelEngine();
+		const binary = tunnelEngine();
 	if (!binary) {
 		current.publicError = "找不到 cloudflared";
 		return remoteStatus().public;
 	}
 
-	const child = spawn(binary, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${lan.port}`], {
-		stdio: ["ignore", "pipe", "pipe"],
+	// TCP/HTTP2 在限制 UDP 的本机代理和网络下也可用，避免默认 QUIC 长时间卡在未连接。
+	const child = spawn(process.execPath, [path.join(APP_ROOT, "scripts", "remote-engine.mjs"), binary, "tunnel", "--no-autoupdate", "--protocol", "http2", "--url", `http://127.0.0.1:${lan.port}`], {
+		stdio: ["ignore", "pipe", "pipe", "ipc"],
 		windowsHide: true,
+		detached: process.platform !== "win32",
+		env: { ...isolatedCommandEnv(process.env), NODE_ENV: "production", PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR },
 	});
-	const tunnel: ManagedTunnel = { child, url: null, ready: false, controller: new AbortController() };
+	const tunnel: ManagedTunnel = { child, url: null, ready: false, probeAllowed: false, controller: new AbortController() };
 	current.tunnel = tunnel;
 
 	await new Promise<void>((resolve) => {
@@ -473,18 +566,26 @@ async function spawnTunnel(): Promise<PublicState> {
 		tunnel.controller!.signal.addEventListener("abort", canceled, { once: true });
 		const timer = setTimeout(() => {
 			// 不收掉的话进程还活着、状态一直是「运行中」却永远没有地址
-			current.publicError = "启动隧道超时：cloudflared 没有在 45 秒内给出地址";
+			current.publicError = "连接准备超时：隧道没有在 45 秒内完成注册，正在自动重试。";
 			dropTunnel(child);
 			finish();
 		}, TUNNEL_TIMEOUT_MS);
 		const catcher = createUrlCatcher();
+		let registered = false;
+		let logTail = "";
 		const scan = (chunk: Buffer) => {
-			const url = catcher.feed(chunk.toString("utf8"));
-			if (!url || current.tunnel !== tunnel) return;
-			tunnel.url = url;
-			// 域名必须先放行再算启动成功，否则第一次访问必然被 Host 校验挡成 403
-			allowTunnelHost(url);
-			// 抓到就够了，摘掉监听：既避免后续输出改动已生效的地址，也不白占着流
+			if (current.tunnel !== tunnel) return;
+			const text = chunk.toString("utf8");
+			logTail = (logTail + text).slice(-8192);
+			registered ||= logTail.includes("Registered tunnel connection");
+			const url = catcher.feed(text);
+			if (url) {
+				tunnel.url = url;
+				// 域名先放行，之后的健康检查才能通过 Host 校验。
+				allowTunnelHost(url);
+			}
+			if (!tunnel.url || !registered) return;
+			// 地址创建和隧道注册都完成后再进入探测阶段。
 			child.stdout?.off("data", scan);
 			child.stderr?.off("data", scan);
 			finish();
@@ -503,10 +604,15 @@ async function spawnTunnel(): Promise<PublicState> {
 			dropTunnel(child);
 			finish();
 		});
+		child.on("message", (message) => {
+			if (current.tunnel !== tunnel || !message || typeof message !== "object" || !("type" in message) || message.type !== "engine-error") return;
+			const failure = message as { code?: string; message?: string };
+			child.emit("error", Object.assign(new Error(failure.message || "隧道引擎启动失败"), { code: failure.code }));
+		});
 		child.once("exit", (code) => {
 			const active = current.tunnel;
 			if (active?.child === child) {
-				current.publicError = `cloudflared 退出了（code ${code ?? "?"}）。请重新开启远程连接，并使用新地址。`;
+				current.publicError = `公网连接中断（code ${code ?? "?"}），正在等待自动重连。`;
 				dropTunnel(child);
 				finish();
 			} else {
@@ -515,39 +621,46 @@ async function spawnTunnel(): Promise<PublicState> {
 		});
 	});
 
-	// 地址拿到了，但快速隧道的域名还要十几秒才在全球 DNS 生效。
-	// 不等它就直接报「就绪」，用户一复制地址打开就是打不开 —— 那才是真的像坏了。
-	if (current.tunnel === tunnel && tunnel.url) await waitForTunnelReady(tunnel);
+	if (current.tunnel === tunnel && tunnel.url) {
+		await delay(TUNNEL_DNS_GRACE_MS, undefined, { signal: tunnel.controller!.signal }).catch(() => {});
+		if (current.tunnel === tunnel && !tunnel.controller!.signal.aborted) {
+			tunnel.probeAllowed = true;
+			await waitForTunnelReady(tunnel);
+		}
+	}
 	return remoteStatus().public;
 }
 
 export async function stopPublic(): Promise<void> {
 	const current = state();
+	if (current.automaticRetry) clearInterval(current.automaticRetry);
+	current.automaticRetry = undefined;
 	current.generation = (current.generation ?? 0) + 1;
 	const starting = current.publicStarting;
 	const tunnel = current.tunnel;
 	current.tunnel = null;
 	current.publicError = null;
-	if (!tunnel) { await starting; return; }
+	if (!tunnel) { await starting; await Promise.all(current.tunnelStopping ?? []); return; }
 	tunnel.controller?.abort();
 	// 先摘域名再杀进程：别给一个已经没人管的域名留后门
 	disallowTunnelHost(tunnel.url);
-	await new Promise<void>((resolve) => {
-		tunnel.child.once("exit", () => resolve());
-		tunnel.child.kill();
-		// 进程已经死了或杀不掉时不要卡住调用方
-		setTimeout(resolve, 3_000).unref();
-	});
+	await dropTunnel(tunnel.child);
+	await Promise.all(current.tunnelStopping ?? []);
 	await starting;
 }
 
 export async function stopAll(): Promise<void> {
+	const current = state();
+	if (current.automaticRetry) clearInterval(current.automaticRetry);
+	current.automaticRetry = undefined;
 	await stopPublic();
 	await stopLan();
 }
 
 /** 仅供测试 */
 export function resetRemoteSupervisor(): void {
+	const previous = state();
+	if (previous.automaticRetry) clearInterval(previous.automaticRetry);
 	const store = globalThis as Record<PropertyKey, unknown>;
 	store[Symbol.for(STATE_KEY)] = {
 		lan: null, tunnel: null, lanError: null, publicError: null, enginePath: null, engineChecked: false,

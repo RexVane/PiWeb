@@ -17,10 +17,11 @@ import { grokSource } from "./grok";
 import { dshSource } from "./dsh";
 import { zcodeSource } from "./zcode";
 import { opencodeSource } from "./opencode";
-import { importedKey, listImportedSessions, findImported, writeImportedSession } from "./writer";
+import { importedKey, listImportedSessions, writeImportedSession } from "./writer";
 import { getArchivedSessions, forgetSession } from "../workspace-store";
 import { readHead } from "./files";
 import { INITIAL_SCAN_LIMIT } from "./limits";
+import { withSettingsWriteLock, withExternalSettingsLock } from "../settings-write-lock";
 
 export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 	claude: claudeSource,
@@ -55,16 +56,19 @@ export interface ScanReport {
 	hasMore: Partial<Record<ImportSource, boolean>>;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string, onTimeout?: () => void, signal?: AbortSignal): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error(message)), ms);
+		const finish = () => { clearTimeout(timer); signal?.removeEventListener("abort", cancel); };
+		const cancel = () => { finish(); reject(signal?.reason ?? new Error("扫描已取消")); };
+		const timer = setTimeout(() => { finish(); onTimeout?.(); reject(new Error(message)); }, ms);
+		if (signal?.aborted) cancel(); else signal?.addEventListener("abort", cancel, { once: true });
 		promise.then(
 			(value) => {
-				clearTimeout(timer);
+				finish();
 				resolve(value);
 			},
 			(error) => {
-				clearTimeout(timer);
+				finish();
 				reject(error);
 			},
 		);
@@ -72,7 +76,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 /** 扫描全部来源；返回的 summary 带 imported 标记，且已按时间倒序 */
-export async function scanAllSources(agentDir: string, options: { sources?: ImportSource[]; limit?: number } = {}): Promise<ScanReport> {
+export async function scanAllSources(agentDir: string, options: { sources?: ImportSource[]; limit?: number; signal?: AbortSignal } = {}): Promise<ScanReport> {
+	options.signal?.throwIfAborted();
 	const sources = options.sources ?? IMPORT_SOURCES;
 	const limit = options.limit ?? SCAN_LIMIT_PER_SOURCE;
 	const summaries: ExternalSessionSummary[] = [];
@@ -83,13 +88,17 @@ export async function scanAllSources(agentDir: string, options: { sources?: Impo
 	const archived = [...imported].filter(([, file]) => archivedPaths.has(pathKey(file))).map(([key]) => key);
 
 	await Promise.all(sources.map(async (source) => {
+		options.signal?.throwIfAborted();
 		const module = IMPORT_SOURCE_MODULES[source];
 		if (!module) return;
 		try {
-			const found = await withTimeout(module.scan({ limit: limit > 0 ? limit + 1 : 0 }), SCAN_TIMEOUT_MS, "扫描超时（30 秒）");
+			const controller = new AbortController();
+			const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+			const found = await withTimeout(module.scan({ limit: limit > 0 ? limit + 1 : 0, signal }), SCAN_TIMEOUT_MS, "扫描超时（30 秒）", () => controller.abort(), signal);
 			hasMore[source] = limit > 0 && found.length > limit;
 			summaries.push(...(limit > 0 ? found.slice(0, limit) : found));
 		} catch (error) {
+			options.signal?.throwIfAborted();
 			errors.push({ source, message: error instanceof Error ? error.message : String(error) });
 		}
 	}));
@@ -112,7 +121,7 @@ export interface ImportOutcome {
 	messageCount?: number;
 	/** 导入到的 pi 会话文件（成功时） */
 	path?: string;
-	/** 落到的工具目录；源项目路径本机不存在时会与源项目不同 */
+	/** 导入到的工作区目录 */
 	workspace?: string;
 	skipped?: string[];
 }
@@ -128,11 +137,10 @@ export interface ImportReport {
 }
 
 export interface ImportOptions {
+	signal?: AbortSignal;
 	agentDir: string;
-	/** 源项目路径在本机不存在时的兜底工作区（必须已存在） */
-	fallbackCwd?: string;
 	now?: number;
-	onProgress?: (done: number, total: number) => void;
+	onProgress?: (done: number, total: number, outcome?: ImportOutcome) => void;
 }
 
 async function isDirectory(target: string | undefined): Promise<boolean> {
@@ -160,9 +168,15 @@ async function oversize(location: string): Promise<boolean> {
 }
 
 export async function importSessions(items: ImportSelection[], options: ImportOptions): Promise<ImportReport> {
+	const lock = path.join(options.agentDir, "piweb-session-import");
+	return withSettingsWriteLock(lock, () => { options.signal?.throwIfAborted(); return withExternalSettingsLock(lock, () => { options.signal?.throwIfAborted(); return importSessionsLocked(items, options); }); });
+}
+
+async function importSessionsLocked(items: ImportSelection[], options: ImportOptions): Promise<ImportReport> {
 	const results: ImportOutcome[] = [];
+	const imported = await listImportedSessions(options.agentDir);
+	const archived = new Set((await getArchivedSessions(options.agentDir)).map(pathKey));
 	const workspaces = new Set<string>();
-	const fallback = (await isDirectory(options.fallbackCwd)) ? path.resolve(options.fallbackCwd as string) : undefined;
 	const scanned = new Map<ImportSource, Map<string, ExternalSessionSummary>>();
 	const seen = new Set<string>();
 
@@ -174,7 +188,9 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 			cache = new Map();
 			// limit: 0 = 不限：这里要按 id 反查任意一条会话（面板只列最近的 15 条，
 			// 但选择来自面板、且可能已经过几分钟，所以解析一定要能看到全部，不能跟着截断）
-			for (const summary of await module.scan({ limit: 0 })) cache.set(summary.externalId, summary);
+			const controller = new AbortController();
+			const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+			for (const summary of await withTimeout(module.scan({ limit: 0, signal }), SCAN_TIMEOUT_MS, "源会话扫描超时", () => controller.abort(), signal)) cache.set(summary.externalId, summary);
 			scanned.set(source, cache);
 		}
 		return cache.get(externalId);
@@ -182,11 +198,12 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 
 	let done = 0;
 	for (const item of items) {
+		options.signal?.throwIfAborted();
 		const { source, externalId } = item;
 		const outcome: ImportOutcome = { source, externalId, status: "failed" };
 		try {
 			const identity = importedKey(source, externalId);
-			const existing = IMPORT_SOURCE_MODULES[source] && !seen.has(identity) ? await findImported(options.agentDir, source, externalId) : null;
+			const existing = IMPORT_SOURCE_MODULES[source] && !seen.has(identity) ? imported.get(identity) : undefined;
 			if (!IMPORT_SOURCE_MODULES[source]) {
 				outcome.reason = "不支持的来源";
 			} else if (seen.has(importedKey(source, externalId))) {
@@ -199,9 +216,10 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 				outcome.workspace = header.cwd;
 				workspaces.add(header.cwd);
 				seen.add(identity);
-				if ((await getArchivedSessions(options.agentDir)).some((file) => pathKey(file) === pathKey(existing))) {
+				if (archived.has(pathKey(existing))) {
 					// 恢复既有文件，保留导入后在 Pi 中追加的内容；不依赖源会话仍然存在。
 					await forgetSession(existing, options.agentDir);
+					archived.delete(pathKey(existing));
 					outcome.status = "restored";
 				} else {
 					outcome.status = "skipped";
@@ -215,20 +233,22 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 					outcome.reason = "源会话过大（超过 200MB），已跳过";
 				} else {
 					const session = await IMPORT_SOURCE_MODULES[source].read(summary);
+					options.signal?.throwIfAborted();
 					if (!session) {
 						outcome.reason = "源会话读不出可导入的消息";
 					} else if (session.entries.length > MAX_ENTRIES) {
 						outcome.reason = `消息过多（${session.entries.length} 条），已跳过`;
 					} else {
-						// 源项目路径本机存在就导回原工作区，否则落到用户选的兜底工作区
+						// 只导回在本机仍存在的原项目目录；目录不存在或缺失时直接失败，不做工作区兜底
 						const sourceProject = session.summary.projectPath;
-						const target = (await isDirectory(sourceProject)) ? path.resolve(sourceProject as string) : fallback;
+						const target = (await isDirectory(sourceProject)) ? path.resolve(sourceProject as string) : undefined;
 						if (!target) {
-							outcome.reason = sourceProject ? `源项目目录不存在：${sourceProject}` : "源会话没有项目目录，且未选择兜底工作区";
+							outcome.reason = sourceProject ? `源项目目录不存在：${sourceProject}` : "源会话没有项目目录";
 						} else {
 							const written = await writeImportedSession(session, { cwd: target, agentDir: options.agentDir, now: options.now });
 							outcome.status = "imported";
 							outcome.path = written.path;
+							imported.set(identity, written.path);
 							outcome.messageCount = written.messageCount;
 							outcome.workspace = target;
 							outcome.title = session.summary.title;
@@ -244,7 +264,7 @@ export async function importSessions(items: ImportSelection[], options: ImportOp
 		}
 		results.push(outcome);
 		done += 1;
-		options.onProgress?.(done, items.length);
+		options.onProgress?.(done, items.length, outcome);
 	}
 
 	return {

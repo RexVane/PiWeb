@@ -25,7 +25,7 @@ function renderSidebar(
 	groupBy: "workspace" | "flat",
 	archivedSessions: SessionListItem[] = [],
 	handlers: {
-		onArchive?: (path: string) => void;
+		onArchive?: (path: string) => void | Promise<void>;
 		onDelete?: (path: string) => Promise<void>;
 		onPin?: (path: string) => void | Promise<void>;
 		onUnpin?: (path: string) => void | Promise<void>;
@@ -89,7 +89,12 @@ describe("sidebar row menus", () => {
 		renderSidebar("flat");
 		const trigger = screen.getByRole("button", { name: "session-actions" });
 		press(trigger);
-		expect(screen.getByText("重命名")).toBeTruthy();
+		const renameItem = screen.getByRole("button", { name: "重命名" });
+		const popover = renameItem.closest(".popover");
+		expect(popover).toBeTruthy();
+		// Popover must live outside the parent session row .isx-menu-item so hover/active icon inversion never turns menu icons white
+		expect(popover?.parentElement?.classList.contains("isx-menu-item")).toBe(false);
+		expect(popover?.closest(".isx-menu-item")).toBeNull();
 		press(trigger);
 		expect(screen.queryByText("重命名")).toBeNull();
 	});
@@ -115,10 +120,23 @@ describe("sidebar row menus", () => {
 		expect(screen.getByText("归档满 30 天自动删除")).toBeTruthy();
 	});
 
-	it("archives from the row icon, and keeps archive out of the ⋮ menu", () => {
+	it("archives only after confirming the row action, and keeps archive out of the ⋮ menu", async () => {
 		const onArchive = vi.fn();
 		renderSidebar("flat", [], { onArchive });
 		fireEvent.click(screen.getByRole("button", { name: "归档会话" }));
+		expect(onArchive).not.toHaveBeenCalled();
+		const prompt = screen.getByRole("alertdialog");
+		expect(prompt.textContent).toContain("正在运行的任务会停止");
+		expect(prompt.textContent).toContain("内容会保留");
+		expect(prompt.textContent).toContain("30 天");
+		expect(prompt.textContent).toContain("恢复副本");
+		fireEvent.click(within(prompt).getByRole("button", { name: "取消" }));
+		expect(onArchive).not.toHaveBeenCalled();
+		expect(screen.queryByRole("alertdialog")).toBeNull();
+		expect(screen.getByText("hello")).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "归档会话" }));
+		fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "归档会话" }));
+		await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 		expect(onArchive).toHaveBeenCalledWith("/sessions/a.jsonl");
 
 		press(screen.getByRole("button", { name: "session-actions" }));
@@ -127,13 +145,35 @@ describe("sidebar row menus", () => {
 		expect(screen.queryAllByText("归档会话")).toHaveLength(0);
 	});
 
-	it("permanently deletes a session only after confirming", async () => {
+	it("keeps a failed archive confirmation open for retry and blocks repeated submissions while pending", async () => {
+		let reject!: (error: Error) => void;
+		const pending = new Promise<void>((_resolve, no) => { reject = no; });
+		const onArchive = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(undefined);
+		renderSidebar("flat", [], { onArchive });
+		fireEvent.click(screen.getByRole("button", { name: "归档会话" }));
+		const prompt = screen.getByRole("alertdialog");
+		const confirm = within(prompt).getByRole("button", { name: "归档会话" });
+		fireEvent.click(confirm); fireEvent.click(confirm);
+		expect(onArchive).toHaveBeenCalledTimes(1);
+		expect((confirm as HTMLButtonElement).disabled).toBe(true);
+		fireEvent.click(within(prompt).getByRole("button", { name: "取消" }));
+		expect(screen.getByRole("alertdialog")).toBe(prompt);
+		await act(async () => reject(new Error("archive denied")));
+		expect(screen.getByRole("alert").textContent).toBe("archive denied");
+		expect(screen.getByText("hello")).toBeTruthy();
+		expect((confirm as HTMLButtonElement).disabled).toBe(false);
+		fireEvent.click(confirm);
+		await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+		expect(onArchive).toHaveBeenCalledTimes(2);
+	});
+
+	it("removes a session only after confirming its recoverable backup", async () => {
 		const onDelete = vi.fn(async () => {});
 		renderSidebar("flat", [], { onDelete });
 		press(screen.getByRole("button", { name: "session-actions" }));
 		fireEvent.click(screen.getByText("删除会话"));
 		expect(onDelete).not.toHaveBeenCalled();
-		expect(screen.getByRole("dialog").textContent).toContain("无法恢复");
+		expect(screen.getByRole("dialog").textContent).toContain("恢复副本");
 
 		fireEvent.click(screen.getByRole("button", { name: "取消" }));
 		expect(screen.queryByRole("dialog")).toBeNull();
@@ -249,7 +289,7 @@ describe("confirmed session pin state", () => {
 		let finish!: (value: Response) => void;
 		const requests: unknown[] = [];
 		vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-			const url = String(input);
+			const url = new URL(String(input), "http://localhost").pathname;
 			if (url === "/api/workspaces" && init?.method === "POST") {
 				requests.push(JSON.parse(String(init.body)));
 				return new Promise<Response>((done) => { finish = done; });

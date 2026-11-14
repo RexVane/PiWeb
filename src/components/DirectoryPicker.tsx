@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 /**
  * 应用内目录浏览器：供远程设备和本机原生选择器不可用时使用。

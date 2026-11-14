@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { recycleFixture } from "../lib/sandbox/fixtures";
 
 const gitPipeFailure = vi.hoisted(() => ({ result: null as { code: number; stderr: string } | null }));
 vi.mock("node:child_process", async (original) => {
@@ -11,7 +12,7 @@ vi.mock("node:child_process", async (original) => {
 	const { PassThrough } = await import("node:stream");
 	return { ...actual, spawn: (file: string, args: readonly string[] = [], options: import("node:child_process").SpawnOptions = {}) => {
 		const result = gitPipeFailure.result;
-		if (!result || args[0] !== "check-ignore") return actual.spawn(file, args, options);
+		if (!result || !args.includes("check-ignore")) return actual.spawn(file, args, options);
 		const child = Object.assign(new EventEmitter(), {
 			stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
 		});
@@ -37,7 +38,8 @@ beforeEach(async () => {
 });
 afterEach(async () => {
 	gitPipeFailure.result = null;
-	await fs.rm(temporary, { recursive: true, force: true });
+	vi.restoreAllMocks();
+	await recycleFixture(temporary);
 });
 
 const imageRequest = (file: string) => GET(new Request(`http://localhost/api/files?${new URLSearchParams({ image: "1", cwd, path: file })}`));
@@ -61,6 +63,27 @@ describe("protected workspace image endpoint", () => {
 		for (const target of ["../outside/pic.png", "linked/pic.png", "https://outside.test/pic.png", "//outside.test/pic.png"]) {
 			expect((await imageRequest(target)).status, target).toBe(400);
 		}
+	});
+	it("rejects an image parent redirected after path checks but before the file opens", async () => {
+		const outside = path.join(temporary, "outside-race");
+		await fs.mkdir(outside);
+		await fs.writeFile(path.join(outside, "中文 image.png"), Buffer.concat([PNG, Buffer.from("PRIVATE OUTSIDE IMAGE")]));
+		const parent = path.join(cwd, "assets");
+		const target = path.join(parent, "中文 image.png");
+		const open = fs.open.bind(fs);
+		let swapped = false;
+		vi.spyOn(fs, "open").mockImplementation(async (...args) => {
+			if (!swapped && path.resolve(String(args[0])) === target) {
+				swapped = true;
+				await fs.rename(parent, path.join(cwd, "original-assets"));
+				await fs.symlink(outside, parent, process.platform === "win32" ? "junction" : "dir");
+			}
+			return open(...args);
+		});
+		const response = await imageRequest("assets/中文 image.png");
+		expect(swapped).toBe(true);
+		expect(response.status).toBe(400);
+		expect(await response.text()).not.toContain("PRIVATE OUTSIDE IMAGE");
 	});
 
 	it("accepts an absolute document image when the workspace was opened through a directory alias", async () => {
@@ -102,14 +125,16 @@ describe("protected workspace image endpoint", () => {
 		gitPipeFailure.result = { code, stderr: "" };
 		const response = await imageRequest("assets/中文 image.png");
 		expect(response.status).toBe(500);
-		expect((await response.json()).error).toBe("write EPIPE");
+		expect(await response.json()).toMatchObject({ success: false, errorCode: "EPIPE" });
 	});
 
 	it("keeps unsafe-repository failures closed when Git also closes stdin early", async () => {
 		gitPipeFailure.result = { code: 128, stderr: "fatal: detected dubious ownership in repository\n" };
 		const response = await imageRequest("assets/中文 image.png");
 		expect(response.status).toBe(500);
-		expect((await response.json()).error).toBe("fatal: detected dubious ownership in repository");
+		const body = await response.json();
+		expect(body).toMatchObject({ success: false, errorCode: "REQUEST_FAILED" });
+		expect(body.error).not.toContain(cwd);
 	});
 
 	it("serves real SVG with scripts and external requests disabled even when navigated directly", async () => {

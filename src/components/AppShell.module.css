@@ -1,0 +1,66 @@
+.shell {
+	/* The first HTML paint already has the right columns, before matchMedia runs. */
+	grid-template-columns: var(--pw-sidebar-width) minmax(0, 1fr) var(--pw-right-width);
+	background: var(--dsw-bg-base);
+}
+
+.sidebar {
+	background: var(--dsw-sidebar-fill);
+}
+
+.rightColumn {
+	background: var(--dsw-sidebar-fill);
+	border-left: 0.5px solid var(--dsw-border-l2);
+}
+
+.shell .mobileMenu,
+.mobileBackdrop {
+	display: none;
+}
+
+@media (max-width: 840px) {
+	.shell {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.sidebar {
+		position: fixed;
+		inset: 0 auto 0 0;
+		width: min(86vw, 340px);
+		z-index: 90;
+		visibility: hidden;
+		pointer-events: none;
+		transform: translateX(-105%);
+		transition: transform var(--ds-duration-normal) var(--ds-ease-in-out), visibility 0s linear var(--ds-duration-normal);
+	}
+
+	.sidebar[data-mobile-open="true"] {
+		visibility: visible;
+		pointer-events: auto;
+		transform: translateX(0);
+		transition-delay: 0s;
+		box-shadow: var(--dsw-elevation-prominent);
+	}
+
+	.rightColumn {
+		position: fixed;
+		inset: 0 0 0 auto;
+		width: min(92vw, 640px);
+		z-index: 90;
+		border-left: 0;
+		box-shadow: var(--dsw-elevation-prominent);
+	}
+
+	.rightPlaceholder,
+	.desktopResizeHandle {
+		display: none;
+	}
+
+	.shell .mobileMenu {
+		display: inline-flex;
+	}
+
+	.mobileBackdrop {
+		display: block;
+	}
+}

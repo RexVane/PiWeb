@@ -92,10 +92,10 @@ vi.mock("@/hooks/usePiWeb", () => ({
 			currentId: "current-id",
 			models,
 			state: {
-				snapshot,
+				snapshot: { ...snapshot, messages: currentMessages },
 				messages: currentMessages,
 				tools,
-				toolPreset: "standard",
+				toolPreset: "workspace",
 				connected: true,
 				error: null,
 				compaction: null,

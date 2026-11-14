@@ -11,16 +11,18 @@
  */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { type CommitOptions, GrowthError, commitRound, recordWorkspaceChanges } from "./growth-service";
-import { promptsFromEntries } from "./growth-turns";
+import { promptsFromEntries, userTurnsFromEntries } from "./growth-turns";
 import type { GrowthConsentRequest, GrowthRound, GrowthRoundStatus, WebEvent } from "./types";
+import { isAbortMessage } from "./chat/cancellation";
+import { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-activity";
 
 const ERROR_THROTTLE_MS = 60_000;
-export const GROWTH_TRACKER_VERSION = 5;
+export const GROWTH_TRACKER_VERSION = 6;
 
 interface SessionEntryLike {
 	type?: string;
 	id?: string;
-	message?: { role?: string; content?: unknown; stopReason?: string };
+	message?: { role?: string; content?: unknown; stopReason?: string; errorMessage?: string };
 }
 
 export interface GrowthTracker {
@@ -34,7 +36,7 @@ export interface GrowthTracker {
 	/** 立即记录（项目栏按钮）：把当前改动提交为「你的修改」；没改动返回 null */
 	recordNow(): Promise<GrowthRound | null>;
 	/** 用户回答了建仓库请求（决定已由调用方存好）：同意就立即拍基线，拒绝就停用 */
-	consentAnswered(allow: boolean): Promise<GrowthRound | null>;
+	consentAnswered(allow: boolean, recordBaseline?: boolean): Promise<GrowthRound | null>;
 	dispose(): void;
 }
 
@@ -44,7 +46,7 @@ function roundStatus(entries: readonly SessionEntryLike[]): GrowthRoundStatus {
 		const message = entries[i].type === "message" ? entries[i].message : undefined;
 		if (message?.role !== "assistant") continue;
 		if (message.stopReason === "aborted") return "aborted";
-		if (message.stopReason === "error") return "error";
+		if (message.stopReason === "error") return isAbortMessage(message.errorMessage) ? "aborted" : "error";
 		return "done";
 	}
 	return "done";
@@ -71,9 +73,13 @@ export function createGrowthTracker(opts: {
 	let runStart: number | null = null;
 	/** 每开始一轮加一：prepare 排队期间 pi 已经开工，就不能再把工作区记成「你的修改」 */
 	let runEpoch = 0;
-	/** 已知工作区要先建仓库；consentRequest = 正在等用户回答 */
-	let needsInit = false;
+	/** 正在等待用户同意为该工作区记录修改。 */
 	let consentRequest: GrowthConsentRequest | null = null;
+	const releaseActiveRun = () => {
+		const attribution = finishGrowthRun(cwd, sessionPath);
+		runStart = null;
+		void completeGrowthRun(cwd, attribution.runId).catch((error) => console.warn("[piweb] Could not finish project recording activity", error));
+	};
 
 	// 提交失败不打扰用户（项目栏退化成普通文件树 + 查看器）：只在服务端日志记一次，没 git / 项目过大就停用本会话的跟踪
 	const reportError = (error: unknown) => {
@@ -82,7 +88,7 @@ export function createGrowthTracker(opts: {
 		if (terminal) {
 			disabled = true;
 			disabledFailure = error;
-			runStart = null;
+			releaseActiveRun();
 		}
 		errorActive = true;
 		lastErrorMessage = message;
@@ -111,7 +117,7 @@ export function createGrowthTracker(opts: {
 	const declined = () => {
 		disabled = true;
 		disabledFailure = new GrowthError("growth tracking was declined for this workspace", "unavailable");
-		runStart = null;
+		releaseActiveRun();
 	};
 
 	/**
@@ -119,23 +125,28 @@ export function createGrowthTracker(opts: {
 	 * 已知要建仓库且还没决定时直接跳过，不再每轮起一个 git 进程去探测。
 	 */
 	const commit = async (run: (options: CommitOptions) => Promise<GrowthRound | null>, abortIf?: () => boolean): Promise<GrowthRound | null | undefined> => {
-		const decision = needsInit ? await consent() : null;
+		const decision = await consent();
 		if (decision === false) {
 			declined();
 			return undefined;
 		}
-		if (needsInit && decision === null) return undefined;
+		if (decision === null) {
+			if (!consentRequest && !disposed) {
+				consentRequest = { cwd, reason: "existing" };
+				publish({ type: "growth_consent", request: consentRequest, ts: Date.now() });
+			}
+			return undefined;
+		}
 		try {
-			return await run({ allowInit: decision === true, abortIf });
+			return await run({ allowInit: decision === true, allowRecording: decision === true, abortIf });
 		} catch (error) {
 			if (!(error instanceof GrowthError) || error.code !== "needs-consent") throw error;
-			needsInit = true;
 			const answer = await consent();
 			if (answer === false) {
 				declined();
 				return undefined;
 			}
-			if (answer === true) return run({ allowInit: true, abortIf });
+			if (answer === true) return run({ allowInit: true, allowRecording: true, abortIf });
 			if (!consentRequest && !disposed) {
 				consentRequest = { cwd, reason: error.target?.reason ?? "not-git", parent: error.target?.parent };
 				publish({ type: "growth_consent", request: consentRequest, ts: Date.now() });
@@ -167,6 +178,7 @@ export function createGrowthTracker(opts: {
 				case "agent_start":
 					// 自动重试会再次 agent_start：一轮只从第一次开始算
 					if (runStart === null) {
+						beginGrowthRun(cwd, sessionPath);
 						runStart = entries().length;
 						runEpoch += 1;
 					}
@@ -176,11 +188,15 @@ export function createGrowthTracker(opts: {
 					const all = entries();
 					const run = all.slice(runStart);
 					const { ids, title } = promptsFromEntries(run);
+					const ordinal = userTurnsFromEntries(all).findIndex((turn) => turn.id === ids[0]) + 1;
+					const attribution = finishGrowthRun(cwd, sessionPath);
 					runStart = null;
 					void enqueue(async () => {
-						if (disabled || disposed) return;
-						const round = await commit((options) => commitRound(cwd, { kind: "round", session: sessionPath, title, promptIds: ids, status: roundStatus(run) }, options));
-						if (round !== undefined) published(round);
+						try {
+							if (disabled || disposed) return;
+							const round = await commit((options) => commitRound(cwd, { kind: "round", session: sessionPath, title, promptIds: ids, ...(ordinal > 0 ? { roundNumber: ordinal } : {}), status: roundStatus(run), ...attribution }, options));
+							if (round !== undefined) published(round);
+						} finally { await completeGrowthRun(cwd, attribution.runId); }
 					});
 					break;
 				}
@@ -210,7 +226,7 @@ export function createGrowthTracker(opts: {
 			if (failure) throw failure;
 			return result;
 		},
-		async consentAnswered(allow) {
+		async consentAnswered(allow, recordBaseline = true) {
 			const pending = consentRequest;
 			consentRequest = null;
 			if (pending && !disposed) publish({ type: "growth_consent", request: null, ts: Date.now() });
@@ -218,7 +234,10 @@ export function createGrowthTracker(opts: {
 				declined();
 				return null;
 			}
-			if (disabled || disposed) return null;
+			if (disposed) return null;
+			disabled = false;
+			disabledFailure = null;
+			if (!recordBaseline) return null;
 			let result: GrowthRound | null = null;
 			await enqueue(async () => {
 				const round = await recordUserChanges();
@@ -228,6 +247,7 @@ export function createGrowthTracker(opts: {
 		},
 		dispose() {
 			disposed = true;
+			releaseActiveRun();
 		},
 	};
 }

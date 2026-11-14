@@ -3,13 +3,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type osTypes from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../src/app/api/remote/route";
 import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remotePluginEnabled, remoteStatus, resetRemoteSupervisor, setRemotePluginEnabled, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
 const savedAuth = process.env.PI_WEB_AUTH;
 const savedToken = process.env.PI_WEB_LAUNCH_TOKEN;
+const savedAgentRoot = process.env.PI_CODING_AGENT_DIR;
+beforeEach(() => {
+	const listen = net.Server.prototype.listen;
+	vi.spyOn(net.Server.prototype, "listen").mockImplementation(function (this: net.Server, ...args: unknown[]) {
+		// Exercise the real listener without opening a test entry to the user's LAN.
+		if (args[1] === "0.0.0.0" || args[1] === "::") args[1] = "127.0.0.1";
+		return Reflect.apply(listen, this, args);
+	});
+});
 afterEach(async () => {
 	if (saved === undefined) delete process.env.PI_WEB_TRUSTED_HOSTS;
 	else process.env.PI_WEB_TRUSTED_HOSTS = saved;
@@ -19,6 +28,9 @@ afterEach(async () => {
 	else process.env.PI_WEB_LAUNCH_TOKEN = savedToken;
 	await stopAll();
 	resetRemoteSupervisor();
+	vi.restoreAllMocks();
+	if (savedAgentRoot === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = savedAgentRoot;
 });
 
 /** 拿一个当下空闲的端口 */
@@ -32,15 +44,15 @@ async function freePort(): Promise<number> {
 
 describe("remote entry guard", () => {
 	it("blocks both entries without authentication and in development mode", () => {
-		expect(remoteBlocked({})).toBe("auth");
+		expect(remoteBlocked({})).toBeNull();
 		expect(remoteBlocked({ PI_WEB_AUTH: "0" })).toBe("auth");
 		expect(remoteBlocked({ PI_WEB_AUTH: "1", NODE_ENV: "development" })).toBe("dev");
 		expect(remoteBlocked({ PI_WEB_AUTH: "1", NODE_ENV: "production" })).toBeNull();
 	});
 
 	it("/api/remote refuses to start anything while authentication is off", async () => {
-		delete process.env.PI_WEB_AUTH;
-		for (const action of ["start", "start-lan"]) {
+		process.env.PI_WEB_AUTH = "0";
+		for (const action of ["connect", "start", "start-lan"]) {
 			const response = await POST(new Request("http://127.0.0.1/api/remote", { method: "POST", body: JSON.stringify({ action }) }));
 			expect(response.status, action).toBe(409);
 		}
@@ -77,7 +89,7 @@ describe("remote entry guard", () => {
 			POST(new Request("http://127.0.0.1/api/remote", { method: "POST", body: JSON.stringify({ action: "set-plugin", enabled }) }));
 
 		it("saves the switch but never opens the LAN entry while authentication is off", async () => {
-			delete process.env.PI_WEB_AUTH;
+			process.env.PI_WEB_AUTH = "0";
 			for (const enabled of [false, true]) {
 				const response = await setPlugin(enabled);
 				expect(response.status).toBe(200);
@@ -98,17 +110,21 @@ describe("remote entry guard", () => {
 			delete process.env.PIWEB_REMOTE_LAN;
 			expect((await setPlugin(false)).status).toBe(200);
 			expect(remoteStatus().lan).toMatchObject({ running: true, styled: false });
+			const port = Number(process.env.PIWEB_REMOTE_LAN_PORT);
+			const probe = net.connect(port, "127.0.0.1");
+			await new Promise<void>((resolve, reject) => { probe.once("connect", resolve); probe.once("error", reject); });
+			probe.destroy();
 			expect((await setPlugin(true)).status).toBe(200);
 			expect(remoteStatus().lan).toMatchObject({ running: true, styled: true });
 		});
 	});
 
-	it("/api/remote hands the launch token to the settings page only while authentication is on", async () => {
+	it("/api/remote never exposes the launch token to the QR connection page", async () => {
 		process.env.PI_WEB_LAUNCH_TOKEN = "launch-tok";
 		process.env.PI_WEB_AUTH = "1";
-		expect((await (await GET()).json()).data.loginToken).toBe("launch-tok");
+		expect((await (await GET()).json()).data).not.toHaveProperty("loginToken");
 		delete process.env.PI_WEB_AUTH;
-		expect((await (await GET()).json()).data.loginToken).toBeNull();
+		expect((await (await GET()).json()).data).not.toHaveProperty("loginToken");
 	});
 });
 

@@ -50,7 +50,7 @@ describe("file paths in markdown", () => {
 	it("opens explicit relative Markdown links in the file viewer, decoding the path once", () => {
 		const { container, openFile } = renderMd("[文件](docs/%E4%B8%AD%E6%96%87%20file.md?raw=1#L2) [README](README.md) [目录](src/) [无扩展名](./LICENSE)");
 		for (const name of ["文件", "README", "目录", "无扩展名"]) fireEvent.click(screen.getByRole("link", { name }));
-		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["docs/中文 file.md", "README.md", "src/", "./LICENSE"]);
+		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["docs/中文 file.md", "README.md", "src/", "LICENSE"]);
 		expect(container.querySelectorAll("a.md-file-link").length).toBe(4);
 		expect(screen.getByRole("link", { name: "文件" }).querySelector("svg.md-file-path-icon")).not.toBeNull();
 	});

@@ -6,7 +6,7 @@
  * 答案是 JSON（{ answers: [{ selected, other? }] }），服务端再按题目校验一遍。
  */
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { IconCheckOutline14 } from "@/components/icons";
+import { IconCheckOutline14, IconChevronLeft14, IconChevronRight14 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { ExtensionDialog } from "@/hooks/usePiWeb";
 
@@ -20,9 +20,12 @@ const isAnswered = (draft: Draft | undefined) => Boolean(draft && (draft.selecte
 export function AskUserCard({
 	dialog,
 	onAnswer,
+	embedded = false,
 }: {
 	dialog: ExtensionDialog;
 	onAnswer: (id: string, response: { value?: string; cancelled?: boolean }) => void;
+	/** true 时作为输入卡(.isx-composer)顶部一体分区渲染，不单独套外框 */
+	embedded?: boolean;
 }) {
 	const { t } = useI18n();
 	const questions = dialog.questions ?? [];
@@ -115,83 +118,98 @@ export function AskUserCard({
 	/** 行尾的单选圈 / 多选框：一眼看出这题能选几个 */
 	const mark = (checked: boolean) => (
 		<span className="pw-ask-mark" data-kind={question.multiSelect ? "check" : "radio"} data-checked={checked || undefined} aria-hidden>
-			{checked && question.multiSelect && <IconCheckOutline14 size={11} />}
+			{checked && question.multiSelect && <IconCheckOutline14 size={10} />}
 		</span>
 	);
 	const title = many ? t.askTitleMany.replace("{n}", String(questions.length)) : t.askTitle;
 	const questionId = `pw-ask-${dialog.id}-q`;
 	return (
-		<section ref={cardRef} className="pw-ask" tabIndex={-1} aria-label={title} onKeyDown={onKeyDown} data-testid="ask-user-card">
-			<div className="pw-ask-head">
-				<span className="pw-ask-dot" aria-hidden />
-				<span className="pw-ask-title">{title}</span>
-				{many && (
-					<div className="pw-ask-tabs" role="tablist">
-						{questions.map((q, i) => (
-							<button
-								key={`${i}-${q.header}`}
-								type="button"
-								role="tab"
-								aria-selected={i === current}
-								data-answered={isAnswered(drafts[i]) || undefined}
-								className="pw-ask-tab"
-								title={isAnswered(drafts[i]) ? `${q.question} · ${t.askAnswered}` : q.question}
-								onClick={() => setIndex(i)}
-							>
-								{isAnswered(drafts[i]) && <IconCheckOutline14 size={11} />}
-								{q.header}
-							</button>
-						))}
+		<section ref={cardRef} className="pw-ask" data-embedded={embedded ? "true" : undefined} tabIndex={-1} aria-label={title} onKeyDown={onKeyDown} data-testid="ask-user-card">
+			<div className="pw-ask-body">
+				<div className="pw-ask-question-row flex items-start justify-between gap-2.5">
+					<div className="pw-ask-question min-w-0 flex-1" id={questionId}>
+						{many && <span className="pw-ask-qnum">{current + 1}、</span>}
+						<span className="pw-ask-question-text">{question.question}</span>
+						{question.multiSelect && <span className="pw-ask-multi">{t.askMultiHint}</span>}
 					</div>
-				)}
-			</div>
-			<div className="pw-ask-question" id={questionId}>
-				{question.question}
-				{question.multiSelect && <span className="pw-ask-multi">{t.askMultiHint}</span>}
-			</div>
-			<div className="pw-ask-options" role={question.multiSelect ? "group" : "radiogroup"} aria-labelledby={questionId}>
-				{question.options.map((option, i) => {
-					const checked = draft.selected.includes(option.label);
-					return (
-						<button
-							key={`${current}-${i}-${option.label}`}
-							type="button"
-							role={question.multiSelect ? "checkbox" : "radio"}
-							aria-checked={checked}
-							className="pw-ask-option"
-							onClick={() => choose(option.label)}
-						>
-							<span className="pw-ask-num">{i + 1}</span>
-							<span className="pw-ask-text">
-								<span className="pw-ask-label">{option.label}</span>
-								{option.description && <span className="pw-ask-desc">{option.description}</span>}
+					{many && (
+						<div className="pw-ask-pager inline-flex flex-none items-center" aria-label={`${current + 1}/${questions.length}`}>
+							<button
+								type="button"
+								className="pw-ask-pager-btn inline-flex items-center justify-center"
+								aria-label={t.askPrev}
+								title={`${t.askPrev} (←)`}
+								disabled={current === 0}
+								onClick={() => setIndex(Math.max(0, current - 1))}
+							>
+								<IconChevronLeft14 size={13} aria-hidden />
+							</button>
+							<span className="pw-ask-pager-count">
+								{current + 1}/{questions.length}
 							</span>
-							{mark(checked)}
-						</button>
-					);
-				})}
-				<label className="pw-ask-option pw-ask-other" data-checked={draft.other.trim() ? true : undefined}>
-					<span className="pw-ask-num">{question.options.length + 1}</span>
-					<input
-						key={current}
-						ref={otherRef}
-						value={draft.other}
-						placeholder={t.askOtherPlaceholder}
-						aria-label={t.askOther}
-						maxLength={4000}
-						onChange={(event) => setOther(event.target.value)}
-					/>
-					{mark(Boolean(draft.other.trim()))}
-				</label>
+							<button
+								type="button"
+								className="pw-ask-pager-btn inline-flex items-center justify-center"
+								aria-label={t.askPagerNext}
+								title={`${t.askPagerNext} (→)`}
+								disabled={current >= questions.length - 1}
+								onClick={() => setIndex(Math.min(questions.length - 1, current + 1))}
+							>
+								<IconChevronRight14 size={13} aria-hidden />
+							</button>
+						</div>
+					)}
+				</div>
+				<div className="pw-ask-options" role={question.multiSelect ? "group" : "radiogroup"} aria-labelledby={questionId}>
+					{question.options.map((option, i) => {
+						const checked = draft.selected.includes(option.label);
+						return (
+							<button
+								key={`${current}-${i}-${option.label}`}
+								type="button"
+								role={question.multiSelect ? "checkbox" : "radio"}
+								aria-checked={checked}
+								className="pw-ask-option"
+								onClick={() => choose(option.label)}
+							>
+								<span className="pw-ask-num">{i + 1}</span>
+								<span className="pw-ask-text">
+									<span className="pw-ask-label">{option.label}</span>
+									{option.description && <span className="pw-ask-desc">{option.description}</span>}
+								</span>
+								{mark(checked)}
+							</button>
+						);
+					})}
+					<label className="pw-ask-option pw-ask-other" data-checked={draft.other.trim() ? true : undefined}>
+						<span className="pw-ask-num">{question.options.length + 1}</span>
+						<input
+							key={current}
+							ref={otherRef}
+							value={draft.other}
+							placeholder={t.askOtherPlaceholder}
+							aria-label={t.askOther}
+							maxLength={4000}
+							onChange={(event) => setOther(event.target.value)}
+						/>
+						{mark(Boolean(draft.other.trim()))}
+					</label>
+				</div>
 			</div>
 			<div className="pw-ask-foot">
-				<span className="pw-ask-hint">{t.askWaitHint}</span>
-				<button type="button" className="pw-ask-skip" onClick={() => onAnswer(dialog.id, { cancelled: true })}>
-					{t.askSkip}
-				</button>
-				<button type="button" className="btn-primary-white" style={{ height: 30, padding: "0 16px", fontSize: 13 }} disabled={primaryDisabled} onClick={primary}>
-					{primaryLabel}
-				</button>
+				<div className="pw-ask-actions">
+					<button type="button" className="pw-ask-skip" onClick={() => onAnswer(dialog.id, { cancelled: true })}>
+						{t.askSkip}
+					</button>
+					<button
+						type="button"
+						className="btn-primary-white pw-ask-submit"
+						disabled={primaryDisabled}
+						onClick={primary}
+					>
+						{primaryLabel}
+					</button>
+				</div>
 			</div>
 		</section>
 	);

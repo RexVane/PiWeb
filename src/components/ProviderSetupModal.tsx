@@ -1,4 +1,6 @@
 "use client";
+import { clientFetch as fetch } from "@/lib/client-fetch";
+
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -329,6 +331,7 @@ export function ProviderSetupModal({
 										<input
 											className={styles.input}
 											value={entry.value}
+											type="password"
 											placeholder={t.customHeaderValue}
 											onChange={(event) => setHeaders((current) => (current ?? []).map((item, i) => (i === index ? { ...item, value: event.target.value } : item)))}
 										/>

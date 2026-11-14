@@ -36,6 +36,8 @@ describe("workspace resources route", () => {
 		mocks.load.mockRejectedValue(new Error("Discovery failed"));
 		const result = await GET(request(cwd));
 		expect(result.status).toBe(500);
-		expect(await result.json()).toEqual({ success: false, error: "Discovery failed" });
+		const body = await result.json();
+		expect(body).toMatchObject({ success: false, errorCode: "REQUEST_FAILED", error: expect.stringContaining("重试") });
+		expect(body.error).not.toContain("Discovery failed");
 	});
 });

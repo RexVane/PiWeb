@@ -69,20 +69,12 @@
 .project span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .metadata { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: 10px; color: var(--dsw-label-tertiary); }
 .metadata > * { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.help { margin-top: 12px; color: var(--dsw-label-tertiary); font-size: 11px; }
-.help summary, .destination summary, .report summary { display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer; }
-.help summary::-webkit-details-marker, .destination summary::-webkit-details-marker, .report summary::-webkit-details-marker { display: none; }
+.help { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--dsw-border-l1); color: var(--dsw-label-tertiary); font-size: 11px; }
+.help summary, .report summary { display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer; }
+.help summary::-webkit-details-marker, .report summary::-webkit-details-marker { display: none; }
 .help p { padding-top: 8px; margin: 0; line-height: 1.8; }
-.help[open] summary svg, .destination[open] summary > svg:last-child, .report details[open] summary svg { transform: rotate(180deg); }
+.help[open] summary svg, .report details[open] summary svg { transform: rotate(180deg); }
 .footer { flex: none; padding: 10px 16px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--dsw-border-l1); background: var(--dsw-bg-elevated); }
-.destination { margin-top: 18px; border-top: 1px solid var(--dsw-border-l1); color: var(--dsw-label-tertiary); }
-.destination summary { min-height: 36px; font-size: 11px; }
-.destination summary > span { display: flex; flex: 1; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
-.destination small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--dsw-label-tertiary); }
-.destinationOptions { padding: 2px 0 12px; }
-.destinationOptions label { display: block; font-size: 11px; margin-bottom: 6px; }
-.destinationOptions select { width: 100%; min-width: 0; border: 1px solid var(--dsw-border-l2); border-radius: 8px; padding: 7px 8px; background: var(--dsw-bg-base); color: var(--dsw-label-primary); font-size: 11px; text-overflow: ellipsis; }
-.destinationOptions p { margin: 6px 0 0; font-size: 10px; line-height: 1.5; color: var(--dsw-label-tertiary); }
 .selectionReview { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; margin-bottom: 8px; font-size: 10px; color: var(--dsw-label-tertiary); }
 .selectionActions { display: flex; flex: 1; justify-content: space-between; gap: 12px; }
 .selectionActions button { padding: 3px 0; color: var(--dsw-accent); font-size: 10.5px; }

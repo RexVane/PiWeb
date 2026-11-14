@@ -20,6 +20,13 @@ function flipLastChar(value: string): string {
 }
 
 describe("session cookies", () => {
+	it("binds an in-flight exchange to its revocation generation across concurrent all-device logout", () => {
+		const before = createSessionCookie(AUTHORITY, SECRET, 2000, "browser", 0);
+		const after = createSessionCookie(AUTHORITY, SECRET, 2000, "browser", 1500);
+		const revocations = { notBefore: 1500, revoked: new Map<string, number>() };
+		expect(validSessionCookie(request("/", { cookie: cookieHeader(before.name, before.value) }), SECRET, 2001, revocations)).toBe(false);
+		expect(validSessionCookie(request("/", { cookie: cookieHeader(after.name, after.value) }), SECRET, 2001, revocations)).toBe(true);
+	});
 	it("round-trips a cookie for the same authority and secret", () => {
 		const cookie = createSessionCookie(AUTHORITY, SECRET);
 		expect(validSessionCookie(request("/", { cookie: cookieHeader(cookie.name, cookie.value) }), SECRET)).toBe(true);
@@ -40,6 +47,19 @@ describe("session cookies", () => {
 			headers: { host: "evil.test:30141", cookie: cookieHeader(cookieNameForAuthority("evil.test:30141"), cookie.value) },
 		});
 		expect(validSessionCookie(renamed, SECRET)).toBe(false);
+	});
+
+	it("keeps a session for 30 days, matching the login copy", () => {
+		// 登录页写「打开一次后浏览器会记住 30 天」，远程连接页写「登录后 30 天内有效」：
+		// 常量必须与这两处文案一致，否则用户会莫名其妙被要求重新登录。
+		const thirtyDays = 30 * 24 * 60 * 60;
+		expect(SESSION_MAX_AGE_SECONDS).toBe(thirtyDays);
+		const issued = 1_000_000;
+		const cookie = createSessionCookie(AUTHORITY, SECRET, issued);
+		const header = cookieHeader(cookie.name, cookie.value);
+		expect(cookie.maxAgeSeconds).toBe(thirtyDays);
+		expect(validSessionCookie(request("/", { cookie: header }), SECRET, issued + 29 * 24 * 60 * 60 * 1000)).toBe(true);
+		expect(validSessionCookie(request("/", { cookie: header }), SECRET, issued + 31 * 24 * 60 * 60 * 1000)).toBe(false);
 	});
 
 	it("rejects expired cookies and accepts them right up to expiry", () => {
@@ -88,18 +108,18 @@ describe("request authority", () => {
 });
 
 describe("authEnabled", () => {
-	it("turns on only with an explicit PI_WEB_AUTH", () => {
-		expect(authEnabled({})).toBe(false);
+	it("is enabled by default with an explicit zero opt-out", () => {
+		expect(authEnabled({})).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "1" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "TRUE" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "on" })).toBe(true);
 		expect(authEnabled({ PI_WEB_AUTH: "0" })).toBe(false);
-		expect(authEnabled({ PI_WEB_AUTH: "" })).toBe(false);
+		expect(authEnabled({ PI_WEB_AUTH: "" })).toBe(true);
 	});
 
 	it("no longer turns on with PI_WEB_PASSWORD", () => {
 		// 密码登录已移除：这个变量不再是认证开关（启动器会直接拒绝启动）
-		expect(authEnabled({ PI_WEB_PASSWORD: "x" })).toBe(false);
+		expect(authEnabled({ PI_WEB_PASSWORD: "x" })).toBe(true);
 		expect(authEnabled({ PI_WEB_PASSWORD: "x", PI_WEB_AUTH: "0" })).toBe(false);
 	});
 });

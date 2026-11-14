@@ -53,7 +53,7 @@ function fakeSession(model: Model, thinkingLevel: string): FakeSession {
 		isIdle: true,
 		isStreaming: false,
 		agent: { state: { model } },
-		modelRuntime: runtimeWith([]),
+		modelRuntime: runtimeWith([previous, fresh]),
 		getAvailableThinkingLevels: () => ["off", "minimal", "low", "medium", "high"],
 		setModel: vi.fn(async (next: Model) => {
 			session.model = next;

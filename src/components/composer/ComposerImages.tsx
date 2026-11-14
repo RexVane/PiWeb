@@ -25,9 +25,6 @@ const CARD = 96;
 /** 牌堆里后面每层露出的右边缘、最多露几层（再多的叠在最后一层下面、不显示） */
 const DECK_PEEK = 4;
 const DECK_LAYERS = 4;
-/** 扇形所在圆弧的半径（越大弧越平）、相邻两张中心的最大间距（再大就散成一排，不像一手牌了） */
-const FAN_RADIUS = 520;
-const FAN_GAP_MAX = 76;
 /** 悬停 / 聚焦时那张往上抬多少；左右给旋转后探出去的角留的余量 */
 const FAN_LIFT = 12;
 const FAN_SIDE = 8;

@@ -36,6 +36,7 @@ const initialProps = { cwd: "/workspace-a", sessionPath: "/session-a.jsonl", liv
 beforeEach(() => { localStorage.clear(); });
 afterEach(() => {
 	cleanup();
+	vi.restoreAllMocks();
 	vi.unstubAllGlobals();
 	vi.useRealTimers();
 });
@@ -144,6 +145,87 @@ describe("useGrowth round selection", () => {
 });
 
 describe("useGrowth request scope", () => {
+	it.each(["success", "failure"] as const)("releases a completed %s refresh instead of aborting it on later scope changes", async (outcome) => {
+		const abort = vi.spyOn(AbortController.prototype, "abort");
+		const signals: AbortSignal[] = [];
+		const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+			signals.push(init.signal as AbortSignal);
+			if (outcome === "failure") throw new Error("timeline unavailable");
+			return response({ available: true, rounds: [] });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		const { result, rerender, unmount } = renderHook((props) => useGrowth(props), { initialProps });
+		await act(async () => { await result.current.refresh(); });
+		expect(signals).toHaveLength(1);
+		expect(signals[0].aborted).toBe(false);
+		// A completed request must be retired: aborting it creates an AbortError
+		// whose captured render can keep prior session snapshots alive.
+		await act(async () => { await result.current.refresh(); });
+		expect(signals).toHaveLength(2);
+		expect(signals.every((signal) => !signal.aborted)).toBe(true);
+		expect(abort).not.toHaveBeenCalled();
+		rerender({ ...initialProps, cwd: "/workspace-b", sessionPath: "/session-b.jsonl" });
+		unmount();
+		expect(signals.every((signal) => !signal.aborted)).toBe(true);
+		expect(abort).not.toHaveBeenCalled();
+	});
+
+	it("still cancels the directory half of a refresh after its timeline has completed", async () => {
+		const disk = deferred<Response>();
+		let diskSignal!: AbortSignal;
+		vi.stubGlobal("fetch", vi.fn((url: string, init: RequestInit) => {
+			if (url.startsWith("/api/growth")) return Promise.resolve(response({ available: false, rounds: [] }));
+			diskSignal = init.signal as AbortSignal;
+			return disk.promise;
+		}));
+		const { result, unmount } = renderHook(() => useGrowth({ ...initialProps, active: true }));
+		await waitFor(() => expect(result.current.available).toBe(false));
+		expect(diskSignal.aborted).toBe(false);
+		unmount();
+		expect(diskSignal.aborted).toBe(true);
+		await act(async () => { disk.resolve(directory("late.txt")); });
+	});
+
+	it("keeps a replacement refresh cancelable when the superseded request finishes late", async () => {
+		const old = deferred<Response>();
+		const replacement = deferred<Response>();
+		const fetchMock = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(replacement.promise);
+		vi.stubGlobal("fetch", fetchMock);
+		const { result, unmount } = renderHook(() => useGrowth(initialProps));
+		let first!: Promise<void>;
+		let second!: Promise<void>;
+		act(() => { first = result.current.refresh(); });
+		const firstSignal = fetchMock.mock.calls[0][1].signal as AbortSignal;
+		act(() => { second = result.current.refresh(); });
+		const secondSignal = fetchMock.mock.calls[1][1].signal as AbortSignal;
+		expect(firstSignal.aborted).toBe(true);
+		await act(async () => { old.resolve(response({ available: true, rounds: [round("a", "0", "1")] })); await first; });
+		expect(result.current.rounds).toEqual([]);
+		expect(secondSignal.aborted).toBe(false);
+		unmount();
+		expect(secondSignal.aborted).toBe(true);
+		replacement.resolve(response({ available: true, rounds: [] }));
+		await second;
+	});
+
+	it("does not reuse a retired lazy directory generation when returning A to B to A", async () => {
+		const old = deferred<Response>();
+		const current = deferred<Response>();
+		const fetchMock = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+		vi.stubGlobal("fetch", fetchMock);
+		const { result, rerender } = renderHook((props) => useGrowth(props), { initialProps });
+		let first!: Promise<void>;
+		let last!: Promise<void>;
+		act(() => { first = result.current.expandLazy("p"); });
+		rerender({ ...initialProps, sessionPath: "/session-b.jsonl" });
+		rerender(initialProps);
+		act(() => { last = result.current.expandLazy("p"); });
+		await act(async () => { old.resolve(directory("retired.txt")); await first; });
+		expect(result.current.filePaths).toEqual([]);
+		await act(async () => { current.resolve(directory("current.txt")); await last; });
+		expect(result.current.filePaths).toEqual(["p/current.txt"]);
+	});
+
 	it.each(["cwd", "session"] as const)("ignores delayed lazy responses across a %s switch without blocking the new request", async (changed) => {
 		const old = deferred<Response>();
 		const current = deferred<Response>();

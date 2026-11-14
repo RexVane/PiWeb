@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { WebEvent, WebMessage } from "../src/lib/types";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -42,7 +43,7 @@ afterAll(async () => {
 	for (const file of files) await manager.disposeSessionPath(file);
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleFixture(root);
 });
 
 const usage = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -185,6 +186,28 @@ describe("终端 pi 同时写会话", () => {
 		expect(fresh).not.toBe(m);
 		expect(texts((await manager.buildSnapshot(fresh)).messages)).toContain("终端插进来的问题");
 	}, 60_000);
+
+	it("同尺寸同 ID 重写运行中的会话只提醒一次，空闲后才替换历史", async () => {
+		const file = seed();
+		const m = manager.getManaged(file);
+		const events: WebEvent[] = [];
+		manager.subscribe(m, (_seq, json) => events.push(JSON.parse(json)), m.seq);
+		m.runActive = true;
+		const original = await fs.readFile(file, "utf8");
+		const replaced = original.replace("网页里的问题", "终端改了问题");
+		expect(Buffer.byteLength(replaced)).toBe(Buffer.byteLength(original));
+		await fs.writeFile(file, replaced);
+		await fs.utimes(file, new Date(), new Date(Date.now() + 1000));
+		expect(manager.getManaged(file)).toBe(m);
+		expect(m.disposed).toBe(false);
+		expect(texts((await manager.buildSnapshot(m)).messages)).toContain("网页里的问题");
+		manager.getManaged(file);
+		expect(events.filter((event) => event.type === "external_write")).toHaveLength(1);
+		m.runActive = false;
+		const fresh = manager.getManaged(file);
+		expect(fresh).not.toBe(m);
+		expect(texts((await manager.buildSnapshot(fresh)).messages)).toContain("终端改了问题");
+	});
 
 	it("终端那一行还没写完：先不算，写完后再重载", async () => {
 		const file = seed();

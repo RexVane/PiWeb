@@ -6,9 +6,12 @@ import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
+vi.mock("node:child_process", async (original) => ({ ...await original<typeof import("node:child_process")>(), spawn: mocks.spawn }));
 
-import { runCommand } from "../scripts/process-runner.mjs";
+import { runCommand, terminateProcessTree } from "../scripts/process-runner.mjs";
+import { browserLaunchSpec } from "../scripts/launcher.mjs";
+import { npmCommand } from "../scripts/npm-command.mjs";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 function fakeChild(pid = 12345) {
 	return Object.assign(new EventEmitter(), {
@@ -42,18 +45,17 @@ describe("update command runner without real subprocesses", () => {
 			mocks.spawn.mockReturnValue(child);
 			const { runLauncher } = await import("../scripts/launcher.mjs");
 			const result = await runLauncher({
-				root, args: [], env: {},
+				root, args: [], env: { PI_CODING_AGENT_DIR: root },
 				// readLaunchToken 必须注入：真实实现会去读本机 agent 目录里那个实例留下的令牌文件，
 				// 于是"本机此刻有没有在跑带认证的 PiWeb"会决定这个用例开的是裸地址还是登录链接 —— 用例就不再 hermetic。
 				dependencies: { probePort: async () => "busy", isPiWebRunning: async () => true, log: vi.fn(), readLaunchToken: () => null },
 			});
 			const url = "http://127.0.0.1:30141";
-			const command = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "open" : "xdg-open";
-			const args = process.platform === "win32" ? ["/d", "/c", "start", "", url] : [url];
+			const { command, args, env } = browserLaunchSpec(url);
 			expect(result).toBe(0);
-			expect(mocks.spawn).toHaveBeenCalledExactlyOnceWith(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+			expect(mocks.spawn).toHaveBeenCalledExactlyOnceWith(command, args, { env, detached: true, stdio: "ignore", windowsHide: true });
 			expect(child.unref).toHaveBeenCalledOnce();
-		} finally { await fs.rm(root, { recursive: true, force: true }); }
+		} finally { await recycleFixture(root); }
 	});
 
 	it("uses fixed argv and cwd, waits for close and bounds captured output", async () => {
@@ -73,21 +75,24 @@ describe("update command runner without real subprocesses", () => {
 		expect((await task).length).toBe(256 * 1024);
 	});
 
-	it("only uses the Windows command shim for npm and reports failed exit statuses", async () => {
+	it("runs npm JavaScript directly and reports failed exit statuses", async () => {
 		const child = fakeChild();
 		mocks.spawn.mockReturnValue(child);
 		const task = runCommand("npm", ["run", "check"], { cwd: "/temporary/install", env: {} });
 		const failure = expect(task).rejects.toThrow("build failed");
-		if (process.platform === "win32") {
-			expect(mocks.spawn.mock.calls[0][0]).toBe("cmd.exe");
-			expect(mocks.spawn.mock.calls[0][1]).toEqual(["/d", "/c", "npm", "run", "check"]);
-		} else {
-			expect(mocks.spawn.mock.calls[0][0]).toBe("npm");
-			expect(mocks.spawn.mock.calls[0][1]).toEqual(["run", "check"]);
-		}
+		const invocation = npmCommand(["run", "check"], {});
+		expect(mocks.spawn.mock.calls[0][0]).toBe(invocation.command);
+		expect(mocks.spawn.mock.calls[0][1]).toEqual(invocation.args);
 		child.stderr.write("build failed");
 		child.emit("close", 1);
 		await failure;
+	});
+	it.skipIf(process.platform !== "win32")("reports a failed process-tree termination instead of claiming every descendant stopped", async () => {
+		const child = fakeChild(12345), killer = fakeChild(67890);
+		mocks.spawn.mockReturnValue(killer);
+		const stopped = expect(terminateProcessTree(child)).rejects.toThrow(/could not be confirmed stopped/);
+		killer.emit("close", 1); await stopped;
+		expect(child.kill).toHaveBeenCalledOnce();
 	});
 
 	it("terminates only its spawned process tree on timeout before rejecting", async () => {

@@ -1,5 +1,7 @@
 "use client";
 
+import { safeLocalStorage } from "@/lib/browser-storage";
+
 /**
  * 侧栏 —— 照抄 dsh ui-sidebar：
  * 品牌行（mark + 字标 + 描边徽章 + 侧栏开合）、新会话按钮（h38 r12），
@@ -15,27 +17,33 @@ import {
 	IconArchiveOutline20,
 	IconBranchOutline16,
 	IconCheckOutline14,
+	IconClockOutline16,
 	IconDownloadOutline16,
 	IconEditOutline16,
 	IconEllipsisOutline16,
 	IconFolderClose16,
 	IconFolderOpenOutline16,
+	IconMarketOutline16,
 	IconNewChatOutline16,
 	IconPanelLeftOutline16,
 	IconPersonalizationOutline16,
 	IconPinFill16,
 	IconPinOutline16,
+	IconPluginOutline16,
 	IconPlusOutline16,
 	IconProjectAddOutline16,
+	IconPromptOutline16,
 	IconSearchOutline16,
 	IconCloseOutline14,
 	IconSettingsOutline16,
+	IconSkillOutline16,
 	IconTrashOutline16,
 	IconTriangleRightFill14,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import type { SessionListItem } from "@/hooks/usePiWeb";
 import { useDialog } from "@/hooks/useDialog";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 function relTime(iso: string, lang: "zh" | "en"): string {
 	const d = Date.now() - new Date(iso).getTime();
@@ -64,6 +72,7 @@ function normPath(p: string): string {
 
 type GroupBy = "workspace" | "flat";
 type OrderBy = "updated" | "manual";
+export type WorkspaceView = "chat" | "skills" | "plugins" | "prompts" | "market" | "automations";
 
 interface WorkspaceGroup {
 	cwd: string;
@@ -74,7 +83,12 @@ interface WorkspaceGroup {
 function SessionSidebarImpl({
 	sessions,
 	sessionListError,
+	workspaceRegistryWarning,
 	onRetrySessionList,
+	onSearchQuery,
+	onLoadMore,
+	hasMore = false,
+	loadingMore = false,
 	archivedSessions = [],
 	archivedPaths = [],
 	pinnedPaths = [],
@@ -104,10 +118,18 @@ function SessionSidebarImpl({
 	onOpenSettings,
 	onAddWorkspace,
 	draftCwd,
+	activeView = "chat",
+	onSelectView,
 }: {
 	sessions: SessionListItem[];
 	sessionListError?: string | null;
+	workspaceRegistryWarning?: string | null;
 	onRetrySessionList?: () => void;
+	/** 有此回调时由服务端搜索全量（含归档）会话，传入 sessions 就是匹配结果。 */
+	onSearchQuery?: (query: string) => void;
+	onLoadMore?: () => void;
+	hasMore?: boolean;
+	loadingMore?: boolean;
 	archivedSessions?: SessionListItem[];
 	/** 原始归档路径（含被豁免的当前会话：dsh 合同下主列表可见但菜单显示取消归档） */
 	archivedPaths?: string[];
@@ -127,11 +149,11 @@ function SessionSidebarImpl({
 	onNewInWorkspace: (cwd: string) => void;
 	onRename: (path: string, newName: string) => Promise<void>;
 	onFork?: (path: string, cwd: string) => void;
-	onArchive?: (path: string) => void;
+	onArchive?: (path: string) => void | Promise<void>;
 	onUnarchive?: (path: string) => void;
 	onPin?: (path: string) => void | Promise<void>;
 	onUnpin?: (path: string) => void | Promise<void>;
-	/** 物理删除会话文件；失败时抛出，确认框里显示错误 */
+	/** 先保存恢复副本再移除会话文件；失败时抛出，确认框里显示错误 */
 	onDelete?: (path: string) => Promise<void>;
 	/** 下载会话日志（JSONL 导出，经 AppShell 统一编码会话 id） */
 	onExport?: (path: string) => void;
@@ -142,6 +164,9 @@ function SessionSidebarImpl({
 	onAddWorkspace: () => void;
 	/** 新会话草稿所在的工作区：条目显示在该分组内，发送第一条消息才真正创建 */
 	draftCwd?: string | null;
+	/** 当前主区域展示的视图：会话对话或顶部工作区视图 */
+	activeView?: WorkspaceView;
+	onSelectView?: (view: Exclude<WorkspaceView, "chat">) => void;
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
@@ -150,10 +175,16 @@ function SessionSidebarImpl({
 	const [rowMenu, setRowMenu] = useState<string | null>(null); // 展开工作区行菜单的 cwd
 	const [sessionMenu, setSessionMenu] = useState<string | null>(null); // 展开会话行菜单的 session path
 	const [archiveOpen, setArchiveOpen] = useState(false);
+	useEffect(() => {
+		if (!searchOpen || !q.trim()) { onSearchQuery?.(""); return; }
+		const timer = setTimeout(() => onSearchQuery?.(q.trim()), 300);
+		return () => clearTimeout(timer);
+	}, [onSearchQuery, searchOpen, q]);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const sessionMenuRef = useRef<HTMLDivElement>(null);
 	const renameInputRef = useRef<HTMLInputElement>(null);
 	const renameDialogRef = useRef<HTMLDivElement>(null);
+	const deleteSessionDialogRef = useRef<HTMLDivElement>(null);
 	const deleteWorkspaceDialogRef = useRef<HTMLDivElement>(null);
 	const renameComposingRef = useRef(false);
 
@@ -171,6 +202,10 @@ function SessionSidebarImpl({
 	const [deleteSessionTarget, setDeleteSessionTarget] = useState<{ path: string; name: string } | null>(null);
 	const [deleteSessionPending, setDeleteSessionPending] = useState(false);
 	const [deleteSessionError, setDeleteSessionError] = useState<string | null>(null);
+	const [archiveTarget, setArchiveTarget] = useState<{ path: string; name: string } | null>(null);
+	const [archivePending, setArchivePending] = useState(false);
+	const [archiveError, setArchiveError] = useState<string | null>(null);
+	const archiveInFlight = useRef(false);
 	const renameWorkspaceConflict = renameTarget?.type === "workspace"
 		&& renameValue.trim().length > 0
 		&& addedWorkspaces.some((cwd) => (
@@ -227,6 +262,9 @@ function SessionSidebarImpl({
 		setRenameError(null);
 	};
 	useDialog({ open: mounted && renameTarget !== null, onClose: closeRename, ref: renameDialogRef });
+	useDialog({ open: mounted && deleteSessionTarget !== null, onClose: () => {
+		if (!deleteSessionPending) setDeleteSessionTarget(null);
+	}, ref: deleteSessionDialogRef });
 	useDialog({ open: mounted && deleteWorkspaceTarget !== null, onClose: () => {
 		if (!deleteWorkspacePending) setDeleteWorkspaceTarget(null);
 	}, ref: deleteWorkspaceDialogRef });
@@ -268,6 +306,18 @@ function SessionSidebarImpl({
 		} catch {
 			// usePiWeb exposes the request failure in the shared error banner.
 		}
+	};
+	const confirmArchive = async () => {
+		if (!archiveTarget || !onArchive || archiveInFlight.current) return;
+		archiveInFlight.current = true;
+		setArchivePending(true);
+		setArchiveError(null);
+		try {
+			await onArchive(archiveTarget.path);
+			setArchiveTarget(null);
+		} catch (error) {
+			setArchiveError(error instanceof Error ? error.message : lang === "en" ? "Could not archive this chat. Please retry." : "归档失败，请重试。");
+		} finally { archiveInFlight.current = false; setArchivePending(false); }
 	};
 
 	// 路径一律按 normPath 比：注册表里的工作区经过 path.resolve，会话头里的 cwd 是原样记下的，
@@ -356,7 +406,7 @@ function SessionSidebarImpl({
 	// 工作区展开状态持久化：刷新后保持收起/展开，不被自动展开逻辑覆盖
 	const [openSet, setOpenSet] = useState<Set<string>>(() => {
 		try {
-			const saved = JSON.parse(localStorage.getItem("piweb.openWorkspaces") ?? "[]");
+			const saved = JSON.parse(safeLocalStorage.getItem("piweb.openWorkspaces") ?? "[]");
 			if (Array.isArray(saved)) return new Set(saved.filter((x) => typeof x === "string"));
 		} catch {
 			/* ignore */
@@ -365,7 +415,7 @@ function SessionSidebarImpl({
 	});
 	useEffect(() => {
 		try {
-			localStorage.setItem("piweb.openWorkspaces", JSON.stringify([...openSet]));
+			safeLocalStorage.setItem("piweb.openWorkspaces", JSON.stringify([...openSet]));
 		} catch {
 			/* ignore */
 		}
@@ -425,6 +475,13 @@ function SessionSidebarImpl({
 		});
 		return list;
 	}, [sessions, orderBy, pinnedPaths]);
+	const searchSessions = useMemo(() => {
+		if (onSearchQuery) return flatSessions;
+		const unique = new Map([...flatSessions, ...archivedSessions].map((session) => [normPath(session.path), session]));
+		const query = q.trim().toLowerCase();
+		return [...unique.values()].filter((session) => session.name?.toLowerCase().includes(query)
+			|| session.firstMessage.toLowerCase().includes(query) || session.cwd.toLowerCase().includes(query));
+	}, [flatSessions, archivedSessions, q, onSearchQuery]);
 
 	const toggleOpen = (cwd: string) => {
 		setOpenSet((prev) => {
@@ -434,6 +491,14 @@ function SessionSidebarImpl({
 			return next;
 		});
 	};
+
+	const workspaceNavItems: { id: Exclude<WorkspaceView, "chat">; label: string; icon: React.ReactNode }[] = [
+		{ id: "skills", label: t.navSkills, icon: <IconSkillOutline16 size={15} /> },
+		{ id: "plugins", label: t.navPlugins, icon: <IconPluginOutline16 size={15} /> },
+		{ id: "prompts", label: t.navPrompts, icon: <IconPromptOutline16 size={15} /> },
+		{ id: "market", label: t.navMarket, icon: <IconMarketOutline16 size={15} /> },
+		{ id: "automations", label: t.navAutomations, icon: <IconClockOutline16 size={15} /> },
+	];
 
 	if (collapsed) {
 		return (
@@ -448,6 +513,23 @@ function SessionSidebarImpl({
 				<button className="rail-btn" title={t.newChat} onClick={onNew}>
 					<IconNewChatOutline16 size={18} />
 				</button>
+				{onSelectView &&
+					workspaceNavItems.map((item) => (
+						<button
+							key={item.id}
+							className="rail-btn"
+							title={item.label}
+							aria-label={item.label}
+							style={
+								activeView === item.id
+									? { background: "var(--dsw-label-primary)", color: "var(--dsw-bg-base)" }
+									: undefined
+							}
+							onClick={() => onSelectView(item.id)}
+						>
+							{item.icon}
+						</button>
+					))}
 				<button className="rail-btn" title={t.addWorkspace} onClick={onAddWorkspace}>
 					<IconProjectAddOutline16 size={17} />
 				</button>
@@ -470,25 +552,25 @@ function SessionSidebarImpl({
 	}
 
 	const sessionRow = (s: SessionListItem, indented: boolean, archived = false) => {
-		const selected = !!currentKey && normPath(s.path) === currentKey;
+		const selected = activeView === "chat" && !!currentKey && normPath(s.path) === currentKey;
 		// dsh 合同：被归档的当前会话仍显示在主列表，菜单按真实归档态切换
 		const reallyArchived = archived || archivedPaths.some((p) => normPath(p) === normPath(s.path));
 		const pinned = !reallyArchived && pinnedPaths.some((p) => normPath(p) === normPath(s.path));
 		return (
-			<div
-				key={s.path}
-				data-active={selected ? "true" : undefined}
-				className="isx-menu-item group relative flex items-center rounded-xl"
-				style={{
-					paddingLeft: indented ? 38 : 10,
-					paddingRight: 14,
-					paddingTop: 6,
-					paddingBottom: 6,
-					// 选中/悬停框之间留缝，不互相粘连
-					marginTop: 2,
-					marginBottom: 2,
-				}}
-			>
+			<div key={s.path} className="group relative">
+				<div
+					data-active={selected ? "true" : undefined}
+					className="isx-menu-item relative flex items-center rounded-lg"
+					style={{
+						paddingLeft: indented ? 38 : 10,
+						paddingRight: 14,
+						paddingTop: 6,
+						paddingBottom: 6,
+						// 选中/悬停框之间留缝，不互相粘连
+						marginTop: 2,
+						marginBottom: 2,
+					}}
+				>
 				{s.streaming && <span className="state-dot running" style={{ position: "absolute", left: indented ? 26 : 6, width: 6, height: 6 }} />}
 				<button className="flex min-w-0 flex-1 flex-col items-start text-left" onClick={() => onOpen(s.path)}>
 					<span
@@ -505,37 +587,43 @@ function SessionSidebarImpl({
 				</button>
 				{pinned && (
 					<span
-						className={`flex-none pl-1 text-zinc-400 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
+						className={`pw-touch-hide flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
+						style={{ color: "var(--dsw-label-tertiary)" }}
 						title={t.pinned}
 					>
 						<IconPinFill16 size={12} />
 					</span>
 				)}
 				<span
-					className={`isx-menu-sub flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
+					className={`isx-menu-sub pw-touch-hide flex-none pl-1 ${sessionMenu === s.path ? "hidden" : "group-hover:hidden group-focus-within:hidden"}`}
 					style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}
 				>
 					{relTime(s.modified, lang)}
 				</span>
-				<span className={`flex-none items-center gap-0.5 pl-1 ${sessionMenu === s.path ? "flex" : "hidden group-hover:flex group-focus-within:flex"}`}>
+				<span className={`pw-touch-actions flex-none items-center gap-0.5 pl-1 ${sessionMenu === s.path ? "flex" : "hidden group-hover:flex group-focus-within:flex"}`}>
 					<button
 						className="icon-btn"
 						style={{ width: 22, height: 22 }}
 						title={reallyArchived ? t.unarchiveSession : `${t.archiveSession} · ${t.archiveRetentionHint}`}
 						aria-label={reallyArchived ? t.unarchiveSession : t.archiveSession}
+						disabled={archivePending || (!reallyArchived && !onArchive)}
 						onClick={(e) => {
 							e.stopPropagation();
 							setSessionMenu(null);
 							if (reallyArchived) onUnarchive?.(s.path);
-							else onArchive?.(s.path);
+							else { setArchiveError(null); setArchiveTarget({ path: s.path, name: s.name || s.firstMessage || basename(s.path) }); }
 						}}
 					>
 						<IconArchiveOutline20 size={14} />
 					</button>
 					{!reallyArchived && (
 						<button
-							className={`icon-btn ${pinned ? "rounded-full bg-white/10 text-white" : ""}`}
-							style={{ width: 22, height: 22 }}
+							className={`icon-btn ${pinned ? "rounded-full" : ""}`}
+							style={{
+								width: 22,
+								height: 22,
+								...(pinned ? { background: "var(--dsw-selector)", color: "var(--dsw-accent)" } : {}),
+							}}
 							title={pinned ? t.unpinSession : t.pinSession}
 							aria-label={pinned ? t.unpinSession : t.pinSession}
 							onClick={(e) => {
@@ -562,8 +650,9 @@ function SessionSidebarImpl({
 						<IconEllipsisOutline16 size={14} />
 					</button>
 				</span>
+				</div>
 				{sessionMenu === s.path && (
-					<div className="popover absolute right-1 top-8 z-50 w-36 py-1 shadow-xl" ref={sessionMenuRef}>
+					<div className="popover absolute right-1 top-8 z-50 w-max min-w-[168px] py-1 shadow-xl" ref={sessionMenuRef}>
 						<MenuItem
 							icon={<IconEditOutline16 size={14} />}
 							label={t.rename}
@@ -641,9 +730,9 @@ function SessionSidebarImpl({
 			: (getWorkspaceName ? getWorkspaceName(g.cwd) : basename(g.cwd));
 
 		return (
-			<div key={g.cwd}>
+			<div key={g.cwd} className="relative">
 				<div
-					className="isx-menu-item group relative flex items-center rounded-xl"
+					className="isx-menu-item group relative flex items-center rounded-lg"
 					style={{
 						background: open || isCurrent ? "var(--dsw-hover)" : "transparent",
 						paddingLeft: 10,
@@ -678,7 +767,7 @@ function SessionSidebarImpl({
 							{displayName}
 						</span>
 					</button>
-					<span className="hidden flex-none items-center gap-0.5 pl-1 group-hover:flex group-focus-within:flex" style={{ color: "var(--dsw-label-tertiary)" }}>
+					<span className="pw-touch-actions hidden flex-none items-center gap-0.5 pl-1 group-hover:flex group-focus-within:flex" style={{ color: "var(--dsw-label-tertiary)" }}>
 						{!isUngrouped && (
 							<button
 								className="icon-btn"
@@ -703,44 +792,44 @@ function SessionSidebarImpl({
 							<IconPlusOutline16 size={14} />
 						</button>
 					</span>
-					{!isUngrouped && rowMenu === g.cwd && (
-						<div className="popover absolute right-1 top-9 z-50 w-44 py-1 shadow-xl" ref={menuRef}>
-							<MenuItem
-								icon={<IconEditOutline16 size={14} />}
-								label={t.rename}
-								onClick={(e) => {
-									e.stopPropagation();
-									setRowMenu(null);
-									setRenameTarget({
-										type: "workspace",
-										cwd: g.cwd,
-										name: displayName,
-									});
-								}}
-							/>
-							<MenuItem
-								icon={<IconTrashOutline16 size={14} />}
-								label={t.deleteWorkspace}
-								danger
-								onClick={(e) => {
-									e.stopPropagation();
-									setRowMenu(null);
-									setDeleteWorkspaceTarget({
-										cwd: g.cwd,
-										name: displayName,
-									});
-									setDeleteWorkspaceError(null);
-								}}
-							/>
-						</div>
-					)}
 				</div>
+				{!isUngrouped && rowMenu === g.cwd && (
+					<div className="popover absolute right-1 top-9 z-50 w-max min-w-[168px] py-1 shadow-xl" ref={menuRef}>
+						<MenuItem
+							icon={<IconEditOutline16 size={14} />}
+							label={t.rename}
+							onClick={(e) => {
+								e.stopPropagation();
+								setRowMenu(null);
+								setRenameTarget({
+									type: "workspace",
+									cwd: g.cwd,
+									name: displayName,
+								});
+							}}
+						/>
+						<MenuItem
+							icon={<IconTrashOutline16 size={14} />}
+							label={t.deleteWorkspace}
+							danger
+							onClick={(e) => {
+								e.stopPropagation();
+								setRowMenu(null);
+								setDeleteWorkspaceTarget({
+									cwd: g.cwd,
+									name: displayName,
+								});
+								setDeleteWorkspaceError(null);
+							}}
+						/>
+					</div>
+				)}
 				{open && (
 					<>
 						{/* dsh 草稿新会话：显示在所属工作区分组内，发送第一条消息才真正创建，切走即消失 */}
 						{draftInThisGroup && (
 							<div
-								className="flex items-center rounded-xl"
+								className="flex items-center rounded-lg"
 								style={{
 									background: "var(--dsw-active)",
 									paddingLeft: 38,
@@ -766,6 +855,11 @@ function SessionSidebarImpl({
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
+			<ConfirmDialog open={archiveTarget !== null} title={t.archiveSession} confirmLabel={t.archiveSession} busy={archivePending} error={archiveError ?? undefined}
+				message={lang === "en"
+					? `Archive “${archiveTarget?.name ?? ""}”? Its running task will stop and the chat will move to the archive. Content is kept and you can unarchive it. After 30 days, cleanup saves a recovery copy before removing it.`
+					: `归档“${archiveTarget?.name ?? ""}”后，其正在运行的任务会停止，会话会移入归档区。内容会保留，可取消归档；归档满 30 天后，自动清理前会保留恢复副本。是否继续？`}
+				onConfirm={() => void confirmArchive()} onCancel={() => { if (!archiveInFlight.current) { setArchiveTarget(null); setArchiveError(null); } }} />
 			{/* 品牌行 */}
 			<div className="flex items-center gap-1 px-4 pb-2 pt-4">
 				<BrandPi />
@@ -783,6 +877,37 @@ function SessionSidebarImpl({
 				</button>
 			</div>
 
+			{/* 顶部工作区导航：固定顺序 技能 → 插件 → 自动化任务 */}
+			{onSelectView && (
+				<nav className="flex flex-col gap-0.5 px-3 pt-2.5">
+					{workspaceNavItems.map((item) => {
+						const active = activeView === item.id;
+						return (
+							<button
+								key={item.id}
+								type="button"
+								data-active={active ? "true" : undefined}
+								className="isx-menu-item flex w-full items-center gap-2.5 rounded-lg text-left"
+								style={{
+									borderRadius: 8,
+									padding: "7px 12px",
+									lineHeight: "20px",
+									fontSize: 13.5,
+									fontWeight: active ? 500 : 400,
+									color: active ? "var(--dsw-bg-base)" : "var(--dsw-label-secondary)",
+								}}
+								onClick={() => onSelectView(item.id)}
+							>
+								<span className="isx-menu-icon" style={{ display: "inline-flex" }}>
+									{item.icon}
+								</span>
+								<span className="isx-menu-shift">{item.label}</span>
+							</button>
+						);
+					})}
+				</nav>
+			)}
+
 			{/* 工作区标题行 / 搜索框（互替，照 Iconsax .con-search） */}
 			{searchOpen ? (
 				<div className="px-3 pb-1 pt-3">
@@ -792,6 +917,7 @@ function SessionSidebarImpl({
 							autoFocus
 							value={q}
 							onChange={(e) => setQ(e.target.value)}
+							onKeyDown={(event) => { if (event.key === "Escape" && !event.nativeEvent.isComposing) { setQ(""); setSearchOpen(false); } }}
 							placeholder={t.searchSessions}
 							className="w-full"
 							style={{ fontSize: 13 }}
@@ -848,6 +974,11 @@ function SessionSidebarImpl({
 
 			{/* 列表区 */}
 			<div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+				{workspaceRegistryWarning && (
+					<div role="status" className="mb-2 rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-warn-text)", fontSize: 12 }}>
+						{workspaceRegistryWarning}
+					</div>
+				)}
 				{sessionListError && (
 					<div role="alert" className="mb-2 rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-danger)", fontSize: 12 }}>
 						<div>{t.sessionListLoadFailed}: {sessionListError}</div>
@@ -856,31 +987,19 @@ function SessionSidebarImpl({
 				)}
 				{searchOpen && q.trim() ? (
 					// 搜索结果：会话平铺
-					flatSessions.filter(
-						(s) =>
-							s.name?.toLowerCase().includes(q.trim().toLowerCase()) ||
-							s.firstMessage.toLowerCase().includes(q.trim().toLowerCase()) ||
-							basename(s.cwd).toLowerCase().includes(q.trim().toLowerCase()),
-					).length === 0 ? (
+					searchSessions.length === 0 ? (
 						<div className="px-2 py-6 text-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
-							—
+							{loadingMore ? t.panelLoading : "—"}
 						</div>
 					) : (
-						flatSessions
-							.filter(
-								(s) =>
-									s.name?.toLowerCase().includes(q.trim().toLowerCase()) ||
-									s.firstMessage.toLowerCase().includes(q.trim().toLowerCase()) ||
-									basename(s.cwd).toLowerCase().includes(q.trim().toLowerCase()),
-							)
-							.map((s) => sessionRow(s, false))
+						searchSessions.map((s) => sessionRow(s, false))
 					)
 				) : searchOpen ? (
 					// 空查询：工作区平铺（照 dsh 截图）
 					[...workspaceGroups, ...(ungroupedGroup ? [ungroupedGroup] : [])].map((g) => (
 						<div
 							key={g.cwd}
-							className="isx-menu-item flex cursor-pointer items-center gap-2.5 rounded-xl px-2.5 py-2"
+							className="isx-menu-item flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2"
 							onClick={() => {
 								setSearchOpen(false);
 								toggleOpen(g.cwd);
@@ -914,7 +1033,7 @@ function SessionSidebarImpl({
 						<>
 							{draftCwd && (
 								<div
-									className="flex items-center rounded-xl"
+									className="flex items-center rounded-lg"
 									style={{
 										background: "var(--dsw-active)",
 										paddingLeft: 10,
@@ -933,7 +1052,7 @@ function SessionSidebarImpl({
 							)}
 							{(flatSessions.length === 0
 						? [...workspaceGroups, ...(ungroupedGroup ? [ungroupedGroup] : [])].map((g) => (
-								<div key={g.cwd} className="flex items-center gap-2.5 rounded-xl px-2.5 py-2" title={g.cwd}>
+								<div key={g.cwd} className="flex items-center gap-2.5 rounded-lg px-2.5 py-2" title={g.cwd}>
 									<span style={{ color: "var(--dsw-label-tertiary)", display: "inline-flex" }}>
 										<IconFolderClose16 size={15} />
 									</span>
@@ -951,7 +1070,8 @@ function SessionSidebarImpl({
 					<div className="mt-2 border-t pt-2" style={{ borderColor: "var(--dsw-border-l2)" }}>
 						<button
 							type="button"
-							className="isx-menu-item flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left"
+							className="isx-menu-item flex w-full items-center gap-2 rounded-lg text-left"
+							style={{ padding: "8px 10px" }}
 							aria-expanded={archiveOpen}
 							title={t.archiveRetentionDetail}
 							onClick={() => setArchiveOpen((open) => !open)}
@@ -981,13 +1101,18 @@ function SessionSidebarImpl({
 						{archiveOpen && archivedSessions.map((session) => sessionRow(session, true, true))}
 					</div>
 				)}
+				{hasMore && onLoadMore && (
+					<button type="button" className="pw-chip mx-2 my-2" disabled={loadingMore} onClick={onLoadMore}>
+						{loadingMore ? t.panelLoading : t.viewerDirMore}
+					</button>
+				)}
 			</div>
 
 			{/* 设置固定左下角 */}
 			<div className="px-3 py-2.5">
 				<button
-					className="isx-menu-item flex w-full items-center gap-2.5 rounded-xl px-4 py-2 text-left"
-					style={{ color: "var(--dsw-label-secondary)" }}
+					className="isx-menu-item flex w-full items-center gap-2.5 rounded-lg text-left"
+					style={{ color: "var(--dsw-label-secondary)", padding: "8px 12px" }}
 					onClick={onOpenSettings}
 				>
 					<span className="isx-menu-icon" style={{ display: "inline-flex" }}>
@@ -997,15 +1122,16 @@ function SessionSidebarImpl({
 				</button>
 			</div>
 
-			{/* 重命名弹窗（照用户截图 media_1788745548711.png，通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
+			{/* 重命名弹窗（通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
 			{mounted && renameTarget && createPortal(
 				<div
-					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
 					onClick={closeRename}
 				>
 					<div
 						ref={renameDialogRef}
-						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
+						className="glass-modal relative w-full max-w-[420px] p-6"
+						style={{ boxShadow: "var(--pw-shadow-modal)", color: "var(--dsw-label-primary)" }}
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
@@ -1016,14 +1142,15 @@ function SessionSidebarImpl({
 							type="button"
 							onClick={closeRename}
 							disabled={renamePending}
-							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
+							className="icon-btn absolute right-5 top-5"
+							style={{ width: 28, height: 28 }}
 							aria-label={t.close}
 						>
 							<IconCloseOutline14 size={16} />
 						</button>
 
 						{/* 标题 */}
-						<h3 id="rename-dialog-title" className="text-lg font-medium text-white pr-8">
+						<h3 id="rename-dialog-title" className="pr-8 text-lg font-medium" style={{ color: "var(--dsw-label-primary)" }}>
 							{renameTarget.type === "session"
 								? (t.renameSession || "重命名会话")
 								: (t.renameWorkspace || "重命名工作区")}
@@ -1052,7 +1179,12 @@ function SessionSidebarImpl({
 								}}
 								onCompositionStart={() => { renameComposingRef.current = true; }}
 								onCompositionEnd={() => { renameComposingRef.current = false; }}
-								className="w-full rounded-full bg-white/[0.05] border border-white/15 px-4 py-2.5 text-[14.5px] text-white outline-none focus:border-white/40 focus:ring-1 focus:ring-white/30 transition"
+								className="pw-modal-input w-full rounded-full px-4 py-2.5 text-[14.5px] outline-none transition"
+								style={{
+									background: "var(--dsw-bg-elevated)",
+									border: "1px solid var(--dsw-border-l2)",
+									color: "var(--dsw-label-primary)",
+								}}
 							/>
 						</div>
 						{renameError && (
@@ -1060,12 +1192,12 @@ function SessionSidebarImpl({
 						)}
 
 						{/* 按钮区 */}
-						<div className="flex items-center justify-end gap-3">
+						<div className="flex items-center justify-end gap-2.5">
 							<button
 								type="button"
 								onClick={closeRename}
 								disabled={renamePending}
-								className="rounded-full bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 hover:bg-[#383838] transition"
+								className="btn-outline"
 							>
 								{t.cancel}
 							</button>
@@ -1073,7 +1205,7 @@ function SessionSidebarImpl({
 								type="button"
 								onClick={() => void handleConfirmRename()}
 								disabled={renamePending || !renameValue.trim() || (renameTarget.type === "workspace" && (renameValue.trim() === renameTarget.name || renameWorkspaceConflict))}
-								className="rounded-full bg-white px-5 py-2 text-sm font-medium text-black hover:bg-zinc-200 transition"
+								className="btn-primary-white"
 							>
 								{t.rename}
 							</button>
@@ -1083,14 +1215,16 @@ function SessionSidebarImpl({
 				document.body
 			)}
 
-			{/* 删除会话确认弹窗（样式同删除工作区；物理删除，不可恢复） */}
+			{/* 删除会话确认弹窗（样式同删除工作区；先保存恢复副本） */}
 			{mounted && deleteSessionTarget && createPortal(
 				<div
-					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
 					onClick={() => !deleteSessionPending && setDeleteSessionTarget(null)}
 				>
 					<div
-						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
+						ref={deleteSessionDialogRef}
+						className="glass-modal relative w-full max-w-[420px] p-6"
+						style={{ boxShadow: "var(--pw-shadow-modal)", color: "var(--dsw-label-primary)" }}
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
@@ -1100,29 +1234,30 @@ function SessionSidebarImpl({
 							type="button"
 							onClick={() => setDeleteSessionTarget(null)}
 							disabled={deleteSessionPending}
-							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
+							className="icon-btn absolute right-5 top-5"
+							style={{ width: 28, height: 28 }}
 							aria-label={t.close}
 						>
 							<IconCloseOutline14 size={16} />
 						</button>
-						<h3 id="delete-session-dialog-title" className="text-lg font-medium text-white pr-8">
+						<h3 id="delete-session-dialog-title" className="pr-8 text-lg font-medium" style={{ color: "var(--dsw-label-primary)" }}>
 							{t.deleteSession}
 						</h3>
-						<p className="mt-3 text-[14.5px] leading-relaxed text-zinc-300">
+						<p className="mt-3 text-[14.5px] leading-relaxed break-words" style={{ color: "var(--dsw-label-secondary)" }}>
 							{t.deleteSessionConfirm.replace("{name}", deleteSessionTarget.name)}
 						</p>
 						{deleteSessionPending && (
-							<p className="mt-4 text-sm text-zinc-400" role="status">{t.deleteSessionPending}</p>
+							<p className="mt-4 text-sm" style={{ color: "var(--dsw-label-caption)" }} role="status">{t.deleteSessionPending}</p>
 						)}
 						{deleteSessionError && (
 							<p className="mt-4 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{deleteSessionError}</p>
 						)}
-						<div className="mt-6 flex items-center justify-end gap-3">
+						<div className="mt-6 flex items-center justify-end gap-2.5">
 							<button
 								type="button"
 								onClick={() => setDeleteSessionTarget(null)}
 								disabled={deleteSessionPending}
-								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 transition hover:border-white/25 hover:bg-[#383838]"
+								className="btn-outline"
 							>
 								{t.cancel}
 							</button>
@@ -1130,7 +1265,7 @@ function SessionSidebarImpl({
 								type="button"
 								onClick={() => void handleConfirmDeleteSession()}
 								disabled={deleteSessionPending}
-								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] transition hover:border-[#f87171]/40 hover:bg-[#383838] hover:text-[#ef4444]"
+								className="pw-btn-danger"
 							>
 								{t.deleteSession}
 							</button>
@@ -1140,15 +1275,16 @@ function SessionSidebarImpl({
 				document.body
 			)}
 
-			{/* 删除工作区确认弹窗（照用户截图 media_1788745235179.png 与 media_1788746156687.png，通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
+			{/* 删除工作区确认弹窗（通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
 			{mounted && deleteWorkspaceTarget && createPortal(
 				<div
-					className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
 					onClick={() => !deleteWorkspacePending && setDeleteWorkspaceTarget(null)}
 				>
 					<div
 						ref={deleteWorkspaceDialogRef}
-						className="relative w-full max-w-[420px] rounded-[24px] bg-[#212121] p-6 text-white shadow-2xl border border-white/10"
+						className="glass-modal relative w-full max-w-[420px] p-6"
+						style={{ boxShadow: "var(--pw-shadow-modal)", color: "var(--dsw-label-primary)" }}
 						onClick={(e) => e.stopPropagation()}
 						role="dialog"
 						aria-modal="true"
@@ -1159,38 +1295,39 @@ function SessionSidebarImpl({
 							type="button"
 							onClick={() => setDeleteWorkspaceTarget(null)}
 							disabled={deleteWorkspacePending}
-							className="absolute right-5 top-5 rounded-full p-1 text-zinc-400 hover:text-white hover:bg-white/10 transition"
+							className="icon-btn absolute right-5 top-5"
+							style={{ width: 28, height: 28 }}
 							aria-label={t.close}
 						>
 							<IconCloseOutline14 size={16} />
 						</button>
 
 						{/* 标题 */}
-						<h3 id="delete-workspace-dialog-title" className="text-lg font-medium text-white pr-8">
+						<h3 id="delete-workspace-dialog-title" className="pr-8 text-lg font-medium" style={{ color: "var(--dsw-label-primary)" }}>
 							{t.deleteWorkspace}
 						</h3>
 
 						{/* 描述文本 */}
-						<p className="mt-3 text-[14.5px] leading-relaxed text-zinc-300">
+						<p className="mt-3 text-[14.5px] leading-relaxed break-words" style={{ color: "var(--dsw-label-secondary)" }}>
 							{(t.deleteWorkspaceConfirm || "将把“{name}”从工作区列表中移除。文件夹与会话记录会保留，其会话将显示在“未分组”下。").replace(
 								"{name}",
 								deleteWorkspaceTarget.name,
 							)}
 						</p>
 						{deleteWorkspacePending && (
-							<p className="mt-4 text-sm text-zinc-400" role="status">{t.deleteWorkspacePending}</p>
+							<p className="mt-4 text-sm" style={{ color: "var(--dsw-label-caption)" }} role="status">{t.deleteWorkspacePending}</p>
 						)}
 						{deleteWorkspaceError && (
 							<p className="mt-4 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{deleteWorkspaceError}</p>
 						)}
 
 						{/* 按钮区 */}
-						<div className="mt-6 flex items-center justify-end gap-3">
+						<div className="mt-6 flex items-center justify-end gap-2.5">
 							<button
 								type="button"
 								onClick={() => setDeleteWorkspaceTarget(null)}
 								disabled={deleteWorkspacePending}
-								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-zinc-200 transition hover:border-white/25 hover:bg-[#383838]"
+								className="btn-outline"
 							>
 								{t.cancel}
 							</button>
@@ -1198,7 +1335,7 @@ function SessionSidebarImpl({
 								type="button"
 								onClick={() => void handleConfirmDeleteWorkspace()}
 								disabled={deleteWorkspacePending}
-								className="rounded-xl border border-transparent bg-[#2c2c2c] px-5 py-2 text-sm font-medium text-[#f87171] transition hover:border-[#f87171]/40 hover:bg-[#383838] hover:text-[#ef4444]"
+								className="pw-btn-danger"
 							>
 								{t.deleteWorkspace}
 							</button>
@@ -1234,12 +1371,12 @@ function MenuItem({
 		<button
 			title={title}
 			data-danger={danger ? "true" : undefined}
-			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-lg px-3 py-2 text-left"
-			style={{ fontSize: 13, color: danger ? "var(--dsw-danger)" : "var(--dsw-label-primary)" }}
+			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center gap-2.5 rounded-lg text-left"
+			style={{ fontSize: 13, padding: "8px 12px", color: danger ? "var(--dsw-danger)" : "var(--dsw-label-primary)" }}
 			onClick={onClick}
 		>
-			<span className="isx-menu-icon" style={{ display: "inline-flex" }}>{icon}</span>
-			<span className="isx-menu-shift">{label}</span>
+			<span className="isx-menu-icon shrink-0" style={{ display: "inline-flex" }}>{icon}</span>
+			<span className="isx-menu-shift whitespace-nowrap">{label}</span>
 		</button>
 	);
 }
@@ -1248,8 +1385,8 @@ function MenuCheck({ label, checked, onClick }: { label: string; checked: boolea
 	return (
 		<button
 			data-active={checked ? "true" : undefined}
-			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center justify-between rounded-lg pl-4 pr-4 py-2 text-left"
-			style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}
+			className="isx-menu-item mx-1 flex w-[calc(100%-8px)] items-center justify-between rounded-lg text-left"
+			style={{ fontSize: 13, padding: "8px 16px", color: "var(--dsw-label-primary)" }}
 			onClick={onClick}
 		>
 			<span className="isx-menu-shift">{label}</span>

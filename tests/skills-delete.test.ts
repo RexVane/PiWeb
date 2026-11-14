@@ -52,6 +52,11 @@ vi.mock("@/lib/pi", () => ({
 	resourceLoaderReady: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/agent-manager", () => ({ reloadSessionsForCwd: vi.fn(async () => undefined) }));
+vi.mock("@/lib/recoverable-remove", () => ({ recoverableRemove: async (removed: string) => {
+	const backup = `${removed}.backup`;
+	await fs.promises.rename(removed, backup);
+	return { removed, backup };
+} }));
 
 import { deleteSkill } from "@/lib/skills-service";
 
@@ -79,7 +84,7 @@ describe("deleteSkill", () => {
 		fakeSkills.set("my-skill", { name: "my-skill", filePath });
 		try {
 			const expected = await expanded(dir); // 删之前先取展开形式，产品返回的就是这个
-			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected });
+			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
 			expect(fs.existsSync(dir)).toBe(false);
 		} finally {
 			rmSync(agentDir, { recursive: true, force: true });
@@ -102,7 +107,7 @@ describe("deleteSkill", () => {
 		fakeSkills.set("other-skill", { name: "other-skill", filePath: path.join(sibling, "SKILL.md") });
 		try {
 			const expected = await expanded(flat);
-			await expect(deleteSkill(flat, undefined)).resolves.toEqual({ removed: expected });
+			await expect(deleteSkill(flat, undefined)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
 			expect(fs.existsSync(flat)).toBe(false);
 			expect(fs.existsSync(path.join(sibling, "SKILL.md"))).toBe(true);
 		} finally {
@@ -149,14 +154,14 @@ describe("deleteSkill", () => {
 		const cwd = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-"));
 		const filePath = makeSkillDir("project");
 		// classifyScope: 不在 agent 目录下的绝对路径 + cwd 前缀不匹配时落 package；放进 cwd 下即 project
-		const dir = path.join(cwd, "my-skill");
+		const dir = path.join(cwd, ".pi", "skills", "my-skill");
 		rmSync(path.dirname(filePath), { recursive: true, force: true });
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(path.join(dir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
 		const projectFile = path.join(dir, "SKILL.md");
 		fakeSkills.set("my-skill", { name: "my-skill", filePath: projectFile });
 		const expected = await expanded(dir);
-		await expect(deleteSkill(projectFile, cwd)).resolves.toEqual({ removed: expected });
+		await expect(deleteSkill(projectFile, cwd)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
 		expect(fs.existsSync(dir)).toBe(false);
 		rmSync(cwd, { recursive: true, force: true });
 	});
@@ -205,7 +210,7 @@ describe("deleteSkill", () => {
 		mockState.agentDir = linkDir;
 		try {
 			const expected = await expanded(skillDir);
-			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected });
+			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
 			expect(fs.existsSync(skillDir)).toBe(false);
 		} finally {
 			removeDirLink(linkDir); // 只删链接本身，不动目标

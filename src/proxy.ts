@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { configuredTrustedHosts, isSafeHost, isSafeOrigin } from "@/lib/auth";
-import { authEnabled, createSessionCookie, requestAuthority, sessionCookieOptions, validSessionCookie } from "@/lib/web-auth";
-import { TOKEN_QUERY, validLaunchToken } from "@/lib/web-launch-token";
+import { authEnabled, createSessionCookie, requestAuthority, requestDeviceType, sessionCookieOptions, sessionCookieFromRequest, validSessionCookie, sessionCookieId, decodeSessionCookie } from "@/lib/web-auth";
+import { rememberWebDevice } from "@/lib/web-devices";
+import { TOKEN_QUERY, consumeLaunchToken } from "@/lib/web-launch-token";
 import { loadSessionRevocations, loadWebSecret } from "@/lib/web-secret";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-/** 未认证也可达：登录页自身与认证接口 */
-const PUBLIC_PATHS = new Set(["/login", "/api/web-auth"]);
+/** 未认证也可达：登录页自身、认证接口，以及手机扫码用的配对入口（短码自己就是凭据） */
+const PUBLIC_PATHS = new Set(["/login", "/api/web-auth", "/pair"]);
 /** 静态资源不参与认证（dev 的 assetPrefix 是 /_piweb-dev/<id>，生产是 _next） */
 const ASSET_PREFIXES = ["/_next/", "/_piweb-dev/"];
 const ASSET_PATHS = new Set(["/icon.svg", "/favicon.ico"]);
@@ -33,6 +34,7 @@ export function proxy(request: NextRequest) {
 
 	const secret = loadWebSecret();
 	const revocations = loadSessionRevocations();
+	if (revocations.unavailable) return NextResponse.json({ success: false, error: "session authentication is temporarily unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
 
 	// 启动令牌换 Cookie：只认根路径、只认一个 token 参数、只认 GET。
 	// 令牌不接受出现在 API 路径上，也不接受走 Authorization 头。
@@ -40,8 +42,9 @@ export function proxy(request: NextRequest) {
 		const tokens = request.nextUrl.searchParams.getAll(TOKEN_QUERY);
 		if (tokens.length > 0) {
 			const authority = requestAuthority(request);
-			if (authority && tokens.length === 1 && validLaunchToken(tokens[0], process.env.PI_WEB_LAUNCH_TOKEN)) {
-				const cookie = createSessionCookie(authority, secret);
+			if (authority && tokens.length === 1 && consumeLaunchToken(tokens[0], process.env.PI_WEB_LAUNCH_TOKEN, Date.now(), revocations.notBefore)) {
+				const cookie = createSessionCookie(authority, secret, Date.now(), requestDeviceType(request), revocations.notBefore);
+				void rememberWebDevice(sessionCookieId(cookie.value), decodeSessionCookie(cookie.value, secret)!).catch((error) => console.error("[auth] Could not remember device:", error));
 				const response = redirectToCleanRoot(request);
 				response.cookies.set(cookie.name, cookie.value, sessionCookieOptions(request));
 				return response;
@@ -52,7 +55,11 @@ export function proxy(request: NextRequest) {
 	}
 
 	const authenticated = validSessionCookie(request, secret, Date.now(), revocations);
-	if (authenticated) return NextResponse.next();
+	if (authenticated) {
+		const cookie = sessionCookieFromRequest(request, secret);
+		if (cookie) void rememberWebDevice(cookie.id, cookie.payload).catch((error) => console.error("[auth] Could not remember device:", error));
+		return NextResponse.next();
+	}
 	if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
 	// 页面请求 → 登录页（带返回地址）；API → 401（没有 Basic，不发挑战头）。
@@ -83,5 +90,5 @@ function redirectToCleanRoot(request: NextRequest): NextResponse {
 }
 
 export const config = {
-	matcher: ["/((?!_next/|_piweb-dev/|icon\\.svg|favicon\\.ico).*)"],
+	matcher: ["/((?!_next/|_piweb-dev/|api/files/upload$|icon\\.svg|favicon\\.ico).*)"],
 };

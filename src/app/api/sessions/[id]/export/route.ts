@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { exportSession, getManaged } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath } from "@/lib/path-security";
+import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +27,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 			headers: {
 				"Content-Type": `${contentType}; charset=utf-8`,
 				"Content-Disposition": attachmentDisposition(filename),
+				"Cache-Control": "no-store",
 			},
 		});
 	} catch (error) {
 		return NextResponse.json(
-			{ success: false, error: error instanceof Error ? error.message : "request failed" },
-			{ status: error instanceof BoundaryError ? 400 : 500 },
+			{ success: false, ...apiError(error, "会话导出失败，请稍后重试。") },
+			{ status: error instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } },
 		);
 	}
 }

@@ -14,6 +14,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	AUTOCOMPLETE_SEPARATOR_REGEX, CJK_BREAK_REGEX, atToken, buildCandidates, dirsOfPaths, scoreEntry, suggestPaths,
@@ -100,9 +102,10 @@ describe("评分与 pi 一致", () => {
 	});
 });
 
-const FD = spawnSync("fd", ["--version"], { encoding: "utf8" }).status === 0 ? "fd" : null;
+const FD = [path.join(getAgentDir(), "bin", process.platform === "win32" ? "fd.exe" : "fd"), "fd", "fdfind"]
+	.find((candidate) => spawnSync(candidate, ["--version"], { encoding: "utf8", windowsHide: true }).status === 0) ?? null;
 const withFd = piAutocomplete && piUtils && FD ? it : it.skip;
-if (piAutocomplete && !FD) console.warn("[mention-parity] PATH 上没有 fd，端到端对照跳过");
+if (piAutocomplete && !FD) console.warn("[mention-parity] SDK 工具目录与 PATH 上都没有可用 fd，端到端对照跳过");
 
 // 总条目（文件 + 目录）少于 100：pi 每次 fd 只取前 100 条，夹具要在这个范围内才是逐条可比的
 const FIXTURE = [
@@ -125,7 +128,7 @@ describe("端到端：同一批文件，pi（真 fd）与网页给出同样的�
 		}
 	});
 	afterAll(async () => {
-		if (root) await fs.rm(root, { recursive: true, force: true });
+		if (root) await recycleFixture(root);
 	});
 
 	withFd("各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符", async (ctx) => {

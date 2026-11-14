@@ -5,7 +5,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { writeRememberedHeroModel } from "@/lib/hero-model-memory";
 
-const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn(), initialPath: "/session-a", queue: { steering: [] as string[], followUp: [] as string[] } }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
@@ -21,12 +21,12 @@ vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => 
 	<button onClick={() => props.onNewInWorkspace("/other")}>New other hero</button>
 </> }));
 vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
-	const [currentPath, setCurrentPath] = useState<string | null>("/session-a");
+	const [currentPath, setCurrentPath] = useState<string | null>(mocks.initialPath);
 	return {
 		sessions: ["/session-a", "/session-b", "/created"].map((path) => ({ path, cwd: "/workspace", name: path })),
 		archivedSessions: [], archivedSessionPaths: [], addedWorkspaces: ["/workspace"], removedWorkspaces: [], workspaceAliases: {},
 		currentPath, currentId: currentPath, models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
-		state: { snapshot: currentPath ? { cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: { steering: [], followUp: [] } } : null,
+		state: { snapshot: currentPath ? { sessionPath: currentPath, cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: mocks.queue } : null,
 			messages: [], tools: {}, growth: { rounds: [], error: null }, extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true },
 		getWorkspaceName: (cwd: string) => cwd, sendCommand: mocks.sendCommand,
 		newSession: async (...args: unknown[]) => { const path = await mocks.newSession(...args); if (path) setCurrentPath(path); return path; },
@@ -47,10 +47,77 @@ const go = (name: string) => fireEvent.click(screen.getByRole("button", { name }
 // 轨迹页签已移除：用「切到别的会话再切回来」制造同样的重挂载（草稿与待接收状态由父层持有）
 const remount = (returnTo = "Open A") => { go("Open B"); go(returnTo); };
 // 新会话页不再自动选模型：这些用例模拟用户在 /workspace 里选过 test-model（记住的选择），草稿才能发出去
-beforeEach(() => { localStorage.clear(); writeRememberedHeroModel(localStorage, "/workspace", { provider: model.provider, id: model.id }); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
+beforeEach(() => { mocks.initialPath = "/session-a"; mocks.queue = { steering: [], followUp: [] }; localStorage.clear(); sessionStorage.clear(); writeRememberedHeroModel(localStorage, "/workspace", { provider: model.provider, id: model.id }); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
+	it.each([{ imageCount: 21, textLength: 10 }, { imageCount: 0, textLength: 200_001 }])("restores an over-limit recovered draft after a page remount ($imageCount images, $textLength characters)", async ({ imageCount, textLength }) => {
+		const images = Array.from({ length: imageCount }, () => ({ type: "image", data: "YQ==", mimeType: "image/png" }));
+		const recoveredText = "r".repeat(textLength);
+		mocks.queue = { steering: [recoveredText], followUp: [] };
+		mocks.sendCommand.mockImplementation((command: any) => Promise.resolve(command.cmd === "clearQueue"
+			? { success: true, data: { ...mocks.queue, images } } : { success: true }));
+		vi.stubGlobal("fetch", vi.fn(async () => response({ skills: [], promptTemplates: [], extensionCommands: [] })));
+		const first = render(<AppShell />);
+		fireEvent.change(textarea(), { target: { value: "unsent text" } });
+		fireEvent.click(screen.getByRole("button", { name: "↑ 取回编辑" }));
+		await waitFor(() => expect(textarea().value.length).toBe(textLength + "\n\nunsent text".length));
+		expect(document.querySelectorAll('img[src^="data:image/png"]')).toHaveLength(imageCount);
+		first.unmount();
+		mocks.queue = { steering: [], followUp: [] };
+		render(<AppShell />);
+		await waitFor(() => expect(textarea().value.length).toBe(textLength + "\n\nunsent text".length));
+		expect(textarea().value.endsWith("\n\nunsent text")).toBe(true);
+		expect(document.querySelectorAll('img[src^="data:image/png"]')).toHaveLength(imageCount);
+		fireEvent.keyDown(textarea(), { key: "Enter" });
+		await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+		expect(mocks.sendCommand.mock.calls.some(([command]) => command.cmd === "prompt")).toBe(false);
+	});
+	it("persists the latest text and references on unmount without waiting for the debounce", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => response({ skills: [], promptTemplates: [], extensionCommands: [] })));
+		const first = render(<AppShell />);
+		fireEvent.change(textarea(), { target: { value: "unsent before reload" } });
+		fireEvent.click(screen.getByTestId("drawer-toggle"));
+		go("Reference file"); first.unmount(); render(<AppShell />);
+		await waitFor(() => expect(textarea().value).toBe("unsent before reload"));
+		expect(screen.getByTestId("composer-references").textContent).toContain("ref.txt");
+	});
+	it("restores a saved draft when the same Windows session uses different separators and casing", async () => {
+		mocks.initialPath = "D:/Store/a.jsonl";
+		sessionStorage.setItem("piweb.drafts", JSON.stringify({ version: 1, drafts: [["d:\\store\\A.jsonl", { text: "canonical draft", images: [], uploads: [] }]] }));
+		render(<AppShell />); await waitFor(() => expect(textarea().value).toBe("canonical draft"));
+	});
+	it("keeps POSIX session paths with different casing as separate drafts", async () => {
+		mocks.initialPath = "/Store/a.jsonl";
+		sessionStorage.setItem("piweb.drafts", JSON.stringify({ version: 1, drafts: [
+			["/Store/a.jsonl", { text: "current draft", images: [], uploads: [] }],
+			["/store/a.jsonl", { text: "other draft", images: [], uploads: [] }],
+		] }));
+		render(<AppShell />); await waitFor(() => expect(textarea().value).toBe("current draft"));
+	});
+	it("restores an older nonempty draft when more than thirty drafts were saved", async () => {
+		const drafts = [["/session-a", { text: "old unsent draft", images: [], uploads: [] }],
+			...Array.from({ length: 30 }, (_, index) => [`/saved-${index}`, { text: `saved ${index}`, images: [], uploads: [] }])];
+		sessionStorage.setItem("piweb.drafts", JSON.stringify({ version: 1, drafts }));
+		render(<AppShell />); await waitFor(() => expect(textarea().value).toBe("old unsent draft"));
+	});
+	it("persists every unsent draft after sending clears the current draft", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => response({ skills: [], promptTemplates: [], extensionCommands: [] })));
+		const drafts = Array.from({ length: 31 }, (_, index) => [`/saved-${index}`, { text: `saved ${index}`, images: [], uploads: [] }]);
+		sessionStorage.setItem("piweb.drafts", JSON.stringify({ version: 1, drafts }));
+		const mounted = render(<AppShell />);
+		fireEvent.change(textarea(), { target: { value: "send current" } });
+		fireEvent.keyDown(textarea(), { key: "Enter" });
+		await waitFor(() => expect(mocks.sendCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: "prompt", text: "send current" })));
+		await waitFor(() => expect(textarea().value).toBe(""));
+		mounted.unmount();
+		const saved = JSON.parse(sessionStorage.getItem("piweb.drafts")!);
+		expect(saved.drafts).toHaveLength(31);
+		expect(saved.drafts.map(([key, draft]: [string, { text: string }]) => [key, draft.text])).toEqual(
+			Array.from({ length: 31 }, (_, index) => [`/saved-${index}`, `saved ${index}`]),
+		);
+		expect(saved.drafts.some(([key]: [string]) => key === "/session-a")).toBe(false);
+	});
 	it("loads skills, templates and extension commands before sending the first Hero message", async () => {
 		const resources = { skills: [{ name: "workspace-skill", description: "A skill" }], promptTemplates: [{ name: "workspace-template", description: "A template" }], extensionCommands: [{ name: "workspace-command", description: "A command" }] };
 		const fetcher = vi.fn((url: string) => Promise.resolve(response(url.startsWith("/api/agent/resources") ? resources : { modelThinkingLevels: {} })));
@@ -175,6 +242,27 @@ describe("AppShell session-owned composer drafts", () => {
 		expect(textarea().value).toBe("");
 		go("Open B");
 		expect(textarea().value).toBe("draft B");
+	});
+
+	it.each([true, false])("isolates an in-flight send when moving from A to B (success=%s)", async (success) => {
+		const accepted = deferred<{ success: boolean; error?: string }>();
+		mocks.sendCommand.mockImplementation((command: any) => command.cmd === "prompt" ? accepted.promise : Promise.resolve({ success: true }));
+		vi.stubGlobal("fetch", vi.fn(async () => response({ skills: [], promptTemplates: [], extensionCommands: [] })));
+		render(<AppShell />);
+		fireEvent.change(textarea(), { target: { value: "pending A" } });
+		fireEvent.keyDown(textarea(), { key: "Enter" });
+		await waitFor(() => expect(mocks.sendCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: "prompt", text: "pending A" })));
+		expect(textarea().disabled).toBe(true);
+		go("Open B");
+		expect(textarea().disabled).toBe(false);
+		fireEvent.change(textarea(), { target: { value: "untouched B" } });
+		await act(async () => accepted.resolve({ success, error: success ? undefined : "A rejected" }));
+		expect(textarea().value).toBe("untouched B");
+		expect(textarea().disabled).toBe(false);
+		expect(screen.queryByText("A rejected")).toBeNull();
+		go("Open A");
+		expect(textarea().value).toBe(success ? "" : "pending A");
+		expect(textarea().disabled).toBe(false);
 	});
 
 	it.each([true, false])("migrates Hero draft and pending acceptance to the created session (success=%s)", async (success) => {

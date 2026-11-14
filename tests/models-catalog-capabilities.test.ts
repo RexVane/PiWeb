@@ -53,4 +53,10 @@ describe("catalogCapabilities", () => {
 		expect(catalogCapabilities({ context_window: 1.5 }).contextWindow).toBeUndefined();
 		expect(catalogCapabilities({ context_window: "128000" }).contextWindow).toBeUndefined();
 	});
+	it("preserves models.dev and OpenCode nested capacities, MIME vision and structured reasoning", () => {
+		expect(catalogCapabilities({ limit: { context: 500000, output: 64000 }, modalities: { input: ["text", "image/jpeg"] }, capabilities: { reasoning: { supported: true } } }))
+			.toEqual({ contextWindow: 500000, maxTokens: 64000, vision: true, reasoning: true });
+		expect(catalogCapabilities({ contextWindow: 200000, max_tokens: 32000, capabilities: { image_input: false, reasoning: { supported: false } } }))
+			.toEqual({ contextWindow: 200000, maxTokens: 32000, vision: false, reasoning: false });
+	});
 });

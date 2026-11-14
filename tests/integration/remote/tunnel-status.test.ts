@@ -10,7 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/remote/route";
 import { resetRemoteSupervisor, startLan, startPublic, stopAll, stopPublic } from "@/lib/remote/supervisor";
 
-describe.skipIf(process.platform === "win32")("tunnel status through API, process and HTTP", () => {
+// These local fixtures have no DNS propagation; the startup grace is tested with fake time separately.
+vi.mock("node:timers/promises", async (original) => {
+	const timers = await original<typeof import("node:timers/promises")>();
+	return { ...timers, setTimeout: (ms: number, value?: unknown, options?: { signal?: AbortSignal }) =>
+		ms === 15_000 ? Promise.resolve(value) : timers.setTimeout(ms, value, options) };
+});
+
+describe("tunnel status through API, process and HTTP", () => {
 	let root: string;
 	let edge: http.Server;
 	let reply: { status: number; body: string; headers?: Record<string, string> };
@@ -51,8 +58,8 @@ describe.skipIf(process.platform === "win32")("tunnel status through API, proces
 		resetRemoteSupervisor();
 		vi.stubEnv("PI_CODING_AGENT_DIR", root);
 		vi.stubEnv("PI_WEB_TRUSTED_HOSTS", "");
-		const executable = path.join(root, "cloudflared-fixture");
-		await fs.writeFile(executable, `#!${process.execPath}
+		const executable = path.join(root, "cloudflared-fixture.cjs");
+		await fs.writeFile(executable, `
 const fs = require("node:fs");
 const root = process.env.PI_CODING_AGENT_DIR;
 const startupDelay = fs.existsSync(root + "/startup-delay") ? Number(fs.readFileSync(root + "/startup-delay", "utf8")) : 0;
@@ -60,6 +67,7 @@ setTimeout(() => {
 fs.appendFileSync(root + "/starts", "started\\n");
 fs.writeFileSync(root + "/pid", String(process.pid));
 if (!fs.existsSync(root + "/no-url")) console.log("https://status-fixture.trycloudflare.com");
+console.log("Registered tunnel connection");
 setInterval(() => { if (fs.existsSync(root + "/exit")) process.exit(7); }, 20);
 }, startupDelay);
 `, { mode: 0o755 });
@@ -80,7 +88,7 @@ setInterval(() => { if (fs.existsSync(root + "/exit")) process.exit(7); }, 20);
 		await new Promise<void>((resolve) => edge.listen(0, "127.0.0.1", resolve));
 		const port = (edge.address() as net.AddressInfo).port;
 		vi.spyOn(https, "request").mockImplementation(((options: http.RequestOptions, callback: (response: http.IncomingMessage) => void) =>
-			http.request({ ...options, host: "127.0.0.1", port }, callback)) as typeof https.request);
+			http.request({ ...options, host: "127.0.0.1", port, agent: false }, callback)) as typeof https.request);
 		now = Date.now();
 		vi.spyOn(Date, "now").mockImplementation(() => now);
 		const socket = net.createServer();

@@ -58,7 +58,7 @@ async function open(name = "Open cold", extra: Record<string, unknown> = {}) {
 	await waitFor(() => expect(EventSourceFixture.instances).toHaveLength(count + 1));
 	const stream = EventSourceFixture.instances.at(-1)!;
 	await act(async () => stream.emit({ type: "snapshot", snapshot: {
-		cwd: "/workspace", messages: [], trajectory: [], userTurns: [], toolPreset: "standard", toolPreferenceSaved: true,
+		cwd: "/workspace", messages: [], trajectory: [], userTurns: [], toolPreset: "workspace", toolPreferenceSaved: true,
 		model: { provider: "test", id: "m", name: "Test model" }, tools: { active: ["read", "bash"], all: [{ name: "read" }, { name: "bash" }] },
 		queue: { steering: [], followUp: [] }, isStreaming: false, contextUsage: null, ...extra,
 	} }));
@@ -71,8 +71,8 @@ function choosePermission(name: string) {
 
 it("sets the new-chat permission from the composer without starting an agent or exposing a tools settings page", async () => {
 	render(<AppShell />);
-	choosePermission("只读访问");
-	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("只读访问"));
+	choosePermission("仅可查看");
+	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("仅可查看"));
 	expect(localStorage.getItem("piweb.toolPreset")).toBe("readonly");
 	expect(commands).toEqual([]);
 	click("Settings");
@@ -83,10 +83,10 @@ it("replaces a cold session's custom selection only after the permission command
 	render(<AppShell />);
 	await open("Open cold", { customActiveTools: ["read"] });
 	expect(screen.getByTestId("permission-trigger").textContent).toBe("自定义");
-	choosePermission("常规编辑");
-	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("常规编辑"));
+	choosePermission("工作区内修改");
+	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("工作区内修改"));
 	expect(commands).toHaveLength(1);
-	expect(commands[0]).toMatchObject({ cmd: "setToolPreset", preset: "standard" });
+	expect(commands[0]).toMatchObject({ cmd: "setToolPreset", preset: "workspace" });
 	expect(commands[0].url).toContain("/api/agent/");
 });
 
@@ -96,14 +96,14 @@ it("disables sending during a save and retains the previous permission when savi
 	fireEvent.change(screen.getByRole("textbox"), { target: { value: "draft" } });
 	let resolve!: (response: Response) => void;
 	setPermission = () => new Promise((yes) => { resolve = yes; });
-	choosePermission("完全访问");
+	choosePermission("完全权限");
 	await waitFor(() => expect(commands).toHaveLength(1));
 	expect((screen.getByTestId("permission-trigger") as HTMLButtonElement).disabled).toBe(true);
 	expect((screen.getByTitle("发送") as HTMLButtonElement).disabled).toBe(true);
 	fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
 	expect(commands).toHaveLength(1);
 	await act(async () => resolve(new Response(JSON.stringify({ success: false, error: "permission save failed" }), { status: 503 })));
-	expect(screen.getByTestId("permission-trigger").textContent).toBe("常规编辑");
+	expect(screen.getByTestId("permission-trigger").textContent).toBe("工作区内修改");
 	expect(localStorage.getItem("piweb.toolPreset")).toBeNull();
 	expect((screen.getByTitle("发送") as HTMLButtonElement).disabled).toBe(false);
 });
@@ -113,17 +113,17 @@ it("ignores a previous session's late success and failure after switching sessio
 	await open();
 	let resolve!: (response: Response) => void;
 	setPermission = () => new Promise((yes) => { resolve = yes; });
-	choosePermission("完全访问");
+	choosePermission("完全权限");
 	await waitFor(() => expect(commands).toHaveLength(1));
 	await open("Open other", { toolPreset: "readonly" });
 	await act(async () => resolve(response({})));
-	expect(screen.getByTestId("permission-trigger").textContent).toBe("只读访问");
+	expect(screen.getByTestId("permission-trigger").textContent).toBe("仅可查看");
 	expect(localStorage.getItem("piweb.toolPreset")).toBeNull();
-	choosePermission("常规编辑");
+	choosePermission("工作区内修改");
 	await waitFor(() => expect(commands).toHaveLength(2));
 	await open("Open cold", { toolPreset: "full" });
 	await act(async () => resolve(new Response(JSON.stringify({ success: false, error: "old session failed" }), { status: 503 })));
-	expect(screen.getByTestId("permission-trigger").textContent).toBe("完全访问");
+	expect(screen.getByTestId("permission-trigger").textContent).toBe("完全权限");
 	expect(screen.queryByText("old session failed")).toBeNull();
 });
 
@@ -132,11 +132,11 @@ it("changes the actual session permission while a task is running", async () => 
 	const stream = await open("Open cold", { isStreaming: true, toolPreset: "full" });
 	const trigger = screen.getByTestId("permission-trigger") as HTMLButtonElement;
 	expect(trigger.disabled).toBe(false);
-	choosePermission("只读访问");
-	await waitFor(() => expect(trigger.textContent).toBe("只读访问"));
+	choosePermission("仅可查看");
+	await waitFor(() => expect(trigger.textContent).toBe("仅可查看"));
 	expect(commands).toHaveLength(1);
 	expect(commands[0]).toMatchObject({ cmd: "setToolPreset", preset: "readonly" });
 	expect(localStorage.getItem("piweb.toolPreset")).toBe("readonly");
 	await act(async () => stream.emit({ type: "status", isStreaming: false }));
-	expect(trigger.textContent).toBe("只读访问");
+	expect(trigger.textContent).toBe("仅可查看");
 });

@@ -69,6 +69,7 @@ export async function pickInitialModel(runtime: ModelScopeRuntime, input: Initia
 	if (input.patterns.length > 0) {
 		const { scopedModels } = await resolveModelScopeWithDiagnostics(input.patterns, runtime);
 		if (scopedModels.length > 0) return scopedModels[0].model;
+		return undefined;
 	}
 	if (input.defaultProvider && input.defaultModelId) {
 		const configured = runtime.getModel(input.defaultProvider, input.defaultModelId);

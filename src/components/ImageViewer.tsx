@@ -5,8 +5,12 @@ import { useI18n } from "@/i18n";
 import type { ImageAttachment } from "@/lib/types";
 import { useDialog } from "@/hooks/useDialog";
 
-export type PreviewImageSource = ImageAttachment | string;
-export const imageSource = (image: PreviewImageSource) => typeof image === "string" ? image : `data:${image.mimeType};base64,${image.data}`;
+export type PreviewImageSource = (ImageAttachment & { url?: string }) | string;
+export const imageSource = (image: PreviewImageSource) => {
+	if (typeof image === "string") return image;
+	if (image.url) return image.url.startsWith("/") && !image.url.startsWith("//") && !/[\\\u0000-\u0020\u007f]/.test(image.url) ? image.url : "";
+	return image.data ? `data:${image.mimeType};base64,${image.data}` : "";
+};
 
 /** 只读图集；删除只提供给尚未发送的输入附件（发出去的消息图片不可删） */
 export function ImageViewer({ images, index, disabled, onIndex, onRemove, onClose }: {
