@@ -1,32 +1,59 @@
 # Releasing
 
-Maintainer notes. Users only need `npm install -g @rexvane/piweb`.
+Maintainer notes, reviewed against the repository on 2026-11-14. Users only need `npm install -g @rexvane/piweb`. [Documentation index](../docs/README.md).
 
-Releases are **manual**. Prepare changes on `rexvane-piweb`, update the version in `package.json` and `package-lock.json`, and append the matching entry to `docs/state/progress.md` in the same commit. Merge the release PR only after its checks pass, then trigger `.github/workflows/publish.yml` on `main`.
+Releases are **manual**. Prepare changes on a reviewed feature branch, update the version in `package.json` and `package-lock.json`, and append the matching dated entry to `docs/state/progress.md` in the same commit. Merge the release PR only after its checks pass, then trigger [publish.yml](workflows/publish.yml) on `main`. The workflow does not require a particular source branch name.
 
 The workflow:
 
 1. validates the version already merged through the PR and refuses an existing npm version;
 2. builds the production bundle and checks a real packed artifact in a clean installation;
-3. checks that main still points to the tested source, then runs the typecheck/test publish gate and publishes to npm;
+3. checks that main still points to the tested source, then runs `prepublishOnly` (typecheck, tests, build and package verification) and publishes to npm;
 4. pushes only the version tag and creates a GitHub Release with commit-history notes.
 
 The workflow never commits or pushes to main. Pi runtime packages, including Chord, must be pinned to the same exact tested version so users receive a compatible dependency set.
 
 ```bash
-# on rexvane-piweb, before the release commit:
+# on the release feature branch, before the release commit:
 npm version patch --no-git-tag-version
 # update progress.md, commit, push the feature branch, and open/merge the PR
 # after all checks pass on the merged source:
 gh workflow run publish --ref main
-# synchronize the feature branch through a merge, never rebase:
+# if the feature branch needs the merged source, preserve its history:
 git fetch origin
 git merge origin/main
 ```
 
+## Local verification
+
+Use a separate checkout or staging directory with its own build output. `npm run build` writes `.next`; do not run it against the installation serving an active session. Preserve existing user data and uncommitted changes. Use a separate `PI_CODING_AGENT_DIR` for checks, never a directory containing personal model credentials.
+
+The [check workflow](workflows/check.yml) runs Windows and Linux with Node 22.22.2 and 24. Node 22.19.0 remains the package runtime minimum; it is not the current development-test matrix. Install with `npm ci`, prepare the SDK's real search tools with `node scripts/testing/prepare-sdk-tools.mjs` while network access is allowed, then run the offline checks. Keep the same temporary agent directory for preparation and testing.
+
+```bash
+npm run typecheck
+npm run test
+npm run build
+npm run verify:package
+```
+
+For coverage, set `PIWEB_COVERAGE=1`, `PIWEB_COVERAGE_REPORT_DIR` to an evidence directory and `PIWEB_TEST_REPORT` to the Vitest JSON report path. After testing, run `node scripts/testing/check-skips.mjs` in the same environment: it reads `PIWEB_TEST_REPORT`, not a positional filename argument. Missing required SDK tools or native Windows coverage must not be hidden by adding permissive skips. Public tunnel verification is separately enabled with `PIWEB_TEST_TUNNEL=1`; run it only against isolated fixture data, not a user's live port.
+
+`verify:package` checks the actual packed tarball, installs it into an empty global prefix with lifecycle scripts disabled, and starts the installed copy using isolated data. It verifies the compatible Pi runtime set, authentication and first-paint APIs. It does not replace browser interaction checks, an actual public tunnel probe, or production plugin mutation checks. For installation/auth/native changes, also verify a relocated installed copy; for npm plugin transactions, verify install → update → remove through authenticated APIs with a local fixture registry and check retained generations and settings.
+
+Record source fingerprint/commit, build ID, passed/failed/skipped counts, coverage and platform. [Progress](../docs/state/progress.md) records the 2026-11-14 repair acceptance **before** subsequent dead-code and file cleanup: 2211 passed, 2 approved skips, 73.03% branch coverage and 37 browser checks. Later changes require their own validation; those numbers do not certify a newly modified tree or imply npm publication.
+
+## Local release builds and cleanup
+
+`npm run build:release` prepares an isolated `.next-releases/<id>` and seals a file-hash inventory before promotion. Startup validates the selected build. A failed/in-progress selection can use its validated `previous` output, or a complete `.next` when no previous output exists; malformed active JSON can recover the separately persisted `last-ready.json`. This is distinct from the `.next` artifact packed for npm.
+
+Before removing generated directories, identify the active selection, previous/last-ready selections, lock/process owners and any build still in use. Preserve referenced outputs and audit logs, JSON reports and recovery evidence. A directory not named by `active.json` is not automatically disposable. Follow the project's deletion/backup rules for the specific confirmed paths; do not copy CI's cleanup commands into a user's working installation. Reaching the retained-release limit stops new builds without automatically deleting prior releases.
+
 ## Credentials
 
 Publishing uses the repository secret `NPM_TOKEN`. Refresh an expired token through `gh secret set NPM_TOKEN`; never put credentials in source or release notes.
+
+Production authentication stays enabled by default. Installed checks must acquire their own local launch credential and cookie. The launcher does not print token-bearing login URLs, so do not scrape logs for credentials or disable authentication to make a release probe pass.
 
 ## Retrying
 

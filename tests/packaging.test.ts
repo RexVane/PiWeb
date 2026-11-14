@@ -161,7 +161,7 @@ describe("bundled scripts must not depend on the build machine's paths", () => {
 	it("never turns import.meta.url into a filesystem path unvalidated", async () => {
 		// 注释里提到这个名字是解释，不是代码；只检查真正的调用。
 		const stripComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-		const unvalidated = /fileURLToPath\(\s*import\.meta\.url|dirname\(\s*import\.meta\.url|dirname\(\s*fileURLToPath\(\s*import\.meta\.url|new URL\([^)]{0,40}import\.meta\.url/;
+		const unvalidated = /fileURLToPath\(\s*import\.meta\.url|createRequire\(\s*import\.meta\.url|dirname\(\s*import\.meta\.url|dirname\(\s*fileURLToPath\(\s*import\.meta\.url|new URL\([^)]{0,40}import\.meta\.url/;
 		for (const name of await bundledScripts()) {
 			const code = stripComments(await fs.readFile(path.join(repoRoot, "scripts", name), "utf8"));
 			expect(code, `${name}: 打包后 import.meta.url 是构建机路径，须经 resolveReleaseRoot 校验`).not.toMatch(unvalidated);

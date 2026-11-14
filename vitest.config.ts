@@ -19,5 +19,24 @@ export default defineConfig({
 		include: ["tests/**/*.test.{ts,tsx}"],
 		// jsdom 缺失的浏览器 API 垫片（node 环境下自动跳过）
 		setupFiles: ["tests/setup-dom.ts"],
+		reporters: process.env.PIWEB_TEST_REPORT ? ["default", "json"] : ["default"],
+		outputFile: process.env.PIWEB_TEST_REPORT,
+		coverage: {
+			enabled: process.env.PIWEB_COVERAGE === "1",
+			provider: "v8",
+			reportOnFailure: true,
+			include: ["src/**", "scripts/{file-lock,http-request-guard,remote-engine,update-environment,web-auth-protocol,web-auth-constants,process-identity}.mjs"],
+			reporter: ["json-summary", "text-summary"],
+			reportsDirectory: process.env.PIWEB_COVERAGE_REPORT_DIR ?? "coverage",
+			thresholds: {
+				branches: 70,
+				// Keep separate baselines for these large modules; a global total
+				// alone can hide regressions in their request and permission branches.
+				// Ratchet these measured floors upward as coverage grows; do not
+				// lower them to accommodate a failing change or exclude new branches.
+				"src/hooks/usePiWeb.ts": { branches: 53 },
+				"src/lib/git-service.ts": { branches: 42 },
+			},
+		},
 	},
 });

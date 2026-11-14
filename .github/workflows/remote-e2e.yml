@@ -1,0 +1,58 @@
+name: remote connection
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-pairing:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install the verified tunnel fixture
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -eq 'Windows') {
+            $assetName = 'cloudflared-windows-amd64.exe'
+            $expectedHash = '86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c'
+          } else {
+            $assetName = 'cloudflared-linux-amd64'
+            $expectedHash = 'd33ff2d14475178d2012c2c56beba87389ac5ded27649519f198a7d3134a99db'
+          }
+          $enginePath = Join-Path $env:RUNNER_TEMP $assetName
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/$assetName" -OutFile $enginePath
+          if ((Get-FileHash -LiteralPath $enginePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+            throw 'Tunnel fixture checksum mismatch'
+          }
+          if ($env:RUNNER_OS -ne 'Windows') { chmod +x $enginePath }
+          "PIWEB_CLOUDFLARED=$enginePath" >> $env:GITHUB_ENV
+      - name: Verify public pairing and mobile forwarding
+        run: npx vitest run tests/remote-tunnel.integration.test.ts
+        env:
+          PIWEB_TEST_TUNNEL: "1"
+          PIWEB_TEST_TUNNEL_DIR: ${{ runner.temp }}/piweb-remote-e2e
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-remote-e2e
+          PI_WEB_AUTH: "1"
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+          PIWEB_TEST_REPORT: ${{ runner.temp }}/piweb-remote-e2e.json
+      - name: Require the enabled network case to execute
+        if: always()
+        run: node scripts/testing/check-skips.mjs
+        env:
+          PIWEB_TEST_TUNNEL: "1"
+          PIWEB_TEST_REPORT: ${{ runner.temp }}/piweb-remote-e2e.json

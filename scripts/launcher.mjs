@@ -4,10 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { acquireFileLock } from "./file-lock.mjs";
+import { terminateProcessTree } from "./process-runner.mjs";
 import { assertInstallation, selectProductionBuild } from "./build-output.mjs";
 import { ensureInstallBuild, isProductionOnlyInstall } from "./install-build.mjs";
 import { readSystemProxy } from "./system-proxy.mjs";
+import { launchTokenIpcPath, launchIpcProof, validLaunchIpcProof } from "./web-auth-protocol.mjs";
+import { lockChildEnvironment } from "./lock-child-env.mjs";
+import { readHttpProxySetting } from "./update-environment.mjs";
+export { readHttpProxySetting } from "./update-environment.mjs";
 export { isMainModule } from "./entrypoint.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,7 +28,7 @@ const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * @property {string} [root]
  * @property {{log?: (message: string) => void, probePort?: typeof probePort,
  * isPiWebRunning?: typeof isPiWebRunning, openBrowser?: (url: string) => Promise<void>,
- * warmFirstPaint?: typeof warmFirstPaint, readLaunchToken?: typeof readLaunchToken,
+ * warmFirstPaint?: typeof warmFirstPaint, readCurrentLaunchToken?: typeof readCurrentLaunchToken,
  * readHttpProxySetting?: typeof readHttpProxySetting, readSystemProxy?: typeof readSystemProxy, warn?: (message: string) => void,
  * spawn?: (command: string, args: string[], options: import('node:child_process').SpawnOptions) => LauncherChild}} [dependencies]
  */
@@ -100,21 +106,56 @@ export function readLaunchToken(port, env = process.env) {
 }
 
 /**
+ * Confirm or renew a local launch credential through the private IPC endpoint.
+ * @param {number} port
+ * @param {Environment} [env]
+ * @returns {Promise<string | null>}
+ */
+export async function readCurrentLaunchToken(port, env = process.env, { timeoutMs = 2000 } = {}) {
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		const token = readLaunchToken(port, env);
+		if (!token) return null;
+		const result = await new Promise((resolve) => {
+			const socket = net.connect(launchTokenIpcPath(agentDirOf(env), String(port)));
+			const clientNonce = randomBytes(32).toString("base64url");
+			let serverNonce;
+			let response = "";
+			let finished = false;
+			const finish = (value) => { if (!finished) { finished = true; clearTimeout(timer); socket.destroy(); resolve(value); } };
+			const timer = setTimeout(() => finish({ error: "unavailable" }), timeoutMs);
+			socket.once("connect", () => socket.write(`${JSON.stringify({ clientNonce })}\n`));
+			socket.on("data", (chunk) => {
+				response += chunk.toString("utf8");
+				if (Buffer.byteLength(response, "utf8") > 1024) { finish({ error: "unavailable" }); return; }
+				while (response.includes("\n") && !finished) try {
+					const boundary = response.indexOf("\n");
+					const message = JSON.parse(response.slice(0, boundary));
+					response = response.slice(boundary + 1);
+					if (!serverNonce) {
+						if (typeof message.serverNonce !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(message.serverNonce)
+							|| !validLaunchIpcProof(message.proof, token, "server", clientNonce, message.serverNonce)) { finish({ error: "invalid_token" }); return; }
+						serverNonce = message.serverNonce;
+						socket.write(`${JSON.stringify({ proof: launchIpcProof(token, "client", clientNonce, serverNonce) })}\n`);
+					} else {
+						finish(validLaunchIpcProof(message.proof, token, "ready", clientNonce, serverNonce) ? { ready: true } : { error: "invalid_token" });
+					}
+				} catch { finish({ error: "unavailable" }); }
+			});
+			socket.once("error", () => finish({ error: "unavailable" }));
+			socket.once("close", () => finish({ error: "unavailable" }));
+		});
+		if (result?.ready) return readLaunchToken(port, env);
+		if (result?.error !== "invalid_token") return null;
+	}
+	return null;
+}
+
+/**
  * pi 的 `httpProxy` 设置（agent 目录的 settings.json）。读不到、写坏了、没设都返回 null。
  * 按标准 JSON 读：这份文件由 pi 和 PiWeb 的设置面板写，两边写出来的都是标准 JSON。
  * @param {Environment} [env]
  * @returns {string | null}
  */
-export function readHttpProxySetting(env = process.env) {
-	try {
-		const raw = JSON.parse(fs.readFileSync(path.join(agentDirOf(env), "settings.json"), "utf8").replace(/^\uFEFF/, ""));
-		const proxy = typeof raw?.httpProxy === "string" ? raw.httpProxy.trim() : "";
-		return proxy || null;
-	} catch {
-		return null;
-	}
-}
-
 /** Node 自带的环境变量代理（NODE_USE_ENV_PROXY）：24.0 起支持，22.x 从 22.21 起 */
 export function nodeSupportsEnvProxy(version = process.versions.node) {
 	const [major, minor] = String(version).split(".").map(Number);
@@ -182,14 +223,8 @@ function mergeHostnames(current, hostname) {
 	return list.join(",");
 }
 
-function isTruthyFlag(value) {
-	const flag = (value ?? "").trim().toLowerCase();
-	return flag === "1" || flag === "true" || flag === "on" || flag === "yes";
-}
-
-function isOffFlag(value) {
-	const flag = (value ?? "").trim().toLowerCase();
-	return flag === "0" || flag === "false" || flag === "off" || flag === "no";
+function authenticationEnabled(value) {
+	return String(value ?? "1").trim() !== "0";
 }
 
 /** @param {string[]} [args] @param {Environment} [env] @returns {ParsedOptions} */
@@ -234,17 +269,15 @@ export function createLaunchPlan(root, options, env = process.env) {
 		throw new Error("拒绝非本机开发模式：启动令牌认证保护不了 Next 开发工具端点。请绑定 127.0.0.1，或先运行 npm run build:release 后用生产模式启动。");
 	}
 	const publicUrl = options.publicUrl ?? null;
+	if (String(env.PI_WEB_AUTH ?? "").trim() === "0" && (!loopback || publicUrl)) {
+		throw new Error("对外连接必须启用认证：请移除 PI_WEB_AUTH=0，或仅绑定本机地址且不配置公开地址。");
+	}
 	const installation = assertInstallation(root);
 	const build = options.isDev ? null : selectProductionBuild(installation, env.PIWEB_BUILD_DIR);
 	if (!build && !loopback) {
 		throw new Error("找不到可用生产构建，拒绝对外自动回退到开发模式。请先运行 npm run build:release，再以相同启动参数重试。");
 	}
 	const command = options.isDev || !build ? "dev" : "start";
-	// 局域网入口（「远程连接」内置插件）默认开着，等于这台机器同网段可达；
-	// 非本机监听、配了对外地址同样算暴露面。三种情况都必须有认证。
-	// 开发模式下局域网入口根本不会起（instrumentation 会跳过），不算暴露面。
-	const lanEntry = command !== "dev" && !isOffFlag(env.PIWEB_REMOTE_LAN);
-	const exposed = !loopback || Boolean(publicUrl) || lanEntry;
 	const childEnv = {
 		...env,
 		PI_WEB_ROOT: installation,
@@ -253,9 +286,9 @@ export function createLaunchPlan(root, options, env = process.env) {
 	};
 	// 每次启动换一个启动令牌；调用方已经给出就沿用（便于测试与外部编排）。
 	if (!childEnv.PI_WEB_LAUNCH_TOKEN) childEnv.PI_WEB_LAUNCH_TOKEN = randomBytes(32).toString("base64url");
-	// 有暴露面 + 用户没表态 → 自动打开启动令牌认证，而不是拒绝启动。
-	// 只在用户没表态时才替它打开：显式 PI_WEB_AUTH=0 会被尊重（此时局域网入口也会自行跳过）。
-	if (exposed && !String(childEnv.PI_WEB_AUTH ?? "").trim()) childEnv.PI_WEB_AUTH = "1";
+	// 每种启动方式都默认启用认证，并由下面的登录链接自动进入；不再需要手动常设环境变量。
+	// 显式关闭仍留给已有部署，远程入口会继续拒绝无认证运行。
+	if (!String(childEnv.PI_WEB_AUTH ?? "").trim()) childEnv.PI_WEB_AUTH = "1";
 	// 反代会把外部主机名原样转给后端，不进白名单会被判 untrusted host。
 	if (publicUrl) childEnv.PI_WEB_TRUSTED_HOSTS = mergeHostnames(childEnv.PI_WEB_TRUSTED_HOSTS, new URL(publicUrl).hostname.toLowerCase());
 	if (command === "start") childEnv.PIWEB_BUILD_DIR = build.buildDir;
@@ -327,17 +360,14 @@ function delay(ms, signal) {
 }
 
 /**
- * 首屏预热：生产模式下，Next 服务器对**第一个动态 API 请求**要一次性付出 2.4~3.3 秒的
- * 模块加载成本（本机实测：`/api/version` 首次 2559~3566ms、第二次 4~10ms；页面路由与
- * `/api/health` 不吃这笔账）。浏览器首屏正好撞在这笔成本上，于是"页面出来了、列表还在转圈"。
- *
- * 这里在子进程刚起来时就后台打一次最便宜的路由吃掉它，再预热首屏真正要用的四个路由。
- * 只等端口起来 + 身份确认，绝不阻塞启动；失败一律静默（预热属于优化，不是启动的前置条件）。
+ * 先准备首屏会话列表，避免首次索引与模型目录等初始化争用同一进程。
+ * 身份确认与 Cookie 交换后，启动器只等一次有超时的列表预热尝试；版本、
+ * 工作区、模型与设置随后并发准备，不延长就绪等待。预热失败不阻止启动。
  *
  * @param {string} base
  * @param {{fetchImpl?: typeof fetch, token?: string, timeoutMs?: number, waitMs?: number,
  * pollMs?: number, check?: typeof isPiWebRunning, signal?: AbortSignal}} [options]
- * @returns {Promise<boolean>} 是否完成了管线预热
+ * @returns {Promise<boolean>} 是否成功读完首个会话列表响应
  */
 export async function warmFirstPaint(base, { fetchImpl = fetch, token, timeoutMs = 20_000, waitMs = 60_000, pollMs = 100, check = isPiWebRunning, signal } = {}) {
 	const timeoutFor = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs));
@@ -365,17 +395,21 @@ export async function warmFirstPaint(base, { fetchImpl = fetch, token, timeoutMs
 	if (cookie) headers.cookie = cookie;
 	const headerInit = Object.keys(headers).length > 0 ? headers : undefined;
 	const get = async (route) => {
+		if (signal?.aborted) return false;
 		try {
 			const response = await fetchImpl(new URL(route, base), { credentials: "omit", redirect: "error", headers: headerInit, signal: timeoutFor() });
 			// 只需让服务端把这条路由跑完；响应体要么丢弃，要么读干净以释放连接。
-			await response.arrayBuffer().catch(() => undefined);
+			await response.arrayBuffer();
+			return response.ok;
 		} catch {
 			/* 预热失败不影响启动 */
+			return false;
 		}
 	};
-	await get("/api/version");
-	for (const route of FIRST_PAINT_ROUTES) void get(route);
-	return true;
+	const sessionsReady = await get("/api/sessions");
+	if (signal?.aborted) return false;
+	for (const route of ["/api/version", ...FIRST_PAINT_ROUTES.filter((route) => route !== "/api/sessions")]) void get(route);
+	return sessionsReady;
 }
 
 /** @param {number} port @param {string} hostname @returns {Promise<'busy' | 'free' | NodeJS.ErrnoException>} */
@@ -388,10 +422,17 @@ export function probePort(port, hostname) {
 	});
 }
 
+export function browserLaunchSpec(url, platform = process.platform) {
+	if (platform === "win32") {
+		// The URL is data in the child environment, never command text interpreted
+		// by cmd or PowerShell. Ampersands/quotes cannot create another command.
+		return { command: "powershell.exe", args: ["-NoProfile", "-NonInteractive", "-Command", "Start-Process -FilePath $env:PIWEB_BROWSER_URL"], env: { ...process.env, PIWEB_BROWSER_URL: url } };
+	}
+	return { command: platform === "darwin" ? "open" : "xdg-open", args: [url], env: process.env };
+}
 async function openBrowser(url) {
-	const command = process.platform === "win32" ? "cmd.exe" : process.platform === "darwin" ? "open" : "xdg-open";
-	const args = process.platform === "win32" ? ["/d", "/c", "start", "", url] : [url];
-	const child = spawn(command, args, { detached: true, stdio: "ignore", windowsHide: true });
+	const { command, args, env } = browserLaunchSpec(url);
+	const child = spawn(command, args, { env, detached: true, stdio: "ignore", windowsHide: true });
 	child.once("error", () => {});
 	child.unref();
 }
@@ -401,7 +442,7 @@ async function openBrowser(url) {
  * @param {LauncherOptions} [options]
  * @returns {Promise<number>}
  */
-export async function runLauncher({ args = process.argv.slice(2), env = process.env, root = DEFAULT_ROOT, dependencies = {} } = {}) {
+async function runLauncherInner({ args = process.argv.slice(2), env = process.env, root = DEFAULT_ROOT, dependencies = {} } = {}, instanceLock) {
 	const options = parseLauncherArgs(args, env);
 	const log = dependencies.log ?? console.log;
 	if (options.help) {
@@ -411,10 +452,18 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		log("对外监听必须使用生产构建。构建/恢复发布：npm run build:release。");
 		return 0;
 	}
-	// Validate before probing/reusing: an existing server must not hide an unsafe request.
-	// Production-only installs (`npm i -g piweb`) have no dev dependencies, so the
-	// development fallback is unusable there: prepare the one-time build first.
-	if (!options.isDev) {
+	// A finished build is selected, fully verified and consumed by the plan in one
+	// synchronous call. Do not first verify it in ensureInstallBuild and then hash
+	// the same files again here. No validation result survives this invocation.
+	let plan;
+	try { plan = createLaunchPlan(root, options, env); }
+	catch (error) {
+		if (options.isDev) throw error;
+		// An incomplete production-only installation may still be repaired below.
+	}
+	// Keep first-install preparation and repair before probing/reusing a service.
+	// A checkout without a production build retains its local development fallback.
+	if (!plan || (!options.isDev && plan.command !== "start")) {
 		const prepared = ensureInstallBuild(root, { log, warn: dependencies.warn ?? console.warn });
 		if (prepared === "failed" && isProductionOnlyInstall(root)) {
 			// 常见根因：包目录属主不是当前用户（sudo 安装残留），构建产物写不进去
@@ -425,10 +474,10 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 					owner = `\n此安装目录属主不是当前用户（uid ${stat.uid}）——之前可能用 sudo 安装过。修复：sudo chown -R $(whoami) "${root}"，然后重试 piweb。`;
 				}
 			} catch { /* diagnostics only */ }
-			throw new Error(`无法准备生产构建，且该安装没有开发依赖。请用 \`npm rebuild -g piweb\` 重试，或改用仓库中的 npm run dev。${owner}`);
+			throw new Error(`无法准备生产构建，且该安装没有开发依赖。请用 \`npm rebuild -g @rexvane/piweb\` 重试，或改用仓库中的 npm run dev。${owner}`);
 		}
+		plan = createLaunchPlan(root, options, env);
 	}
-	const plan = createLaunchPlan(root, options, env);
 	const checkPort = dependencies.probePort ?? probePort;
 	const checkHealth = dependencies.isPiWebRunning ?? isPiWebRunning;
 	const browse = dependencies.openBrowser ?? openBrowser;
@@ -444,7 +493,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 			if (!options.noOpen) {
 				// 那个实例开了认证的话，裸地址只会落到登录页，而这里手里没有它的令牌；
 				// 它启动时留下过令牌就直接开登录链接（浏览器里已有 Cookie 时令牌也无害）
-				const token = (dependencies.readLaunchToken ?? readLaunchToken)(port, env);
+				const token = await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env);
 				await browse(token ? tokenLoginUrl(url, token) : url);
 			}
 			return 0;
@@ -456,6 +505,10 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	const url = localUrl(options.hostname, port);
 	// 内置插件要转发回 PiWeb 自己的端口；端口可能被占而 +1，所以在这里给最终值。
 	plan.env.PIWEB_PORT = String(port);
+	plan.env.PORT = String(port);
+	instanceLock?.updateMetadata({ port, hostname: options.hostname, root: plan.root });
+	plan.env.PIWEB_HTTP_GUARD = "1";
+	plan.env.NODE_OPTIONS = [plan.env.NODE_OPTIONS, `--import=${JSON.stringify(pathToFileURL(path.join(DEFAULT_ROOT, "scripts", "http-request-guard.mjs")).href)}`].filter(Boolean).join(" ");
 	log(`[piweb] 启动 ${url} (${plan.command} 模式)`);
 	const proxySetting = (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env);
 	const hasProxyEnv = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].some((key) => plan.env[key]?.trim());
@@ -469,7 +522,7 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		if (proxy.supported) log(`[piweb] 模型请求走代理 ${redactProxy(proxy.proxy)}（来自${from}）`);
 		else (dependencies.warn ?? console.warn)(`[piweb] 配了代理（来自${from}），但 Node ${process.versions.node} 不支持按环境变量走代理，模型请求仍是直连。请升级到 Node 24 或 22.21 以上。`);
 	}
-	const authOn = isTruthyFlag(plan.env.PI_WEB_AUTH);
+	const authOn = authenticationEnabled(plan.env.PI_WEB_AUTH);
 	if (authOn) log("[piweb] 已启用启动令牌认证");
 	if (!isLoopback(options.hostname)) {
 		for (const addresses of Object.values(os.networkInterfaces())) {
@@ -480,12 +533,11 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 			}
 		}
 	}
-	// 令牌即凭据：只往终端打印，不写日志文件，也不要贴到聊天或截图里。
+	// Only the browser receives a launch credential; redirected terminal logs do not.
 	const loginBase = options.publicUrl ?? url;
-	const loginUrl = tokenLoginUrl(loginBase, plan.env.PI_WEB_LAUNCH_TOKEN);
 	if (authOn) {
 		if (options.publicUrl) log(`[piweb] 对外地址：${options.publicUrl}`);
-		log(`[piweb] 登录链接（令牌即凭据，别外传；它会进浏览器历史）：${loginUrl}`);
+		log("[piweb] 登录入口会自动在本机浏览器打开；需要重新登录时再次运行 piweb。");
 	}
 	const next = path.join(plan.root, "node_modules", "next", "dist", "bin", "next");
 	/**
@@ -510,8 +562,9 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 	 * （update-service 会据此退回复制命令，见 canSelfUpdateNpmInstall）。
 	 */
 	const child = start(process.execPath, [next, plan.command, ...(plan.command === "dev" ? ["--webpack"] : []), "-p", String(port), "-H", options.hostname], {
-		cwd: plan.root, stdio: "inherit", env: plan.env,
+		cwd: plan.root, stdio: "inherit", env: instanceLock ? lockChildEnvironment(plan.env, instanceLock.file, instanceLock.token) : plan.env, windowsHide: true, detached: process.platform !== "win32",
 	});
+	if (child.pid) instanceLock?.childStarted(child.pid);
 	const controller = new AbortController();
 	let timer;
 	// 首屏预热：开发模式每次请求都要现场编译，预热只会白占 CPU，因此只在生产模式下做。
@@ -531,15 +584,18 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 			}
 			log(`[piweb] 就绪：${url}`);
 			// 开了认证就直接开登录链接：否则用户打开的是登录页，而他手里还没有会话 Cookie。
-			if (!options.noOpen) await browse(authOn ? loginUrl : url);
+			if (!options.noOpen) {
+				const latestToken = authOn ? await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env) : null;
+				await browse(latestToken ? tokenLoginUrl(loginBase, latestToken) : url);
+			}
 		} else if (!controller.signal.aborted) {
 			timer = setTimeout(() => void ready(attempt + 1), 250);
 			timer.unref();
 		}
 	};
 	return new Promise((resolve, reject) => {
-		const interrupt = () => { child.kill("SIGINT"); };
-		const terminate = () => { child.kill("SIGTERM"); };
+		const interrupt = () => { void terminateProcessTree(child).catch((error) => { cleanup(); reject(error); }); };
+		const terminate = interrupt;
 		const cleanup = () => {
 			controller.abort();
 			clearTimeout(timer);
@@ -552,4 +608,42 @@ export async function runLauncher({ args = process.argv.slice(2), env = process.
 		child.once("exit", (code) => { cleanup(); resolve(code ?? 1); });
 		void ready().catch(() => {});
 	});
+}
+
+/** One launcher per agent directory, including the period before health is ready. */
+export async function runLauncher(options = {}) {
+	const env = options.env ?? process.env;
+	const parsed = parseLauncherArgs(options.args ?? process.argv.slice(2), env);
+	if (!parsed.help) {
+		assertInstallation(options.root ?? DEFAULT_ROOT);
+		if (env.PI_WEB_PASSWORD) throw new Error("PI_WEB_PASSWORD 已被移除，请删掉该环境变量后重试。");
+		if (parsed.isDev && !isLoopback(parsed.hostname)) throw new Error("拒绝非本机开发模式，请使用生产构建。");
+	}
+	// Injected process I/O remains isolated in launcher unit tests.
+	if (parsed.help || options.dependencies?.spawn) return runLauncherInner(options);
+	const lockFile = path.join(agentDirOf(env), "web-launch", "instance.lock");
+	let lock;
+	try { lock = acquireFileLock(lockFile, { port: parsed.port, hostname: parsed.hostname, root: path.resolve(options.root ?? DEFAULT_ROOT) }); }
+	catch (error) {
+		const owner = error.owner;
+		if (!owner || !Number.isInteger(owner.port)) throw error;
+		if (owner.root && fs.realpathSync(owner.root) !== fs.realpathSync(options.root ?? DEFAULT_ROOT)) throw new Error("已有 PiWeb 实例来自另一安装目录；停止该实例后再启动当前版本。");
+		const url = localUrl(owner.hostname || "127.0.0.1", owner.port);
+		const log = options.dependencies?.log ?? console.log;
+		log("[piweb] 已有实例正在启动，等待它就绪…");
+		const deadline = Date.now() + 60_000;
+		while (Date.now() < deadline) {
+			if (await (options.dependencies?.isPiWebRunning ?? isPiWebRunning)(url)) {
+				if (!parsed.noOpen) {
+					const token = await (options.dependencies?.readCurrentLaunchToken ?? readCurrentLaunchToken)(owner.port, env);
+					await (options.dependencies?.openBrowser ?? openBrowser)(token ? tokenLoginUrl(url, token) : url);
+				}
+				return 0;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 250));
+		}
+		throw new Error("已有 PiWeb 实例仍在启动或没有响应；请等待或停止该实例后重试。");
+	}
+	try { return await runLauncherInner(options, lock); }
+	finally { lock(); }
 }

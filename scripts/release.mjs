@@ -4,7 +4,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { assertInstallation, assertLocalPath, readProductionBuild, resolveBuildOutput, RELEASES_DIR, RELEASE_MANIFEST } from "./build-output.mjs";
+import { assertInstallation, assertLocalPath, assertReleaseCapacity, readProductionBuild, selectProductionBuild, writeBuildInventory, resolveBuildOutput, RELEASES_DIR, RELEASE_MANIFEST, RELEASE_READY_MANIFEST } from "./build-output.mjs";
+import { acquireFileLock } from "./file-lock.mjs";
+import { isolatedCommandEnv } from "./update-environment.mjs";
 import { runCommand } from "./process-runner.mjs";
 import { isMainModule } from "./entrypoint.mjs";
 import { installPiRuntime, PI_PACKAGE } from "./runtime/pi-packages.mjs";
@@ -55,15 +57,7 @@ async function atomicJson(root, relative, value) {
 
 async function acquireLock(root) {
 	const lockPath = assertLocalPath(root, LOCK_PATH);
-	let lock;
-	try { lock = await fs.open(lockPath, "wx", 0o600); }
-	catch (error) {
-		if (error.code === "EEXIST") throw new Error(`an update/build is already running (${lockPath}); after an interrupted build, confirm its process tree has stopped before removing this lock and retrying npm run build:release`);
-		throw error;
-	}
-	try { await lock.writeFile(JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })); }
-	catch (error) { await lock.close(); await fs.unlink(lockPath); throw error; }
-	return async () => { await lock.close(); await fs.unlink(lockPath); };
+	return acquireFileLock(lockPath);
 }
 
 async function writeReleaseTypeConfig(root, buildDir) {
@@ -122,40 +116,54 @@ export async function prepareRelease({ root = ROOT, env = process.env, run = run
 	await fs.mkdir(releases, { recursive: true });
 	assertLocalPath(installation, RELEASES_DIR);
 	const releaseLock = await acquireLock(installation);
+	const trackedRun = (command, args, options) => run(command, args, { ...options, onStart: releaseLock.childStarted });
 	let started = false;
 	let state;
 	try {
+		assertReleaseCapacity(installation, env);
 		await beforePrepare?.();
 		signal?.throwIfAborted();
 		const buildDir = resolveBuildOutput(installation, `${RELEASES_DIR}/${Date.now().toString(36)}-${randomUUID()}`);
 		// Never reuse a failed or previous directory, even if it has a BUILD_ID.
 		await fs.mkdir(assertLocalPath(installation, buildDir));
-		state = { schema: 1, state: "building", buildDir, startedAt: new Date().toISOString() };
+		await atomicJson(installation, `${buildDir}.owner.json`, { schema: 1, state: "building", buildDir });
+		let previous;
+		try { const prior = selectProductionBuild(installation); if (prior?.buildDir.startsWith(`${RELEASES_DIR}/`)) previous = { schema: 1, state: "ready", ...prior }; } catch { /* A repair still builds into a new directory. */ }
+		state = { schema: 1, state: "building", buildDir, previous, startedAt: new Date().toISOString() };
+		if (previous) await atomicJson(installation, RELEASE_READY_MANIFEST, previous);
 		await atomicJson(installation, RELEASE_MANIFEST, state);
 		started = true;
 		const childEnv = {
-			...env, PI_WEB_ROOT: installation, PIWEB_BUILD_DIR: buildDir,
+			...isolatedCommandEnv(env), PI_WEB_ROOT: installation, PIWEB_BUILD_DIR: buildDir,
+			PIWEB_PROCESS_LOCK_FILE: releaseLock.file, PIWEB_PROCESS_LOCK_TOKEN: releaseLock.token,
+			PI_CODING_AGENT_DIR: env.PI_CODING_AGENT_DIR, PI_OFFLINE: env.PI_OFFLINE,
 			PYTHONUTF8: env.PYTHONUTF8 ?? "1", PYTHONIOENCODING: env.PYTHONIOENCODING ?? "utf-8",
 		};
 		delete childEnv.PI_WEB_DEV;
 		delete childEnv.NODE_ENV;
-		const context = { root: installation, buildDir, env: childEnv, run, signal };
+		const context = { root: installation, buildDir, env: childEnv, run: trackedRun, signal };
 		await prepare?.(context);
 		signal?.throwIfAborted();
 		assertInstallation(installation);
 		await writeReleaseTypeConfig(installation, buildDir);
-		await run(process.execPath, [path.join(installation, "scripts", "release.mjs"), "--verify-config"], {
+		await trackedRun(process.execPath, [path.join(installation, "scripts", "release.mjs"), "--verify-config"], {
 			cwd: installation, env: childEnv, timeoutMs: 60_000, signal,
 		});
-		await run("npm", ["run", "check"], { cwd: installation, env: childEnv, timeoutMs: 600_000, signal });
+		await trackedRun("npm", ["run", "check"], { cwd: installation, env: childEnv, timeoutMs: 600_000, signal });
 		signal?.throwIfAborted();
+		writeBuildInventory(installation, buildDir);
 		const build = readProductionBuild(installation, buildDir);
 		const version = JSON.parse(await fs.readFile(path.join(installation, "package.json"), "utf8")).version;
 		if (typeof version !== "string" || !version) throw new Error("PiWeb package version is missing");
-		await atomicJson(installation, RELEASE_MANIFEST, { ...state, ...build, state: "ready", version, finishedAt: new Date().toISOString() });
+		const ready = { ...state, ...build, state: "ready", version, finishedAt: new Date().toISOString() };
+		await atomicJson(installation, RELEASE_MANIFEST, ready);
+		await atomicJson(installation, `${buildDir}.owner.json`, { schema: 1, state: "ready", buildDir });
+		try { await atomicJson(installation, RELEASE_READY_MANIFEST, ready); }
+		catch (error) { console.warn(`[piweb] Release ready, but its recovery selection could not be saved: ${error.message}`); }
 		return { ...build, version, needsRestart: true };
 	} catch (error) {
 		if (started) {
+			try { await atomicJson(installation, `${state.buildDir}.owner.json`, { schema: 1, state: "failed", buildDir: state.buildDir }); } catch { /* Retain the interrupted ownership marker. */ }
 			try { await atomicJson(installation, RELEASE_MANIFEST, { ...state, state: "failed", finishedAt: new Date().toISOString() }); }
 			catch { /* The previously persisted building state still blocks stale fallback. */ }
 		}

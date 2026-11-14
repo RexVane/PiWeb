@@ -13,9 +13,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [22.19.0, 24]
+        node: [22.22.2, 24]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,5 +31,19 @@ jobs:
       - run: npm run check
         env:
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-test-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+          PIWEB_TEST_REPORT: ${{ runner.temp }}/piweb-vitest.json
+          PIWEB_COVERAGE: "1"
+          PIWEB_COVERAGE_REPORT_DIR: ${{ runner.temp }}/piweb-coverage
+      - name: Reject unexpected skipped tests
+        if: always()
+        run: node scripts/testing/check-skips.mjs
+        env:
+          PIWEB_TEST_REPORT: ${{ runner.temp }}/piweb-vitest.json
+      - name: Verify a clean installed artifact on this platform
+        run: npm run verify:package
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-package-agent
           PI_OFFLINE: "1"
           NEXT_TELEMETRY_DISABLED: "1"

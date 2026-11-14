@@ -58,7 +58,7 @@ jobs:
       - name: Prebuild the production bundle
         run: |
           set -euo pipefail
-          node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack
+          npm run build
           rm -rf .next/cache .next/diagnostics .next/trace .next/trace-build
           rm -rf .next-releases
           test -f .next/BUILD_ID

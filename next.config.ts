@@ -2,8 +2,9 @@ import type { NextConfig } from "next";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from "next/constants";
+import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD, PHASE_PRODUCTION_SERVER } from "next/constants";
 import { resolveBuildOutput } from "./scripts/build-output.mjs";
+import { requestGuardInstalled } from "./scripts/http-request-guard.mjs";
 
 /**
  * 让构建期的文件追踪看不到用户主目录。
@@ -33,6 +34,10 @@ function isolateHomeFromTracing(): void {
 
 export default (phase: string): NextConfig => {
 	const development = phase === PHASE_DEVELOPMENT_SERVER;
+	if ((development || phase === PHASE_PRODUCTION_SERVER) && String(process.env.PI_WEB_AUTH ?? "1").trim() !== "0"
+		&& !requestGuardInstalled(process.env.PORT ?? process.env.PIWEB_PORT)) {
+		throw new Error("请使用 npm start、npm run dev 或 piweb 启动器启动；它们会自动准备认证和连接，无需额外设置。");
+	}
 	const devAssetId = process.env.PIWEB_DEV_ASSET_ID ?? "unversioned";
 	if (phase === PHASE_PRODUCTION_BUILD) isolateHomeFromTracing();
 	const buildDir = development ? ".next-dev-webpack" : resolveBuildOutput(process.cwd(), process.env.PIWEB_BUILD_DIR);
@@ -49,7 +54,7 @@ export default (phase: string): NextConfig => {
 		// pi-ai 也走运行时加载：打进 .next 的话，服务里会有两份 pi-ai（pi-coding-agent 自己从
 		// node_modules 再加载一份），npm 成品包单独更新 pi 后打包的那份还停在旧版本。
 		serverExternalPackages: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "@earendil-works/pi-agent-core"],
-		// Image prompts allow 268 MB of base64 plus text and JSON framing.
-		experimental: { proxyClientMaxBodySize: "272mb" },
+		// The launcher admits authenticated, bounded streams before Next clones bodies.
+		experimental: { proxyClientMaxBodySize: "12mb" },
 	};
 };

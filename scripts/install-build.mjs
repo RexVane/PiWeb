@@ -13,7 +13,11 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
-import { readProductionBuild } from "./build-output.mjs";
+import { randomUUID } from "node:crypto";
+import { acquireFileLock } from "./file-lock.mjs";
+import { lockChildEnvironment } from "./lock-child-env.mjs";
+import { readProductionBuild, selectProductionBuild, writeBuildInventory, assertLocalPath, assertReleaseCapacity, RELEASES_DIR, RELEASE_MANIFEST, RELEASE_READY_MANIFEST } from "./build-output.mjs";
+import { writeJsonAtomically } from "./atomic-json.mjs";
 
 /**
  * A leftover BUILD_ID is not a usable build: a package that shipped .next without
@@ -22,10 +26,8 @@ import { readProductionBuild } from "./build-output.mjs";
  * truncated install falls through to the one-time build instead of crashing.
  */
 export function hasProductionBuild(root) {
-	if (fs.existsSync(path.join(root, ".next-releases", "active.json"))) return true;
 	try {
-		readProductionBuild(root, ".next");
-		return true;
+		return selectProductionBuild(root) !== null;
 	} catch {
 		return false;
 	}
@@ -160,8 +162,10 @@ function linkOrCopyDependencies(root, staging, log) {
 	fs.cpSync(target, linkPath, { recursive: true, verbatimSymlinks: true });
 }
 
-function buildInStaging(root, nextBin, env, log, warn) {
+function buildInStaging(root, nextBin, env, log, warn, sourceRoot = root) {
 	let staging;
+	let outputDir;
+	let promoted = false;
 	try {
 		staging = fs.mkdtempSync(path.join(stagingParent(root), ".piweb-build-"));
 	} catch {
@@ -169,7 +173,7 @@ function buildInStaging(root, nextBin, env, log, warn) {
 	}
 	try {
 		for (const entry of ["src", "public", "assets", "scripts", "bin"]) {
-			const from = path.join(root, entry);
+			const from = path.join(entry === "src" ? sourceRoot : root, entry);
 			if (fs.existsSync(from)) fs.cpSync(from, path.join(staging, entry), { recursive: true });
 		}
 		for (const file of ["package.json", "tsconfig.json", "next.config.ts", "postcss.config.mjs"]) {
@@ -177,15 +181,36 @@ function buildInStaging(root, nextBin, env, log, warn) {
 			if (fs.existsSync(from)) fs.copyFileSync(from, path.join(staging, file));
 		}
 		linkOrCopyDependencies(root, staging, log);
+		const buildDir = `${RELEASES_DIR}/install-${Date.now().toString(36)}-${randomUUID()}`;
+		fs.mkdirSync(path.join(staging, RELEASES_DIR));
+		fs.writeFileSync(path.join(staging, RELEASES_DIR, "tsconfig.json"), JSON.stringify({ extends: "../tsconfig.json", include: ["../src/**/*.ts", "../src/**/*.tsx", "../next-env.d.ts", `./${buildDir.split("/")[1]}/types/**/*.ts`], exclude: ["../node_modules"] }));
+		const buildEnv = { ...env, PIWEB_BUILD_DIR: buildDir, PI_WEB_ROOT: staging };
 		log(`[piweb] Building in ${staging} ...`);
-		const result = spawnSync(process.execPath, [nextBin, "build", "--webpack"], { cwd: staging, stdio: "inherit", env });
-		const produced = path.join(staging, ".next", "BUILD_ID");
+		const result = spawnSync(process.execPath, [path.join(staging, "scripts", "build.mjs")], { cwd: staging, stdio: "inherit", env: lockChildEnvironment(buildEnv), windowsHide: true });
+		const produced = path.join(staging, buildDir, "BUILD_ID");
 		if (result.status !== 0 || !fs.existsSync(produced)) return false;
-		const target = path.join(root, ".next");
-		fs.rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-		fs.cpSync(path.join(staging, ".next"), target, { recursive: true });
-		return fs.existsSync(path.join(target, "BUILD_ID"));
+		writeBuildInventory(staging, buildDir);
+		const target = assertLocalPath(root, buildDir);
+		// Copy to a fresh immutable release; failure cannot remove the serving output.
+		fs.mkdirSync(assertLocalPath(root, RELEASES_DIR), { recursive: true });
+		outputDir = buildDir;
+		fs.writeFileSync(assertLocalPath(root, `${buildDir}.owner.json`), JSON.stringify({ schema: 1, buildDir, state: "building" }), { flag: "wx", mode: 0o600 });
+		fs.cpSync(path.join(staging, buildDir), target, { recursive: true, errorOnExist: true, force: false });
+		const build = readProductionBuild(root, buildDir);
+		const active = assertLocalPath(root, RELEASE_MANIFEST);
+		let previous;
+		try { const prior = selectProductionBuild(root); if (prior?.buildDir.startsWith(`${RELEASES_DIR}/`)) previous = { schema: 1, state: "ready", ...prior }; } catch { /* Repair installs may have no valid prior build. */ }
+		if (previous) writeJsonAtomically(assertLocalPath(root, RELEASE_READY_MANIFEST), previous);
+		const manifest = { schema: 1, state: "ready", ...build, previous, finishedAt: new Date().toISOString() };
+		writeJsonAtomically(assertLocalPath(root, `${buildDir}.owner.json`), { schema: 1, buildDir, state: "ready" });
+		writeJsonAtomically(active, manifest);
+		promoted = true;
+		try { writeJsonAtomically(assertLocalPath(root, RELEASE_READY_MANIFEST), manifest); } catch (error) { warn(`[piweb] Build ready, but its recovery selection could not be saved: ${error.message}`); }
+		return true;
 	} finally {
+		if (outputDir && !promoted) {
+			try { fs.writeFileSync(assertLocalPath(root, `${outputDir}.owner.json`), JSON.stringify({ schema: 1, buildDir: outputDir, state: "failed" })); } catch { /* Keep the ownership marker for manual recovery. */ }
+		}
 		// 复制兜底时 staging 里是整份 node_modules，必须删掉；rmSync 跟随链接删除
 		// 的是链接本身（Node 14+ 目录符号链接不穿透），真实依赖不受影响。
 		fs.rmSync(staging, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
@@ -196,10 +221,10 @@ function buildInStaging(root, nextBin, env, log, warn) {
  * Build once when a production-only install has no build yet.
  * @returns {"skipped" | "built" | "failed"}
  */
-export function ensureInstallBuild(root, { log = console.log, warn = console.warn } = {}) {
+export function ensureInstallBuild(root, { log = console.log, warn = console.warn, force = false, sourceRoot = root } = {}) {
 	if (process.env.PIWEB_SKIP_INSTALL_BUILD === "1") return "skipped";
-	if (hasProductionBuild(root)) return "skipped";
-	if (!isProductionOnlyInstall(root)) return "skipped";
+	if (!force && hasProductionBuild(root)) return "skipped";
+	if (!force && !isProductionOnlyInstall(root)) return "skipped";
 
 	const nextBin = resolveNextBin(root);
 	if (!nextBin) {
@@ -209,14 +234,22 @@ export function ensureInstallBuild(root, { log = console.log, warn = console.war
 
 	log("[piweb] Preparing the production build for this installation (one time, takes a minute or two)...");
 	const started = Date.now();
-	const built = buildInStaging(root, nextBin, {
+	let built;
+	let buildLock;
+	try {
+		assertReleaseCapacity(root);
+		buildLock = acquireFileLock(assertLocalPath(root, `${RELEASES_DIR}/update.lock`));
+		built = buildInStaging(root, nextBin, {
 		...process.env,
+		PIWEB_BUILD_LOCK_FILE: assertLocalPath(root, `${RELEASES_DIR}/update.lock`), PIWEB_BUILD_LOCK_TOKEN: buildLock.token,
 		NEXT_TELEMETRY_DISABLED: "1",
 		NODE_OPTIONS: [process.env.NODE_OPTIONS, "--max-old-space-size=8192"].filter(Boolean).join(" "),
-	}, log, warn);
+	}, log, warn, sourceRoot); }
+	catch (error) { warn(`[piweb] Production build failed: ${error.message}`); return "failed"; }
+	finally { buildLock?.(); }
 
 	if (!built) {
-		warn("[piweb] Production build failed. Retry with: npm rebuild -g piweb");
+		warn("[piweb] Production build failed. Retry with: npm rebuild -g @rexvane/piweb");
 		return "failed";
 	}
 	log(`[piweb] Build ready in ${((Date.now() - started) / 1000).toFixed(0)}s.`);

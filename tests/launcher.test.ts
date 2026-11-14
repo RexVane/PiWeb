@@ -4,18 +4,35 @@ import path from "node:path";
 import http, { type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyProxyEnv, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, nodeSupportsEnvProxy, parseLauncherArgs, probePort, readHttpProxySetting, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
+import { applyProxyEnv, browserLaunchSpec, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, nodeSupportsEnvProxy, parseLauncherArgs, probePort, readHttpProxySetting, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 vi.mock("../scripts/system-proxy.mjs", () => ({ readSystemProxy: vi.fn(() => null) }));
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
+it("keeps browser URLs out of Windows command text", () => {
+	const url = "https://pi.example/?x=one&calc.exe&value='literal'";
+	const spec = browserLaunchSpec(url, "win32");
+	expect(spec.command).toBe("powershell.exe");
+	expect(spec.args.join(" ")).not.toContain(url);
+	expect(spec.args.join(" ")).not.toContain("calc.exe");
+	expect(spec.env.PIWEB_BROWSER_URL).toBe(url);
+});
+it("rejects explicit auth-off for externally bound or public URL launches", async () => {
+	const root = await installation(); await productionBuild(root);
+	for (const args of [["--hostname", "0.0.0.0"], ["--public-url", "https://pi.example"]]) {
+		expect(() => createLaunchPlan(root, parseLauncherArgs(args, {}), { PI_WEB_AUTH: "0" })).toThrow(/必须启用认证/);
+	}
+	expect(createLaunchPlan(root, parseLauncherArgs([], {}), { PI_WEB_AUTH: "0" }).env.PI_WEB_AUTH).toBe("0");
+});
+
 async function installation() {
 	const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-launcher-")));
-	cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+	cleanups.push(() => recycleFixture(root));
 	await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "pi-web", version: "1.0.0" }));
 	// Mark it as a development checkout (test dev dependencies present) so the
 	// launcher does not try to prepare an install-time production build.
@@ -178,12 +195,12 @@ describe("first-paint warm-up", () => {
 		};
 	}
 
-	it("confirms the service without credentials, then warms the pipeline and the first-paint routes", async () => {
+	it("confirms the service without credentials, then warms sessions before the other first-paint routes", async () => {
 		const server = await fakeHttp((_headers, response) => response.end(health));
 		const log: Array<{ path: string; authorization?: string }> = [];
 		expect(await warmFirstPaint(server.url, { fetchImpl: recordingFetch(log) })).toBe(true);
 		expect(log[0]).toEqual({ path: "/api/health", authorization: undefined });
-		expect(log[1].path).toBe("/api/version");
+		expect(log[1].path).toBe("/api/sessions");
 		for (const route of FIRST_PAINT_ROUTES) expect(log.map((entry) => entry.path)).toContain(route);
 		// 没有令牌就没有凭据可带：一条也不能凭空发出去
 		expect(log.every((entry) => entry.authorization === undefined)).toBe(true);
@@ -246,11 +263,13 @@ describe("validated build output selection", () => {
 		expect(createLaunchPlan(root, parseLauncherArgs([], {}), {}).env.PIWEB_BUILD_DIR).toBe(buildDir);
 		await fs.writeFile(path.join(root, buildDir, "BUILD_ID"), "replaced");
 		expect(() => selectProductionBuild(root)).toThrow(/BUILD_ID changed/);
-		for (const state of ["building", "failed", "unknown"]) {
+		for (const state of ["building", "failed"]) {
 			await fs.writeFile(manifest, JSON.stringify({ ...ready, state }));
-			expect(() => selectProductionBuild(root)).toThrow(/no stale-build fallback/);
-			expect(() => selectProductionBuild(root, ".next")).toThrow(/no stale-build fallback/);
+			expect(selectProductionBuild(root)).toEqual({ buildDir: ".next", buildId: "old" });
+			expect(selectProductionBuild(root, ".next")).toEqual({ buildDir: ".next", buildId: "old" });
 		}
+		await fs.writeFile(manifest, JSON.stringify({ ...ready, state: "unknown" }));
+		expect(() => selectProductionBuild(root)).toThrow(/invalid release manifest/);
 		await fs.writeFile(manifest, "{broken");
 		expect(() => selectProductionBuild(root)).toThrow(/invalid release manifest/);
 	});
@@ -323,7 +342,7 @@ describe("launcher lifecycle without real child processes", () => {
 			env: {},
 			dependencies: {
 				spawn: start, probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true),
-				openBrowser: async (url: string) => { opened.push(url); }, warmFirstPaint: warm, log: (message: string) => logs.push(message),
+				openBrowser: async (url: string) => { opened.push(url); }, warmFirstPaint: warm, readCurrentLaunchToken: vi.fn(async () => "current_abcdefghijklmnop"), log: (message: string) => logs.push(message),
 			},
 		});
 		expect(result).toBe(0);
@@ -333,7 +352,8 @@ describe("launcher lifecycle without real child processes", () => {
 		// 开了认证就直接开登录链接：用户手里还没有会话 Cookie，开裸地址只会撞上登录页
 		expect(opened).toHaveLength(1);
 		expect(opened[0]).toMatch(/^http:\/\/127\.0\.0\.1:30141\/\?token=[A-Za-z0-9_-]+$/);
-		expect(logs.some((line) => line.includes("登录链接"))).toBe(true);
+		expect(logs.some((line) => line.includes("登录入口"))).toBe(true);
+		expect(logs.some((line) => line.includes("?token="))).toBe(false);
 		expect(logs.some((line) => line.includes("预热首屏"))).toBe(true);
 		expect(logs.some((line) => line.includes("就绪"))).toBe(true);
 	});
@@ -347,29 +367,29 @@ describe("launcher lifecycle without real child processes", () => {
 		expect(createLaunchPlan(root, parseLauncherArgs([], {}), { PI_WEB_AUTH: "0" }).env.PI_WEB_AUTH).toBe("0");
 	});
 
-	it("does not count the LAN entry in local development mode (it never starts there)", async () => {
+	it("also enables authentication by default for local development", async () => {
 		const root = await installation();
 		const plan = createLaunchPlan(root, parseLauncherArgs(["--dev"], {}), {});
 		expect(plan.command).toBe("dev");
-		expect(plan.env.PI_WEB_AUTH).toBeUndefined();
-		// 配了对外地址仍算暴露面
+		expect(plan.env.PI_WEB_AUTH).toBe("1");
+		expect(plan.env.PI_WEB_LAUNCH_TOKEN).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(createLaunchPlan(root, parseLauncherArgs(["--dev", "--public-url", "https://a.test"], {}), {}).env.PI_WEB_AUTH).toBe("1");
 	});
 
 	it("opens the login link of an already running instance when it left its token behind", async () => {
 		const root = await installation();
 		const opened: string[] = [];
-		const readLaunchToken = vi.fn(() => "tok_abcdefghijklmnop");
+		const readCurrentLaunchToken = vi.fn(async () => "tok_abcdefghijklmnop");
 		await runLauncher({
 			root,
 			args: [],
 			env: {},
 			dependencies: {
 				spawn: vi.fn(), probePort: vi.fn<typeof probePort>(async () => "busy"), isPiWebRunning: vi.fn(async () => true),
-				openBrowser: async (url: string) => { opened.push(url); }, readLaunchToken, log: vi.fn(),
+				openBrowser: async (url: string) => { opened.push(url); }, readCurrentLaunchToken, log: vi.fn(),
 			},
 		});
-		expect(readLaunchToken).toHaveBeenCalledWith(30141, {});
+		expect(readCurrentLaunchToken).toHaveBeenCalledWith(30141, {});
 		expect(opened).toEqual(["http://127.0.0.1:30141/?token=tok_abcdefghijklmnop"]);
 	});
 
@@ -402,6 +422,26 @@ describe("launcher lifecycle without real child processes", () => {
 		});
 		expect(opened).toEqual(["http://127.0.0.1:30141"]);
 		expect(logs.some((line) => line.includes("登录链接"))).toBe(false);
+	});
+	it("opens the current rotated token after warmup consumes the startup token", async () => {
+		const root = await installation(); await productionBuild(root);
+		const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+		const opened: string[] = []; const read = vi.fn(async () => "rotated_abcdefghijklmnop");
+		await runLauncher({ root, args: [], env: { PI_WEB_LAUNCH_TOKEN: "original_abcdefghijklmnop" }, dependencies: {
+			spawn: vi.fn(() => { setTimeout(() => child.emit("exit", 0), 40); return child; }), probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true), log: vi.fn(),
+			warmFirstPaint: vi.fn(async () => true), readCurrentLaunchToken: read, openBrowser: async (url: string) => { opened.push(url); },
+		} });
+		expect(opened).toEqual(["http://127.0.0.1:30141/?token=rotated_abcdefghijklmnop"]);
+	});
+	it("uses the same explicit-zero authentication rule as the server for other flag spellings", async () => {
+		const root = await installation(); await productionBuild(root);
+		const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+		const opened: string[] = [];
+		await runLauncher({ root, args: [], env: { PI_WEB_AUTH: "false" }, dependencies: {
+			spawn: vi.fn(() => { setTimeout(() => child.emit("exit", 0), 40); return child; }), probePort: vi.fn<typeof probePort>(async () => "free"), isPiWebRunning: vi.fn(async () => true), log: vi.fn(),
+			warmFirstPaint: vi.fn(async () => true), readCurrentLaunchToken: vi.fn(async () => "verified_abcdefghijklmnop"), openBrowser: async (url: string) => { opened.push(url); },
+		} });
+		expect(opened).toEqual(["http://127.0.0.1:30141/?token=verified_abcdefghijklmnop"]);
 	});
 
 	it("never warms in development mode or when PIWEB_SKIP_WARMUP=1", async () => {

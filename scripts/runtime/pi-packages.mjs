@@ -1,4 +1,5 @@
 /** Pi's packages are released together and must resolve to the same runtime version. */
+import { exactRegistryVersion, isolatedCommandEnv, OFFICIAL_REGISTRY_ARGS } from "../update-environment.mjs";
 export const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_AI_PACKAGE = "@earendil-works/pi-ai";
 export const PI_RUNTIME_PACKAGES = Object.freeze([
@@ -13,9 +14,10 @@ export const PI_RUNTIME_PACKAGES = Object.freeze([
 
 /** @param {string} version */
 export function piRuntimeSpecs(version) {
-	if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+	if (typeof version !== "string") {
 		throw new Error("Pi runtime requires an exact version; received " + JSON.stringify(version));
 	}
+	exactRegistryVersion(version);
 	return PI_RUNTIME_PACKAGES.map((name) => name + "@" + version);
 }
 
@@ -40,13 +42,14 @@ export function verifyPiRuntimePins(manifest) {
  */
 export async function installPiRuntime({ root, env, run, signal }, { omitDev = false, assertIdle = async () => {} } = {}) {
 	await assertIdle();
-	const version = (await run("npm", ["view", PI_PACKAGE + "@latest", "version"], {
-		cwd: root, env, timeoutMs: 30_000, signal,
-	})).trim();
+	const commandEnv = isolatedCommandEnv(env);
+	const version = exactRegistryVersion(await run("npm", ["view", PI_PACKAGE + "@latest", "version", ...OFFICIAL_REGISTRY_ARGS], {
+		cwd: root, env: commandEnv, timeoutMs: 30_000, signal,
+	}));
 	const specs = piRuntimeSpecs(version);
 	await assertIdle();
-	await run("npm", ["install", "--save-exact", ...specs, ...(omitDev ? ["--omit=dev"] : []), "--no-audit", "--no-fund"], {
-		cwd: root, env, timeoutMs: 600_000, signal,
+	await run("npm", ["install", "--save-exact", ...specs, ...(omitDev ? ["--omit=dev"] : []), "--no-audit", "--no-fund", "--ignore-scripts", ...OFFICIAL_REGISTRY_ARGS], {
+		cwd: root, env: commandEnv, timeoutMs: 600_000, signal,
 	});
 	return version;
 }

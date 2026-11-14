@@ -34,3 +34,11 @@ probe_*.py
 .DS_Store
 Thumbs.db
 PiWeb_Audit_*.md
+
+# Runtime credentials when PI_CODING_AGENT_DIR points inside the checkout.
+auth.json
+models.json
+web-secret
+web-launch/
+web-devices.json
+web-revocations.json
