@@ -1,0 +1,30 @@
+{
+  "agentDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a7",
+  "cwd": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\ws-a7",
+  "entryPoint": "listSkills(cwd) -> resourceLoaderReady(cwd) -> loader.reload() -> packageManager.resolve()",
+  "elapsedMs": 2583,
+  "error": null,
+  "skillsSeenAfterList": [
+    {
+      "name": "acme-demo",
+      "origin": "package",
+      "sourceLabel": "acme-pi-plugin"
+    }
+  ],
+  "npmRootExists": true,
+  "installedDirExists": true,
+  "postinstallMarkerExists": true,
+  "postinstallMarker": "when=2026-11-13T11:56:22.334Z\ncwd=C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a7\\npm\\node_modules\\acme-pi-plugin\nnpm_lifecycle_event=postinstall\nnpm_package_name=acme-pi-plugin\nnpm_package_version=1.0.0\n---\n",
+  "npmTree": [
+    ".gitignore (14 bytes)",
+    "node_modules/.package-lock.json/",
+    "node_modules/acme-pi-plugin/",
+    "package-lock.json (514 bytes)",
+    "package.json (105 bytes)"
+  ],
+  "settingsAfter": {
+    "packages": [
+      "npm:acme-pi-plugin"
+    ]
+  }
+}

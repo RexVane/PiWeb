@@ -1,0 +1,66 @@
+{
+  "agentDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a1",
+  "cwd": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\ws-a1",
+  "installSource": "npm:acme-pi-plugin",
+  "elapsedMs": 1658,
+  "settingsFile": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a1\\settings.json",
+  "settings": {
+    "packages": [
+      "npm:acme-pi-plugin"
+    ]
+  },
+  "npmRoot": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a1\\npm",
+  "npmRootExists": true,
+  "npmProjectPackageJson": {
+    "name": "pi-extensions",
+    "private": true,
+    "dependencies": {
+      "acme-pi-plugin": "^1.0.0"
+    }
+  },
+  "installedPackageJson": {
+    "name": "acme-pi-plugin",
+    "version": "1.0.0",
+    "description": "PiWeb audit fixture: zero-dependency pi package with a postinstall marker",
+    "keywords": [
+      "pi-package"
+    ],
+    "license": "MIT",
+    "pi": {
+      "skills": [
+        "skills/demo"
+      ]
+    },
+    "scripts": {
+      "postinstall": "node scripts/postinstall.js"
+    }
+  },
+  "npmTree": [
+    ".gitignore (14 bytes)",
+    "node_modules/.package-lock.json/",
+    "node_modules/acme-pi-plugin/",
+    "package-lock.json (514 bytes)",
+    "package.json (105 bytes)"
+  ],
+  "marker": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\markers\\a1-postinstall.txt",
+  "postinstallMarkerExists": true,
+  "postinstallMarker": "when=2026-11-13T11:56:11.190Z\ncwd=C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a1\\npm\\node_modules\\acme-pi-plugin\nnpm_lifecycle_event=postinstall\nnpm_package_name=acme-pi-plugin\nnpm_package_version=1.0.0\n---\n",
+  "listPackages": [
+    {
+      "source": "npm:acme-pi-plugin",
+      "scope": "user",
+      "installedPath": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a1\\npm\\node_modules\\acme-pi-plugin",
+      "resources": {
+        "extensions": 0,
+        "skills": 1,
+        "prompts": 0,
+        "themes": 0
+      },
+      "types": [
+        "skills"
+      ],
+      "disabled": false
+    }
+  ],
+  "realAgentNpmUntouched": true
+}

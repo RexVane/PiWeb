@@ -1,0 +1,48 @@
+{
+  "agentDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agent-a4",
+  "cwd": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\ws-a4",
+  "totalElapsedMs": 2902,
+  "results": [
+    {
+      "source": "npm:acme-pi-plugin",
+      "begin": 1,
+      "end": 1616,
+      "ok": true,
+      "error": null
+    },
+    {
+      "source": "npm:beta-pi-plugin",
+      "begin": 10,
+      "end": 2902,
+      "ok": true,
+      "error": null
+    }
+  ],
+  "settings": {
+    "packages": [
+      "npm:acme-pi-plugin",
+      "npm:beta-pi-plugin"
+    ]
+  },
+  "npmTree": [
+    ".gitignore (14 bytes)",
+    "node_modules/.package-lock.json/",
+    "node_modules/acme-pi-plugin/",
+    "node_modules/beta-pi-plugin/",
+    "package-lock.json (823 bytes)",
+    "package.json (137 bytes)"
+  ],
+  "npmProjectPackageJson": {
+    "name": "pi-extensions",
+    "private": true,
+    "dependencies": {
+      "acme-pi-plugin": "^1.0.0",
+      "beta-pi-plugin": "^1.0.0"
+    }
+  },
+  "installedDirs": [
+    ".package-lock.json",
+    "acme-pi-plugin",
+    "beta-pi-plugin"
+  ]
+}

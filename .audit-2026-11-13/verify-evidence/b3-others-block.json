@@ -1,0 +1,60 @@
+{
+  "agentDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agentB3",
+  "external": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\external\\skill-pack-three",
+  "skillsBefore": [
+    {
+      "name": "inner-declared",
+      "filePath": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\external\\skill-pack-three\\inner\\SKILL.md",
+      "scope": "user",
+      "origin": "top-level",
+      "sourceLabel": "C:/Users/guica/AppData/Local/Temp/piweb-verify-plugin/external/skill-pack-three/inner",
+      "baseDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\external\\skill-pack-three\\inner",
+      "sourceInfo": {
+        "path": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\external\\skill-pack-three\\inner\\SKILL.md",
+        "source": "local",
+        "scope": "user",
+        "origin": "top-level"
+      }
+    },
+    {
+      "name": "pack-three",
+      "filePath": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agentB3\\skills\\pack3\\SKILL.md",
+      "scope": "user",
+      "origin": "top-level",
+      "sourceLabel": "C:/Users/guica/AppData/Local/Temp/piweb-verify-plugin/agentB3",
+      "baseDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agentB3\\skills\\pack3",
+      "sourceInfo": {
+        "path": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agentB3\\skills\\pack3\\SKILL.md",
+        "source": "auto",
+        "scope": "user",
+        "origin": "top-level",
+        "baseDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\agentB3"
+      }
+    }
+  ],
+  "nestedSkillDiscovered": true,
+  "before": {
+    "externalTree": [
+      ".git/",
+      ".git/config (13 bytes)",
+      "SKILL.md (116 bytes)",
+      "inner/",
+      "inner/SKILL.md (127 bytes)",
+      "notes.txt (9 bytes)"
+    ]
+  },
+  "result": {
+    "removed": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-verify-plugin\\external\\skill-pack-three\\SKILL.md",
+    "error": null
+  },
+  "externalExistsAfter": true,
+  "externalTreeAfter": [
+    ".git/",
+    ".git/config (13 bytes)",
+    "inner/",
+    "inner/SKILL.md (127 bytes)",
+    "notes.txt (9 bytes)"
+  ],
+  "rootSkillFileExistsAfter": false,
+  "nestedSkillFileExistsAfter": true
+}

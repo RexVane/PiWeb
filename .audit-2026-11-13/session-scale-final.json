@@ -1,0 +1,14 @@
+{
+  "synthetic": true,
+  "node": "24.12.0",
+  "platform": "win32",
+  "sessions": 65,
+  "bytes": 96871560,
+  "coldMs": 404.72609999999986,
+  "restartMs": 24.86579999999958,
+  "appendMs": 28.828800000001138,
+  "baselineRss": 155041792,
+  "sampledPeakRss": 284278784,
+  "sampledRssDelta": 129236992,
+  "limitations": "Synthetic payload uses one large assistant text per session; not the original audit fixture or a fresh OS-cache run. RSS is sampled without forced GC. First unindexed scan still reads every JSONL byte."
+}

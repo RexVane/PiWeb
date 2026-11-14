@@ -1,0 +1,28 @@
+{
+  "createdAt": "2026-11-13T17:43:34.741Z",
+  "stage": "D:\\AIApp\\.piweb-audit-build-XbNJ73",
+  "checkedRealpath": "D:\\AIApp\\.piweb-audit-build-XbNJ73",
+  "checkedOwnTemporaryDirectories": 3465,
+  "junction": {
+    "path": "D:\\AIApp\\.piweb-audit-build-XbNJ73\\node_modules",
+    "target": "D:\\AIApp\\PiWeb\\node_modules",
+    "protectedFile": "D:\\AIApp\\PiWeb\\node_modules\\next\\package.json",
+    "protectedHash": "76f5b7ef447577c2855eee017ae8a47aeefc1e4c95e71387b66c2671283682c8",
+    "status": "recycled-separately",
+    "protectedTargetPresent": true,
+    "protectedHashAfterRecycling": "76f5b7ef447577c2855eee017ae8a47aeefc1e4c95e71387b66c2671283682c8"
+  },
+  "reparsePoints": [
+    {
+      "path": "D:\\AIApp\\.piweb-audit-build-XbNJ73\\node_modules",
+      "target": "D:\\AIApp\\PiWeb\\node_modules"
+    }
+  ],
+  "status": "recycled",
+  "final": true,
+  "recycledAt": "2026-11-13T17:45:58.189Z",
+  "temporaryProcessesAfterAcceptance": 0,
+  "stageAbsent": true,
+  "recycledStageLocation": "D:/$Recycle.Bin/S-1-5-21-2724144899-3179484728-3110771459-1001/$R3N2E2L.piweb-audit-build-XbNJ73",
+  "inventoryEvidence": "build-inventory-final.json"
+}

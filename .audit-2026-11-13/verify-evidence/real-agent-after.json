@@ -1,0 +1,43 @@
+﻿{
+    "realAgentDir":  "C:\\Users\\guica\\.pi\\agent",
+    "exists":  true,
+    "topLevel":  [
+                     "extensions|1|2026-11-13T10:24:21.8786615Z",
+                     "git|1|2026-10-21T16:40:35.8140869Z",
+                     "npm|1|2026-09-13T03:47:44.2973650Z",
+                     "sessions|1|2026-10-30T17:21:07.0886989Z",
+                     "skills|1|2026-09-14T13:33:02.0673254Z",
+                     "web-bin|1|2026-10-11T11:17:30.1877349Z",
+                     "web-launch|1|2026-11-12T17:39:41.2874162Z",
+                     "web-sandbox|1|2026-11-13T11:49:39.3646425Z",
+                     "web-uploads|1|2026-10-16T14:14:28.0394161Z",
+                     "AGENTS.md|2191|2026-11-10T05:03:45.8163879Z",
+                     "auth.json|2|2026-10-28T03:35:18.6441993Z",
+                     "mcp-auth.json|2|2026-10-14T10:41:48.7187690Z",
+                     "mcp.json|22|2026-10-27T08:23:00.4662100Z",
+                     "models-store.json|15120|2026-10-08T04:37:41.3315690Z",
+                     "models.json|10270|2026-11-13T09:23:54.4342361Z",
+                     "models.json.bak-2026-09-12|792|2026-09-12T05:20:07.6036054Z",
+                     "piweb-github-identity.json|2434|2026-11-13T10:06:24.0640243Z",
+                     "piweb-session-index.json|32894|2026-11-13T10:36:47.6096551Z",
+                     "piweb-session-index.json.aside2|32112|2026-10-11T05:47:00.9123918Z",
+                     "remote-plugin.json|22|2026-10-17T03:09:36.7446473Z",
+                     "settings.json|497|2026-11-12T17:49:09.9121633Z",
+                     "trust.json|37|2026-10-28T03:39:23.4003700Z",
+                     "web-automations.json|47|2026-11-13T01:59:39.4031007Z",
+                     "web-revocations.json|184|2026-11-13T09:55:07.8728578Z",
+                     "web-secret|44|2026-10-11T10:05:15.6336259Z",
+                     "web-tool-preferences.json|3060|2026-11-13T10:21:58.5696594Z",
+                     "web-workspaces.json|16648|2026-11-13T09:55:43.9734070Z"
+                 ],
+    "settingsHash":  "8EEBC00D3FBB022E03572C1892BBB968B19AA706DC647EEF3ECBA819509F510D",
+    "npmEntries":  [
+                       "node_modules",
+                       ".gitignore",
+                       "package-lock.json",
+                       "package.json"
+                   ],
+    "skillEntries":  [
+
+                     ]
+}

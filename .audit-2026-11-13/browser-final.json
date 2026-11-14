@@ -1,0 +1,778 @@
+{
+  "at": "2026-11-13T17:34:52.914Z",
+  "stage": "D:/AIApp/.piweb-audit-build-XbNJ73",
+  "buildId": "V8EkQiPStS7Rma76LwdHE",
+  "kind": "final-source-snapshot-production-browser-check",
+  "playwright": "1.64.0",
+  "chromiumRevision": "1248",
+  "viewportMobile": {
+    "width": 390,
+    "height": 664
+  },
+  "limitations": [
+    "Desktop Chromium with mobile viewport/touch emulation; no physical phone tested.",
+    "Installed WebKit 2336 does not match required 2370 and was not used.",
+    "UI metadata and SSE failure/silence are deterministic local HTTP fixtures; no real model was called."
+  ],
+  "checks": [
+    {
+      "name": "isolated-auth-enabled",
+      "pass": true,
+      "status": 401
+    },
+    {
+      "name": "staged-source-snapshot-matches-workspace",
+      "pass": true,
+      "changedSources": []
+    },
+    {
+      "name": "ssr-chinese-language",
+      "pass": true,
+      "status": 200,
+      "language": "zh-CN"
+    },
+    {
+      "name": "real-browser-native-eventsource",
+      "pass": true
+    },
+    {
+      "name": "desktop-chat-no-horizontal-overflow",
+      "pass": true,
+      "pageWidth": 1280,
+      "bodyWidth": 1280,
+      "viewportWidth": 1280
+    },
+    {
+      "name": "desktop-chat-visible-center-hit-targets",
+      "pass": true,
+      "targetCount": 21,
+      "failures": []
+    },
+    {
+      "name": "desktop-git-long-line-horizontal-scroll",
+      "pass": true,
+      "scrollWidth": 33103,
+      "clientWidth": 311,
+      "scrollLeftBefore": 0,
+      "scrollLeftAfter": 1000,
+      "renderedRows": 63,
+      "whiteSpace": "pre",
+      "pageScrollWidth": 1280,
+      "viewportWidth": 1280
+    },
+    {
+      "name": "desktop-git-large-diff-window-bounded",
+      "pass": true,
+      "renderedRows": 63,
+      "fixtureChangedRows": 2002
+    },
+    {
+      "name": "desktop-git-long-line-page-contained",
+      "pass": true,
+      "pageScrollWidth": 1280,
+      "viewportWidth": 1280
+    },
+    {
+      "name": "desktop-git-large-diff-bottom-accessible",
+      "pass": true,
+      "renderedRows": 63
+    },
+    {
+      "name": "desktop-settings-no-horizontal-overflow",
+      "pass": true,
+      "pageWidth": 1280,
+      "bodyWidth": 1280,
+      "viewportWidth": 1280
+    },
+    {
+      "name": "desktop-settings-visible-center-hit-targets",
+      "pass": true,
+      "targetCount": 19,
+      "failures": []
+    },
+    {
+      "name": "desktop-settings-open",
+      "pass": true
+    },
+    {
+      "name": "desktop-no-hydration-or-runtime-errors",
+      "pass": true,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "mobile-closed-sidebar-inert",
+      "pass": true
+    },
+    {
+      "name": "mobile-chat-no-horizontal-overflow",
+      "pass": true,
+      "pageWidth": 390,
+      "bodyWidth": 390,
+      "viewportWidth": 390
+    },
+    {
+      "name": "mobile-chat-44px-visible-hit-targets",
+      "pass": true,
+      "targetCount": 10,
+      "failures": []
+    },
+    {
+      "name": "mobile-current-title-first-character-uncovered",
+      "pass": true,
+      "visible": true,
+      "firstCharacter": {
+        "x": 68,
+        "y": 24,
+        "width": 14.5,
+        "height": 19
+      },
+      "menu": {
+        "x": 12,
+        "y": 12,
+        "width": 44,
+        "height": 44
+      }
+    },
+    {
+      "name": "mobile-git-long-line-horizontal-scroll",
+      "pass": true,
+      "scrollWidth": 33103,
+      "clientWidth": 311,
+      "scrollLeftBefore": 0,
+      "scrollLeftAfter": 1000,
+      "renderedRows": 63,
+      "whiteSpace": "pre",
+      "pageScrollWidth": 390,
+      "viewportWidth": 390
+    },
+    {
+      "name": "mobile-git-large-diff-window-bounded",
+      "pass": true,
+      "renderedRows": 63,
+      "fixtureChangedRows": 2002
+    },
+    {
+      "name": "mobile-git-long-line-page-contained",
+      "pass": true,
+      "pageScrollWidth": 390,
+      "viewportWidth": 390
+    },
+    {
+      "name": "mobile-git-large-diff-bottom-accessible",
+      "pass": true,
+      "renderedRows": 63
+    },
+    {
+      "name": "mobile-open-sidebar-interactive",
+      "pass": true
+    },
+    {
+      "name": "mobile-sidebar-no-horizontal-overflow",
+      "pass": true,
+      "pageWidth": 390,
+      "bodyWidth": 390,
+      "viewportWidth": 390
+    },
+    {
+      "name": "mobile-sidebar-44px-visible-hit-targets",
+      "pass": true,
+      "targetCount": 10,
+      "failures": []
+    },
+    {
+      "name": "mobile-settings-no-horizontal-overflow",
+      "pass": true,
+      "pageWidth": 390,
+      "bodyWidth": 390,
+      "viewportWidth": 390
+    },
+    {
+      "name": "mobile-settings-44px-visible-hit-targets",
+      "pass": true,
+      "targetCount": 13,
+      "failures": []
+    },
+    {
+      "name": "mobile-no-hydration-or-runtime-errors",
+      "pass": true,
+      "pageErrors": [],
+      "consoleErrors": []
+    },
+    {
+      "name": "sse-permanent-failure-actionable-error",
+      "pass": true
+    },
+    {
+      "name": "sse-manual-retry-creates-real-request",
+      "pass": true,
+      "requestsBefore": 1,
+      "requestsAfter": 2
+    },
+    {
+      "name": "sse-permanent-error-auto-retries",
+      "pass": true,
+      "requests": 3
+    },
+    {
+      "name": "sse-failure-no-page-runtime-error",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "name": "sse-silent-connection-rebuilt-by-watchdog",
+      "pass": true,
+      "simulatedAdvanceMs": 51000,
+      "requestsBefore": 1,
+      "requestsAfter": 2,
+      "realEventSource": true
+    },
+    {
+      "name": "sse-heartbeats-keep-recovered-connection-live",
+      "pass": true,
+      "simulatedAdvanceMs": 80000,
+      "heartbeatIntervalMs": 200,
+      "requestsAfterRecovery": 2,
+      "requestsAfterHeartbeats": 2
+    },
+    {
+      "name": "sse-silence-no-page-runtime-error",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "name": "no-browser-mutations-or-model-call",
+      "pass": true,
+      "attempts": []
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "desktop-chat",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pageWidth": 1280,
+      "bodyWidth": 1280,
+      "buttons": [
+        {
+          "label": "«",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "新会话",
+          "width": 256,
+          "height": 40,
+          "centerHit": true
+        },
+        {
+          "label": "技能",
+          "width": 256,
+          "height": 34,
+          "centerHit": true
+        },
+        {
+          "label": "扩展",
+          "width": 256,
+          "height": 34,
+          "centerHit": true
+        },
+        {
+          "label": "提示词",
+          "width": 256,
+          "height": 34,
+          "centerHit": true
+        },
+        {
+          "label": "资源市场",
+          "width": 256,
+          "height": 34,
+          "centerHit": true
+        },
+        {
+          "label": "自动化任务",
+          "width": 256,
+          "height": 34,
+          "centerHit": true
+        },
+        {
+          "label": "搜索",
+          "width": 26,
+          "height": 26,
+          "centerHit": true
+        },
+        {
+          "label": "分组方式",
+          "width": 26,
+          "height": 26,
+          "centerHit": true
+        },
+        {
+          "label": "添加工作区",
+          "width": 26,
+          "height": 26,
+          "centerHit": true
+        },
+        {
+          "label": "workspace",
+          "width": 234,
+          "height": 24,
+          "centerHit": true
+        },
+        {
+          "label": "设置",
+          "width": 256,
+          "height": 40,
+          "centerHit": true
+        },
+        {
+          "label": "右侧抽屉",
+          "width": 30,
+          "height": 30,
+          "centerHit": true
+        },
+        {
+          "label": "复制",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "编辑这条消息",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "复制",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "在新对话中分支",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "权限: 工作区内修改",
+          "width": 123,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "Test/浏览器测试模型",
+          "width": 135,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "上下文用量未知",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "发送",
+          "width": 34,
+          "height": 34,
+          "centerHit": true
+        }
+      ]
+    },
+    {
+      "name": "desktop-settings",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pageWidth": 1280,
+      "bodyWidth": 1280,
+      "buttons": [
+        {
+          "label": "通用设置",
+          "width": 180,
+          "height": 42,
+          "centerHit": true
+        },
+        {
+          "label": "模型",
+          "width": 180,
+          "height": 42,
+          "centerHit": true
+        },
+        {
+          "label": "远程连接",
+          "width": 180,
+          "height": 42,
+          "centerHit": true
+        },
+        {
+          "label": "打开配置文件",
+          "width": 130,
+          "height": 32,
+          "centerHit": true
+        },
+        {
+          "label": "关闭",
+          "width": 28,
+          "height": 28,
+          "centerHit": true
+        },
+        {
+          "label": "当前工作区",
+          "width": 74,
+          "height": 32,
+          "centerHit": true
+        },
+        {
+          "label": "中文",
+          "width": 74,
+          "height": 32,
+          "centerHit": true
+        },
+        {
+          "label": "海与墨",
+          "width": 175.33,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "银钢",
+          "width": 175.34,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "石灰与煤炭",
+          "width": 175.33,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "亚麻与苔绿",
+          "width": 175.33,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "北欧纸墨",
+          "width": 175.34,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "Pebrel",
+          "width": 175.33,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "浅色",
+          "width": 175.33,
+          "height": 56,
+          "centerHit": true
+        },
+        {
+          "label": "深色",
+          "width": 175.34,
+          "height": 56,
+          "centerHit": true
+        },
+        {
+          "label": "跟随系统",
+          "width": 175.33,
+          "height": 56,
+          "centerHit": true
+        },
+        {
+          "label": "decrease font size",
+          "width": 26,
+          "height": 26,
+          "centerHit": true
+        },
+        {
+          "label": "reset",
+          "width": 48,
+          "height": 24,
+          "centerHit": true
+        },
+        {
+          "label": "increase font size",
+          "width": 26,
+          "height": 26,
+          "centerHit": true
+        }
+      ]
+    },
+    {
+      "name": "mobile-chat",
+      "viewport": {
+        "width": 390,
+        "height": 664
+      },
+      "pageWidth": 390,
+      "bodyWidth": 390,
+      "buttons": [
+        {
+          "label": "右侧抽屉",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "复制",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "编辑这条消息",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "复制",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "在新对话中分支",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "权限: 工作区内修改",
+          "width": 104.44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "Test/浏览器测试模型",
+          "width": 111.56,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "上下文用量未知",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "发送",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "工作区",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        }
+      ]
+    },
+    {
+      "name": "mobile-sidebar",
+      "viewport": {
+        "width": 390,
+        "height": 664
+      },
+      "pageWidth": 390,
+      "bodyWidth": 390,
+      "buttons": [
+        {
+          "label": "«",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "新会话",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "技能",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "扩展",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "提示词",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "资源市场",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "自动化任务",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "添加工作区",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "设置",
+          "width": 311.39,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "关闭",
+          "width": 390,
+          "height": 664,
+          "centerHit": true
+        }
+      ]
+    },
+    {
+      "name": "mobile-settings",
+      "viewport": {
+        "width": 390,
+        "height": 664
+      },
+      "pageWidth": 390,
+      "bodyWidth": 390,
+      "buttons": [
+        {
+          "label": "通用设置",
+          "width": 105,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "模型",
+          "width": 77,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "远程连接",
+          "width": 105,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "打开配置文件",
+          "width": 130,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "关闭",
+          "width": 44,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "当前工作区",
+          "width": 74,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "中文",
+          "width": 74,
+          "height": 44,
+          "centerHit": true
+        },
+        {
+          "label": "海与墨",
+          "width": 158,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "银钢",
+          "width": 158,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "石灰与煤炭",
+          "width": 158,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "亚麻与苔绿",
+          "width": 158,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "北欧纸墨",
+          "width": 158,
+          "height": 88,
+          "centerHit": true
+        },
+        {
+          "label": "Pebrel",
+          "width": 158,
+          "height": 88,
+          "centerHit": true
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    "browser-final-desktop.png",
+    "browser-final-desktop-git.png",
+    "browser-final-mobile.png",
+    "browser-final-mobile-git.png",
+    "browser-final-mobile-settings.png"
+  ],
+  "mutations": [],
+  "cleanup": {
+    "probeRoot": "C:/Users/guica/AppData/Local/Temp/piweb-browser-final-2127166df07a449dbf9a293279f28d9f",
+    "agentDir": "C:\\Users\\guica\\AppData\\Local\\Temp\\piweb-browser-final-2127166df07a449dbf9a293279f28d9f\\agent",
+    "script": "/C:/Users/guica/AppData/Local/Temp/piweb-browser-final-2127166df07a449dbf9a293279f28d9f/browser-probe.mjs",
+    "serverStopped": true,
+    "temporaryFilesRecycled": true,
+    "serverStopIndependentlyVerified": true
+  },
+  "testPort": 2411,
+  "testPid": 43556,
+  "sourceHashes": {
+    "src/components/AppShell.tsx": "c67ac0b2d752ad4332a4768a159ff62914bdc4da811a7fcea1e00d0a7abf7dc8",
+    "src/hooks/usePiWeb.ts": "860b8471d9866f388c5be8fc575ba9a090bb8869adb375fc9065bef4e3bec00d",
+    "src/app/globals.css": "bae721bf733ea817f58743cf2b78038c817cd4fad62e08f225d5ab22b44a37e6",
+    "src/components/SettingsPanel.tsx": "78a39f873ae10b51ac7f1aa178e66ec72c93d5262ef25f509553e7c3349e0e00",
+    "src/app/layout.tsx": "4534c1e7e8de5bbcd4c3e23920761a1ebdd776d6250a3b65477db068a5225019",
+    "src/i18n.tsx": "22f122d6349b0b595caa6bc1b4ee02fa284af6b2199f734566666e967d8de4de",
+    "src/components/FileViewer.tsx": "2072bd1c68d9fdd253639eb0d4f02ec5d526e391075cc84ae4df5bfc6d005261",
+    "src/lib/file-preview.ts": "772606cc8314aea35f8a4e31a3dea9f6c589c2693e646b07e996dad6fa19ec2b",
+    "src/lib/growth-service.ts": "429815b9d8b75604c4686edb066e471ed1db4f8f6a5c180e0115d50208a8b017",
+    "src/components/GitPanel.tsx": "3775372f0f2ca95ca35743fc394c6d6270bd526659527ff7f1ad31fa6da67578",
+    "src/components/DiffView.tsx": "0d143d4893359f29c0d9a175eb216c1c2e7201d9e9aa904e3144364447119c47"
+  },
+  "browserVersion": "156.0.8078.4",
+  "serverLog": "▲ Next.js 16.4.5\n- Local:         http://127.0.0.1:2411\n- Network:       http://127.0.0.1:2411\n✓ Ready in 1176ms\n✓ Running next.config.ts took 224ms\n",
+  "pass": true
+}

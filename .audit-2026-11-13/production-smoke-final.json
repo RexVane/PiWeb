@@ -1,0 +1,9 @@
+{
+  "final": true,
+  "createdAt": "2026-11-13T17:34:53.444Z",
+  "stage": "D:/AIApp/.piweb-audit-build-XbNJ73",
+  "buildId": "V8EkQiPStS7Rma76LwdHE",
+  "agentDir": "D:\\AIApp\\.piweb-audit-build-XbNJ73\\agent-runtime-final-q0yIZm",
+  "exitCode": 0,
+  "output": "✓ Running next.config.ts took 334ms\n{\"version\":\"1.5.2\",\"routes\":[\"/api/health\",\"/api/version\",\"/api/models\",\"/api/sessions\",\"/api/workspaces\",\"/api/pi-settings\"],\"homePage\":true,\"launchTokenExchange\":true,\"deviceCookieMetadata\":true,\"earlyAuthentication\":true,\"authenticatedUpload\":true,\"uploadContentLimitMiB\":100,\"uploadWireLimitMiB\":101}\n"
+}

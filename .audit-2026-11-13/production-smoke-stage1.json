@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-11-13T17:08:47.818Z",
+  "stage": "D:/AIApp/.piweb-audit-build-XbNJ73",
+  "buildId": "wgrQ4h0tdIM2hIIdYVPDi",
+  "final": false,
+  "pending": "P1-12/P3-22/P3-31 file-region source changes",
+  "result": {
+    "version": "1.5.2",
+    "routes": [
+      "/api/health",
+      "/api/version",
+      "/api/models",
+      "/api/sessions",
+      "/api/workspaces",
+      "/api/pi-settings"
+    ],
+    "homePage": true,
+    "launchTokenExchange": true,
+    "deviceCookieMetadata": true,
+    "earlyAuthentication": true,
+    "authenticatedUpload": true,
+    "uploadContentLimitMiB": 100,
+    "uploadWireLimitMiB": 101
+  }
+}
