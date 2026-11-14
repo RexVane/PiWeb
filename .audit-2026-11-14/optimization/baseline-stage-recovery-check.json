@@ -1,0 +1,18 @@
+{
+  "at": "2026-11-14T11:29:25.542Z",
+  "recyclePath": "D:\\$RECYCLE.BIN\\S-1-5-21-2724144899-3179484728-3110771459-1001\\$RHNOIH3.piweb-performance-20261114-XavtFX",
+  "originalPath": "D:\\AIApp\\.piweb-performance-20261114-XavtFX",
+  "destinationAbsent": true,
+  "sourceFiles": 730,
+  "sourceHash": "0a8188e986da0c45600a2153ae2d4d5da4b185e18f7f23b60feb75eb83337961",
+  "buildId": "qs_AuODvEiFduBinEf95d",
+  "productionInventoryValid": true,
+  "dependencyDirectoryEmpty": true,
+  "standaloneOwnerMarker": false,
+  "ownershipEvidence": [
+    "performance/source-snapshot.json records this exact self-created stage and every input SHA",
+    "performance/stage-validation.json records this exact build",
+    "performance/cleanup-stage.json records recycling this exact self-created stage at the matching deletion time"
+  ],
+  "recovered": false
+}

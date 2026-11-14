@@ -1,0 +1,399 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-11-14T11:47:58.352Z",
+  "completed": true,
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "plannedSwitches": 100,
+  "transport": "Node 24 built-in WebSocket; direct CDP; no Playwright import or connection",
+  "enabledDomains": [
+    "Runtime",
+    "HeapProfiler"
+  ],
+  "networkDomainEnabled": false,
+  "clicks": "Runtime.evaluate finds and clicks the actual sidebar DOM button; untrusted clicks are only used for memory comparison, not interaction timing",
+  "base": "http://127.0.0.1:2074",
+  "browserExecutable": "B:\\devcache\\playwright\\chromium-1248\\chrome-win64\\chrome.exe",
+  "browserPid": 35448,
+  "profile": "D:\\AIApp\\piweb-performance-fixture-GADnJL\\native-chromium-ulhMeM",
+  "fixture": {
+    "sessions": 300,
+    "short": "Performance session 298",
+    "long": "Performance long session",
+    "longMessages": 10000,
+    "longFileBytes": 21599196
+  },
+  "samples": [
+    {
+      "switches": 0,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:02.155Z",
+      "jsHeapUsedBytes": 12411028,
+      "jsHeapTotalBytes": 12845056,
+      "embedderHeapUsedSize": 7705176,
+      "backingStorageSize": 1924962,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 3,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 10,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:05.106Z",
+      "jsHeapUsedBytes": 13917444,
+      "jsHeapTotalBytes": 14557184,
+      "embedderHeapUsedSize": 7775536,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 13,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 20,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:08.545Z",
+      "jsHeapUsedBytes": 14063564,
+      "jsHeapTotalBytes": 14557184,
+      "embedderHeapUsedSize": 7969368,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 23,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 30,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:11.842Z",
+      "jsHeapUsedBytes": 15025672,
+      "jsHeapTotalBytes": 15867904,
+      "embedderHeapUsedSize": 7841936,
+      "backingStorageSize": 1398132,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 33,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 40,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:14.770Z",
+      "jsHeapUsedBytes": 15118552,
+      "jsHeapTotalBytes": 15605760,
+      "embedderHeapUsedSize": 8087632,
+      "backingStorageSize": 1398132,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 43,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 50,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:17.488Z",
+      "jsHeapUsedBytes": 15163740,
+      "jsHeapTotalBytes": 15867904,
+      "embedderHeapUsedSize": 7995920,
+      "backingStorageSize": 1398132,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 60,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:20.383Z",
+      "jsHeapUsedBytes": 15184052,
+      "jsHeapTotalBytes": 15867904,
+      "embedderHeapUsedSize": 8128120,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 70,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:23.323Z",
+      "jsHeapUsedBytes": 15229564,
+      "jsHeapTotalBytes": 16130048,
+      "embedderHeapUsedSize": 8007736,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 80,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:26.223Z",
+      "jsHeapUsedBytes": 15290216,
+      "jsHeapTotalBytes": 16392192,
+      "embedderHeapUsedSize": 8344928,
+      "backingStorageSize": 1397886,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 90,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:28.784Z",
+      "jsHeapUsedBytes": 15652632,
+      "jsHeapTotalBytes": 16392192,
+      "embedderHeapUsedSize": 7792448,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 100,
+      "idleSeconds": 0,
+      "at": "2026-11-14T11:48:31.372Z",
+      "jsHeapUsedBytes": 15303776,
+      "jsHeapTotalBytes": 16130048,
+      "embedderHeapUsedSize": 8081104,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    },
+    {
+      "switches": 100,
+      "idleSeconds": 90,
+      "at": "2026-11-14T11:50:01.603Z",
+      "jsHeapUsedBytes": 15315412,
+      "jsHeapTotalBytes": 16130048,
+      "embedderHeapUsedSize": 8009784,
+      "backingStorageSize": 1397871,
+      "dom": {
+        "attachedElements": 4061,
+        "attachedNodes": 4531,
+        "documents": 1,
+        "historyEntries": 50,
+        "currentSession": "RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw",
+        "pageProbeAbsent": true
+      }
+    }
+  ],
+  "stages": [
+    {
+      "name": "native-initial-navigation",
+      "at": "2026-11-14T11:47:59.402Z"
+    },
+    {
+      "name": "native-100-switches",
+      "at": "2026-11-14T11:48:02.157Z"
+    },
+    {
+      "name": "native-switches-10",
+      "at": "2026-11-14T11:48:05.108Z"
+    },
+    {
+      "name": "native-switches-20",
+      "at": "2026-11-14T11:48:08.546Z"
+    },
+    {
+      "name": "native-switches-30",
+      "at": "2026-11-14T11:48:11.843Z"
+    },
+    {
+      "name": "native-switches-40",
+      "at": "2026-11-14T11:48:14.773Z"
+    },
+    {
+      "name": "native-switches-50",
+      "at": "2026-11-14T11:48:17.489Z"
+    },
+    {
+      "name": "native-switches-60",
+      "at": "2026-11-14T11:48:20.387Z"
+    },
+    {
+      "name": "native-switches-70",
+      "at": "2026-11-14T11:48:23.325Z"
+    },
+    {
+      "name": "native-switches-80",
+      "at": "2026-11-14T11:48:26.224Z"
+    },
+    {
+      "name": "native-switches-90",
+      "at": "2026-11-14T11:48:28.785Z"
+    },
+    {
+      "name": "native-switches-100",
+      "at": "2026-11-14T11:48:31.373Z"
+    },
+    {
+      "name": "native-idle-90s",
+      "at": "2026-11-14T11:48:31.374Z"
+    },
+    {
+      "name": "native-final-heap-snapshot",
+      "at": "2026-11-14T11:50:01.605Z"
+    },
+    {
+      "name": "native-memory-complete",
+      "at": "2026-11-14T11:50:03.908Z"
+    }
+  ],
+  "methods": [
+    "Browser.getVersion",
+    "Storage.setCookies",
+    "Target.createTarget",
+    "Target.attachToTarget",
+    "Runtime.enable",
+    "HeapProfiler.enable",
+    "Runtime.evaluate",
+    "HeapProfiler.collectGarbage",
+    "Runtime.getHeapUsage",
+    "HeapProfiler.takeHeapSnapshot",
+    "Browser.close"
+  ],
+  "browserVersion": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/156.0.8078.4",
+    "revision": "@f842f52ef39fd97b449eb27cff414bf05a98ddce",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+    "jsVersion": "15.6.75"
+  },
+  "initialDom": {
+    "url": "/",
+    "title": "pi",
+    "textareaCount": 1,
+    "buttonNames": [
+      {
+        "text": "",
+        "title": "«"
+      },
+      {
+        "text": "新会话",
+        "title": ""
+      },
+      {
+        "text": "技能",
+        "title": ""
+      },
+      {
+        "text": "扩展",
+        "title": ""
+      },
+      {
+        "text": "提示词",
+        "title": ""
+      },
+      {
+        "text": "资源市场",
+        "title": ""
+      },
+      {
+        "text": "自动化任务",
+        "title": ""
+      },
+      {
+        "text": "",
+        "title": "搜索"
+      },
+      {
+        "text": "",
+        "title": "分组方式"
+      },
+      {
+        "text": "",
+        "title": "添加工作区"
+      },
+      {
+        "text": "设置",
+        "title": ""
+      },
+      {
+        "text": "",
+        "title": "右侧抽屉"
+      },
+      {
+        "text": "新建工作区",
+        "title": ""
+      },
+      {
+        "text": "工作区内修改",
+        "title": "工作区内修改"
+      },
+      {
+        "text": "选择模型",
+        "title": "选择模型"
+      },
+      {
+        "text": "",
+        "title": "发送"
+      },
+      {
+        "text": "",
+        "title": ""
+      }
+    ]
+  },
+  "idleSecondsCompleted": 90,
+  "heapSnapshot": {
+    "path": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\frontend-memory-optimized-100.heapsnapshot",
+    "bytes": 34426396,
+    "testCookieRedactions": 0
+  },
+  "finishedAt": "2026-11-14T11:50:03.908Z",
+  "changeBytes": 2904384,
+  "bytesPerSwitch": 29043.84,
+  "profileRecycled": true
+}

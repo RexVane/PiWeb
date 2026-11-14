@@ -1,0 +1,11 @@
+{
+  "intervalMs": 2000,
+  "samples": 17,
+  "errors": 0,
+  "peakPrivateBytes": 275259392,
+  "peakRss": 279818240,
+  "minSystemAvailableBytes": 4853297152,
+  "maxHandles": 682,
+  "maxSampleOverheadMs": 127.38850000000001,
+  "budgetExceeded": null
+}

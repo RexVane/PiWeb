@@ -1,0 +1,36 @@
+{
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "startup": [
+    {
+      "buildId": "T9X3r3wKuuYbNUYmPTqye",
+      "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+      "iteration": 1,
+      "at": "2026-11-14T11:37:58.337Z",
+      "pid": 31208,
+      "port": 3807,
+      "listenerMs": 7760.833799999999,
+      "authenticatedHealthMs": 7817.515200000001,
+      "firstSessionsMsSinceSpawn": 9963.848999999998,
+      "firstSessionsRequestMs": 2146.0821000000014,
+      "firstPageMsSinceSpawn": 10066.1508,
+      "firstPageRequestMs": 102.30240000000049,
+      "firstPageBytes": 38105,
+      "launcherWarmup": "enabled; requests may overlap default first-paint prewarming",
+      "indexState": "new agent directory; OS disk cache not cleared"
+    }
+  ],
+  "last": {
+    "base": "http://127.0.0.1:3807",
+    "pid": 31208
+  },
+  "fixtureSizes": {
+    "sessions": 300,
+    "syntheticFiles": 10000,
+    "longMessages": 10000,
+    "skills": 100,
+    "sessionFileBytes": 25267221,
+    "git": true
+  },
+  "completedAt": "2026-11-14T11:40:32.661Z"
+}

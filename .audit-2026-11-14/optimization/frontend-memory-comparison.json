@@ -1,0 +1,153 @@
+{
+  "final": true,
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "browser": "Chrome/156.0.8078.4",
+  "baselineEvidence": "../performance/frontend-memory-native-v2.json",
+  "optimizedEvidence": "frontend-memory-optimized-100.json",
+  "baseline": [
+    {
+      "switches": 0,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 11888896
+    },
+    {
+      "switches": 10,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 26895784
+    },
+    {
+      "switches": 20,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 40746456
+    },
+    {
+      "switches": 30,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 54601264
+    },
+    {
+      "switches": 40,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 69348764
+    },
+    {
+      "switches": 50,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 83500392
+    },
+    {
+      "switches": 50,
+      "idleSeconds": 90,
+      "jsHeapUsedBytes": 83512396
+    }
+  ],
+  "optimized": [
+    {
+      "switches": 0,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 12411028,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 10,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 13917444,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 20,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 14063564,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 30,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15025672,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 40,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15118552,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 50,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15163740,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 60,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15184052,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 70,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15229564,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 80,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15290216,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 90,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15652632,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 100,
+      "idleSeconds": 0,
+      "jsHeapUsedBytes": 15303776,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    },
+    {
+      "switches": 100,
+      "idleSeconds": 90,
+      "jsHeapUsedBytes": 15315412,
+      "attachedElements": 4061,
+      "attachedNodes": 4531
+    }
+  ],
+  "afterHistoryStrings": {
+    "count": 1600,
+    "selfSizeBytes": 2514712
+  },
+  "afterRootPaths": [
+    {
+      "targetOffset": 208500,
+      "edgeCount": 16,
+      "abortControllers": 0
+    },
+    {
+      "targetOffset": 808116,
+      "edgeCount": 15,
+      "abortControllers": 0
+    },
+    {
+      "targetOffset": 1514466,
+      "edgeCount": 16,
+      "abortControllers": 0
+    }
+  ],
+  "boundary": "One native run before and one after, same Chromium and fixture scale. JS heap only; not process RSS or interaction latency. Root separately measures true streaming."
+}

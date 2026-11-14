@@ -1,0 +1,192 @@
+{
+  "startedAt": "2026-11-14T12:16:50.8929364Z",
+  "owner": "verify_auth_release",
+  "scope": "Only this task-owned temporary stages and probe scripts; all measurement evidence is retained",
+  "sourceConsistencyEvidence": "source-consistency-final.json",
+  "priorOriginalNextEvidence": "../performance/cleanup-stage.json",
+  "complete": true,
+  "stages": [
+    {
+      "path": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
+      "marker": ".optimization-owner.json",
+      "buildId": "T9X3r3wKuuYbNUYmPTqye",
+      "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+      "entriesWithoutFollowingLinks": 1328,
+      "junction": {
+        "path": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO\\node_modules",
+        "target": "D:\\AIApp\\PiWeb\\node_modules",
+        "type": "Junction"
+      },
+      "junctionDetached": true,
+      "recycled": true,
+      "absent": true,
+      "junctionMethod": "fsutil reparsepoint delete removes only this link metadata; empty directory then recycled with owned stage"
+    },
+    {
+      "path": "D:\\AIApp\\.piweb-performance-20261114-XavtFX",
+      "marker": ".optimization-restored-owner.json",
+      "buildId": "qs_AuODvEiFduBinEf95d",
+      "sourceHash": "0a8188e986da0c45600a2153ae2d4d5da4b185e18f7f23b60feb75eb83337961",
+      "entriesWithoutFollowingLinks": 1322,
+      "junction": {
+        "path": "D:\\AIApp\\.piweb-performance-20261114-XavtFX\\node_modules",
+        "target": "D:\\AIApp\\PiWeb\\node_modules",
+        "type": "Junction"
+      },
+      "junctionDetached": true,
+      "recycled": true,
+      "absent": true,
+      "junctionMethod": "fsutil reparsepoint delete removes only this link metadata; empty directory then recycled with owned stage"
+    }
+  ],
+  "recycledProbes": [
+    {
+      "name": ".prepare-stage.mjs",
+      "bytes": 9262,
+      "sha256": "ADBD671FF263B334BB79684605A6817EC668EC6FFAC5AC2C8177F9C608804EAA",
+      "recycled": true
+    },
+    {
+      "name": ".startup-five.mjs",
+      "bytes": 13588,
+      "sha256": "198E2B181BFB66B3A1E68870933D5006A593001573E2718DB0070E8B187458DC",
+      "recycled": true
+    },
+    {
+      "name": ".bundle-stats.mjs",
+      "bytes": 5326,
+      "sha256": "0964AA174CCD27B82464C939B3E7C76D51EBC233671D93440B66F67802EC26D9",
+      "recycled": true
+    },
+    {
+      "name": ".startup-compare.mjs",
+      "bytes": 5150,
+      "sha256": "92AEEF321B972E83A1EC7A754E0CED8727AF7CD742402E24BE334CC3DD60D3CF",
+      "recycled": true
+    },
+    {
+      "name": ".startup-parent-controlled.mjs",
+      "bytes": 5193,
+      "sha256": "65B613BC0B42D606B5C6B7105DE23A0EB5AC4811EC355354CE499A4490F722A1",
+      "recycled": true
+    },
+    {
+      "name": ".verify-recycled-stage.mjs",
+      "bytes": 2522,
+      "sha256": "DB8305323D7CCFEA2152F0A59F63FB354DE44C7C9B4B01DEEE85001548DAAAF9",
+      "recycled": true
+    },
+    {
+      "name": ".startup-report-v2.mjs",
+      "bytes": 16773,
+      "sha256": "387A44FBB2717B4CCA47C2C9B5881BF30BB6D5EFD08B9B8FBE1A0A41D467C680",
+      "recycled": true
+    },
+    {
+      "name": ".cleanup-verifier.mjs",
+      "bytes": 5443,
+      "sha256": "F3FCCF1FA460383A897CDD753902EE420EA127C9E7754328AD58F726D5D2DCF7",
+      "recycled": true
+    },
+    {
+      "name": ".cleanup-owned-stages.ps1",
+      "bytes": 9723,
+      "sha256": "ED4357D7B57CFA77487A5F57B5565B3B0D68E204C92579F62942C5212EF360D2",
+      "recycled": true
+    }
+  ],
+  "cleanupScript": ".cleanup-owned-stages.ps1",
+  "cleanupScriptRecycled": true,
+  "noStageNodeProcesses": true,
+  "port2074NotListening": true,
+  "lastStoppedCheckAt": "2026-11-14T12:17:03.0374173Z",
+  "originalNextRootTimeBefore": "2026-11-12T18:18:03.1786799Z",
+  "sharedNextPackageSha256Before": "76F5B7EF447577C2855EEE017AE8A47AEEFC1E4C95E71387B66C2671283682C8",
+  "originalNextRootTimeAfter": "2026-11-12T18:18:03.1786799Z",
+  "originalNextRootTimeUnchanged": true,
+  "originalNextKnownTopFilesAfter": [
+    {
+      "file": "app-path-routes-manifest.json",
+      "sha256": "7c13af9349da7b06c4c8b045f66e37661b87c09f1bc724bd1a4f8e4ac9e2c344",
+      "matchesBefore": true
+    },
+    {
+      "file": "BUILD_ID",
+      "sha256": "b00ba795cf35e3fae7308b64f9bff89d8bda86e9645ea78dd83bed0dd7fdacbb",
+      "matchesBefore": true
+    },
+    {
+      "file": "build-manifest.json",
+      "sha256": "3e7772ea94b7d64fd8c50ee492f6ec5c207ec0e6cdda30247c6accbd80e7109a",
+      "matchesBefore": true
+    },
+    {
+      "file": "export-marker.json",
+      "sha256": "82356527db218adb95bd1eca0ede6f3391165b38b22d667d064e62e6b539d974",
+      "matchesBefore": true
+    },
+    {
+      "file": "images-manifest.json",
+      "sha256": "89153990319006e8e53593d4cee9a741db8a01b9dd8897513bd4e0a4685d2f42",
+      "matchesBefore": true
+    },
+    {
+      "file": "next-minimal-server.js.nft.json",
+      "sha256": "e7a707f73b5b1d1afa55659296ef9cc2f329e9ce63cf17dc0ba7d7f422f83c6e",
+      "matchesBefore": true
+    },
+    {
+      "file": "next-server.js.nft.json",
+      "sha256": "a2cee08253834f18fb038753efcd24f0e12aff7286ac482fdd9453c90ad7e1b8",
+      "matchesBefore": true
+    },
+    {
+      "file": "package.json",
+      "sha256": "091a04fa67c7907b98e106fcff8b964e13129754fce72d24f3025b97c4887fa3",
+      "matchesBefore": true
+    },
+    {
+      "file": "prerender-manifest.json",
+      "sha256": "bcbaa290d3710b2345fb6c593a21e5fa847645ad0f346dc43d709dabe8be6e8b",
+      "matchesBefore": true
+    },
+    {
+      "file": "react-loadable-manifest.json",
+      "sha256": "19f4c51e33c262279b92d5d0ac6b4ce3f867204373295bc8ddcff5de315f90d9",
+      "matchesBefore": true
+    },
+    {
+      "file": "required-server-files.js",
+      "sha256": "cee9059c9134337731f86e06229c5f397212dacae87c701aa101657315ebbd31",
+      "matchesBefore": true
+    },
+    {
+      "file": "required-server-files.json",
+      "sha256": "aab3f83026f3506c023ed2179bc18711a81d83a65ad0d96def8084c146b6a453",
+      "matchesBefore": true
+    },
+    {
+      "file": "routes-manifest.json",
+      "sha256": "0b001f62ae11411077b34d92c552bcd04c74a976e21e5496fa0a00db529efe3e",
+      "matchesBefore": true
+    },
+    {
+      "file": "trace",
+      "sha256": "eb5b52176c08a7c36ca481e5b2ef63ec335e3130fbd03cba05249595edc6430a",
+      "matchesBefore": true
+    },
+    {
+      "file": "trace-build",
+      "sha256": "05e6a21ef5984ac573bf1ea3178c6100626d691264c4b5539212282ade28a258",
+      "matchesBefore": true
+    }
+  ],
+  "originalNextKnownTopFilesUnchanged": true,
+  "originalNextFullTreeHashClaimed": false,
+  "sharedNextPackageSha256After": "76F5B7EF447577C2855EEE017AE8A47AEEFC1E4C95E71387B66C2671283682C8",
+  "sharedNextPackageUnchanged": true,
+  "sharedNodeModulesPresent": true,
+  "finishedAt": "2026-11-14T12:17:03.0404910Z",
+  "allOwnedProbeCount": 9,
+  "finalizedAt": "2026-11-14T12:18:01.946Z"
+}

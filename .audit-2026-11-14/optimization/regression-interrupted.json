@@ -1,0 +1,7 @@
+{
+  "stoppedAtUtc": "2026-11-14T10:54:35.2695427Z",
+  "processId": 17280,
+  "reason": "Source changed during this intermediate coverage run; superseded by a new frozen-source regression run",
+  "log": "regression.log",
+  "complete": false
+}

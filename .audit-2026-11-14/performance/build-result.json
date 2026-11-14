@@ -1,0 +1,14 @@
+{
+  "stage": "D:\\AIApp\\.piweb-performance-20261114-XavtFX",
+  "sourceHash": "0a8188e986da0c45600a2153ae2d4d5da4b185e18f7f23b60feb75eb83337961",
+  "startedAt": "2026-11-14T08:04:24.022Z",
+  "finishedAt": "2026-11-14T08:06:27.638Z",
+  "elapsedMs": 123034.7632,
+  "exitCode": 0,
+  "buildId": "qs_AuODvEiFduBinEf95d",
+  "sourceUnchanged": true,
+  "modifiedSourceFiles": [],
+  "freeMemoryBytesAfter": 4337188864,
+  "definition": "Wall time of production compilation and inventory sealing; not server startup time",
+  "serviceStarted": false
+}

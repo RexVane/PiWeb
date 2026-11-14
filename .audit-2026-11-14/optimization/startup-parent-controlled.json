@@ -1,0 +1,123 @@
+{
+  "startedAt": "2026-11-14T11:25:57.462Z",
+  "stage": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "orders": [
+    [
+      "legacy-double",
+      "single"
+    ],
+    [
+      "single",
+      "legacy-double"
+    ],
+    [
+      "legacy-double",
+      "single"
+    ]
+  ],
+  "runs": [
+    {
+      "pair": 1,
+      "mode": "legacy-double",
+      "importMs": 17.2934,
+      "ensureMs": 2369.3193,
+      "planMs": 2425.9321000000004,
+      "totalMs": 4795.2535,
+      "prepared": "skipped",
+      "command": "start",
+      "childWallMs": 4907.4398,
+      "pid": 14496,
+      "exitCode": 0
+    },
+    {
+      "pair": 1,
+      "mode": "single",
+      "importMs": 15.6693,
+      "ensureMs": 0,
+      "planMs": 2382.3797,
+      "totalMs": 2382.3807,
+      "prepared": "not-called",
+      "command": "start",
+      "childWallMs": 2493.5206,
+      "pid": 49556,
+      "exitCode": 0
+    },
+    {
+      "pair": 2,
+      "mode": "single",
+      "importMs": 14.896800000000002,
+      "ensureMs": 0,
+      "planMs": 2397.6872,
+      "totalMs": 2397.6884,
+      "prepared": "not-called",
+      "command": "start",
+      "childWallMs": 2496.0981,
+      "pid": 8708,
+      "exitCode": 0
+    },
+    {
+      "pair": 2,
+      "mode": "legacy-double",
+      "importMs": 17.064300000000003,
+      "ensureMs": 2393.714,
+      "planMs": 2804.3808999999997,
+      "totalMs": 5198.0969000000005,
+      "prepared": "skipped",
+      "command": "start",
+      "childWallMs": 5314.146400000001,
+      "pid": 8880,
+      "exitCode": 0
+    },
+    {
+      "pair": 3,
+      "mode": "legacy-double",
+      "importMs": 16.502299999999998,
+      "ensureMs": 2481.0991999999997,
+      "planMs": 2572.4818999999998,
+      "totalMs": 5053.5834,
+      "prepared": "skipped",
+      "command": "start",
+      "childWallMs": 5175.381400000002,
+      "pid": 26708,
+      "exitCode": 0
+    },
+    {
+      "pair": 3,
+      "mode": "single",
+      "importMs": 20.533299999999997,
+      "ensureMs": 0,
+      "planMs": 2410.7651,
+      "totalMs": 2410.7662,
+      "prepared": "not-called",
+      "command": "start",
+      "childWallMs": 2514.3924000000006,
+      "pid": 4264,
+      "exitCode": 0
+    }
+  ],
+  "completed": true,
+  "definition": "Fresh Node processes alternate the unchanged ensureInstallBuild+createLaunchPlan path and the optimized createLaunchPlan-only path on the exact same current sealed artifact. This is parent validation attribution, not a full old-version startup.",
+  "exclusions": [
+    "No HTTP service, IPC authentication, resource warmup, browser or model request is started.",
+    "No OS cache flush; module import is reported separately.",
+    "Both modes use the current unchanged integrity-validation algorithms; the legacy path differs only by its extra ensureInstallBuild call.",
+    "No build, install, user configuration write, or release pointer change is allowed."
+  ],
+  "finishedAt": "2026-11-14T11:26:20.370Z",
+  "summary": {
+    "legacy": {
+      "minMs": 4795.2535,
+      "medianMs": 5053.5834,
+      "maxMs": 5198.0969000000005
+    },
+    "single": {
+      "minMs": 2382.3807,
+      "medianMs": 2397.6884,
+      "maxMs": 2410.7662
+    },
+    "medianReductionMs": 2655.8950000000004,
+    "medianReductionPercent": 52.55468822380571
+  }
+}

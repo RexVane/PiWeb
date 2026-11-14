@@ -1,0 +1,2431 @@
+{
+  "source": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\performance\\frontend-desktop-memory-minimal.heapsnapshot",
+  "note": "Self-size aggregation and bounded strong-retainer expansion, following one historical trajectory string; visited nodes are skipped, frontier <=120, <=48 levels; not full dominators. String bodies omitted. No duplicate full reverse graph.",
+  "historySamples": [
+    {
+      "offset": 185808,
+      "type": "string",
+      "name": "<fixture history text; 1024 chars>",
+      "selfSize": 1864,
+      "edgeCount": 4
+    },
+    {
+      "offset": 762912,
+      "type": "string",
+      "name": "<fixture history text; 1024 chars>",
+      "selfSize": 1864,
+      "edgeCount": 4
+    },
+    {
+      "offset": 1647588,
+      "type": "string",
+      "name": "<fixture history text; 1024 chars>",
+      "selfSize": 1864,
+      "edgeCount": 4
+    },
+    {
+      "offset": 2948904,
+      "type": "string",
+      "name": "<fixture history text; 1024 chars>",
+      "selfSize": 1864,
+      "edgeCount": 4
+    },
+    {
+      "offset": 4325550,
+      "type": "string",
+      "name": "<fixture history text; 1024 chars>",
+      "selfSize": 1864,
+      "edgeCount": 4
+    },
+    {
+      "offset": 6158148,
+      "type": "string",
+      "name": "<fixture history text; 1024 chars>",
+      "selfSize": 1864,
+      "edgeCount": 4
+    }
+  ],
+  "nodeCount": 1135062,
+  "edgeCount": 5395774,
+  "topGroups": [
+    {
+      "type": "string",
+      "name": "fixture history text",
+      "count": 35051,
+      "selfSize": 61948784
+    },
+    {
+      "type": "string",
+      "name": "string contents omitted",
+      "count": 302326,
+      "selfSize": 8701512
+    },
+    {
+      "type": "object",
+      "name": "Object",
+      "count": 238795,
+      "selfSize": 8287180
+    },
+    {
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "count": 1617,
+      "selfSize": 4259473
+    },
+    {
+      "type": "code",
+      "name": "system / InstructionStream",
+      "count": 1951,
+      "selfSize": 3694400
+    },
+    {
+      "type": "array",
+      "name": "(object elements)",
+      "count": 138828,
+      "selfSize": 3493384
+    },
+    {
+      "type": "object",
+      "name": "Array",
+      "count": 139958,
+      "selfSize": 2239328
+    },
+    {
+      "type": "object",
+      "name": "rC",
+      "count": 9509,
+      "selfSize": 988936
+    },
+    {
+      "type": "code",
+      "name": "system / TrustedByteArray",
+      "count": 4295,
+      "selfSize": 689372
+    },
+    {
+      "type": "code",
+      "name": "system / BytecodeArray",
+      "count": 2242,
+      "selfSize": 626476
+    },
+    {
+      "type": "number",
+      "name": "heap number",
+      "count": 43149,
+      "selfSize": 517668
+    },
+    {
+      "type": "native",
+      "name": "blink::UniqueElementData",
+      "count": 3966,
+      "selfSize": 444192
+    },
+    {
+      "type": "native",
+      "name": "blink::ComputedStyle",
+      "count": 5309,
+      "selfSize": 382248
+    },
+    {
+      "type": "native",
+      "name": "system / FunctionTemplateInfo",
+      "count": 4897,
+      "selfSize": 313280
+    },
+    {
+      "type": "code",
+      "name": "system / FeedbackVector",
+      "count": 1501,
+      "selfSize": 250892
+    },
+    {
+      "type": "object shape",
+      "name": "system / Map",
+      "count": 6168,
+      "selfSize": 250432
+    },
+    {
+      "type": "array",
+      "name": "(object properties)",
+      "count": 247,
+      "selfSize": 246664
+    },
+    {
+      "type": "object shape",
+      "name": "system / DescriptorArray",
+      "count": 2165,
+      "selfSize": 212520
+    },
+    {
+      "type": "native",
+      "name": "SVGPathElement",
+      "count": 1273,
+      "selfSize": 203680
+    },
+    {
+      "type": "code",
+      "name": "system / ObjectBoilerplateDescription",
+      "count": 4533,
+      "selfSize": 198472
+    },
+    {
+      "type": "native",
+      "name": "blink::GeometryMapperTransformCache",
+      "count": 560,
+      "selfSize": 188160
+    },
+    {
+      "type": "array",
+      "name": "",
+      "count": 635,
+      "selfSize": 176120
+    },
+    {
+      "type": "native",
+      "name": "SVGAnimatedLength",
+      "count": 2694,
+      "selfSize": 172416
+    },
+    {
+      "type": "native",
+      "name": "blink::LayoutBlockFlow",
+      "count": 977,
+      "selfSize": 156320
+    },
+    {
+      "type": "native",
+      "name": "blink::ComputedStyleBase::StyleSurroundData",
+      "count": 466,
+      "selfSize": 145392
+    },
+    {
+      "type": "native",
+      "name": "blink::PhysicalBoxFragment",
+      "count": 1579,
+      "selfSize": 145320
+    },
+    {
+      "type": "native",
+      "name": "blink::TransformPaintPropertyNode",
+      "count": 561,
+      "selfSize": 143616
+    },
+    {
+      "type": "code",
+      "name": "system / Code",
+      "count": 1951,
+      "selfSize": 140472
+    },
+    {
+      "type": "code",
+      "name": "system / ProtectedFixedArray",
+      "count": 427,
+      "selfSize": 139424
+    },
+    {
+      "type": "code",
+      "name": "(constant pool)",
+      "count": 1972,
+      "selfSize": 139052
+    }
+  ],
+  "largest": [
+    {
+      "offset": 3600432,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 761188,
+      "edgeCount": 0
+    },
+    {
+      "offset": 5935404,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 660104,
+      "edgeCount": 0
+    },
+    {
+      "offset": 4150158,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 483468,
+      "edgeCount": 0
+    },
+    {
+      "offset": 4264074,
+      "type": "string",
+      "name": "<string contents omitted; 328716 chars>",
+      "selfSize": 328728,
+      "edgeCount": 2
+    },
+    {
+      "offset": 5573844,
+      "type": "string",
+      "name": "<string contents omitted; 328715 chars>",
+      "selfSize": 328728,
+      "edgeCount": 2
+    },
+    {
+      "offset": 3952872,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 320882,
+      "edgeCount": 0
+    },
+    {
+      "offset": 4150110,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 203733,
+      "edgeCount": 0
+    },
+    {
+      "offset": 4150056,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 150028,
+      "edgeCount": 0
+    },
+    {
+      "offset": 6308718,
+      "type": "code",
+      "name": "system / InstructionStream",
+      "selfSize": 136192,
+      "edgeCount": 881
+    },
+    {
+      "offset": 3952758,
+      "type": "native",
+      "name": "system / ExternalStringData",
+      "selfSize": 121276,
+      "edgeCount": 0
+    },
+    {
+      "offset": 3603846,
+      "type": "code",
+      "name": "system / InstructionStream",
+      "selfSize": 110464,
+      "edgeCount": 1219
+    }
+  ],
+  "retainerLevels": [
+    {
+      "level": 0,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 185808,
+          "edgeType": "property",
+          "edgeName": "detail",
+          "from": {
+            "offset": 1794018,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 36,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 1,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 1794018,
+          "edgeType": "internal",
+          "edgeName": "756",
+          "from": {
+            "offset": 1790340,
+            "type": "array",
+            "name": "(object elements)",
+            "selfSize": 5164,
+            "edgeCount": 1000
+          }
+        },
+        {
+          "target": 1794018,
+          "edgeType": "element",
+          "edgeName": "756",
+          "from": {
+            "offset": 4278786,
+            "type": "object",
+            "name": "Array",
+            "selfSize": 16,
+            "edgeCount": 1003
+          }
+        }
+      ]
+    },
+    {
+      "level": 2,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 4278786,
+          "edgeType": "property",
+          "edgeName": "trajectory",
+          "from": {
+            "offset": 4278744,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 144,
+            "edgeCount": 35
+          }
+        },
+        {
+          "target": 1790340,
+          "edgeType": "internal",
+          "edgeName": "elements",
+          "from": {
+            "offset": 4278786,
+            "type": "object",
+            "name": "Array",
+            "selfSize": 16,
+            "edgeCount": 1003
+          }
+        }
+      ]
+    },
+    {
+      "level": 3,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 4278744,
+          "edgeType": "property",
+          "edgeName": "snapshot",
+          "from": {
+            "offset": 4278738,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 76,
+            "edgeCount": 18
+          }
+        }
+      ]
+    },
+    {
+      "level": 4,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 4278738,
+          "edgeType": "context",
+          "edgeName": "k",
+          "from": {
+            "offset": 4290216,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 4278738,
+          "edgeType": "context",
+          "edgeName": "j",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        }
+      ]
+    },
+    {
+      "level": 5,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 4290216,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290210,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290282,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 4290216,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 4290282,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 4290270,
+            "type": "object",
+            "name": "system / Context / scope @131539",
+            "selfSize": 36,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 4290216,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290276,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290282,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290288,
+            "type": "closure",
+            "name": "rZ",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290282,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290300,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290216,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290312,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290282,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290330,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290216,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290336,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290216,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290348,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4290282,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290354,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 6,
+      "targetCount": 10,
+      "retainers": [
+        {
+          "target": 4290270,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4290210,
+          "edgeType": "context",
+          "edgeName": "eR",
+          "from": {
+            "offset": 4290216,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 4290276,
+          "edgeType": "context",
+          "edgeName": "eA",
+          "from": {
+            "offset": 4290216,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 4290276,
+          "edgeType": "context",
+          "edgeName": "K",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290288,
+          "edgeType": "context",
+          "edgeName": "rZ",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290300,
+          "edgeType": "context",
+          "edgeName": "r8",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290312,
+          "edgeType": "context",
+          "edgeName": "ei",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290330,
+          "edgeType": "context",
+          "edgeName": "rw",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290336,
+          "edgeType": "context",
+          "edgeName": "eo",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290210,
+          "edgeType": "context",
+          "edgeName": "q",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290348,
+          "edgeType": "context",
+          "edgeName": "J",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4290354,
+          "edgeType": "context",
+          "edgeName": "ni",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        }
+      ]
+    },
+    {
+      "level": 7,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 633306,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290222,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290228,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290234,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290246,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4290258,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4296414,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4289520,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4296420,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 8,
+      "targetCount": 8,
+      "retainers": [
+        {
+          "target": 633306,
+          "edgeType": "internal",
+          "edgeName": "2",
+          "from": {
+            "offset": 633288,
+            "type": "array",
+            "name": "",
+            "selfSize": 208,
+            "edgeCount": 20
+          }
+        },
+        {
+          "target": 4290228,
+          "edgeType": "context",
+          "edgeName": "m",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4290234,
+          "edgeType": "context",
+          "edgeName": "h",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4290246,
+          "edgeType": "context",
+          "edgeName": "O",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4290222,
+          "edgeType": "context",
+          "edgeName": "q",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4290258,
+          "edgeType": "context",
+          "edgeName": "ee",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4296414,
+          "edgeType": "property",
+          "edgeName": "selectLatest",
+          "from": {
+            "offset": 4290306,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 4296420,
+          "edgeType": "property",
+          "edgeName": "prev",
+          "from": {
+            "offset": 4290306,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 4290222,
+          "edgeType": "property",
+          "edgeName": "refresh",
+          "from": {
+            "offset": 4290306,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        }
+      ]
+    },
+    {
+      "level": 9,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 633288,
+          "edgeType": "hidden",
+          "edgeName": "0",
+          "from": {
+            "offset": 632616,
+            "type": "native",
+            "name": "system / ErrorStackData",
+            "selfSize": 12,
+            "edgeCount": 3
+          }
+        },
+        {
+          "target": 4290306,
+          "edgeType": "context",
+          "edgeName": "np",
+          "from": {
+            "offset": 4290282,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        }
+      ]
+    },
+    {
+      "level": 10,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 632616,
+          "edgeType": "hidden",
+          "edgeName": "0",
+          "from": {
+            "offset": 632610,
+            "type": "native",
+            "name": "system / PropertyArray",
+            "selfSize": 20,
+            "edgeCount": 2
+          }
+        },
+        {
+          "target": 632616,
+          "edgeType": "property",
+          "edgeName": "<symbol>",
+          "from": {
+            "offset": 2206848,
+            "type": "native",
+            "name": "DOMException",
+            "selfSize": 72,
+            "edgeCount": 8
+          }
+        }
+      ]
+    },
+    {
+      "level": 11,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 632610,
+          "edgeType": "internal",
+          "edgeName": "properties",
+          "from": {
+            "offset": 2206848,
+            "type": "native",
+            "name": "DOMException",
+            "selfSize": 72,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 2206848,
+          "edgeType": "element",
+          "edgeName": "8",
+          "from": {
+            "offset": 2206848,
+            "type": "native",
+            "name": "DOMException",
+            "selfSize": 72,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 2206848,
+          "edgeType": "element",
+          "edgeName": "3",
+          "from": {
+            "offset": 4486938,
+            "type": "native",
+            "name": "AbortSignal",
+            "selfSize": 160,
+            "edgeCount": 8
+          }
+        }
+      ]
+    },
+    {
+      "level": 12,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 4486938,
+          "edgeType": "element",
+          "edgeName": "3",
+          "from": {
+            "offset": 4289490,
+            "type": "native",
+            "name": "AbortController",
+            "selfSize": 48,
+            "edgeCount": 4
+          }
+        },
+        {
+          "target": 4486938,
+          "edgeType": "element",
+          "edgeName": "6",
+          "from": {
+            "offset": 4486938,
+            "type": "native",
+            "name": "AbortSignal",
+            "selfSize": 160,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 4486938,
+          "edgeType": "element",
+          "edgeName": "1",
+          "from": {
+            "offset": 6580332,
+            "type": "native",
+            "name": "blink::SourceSignalCompositionManager",
+            "selfSize": 80,
+            "edgeCount": 1
+          }
+        }
+      ]
+    },
+    {
+      "level": 13,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 4289490,
+          "edgeType": "property",
+          "edgeName": "refresh",
+          "from": {
+            "offset": 4289478,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 32,
+            "edgeCount": 7
+          }
+        },
+        {
+          "target": 4289490,
+          "edgeType": "element",
+          "edgeName": "4",
+          "from": {
+            "offset": 4289490,
+            "type": "native",
+            "name": "AbortController",
+            "selfSize": 48,
+            "edgeCount": 4
+          }
+        },
+        {
+          "target": 6580332,
+          "edgeType": "element",
+          "edgeName": "5",
+          "from": {
+            "offset": 4486938,
+            "type": "native",
+            "name": "AbortSignal",
+            "selfSize": 160,
+            "edgeCount": 8
+          }
+        }
+      ]
+    },
+    {
+      "level": 14,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 4289478,
+          "edgeType": "property",
+          "edgeName": "scope",
+          "from": {
+            "offset": 4289514,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 20,
+            "edgeCount": 4
+          }
+        },
+        {
+          "target": 4289478,
+          "edgeType": "context",
+          "edgeName": "u",
+          "from": {
+            "offset": 4289520,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        }
+      ]
+    },
+    {
+      "level": 15,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 4289514,
+          "edgeType": "context",
+          "edgeName": "P",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        }
+      ]
+    },
+    {
+      "level": 16,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 2038926,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4506744,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4506750,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4506756,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4506762,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518840,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518846,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 2038932,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518852,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 17,
+      "targetCount": 8,
+      "retainers": [
+        {
+          "target": 2038926,
+          "edgeType": "internal",
+          "edgeName": "2",
+          "from": {
+            "offset": 479286,
+            "type": "array",
+            "name": "",
+            "selfSize": 208,
+            "edgeCount": 20
+          }
+        },
+        {
+          "target": 4506744,
+          "edgeType": "context",
+          "edgeName": "m",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4506750,
+          "edgeType": "context",
+          "edgeName": "h",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4506756,
+          "edgeType": "context",
+          "edgeName": "O",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4518846,
+          "edgeType": "context",
+          "edgeName": "q",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4506762,
+          "edgeType": "context",
+          "edgeName": "ee",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 4518840,
+          "edgeType": "property",
+          "edgeName": "expandLazy",
+          "from": {
+            "offset": 4518708,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 4518846,
+          "edgeType": "property",
+          "edgeName": "refresh",
+          "from": {
+            "offset": 4518708,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 4518852,
+          "edgeType": "property",
+          "edgeName": "recordNow",
+          "from": {
+            "offset": 4518708,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        }
+      ]
+    },
+    {
+      "level": 18,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 479286,
+          "edgeType": "hidden",
+          "edgeName": "0",
+          "from": {
+            "offset": 479280,
+            "type": "native",
+            "name": "system / ErrorStackData",
+            "selfSize": 12,
+            "edgeCount": 3
+          }
+        },
+        {
+          "target": 4518708,
+          "edgeType": "context",
+          "edgeName": "np",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        }
+      ]
+    },
+    {
+      "level": 19,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 479280,
+          "edgeType": "hidden",
+          "edgeName": "0",
+          "from": {
+            "offset": 479274,
+            "type": "native",
+            "name": "system / PropertyArray",
+            "selfSize": 20,
+            "edgeCount": 2
+          }
+        },
+        {
+          "target": 479280,
+          "edgeType": "property",
+          "edgeName": "<symbol>",
+          "from": {
+            "offset": 3905820,
+            "type": "native",
+            "name": "DOMException",
+            "selfSize": 72,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 4506882,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 4506876,
+            "type": "object",
+            "name": "system / Context / scope @131539",
+            "selfSize": 36,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 4506882,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518690,
+            "type": "closure",
+            "name": "rZ",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4506882,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518702,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4506882,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518732,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4506882,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518762,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4506882,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 4519818,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        }
+      ]
+    },
+    {
+      "level": 20,
+      "targetCount": 8,
+      "retainers": [
+        {
+          "target": 3905820,
+          "edgeType": "element",
+          "edgeName": "3",
+          "from": {
+            "offset": 633474,
+            "type": "native",
+            "name": "AbortSignal",
+            "selfSize": 160,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 4506876,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 479274,
+          "edgeType": "internal",
+          "edgeName": "properties",
+          "from": {
+            "offset": 3905820,
+            "type": "native",
+            "name": "DOMException",
+            "selfSize": 72,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 3905820,
+          "edgeType": "element",
+          "edgeName": "8",
+          "from": {
+            "offset": 3905820,
+            "type": "native",
+            "name": "DOMException",
+            "selfSize": 72,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 4518690,
+          "edgeType": "context",
+          "edgeName": "rZ",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518702,
+          "edgeType": "context",
+          "edgeName": "r8",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518732,
+          "edgeType": "context",
+          "edgeName": "rw",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518762,
+          "edgeType": "context",
+          "edgeName": "ni",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4519818,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518684,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4519818,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518714,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4519818,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518738,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4519818,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518744,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 4519818,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 4518756,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 21,
+      "targetCount": 6,
+      "retainers": [
+        {
+          "target": 633474,
+          "edgeType": "element",
+          "edgeName": "6",
+          "from": {
+            "offset": 633474,
+            "type": "native",
+            "name": "AbortSignal",
+            "selfSize": 160,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 633474,
+          "edgeType": "element",
+          "edgeName": "3",
+          "from": {
+            "offset": 2038494,
+            "type": "native",
+            "name": "AbortController",
+            "selfSize": 48,
+            "edgeCount": 4
+          }
+        },
+        {
+          "target": 4518684,
+          "edgeType": "context",
+          "edgeName": "K",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518714,
+          "edgeType": "context",
+          "edgeName": "ei",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518738,
+          "edgeType": "context",
+          "edgeName": "eo",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518744,
+          "edgeType": "context",
+          "edgeName": "q",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518756,
+          "edgeType": "context",
+          "edgeName": "J",
+          "from": {
+            "offset": 4506882,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 4518744,
+          "edgeType": "context",
+          "edgeName": "eR",
+          "from": {
+            "offset": 4519818,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 4518684,
+          "edgeType": "context",
+          "edgeName": "eA",
+          "from": {
+            "offset": 4519818,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 633474,
+          "edgeType": "element",
+          "edgeName": "1",
+          "from": {
+            "offset": 6580452,
+            "type": "native",
+            "name": "blink::SourceSignalCompositionManager",
+            "selfSize": 80,
+            "edgeCount": 1
+          }
+        }
+      ]
+    },
+    {
+      "level": 22,
+      "targetCount": 2,
+      "retainers": [
+        {
+          "target": 6580452,
+          "edgeType": "element",
+          "edgeName": "5",
+          "from": {
+            "offset": 633474,
+            "type": "native",
+            "name": "AbortSignal",
+            "selfSize": 160,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 2038494,
+          "edgeType": "property",
+          "edgeName": "refresh",
+          "from": {
+            "offset": 2038482,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 32,
+            "edgeCount": 7
+          }
+        },
+        {
+          "target": 2038494,
+          "edgeType": "element",
+          "edgeName": "4",
+          "from": {
+            "offset": 2038494,
+            "type": "native",
+            "name": "AbortController",
+            "selfSize": 48,
+            "edgeCount": 4
+          }
+        }
+      ]
+    },
+    {
+      "level": 23,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 2038482,
+          "edgeType": "property",
+          "edgeName": "scope",
+          "from": {
+            "offset": 394494,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 20,
+            "edgeCount": 4
+          }
+        },
+        {
+          "target": 2038482,
+          "edgeType": "context",
+          "edgeName": "u",
+          "from": {
+            "offset": 2038932,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        }
+      ]
+    },
+    {
+      "level": 24,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 394494,
+          "edgeType": "context",
+          "edgeName": "P",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        }
+      ]
+    },
+    {
+      "level": 25,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 394422,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 394428,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 394518,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 394560,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 394578,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 446352,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 446358,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 394398,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 446364,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 26,
+      "targetCount": 8,
+      "retainers": [
+        {
+          "target": 394422,
+          "edgeType": "context",
+          "edgeName": "m",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 394428,
+          "edgeType": "context",
+          "edgeName": "h",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 394518,
+          "edgeType": "context",
+          "edgeName": "O",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 394560,
+          "edgeType": "context",
+          "edgeName": "q",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 394578,
+          "edgeType": "context",
+          "edgeName": "ee",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 446352,
+          "edgeType": "property",
+          "edgeName": "selectLatest",
+          "from": {
+            "offset": 475728,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 446358,
+          "edgeType": "property",
+          "edgeName": "prev",
+          "from": {
+            "offset": 475728,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 446364,
+          "edgeType": "property",
+          "edgeName": "next",
+          "from": {
+            "offset": 475728,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        },
+        {
+          "target": 394560,
+          "edgeType": "property",
+          "edgeName": "refresh",
+          "from": {
+            "offset": 475728,
+            "type": "object",
+            "name": "Object",
+            "selfSize": 112,
+            "edgeCount": 27
+          }
+        }
+      ]
+    },
+    {
+      "level": 27,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 475728,
+          "edgeType": "context",
+          "edgeName": "np",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        }
+      ]
+    },
+    {
+      "level": 28,
+      "targetCount": 1,
+      "retainers": [
+        {
+          "target": 384246,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 383898,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 384246,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 394608,
+            "type": "object",
+            "name": "system / Context / scope @131539",
+            "selfSize": 36,
+            "edgeCount": 8
+          }
+        },
+        {
+          "target": 384246,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 475632,
+            "type": "closure",
+            "name": "rZ",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 384246,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 475704,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 384246,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 475896,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 384246,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 476088,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 29,
+      "targetCount": 6,
+      "retainers": [
+        {
+          "target": 383898,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 384210,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 383898,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 384216,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 475632,
+          "edgeType": "context",
+          "edgeName": "rZ",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 475704,
+          "edgeType": "context",
+          "edgeName": "r8",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 475896,
+          "edgeType": "context",
+          "edgeName": "rw",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 476088,
+          "edgeType": "context",
+          "edgeName": "ni",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 394608,
+          "edgeType": "internal",
+          "edgeName": "previous",
+          "from": {
+            "offset": 394398,
+            "type": "object",
+            "name": "system / Context / scope @131469",
+            "selfSize": 188,
+            "edgeCount": 46
+          }
+        },
+        {
+          "target": 383898,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 475776,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 383898,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 475902,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        },
+        {
+          "target": 383898,
+          "edgeType": "internal",
+          "edgeName": "context",
+          "from": {
+            "offset": 476022,
+            "type": "closure",
+            "name": "",
+            "selfSize": 28,
+            "edgeCount": 6
+          }
+        }
+      ]
+    },
+    {
+      "level": 30,
+      "targetCount": 5,
+      "retainers": [
+        {
+          "target": 384210,
+          "edgeType": "context",
+          "edgeName": "eR",
+          "from": {
+            "offset": 383898,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 384216,
+          "edgeType": "context",
+          "edgeName": "eA",
+          "from": {
+            "offset": 383898,
+            "type": "object",
+            "name": "system / Context / scope @127967",
+            "selfSize": 244,
+            "edgeCount": 60
+          }
+        },
+        {
+          "target": 384216,
+          "edgeType": "context",
+          "edgeName": "K",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 475776,
+          "edgeType": "context",
+          "edgeName": "ei",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 475902,
+          "edgeType": "context",
+          "edgeName": "eo",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 384210,
+          "edgeType": "context",
+          "edgeName": "q",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        },
+        {
+          "target": 476022,
+          "edgeType": "context",
+          "edgeName": "J",
+          "from": {
+            "offset": 384246,
+            "type": "object",
+            "name": "system / Context / scope @128083",
+            "selfSize": 464,
+            "edgeCount": 115
+          }
+        }
+      ]
+    }
+  ]
+}

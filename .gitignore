@@ -42,3 +42,7 @@ web-secret
 web-launch/
 web-devices.json
 web-revocations.json
+
+# Local audit intermediates. Reports and summaries are tracked; these are not.
+.audit-*/**/*.heapsnapshot
+.audit-*/**/coverage/.tmp/

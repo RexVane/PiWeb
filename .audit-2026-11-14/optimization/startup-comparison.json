@@ -1,0 +1,430 @@
+{
+  "at": "2026-11-14T11:43:29.451Z",
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "evidence": {
+    "historicalBaseline": "../performance/startup.json",
+    "partial": "startup-five.json",
+    "optimizedFive": "startup-five-v2.json",
+    "interleavedAb": "startup-ab.json",
+    "parentControlled": "startup-parent-controlled.json"
+  },
+  "fixture": {
+    "sessions": 300,
+    "syntheticFiles": 10000,
+    "longMessages": 10000,
+    "skills": 100,
+    "sessionFileBytes": 25267221,
+    "git": true,
+    "shortMessages": 20,
+    "resourceWorkspaces": 40,
+    "fixtureContentHash": "ed951c292bc3f02a6cbf9ea54f21fa97fbc5a29f538ff0ddf53b2b2353f6c578"
+  },
+  "descriptive": {
+    "historicalBaseline": {
+      "listenerMs": {
+        "count": 3,
+        "minMs": 10319.062500000004,
+        "medianMs": 10568.532000000001,
+        "maxMs": 10684.394899999998,
+        "meanMs": 10523.99646666667
+      },
+      "authenticatedHealthMs": {
+        "count": 3,
+        "minMs": 10414.019799999998,
+        "medianMs": 10656.1774,
+        "maxMs": 10765.604099999999,
+        "meanMs": 10611.933766666667
+      },
+      "firstSessionsMsSinceSpawn": {
+        "count": 3,
+        "minMs": 12660.991100000003,
+        "medianMs": 12803.7119,
+        "maxMs": 12945.784399999999,
+        "meanMs": 12803.495799999999
+      },
+      "firstSessionsRequestMs": {
+        "count": 3,
+        "minMs": 2147.300299999999,
+        "medianMs": 2179.8894,
+        "maxMs": 2246.808299999997,
+        "meanMs": 2191.3326666666653
+      },
+      "firstPageMsSinceSpawn": {
+        "count": 3,
+        "minMs": 12731.833200000005,
+        "medianMs": 12862.097600000001,
+        "maxMs": 13022.4605,
+        "meanMs": 12872.130433333334
+      },
+      "firstPageRequestMs": {
+        "count": 3,
+        "minMs": 58.38749999999891,
+        "medianMs": 70.84180000000197,
+        "maxMs": 76.67659999999887,
+        "meanMs": 68.63529999999992
+      }
+    },
+    "firstAttemptSuccessfulSample": {
+      "listenerMs": {
+        "count": 1,
+        "minMs": 22959.1237,
+        "medianMs": 22959.1237,
+        "maxMs": 22959.1237,
+        "meanMs": 22959.1237
+      },
+      "authenticatedHealthMs": {
+        "count": 1,
+        "minMs": 23142.1933,
+        "medianMs": 23142.1933,
+        "maxMs": 23142.1933,
+        "meanMs": 23142.1933
+      },
+      "firstSessionsMsSinceSpawn": {
+        "count": 1,
+        "minMs": 28747.779599999998,
+        "medianMs": 28747.779599999998,
+        "maxMs": 28747.779599999998,
+        "meanMs": 28747.779599999998
+      },
+      "firstSessionsRequestMs": {
+        "count": 1,
+        "minMs": 5605.4223999999995,
+        "medianMs": 5605.4223999999995,
+        "maxMs": 5605.4223999999995,
+        "meanMs": 5605.4223999999995
+      },
+      "firstPageMsSinceSpawn": {
+        "count": 1,
+        "minMs": 29143.7363,
+        "medianMs": 29143.7363,
+        "maxMs": 29143.7363,
+        "meanMs": 29143.7363
+      },
+      "firstPageRequestMs": {
+        "count": 1,
+        "minMs": 395.95620000000054,
+        "medianMs": 395.95620000000054,
+        "maxMs": 395.95620000000054,
+        "meanMs": 395.95620000000054
+      }
+    },
+    "optimizedFive": {
+      "listenerMs": {
+        "count": 5,
+        "minMs": 15308.430699999999,
+        "medianMs": 15608.02700000001,
+        "maxMs": 15953.5331,
+        "meanMs": 15663.22874
+      },
+      "authenticatedHealthMs": {
+        "count": 5,
+        "minMs": 15494.5783,
+        "medianMs": 15794.070200000002,
+        "maxMs": 16141.2549,
+        "meanMs": 15849.732899999999
+      },
+      "firstSessionsMsSinceSpawn": {
+        "count": 5,
+        "minMs": 21168.919499999996,
+        "medianMs": 22016.81580000001,
+        "maxMs": 22337.77919999999,
+        "meanMs": 21821.69712
+      },
+      "firstSessionsRequestMs": {
+        "count": 5,
+        "minMs": 5384.539300000004,
+        "medianMs": 6029.497599999999,
+        "maxMs": 6222.605599999995,
+        "meanMs": 5971.808659999999
+      },
+      "firstPageMsSinceSpawn": {
+        "count": 5,
+        "minMs": 21562.684799999995,
+        "medianMs": 22438.583100000003,
+        "maxMs": 22777.713600000003,
+        "meanMs": 22239.593800000002
+      },
+      "firstPageRequestMs": {
+        "count": 5,
+        "minMs": 393.7646999999997,
+        "medianMs": 421.7670999999973,
+        "maxMs": 439.93420000000333,
+        "meanMs": 417.89628000000084
+      }
+    },
+    "interleavedBaseline": {
+      "listenerMs": {
+        "count": 2,
+        "minMs": 11120.098299999998,
+        "medianMs": 12098.549949999999,
+        "maxMs": 13077.0016,
+        "meanMs": 12098.549949999999
+      },
+      "authenticatedHealthMs": {
+        "count": 2,
+        "minMs": 11203.6259,
+        "medianMs": 12185.9251,
+        "maxMs": 13168.2243,
+        "meanMs": 12185.9251
+      },
+      "firstSessionsMsSinceSpawn": {
+        "count": 2,
+        "minMs": 13298.297699999996,
+        "medianMs": 14209.510199999997,
+        "maxMs": 15120.722699999998,
+        "meanMs": 14209.510199999997
+      },
+      "firstSessionsRequestMs": {
+        "count": 2,
+        "minMs": 1952.3201000000008,
+        "medianMs": 2023.41525,
+        "maxMs": 2094.510399999999,
+        "meanMs": 2023.41525
+      },
+      "firstPageMsSinceSpawn": {
+        "count": 2,
+        "minMs": 13377.279900000001,
+        "medianMs": 14296.10505,
+        "maxMs": 15214.930199999999,
+        "meanMs": 14296.10505
+      },
+      "firstPageRequestMs": {
+        "count": 2,
+        "minMs": 78.98190000000614,
+        "medianMs": 86.59425000000192,
+        "maxMs": 94.2065999999977,
+        "meanMs": 86.59425000000192
+      }
+    },
+    "interleavedOptimized": {
+      "listenerMs": {
+        "count": 2,
+        "minMs": 7922.425299999999,
+        "medianMs": 8075.382350000002,
+        "maxMs": 8228.339400000004,
+        "meanMs": 8075.382350000002
+      },
+      "authenticatedHealthMs": {
+        "count": 2,
+        "minMs": 7980.3485,
+        "medianMs": 8145.06335,
+        "maxMs": 8309.7782,
+        "meanMs": 8145.06335
+      },
+      "firstSessionsMsSinceSpawn": {
+        "count": 2,
+        "minMs": 10054.3911,
+        "medianMs": 10225.85655,
+        "maxMs": 10397.322,
+        "meanMs": 10225.85655
+      },
+      "firstSessionsRequestMs": {
+        "count": 2,
+        "minMs": 2073.8669999999984,
+        "medianMs": 2080.6304999999993,
+        "maxMs": 2087.3940000000002,
+        "meanMs": 2080.6304999999993
+      },
+      "firstPageMsSinceSpawn": {
+        "count": 2,
+        "minMs": 10166.0958,
+        "medianMs": 10357.1418,
+        "maxMs": 10548.1878,
+        "meanMs": 10357.1418
+      },
+      "firstPageRequestMs": {
+        "count": 2,
+        "minMs": 111.70420000000013,
+        "medianMs": 131.28489999999874,
+        "maxMs": 150.86559999999736,
+        "meanMs": 131.28489999999874
+      }
+    }
+  },
+  "adjacentAbPairs": [
+    {
+      "pair": 1,
+      "baselineIteration": 1,
+      "optimizedIteration": 2,
+      "metrics": {
+        "listenerMs": {
+          "baselineMs": 13077.0016,
+          "optimizedMs": 7922.425299999999,
+          "reductionMs": 5154.576300000001
+        },
+        "authenticatedHealthMs": {
+          "baselineMs": 13168.2243,
+          "optimizedMs": 7980.3485,
+          "reductionMs": 5187.8758
+        },
+        "firstSessionsMsSinceSpawn": {
+          "baselineMs": 15120.722699999998,
+          "optimizedMs": 10054.3911,
+          "reductionMs": 5066.331599999998
+        },
+        "firstSessionsRequestMs": {
+          "baselineMs": 1952.3201000000008,
+          "optimizedMs": 2073.8669999999984,
+          "reductionMs": -121.54689999999755
+        },
+        "firstPageMsSinceSpawn": {
+          "baselineMs": 15214.930199999999,
+          "optimizedMs": 10166.0958,
+          "reductionMs": 5048.8344
+        },
+        "firstPageRequestMs": {
+          "baselineMs": 94.2065999999977,
+          "optimizedMs": 111.70420000000013,
+          "reductionMs": -17.49760000000242
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "baselineIteration": 3,
+      "optimizedIteration": 4,
+      "metrics": {
+        "listenerMs": {
+          "baselineMs": 11120.098299999998,
+          "optimizedMs": 8228.339400000004,
+          "reductionMs": 2891.7588999999934
+        },
+        "authenticatedHealthMs": {
+          "baselineMs": 11203.6259,
+          "optimizedMs": 8309.7782,
+          "reductionMs": 2893.8476999999984
+        },
+        "firstSessionsMsSinceSpawn": {
+          "baselineMs": 13298.297699999996,
+          "optimizedMs": 10397.322,
+          "reductionMs": 2900.9756999999954
+        },
+        "firstSessionsRequestMs": {
+          "baselineMs": 2094.510399999999,
+          "optimizedMs": 2087.3940000000002,
+          "reductionMs": 7.1163999999989755
+        },
+        "firstPageMsSinceSpawn": {
+          "baselineMs": 13377.279900000001,
+          "optimizedMs": 10548.1878,
+          "reductionMs": 2829.0921000000017
+        },
+        "firstPageRequestMs": {
+          "baselineMs": 78.98190000000614,
+          "optimizedMs": 150.86559999999736,
+          "reductionMs": -71.88369999999122
+        }
+      }
+    }
+  ],
+  "parentControlled": {
+    "legacy": {
+      "minMs": 4795.2535,
+      "medianMs": 5053.5834,
+      "maxMs": 5198.0969000000005
+    },
+    "single": {
+      "minMs": 2382.3807,
+      "medianMs": 2397.6884,
+      "maxMs": 2410.7662
+    },
+    "medianReductionMs": 2655.8950000000004,
+    "medianReductionPercent": 52.55468822380571
+  },
+  "environmentReadings": {
+    "startup-five": {
+      "samples": 17,
+      "activeSamples": 15,
+      "activeSystemCpuMinPercent": 12.952646239554317,
+      "activeSystemCpuMaxPercent": 42.68571428571428,
+      "allSamplesSystemCpuMaxPercent": 50.490196078431374,
+      "minAvailableBytes": 4853297152,
+      "source": "startup-five-resources.jsonl"
+    },
+    "startup-five-v2": {
+      "samples": 63,
+      "activeSamples": 57,
+      "activeSystemCpuMinPercent": 7.407407407407407,
+      "activeSystemCpuMaxPercent": 30.420535226652103,
+      "allSamplesSystemCpuMaxPercent": 30.420535226652103,
+      "minAvailableBytes": 3024510976,
+      "source": "startup-five-v2-resources.jsonl"
+    },
+    "startup-ab": {
+      "samples": 28,
+      "activeSamples": 23,
+      "activeSystemCpuMinPercent": 7.868303571428571,
+      "activeSystemCpuMaxPercent": 19.180736230279546,
+      "allSamplesSystemCpuMaxPercent": 21.27659574468085,
+      "minAvailableBytes": 2438922240,
+      "source": "startup-ab-resources.jsonl"
+    }
+  },
+  "probeComparability": {
+    "checks": {
+      "sameFixtureContentHash": true,
+      "sameOptimizedBuildId": true,
+      "sameOptimizedSourceHash": true,
+      "sameNode": true,
+      "sameCpu": true,
+      "sameHealthPollInterval": true,
+      "sameResourceSampleInterval": true,
+      "sameAgentCloneBeforeTiming": true,
+      "sameTimerDefinitions": true,
+      "sameOptimizedHtmlResources": true
+    },
+    "allRecordedChecksMatched": true,
+    "unchangedPolicy": [
+      "Same isolatedEnvironment whitelist, authenticate helper, process-tree sampler, and resource limits.",
+      "Real bin/piweb.js, loopback, default authentication, PIWEB_REMOTE_LAN=0 and default warmup.",
+      "Fresh agent clone before timing; same complete health response, sessions body/JSON and HTML timing code.",
+      "Both v2 and A/B isolate sampler generations and cannot fail a new run from an old stopped PID sample."
+    ],
+    "differences": [
+      "A/B runs baseline/optimized/baseline/optimized; v2 runs five optimized starts.",
+      "A/B adds variant/stage identity and four log milestone string matches; v2 already pipes and records output with identical timer boundaries.",
+      "Fresh agent suffixes, ports, PIDs and wall-clock times differ.",
+      "Products retain their own concurrent versus sessions-first default warmup; this is a product difference, not a harness switch.",
+      "OS cache is not flushed; restoring and verifying the old artifact reads files before A/B."
+    ],
+    "limitations": [
+      "Exact inherited whitelist environment values were not saved per run; byte-for-byte ambient environment identity is not proven.",
+      "User applications were not stopped. Background load, CPU scheduling/power and cache state are uncontrolled; slow v2 and partial samples remain observations whose cause is not fully isolated.",
+      "A/B is two adjacent pairs in fixed order, not a randomized trial or a guarantee across machines.",
+      "The raw A/B JSON inherited a generic three-baseline/five-optimized sentence; its actual sequence contains two starts per version."
+    ]
+  },
+  "outcomes": {
+    "validationDeduplicationObserved": true,
+    "interleavedEndToEndImprovementObserved": true,
+    "allStartupWindowsImproved": false,
+    "threeSecondLabTargetReached": false,
+    "warmupStandaloneEffectIsolated": false,
+    "realProviderCalls": 0
+  },
+  "resourceEvidence": {
+    "optimizedFive": {
+      "intervalMs": 2000,
+      "samples": 63,
+      "errors": 0,
+      "peakPrivateBytes": 345149440,
+      "peakRss": 307654656,
+      "minSystemAvailableBytes": 3024510976,
+      "maxHandles": 687,
+      "maxSampleOverheadMs": 104.58840000000001,
+      "budgetExceeded": null
+    },
+    "interleavedAb": {
+      "intervalMs": 2000,
+      "samples": 28,
+      "errors": 0,
+      "peakPrivateBytes": 290013184,
+      "peakRss": 275046400,
+      "minSystemAvailableBytes": 2438922240,
+      "maxHandles": 687,
+      "maxSampleOverheadMs": 152.5813,
+      "budgetExceeded": null
+    }
+  }
+}

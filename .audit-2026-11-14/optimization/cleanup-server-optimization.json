@@ -1,0 +1,38 @@
+{
+  "completedAt": "2026-11-14T12:17:14.1086982Z",
+  "fixtureRoot": "D:\\AIApp\\piweb-performance-fixture-GADnJL",
+  "markerValidated": true,
+  "modelsRestored": true,
+  "modelSha256": "f6a60ffe718b445a923e5d870ff3b23ced2a8e42ef7322a0494c48c788e66e10",
+  "stopMode": "fixture stop signal; exec session 22911 exit 0",
+  "processIdentityEvidence": "cleanup-process-identities.json",
+  "processExitEvidence": "cleanup-process-exit.json",
+  "stoppedPids": [
+    54076,
+    54092,
+    28100
+  ],
+  "port": 2074,
+  "recycleBin": true,
+  "recycledFixture": "D:\\AIApp\\piweb-performance-fixture-GADnJL",
+  "recycledScripts": [
+    {
+      "path": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\server-perf-probe.mjs",
+      "bytes": 36592,
+      "sha256": "b836e54ce0c8dbe9ec794315d0cabf3b670a7b081c4b0f71ed4c441a6a1532a5"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\server-resource-sampler.ps1",
+      "bytes": 4525,
+      "sha256": "8341e08a54e10ee0bb51d7bed818a4d79e24a377b89c47eedbb88739f55444ae"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\summarize-server.mjs",
+      "bytes": 5989,
+      "sha256": "a62f5e0b7b2cc5557086ac04cd4f390b7a5ee94c6ee6a0ac5f0ba3ef50d493dc"
+    }
+  ],
+  "remainingPaths": [],
+  "preservedEvidenceDirectory": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization",
+  "note": "Only temporary files created for this task were recycled; user directories, user port 30141, and backups were not modified."
+}

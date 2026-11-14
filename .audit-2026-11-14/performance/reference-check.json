@@ -1,0 +1,23 @@
+[
+  {
+    "url": "https://web.dev/articles/vitals",
+    "status": 200,
+    "checkedAt": "2026-11-14T08:15:07.914Z",
+    "signals": {
+      "lcp2_5": true,
+      "inp200": true,
+      "cls0_1": true,
+      "percentile75": true
+    }
+  },
+  {
+    "url": "https://developer.chrome.com/docs/devtools/memory-problems",
+    "status": 200,
+    "checkedAt": "2026-11-14T08:15:10.527Z",
+    "signals": {
+      "memoryFootprint": true,
+      "jsMemory": true,
+      "garbageCollection": true
+    }
+  }
+]

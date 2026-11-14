@@ -1,0 +1,9 @@
+{
+  "source": "D:\\AIApp\\PiWeb",
+  "stage": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
+  "createdAt": "2026-11-14T10:36:22.614Z",
+  "owner": "verify_auth_release",
+  "productionSourceCopied": false,
+  "buildStarted": false,
+  "dependencyMode": "junction to existing workspace node_modules; no installation"
+}

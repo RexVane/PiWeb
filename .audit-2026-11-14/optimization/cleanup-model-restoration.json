@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-11-14T12:10:57.525Z",
+  "fixtureRoot": "D:\\AIApp\\piweb-performance-fixture-GADnJL",
+  "markerValid": true,
+  "modelsRestored": true,
+  "models": [
+    {
+      "file": "D:\\AIApp\\piweb-performance-fixture-GADnJL\\agent-template\\models.json",
+      "exists": true,
+      "bytes": 22,
+      "sha256": "f6a60ffe718b445a923e5d870ff3b23ced2a8e42ef7322a0494c48c788e66e10"
+    },
+    {
+      "file": "D:\\AIApp\\piweb-performance-fixture-GADnJL\\agent-browser\\models.json",
+      "exists": true,
+      "bytes": 22,
+      "sha256": "f6a60ffe718b445a923e5d870ff3b23ced2a8e42ef7322a0494c48c788e66e10"
+    }
+  ]
+}

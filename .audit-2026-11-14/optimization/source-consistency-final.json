@@ -1,0 +1,135 @@
+{
+  "checkedAt": "2026-11-14T12:12:26.390Z",
+  "expectedSourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "expectedFileCount": 731,
+  "sourceSnapshot": "source-snapshot-verified.json",
+  "source": "D:\\AIApp\\PiWeb",
+  "stage": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
+  "rootInputs": {
+    "fileCount": 731,
+    "sha256": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+    "matchesFrozenInputs": true,
+    "changes": []
+  },
+  "stageInputs": {
+    "fileCount": 731,
+    "sha256": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+    "matchesFrozenInputs": true,
+    "changes": []
+  },
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "originalNext": {
+    "beforeEvidence": "../performance/cleanup-stage.json",
+    "exists": true,
+    "beforeRootModifiedUtc": "2026-11-12T18:18:03.1786799Z",
+    "actualRootModifiedUtc": "2026-11-12T18:18:03.179Z",
+    "rootModifiedTimeMatches": true,
+    "knownTopLevelFiles": [
+      {
+        "file": "app-path-routes-manifest.json",
+        "beforeSha256": "7c13af9349da7b06c4c8b045f66e37661b87c09f1bc724bd1a4f8e4ac9e2c344",
+        "actualSha256": "7c13af9349da7b06c4c8b045f66e37661b87c09f1bc724bd1a4f8e4ac9e2c344",
+        "matched": true
+      },
+      {
+        "file": "BUILD_ID",
+        "beforeSha256": "b00ba795cf35e3fae7308b64f9bff89d8bda86e9645ea78dd83bed0dd7fdacbb",
+        "actualSha256": "b00ba795cf35e3fae7308b64f9bff89d8bda86e9645ea78dd83bed0dd7fdacbb",
+        "matched": true
+      },
+      {
+        "file": "build-manifest.json",
+        "beforeSha256": "3e7772ea94b7d64fd8c50ee492f6ec5c207ec0e6cdda30247c6accbd80e7109a",
+        "actualSha256": "3e7772ea94b7d64fd8c50ee492f6ec5c207ec0e6cdda30247c6accbd80e7109a",
+        "matched": true
+      },
+      {
+        "file": "export-marker.json",
+        "beforeSha256": "82356527db218adb95bd1eca0ede6f3391165b38b22d667d064e62e6b539d974",
+        "actualSha256": "82356527db218adb95bd1eca0ede6f3391165b38b22d667d064e62e6b539d974",
+        "matched": true
+      },
+      {
+        "file": "images-manifest.json",
+        "beforeSha256": "89153990319006e8e53593d4cee9a741db8a01b9dd8897513bd4e0a4685d2f42",
+        "actualSha256": "89153990319006e8e53593d4cee9a741db8a01b9dd8897513bd4e0a4685d2f42",
+        "matched": true
+      },
+      {
+        "file": "next-minimal-server.js.nft.json",
+        "beforeSha256": "e7a707f73b5b1d1afa55659296ef9cc2f329e9ce63cf17dc0ba7d7f422f83c6e",
+        "actualSha256": "e7a707f73b5b1d1afa55659296ef9cc2f329e9ce63cf17dc0ba7d7f422f83c6e",
+        "matched": true
+      },
+      {
+        "file": "next-server.js.nft.json",
+        "beforeSha256": "a2cee08253834f18fb038753efcd24f0e12aff7286ac482fdd9453c90ad7e1b8",
+        "actualSha256": "a2cee08253834f18fb038753efcd24f0e12aff7286ac482fdd9453c90ad7e1b8",
+        "matched": true
+      },
+      {
+        "file": "package.json",
+        "beforeSha256": "091a04fa67c7907b98e106fcff8b964e13129754fce72d24f3025b97c4887fa3",
+        "actualSha256": "091a04fa67c7907b98e106fcff8b964e13129754fce72d24f3025b97c4887fa3",
+        "matched": true
+      },
+      {
+        "file": "prerender-manifest.json",
+        "beforeSha256": "bcbaa290d3710b2345fb6c593a21e5fa847645ad0f346dc43d709dabe8be6e8b",
+        "actualSha256": "bcbaa290d3710b2345fb6c593a21e5fa847645ad0f346dc43d709dabe8be6e8b",
+        "matched": true
+      },
+      {
+        "file": "react-loadable-manifest.json",
+        "beforeSha256": "19f4c51e33c262279b92d5d0ac6b4ce3f867204373295bc8ddcff5de315f90d9",
+        "actualSha256": "19f4c51e33c262279b92d5d0ac6b4ce3f867204373295bc8ddcff5de315f90d9",
+        "matched": true
+      },
+      {
+        "file": "required-server-files.js",
+        "beforeSha256": "cee9059c9134337731f86e06229c5f397212dacae87c701aa101657315ebbd31",
+        "actualSha256": "cee9059c9134337731f86e06229c5f397212dacae87c701aa101657315ebbd31",
+        "matched": true
+      },
+      {
+        "file": "required-server-files.json",
+        "beforeSha256": "aab3f83026f3506c023ed2179bc18711a81d83a65ad0d96def8084c146b6a453",
+        "actualSha256": "aab3f83026f3506c023ed2179bc18711a81d83a65ad0d96def8084c146b6a453",
+        "matched": true
+      },
+      {
+        "file": "routes-manifest.json",
+        "beforeSha256": "0b001f62ae11411077b34d92c552bcd04c74a976e21e5496fa0a00db529efe3e",
+        "actualSha256": "0b001f62ae11411077b34d92c552bcd04c74a976e21e5496fa0a00db529efe3e",
+        "matched": true
+      },
+      {
+        "file": "trace",
+        "beforeSha256": "eb5b52176c08a7c36ca481e5b2ef63ec335e3130fbd03cba05249595edc6430a",
+        "actualSha256": "eb5b52176c08a7c36ca481e5b2ef63ec335e3130fbd03cba05249595edc6430a",
+        "matched": true
+      },
+      {
+        "file": "trace-build",
+        "beforeSha256": "05e6a21ef5984ac573bf1ea3178c6100626d691264c4b5539212282ade28a258",
+        "actualSha256": "05e6a21ef5984ac573bf1ea3178c6100626d691264c4b5539212282ade28a258",
+        "matched": true
+      }
+    ],
+    "allKnownTopLevelFilesMatched": true,
+    "fullTreeContentHashClaimed": false,
+    "limitation": "The pre-existing record contains hashes for 15 top-level files and a metadata-only tree digest; its exact tree-digest serialization was not retained. This check proves those recorded file hashes and root mtime only, not every nested byte.",
+    "initialNodePrecisionComparisonWasFalse": true,
+    "initialNodePrecisionComparisonExplanation": "The first script compared a Node Date millisecond ISO string with an existing seven-decimal .NET UTC string; that was a precision mismatch, not a filesystem change.",
+    "dotNetActualRootModifiedUtc": "2026-11-12T18:18:03.1786799Z",
+    "rootTimeComparisonPrecision": "Exact .NET UTC ISO string, seven fractional digits"
+  },
+  "sharedDependencies": {
+    "nextPackage": "D:\\AIApp\\PiWeb\\node_modules\\next\\package.json",
+    "exists": true,
+    "beforeSha256": "76f5b7ef447577c2855eee017ae8a47aeefc1e4c95e71387b66c2671283682c8",
+    "currentSha256": "76f5b7ef447577c2855eee017ae8a47aeefc1e4c95e71387b66c2671283682c8",
+    "matched": true
+  },
+  "matched": true
+}

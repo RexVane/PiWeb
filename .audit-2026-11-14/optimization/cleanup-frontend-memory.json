@@ -1,0 +1,20 @@
+{
+  "at": "2026-11-14T11:53:41.1351404Z",
+  "scope": "Temporary memory probes created or restored for this optimization; evidence preserved",
+  "method": "Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile SendToRecycleBin",
+  "files": [
+    {
+      "path": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\.heap-root-probe.mjs",
+      "originalAbsent": true
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\.native-memory-check.mjs",
+      "originalAbsent": true
+    }
+  ],
+  "browserProfileRecycled": true,
+  "browserExited": true,
+  "browserPid": 35448,
+  "livePort30141Touched": false,
+  "report": "frontend-memory-comparison.json"
+}

@@ -1,0 +1,159 @@
+{
+  "startedAt": "2026-11-14T17:09:56.8756477+08:00",
+  "stage": "D:\\AIApp\\.piweb-performance-20261114-XavtFX",
+  "buildId": "qs_AuODvEiFduBinEf95d",
+  "sourceHash": "0a8188e986da0c45600a2153ae2d4d5da4b185e18f7f23b60feb75eb83337961",
+  "noStageNodeProcesses": true,
+  "port10149NotListening": true,
+  "stageEntriesWithoutFollowingLinks": 1321,
+  "junctionPath": "D:\\AIApp\\.piweb-performance-20261114-XavtFX\\node_modules",
+  "junctionTarget": "D:\\AIApp\\PiWeb\\node_modules",
+  "junctionMethod": "Remove only reparse-point metadata; preserve empty directory, then SendToRecycleBin with stage",
+  "originalNextBefore": {
+    "entries": 462,
+    "metadataSha256": "3dd4a215d318c094a89ac65a1082ecf715f9a0cf2ce337ae0bb58b0fa8206eee",
+    "rootModifiedUtc": "2026-11-12T18:18:03.1786799Z",
+    "links": []
+  },
+  "originalNextTopLevelSha256Before": [
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\app-path-routes-manifest.json",
+      "sha256": "7C13AF9349DA7B06C4C8B045F66E37661B87C09F1BC724BD1A4F8E4AC9E2C344"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\BUILD_ID",
+      "sha256": "B00BA795CF35E3FAE7308B64F9BFF89D8BDA86E9645EA78DD83BED0DD7FDACBB"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\build-manifest.json",
+      "sha256": "3E7772EA94B7D64FD8C50EE492F6EC5C207EC0E6CDDA30247C6ACCBD80E7109A"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\export-marker.json",
+      "sha256": "82356527DB218ADB95BD1ECA0EDE6F3391165B38B22D667D064E62E6B539D974"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\images-manifest.json",
+      "sha256": "89153990319006E8E53593D4CEE9A741DB8A01B9DD8897513BD4E0A4685D2F42"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\next-minimal-server.js.nft.json",
+      "sha256": "E7A707F73B5B1D1AFA55659296EF9CC2F329E9CE63CF17DC0BA7D7F422F83C6E"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\next-server.js.nft.json",
+      "sha256": "A2CEE08253834F18FB038753EFCD24F0E12AFF7286AC482FDD9453C90AD7E1B8"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\package.json",
+      "sha256": "091A04FA67C7907B98E106FCFF8B964E13129754FCE72D24F3025B97C4887FA3"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\prerender-manifest.json",
+      "sha256": "BCBAA290D3710B2345FB6C593A21E5FA847645AD0F346DC43D709DABE8BE6E8B"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\react-loadable-manifest.json",
+      "sha256": "19F4C51E33C262279B92D5D0AC6B4CE3F867204373295BC8DDCFF5DE315F90D9"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\required-server-files.js",
+      "sha256": "CEE9059C9134337731F86E06229C5F397212DACAE87C701AA101657315EBBD31"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\required-server-files.json",
+      "sha256": "AAB3F83026F3506C023ED2179BC18711A81D83A65AD0D96DEF8084C146B6A453"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\routes-manifest.json",
+      "sha256": "0B001F62AE11411077B34D92C552BCD04C74A976E21E5496FA0A00DB529EFE3E"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\trace",
+      "sha256": "EB5B52176C08A7C36CA481E5B2EF63EC335E3130FBD03CBA05249595EDC6430A"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\trace-build",
+      "sha256": "05E6A21EF5984AC573BF1EA3178C6100626D691264C4B5539212282ADE28A258"
+    }
+  ],
+  "nextPackageSha256Before": "76F5B7EF447577C2855EEE017AE8A47AEEFC1E4C95E71387B66C2671283682C8",
+  "complete": true,
+  "junctionDetachedWithoutTargetTraversal": true,
+  "stageAbsent": true,
+  "originalNextAfter": {
+    "entries": 462,
+    "metadataSha256": "3dd4a215d318c094a89ac65a1082ecf715f9a0cf2ce337ae0bb58b0fa8206eee",
+    "rootModifiedUtc": "2026-11-12T18:18:03.1786799Z",
+    "links": []
+  },
+  "originalNextTopLevelSha256After": [
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\app-path-routes-manifest.json",
+      "sha256": "7C13AF9349DA7B06C4C8B045F66E37661B87C09F1BC724BD1A4F8E4AC9E2C344"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\BUILD_ID",
+      "sha256": "B00BA795CF35E3FAE7308B64F9BFF89D8BDA86E9645EA78DD83BED0DD7FDACBB"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\build-manifest.json",
+      "sha256": "3E7772EA94B7D64FD8C50EE492F6EC5C207EC0E6CDDA30247C6ACCBD80E7109A"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\export-marker.json",
+      "sha256": "82356527DB218ADB95BD1ECA0EDE6F3391165B38B22D667D064E62E6B539D974"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\images-manifest.json",
+      "sha256": "89153990319006E8E53593D4CEE9A741DB8A01B9DD8897513BD4E0A4685D2F42"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\next-minimal-server.js.nft.json",
+      "sha256": "E7A707F73B5B1D1AFA55659296EF9CC2F329E9CE63CF17DC0BA7D7F422F83C6E"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\next-server.js.nft.json",
+      "sha256": "A2CEE08253834F18FB038753EFCD24F0E12AFF7286AC482FDD9453C90AD7E1B8"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\package.json",
+      "sha256": "091A04FA67C7907B98E106FCFF8B964E13129754FCE72D24F3025B97C4887FA3"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\prerender-manifest.json",
+      "sha256": "BCBAA290D3710B2345FB6C593A21E5FA847645AD0F346DC43D709DABE8BE6E8B"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\react-loadable-manifest.json",
+      "sha256": "19F4C51E33C262279B92D5D0AC6B4CE3F867204373295BC8DDCFF5DE315F90D9"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\required-server-files.js",
+      "sha256": "CEE9059C9134337731F86E06229C5F397212DACAE87C701AA101657315EBBD31"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\required-server-files.json",
+      "sha256": "AAB3F83026F3506C023ED2179BC18711A81D83A65AD0D96DEF8084C146B6A453"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\routes-manifest.json",
+      "sha256": "0B001F62AE11411077B34D92C552BCD04C74A976E21E5496FA0A00DB529EFE3E"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\trace",
+      "sha256": "EB5B52176C08A7C36CA481E5B2EF63EC335E3130FBD03CBA05249595EDC6430A"
+    },
+    {
+      "path": "D:\\AIApp\\PiWeb\\.next\\trace-build",
+      "sha256": "05E6A21EF5984AC573BF1EA3178C6100626D691264C4B5539212282ADE28A258"
+    }
+  ],
+  "nextPackageSha256After": "76F5B7EF447577C2855EEE017AE8A47AEEFC1E4C95E71387B66C2671283682C8",
+  "sharedNodeModulesPresent": true,
+  "originalNextPresent": true,
+  "originalNextMetadataUnchanged": true,
+  "originalNextTopLevelFilesUnchanged": true,
+  "nextPackageUnchanged": true,
+  "finishedAt": "2026-11-14T17:09:59.4761041+08:00"
+}

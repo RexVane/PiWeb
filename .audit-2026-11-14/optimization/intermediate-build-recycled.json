@@ -1,0 +1,11 @@
+{
+  "reason": "Own intermediate build predates the final pi.ts refresh fix",
+  "stage": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
+  "recycled": true,
+  "entries": 508,
+  "final": false,
+  "at": "2026-11-14T10:42:50.4860839Z",
+  "sourceSnapshot": "source-snapshot.json",
+  "sourceUnchanged": false,
+  "target": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO\\.next"
+}

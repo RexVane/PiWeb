@@ -1,0 +1,99 @@
+{
+  "startedAt": "2026-11-14T11:15:47.547Z",
+  "final": true,
+  "stage": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "sourceFiles": 731,
+  "node": "v24.12.0",
+  "cpu": "Intel(R) Core(TM) i7-14700HX",
+  "totalMemoryBytes": 16944848896,
+  "freeMemoryBytesBefore": 5299068928,
+  "fixtureFile": "D:\\AIApp\\piweb-performance-fixture-GADnJL\\fixture.json",
+  "fixture": {
+    "sessions": 300,
+    "syntheticFiles": 10000,
+    "longMessages": 10000,
+    "skills": 100,
+    "sessionFileBytes": 25267221,
+    "git": true,
+    "shortMessages": 20,
+    "resourceWorkspaces": 40,
+    "fixtureContentHash": "ed951c292bc3f02a6cbf9ea54f21fa97fbc5a29f538ff0ddf53b2b2353f6c578"
+  },
+  "parameters": {
+    "starts": 5,
+    "healthPollIntervalMs": 100,
+    "resourceSampleIntervalMs": 2000,
+    "agentCloneBeforeTiming": true,
+    "launcherWarmup": "default enabled; sessions body first, then background version/workspaces/models/pi-settings",
+    "realProviderCalls": 0
+  },
+  "definitions": {
+    "listenerMs": "Time from spawning the real launcher to the first complete HTTP /api/health 200 or 401; this is not TCP listen time",
+    "authenticatedHealthMs": "Time from spawn to completed private IPC login plus authenticated health body and JSON validation",
+    "firstSessionsMsSinceSpawn": "Time from spawn to a completed authenticated sessions body, JSON parse and validation of all 300 sessions",
+    "firstSessionsRequestMs": "Legacy comparable per-request measure ends at body completion before JSON parsing, exactly as the baseline helper",
+    "firstSessionsValidatedRequestMs": "Additional request-only measure including JSON parsing and 300-session validation",
+    "firstPageRequestMs": "Authenticated HTML request ends after UTF-8 decoding and HTML validation; follows sessions and is not an independent cold page load",
+    "launcherReadyMs": "Receipt of the launcher ready log after its sessions warmup; background warmup may continue"
+  },
+  "limitations": [
+    "OS file cache is not cleared between runs.",
+    "The fixture has fresh agent storage each run but the same synthetic session and workspace sizes as the baseline.",
+    "Default launcher warmup may overlap the measured first sessions request.",
+    "The baseline has three runs and the optimized run has five; this is a local observation, not a statistical guarantee.",
+    "Source changes include startup, server caching, and frontend optimizations; end-to-end change cannot be attributed solely to validation deduplication."
+  ],
+  "runs": [
+    {
+      "iteration": 1,
+      "at": "2026-11-14T11:15:49.227Z",
+      "pid": 14764,
+      "port": 5647,
+      "agentDir": "D:\\AIApp\\piweb-performance-fixture-GADnJL\\agent-launch-1",
+      "logFile": "startup-five-1.log",
+      "listenerMs": 22959.1237,
+      "authenticatedHealthMs": 23142.1933,
+      "firstSessionsMsSinceSpawn": 28747.779599999998,
+      "firstSessionsRequestMs": 5605.4223999999995,
+      "firstSessionsValidatedRequestMs": 5605.585899999998,
+      "firstSessionsTtfbMs": 5604.899399999998,
+      "firstSessionsBytes": 70669,
+      "totalSessions": 300,
+      "firstPageMsSinceSpawn": 29143.7363,
+      "firstPageRequestMs": 395.95620000000054,
+      "firstPageBytes": 38105,
+      "launcherReadyMs": 24530.4164,
+      "initialHtmlResources": [
+        "/_next/static/css/cb7f02c19dc06f53.css",
+        "/_next/static/css/c37142570e187f19.css",
+        "/_next/static/chunks/webpack-4078b1e863601c8d.js",
+        "/_next/static/chunks/12842c34-0c9ba74460dadb2f.js",
+        "/_next/static/chunks/1146-be0c5876aa8cafb2.js",
+        "/_next/static/chunks/main-app-b13b608274f2174f.js",
+        "/_next/static/chunks/6171-a0a3e54d1847c9e8.js",
+        "/_next/static/chunks/app/page-2ee325f0fc9d0fc0.js",
+        "/_next/static/chunks/app/layout-0afded0ffa312c0d.js"
+      ],
+      "error": null,
+      "exitCode": 1,
+      "signalCode": null,
+      "processStopped": true
+    },
+    {
+      "iteration": 2,
+      "at": "2026-11-14T11:16:21.660Z",
+      "pid": 40396,
+      "port": 7478,
+      "agentDir": "D:\\AIApp\\piweb-performance-fixture-GADnJL\\agent-launch-2",
+      "logFile": "startup-five-2.log",
+      "error": "Resource sampler lost the service process tree; empty samples are not a valid idle result",
+      "exitCode": 1,
+      "signalCode": null,
+      "processStopped": true
+    }
+  ],
+  "completed": false,
+  "freeMemoryBytesAfter": 5210947584
+}

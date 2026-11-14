@@ -1,0 +1,177 @@
+{
+  "startedAt": "2026-11-14T12:02:17.764Z",
+  "buildId": "T9X3r3wKuuYbNUYmPTqye",
+  "sourceHash": "41a70da175d1e7c92ff478fb834b001af204c79a7d713fe53572521285a81046",
+  "method": "Local synthetic OpenAI-compatible stream through real SDK, agent command, server SSE and browser; no real model or credentials",
+  "completed": false,
+  "requests": [
+    {
+      "index": 1,
+      "start": 1794657744279,
+      "chunks": 800,
+      "complete": true,
+      "closed": true,
+      "end": 1794657769067
+    },
+    {
+      "index": 2,
+      "start": 1794657769158,
+      "chunks": 800,
+      "complete": true,
+      "closed": true,
+      "end": 1794657793979
+    }
+  ],
+  "samples": [
+    {
+      "scenario": "complete-stream-input-scroll-reconnect",
+      "input": {
+        "samples": [
+          {
+            "ms": 6.600000023841858,
+            "trusted": true
+          },
+          {
+            "ms": 5.100000023841858,
+            "trusted": true
+          },
+          {
+            "ms": 9.099999964237213,
+            "trusted": true
+          },
+          {
+            "ms": 6.700000047683716,
+            "trusted": true
+          },
+          {
+            "ms": 9.599999964237213,
+            "trusted": true
+          },
+          {
+            "ms": 5.5,
+            "trusted": true
+          },
+          {
+            "ms": 8.199999988079071,
+            "trusted": true
+          },
+          {
+            "ms": 8.800000011920929,
+            "trusted": true
+          },
+          {
+            "ms": 7.699999988079071,
+            "trusted": true
+          },
+          {
+            "ms": 8.400000035762787,
+            "trusted": true
+          },
+          {
+            "ms": 7.5,
+            "trusted": true
+          },
+          {
+            "ms": 8.700000047683716,
+            "trusted": true
+          },
+          {
+            "ms": 8.300000011920929,
+            "trusted": true
+          },
+          {
+            "ms": 9.800000011920929,
+            "trusted": true
+          },
+          {
+            "ms": 9.5,
+            "trusted": true
+          },
+          {
+            "ms": 8.5,
+            "trusted": true
+          },
+          {
+            "ms": 8.599999964237213,
+            "trusted": true
+          },
+          {
+            "ms": 6.800000011920929,
+            "trusted": true
+          },
+          {
+            "ms": 8,
+            "trusted": true
+          },
+          {
+            "ms": 6.800000011920929,
+            "trusted": true
+          }
+        ],
+        "p95": 9.599999964237213
+      },
+      "scroll": {
+        "count": 348,
+        "p95": 5.899999999999636,
+        "longFrameRatio": 0,
+        "positions": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          200,
+          400,
+          600,
+          868,
+          892,
+          941,
+          966,
+          1015,
+          1071,
+          1095,
+          1120,
+          1169,
+          1193,
+          1242,
+          1267
+        ]
+      },
+      "chunksBeforeOffline": 95,
+      "chunks": 800,
+      "durationMs": 24788,
+      "finalMessageVisible": true,
+      "providerRequestCount": 1,
+      "streamRequests": [
+        {
+          "at": 1794657740811,
+          "path": "/api/agent/RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMTItMDItMTktNzU4Wl8wMWExZDllZi1lM2VlLTc1ZDMtOTYyNy02ZTFkZjIyMzA3NzguanNvbmw/events"
+        },
+        {
+          "at": 1794657748405,
+          "path": "/api/agent/RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMTItMDItMTktNzU4Wl8wMWExZDllZi1lM2VlLTc1ZDMtOTYyNy02ZTFkZjIyMzA3NzguanNvbmw/events"
+        },
+        {
+          "at": 1794657770030,
+          "path": "/api/agent/RDpcQUlBcHBccGl3ZWItcGVyZm9ybWFuY2UtZml4dHVyZS1HQURuSkxcYWdlbnQtYnJvd3NlclxzZXNzaW9uc1wtLUQtLUFJQXBwLXBpd2ViLXBlcmZvcm1hbmNlLWZpeHR1cmUtR0FEbkpMLXdvcmtzcGFjZS0tXDIwMjYtMTEtMTRUMDQtNTgtMDAtMDAwWl8xOTdlMDhkMy1iNmJlLTQ2ZTAtODU4NS05ZmVmZjgxNDhkMTkuanNvbmw/events"
+        }
+      ],
+      "partialMessageResumedBeforeCompletion": true
+    }
+  ],
+  "errors": [],
+  "fixtureGrowthDeclined": true,
+  "failure": "locator.click: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#piweb-session-sidebar').getByText('Optimization stream fixture v3', { exact: true })\u001b[22m\n\n    at selectSession (D:\\AIApp\\PiWeb\\.audit-2026-11-14\\optimization\\.stream-probe.mjs:57:15)\n    at async file:///D:/AIApp/PiWeb/.audit-2026-11-14/optimization/.stream-probe.mjs:119:3",
+  "fixtureModelsRestored": true,
+  "finishedAt": "2026-11-14T12:03:22.954Z"
+}

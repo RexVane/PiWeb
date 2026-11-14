@@ -1,0 +1,22 @@
+{
+  "iteration": 4,
+  "at": "2026-11-14T08:21:10.614Z",
+  "pid": 61236,
+  "port": 14725,
+  "listenerMs": 9732.472399999999,
+  "authenticatedHealthMs": 9757.467999999993,
+  "launcherWarmup": "disabled for this measurement via existing PIWEB_SKIP_WARMUP=1",
+  "preparedRequests": [
+    "launcher readiness/version",
+    "health",
+    "private IPC auth exchange"
+  ],
+  "untouchedRequests": [
+    "home page",
+    "sessions",
+    "models",
+    "resources"
+  ],
+  "indexState": "new agent directory; OS disk cache remains warm",
+  "buildId": "qs_AuODvEiFduBinEf95d"
+}

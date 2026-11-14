@@ -1,0 +1,529 @@
+{
+  "measuredAt": "2026-11-14T09:02:45.488Z",
+  "stage": "D:\\AIApp\\.piweb-performance-20261114-XavtFX",
+  "fixtureRoot": "D:\\AIApp\\.piweb-startup-parent-qS1gW8",
+  "sourceHash": "0a8188e986da0c45600a2153ae2d4d5da4b185e18f7f23b60feb75eb83337961",
+  "buildId": "qs_AuODvEiFduBinEf95d",
+  "verifiedStartupScripts": 39,
+  "runs": [
+    {
+      "mode": "baseline",
+      "pid": 5448,
+      "node": "24.12.0",
+      "measured": [
+        {
+          "phase": "launcher.import",
+          "wallMs": 18.403,
+          "cpuUserMs": 15,
+          "cpuSystemMs": 15
+        },
+        {
+          "phase": "cached.exports",
+          "wallMs": 1.596,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "parse-and-assert",
+          "wallMs": 2.415,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "instance-lock.acquire-including-cold-identity",
+          "wallMs": 27.506,
+          "cpuUserMs": 32,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "ensureInstallBuild",
+          "wallMs": 2206.395,
+          "cpuUserMs": 109,
+          "cpuSystemMs": 2094,
+          "state": "skipped"
+        },
+        {
+          "phase": "createLaunchPlan",
+          "wallMs": 2546.572,
+          "cpuUserMs": 141,
+          "cpuSystemMs": 2422,
+          "command": "start",
+          "buildDir": ".next",
+          "authEnabled": true
+        },
+        {
+          "phase": "instance-lock.update-metadata",
+          "wallMs": 5.087,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "proxy.read-fixture-settings",
+          "wallMs": 0.39,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "configured": false
+        },
+        {
+          "phase": "proxy.read-system",
+          "wallMs": 61.096,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 15,
+          "configured": true,
+          "hasHttp": true,
+          "hasHttps": true
+        },
+        {
+          "phase": "instance-lock.release-cleanup",
+          "wallMs": 1.501,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "process-identity.warm-diagnostic",
+          "wallMs": 0.151,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "alive": true,
+          "birthAvailable": true
+        }
+      ],
+      "selectedPhasesWallMs": 4867.864,
+      "selectedPhasesCpuMs": 4843,
+      "serverStarted": false,
+      "buildCreated": false,
+      "authDisabled": false,
+      "freshProcessWallMs": 4979.007
+    },
+    {
+      "mode": "baseline",
+      "pid": 18812,
+      "node": "24.12.0",
+      "measured": [
+        {
+          "phase": "launcher.import",
+          "wallMs": 14.99,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 15
+        },
+        {
+          "phase": "cached.exports",
+          "wallMs": 0.925,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "parse-and-assert",
+          "wallMs": 1.808,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "instance-lock.acquire-including-cold-identity",
+          "wallMs": 20.066,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 16
+        },
+        {
+          "phase": "ensureInstallBuild",
+          "wallMs": 2035.189,
+          "cpuUserMs": 31,
+          "cpuSystemMs": 2000,
+          "state": "skipped"
+        },
+        {
+          "phase": "createLaunchPlan",
+          "wallMs": 2500.348,
+          "cpuUserMs": 141,
+          "cpuSystemMs": 2359,
+          "command": "start",
+          "buildDir": ".next",
+          "authEnabled": true
+        },
+        {
+          "phase": "instance-lock.update-metadata",
+          "wallMs": 4.734,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 16
+        },
+        {
+          "phase": "proxy.read-fixture-settings",
+          "wallMs": 0.357,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "configured": false
+        },
+        {
+          "phase": "proxy.read-system",
+          "wallMs": 81.08,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 16,
+          "configured": true,
+          "hasHttp": true,
+          "hasHttps": true
+        },
+        {
+          "phase": "instance-lock.release-cleanup",
+          "wallMs": 1.46,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "process-identity.warm-diagnostic",
+          "wallMs": 0.048,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "alive": true,
+          "birthAvailable": true
+        }
+      ],
+      "selectedPhasesWallMs": 4658.572,
+      "selectedPhasesCpuMs": 4594,
+      "serverStarted": false,
+      "buildCreated": false,
+      "authDisabled": false,
+      "freshProcessWallMs": 4738.955
+    },
+    {
+      "mode": "baseline",
+      "pid": 38196,
+      "node": "24.12.0",
+      "measured": [
+        {
+          "phase": "launcher.import",
+          "wallMs": 14.942,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 15
+        },
+        {
+          "phase": "cached.exports",
+          "wallMs": 0.996,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "parse-and-assert",
+          "wallMs": 1.921,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "instance-lock.acquire-including-cold-identity",
+          "wallMs": 19.885,
+          "cpuUserMs": 16,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "ensureInstallBuild",
+          "wallMs": 2026.065,
+          "cpuUserMs": 203,
+          "cpuSystemMs": 1766,
+          "state": "skipped"
+        },
+        {
+          "phase": "createLaunchPlan",
+          "wallMs": 2396.166,
+          "cpuUserMs": 94,
+          "cpuSystemMs": 2265,
+          "command": "start",
+          "buildDir": ".next",
+          "authEnabled": true
+        },
+        {
+          "phase": "instance-lock.update-metadata",
+          "wallMs": 4.219,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "proxy.read-fixture-settings",
+          "wallMs": 0.339,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "configured": false
+        },
+        {
+          "phase": "proxy.read-system",
+          "wallMs": 70.997,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 32,
+          "configured": true,
+          "hasHttp": true,
+          "hasHttps": true
+        },
+        {
+          "phase": "instance-lock.release-cleanup",
+          "wallMs": 1.645,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0
+        },
+        {
+          "phase": "process-identity.warm-diagnostic",
+          "wallMs": 0.051,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "alive": true,
+          "birthAvailable": true
+        }
+      ],
+      "selectedPhasesWallMs": 4534.534,
+      "selectedPhasesCpuMs": 4391,
+      "serverStarted": false,
+      "buildCreated": false,
+      "authDisabled": false,
+      "freshProcessWallMs": 4635.884
+    },
+    {
+      "mode": "counted",
+      "pid": 8396,
+      "node": "24.12.0",
+      "measured": [
+        {
+          "phase": "launcher.import",
+          "wallMs": 14.777,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 31,
+          "fs": {
+            "readSync": {
+              "calls": 15,
+              "errors": 0,
+              "inclusiveMs": 0.542,
+              "exclusiveMs": 0.542,
+              "returnedBytes": 83612
+            }
+          }
+        },
+        {
+          "phase": "cached.exports",
+          "wallMs": 1.022,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "fs": {}
+        },
+        {
+          "phase": "parse-and-assert",
+          "wallMs": 2.037,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "fs": {
+            "realpathSync": {
+              "calls": 3,
+              "errors": 0,
+              "inclusiveMs": 1.147,
+              "exclusiveMs": 1.147,
+              "returnedBytes": 0
+            },
+            "lstatSync": {
+              "calls": 1,
+              "errors": 0,
+              "inclusiveMs": 0.147,
+              "exclusiveMs": 0.147,
+              "returnedBytes": 0
+            },
+            "readFileSync": {
+              "calls": 1,
+              "errors": 0,
+              "inclusiveMs": 0.221,
+              "exclusiveMs": 0.221,
+              "returnedBytes": 2713
+            }
+          }
+        },
+        {
+          "phase": "instance-lock.acquire-including-cold-identity",
+          "wallMs": 18.2,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 31,
+          "fs": {
+            "realpathSync": {
+              "calls": 5,
+              "errors": 0,
+              "inclusiveMs": 2.633,
+              "exclusiveMs": 2.633,
+              "returnedBytes": 0
+            },
+            "readFileSync": {
+              "calls": 5,
+              "errors": 1,
+              "inclusiveMs": 0.965,
+              "exclusiveMs": 0.965,
+              "returnedBytes": 14692
+            }
+          }
+        },
+        {
+          "phase": "ensureInstallBuild",
+          "wallMs": 2045.219,
+          "cpuUserMs": 157,
+          "cpuSystemMs": 1813,
+          "fs": {
+            "realpathSync": {
+              "calls": 2636,
+              "errors": 0,
+              "inclusiveMs": 1602.217,
+              "exclusiveMs": 1602.217,
+              "returnedBytes": 0
+            },
+            "lstatSync": {
+              "calls": 2227,
+              "errors": 1,
+              "inclusiveMs": 253.31,
+              "exclusiveMs": 253.31,
+              "returnedBytes": 0
+            },
+            "statSync": {
+              "calls": 742,
+              "errors": 1,
+              "inclusiveMs": 83.239,
+              "exclusiveMs": 83.239,
+              "returnedBytes": 0
+            },
+            "readFileSync": {
+              "calls": 338,
+              "errors": 0,
+              "inclusiveMs": 72.21,
+              "exclusiveMs": 60.13,
+              "returnedBytes": 6653228
+            },
+            "readSync": {
+              "calls": 333,
+              "errors": 0,
+              "inclusiveMs": 12.079,
+              "exclusiveMs": 12.079,
+              "returnedBytes": 6595309
+            }
+          },
+          "state": "skipped"
+        },
+        {
+          "phase": "createLaunchPlan",
+          "wallMs": 2510.491,
+          "cpuUserMs": 125,
+          "cpuSystemMs": 2234,
+          "fs": {
+            "realpathSync": {
+              "calls": 2639,
+              "errors": 0,
+              "inclusiveMs": 1967.346,
+              "exclusiveMs": 1967.346,
+              "returnedBytes": 0
+            },
+            "lstatSync": {
+              "calls": 2228,
+              "errors": 1,
+              "inclusiveMs": 312.516,
+              "exclusiveMs": 312.516,
+              "returnedBytes": 0
+            },
+            "readFileSync": {
+              "calls": 339,
+              "errors": 0,
+              "inclusiveMs": 91.13,
+              "exclusiveMs": 76.239,
+              "returnedBytes": 6655941
+            },
+            "statSync": {
+              "calls": 742,
+              "errors": 1,
+              "inclusiveMs": 103.745,
+              "exclusiveMs": 103.745,
+              "returnedBytes": 0
+            },
+            "readSync": {
+              "calls": 333,
+              "errors": 0,
+              "inclusiveMs": 14.891,
+              "exclusiveMs": 14.891,
+              "returnedBytes": 6595309
+            }
+          },
+          "command": "start",
+          "buildDir": ".next",
+          "authEnabled": true
+        },
+        {
+          "phase": "instance-lock.update-metadata",
+          "wallMs": 12.415,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 16,
+          "fs": {
+            "readFileSync": {
+              "calls": 1,
+              "errors": 0,
+              "inclusiveMs": 0.331,
+              "exclusiveMs": 0.331,
+              "returnedBytes": 270
+            }
+          }
+        },
+        {
+          "phase": "proxy.read-fixture-settings",
+          "wallMs": 1.116,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "fs": {
+            "readFileSync": {
+              "calls": 1,
+              "errors": 0,
+              "inclusiveMs": 0.72,
+              "exclusiveMs": 0.72,
+              "returnedBytes": 3
+            }
+          },
+          "configured": false
+        },
+        {
+          "phase": "proxy.read-system",
+          "wallMs": 51.511,
+          "cpuUserMs": 15,
+          "cpuSystemMs": 0,
+          "fs": {},
+          "configured": true,
+          "hasHttp": true,
+          "hasHttps": true
+        },
+        {
+          "phase": "instance-lock.release-cleanup",
+          "wallMs": 1.42,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 15,
+          "fs": {
+            "readFileSync": {
+              "calls": 1,
+              "errors": 0,
+              "inclusiveMs": 0.232,
+              "exclusiveMs": 0.232,
+              "returnedBytes": 270
+            }
+          }
+        },
+        {
+          "phase": "process-identity.warm-diagnostic",
+          "wallMs": 0.049,
+          "cpuUserMs": 0,
+          "cpuSystemMs": 0,
+          "fs": {},
+          "alive": true,
+          "birthAvailable": true
+        }
+      ],
+      "selectedPhasesWallMs": 4655.766,
+      "selectedPhasesCpuMs": 4422,
+      "serverStarted": false,
+      "buildCreated": false,
+      "authDisabled": false,
+      "freshProcessWallMs": 4746.805
+    }
+  ],
+  "method": "Three separate unwrapped Node processes, followed by one synchronous read-call attribution process; no service/port is started",
+  "limitations": [
+    "The probe loads its core Node measurement modules before timing launcher.import.",
+    "OS disk caches are warm and are not flushed. Startup script hashes are checked before the four workers.",
+    "Selected phase sums exclude port probing, child spawn, framework initialization, HTTP readiness and cleanup; they are not end-to-end startup times.",
+    "Cold process identity/native initialization is included in instance-lock.acquire; the standalone identity sample is warm.",
+    "Counted round is diagnostic. JS API inclusive timings/bytes can overlap; do not sum inclusive times or readFile/readSync bytes.",
+    "No network/model requests, server starts or build repairs. System proxy is read without exporting its address."
+  ],
+  "complete": true,
+  "finishedAt": "2026-11-14T09:03:04.613Z"
+}

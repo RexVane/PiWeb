@@ -1,0 +1,26 @@
+{
+  "base": "http://127.0.0.1:10149",
+  "pid": 52652,
+  "probePid": 53028,
+  "fixtureFile": "D:\\AIApp\\piweb-performance-fixture-R8brk8\\active-browser-fixture.json",
+  "privateAccessFile": "D:\\AIApp\\piweb-performance-fixture-R8brk8\\private-browser-access.json",
+  "stopFile": "D:\\AIApp\\piweb-performance-fixture-R8brk8\\stop-browser-probe.json",
+  "listenerMs": 11287.8338,
+  "authenticatedHealthMs": 11334.4557,
+  "idleStart": "2026-11-14T08:25:28.716Z",
+  "readyAt": "2026-11-14T08:25:59.692Z",
+  "buildId": "qs_AuODvEiFduBinEf95d",
+  "preparedRequests": [
+    "launcher readiness/version",
+    "health",
+    "private IPC authentication"
+  ],
+  "untouchedRequests": [
+    "home",
+    "sessions",
+    "models",
+    "resources"
+  ],
+  "launcherWarmup": "disabled via existing PIWEB_SKIP_WARMUP=1",
+  "indexState": "fresh directory; OS cache remains warm"
+}
