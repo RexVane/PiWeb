@@ -1,0 +1,38 @@
+{
+  "at": "2026-11-14T07:59:31.994Z",
+  "scope": "2026-11-14 documentation and dead-code cleanup",
+  "approvedCleanupComplete": true,
+  "recycledTargets": 30,
+  "recycledBytes": 3239985954,
+  "reappearedTargets": [],
+  "pendingDecision": null,
+  "tests": {
+    "passed": 2211,
+    "failed": 0,
+    "skipped": 2,
+    "report": "cleanup-regression.json",
+    "exitCode": 0
+  },
+  "typecheck": {
+    "noUnused": true,
+    "exitCode": 0,
+    "log": "cleanup-typecheck-final.log"
+  },
+  "skipGuard": {
+    "exitCode": 0,
+    "log": "cleanup-skips-verified.log"
+  },
+  "sourceUnchanged": true,
+  "docLinks": {
+    "at": "2026-11-14T07:59:31.753Z",
+    "files": 26,
+    "checked": 258,
+    "missing": [],
+    "notes": "After approved screenshot removal; local Markdown/HTML targets, excluding code examples."
+  },
+  "complete": true,
+  "assets": {
+    "completed": true,
+    "report": "cleanup-assets-verification.json"
+  }
+}

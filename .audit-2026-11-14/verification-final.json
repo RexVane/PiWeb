@@ -1,0 +1,50 @@
+{
+  "verifiedAt": "2026-11-14T15:10:16.1231882+08:00",
+  "sourceUnchanged": true,
+  "sourceFiles": 1028,
+  "testExitCode": 0,
+  "tests": {
+    "skipped": 2,
+    "failed": 0,
+    "passed": 2211
+  },
+  "typecheckExitCode": 0,
+  "skipGuardExitCode": 0,
+  "diffCheckExitCode": 0,
+  "coverage": {
+    "lines": {
+      "total": 22154,
+      "covered": 19218,
+      "skipped": 0,
+      "pct": 86.74
+    },
+    "statements": {
+      "total": 27906,
+      "covered": 22755,
+      "skipped": 0,
+      "pct": 81.54
+    },
+    "functions": {
+      "total": 5249,
+      "covered": 4199,
+      "skipped": 0,
+      "pct": 79.99
+    },
+    "branches": {
+      "total": 24372,
+      "covered": 17799,
+      "skipped": 0,
+      "pct": 73.03
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "artifact": "artifact-pack-install-final-v2.json",
+  "browser": "browser-final.json",
+  "tunnel": "tunnel-final.json",
+  "cleanup": "artifact-cleanup-final-v2.json"
+}

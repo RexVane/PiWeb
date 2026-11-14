@@ -1,0 +1,574 @@
+{
+  "at": "2026-11-14T07:33:15.460Z",
+  "root": "D:\\AIApp\\PiWeb",
+  "records": [
+    {
+      "path": ".next-releases/active.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 264,
+      "links": 0,
+      "newest": "2026-11-13T09:52:42.539Z"
+    },
+    {
+      "path": ".next-releases/audit-validation-20261113-2e4047.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1324037,
+      "links": 0,
+      "newest": "2026-11-13T05:44:08.092Z"
+    },
+    {
+      "path": ".next-releases/automation-backend-tests.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 9364,
+      "links": 0,
+      "newest": "2026-11-13T03:43:29.494Z"
+    },
+    {
+      "path": ".next-releases/dev-20261114-022907.log",
+      "isDir": false,
+      "files": 1,
+      "bytes": 5093,
+      "links": 0,
+      "newest": "2026-11-13T18:32:27.456Z"
+    },
+    {
+      "path": ".next-releases/dev-20261114-022907.log.err",
+      "isDir": false,
+      "files": 1,
+      "bytes": 8440,
+      "links": 0,
+      "newest": "2026-11-13T18:32:37.464Z"
+    },
+    {
+      "path": ".next-releases/menu-drawer-20261112-235700",
+      "isDir": true,
+      "files": 786,
+      "bytes": 289739003,
+      "links": 0,
+      "newest": "2026-11-12T16:14:42.412Z"
+    },
+    {
+      "path": ".next-releases/mvbx09xv-8a50bcae-3208-4069-9763-80681dc673f3",
+      "isDir": true,
+      "files": 763,
+      "bytes": 265524782,
+      "links": 0,
+      "newest": "2026-10-17T04:54:03.728Z"
+    },
+    {
+      "path": ".next-releases/mwc51mx1-a059cc29-ee12-4320-9bc3-bb465878b2ab",
+      "isDir": true,
+      "files": 787,
+      "bytes": 289311099,
+      "links": 0,
+      "newest": "2026-11-11T13:26:38.833Z"
+    },
+    {
+      "path": ".next-releases/mwdtqifv-a1a78057-23c2-4123-9fb5-e93a3132aed3",
+      "isDir": true,
+      "files": 297,
+      "bytes": 228286805,
+      "links": 0,
+      "newest": "2026-11-12T17:39:31.831Z"
+    },
+    {
+      "path": ".next-releases/mwerj2pm-1f2e3b01-38ab-46f9-853b-2b3a691d2d09",
+      "isDir": true,
+      "files": 0,
+      "bytes": 0,
+      "links": 0,
+      "newest": "2026-11-13T09:16:50.942Z"
+    },
+    {
+      "path": ".next-releases/mweslqtb-0ad8d701-78c0-483d-a970-3bcbdb792000",
+      "isDir": true,
+      "files": 360,
+      "bytes": 276212242,
+      "links": 0,
+      "newest": "2026-11-13T10:01:00.724Z"
+    },
+    {
+      "path": ".next-releases/permission-review-20261113-0658-baseline.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 48881,
+      "links": 0,
+      "newest": "2026-11-13T07:01:24.292Z"
+    },
+    {
+      "path": ".next-releases/permission-review-20261113-0658-evidence.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 4423,
+      "links": 0,
+      "newest": "2026-11-13T07:00:18.433Z"
+    },
+    {
+      "path": ".next-releases/permission-review-20261113-0658-results.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 3731,
+      "links": 0,
+      "newest": "2026-11-13T07:00:18.445Z"
+    },
+    {
+      "path": ".next-releases/piweb-runtime-20261113-1717.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 309,
+      "links": 0,
+      "newest": "2026-11-13T10:08:54.757Z"
+    },
+    {
+      "path": ".next-releases/piweb-runtime-20261113-1717.log",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1201,
+      "links": 0,
+      "newest": "2026-11-13T10:06:21.320Z"
+    },
+    {
+      "path": ".next-releases/plugins-agent-settled-review-result.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 10867,
+      "links": 0,
+      "newest": "2026-11-13T03:09:27.334Z"
+    },
+    {
+      "path": ".next-releases/plugins-baseline-result.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 8231,
+      "links": 0,
+      "newest": "2026-11-13T03:02:26.231Z"
+    },
+    {
+      "path": ".next-releases/plugins-f04-review-result.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 928,
+      "links": 0,
+      "newest": "2026-11-13T03:05:31.516Z"
+    },
+    {
+      "path": ".next-releases/plugins-fixed-result.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 21967,
+      "links": 0,
+      "newest": "2026-11-13T03:08:27.804Z"
+    },
+    {
+      "path": ".next-releases/preview-20261112-234300",
+      "isDir": true,
+      "files": 780,
+      "bytes": 289663021,
+      "links": 0,
+      "newest": "2026-11-12T15:46:18.740Z"
+    },
+    {
+      "path": ".next-releases/proxy-compact-20261113-010500",
+      "isDir": true,
+      "files": 305,
+      "bytes": 228317909,
+      "links": 0,
+      "newest": "2026-11-12T17:11:21.893Z"
+    },
+    {
+      "path": ".next-releases/proxy-diagnostics-20261113-004800",
+      "isDir": true,
+      "files": 302,
+      "bytes": 253225860,
+      "links": 0,
+      "newest": "2026-11-12T16:59:39.052Z"
+    },
+    {
+      "path": ".next-releases/proxy-settings-20261113-002700",
+      "isDir": true,
+      "files": 786,
+      "bytes": 289741884,
+      "links": 0,
+      "newest": "2026-11-12T16:52:14.698Z"
+    },
+    {
+      "path": ".next-releases/remote-dns-probe-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 541,
+      "links": 0,
+      "newest": "2026-11-13T08:30:19.233Z"
+    },
+    {
+      "path": ".next-releases/remote-dns-readiness-tests-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 4730,
+      "links": 0,
+      "newest": "2026-11-13T08:34:43.826Z"
+    },
+    {
+      "path": ".next-releases/remote-dns-readiness-verified-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 3597,
+      "links": 0,
+      "newest": "2026-11-13T08:34:45.225Z"
+    },
+    {
+      "path": ".next-releases/remote-network-probe-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 2963,
+      "links": 0,
+      "newest": "2026-11-13T08:15:50.135Z"
+    },
+    {
+      "path": ".next-releases/remote-network-trace-20261113-results.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1397,
+      "links": 0,
+      "newest": "2026-11-13T07:49:57.137Z"
+    },
+    {
+      "path": ".next-releases/remote-network-trace-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 2769,
+      "links": 0,
+      "newest": "2026-11-13T07:49:57.098Z"
+    },
+    {
+      "path": ".next-releases/remote-pair-redirect-after-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 2402,
+      "links": 0,
+      "newest": "2026-11-13T08:15:43.969Z"
+    },
+    {
+      "path": ".next-releases/remote-pair-redirect-before-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 2758,
+      "links": 0,
+      "newest": "2026-11-13T08:14:05.561Z"
+    },
+    {
+      "path": ".next-releases/remote-recovery-and-pair-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 5147,
+      "links": 0,
+      "newest": "2026-11-13T08:17:38.992Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-tests-final.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 47317,
+      "links": 0,
+      "newest": "2026-11-13T07:35:10.294Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-tests.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 46946,
+      "links": 0,
+      "newest": "2026-11-13T07:29:00.547Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-transport-final.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1393,
+      "links": 0,
+      "newest": "2026-11-13T07:45:40.270Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-transport-launcher.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1543,
+      "links": 0,
+      "newest": "2026-11-13T07:39:46.745Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-transport-verified.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1393,
+      "links": 0,
+      "newest": "2026-11-13T08:04:11.423Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-transport.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1544,
+      "links": 0,
+      "newest": "2026-11-13T07:36:07.598Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-20261113-verified-tests.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 47288,
+      "links": 0,
+      "newest": "2026-11-13T08:04:42.152Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-complete-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 48810,
+      "links": 0,
+      "newest": "2026-11-13T08:35:32.383Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-dns-network-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 997,
+      "links": 0,
+      "newest": "2026-11-13T08:34:30.601Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-full-network-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1311,
+      "links": 0,
+      "newest": "2026-11-13T08:23:45.538Z"
+    },
+    {
+      "path": ".next-releases/remote-unified-regressions-20261113.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 48408,
+      "links": 0,
+      "newest": "2026-11-13T08:19:48.000Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-build.log",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1909,
+      "links": 0,
+      "newest": "2026-11-13T09:52:40.622Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-examples-latest.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 3042,
+      "links": 0,
+      "newest": "2026-11-13T09:45:58.779Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-extension-regressions.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 3864,
+      "links": 0,
+      "newest": "2026-11-13T09:41:09.029Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-extensions-latest.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 18248,
+      "links": 0,
+      "newest": "2026-11-13T09:43:55.016Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-isolation-diagnostic.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 12249,
+      "links": 0,
+      "newest": "2026-11-13T09:29:46.366Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-isolation-fixed.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 27749,
+      "links": 0,
+      "newest": "2026-11-13T09:35:44.997Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-isolation-recheck.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 12165,
+      "links": 0,
+      "newest": "2026-11-13T09:27:16.002Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-isolation-verified.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 22956,
+      "links": 0,
+      "newest": "2026-11-13T09:38:51.197Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-release.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1494,
+      "links": 0,
+      "newest": "2026-11-13T09:52:43.606Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-runtime-verification.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 813,
+      "links": 0,
+      "newest": "2026-11-13T09:59:05.220Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-source-build.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 131003,
+      "links": 0,
+      "newest": "2026-11-13T09:46:55.086Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-source-examples.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 390,
+      "links": 0,
+      "newest": "2026-11-13T09:45:39.819Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-source-extensions.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 362,
+      "links": 0,
+      "newest": "2026-11-13T09:43:32.859Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-source-validation.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 184930,
+      "links": 0,
+      "newest": "2026-11-13T09:39:30.150Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-synced-regressions.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 191987,
+      "links": 0,
+      "newest": "2026-11-13T09:44:51.943Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-tests.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 583772,
+      "links": 0,
+      "newest": "2026-11-13T09:25:27.890Z"
+    },
+    {
+      "path": ".next-releases/restart-latest-20261113-1717-validation.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 1089,
+      "links": 0,
+      "newest": "2026-11-13T09:46:55.087Z"
+    },
+    {
+      "path": ".next-releases/review-20261112-2200-20261113-1807",
+      "isDir": true,
+      "files": 20,
+      "bytes": 2636720,
+      "links": 0,
+      "newest": "2026-11-13T10:51:21.633Z"
+    },
+    {
+      "path": ".next-releases/tsconfig.json",
+      "isDir": false,
+      "files": 1,
+      "bytes": 542,
+      "links": 0,
+      "newest": "2026-11-13T09:46:55.136Z"
+    },
+    {
+      "path": ".next-releases/ui-cleanup-20261112-213600",
+      "isDir": true,
+      "files": 775,
+      "bytes": 289708668,
+      "links": 0,
+      "newest": "2026-11-12T13:42:21.968Z"
+    },
+    {
+      "path": ".next-releases/ui-compaction-20261112-204500",
+      "isDir": true,
+      "files": 784,
+      "bytes": 362837781,
+      "links": 0,
+      "newest": "2026-11-12T12:15:28.246Z"
+    },
+    {
+      "path": ".next-dev-webpack/dev",
+      "isDir": true,
+      "files": 337,
+      "bytes": 451345268,
+      "links": 0,
+      "newest": "2026-11-13T18:32:45.599Z"
+    },
+    {
+      "path": "node_modules/.cache/jiti",
+      "isDir": true,
+      "files": 16,
+      "bytes": 123420,
+      "links": 0,
+      "newest": "2026-11-14T06:50:08.756Z"
+    },
+    {
+      "path": "node_modules/.cache/piweb-metrics",
+      "isDir": true,
+      "files": 72,
+      "bytes": 869497,
+      "links": 0,
+      "newest": "2026-11-14T04:53:54.237Z"
+    },
+    {
+      "path": "node_modules/.cache/piweb-probe",
+      "isDir": true,
+      "files": 8,
+      "bytes": 66182,
+      "links": 0,
+      "newest": "2026-10-07T12:04:59.956Z"
+    },
+    {
+      "path": "node_modules/.cache/tsconfig.tsbuildinfo",
+      "isDir": false,
+      "files": 1,
+      "bytes": 760715,
+      "links": 0,
+      "newest": "2026-10-09T02:56:23.018Z"
+    },
+    {
+      "path": "tsconfig.tsbuildinfo",
+      "isDir": false,
+      "files": 1,
+      "bytes": 937229,
+      "links": 0,
+      "newest": "2026-11-14T06:52:16.111Z"
+    }
+  ]
+}

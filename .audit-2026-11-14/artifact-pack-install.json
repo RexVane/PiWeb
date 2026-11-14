@@ -1,0 +1,48 @@
+{
+  "buildDir": ".next",
+  "buildId": "5A6GQiBLKRu9xtl-nlrsS",
+  "stage": "D:\\AIApp\\.piweb-final-20261114-reqryB",
+  "sourceHash": "f6a0fa48f3675e6628934cb20beed824934cd5a2b80381f3d8f441095c13160f",
+  "finishedAt": "2026-11-14T05:03:26.447Z",
+  "final": false,
+  "prefix": "D:\\AIApp\\.piweb-clean-install-20261114-TxSMUy",
+  "tarball": "D:\\AIApp\\.piweb-clean-install-20261114-TxSMUy\\packed\\rexvane-piweb-0.3.30.tgz",
+  "tarballSha256": "5d3299239a034572992a904c796cf92cf2c4c954cc7c9b31d31926e591574738",
+  "packagedFiles": 1083,
+  "bytes": 4877815,
+  "installed": "D:\\AIApp\\.piweb-clean-install-20261114-TxSMUy\\node_modules\\@rexvane\\piweb",
+  "cleanInstall": true,
+  "standard": {
+    "version": "1.5.2",
+    "routes": [
+      "/api/health",
+      "/api/version",
+      "/api/models",
+      "/api/sessions",
+      "/api/workspaces",
+      "/api/pi-settings"
+    ],
+    "homePage": true,
+    "launchTokenExchange": true,
+    "deviceCookieMetadata": true,
+    "earlyAuthentication": true,
+    "authenticatedUpload": true,
+    "uploadContentLimitMiB": 100,
+    "uploadWireLimitMiB": 101
+  },
+  "extra": {
+    "nativeDependencyWithinCleanPrefix": true,
+    "nativeCreationIdentity": true,
+    "nativeFileLock": true,
+    "privateIpcLogin": true,
+    "cookieLifetimeDays": 30,
+    "realAuthenticatedWorkspaceMutation": true,
+    "projectFileCreateAndReplace": true,
+    "projectUnrelatedContentRetained": true,
+    "nativeSandboxProbe": true,
+    "allDeviceLogoutRejectsReplay": true,
+    "refreshedIpcLoginWritesSuccessfully": true,
+    "port": 14821,
+    "final": false
+  }
+}

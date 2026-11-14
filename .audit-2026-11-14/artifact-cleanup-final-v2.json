@@ -1,0 +1,14 @@
+{
+  "DirectoriesRecycled": [
+    "D:\\AIApp\\.piweb-final-20261114-c6g3cX",
+    "D:\\AIApp\\.piweb-clean-install-20261114-14nZ7B"
+  ],
+  "ProbeScriptsRecycled": [
+    "artifact-validate-runner.mjs",
+    "artifact-pack-install-runner.mjs",
+    "artifact-extra-probe.mjs",
+    "artifact-npm-probe.mjs"
+  ],
+  "OriginalNextExists": true,
+  "CompletedUtc": "2026-11-14T07:04:03.2999677Z"
+}

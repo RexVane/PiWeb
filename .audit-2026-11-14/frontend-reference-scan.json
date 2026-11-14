@@ -1,0 +1,1033 @@
+{
+  "at": "2026-11-14T07:38:13.535Z",
+  "method": "All source/test/script/bin/example string-literal module references, including dynamic imports and test mocks; candidate evidence only.",
+  "modules": [
+    {
+      "file": "src/components/AppShell.tsx",
+      "production": [
+        "src/app/page.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-composer-isolation.test.tsx",
+        "tests/components/app-shell-drafts.test.tsx",
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/app-shell-markdown-paths.test.tsx",
+        "tests/components/app-shell-sidebar-actions.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/context-meter/session.test.tsx",
+        "tests/components/settings-tools-session.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/AskUserCard.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/ask-user-card.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/chat/chat-scroll.ts",
+      "production": [
+        "src/components/ChatWindow.tsx",
+        "src/components/MarkdownBlock.tsx"
+      ],
+      "other": [
+        "tests/components/streaming-markdown.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/chat/markdown-actions.tsx",
+      "production": [
+        "src/components/ChatWindow.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/MarkdownBlock.tsx"
+      ],
+      "other": [
+        "tests/components/markdown-file-path.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/chat/reading-anchor.ts",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/ChatWindow.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/ChatInput.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-composer-isolation.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/ask-user-card.test.tsx",
+        "tests/components/chat-input-bash.test.tsx",
+        "tests/components/chat-input-chips.test.tsx",
+        "tests/components/chat-input-commands.test.tsx",
+        "tests/components/chat-input-lifecycle.test.tsx",
+        "tests/components/chat-input-mentions.test.tsx",
+        "tests/components/chat-input-queue.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ChatWindow.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-drafts.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/chat-image-preview.test.tsx",
+        "tests/components/chatwindow-ask-step.test.tsx",
+        "tests/components/chatwindow-cancellation-timing.test.tsx",
+        "tests/components/chatwindow-compaction.test.tsx",
+        "tests/components/chatwindow-edit-message.test.tsx",
+        "tests/components/chatwindow-extension-surface.test.tsx",
+        "tests/components/chatwindow-lazy-turns.test.tsx",
+        "tests/components/chatwindow-markdown-paths.test.tsx",
+        "tests/components/chatwindow-round-badge.test.tsx",
+        "tests/components/chatwindow-stick-bottom.test.tsx",
+        "tests/components/chatwindow-stream-markdown.test.tsx",
+        "tests/components/session-history.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/composer/ComposerFiles.tsx",
+      "production": [
+        "src/components/ChatInput.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/composer/ComposerImages.tsx",
+      "production": [
+        "src/components/ChatInput.tsx"
+      ],
+      "other": [
+        "tests/components/chat-input-chips.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/composer/PermissionSelector.tsx",
+      "production": [
+        "src/components/ChatInput.tsx"
+      ],
+      "other": [
+        "tests/components/permission-selector.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ConfirmDialog.tsx",
+      "production": [
+        "src/components/ProjectPanel.tsx",
+        "src/components/SessionSidebar.tsx",
+        "src/components/settings/ModelsSection.tsx",
+        "src/components/settings/PluginMarketplace.tsx",
+        "src/components/settings/PluginsSection.tsx",
+        "src/components/settings/SkillsSection.tsx",
+        "src/components/workspace/AutomationsWorkspaceView.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/ContextMeter.tsx",
+      "production": [
+        "src/components/ChatInput.tsx"
+      ],
+      "other": [
+        "tests/components/context-meter.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/CustomSelect.tsx",
+      "production": [
+        "src/components/ProviderSetupModal.tsx"
+      ],
+      "other": [
+        "tests/components/select-keyboard.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/DiffView.tsx",
+      "production": [
+        "src/components/ChatWindow.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/FullDiff.tsx",
+        "src/components/GitPanel.tsx"
+      ],
+      "other": [
+        "tests/diff-parser.test.ts",
+        "tests/write-diff.test.ts"
+      ]
+    },
+    {
+      "file": "src/components/DirectoryPicker.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/directory-picker.test.tsx",
+        "tests/components/workspace-picker/fallback.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/DrawerPanel.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/app-shell-sidebar-actions.test.tsx",
+        "tests/components/drawer-panel.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ErrorToast.tsx",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/ChatInput.tsx",
+        "src/components/ChatWindow.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/ExtensionUI.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-composer-isolation.test.tsx",
+        "tests/components/app-shell-drafts.test.tsx",
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/app-shell-markdown-paths.test.tsx",
+        "tests/components/app-shell-sidebar-actions.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/context-meter/session.test.tsx",
+        "tests/components/extension-dialog.test.tsx",
+        "tests/components/extension-notices.test.tsx",
+        "tests/components/extension-web-dialog.test.tsx",
+        "tests/components/settings-tools-session.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/FileViewer.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/file-viewer-dir.test.tsx",
+        "tests/components/file-viewer-export.test.tsx",
+        "tests/components/file-viewer-refresh.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/FloatingToast.tsx",
+      "production": [
+        "src/components/settings/PluginsSection.tsx",
+        "src/components/workspace/SkillsPluginsViews.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/FullDiff.tsx",
+      "production": [
+        "src/components/FileViewer.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/GitPanel.tsx",
+      "production": [
+        "src/components/DrawerPanel.tsx"
+      ],
+      "other": [
+        "tests/components/drawer-panel.test.tsx",
+        "tests/components/git-panel-areas.test.tsx",
+        "tests/components/git-panel-diff-window.test.tsx",
+        "tests/components/git-panel-races.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/GrowthTree.tsx",
+      "production": [
+        "src/components/FileViewer.tsx",
+        "src/components/ProjectPanel.tsx"
+      ],
+      "other": [
+        "tests/components/growth-tree.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/icons.tsx",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/AskUserCard.tsx",
+        "src/components/ChatInput.tsx",
+        "src/components/ChatWindow.tsx",
+        "src/components/composer/ComposerFiles.tsx",
+        "src/components/composer/PermissionSelector.tsx",
+        "src/components/ConfirmDialog.tsx",
+        "src/components/CustomSelect.tsx",
+        "src/components/DirectoryPicker.tsx",
+        "src/components/DrawerPanel.tsx",
+        "src/components/ExtensionUI.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/GitPanel.tsx",
+        "src/components/GrowthTree.tsx",
+        "src/components/ImportProjectPicker.tsx",
+        "src/components/MarkdownBlock.tsx",
+        "src/components/ModelSelector.tsx",
+        "src/components/ProjectPanel.tsx",
+        "src/components/PromptPanel.tsx",
+        "src/components/ProviderSetupModal.tsx",
+        "src/components/ProxySettings.tsx",
+        "src/components/SessionImportSection.tsx",
+        "src/components/SessionSidebar.tsx",
+        "src/components/settings/ModelsSection.tsx",
+        "src/components/settings/PluginMarketplace.tsx",
+        "src/components/settings/PluginsSection.tsx",
+        "src/components/settings/SharedControls.tsx",
+        "src/components/settings/SkillsSection.tsx",
+        "src/components/SettingsPanel.tsx",
+        "src/components/TrajectoryView.tsx",
+        "src/components/workspace/AutomationModal.tsx",
+        "src/components/workspace/AutomationsWorkspaceView.tsx",
+        "src/components/workspace/SkillsPluginsViews.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/ImageViewer.tsx",
+      "production": [
+        "src/components/composer/ComposerImages.tsx",
+        "src/components/PreviewImage.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/ImportProjectPicker.tsx",
+      "production": [
+        "src/components/SessionImportSection.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/MarkdownBlock.tsx",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/ChatWindow.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/SessionHistory.tsx"
+      ],
+      "other": [
+        "tests/components/chat-image-preview.test.tsx",
+        "tests/components/chatwindow-stream-markdown.test.tsx",
+        "tests/components/markdown-file-path.test.tsx",
+        "tests/components/markdown-mermaid.test.tsx",
+        "tests/components/markdown-ux.test.tsx",
+        "tests/components/session-history.test.tsx",
+        "tests/components/streaming-markdown.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ModelSelector.tsx",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/ChatInput.tsx"
+      ],
+      "other": [
+        "tests/components/model-selector.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/OutlineRail.tsx",
+      "production": [
+        "src/components/ChatWindow.tsx"
+      ],
+      "other": [
+        "tests/components/outline-rail.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/PiMark.tsx",
+      "production": [
+        "src/app/login/page.tsx",
+        "src/components/AppShell.tsx",
+        "src/components/SessionSidebar.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/PreviewImage.tsx",
+      "production": [
+        "src/components/ChatWindow.tsx",
+        "src/components/MarkdownBlock.tsx",
+        "src/components/SessionHistory.tsx"
+      ],
+      "other": [
+        "tests/components/chat-image-preview.test.tsx",
+        "tests/components/session-history.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ProjectPanel.tsx",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/DrawerPanel.tsx"
+      ],
+      "other": [
+        "tests/components/drawer-panel.test.tsx",
+        "tests/components/growth-project-panel.test.tsx",
+        "tests/integration/project/tree-expansion.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/PromptPanel.tsx",
+      "production": [
+        "src/components/DrawerPanel.tsx"
+      ],
+      "other": [
+        "tests/components/drawer-panel.test.tsx",
+        "tests/components/prompt-panel.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ProviderBrand.tsx",
+      "production": [
+        "src/components/ModelSelector.tsx",
+        "src/components/ProviderSetupModal.tsx",
+        "src/components/SessionImportSection.tsx",
+        "src/components/settings/ModelsSection.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/ProviderSetupModal.tsx",
+      "production": [
+        "src/components/settings/ModelsSection.tsx"
+      ],
+      "other": [
+        "tests/components/provider-setup-modal.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/ProxySettings.tsx",
+      "production": [
+        "src/components/settings/GeneralSection.tsx"
+      ],
+      "other": [
+        "tests/components/proxy-settings.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/RemoteSection.tsx",
+      "production": [
+        "src/components/SettingsPanel.tsx"
+      ],
+      "other": [
+        "tests/components/remote-section.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/SessionHistory.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/session-history.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/SessionImportSection.tsx",
+      "production": [
+        "src/components/DrawerPanel.tsx"
+      ],
+      "other": [
+        "tests/components/drawer-panel.test.tsx",
+        "tests/components/import-delete-refresh.test.tsx",
+        "tests/components/session-import-lifecycle.test.tsx",
+        "tests/components/session-import-panel.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/SessionSidebar.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-composer-isolation.test.tsx",
+        "tests/components/app-shell-drafts.test.tsx",
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/app-shell-markdown-paths.test.tsx",
+        "tests/components/app-shell-sidebar-actions.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/context-meter/session.test.tsx",
+        "tests/components/settings-tools-session.test.tsx",
+        "tests/components/sidebar-current.test.tsx",
+        "tests/components/sidebar-menus.test.tsx",
+        "tests/components/sidebar-search-pagination.test.tsx",
+        "tests/components/workspace-nav-automations.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/settings/GeneralSection.tsx",
+      "production": [
+        "src/components/SettingsPanel.tsx"
+      ],
+      "other": [
+        "tests/components/general-settings-retry.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/settings/ModelsSection.tsx",
+      "production": [
+        "src/components/SettingsPanel.tsx"
+      ],
+      "other": [
+        "tests/components/models-auth-boundary.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/settings/PluginMarketplace.tsx",
+      "production": [
+        "src/components/workspace/SkillsPluginsViews.tsx"
+      ],
+      "other": [
+        "tests/components/plugin-marketplace-lifecycle.test.tsx",
+        "tests/components/plugins-section-state.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/settings/PluginsSection.tsx",
+      "production": [
+        "src/components/workspace/SkillsPluginsViews.tsx"
+      ],
+      "other": [
+        "tests/components/plugins-install-confirm.test.tsx",
+        "tests/components/plugins-section-state.test.tsx",
+        "tests/components/settings-confirm-dialog.test.tsx",
+        "tests/components/workspace-resource-lifecycle.test.tsx",
+        "tests/components/workspace-views-prompts-market.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/settings/SharedControls.tsx",
+      "production": [
+        "src/components/settings/GeneralSection.tsx",
+        "src/components/settings/ModelsSection.tsx",
+        "src/components/settings/PluginsSection.tsx",
+        "src/components/settings/SkillsSection.tsx",
+        "src/components/SettingsPanel.tsx",
+        "src/components/workspace/AutomationModal.tsx",
+        "src/components/workspace/SkillsPluginsViews.tsx",
+        "src/components/workspace/WorkspaceViewShell.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/settings/SkillsSection.tsx",
+      "production": [
+        "src/components/workspace/SkillsPluginsViews.tsx"
+      ],
+      "other": [
+        "tests/components/skills-section.test.tsx",
+        "tests/components/workspace-resource-lifecycle.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/SettingsPanel.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/select-keyboard.test.tsx",
+        "tests/components/select-option-placement.test.tsx",
+        "tests/components/settings-confirm-dialog.test.tsx",
+        "tests/components/settings-dialog-keyboard.test.tsx",
+        "tests/components/settings-model-roundtrip.test.tsx",
+        "tests/components/settings-tools-session.test.tsx",
+        "tests/components/settings-typography.test.tsx",
+        "tests/components/settings-usage-card.test.tsx",
+        "tests/components/workspace-nav-automations.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/TrajectoryView.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/trajectory-view-kinds.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/update/CopyCommand.tsx",
+      "production": [
+        "src/components/settings/GeneralSection.tsx",
+        "src/components/update/UpdateNotice.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/components/update/update-store.ts",
+      "production": [
+        "src/components/settings/GeneralSection.tsx",
+        "src/components/update/UpdateNotice.tsx"
+      ],
+      "other": [
+        "tests/components/general-settings-retry.test.tsx",
+        "tests/components/update-notice.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/update/UpdateNotice.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/update-notice.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/workspace/AutomationModal.tsx",
+      "production": [
+        "src/components/workspace/AutomationsWorkspaceView.tsx"
+      ],
+      "other": [
+        "tests/components/automation-model-scope.test.tsx",
+        "tests/components/automation-preview.test.tsx",
+        "tests/components/workspace-resource-lifecycle.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/workspace/AutomationsWorkspaceView.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/workspace-nav-automations.test.tsx",
+        "tests/components/workspace-resource-lifecycle.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/workspace/SkillsPluginsViews.tsx",
+      "production": [
+        "src/components/AppShell.tsx"
+      ],
+      "other": [
+        "tests/components/workspace-resource-lifecycle.test.tsx",
+        "tests/components/workspace-views-prompts-market.test.tsx"
+      ]
+    },
+    {
+      "file": "src/components/workspace/WorkspaceViewShell.tsx",
+      "production": [
+        "src/components/workspace/AutomationsWorkspaceView.tsx",
+        "src/components/workspace/SkillsPluginsViews.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/hooks/useDialog.ts",
+      "production": [
+        "src/components/ConfirmDialog.tsx",
+        "src/components/DirectoryPicker.tsx",
+        "src/components/ExtensionUI.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/ImageViewer.tsx",
+        "src/components/ProjectPanel.tsx",
+        "src/components/ProviderSetupModal.tsx",
+        "src/components/SessionHistory.tsx",
+        "src/components/SessionSidebar.tsx",
+        "src/components/settings/PluginsSection.tsx",
+        "src/components/SettingsPanel.tsx",
+        "src/components/workspace/AutomationModal.tsx"
+      ],
+      "other": [
+        "tests/components/dialog-stack.test.tsx",
+        "tests/components/file-viewer-dir.test.tsx"
+      ]
+    },
+    {
+      "file": "src/hooks/useFileViewer.ts",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/FileViewer.tsx"
+      ],
+      "other": [
+        "tests/components/file-viewer-dir.test.tsx",
+        "tests/components/file-viewer-refresh.test.tsx"
+      ]
+    },
+    {
+      "file": "src/hooks/useGrowth.ts",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/DrawerPanel.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/ProjectPanel.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-composer-isolation.test.tsx",
+        "tests/components/app-shell-drafts.test.tsx",
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/app-shell-markdown-paths.test.tsx",
+        "tests/components/app-shell-sidebar-actions.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/context-meter/session.test.tsx",
+        "tests/components/drawer-panel.test.tsx",
+        "tests/components/file-viewer-dir.test.tsx",
+        "tests/components/file-viewer-export.test.tsx",
+        "tests/components/file-viewer-refresh.test.tsx",
+        "tests/components/growth-project-panel.test.tsx",
+        "tests/components/settings-tools-session.test.tsx",
+        "tests/integration/project/tree-expansion.test.tsx",
+        "tests/use-growth.test.ts"
+      ]
+    },
+    {
+      "file": "src/hooks/usePiWeb.ts",
+      "production": [
+        "src/components/AppShell.tsx",
+        "src/components/AskUserCard.tsx",
+        "src/components/ChatWindow.tsx",
+        "src/components/ExtensionUI.tsx",
+        "src/components/SessionSidebar.tsx"
+      ],
+      "other": [
+        "tests/components/app-shell-composer-isolation.test.tsx",
+        "tests/components/app-shell-drafts.test.tsx",
+        "tests/components/app-shell-drawer-shortcut.test.tsx",
+        "tests/components/app-shell-markdown-paths.test.tsx",
+        "tests/components/app-shell-sidebar-actions.test.tsx",
+        "tests/components/app-shell-workspace-menu.test.tsx",
+        "tests/components/ask-user-card.test.tsx",
+        "tests/components/chatwindow-extension-surface.test.tsx",
+        "tests/components/extension-dialog.test.tsx",
+        "tests/components/extension-web-dialog.test.tsx",
+        "tests/components/import-delete-refresh.test.tsx",
+        "tests/components/session-model-catalog.test.tsx",
+        "tests/components/sidebar-current.test.tsx",
+        "tests/components/sidebar-menus.test.tsx",
+        "tests/components/sidebar-search-pagination.test.tsx",
+        "tests/components/tool-preference-migration.test.tsx",
+        "tests/components/workspace-picker/fallback.test.tsx",
+        "tests/components/workspace-registry-warning.test.tsx",
+        "tests/use-piweb-events.test.ts"
+      ]
+    },
+    {
+      "file": "src/hooks/useSelectKeyboard.ts",
+      "production": [
+        "src/components/composer/PermissionSelector.tsx",
+        "src/components/CustomSelect.tsx",
+        "src/components/settings/SharedControls.tsx"
+      ],
+      "other": []
+    },
+    {
+      "file": "src/hooks/useWorkspaceFiles.ts",
+      "production": [
+        "src/components/ChatInput.tsx",
+        "src/components/FileViewer.tsx"
+      ],
+      "other": [
+        "tests/use-workspace-files.test.ts"
+      ]
+    },
+    {
+      "file": "src/i18n.tsx",
+      "production": [
+        "src/app/layout.tsx",
+        "src/app/login/page.tsx",
+        "src/components/AppShell.tsx",
+        "src/components/AskUserCard.tsx",
+        "src/components/ChatInput.tsx",
+        "src/components/ChatWindow.tsx",
+        "src/components/composer/ComposerFiles.tsx",
+        "src/components/composer/ComposerImages.tsx",
+        "src/components/composer/PermissionSelector.tsx",
+        "src/components/ConfirmDialog.tsx",
+        "src/components/ContextMeter.tsx",
+        "src/components/DirectoryPicker.tsx",
+        "src/components/DrawerPanel.tsx",
+        "src/components/ErrorToast.tsx",
+        "src/components/ExtensionUI.tsx",
+        "src/components/FileViewer.tsx",
+        "src/components/FullDiff.tsx",
+        "src/components/GitPanel.tsx",
+        "src/components/GrowthTree.tsx",
+        "src/components/ImageViewer.tsx",
+        "src/components/ImportProjectPicker.tsx",
+        "src/components/MarkdownBlock.tsx",
+        "src/components/ModelSelector.tsx",
+        "src/components/OutlineRail.tsx",
+        "src/components/PreviewImage.tsx",
+        "src/components/ProjectPanel.tsx",
+        "src/components/PromptPanel.tsx",
+        "src/components/ProviderSetupModal.tsx",
+        "src/components/ProxySettings.tsx",
+        "src/components/RemoteSection.tsx",
+        "src/components/SessionHistory.tsx",
+        "src/components/SessionImportSection.tsx",
+        "src/components/SessionSidebar.tsx",
+        "src/components/settings/GeneralSection.tsx",
+        "src/components/settings/ModelsSection.tsx",
+        "src/components/settings/PluginMarketplace.tsx",
+        "src/components/settings/PluginsSection.tsx",
+        "src/components/settings/SkillsSection.tsx",
+        "src/components/SettingsPanel.tsx",
+        "src/components/TrajectoryView.tsx",
+        "src/components/update/CopyCommand.tsx",
+        "src/components/update/UpdateNotice.tsx",
+        "src/components/workspace/AutomationModal.tsx",
+        "src/components/workspace/AutomationsWorkspaceView.tsx",
+        "src/components/workspace/SkillsPluginsViews.tsx",
+        "src/components/workspace/WorkspaceViewShell.tsx"
+      ],
+      "other": [
+        "tests/components/i18n-hydration.test.tsx",
+        "tests/components/session-import-lifecycle.test.tsx"
+      ]
+    }
+  ],
+  "unreferencedFiles": [],
+  "cssCandidates": [
+    {
+      "file": "src/components/composer/PermissionSelector.module.css",
+      "importers": [
+        "src/components/composer/PermissionSelector.tsx"
+      ],
+      "classes": 6,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/CustomSelect.module.css",
+      "importers": [
+        "src/components/CustomSelect.tsx"
+      ],
+      "classes": 12,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/ImportProjectPicker.module.css",
+      "importers": [
+        "src/components/ImportProjectPicker.tsx"
+      ],
+      "classes": 14,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/ModelSelector.module.css",
+      "importers": [
+        "src/components/ModelSelector.tsx"
+      ],
+      "classes": 21,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/ProviderSetupModal.module.css",
+      "importers": [
+        "src/components/ProviderSetupModal.tsx"
+      ],
+      "classes": 60,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/SessionHistory.module.css",
+      "importers": [
+        "src/components/SessionHistory.tsx"
+      ],
+      "classes": 14,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/SessionImportSection.module.css",
+      "importers": [
+        "src/components/SessionImportSection.tsx"
+      ],
+      "classes": 47,
+      "unmentionedClasses": []
+    },
+    {
+      "file": "src/components/TrajectoryAnalyzer.module.css",
+      "importers": [
+        "src/components/TrajectoryView.tsx"
+      ],
+      "classes": 28,
+      "unmentionedClasses": []
+    }
+  ],
+  "unmatchedGlobalClasses": [
+    "h-6",
+    "contains-task-list",
+    "task-list-item",
+    "hljs-comment",
+    "hljs-quote",
+    "hljs-keyword",
+    "hljs-selector-tag",
+    "hljs-literal",
+    "hljs-doctag",
+    "hljs-section",
+    "hljs-strong",
+    "hljs-string",
+    "hljs-addition",
+    "hljs-symbol",
+    "hljs-bullet",
+    "hljs-link",
+    "hljs-number",
+    "hljs-template-variable",
+    "hljs-selector-class",
+    "hljs-selector-id",
+    "hljs-selector-pseudo",
+    "hljs-title",
+    "class_",
+    "inherited__",
+    "hljs-name",
+    "hljs-code",
+    "hljs-type",
+    "hljs-built_in",
+    "hljs-builtin-name",
+    "hljs-class",
+    "hljs-attr",
+    "hljs-attribute",
+    "hljs-property",
+    "hljs-tag",
+    "hljs-selector-attr",
+    "hljs-deletion",
+    "hljs-regexp",
+    "hljs-subst",
+    "hljs-char",
+    "escape_",
+    "hljs-meta",
+    "hljs-formula",
+    "hljs-variable",
+    "language_",
+    "hljs-params",
+    "hljs-operator",
+    "hljs-punctuation",
+    "hljs-emphasis"
+  ],
+  "unmatchedI18nKeys": [
+    "resultWrote",
+    "toolLines",
+    "toolMatches",
+    "toolWritten",
+    "filesPanel",
+    "moreActions",
+    "filesFilter",
+    "filesShowAll",
+    "filesHideNoise",
+    "fileChangedByPi",
+    "fileRenderMarkdown",
+    "fileRawSource",
+    "filesBack",
+    "entriesTruncated",
+    "gitGithubAccount",
+    "gitGithubUnknown",
+    "deleteAllSessions",
+    "deleteAllConfirm",
+    "cycleModelHint",
+    "noBranches",
+    "triggerLoading",
+    "toolReadonly",
+    "toolStandard",
+    "toolFull",
+    "imageAttachment",
+    "cmdMenu",
+    "askWaitHint",
+    "askAnswered",
+    "contextUsed",
+    "contextMeasured",
+    "contextSystem",
+    "contextMessages",
+    "contextTools",
+    "tabChat",
+    "sessionLog",
+    "sessionDetails",
+    "exportJsonl",
+    "trajModeSeq",
+    "trajModeTime",
+    "trajModeDur",
+    "trajOutput",
+    "trajTime",
+    "importSelectedCount",
+    "importSelectionHint",
+    "importStatusFilter",
+    "importStatusAll",
+    "importStatusAvailable",
+    "importStatusSelected",
+    "importLimitHintTooltip",
+    "remoteBuiltin",
+    "remotePluginToggle",
+    "remotePluginOn",
+    "remotePluginOff",
+    "remotePluginHint",
+    "remoteLanPlain",
+    "remotePublicNeedsPlugin",
+    "remoteLanTitle",
+    "remoteLanHint",
+    "remotePublicTitle",
+    "remotePublicHint",
+    "remoteStart",
+    "remoteStop",
+    "remoteRunning",
+    "remoteStopped",
+    "remotePending",
+    "pairLan",
+    "pairPublic",
+    "pairPublicNotReady",
+    "pairGenerate",
+    "pairRegenerate",
+    "pairExpired",
+    "pairExpiresIn",
+    "pairCodeLabel",
+    "pairOpen",
+    "providerAuthOk",
+    "providerIdImmutable",
+    "modelsList",
+    "toolsSection",
+    "toolsSectionDesc",
+    "toolsCurrentSession",
+    "toolsActiveCount",
+    "toolsNoSession",
+    "toolsLoading",
+    "toolsLoadFailed",
+    "toolsEmpty",
+    "securityToolPreset",
+    "permissionTitle",
+    "permissionReadonlyDesc",
+    "permissionWorkspaceDesc",
+    "permissionFullDesc",
+    "permissionScopeHint",
+    "securityToolPresetDesc",
+    "securityTrust",
+    "securityTrustDesc",
+    "trustAsk",
+    "trustAlways",
+    "trustNever",
+    "skillFilterPackage",
+    "skillFilterOther",
+    "scopeGlobal",
+    "packagesEmpty",
+    "pluginConfig",
+    "pluginList",
+    "pluginTabInstalled",
+    "pluginTabMarketplace",
+    "enablePlugin",
+    "disablePlugin",
+    "projectTrustForget",
+    "projectTrustTrusted",
+    "projectTrustUntrusted",
+    "autoStatusEnded",
+    "autoTasksTab",
+    "autoFilterAllWorkspaces",
+    "autoEmptyDesc",
+    "autoConflictRunning"
+  ]
+}
