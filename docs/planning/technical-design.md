@@ -1,20 +1,22 @@
 # PiWeb 技术方案与历史调研
 
-## 当前实现概览（2026-11-14）
+## 当前实现概览（2026-11-15）
 
-本节描述当前维护代码。后面的编号章节保留 2026-10-11 至 2026-10-20 的测量、方案和修复经过；其中的版本、行号、耗时、“待做”和验收数字都是当时记录，不是当前待办或性能保证。当前需求见[requirements.md](requirements.md)，验证日期与范围见[进度](../state/progress.md)。
+本节描述当前维护代码。后面的编号章节保留 2026-10-11 至 2026-10-20 的测量、方案和修复经过；其中的版本、行号、耗时、“待做”和验收数字都是当时记录，不是当前待办或性能保证。当前需求见[requirements.md](requirements.md)，验证日期与范围见[进度](../state/progress.md)，运维细节见[运维与部署](../operations/README.md)。
 
 ### 启动、认证与网络
 
 - `scripts/launcher.mjs` 选择并校验生产构建，先预热首屏，再打开浏览器。认证默认开启；重复启动通过本机私有 IPC 验证已有实例，再读取受保护的启动凭据。终端仅显示地址和状态，不输出带凭据的登录链接。
 - `scripts/web-auth-protocol.mjs` 与服务端共享 30 天 Cookie 协议；`scripts/http-request-guard.mjs` 在 Next 读取完整正文前处理匿名请求、正文限额与并发限制。登录后仍检查 Host、来源和写入权限，启动令牌不作为通用 API 密钥。
 - `web-secret.ts` 的全设备吊销代次跨进程持久化，严格递增；Cookie 和配对码绑定代次。连续同毫秒登出、时钟回拨和另一实例缓存旧二维码都不能复用旧代凭据。
+- 认证路径只有两种：本机私有 IPC 取启动凭据后经 `GET /?token=…` 换 Cookie，或已有会话 Cookie；2026-11-15 修复轮删除了“仅回环直连自动签发 Cookie”的旧分支（该分支依赖可伪造的 Host 与缺失的代理头，审计确认实际不可达），不保留其它免登录兜底。
 - 生产启动自动准备 LAN 代理和 Cloudflare 隧道。连接面板只展示一套动态码，凭据 120 秒、单次使用；公网地址可达后显示。`PIWEB_REMOTE_LAN=0` 供自行管理入口的部署关闭自动准备。开发模式限本机；显式关闭认证时拒绝非回环绑定或公开地址。
 - 二维码的 HTTPS 在 Cloudflare 终结；直连 LAN HTTP 不加密。统一二维码不等于公网中断时自动得到离线 LAN 登录能力。
+- Node 版本：`package.json` 的 `engines` 要求 **≥ 22.19.0**；CI 矩阵覆盖 22.19.0、22.22.2 与 24。自动代理依赖 Node 内置的 `NODE_USE_ENV_PROXY`（24+ 或 22.21+），更旧版本上代理只对显式环境继承生效、模型请求仍直连。
 
 ### 资源、设置与提示词
 
-- 侧栏的技能、扩展、提示词、市场、自动化任务由 `SkillsPluginsViews.tsx` 等工作区视图承载，按所选工作区读取。个人/项目 scope 与本地/package origin 是两个独立维度，不能按路径前缀混为一类。
+- 当前侧栏工作区只有 **Chat / Extensions（扩展）/ Automations（自动化任务）** 三种视图（`SessionSidebar.tsx` 的 `WorkspaceView` 类型与 `workspaceNavItems`）。`SkillsPluginsViews.tsx` 里的 `SkillsWorkspaceView`、`PromptsWorkspaceView` 仍在代码中，但当前 `AppShell` 没有装载、侧栏也没有入口；资源市场组件与 `/api/plugins/marketplace` 路由已删除。因此“技能/提示词/市场有侧栏入口”不是当前实现，管理扩展走 Extensions 视图，技能与提示词仍由 pi 的共享资源机制加载并由 SDK 使用。
 - `pi.ts` 与 `resource-fingerprint.ts` 跟踪规则、系统提示词、技能、模板、扩展、配置及受管包资源。读取和执行边界检测变化；会话忙碌时延后重新加载。项目扩展的模型注册保持会话范围。技能开关保留 YAML/BOM；包附带技能不可通过独立技能删除入口移除。
 - Pi SDK 与 Web 设置写入使用共享 JSONC 事务，保留注释和无关字段。Windows 项目设置固定真实祖先目录；已删除工作区的只读查询按缺失处理，写入仍拒绝。
 - 模型目录读取、刷新和会话创建不执行认证命令；实际请求认证仍支持明确配置的 `!command`。模型保存按 revision 检查冲突，短暂文件占用有限重试且每次复核 revision；非合作外部进程不受 PiWeb 锁控制，不能把“检查后替换”说成通用原子比较交换。
@@ -36,6 +38,8 @@
 ### 构建选择与维护验证
 
 `npm run build` 写 `.next`；`npm run build:release` 准备独立 `.next-releases/<id>`，生成完整文件哈希清单，原子发布选择记录。启动会校验文件和清单，不只检查 `BUILD_ID`。失败或进行中的发布先用记录中的 `previous`，没有 previous 时才尝试完整 `.next`；active JSON 无法解析时可读取独立 `last-ready.json`。每个候选都必须重新验证；无有效回退时明确拒绝，不随意使用目录里的旧包。
+
+安装形态分两类：源码检出的 `postinstall` 是 no-op（有开发依赖，`ensureInstallBuild` 直接返回 skipped），发布包/生产专用安装自带已封存的 `.next`，构建缺失或安装跳过生命周期脚本时由首次 `piweb` 启动在 staging 目录现场构建一次并封存切换（自愈）。构建耗时基线：2026-11-15 本机 `next build --webpack` 实测约 370 秒，本地/CI 构建超时应 ≥15 分钟。细节见[安装与构建机制](../operations/install-and-build.md)。
 
 文件锁使用 OS 互斥、原子元数据及进程创建身份，不能仅凭锁文件旧或 PID 相同判断所有者。原生依赖通过实际安装根解析；缺失所需能力时给出错误，不静默换成较弱锁。全局应用先构建候选再复制源码，但源码多文件复制不能宣称具有断电原子性。
 

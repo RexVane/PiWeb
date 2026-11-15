@@ -28,14 +28,18 @@ git merge origin/main
 
 Use a separate checkout or staging directory with its own build output. `npm run build` writes `.next`; do not run it against the installation serving an active session. Preserve existing user data and uncommitted changes. Use a separate `PI_CODING_AGENT_DIR` for checks, never a directory containing personal model credentials.
 
-The [check workflow](workflows/check.yml) runs Windows and Linux with Node 22.22.2 and 24. Node 22.19.0 remains the package runtime minimum; it is not the current development-test matrix. Install with `npm ci`, prepare the SDK's real search tools with `node scripts/testing/prepare-sdk-tools.mjs` while network access is allowed, then run the offline checks. Keep the same temporary agent directory for preparation and testing.
+The [check workflow](workflows/check.yml) runs Ubuntu and Windows with Node 22.19.0, 22.22.2 and 24, plus a minimal macOS job on Node 24. Node 22.19.0 is the package runtime minimum and is also covered by the development-test matrix. Install with `npm ci`, prepare the SDK's real search tools with `node scripts/testing/prepare-sdk-tools.mjs` while network access is allowed, then run the offline checks. Keep the same temporary agent directory for preparation and testing.
 
 ```bash
+npm ci --prefix scripts/testing/lint   # pinned lint toolchain (isolated from root TypeScript 7)
 npm run typecheck
+npm run lint
 npm run test
 npm run build
 npm run verify:package
 ```
+
+The check workflow also runs `npm audit --audit-level=high` and pins third-party Actions to commit SHAs. See [Operations](../docs/operations/README.md) for environment variables, data isolation, privacy behavior and release rollback guidance.
 
 For coverage, set `PIWEB_COVERAGE=1`, `PIWEB_COVERAGE_REPORT_DIR` to an evidence directory and `PIWEB_TEST_REPORT` to the Vitest JSON report path. After testing, run `node scripts/testing/check-skips.mjs` in the same environment: it reads `PIWEB_TEST_REPORT`, not a positional filename argument. Missing required SDK tools or native Windows coverage must not be hidden by adding permissive skips. Public tunnel verification is separately enabled with `PIWEB_TEST_TUNNEL=1`; run it only against isolated fixture data, not a user's live port.
 
