@@ -1,9 +1,0 @@
-{
-  "stage": "D:\\AIApp\\.piweb-optimization-20261114-F3JhDO",
-  "sourceHash": "02501a1d6332eeb4283883572086aabca6e11c2c750f4f9a9c6f48a4ff23f9c7",
-  "startedAt": "2026-11-14T10:38:27.554Z",
-  "pid": 63000,
-  "command": "node scripts/build.mjs",
-  "freshBuildOutput": true,
-  "rootBuildUntouched": true
-}

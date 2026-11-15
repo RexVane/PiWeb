@@ -1,7 +1,0 @@
-{
-  "Pid": 61200,
-  "StartedAt": "2026-11-14T12:32:59.4981664Z",
-  "Root": "D:\\AIApp\\PiWeb",
-  "Command": "node bin/piweb.js",
-  "DefaultConfiguration": true
-}

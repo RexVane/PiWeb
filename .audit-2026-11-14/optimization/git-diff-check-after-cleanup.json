@@ -1,8 +1,0 @@
-{
-  "checkedAt": "2026-11-14T12:19:00.1469741Z",
-  "workingDiffExitCode": 0,
-  "cachedDiffExitCode": 0,
-  "passed": true,
-  "workingLog": "git-diff-check-after-cleanup.log",
-  "cachedLog": "git-diff-cached-check-after-cleanup.log"
-}

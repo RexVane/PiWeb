@@ -1,9 +1,0 @@
-{
-  "stage": "D:\\AIApp\\.piweb-performance-20261114-XavtFX",
-  "sourceHash": "0a8188e986da0c45600a2153ae2d4d5da4b185e18f7f23b60feb75eb83337961",
-  "startedAt": "2026-11-14T08:04:24.022Z",
-  "pid": 31172,
-  "command": "node scripts/build.mjs",
-  "freshBuildOutput": true,
-  "rootBuildUntouched": true
-}
