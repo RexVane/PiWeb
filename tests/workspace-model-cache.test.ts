@@ -47,6 +47,10 @@ beforeEach(async () => {
 	workspace = path.join(root, String(count), "workspace");
 	await fs.mkdir(state.agentDir, { recursive: true });
 	await fs.mkdir(workspace, { recursive: true });
+	// models-service canonicalizes these paths; use the canonical spelling so the mocked
+	// resource loaders/cache keys match (Windows temp dirs may use 8.3 short names).
+	state.agentDir = await fs.realpath(state.agentDir);
+	workspace = await fs.realpath(workspace);
 	state.version = 1; state.trusted = true; state.name = "Base"; state.authenticated = false;
 	state.loaders.clear(); state.objects.clear();
 	state.prepare.mockReset().mockResolvedValue(false);

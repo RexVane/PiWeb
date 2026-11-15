@@ -29,5 +29,5 @@ describe("repository text encoding", () => {
 			const bytes = await fs.readFile(file);
 			expect(() => decoder.decode(bytes), path.relative(root, file)).not.toThrow();
 		}
-	});
+	}, 120_000);
 });

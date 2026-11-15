@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAclSandbox, probeAclSandboxCapability, type AclSandbox } from "@/lib/sandbox/windows-acl";
-import { aclOf, recycleFixture } from "./fixtures";
+import { aclOf, recycleFixture, shortPathOf } from "./fixtures";
 
 const run = promisify(execFile);
 const writeScript = 'module.exports=async({target,content="created-by-sandbox"})=>{await require("node:fs/promises").writeFile(target,content);};';
@@ -191,6 +191,29 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("Windows
 	});
 	it("fails closed for a missing or nonphysical writable root", async () => {
 		expect(await create([path.join(base, "missing")])).toBeNull();
+		// A junction root itself and a real child reached through a junction parent are not
+		// physical roots: the path can be repointed after the ACL was granted.
+		const junction = path.join(base, "nonphysical-junction-root"); await fs.symlink(outside, junction, "junction");
+		expect(await create([junction])).toBeNull();
+		const child = path.join(outside, "child"); await fs.mkdir(child);
+		const linkParent = path.join(base, "nonphysical-junction-parent"); await fs.symlink(outside, linkParent, "junction");
+		expect(await create([path.join(linkParent, "child")])).toBeNull();
+	});
+	it("accepts a writable root addressed through an 8.3 short name", async () => {
+		// Hosted Windows runners expose the temp dir as `C:\Users\RUNNER~1\...` while
+		// realpath returns the long `runneradmin` spelling. That must not disable the sandbox.
+		const root = path.join(base, "short-name-root-0123456789");
+		await fs.mkdir(root);
+		const short = await shortPathOf(root);
+		const spelling = path.isAbsolute(short) ? short : root;
+		const box = await create([spelling]);
+		expect(box).not.toBeNull();
+		if (spelling.toLowerCase() !== root.toLowerCase()) {
+			// The volume really has an 8.3 alias, so this reproduces the CI spelling split.
+			expect(path.resolve(spelling).toLowerCase()).not.toBe((await fs.realpath(spelling)).toLowerCase());
+		}
+		expect((await box!.runNode(writeScript, { target: path.join(root, "written.txt") }, { cwd: root })).exitCode).toBe(0);
+		expect(await fs.readFile(path.join(root, "written.txt"), "utf8")).toBe("created-by-sandbox");
 	});
 	it("supports a writable private temp without letting readonly use it", async () => {
 		const chunks: Buffer[] = [];

@@ -11,6 +11,7 @@ import { readdirSync, lstatSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { physicalPathProblem } from "./physical-path";
 
 const POLL_MS = 25;
 const OUTPUT_LIMIT = 8 * 1024 * 1024;
@@ -185,9 +186,10 @@ export async function probeAclSandboxCapability(): Promise<SandboxCapability> {
 
 /** Do not grant a file object that already has an alias outside its directory. */
 async function checkPhysicalRoot(root: string): Promise<void> {
-	if (path.resolve(root).toLowerCase() !== (await fs.realpath(root)).toLowerCase()) throw new Error("Writable root must be a physical directory.");
-	const stat = await fs.lstat(root);
-	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Writable root must be a physical directory.");
+	// 8.3 short names (CI temp dirs are `C:\Users\RUNNER~1\...`) are the same
+	// physical directory as their long spelling, so compare directory entries
+	// rather than realpath strings; a symlink/junction root is still rejected.
+	if (await physicalPathProblem(root)) throw new Error("Writable root must be a physical directory.");
 	const pendingDirectories = [root];
 	while (pendingDirectories.length) {
 		const directory = pendingDirectories.pop()!;
@@ -239,7 +241,7 @@ export async function createAclSandbox(options: AclSandboxOptions): Promise<AclS
 		}
 		for (const root of options.readableDirs ?? []) {
 			if (options.writableDirs.some((writable) => path.resolve(writable).toLowerCase() === path.resolve(root).toLowerCase())) continue;
-			if (path.resolve(root).toLowerCase() !== (await fs.realpath(root)).toLowerCase()) throw new Error("Readable root must be physical.");
+			if (await physicalPathProblem(root)) throw new Error("Readable root must be physical.");
 			granted.push(backend.grantRoot(root, 0x1200a9));
 		}
 		granted.push(backend.grantRoot(scratch, options.tempDir !== null && options.writableDirs.length > 0 ? 0x1301bf : 0x1200a9));

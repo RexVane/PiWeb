@@ -31,7 +31,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 let temporary: string;
 let cwd: string;
 beforeEach(async () => {
-	temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-image-api-"));
+	temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-image-api-")));
 	cwd = path.join(temporary, "workspace");
 	await fs.mkdir(path.join(cwd, "assets"), { recursive: true });
 	await fs.writeFile(path.join(cwd, "assets", "中文 image.png"), PNG);

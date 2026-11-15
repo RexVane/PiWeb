@@ -10,7 +10,7 @@ vi.mock("node:child_process", async (original) => ({ ...await original<typeof im
 
 import { runCommand, terminateProcessTree } from "../scripts/process-runner.mjs";
 import { browserLaunchSpec } from "../scripts/launcher.mjs";
-import { npmCommand } from "../scripts/npm-command.mjs";
+import { npmCliCandidates, npmCommand } from "../scripts/npm-command.mjs";
 import { recycleFixture } from "./lib/sandbox/fixtures";
 
 function fakeChild(pid = 12345) {
@@ -93,6 +93,19 @@ describe("update command runner without real subprocesses", () => {
 			await failure.catch(() => {});
 			throw error;
 		}
+	});
+	it("finds npm in the Windows and POSIX Node installation layouts", () => {
+		// Official Windows install: <nodeDir>/node_modules/npm/bin/npm-cli.js.
+		const windowsPrefix = path.resolve(path.sep, "custom-node");
+		expect(npmCliCandidates(path.join(windowsPrefix, "node.exe"), {})).toContain(path.join(windowsPrefix, "node_modules", "npm", "bin", "npm-cli.js"));
+		// setup-node / nvm / Homebrew: <prefix>/bin/node with npm at <prefix>/lib/node_modules.
+		const posixPrefix = path.resolve(path.sep, "opt", "hostedtoolcache", "node", "22.19.0", "x64");
+		expect(npmCliCandidates(path.join(posixPrefix, "bin", "node"), {})).toContain(path.join(posixPrefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"));
+		// A PATH entry that is itself a Node prefix is searched both ways.
+		const pathBin = path.resolve(path.sep, "custom", "bin");
+		const fromPath = npmCliCandidates(path.join(windowsPrefix, "node.exe"), { PATH: pathBin });
+		expect(fromPath).toContain(path.join(pathBin, "node_modules", "npm", "bin", "npm-cli.js"));
+		expect(fromPath).toContain(path.resolve(pathBin, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"));
 	});
 	it.skipIf(process.platform !== "win32")("reports a failed process-tree termination instead of claiming every descendant stopped", async () => {
 		const child = fakeChild(12345), killer = fakeChild(67890);

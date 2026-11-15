@@ -32,7 +32,9 @@ describe("automation API and tool validation", () => {
 		const call = (params: Parameters<typeof tool.execute>[1]) => tool.execute("test", params, undefined, undefined, {} as never);
 		await expect(call({ action: "create", name: "No unit", prompt: "Check", schedule: { kind: "interval", every: 1 } })).rejects.toThrow("unit");
 		const created = await call({ action: "create", name: "Valid", prompt: "Check", schedule: { kind: "daily", time: "09:00" } });
-		expect(created.details).toMatchObject({ action: "create", task: { cwd: root } });
+		// The store canonicalizes the workspace (realpath), so compare the canonical spelling:
+		// Windows temp dirs can be addressed through an 8.3 short name.
+		expect(created.details).toMatchObject({ action: "create", task: { cwd: await fs.realpath(root) } });
 		const id = (created.details as { task: { id: string } }).task.id;
 		expect((await call({ action: "list" })).details).toMatchObject({ action: "list", count: 1 });
 		expect((await call({ action: "update", id, enabled: false })).details).toMatchObject({ action: "update", task: { enabled: false } });

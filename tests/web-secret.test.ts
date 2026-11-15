@@ -82,9 +82,11 @@ describe("web secret", () => {
 		// 服务端写、启动器读，两边的路径规则必须一致
 		const { readLaunchToken } = await import("../scripts/launcher.mjs");
 		expect(readLaunchToken(30177, { PI_CODING_AGENT_DIR: path.join(dir, "agent") })).toBe(token);
-		// 没有端口或令牌就什么都不写
+		// 没有端口或令牌就什么都不写（POSIX 另有该端口的私有 IPC socket 侧车文件，Windows 用命名管道）
 		publishLaunchToken({ PI_WEB_LAUNCH_TOKEN: token });
-		expect(fs.readdirSync(path.join(dir, "agent", "web-launch"))).toEqual(["30177.token"]);
+		const published = fs.readdirSync(path.join(dir, "agent", "web-launch"));
+		expect(published.filter((name) => name.endsWith(".token"))).toEqual(["30177.token"]);
+		expect(published.every((name) => name === "30177.token" || name === "30177.socket")).toBe(true);
 	});
 
 	it("decodes base64url strictly", () => {

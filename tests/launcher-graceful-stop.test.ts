@@ -58,22 +58,42 @@ function fakeChild({ pid = 4321, exitAfterMs, exitCode = 130 }: { pid?: number; 
 describe("terminateProcessTreeGracefully", () => {
 	it("waits for the child to stop before force-killing the tree", async () => {
 		const child = fakeChild({ exitAfterMs: 20 });
-		await terminateProcessTreeGracefully(child, { timeoutMs: 500 });
-		expect(child.kill).not.toHaveBeenCalled();
+		// POSIX signals the child's process group. There is no real group for the fake
+		// pid, so intercept it: the real kill would ESRCH into the child-level fallback.
+		const groupKill = vi.spyOn(process, "kill").mockReturnValue(true);
+		try {
+			await terminateProcessTreeGracefully(child, { timeoutMs: 500 });
+		} finally {
+			groupKill.mockRestore();
+		}
 		if (process.platform === "win32") {
+			expect(child.kill).not.toHaveBeenCalled();
 			expect(killerCalls.length).toBeGreaterThan(0);
 			expect(killerCalls.every((args) => !args.includes("/F"))).toBe(true);
+		} else {
+			// Catchable SIGTERM to the group; a child that exits inside the grace window
+			// is never force-killed (no SIGKILL and no direct child.kill fallback).
+			expect(groupKill).toHaveBeenCalledWith(-4321, "SIGTERM");
+			expect(child.kill).not.toHaveBeenCalled();
 		}
 	});
 
 	it("falls back to the forced tree kill when the grace window expires", async () => {
 		const child = fakeChild();
-		await terminateProcessTreeGracefully(child, { timeoutMs: 40 });
+		const groupKill = vi.spyOn(process, "kill").mockImplementation(() => {
+			throw Object.assign(new Error("ESRCH: no such process group"), { code: "ESRCH" });
+		});
+		try {
+			await terminateProcessTreeGracefully(child, { timeoutMs: 40 });
+		} finally {
+			groupKill.mockRestore();
+		}
 		if (process.platform === "win32") {
 			expect(killerCalls.some((args) => args.includes("/F"))).toBe(true);
 		} else {
 			// POSIX 先 SIGTERM（可捕获），超时后 SIGKILL 进程组。
 			expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+			expect(child.kill).toHaveBeenCalledWith("SIGKILL");
 		}
 	});
 
@@ -149,28 +169,41 @@ describe("launcher graceful stop", () => {
 		const child = fakeChild({ pid: 6100 });
 		let spawnCalls = 0;
 		const before = new Set(process.listeners("SIGINT"));
-		const running = runLauncher({
-			root,
-			args: ["--dev", "--no-open"],
-			env: {},
-			dependencies: {
-				spawn: vi.fn(() => { spawnCalls += 1; return child; }),
-				probePort: vi.fn(async () => "free"),
-				isPiWebRunning: vi.fn(async () => true),
-				warmFirstPaint: vi.fn(async () => true),
-				log: vi.fn(),
-			},
-		});
-		await vi.waitFor(() => expect(process.listeners("SIGINT").some((listener) => !before.has(listener))).toBe(true));
-		const handler = process.listeners("SIGINT").find((listener) => !before.has(listener))!;
-		handler("SIGINT" as never);
-		setTimeout(() => { child.exitCode = 130; child.emit("exit", 130); }, 20);
-		await expect(running).resolves.toBe(1);
-		expect(spawnCalls).toBe(1);
-		expect(child.kill).not.toHaveBeenCalled();
-		if (process.platform === "win32") expect(killerCalls.every((args) => !args.includes("/F"))).toBe(true);
-		// 收尾后信号监听器必须摘掉，重复运行不会叠加处理器。
-		expect(process.listeners("SIGINT").some((listener) => !before.has(listener))).toBe(false);
+		// POSIX forwards a catchable SIGTERM to the child's process group; there is no
+		// real group for the fake pid, so intercept the group signal instead of allowing
+		// a real ESRCH to fall back to a direct child.kill.
+		const groupKill = vi.spyOn(process, "kill").mockReturnValue(true);
+		try {
+			const running = runLauncher({
+				root,
+				args: ["--dev", "--no-open"],
+				env: {},
+				dependencies: {
+					spawn: vi.fn(() => { spawnCalls += 1; return child; }),
+					probePort: vi.fn(async () => "free"),
+					isPiWebRunning: vi.fn(async () => true),
+					warmFirstPaint: vi.fn(async () => true),
+					log: vi.fn(),
+				},
+			});
+			await vi.waitFor(() => expect(process.listeners("SIGINT").some((listener) => !before.has(listener))).toBe(true));
+			const handler = process.listeners("SIGINT").find((listener) => !before.has(listener))!;
+			handler("SIGINT" as never);
+			setTimeout(() => { child.exitCode = 130; child.emit("exit", 130); }, 20);
+			await expect(running).resolves.toBe(1);
+			expect(spawnCalls).toBe(1);
+			if (process.platform === "win32") {
+				expect(child.kill).not.toHaveBeenCalled();
+				expect(killerCalls.every((args) => !args.includes("/F"))).toBe(true);
+			} else {
+				expect(groupKill).toHaveBeenCalledWith(-6100, "SIGTERM");
+				expect(child.kill).not.toHaveBeenCalled();
+			}
+			// 收尾后信号监听器必须摘掉，重复运行不会叠加处理器。
+			expect(process.listeners("SIGINT").some((listener) => !before.has(listener))).toBe(false);
+		} finally {
+			groupKill.mockRestore();
+		}
 	});
 
 	it("no longer mints a session cookie through x-piweb-warmup (F1)", async () => {

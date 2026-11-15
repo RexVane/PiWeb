@@ -458,7 +458,9 @@ describe("扩展命令里的会话操作", () => {
 		const before = frames(m).length;
 		expect(await commandContext(m).switchSession(other.getSessionFile()!)).toEqual({ cancelled: false });
 		const switched = frames(m).slice(before).find((frame) => frame.type === "session_navigate");
-		expect(switched).toMatchObject({ reason: "resume", sessionPath: other.getSessionFile() });
+		// The navigate frame carries the canonical session path; the temp dir may be
+		// spelled with a Windows 8.3 short name when the store was opened.
+		expect(switched).toMatchObject({ reason: "resume", sessionPath: await fs.realpath(other.getSessionFile()!) });
 		// 切到已有会话不拿来源会话的档位覆盖它（新建 / 分叉才继承）
 		expect(manager.getManaged(other.getSessionFile()!).toolPreset).toBe("readonly");
 	}, 90_000);

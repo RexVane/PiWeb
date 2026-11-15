@@ -18,7 +18,9 @@ let pi: typeof import("../src/lib/pi");
 const managed: ReturnType<typeof import("../src/lib/agent-manager")["getManaged"]>[] = [];
 
 beforeAll(async () => {
-	root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-agent-sdk-"));
+	// Canonical root: sandbox roots and the permission gate compare realpaths, while the
+	// system temp dir may be spelled with a Windows 8.3 short name (`...\RUNNER~1\...`).
+	root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-agent-sdk-")));
 	cwd = path.join(root, "workspace");
 	const agentDir = path.join(root, "agent");
 	await fs.mkdir(path.join(cwd, ".pi", "extensions"), { recursive: true });

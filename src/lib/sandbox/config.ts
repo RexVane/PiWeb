@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { replaceFileAtomically } from "../atomic-file";
 import { withSettingsWriteLock, withExternalSettingsLock } from "../settings-write-lock";
 import { BoundaryError } from "../path-security";
+import { physicalPathProblem } from "./physical-path";
 
 export interface SandboxConfig {
 	/** 已 realpath 的物理绝对目录 */
@@ -43,17 +44,14 @@ async function resolveRoot(value: unknown): Promise<string> {
 	if (!raw) throw new BoundaryError("可写目录不能为空");
 	if (raw.length > MAX_PATH) throw new BoundaryError(`路径过长（上限 ${MAX_PATH}）`);
 	if (!path.isAbsolute(raw)) throw new BoundaryError(`必须是绝对路径：${raw}`);
-	let real: string;
-	try {
-		real = await fs.realpath(raw);
-	} catch (error) {
-		if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException)?.code ?? "")) throw new BoundaryError(`目录不存在：${raw}`);
-		throw error;
-	}
-	if (comparable(real) !== comparable(raw)) throw new BoundaryError(`不接受符号链接/junction 根目录：${raw}`);
-	const stat = await fs.stat(real);
-	if (!stat.isDirectory()) throw new BoundaryError(`不是目录：${raw}`);
-	return real;
+	// 逐级 lstat 而不是字符串比较 realpath：Windows 的 8.3 短名（CI 临时目录是
+	// `C:\Users\RUNNER~1\...`）与长名指向同一物理目录，字符串比较会误拒普通目录；
+	// 符号链接/junction 仍会被 lstat 报成链接并拒绝。
+	const problem = await physicalPathProblem(raw);
+	if (problem === "missing") throw new BoundaryError(`目录不存在：${raw}`);
+	if (problem === "link") throw new BoundaryError(`不接受符号链接/junction 根目录：${raw}`);
+	if (problem === "not-directory") throw new BoundaryError(`不是目录：${raw}`);
+	return fs.realpath(raw);
 }
 
 /** 读配置：坏条目跳过并告警，不让一个手滑的路径把 shell 弄没 */

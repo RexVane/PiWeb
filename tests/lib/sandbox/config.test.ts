@@ -62,7 +62,12 @@ describe("additionalWritableRoots", () => {
 	});
 
 	it("dedupes and caps the list", async () => {
-		const written = await config.writeSandboxConfig({ additionalWritableRoots: [shared, shared, shared.toUpperCase()] });
+		// Same directory spelled several ways: repeated, trailing separator, and (on the
+		// case-insensitive Windows filesystem) different letter case. POSIX paths are
+		// case-sensitive, so an upper-cased path would simply not exist there.
+		const duplicates = [shared, shared, shared + path.sep];
+		if (process.platform === "win32") duplicates.push(shared.toUpperCase());
+		const written = await config.writeSandboxConfig({ additionalWritableRoots: duplicates });
 		expect(written.additionalWritableRoots).toHaveLength(1);
 		const many = Array.from({ length: 9 }, (_, index) => path.join(root, `d${index}`));
 		for (const dir of many) await fs.mkdir(dir, { recursive: true });

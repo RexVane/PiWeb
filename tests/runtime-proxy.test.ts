@@ -4,6 +4,7 @@ import net from "node:net";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyRuntimeProxy, type UndiciModule } from "../src/lib/runtime-proxy";
+import { nodeSupportsEnvProxy } from "../scripts/proxy-env.mjs";
 import { runtimeRequire } from "../scripts/runtime-require.mjs";
 
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -102,6 +103,25 @@ describe("runtime proxy live switching", () => {
 		delete process.env.PIWEB_INHERITED_HTTPS_PROXY;
 		delete process.env.PIWEB_PROXY_SOURCE;
 
+		if (!nodeSupportsEnvProxy(process.versions.node)) {
+			// Node < 24 / < 22.21 does not support NODE_USE_ENV_PROXY, so the setting must
+			// still reach child processes while this process keeps its default dispatchers.
+			expect(applyRuntimeProxy(proxyA.url, { readSystemProxy: () => null })).toEqual({
+				proxy: proxyA.url, source: "settings", supported: false, activeInProcess: false,
+			});
+			expect(process.env.HTTP_PROXY).toBe(proxyA.url);
+			expect(process.env.HTTPS_PROXY).toBe(proxyA.url);
+			expect(process.env.PIWEB_PROXY_SOURCE).toBe("settings");
+			expect(loadGlobalDispatcherName()).toBe("Agent");
+			expect(applyRuntimeProxy("", { readSystemProxy: () => null })).toEqual({
+				proxy: null, source: "none", supported: true, activeInProcess: true,
+			});
+			expect(process.env.HTTP_PROXY).toBeUndefined();
+			expect(process.env.HTTPS_PROXY).toBeUndefined();
+			expect(process.env.PIWEB_PROXY_SOURCE).toBe("none");
+			return;
+		}
+
 		expect(applyRuntimeProxy(proxyA.url, { readSystemProxy: () => null })).toEqual({
 			proxy: proxyA.url, source: "settings", supported: true, activeInProcess: true,
 		});
@@ -134,22 +154,31 @@ describe("runtime proxy live switching", () => {
 		const envWithInherited: Record<string, string | undefined> = { HTTP_PROXY: "http://inherited:3128" };
 		const fakeHttp = { Agent: http.Agent, globalAgent: new http.Agent() };
 		const fakeHttps = { Agent: https.Agent, globalAgent: new https.Agent() };
+		// These assertions describe in-process proxy switching, which Node < 24 / < 22.21
+		// cannot activate; pin a supported runtime (and a stub undici) so the unit stays
+		// deterministic on every CI Node version. Host support is covered by the live test.
+		const fakeUndici = {
+			Agent: class {},
+			EnvHttpProxyAgent: class {},
+			setGlobalDispatcher: () => undefined,
+		} as unknown as UndiciModule;
+		const inProcess = { nodeVersion: "24.0.0", loadUndici: () => fakeUndici };
 
-		expect(applyRuntimeProxy("http://127.0.0.1:7890", { env: envWithInherited, readSystemProxy: () => null, httpModule: fakeHttp, httpsModule: fakeHttps })).toMatchObject({
+		expect(applyRuntimeProxy("http://127.0.0.1:7890", { ...inProcess, env: envWithInherited, readSystemProxy: () => null, httpModule: fakeHttp, httpsModule: fakeHttps })).toMatchObject({
 			proxy: "http://127.0.0.1:7890", source: "settings", activeInProcess: true,
 		});
 		expect(envWithInherited.HTTPS_PROXY).toBe("http://127.0.0.1:7890");
 		expect((fakeHttp.globalAgent as unknown as { options?: { proxyEnv?: Record<string, string | undefined> } }).options?.proxyEnv?.HTTP_PROXY).toBe("http://127.0.0.1:7890");
 
-		expect(applyRuntimeProxy("", { env: envWithInherited, readSystemProxy: () => ({ http: "http://system:8080", https: "http://system:8443", noProxy: "*.corp" }), httpModule: fakeHttp, httpsModule: fakeHttps })).toMatchObject({
+		expect(applyRuntimeProxy("", { ...inProcess, env: envWithInherited, readSystemProxy: () => ({ http: "http://system:8080", https: "http://system:8443", noProxy: "*.corp" }), httpModule: fakeHttp, httpsModule: fakeHttps })).toMatchObject({
 			proxy: "http://inherited:3128", source: "env", activeInProcess: true,
 		});
 		expect(envWithInherited.HTTP_PROXY).toBe("http://inherited:3128");
 		expect(envWithInherited.HTTPS_PROXY).toBeUndefined();
 
 		const envSystemOnly: Record<string, string | undefined> = {};
-		expect(applyRuntimeProxy("http://127.0.0.1:7890", { env: envSystemOnly, readSystemProxy: () => null, httpModule: fakeHttp, httpsModule: fakeHttps }).activeInProcess).toBe(true);
-		expect(applyRuntimeProxy("", { env: envSystemOnly, readSystemProxy: () => ({ http: "http://system:8080", https: "http://system:8443", noProxy: "*.internal.example" }), httpModule: fakeHttp, httpsModule: fakeHttps })).toMatchObject({
+		expect(applyRuntimeProxy("http://127.0.0.1:7890", { ...inProcess, env: envSystemOnly, readSystemProxy: () => null, httpModule: fakeHttp, httpsModule: fakeHttps }).activeInProcess).toBe(true);
+		expect(applyRuntimeProxy("", { ...inProcess, env: envSystemOnly, readSystemProxy: () => ({ http: "http://system:8080", https: "http://system:8443", noProxy: "*.internal.example" }), httpModule: fakeHttp, httpsModule: fakeHttps })).toMatchObject({
 			proxy: "http://system:8443", source: "system", activeInProcess: true,
 		});
 		expect(envSystemOnly.NO_PROXY).toBe("localhost,127.0.0.1,::1,*.internal.example");
@@ -164,7 +193,9 @@ describe("runtime proxy live switching", () => {
 		});
 		expect(oldNodeEnv.HTTP_PROXY).toBe("http://127.0.0.1:7890");
 
-		expect(applyRuntimeProxy("http://127.0.0.1:7890", { env: {}, loadUndici: () => null, httpModule: fakeHttp, httpsModule: fakeHttps })).toEqual({
+		// A supported runtime without a usable undici still exports the env proxy but
+		// cannot install the in-process dispatcher; pin the supported version explicitly.
+		expect(applyRuntimeProxy("http://127.0.0.1:7890", { env: {}, nodeVersion: "22.21.0", loadUndici: () => null, httpModule: fakeHttp, httpsModule: fakeHttps })).toEqual({
 			proxy: "http://127.0.0.1:7890", source: "settings", supported: true, activeInProcess: false,
 		});
 	});

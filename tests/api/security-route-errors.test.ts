@@ -50,9 +50,12 @@ it.each([sandboxPut, securityPut, directoryPost])("malformed JSON is a 400 with 
 it("directory validation remains actionable while actual read permission and I/O failures are 500", async () => {
 	const invalid = await directoryPost(request({ action: "list", path: "relative" }));
 	expect(invalid.status).toBe(400); expect(await invalid.json()).toMatchObject({ errorCode: "VALIDATION_ERROR" });
+	// The route requires an absolute path; pick a spelling that is absolute on this platform
+	// (the mocked realpath/readdir never touches the real filesystem).
+	const absoluteDirectory = process.platform === "win32" ? "C:\\directory" : "/private/directory";
 	for (const code of ["EACCES", "EIO"]) {
 		deps.readdir.mockRejectedValue(Object.assign(new Error(code + " C:\\private\\directory"), { code }));
-		const response = await directoryPost(request({ action: "list", path: "C:\\directory" }));
+		const response = await directoryPost(request({ action: "list", path: absoluteDirectory }));
 		const body = await response.json();
 		expect(response.status).toBe(500); expect(body.errorCode).toBe(code); expect(body.error).not.toContain("private");
 		expect(response.headers.get("Cache-Control")).toContain("no-store");

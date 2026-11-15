@@ -26,6 +26,7 @@ const windowsOnly = new Map([
 		"stops forwarding output past the limit but lets the command finish",
 		"cleans staged scripts after spawner failure and handles an already-aborted signal",
 		"fails closed for a missing or nonphysical writable root",
+		"accepts a writable root addressed through an 8.3 short name",
 		"supports a writable private temp without letting readonly use it",
 		"fails closed for a native Bash runtime instead of weakening global object isolation",
 	]],

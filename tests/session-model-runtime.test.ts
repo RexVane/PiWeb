@@ -19,7 +19,9 @@ const provider = (host: string) => ({
 });
 
 beforeAll(async () => {
-	root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-provider-isolation-"));
+	// Canonical root: pi keys resource loaders by realpath, and Windows temp dirs may be
+	// spelled with an 8.3 short name (`...\RUNNER~1\...`).
+	root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-provider-isolation-")));
 	const agentDir = path.join(root, "agent");
 	await fs.mkdir(agentDir);
 	await fs.writeFile(path.join(agentDir, "settings.json"), JSON.stringify({ defaultProjectTrust: "always", compaction: { enabled: false } }));

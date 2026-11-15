@@ -24,7 +24,9 @@ let outside: string;
 let linkPath: string;
 
 beforeAll(async () => {
-	base = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-permission-gate-"));
+	// Canonical base: resolveModelPath/judgeWritePath return realpaths, and on Windows
+	// the system temp dir may be spelled with an 8.3 short name (`...\RUNNER~1\...`).
+	base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-permission-gate-")));
 	await fs.mkdir(path.join(base, "workspace", "src"), { recursive: true });
 	await fs.mkdir(path.join(base, "outside"), { recursive: true });
 	workspace = await fs.realpath(path.join(base, "workspace"));

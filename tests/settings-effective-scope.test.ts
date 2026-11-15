@@ -110,6 +110,13 @@ it("reports extension load errors even when the SDK resolves reload successfully
 	await resourceLoaderReady(first);
 	expect(getResourceLoader(first).getExtensions().errors.length).toBeGreaterThan(0);
 	await expect(reloadAllLoaders()).rejects.toThrow("could not refresh");
+	// This file shares module-level loader caches across tests. On POSIX fixture roots
+	// are not removed by recycleFixture, so the broken extension would keep failing every
+	// later global refresh in this file; repair the cached loader before the test ends.
+	await fs.writeFile(path.join(first, ".pi", "settings.json"), "{}");
+	await fs.rm(path.join(first, "broken.mjs"), { force: true });
+	await resourceLoaderReady(first);
+	await expect(reloadAllLoaders()).resolves.toEqual(expect.any(Array));
 });
 
 it("plugin scope changes and resource fingerprints read JSONC consistently without rewriting user formatting", async () => {

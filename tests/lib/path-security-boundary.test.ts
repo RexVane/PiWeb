@@ -38,9 +38,16 @@ afterEach(async () => {
 
 describe("path boundary helpers", () => {
 	it("compares normalized paths instead of string prefixes", () => {
-		expect(isPathInside("C:\\work\\app", "C:\\work\\app\\src\\..\\file.ts")).toBe(true);
-		expect(isPathInside("C:\\work\\app", "C:\\work\\application\\x")).toBe(false);
-		expect(samePath("C:\\work\\app", "C:/work/app/")).toBe(true);
+		// The helpers resolve with the platform path module, so use spellings of the
+		// running platform instead of assuming Windows separators everywhere.
+		const windows = process.platform === "win32";
+		const root = windows ? "C:\\work\\app" : "/work/app";
+		const sibling = windows ? "C:\\work\\application\\x" : "/work/application/x";
+		// The same directory with the other separator spelling and a trailing slash.
+		const alternate = windows ? "C:/work/app/" : root + "/";
+		expect(isPathInside(root, path.join(root, "src", "..", "file.ts"))).toBe(true);
+		expect(isPathInside(root, sibling)).toBe(false);
+		expect(samePath(root, alternate)).toBe(true);
 	});
 });
 
