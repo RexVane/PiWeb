@@ -1,6 +1,8 @@
 import type { TrajEntry, WebMessage } from "../types";
 
-export const MAX_VISIBLE_MESSAGES = 300;
+// Live snapshots/SSE carry at most this many recent messages; older messages stay on disk and
+// load on demand through SessionHistory. Raised from 300 so ordinary long chats stay complete.
+export const MAX_VISIBLE_MESSAGES = 1000;
 export const MAX_VISIBLE_TRAJECTORY = 1000;
 export const MAX_VISIBLE_TOOLS = 500;
 const MAX_PAGE_BYTES = 5 * 1024 * 1024;

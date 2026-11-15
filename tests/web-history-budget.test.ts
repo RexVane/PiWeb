@@ -35,7 +35,7 @@ describe("bounded web history", () => {
 		expect(previewMessage(original)).toMatchObject({ truncated: true });
 		expect(JSON.stringify(previewMessage(original)).length).toBeLessThan(101_000);
 		expect(original.content[0]).toHaveProperty("text", "x".repeat(2_000_000));
-		expect(recentMessages(Array.from({ length: 1000 }, (_, index) => message(index))).length).toBe(300);
+		expect(recentMessages(Array.from({ length: 1000 }, (_, index) => message(index))).length).toBe(1000);
 		expect(recentTrajectory(Array.from({ length: 1500 }, (_, seq) => ({ seq, kind: "tool", ts: seq }))).length).toBe(1000);
 	});
 	it("shares the byte budget across all nested tool results", () => {
