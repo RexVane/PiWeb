@@ -20,6 +20,7 @@ import dynamic from "next/dynamic";
 import { SessionSidebar, type WorkspaceView } from "@/components/SessionSidebar";
 import type { DrawerSection } from "@/components/DrawerPanel";
 import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
+import { canonicalDraftPath, knownWorkspaceCwds, sameWorkspacePath } from "@/lib/workspace-path";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
 const PluginsWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.PluginsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
@@ -43,12 +44,7 @@ const SessionStatsBar = dynamic(() => import("@/components/ChatWindow").then((m)
 const SessionHistory = dynamic(() => import("@/components/SessionHistory").then((m) => m.SessionHistory), { ssr: false });
 const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
 
-/** 会话/工作区路径比较（Windows 大小写与分隔符差异不该影响判断） */
-function canonicalDraftPath(value: string): string {
-	const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
-	return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized;
-}
-const samePath = (a: string, b: string): boolean => canonicalDraftPath(a) === canonicalDraftPath(b);
+const samePath = sameWorkspacePath;
 const DrawerPanel = dynamic(() => import("@/components/DrawerPanel").then((m) => m.DrawerPanel), { ssr: false });
 const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m.FileViewer), { ssr: false });
 // Git 面板不再由 AppShell 直接渲染:它现在是抽屉里的一个入口(DrawerPanel 内部按需加载)
@@ -467,14 +463,10 @@ export function AppShell() {
 	// 未选择时输入框仍可用，发送会提示先选择工作区。
 	// 已删除工作区要过滤（与会话栏分组同口径）：否则它下面残留的会话 cwd
 	// 会把刚删掉的工作区重新喂回顶部下拉。
-	const knownCwds = useMemo(() => {
-		const removed = new Set(removedWorkspaces.map((w) => w.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()));
-		const keep = (cwd: string) => {
-			const norm = cwd.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-			return Boolean(norm) && !removed.has(norm);
-		};
-		return Array.from(new Set([...addedWorkspaces].reverse().concat(sessions.map((s) => s.cwd)).filter(keep)));
-	}, [addedWorkspaces, sessions, removedWorkspaces]);
+	const knownCwds = useMemo(
+		() => knownWorkspaceCwds(addedWorkspaces, removedWorkspaces, sessions.map((s) => s.cwd)),
+		[addedWorkspaces, sessions, removedWorkspaces],
+	);
 
 	// 模型目录派生值：数百个模型对象的映射只在目录变化时重算，
 	// 不能跟着每次 token 增量 / 3 秒轮询重跑（usePiWeb 的 setState 都会触发本组件渲染）
