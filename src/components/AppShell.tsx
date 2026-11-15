@@ -136,6 +136,9 @@ export function AppShell() {
 		currentId,
 		currentPath,
 		state,
+		hasEarlier,
+		loadingEarlier,
+		loadEarlierMessages,
 		models,
 		addedWorkspaces,
 		removedWorkspaces,
@@ -1348,6 +1351,9 @@ export function AppShell() {
 									onEditMessage={doEditMessage}
 									roundBadges={roundBadges}
 									onShowRound={showRound}
+									hasEarlier={hasEarlier}
+									loadingEarlier={loadingEarlier}
+									onLoadEarlier={loadEarlierMessages}
 								/>
 								<div className="px-4 pb-3 pt-2">
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>

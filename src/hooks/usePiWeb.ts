@@ -612,6 +612,11 @@ export function usePiWeb() {
 	const [currentId, setCurrentId] = useState<string | null>(null);
 	const [currentPath, setCurrentPath] = useState<string | null>(null);
 	const [state, setState] = useState<PiWebState>(emptyState);
+	/** 无限滚动加载更早消息时读取最新快照，避免把过期闭包里的 omitted 当成游标。 */
+	const stateRef = useRef(state);
+	stateRef.current = state;
+	const [loadingEarlier, setLoadingEarlier] = useState(false);
+	const loadingEarlierRef = useRef(false);
 	/** 当前 SSE 连接的增量批量器：按帧合并事件，避免每个 token 一次整树渲染 */
 	const batcherRef = useRef<EventBatcher<WebEvent> | null>(null);
 	const [models, setModels] = useState<{ providers: any[]; models: any[] } | null>(null);
@@ -1568,6 +1573,39 @@ export function usePiWeb() {
 		);
 	}, [sessions, archivedSessionPaths, archivedAt]);
 
+	// 无限滚动：滚到聊天顶部时自动加载上一页更早的记录（替代原来的“查看更早的聊天记录”按钮）。
+	const loadEarlierMessages = useCallback(async () => {
+		const sessionId = currentId;
+		const omitted = stateRef.current.snapshot?.history?.omitted ?? 0;
+		if (!sessionId || omitted <= 0 || loadingEarlierRef.current) return;
+		loadingEarlierRef.current = true;
+		setLoadingEarlier(true);
+		try {
+			const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/history?before=${omitted}`);
+			if (!response.ok) return;
+			const body = (await response.json()) as { success?: boolean; data?: { messages?: WebMessage[]; total?: number; olderBefore?: number } };
+			const page = body.success ? body.data : undefined;
+			if (!page || !Array.isArray(page.messages)) return;
+			setState((previous) => {
+				if (activeSessionRef.current !== sessionId || !previous.snapshot) return previous;
+				const seen = new Set(previous.messages.map((message) => message.id).filter((id): id is string => typeof id === "string"));
+				const older = page.messages!.filter((message) => !message.id || !seen.has(message.id));
+				const history = { total: page.total ?? previous.snapshot.history?.total ?? 0, omitted: page.olderBefore ?? 0 };
+				if (!older.length) return { ...previous, snapshot: { ...previous.snapshot, history } };
+				return { ...previous, messages: [...older, ...previous.messages], snapshot: { ...previous.snapshot, history } };
+			});
+		} catch {
+			// 加载失败保留当前视图；下一次滚到顶部会重试。
+		} finally {
+			loadingEarlierRef.current = false;
+			setLoadingEarlier(false);
+		}
+	}, [currentId]);
+	useEffect(() => {
+		loadingEarlierRef.current = false;
+		setLoadingEarlier(false);
+	}, [currentId]);
+
 	return {
 		sessions: sessionSearch ? sessions : visibleSessions,
 		searchSessions,
@@ -1585,6 +1623,9 @@ export function usePiWeb() {
 		currentId,
 		currentPath,
 		state,
+		hasEarlier: (state.snapshot?.history?.omitted ?? 0) > 0,
+		loadingEarlier,
+		loadEarlierMessages,
 		models,
 		addedWorkspaces,
 		removedWorkspaces,

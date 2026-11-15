@@ -2217,6 +2217,9 @@ export function ChatWindow({
 	onOpenPath,
 	roundBadges,
 	onShowRound,
+	hasEarlier = false,
+	loadingEarlier = false,
+	onLoadEarlier,
 }: {
 	messages: WebMessage[];
 	tools: Record<string, ToolCardState>;
@@ -2245,6 +2248,11 @@ export function ChatWindow({
 	onOpenPath?: (path: string) => void;
 	roundBadges?: ReadonlyMap<string, RoundBadge>;
 	onShowRound?: (commit: string) => void;
+	/** 顶部还有更早的消息可通过向上滚动加载 */
+	hasEarlier?: boolean;
+	/** 正在加载上一页更早的消息 */
+	loadingEarlier?: boolean;
+	onLoadEarlier?: () => void;
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
@@ -2305,6 +2313,18 @@ export function ChatWindow({
 	// 工作指示 / 重试行挂在最后一个真正的回合上，压缩卡追加在末尾时也不抢走
 	const lastContentTurn = useMemo(() => turns.findLastIndex((turn) => turn.summaryIndex === undefined), [turns]);
 	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
+	// 向上滚动加载更早消息时的滚动位置锚点：插入后把视口留在原处，而不是跳到旧内容顶部。
+	const earlierAnchor = useRef<{ height: number; top: number } | null>(null);
+	const earlierLength = useRef(messages.length);
+	useLayoutEffect(() => {
+		const anchor = earlierAnchor.current;
+		const scroller = scrollRef.current;
+		if (anchor && scroller && messages.length > earlierLength.current) {
+			scroller.scrollTop = anchor.top + (scroller.scrollHeight - anchor.height);
+			earlierAnchor.current = null;
+		}
+		earlierLength.current = messages.length;
+	}, [messages.length]);
 
 	// ---------- 回合懒渲染 ----------
 	// 打开长会话时快照一次性带来上百回合，每回合的 react-markdown + 代码高亮同步执行，
@@ -2525,10 +2545,25 @@ export function ChatWindow({
 						else stickToBottom.current = atBottom;
 						setAwayFromBottom(!atBottom);
 						if (atBottom) setUnseen(0);
+						// 滚到顶部附近时自动加载上一页更早的消息（无限滚动，不再有按钮）。
+						if (node.scrollTop < 80 && hasEarlier && !loadingEarlier) {
+							earlierAnchor.current = { height: node.scrollHeight, top: node.scrollTop };
+							onLoadEarlier?.();
+						}
 						scheduleUpgradeCheck();
 					}}
 				>
 					<div className="mx-auto flex w-full flex-col px-4 py-6" style={{ maxWidth: "var(--dsh-chat-content-width)" }}>
+						{loadingEarlier && (
+							<div className="mx-auto mb-2 flex items-center gap-2" role="status">
+								<span
+									className="piweb-spin"
+									style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--dsw-border-l3)", borderTopColor: "var(--dsw-accent)", display: "inline-block" }}
+									aria-label="loading earlier messages"
+								/>
+								<span style={{ color: "var(--dsw-label-secondary)", fontSize: "var(--dsh-ui-font-sm)" }}>{t.loadingEarlierMessages}</span>
+							</div>
+						)}
 						{turns.map((turn, ti) => (
 							// 回合间 28px 的分隔挂在槽上：用户消息现在总是槽里的第一个子元素，它自己的 mt-7 会被 first:mt-0 吃掉
 							<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className="mt-7 first:mt-0">
