@@ -3,7 +3,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import lockfile from "proper-lockfile";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
-import { BoundaryError, samePath } from "./path-security";
+// 叶子模块：BoundaryError/samePath 从 path-boundary 取，避免
+// pi → jsonc-settings-storage → path-security → pi 的 import 循环。
+import { BoundaryError, samePath } from "./path-boundary";
+import { syncDirectorySync, syncFileSync } from "./atomic-file";
 import { windowsDirectoryApiSync } from "./sandbox/windows-file-operations";
 
 const MAX_BYTES = 1024 * 1024;
@@ -150,13 +153,26 @@ function withJsoncSettingsFileSync(file: string, fn: (current: string | undefine
 			const result = edit(original ?? "{}\n", before, objectFrom(next));
 			if (Buffer.byteLength(result) > MAX_BYTES) throw new Error("Settings output exceeds the supported size limit");
 			const temporary = file + "." + randomUUID() + ".tmp";
+			// no-unsafe-finally（K1）：finally 里 throw/return 会顶掉主错误；清理与主操作分开记录，
+			// 清理失败仍按原语义优先抛出。
+			let writeError: unknown;
 			try {
 				fs.writeFileSync(temporary, result, { encoding: "utf8", mode: 0o600, flag: "wx" });
+				// 断电持久性（D3）：rename 发布前先把内容刷盘，发布后刷目录项（不可用时降级）。
+				syncFileSync(temporary);
 				for (let attempt = 0; ; attempt++) {
 					try { rename(temporary); break; }
 					catch (error) { if (!["EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "") || attempt >= 9) throw error; pause(Math.min(25 * (attempt + 1), 100)); }
 				}
-			} finally { try { fs.unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
+				syncDirectorySync(path.dirname(file));
+			} catch (error) {
+				writeError = error;
+			}
+			let cleanupError: unknown;
+			try { fs.unlinkSync(temporary); }
+			catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") cleanupError = error; }
+			if (cleanupError !== undefined) throw cleanupError;
+			if (writeError !== undefined) throw writeError;
 		} finally { release?.(); }
 	});
 }

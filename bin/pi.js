@@ -7,7 +7,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { terminateProcessTree } from "../scripts/process-runner.mjs";
+import { terminateProcessTreeGracefully } from "../scripts/process-runner.mjs";
 import { isMainModule } from "../scripts/entrypoint.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,9 +21,10 @@ const utf8Env = {
 const rawArgs = process.argv.slice(2);
 const firstArg = rawArgs[0]?.trim().toLowerCase();
 export function supervise(child) {
-	const stop = () => { void terminateProcessTree(child).catch((error) => { console.error(`[piweb] 停止失败：${error.message}`); process.exitCode = 1; }); };
-	const interrupt = () => stop("SIGINT");
-	const terminate = () => stop("SIGTERM");
+	// 先请求子进程自己收尾（next start / pi-coding-agent 的停机钩子），超时才强杀整棵进程树。
+	const stop = () => { void terminateProcessTreeGracefully(child).catch((error) => { console.error(`[piweb] 停止失败：${error.message}`); process.exitCode = 1; }); };
+	const interrupt = () => stop();
+	const terminate = () => stop();
 	process.once("SIGINT", interrupt);
 	process.once("SIGTERM", terminate);
 	child.once("error", (error) => { process.off("SIGINT", interrupt); process.off("SIGTERM", terminate); console.error(`[piweb] 启动失败：${error.message}`); process.exitCode = 1; });

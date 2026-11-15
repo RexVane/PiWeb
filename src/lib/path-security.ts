@@ -1,23 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { decodeSessionId, getAgentDir, isSessionId } from "./pi";
+import { BoundaryError, isPathInside, samePath } from "./path-boundary";
 
-export class BoundaryError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "BoundaryError";
-	}
-}
-
-function comparable(filePath: string): string {
-	const resolved = path.resolve(filePath);
-	return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
-
-export function isPathInside(root: string, candidate: string): boolean {
-	const relative = path.relative(comparable(root), comparable(candidate));
-	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
+export { BoundaryError, isPathInside, samePath } from "./path-boundary";
 
 export async function resolveSessionPath(id: string, options?: { allowPending?: boolean }): Promise<string> {
 	if (!isSessionId(id)) throw new BoundaryError("invalid session id");
@@ -60,6 +46,49 @@ export async function resolveSessionPath(id: string, options?: { allowPending?: 
 	}
 }
 
+/**
+ * 可选严格工作区模式（默认关闭，保持现状）：
+ * `PIWEB_FS_STRICT_WORKSPACES=1` 时，`resolveWorkspacePath` 除了原有的存在性/目录校验，
+ * 还要求目标位于「已注册工作区」或 `PIWEB_FS_ALLOWED_ROOTS`（用 path.delimiter 分隔）之内。
+ * 认证后的文件接口因此不再能拿任意现存目录当 cwd；未开启时行为逐字不变。
+ */
+export function strictWorkspaceModeEnabled(): boolean {
+	const raw = process.env.PIWEB_FS_STRICT_WORKSPACES?.trim().toLowerCase();
+	return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/** 显式允许的根目录（严格模式用）：部署方可以给出工作区之外但明确可用的目录。 */
+function configuredAllowedRoots(): string[] {
+	return (process.env.PIWEB_FS_ALLOWED_ROOTS ?? "")
+		.split(path.delimiter)
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
+/** 已注册工作区根：读注册表失败时按「没有注册」处理，不影响普通路径校验的报错口径。 */
+async function registeredWorkspaceRoots(): Promise<string[]> {
+	try {
+		const { listAdded } = await import("./workspace-store");
+		return await listAdded();
+	} catch {
+		return [];
+	}
+}
+
+async function assertStrictWorkspace(real: string): Promise<void> {
+	const roots = [...configuredAllowedRoots(), ...await registeredWorkspaceRoots()];
+	for (const root of roots) {
+		let realRoot: string;
+		try {
+			realRoot = await fs.realpath(root);
+		} catch {
+			realRoot = path.resolve(root);
+		}
+		if (isPathInside(realRoot, real)) return;
+	}
+	throw new BoundaryError("workspace is not registered; add it as a workspace or set PIWEB_FS_ALLOWED_ROOTS");
+}
+
 export async function resolveWorkspacePath(value: unknown): Promise<string> {
 	if (typeof value !== "string" || value.trim().length === 0 || value.length > 4096) {
 		throw new BoundaryError("invalid workspace path");
@@ -69,11 +98,8 @@ export async function resolveWorkspacePath(value: unknown): Promise<string> {
 	});
 	const stat = await fs.stat(real);
 	if (!stat.isDirectory()) throw new BoundaryError("workspace is not a directory");
+	if (strictWorkspaceModeEnabled()) await assertStrictWorkspace(real);
 	return real;
-}
-
-export function samePath(left: string, right: string): boolean {
-	return comparable(left) === comparable(right);
 }
 
 export async function resolveDiscoveredPath(requested: string, allowed: string[]): Promise<string> {

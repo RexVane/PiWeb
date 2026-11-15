@@ -5,7 +5,8 @@ import path from "node:path";
 import type osTypes from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../src/app/api/remote/route";
-import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanEnabled, remoteLanPort, remotePluginEnabled, remoteStatus, resetRemoteSupervisor, setRemotePluginEnabled, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
+import { allowTunnelHost, createUrlCatcher, disallowTunnelHost, lanAddresses, managedEnginePath, piwebPort, remoteBlocked, remoteLanBind, remoteLanEnabled, remoteLanPort, remotePluginEnabled, remoteStatus, resetRemoteSupervisor, setRemotePluginEnabled, shutdownRemote, startLan, stopAll, tunnelEngine } from "../src/lib/remote/supervisor";
+import { getRegisteredShutdownHooks } from "../src/lib/graceful-shutdown";
 
 const saved = process.env.PI_WEB_TRUSTED_HOSTS;
 const savedAuth = process.env.PI_WEB_AUTH;
@@ -136,6 +137,30 @@ describe("LAN entry lifecycle", () => {
 		expect(second.running).toBe(true);
 		expect(first.error).toBeNull();
 		expect(second.error).toBeNull();
+	});
+
+	it("keeps 0.0.0.0 as the default bind address and allows PIWEB_REMOTE_LAN_BIND to override it", () => {
+		expect(remoteLanBind({})).toBe("0.0.0.0");
+		expect(remoteLanBind({ PIWEB_REMOTE_LAN_BIND: "127.0.0.1" })).toBe("127.0.0.1");
+		expect(remoteLanBind({ PIWEB_REMOTE_LAN_BIND: " 192.168.5.44 " })).toBe("192.168.5.44");
+		expect(remoteLanBind({ PIWEB_REMOTE_LAN_BIND: "   " })).toBe("0.0.0.0");
+	});
+});
+
+describe("remote shutdown hook (L5)", () => {
+	it("registers a named shutdown hook with the process-wide graceful shutdown", () => {
+		expect(getRegisteredShutdownHooks()).toContain("remote");
+	});
+
+	it("stops the LAN entry and is safe to call repeatedly", async () => {
+		const port = await freePort();
+		await startLan(port, "127.0.0.1", 1);
+		expect(remoteStatus().lan.running).toBe(true);
+		await expect(shutdownRemote()).resolves.toBeUndefined();
+		expect(remoteStatus().lan.running).toBe(false);
+		// 重复调用（例如多个钩子/二次信号）不能让收尾抛错
+		await expect(shutdownRemote()).resolves.toBeUndefined();
+		await expect(stopAll()).resolves.toBeUndefined();
 	});
 });
 

@@ -25,9 +25,55 @@ interface Entry {
 	stamp: string;
 	value?: JsonObject;
 	error?: Error;
+	/** 写入时间：TTL 到期后重新读盘（只影响读缺失/读失败条目停留多久，校验戳仍决定是否回源）。 */
+	at: number;
 }
 
 const cache = new Map<string, Entry>();
+
+/**
+ * 缓存上限（L4）：正常使用只会读个位数的配置文件，这里只是防止「按工作区/路径无限增长」。
+ * 默认宽松（容量 512、TTL 30 分钟），可用 env 收紧或关闭 TTL。
+ */
+function cacheMaxEntries(): number {
+	const raw = Number(process.env.PIWEB_AGENT_CONFIG_CACHE_MAX);
+	return Number.isSafeInteger(raw) && raw > 0 ? raw : 512;
+}
+
+function cacheTtlMs(): number {
+	const raw = Number(process.env.PIWEB_AGENT_CONFIG_CACHE_TTL_MS);
+	return Number.isFinite(raw) && raw > 0 ? raw : 30 * 60_000;
+}
+
+function touch(file: string, entry: Entry): void {
+	cache.delete(file);
+	cache.set(file, entry);
+}
+
+/** 存入并维持容量上限：淘汰最早插入的键（读访问会重新插入，近似 LRU）。 */
+function store(file: string, entry: Entry): void {
+	touch(file, entry);
+	const max = cacheMaxEntries();
+	while (cache.size > max) {
+		const oldest = cache.keys().next().value;
+		if (oldest === undefined) break;
+		cache.delete(oldest);
+	}
+}
+
+/** 校验戳命中才复用；TTL 到期强制回源（行为与「文件没变」一致，只是多一次 stat）。 */
+function cachedEntry(file: string, stamp: string): Entry | undefined {
+	const entry = cache.get(file);
+	if (!entry || entry.stamp !== stamp) return undefined;
+	const ttl = cacheTtlMs();
+	if (ttl > 0 && Date.now() - entry.at > ttl) {
+		cache.delete(file);
+		return undefined;
+	}
+	touch(file, entry);
+	return entry;
+}
+
 
 /** 校验戳：mtime + ctime + 大小 + inode，任一变化都回源 */
 function stampOf(stat: { mtimeMs: number; ctimeMs: number; size: number; ino: number }): string {
@@ -54,14 +100,14 @@ async function readEntry(file: string): Promise<Entry> {
 		stat = await fs.stat(file);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		const missing: Entry = { stamp: "missing", value: {} };
-		cache.set(file, missing);
+		const missing: Entry = { stamp: "missing", value: {}, at: Date.now() };
+		store(file, missing);
 		return missing;
 	}
 	const stamp = stampOf(stat);
-	const cached = cache.get(file);
-	if (cached && cached.stamp === stamp) return cached;
-	const entry: Entry = { stamp };
+	const cached = cachedEntry(file, stamp);
+	if (cached) return cached;
+	const entry: Entry = { stamp, at: Date.now() };
 	try {
 		const text = path.basename(file).toLowerCase() === "settings.json"
 			? (await readFileBounded(file, 1024 * 1024)).toString("utf8") : await fs.readFile(file, "utf8");
@@ -69,7 +115,7 @@ async function readEntry(file: string): Promise<Entry> {
 	} catch (error) {
 		entry.error = error as Error;
 	}
-	cache.set(file, entry);
+	store(file, entry);
 	return entry;
 }
 
@@ -102,18 +148,15 @@ export async function readJsonObjectSafe(file: string): Promise<JsonObject> {
 export function readJsonObjectSync(file: string): JsonObject {
 	try {
 		const stamp = stampOf(statSync(file));
-		const cached = cache.get(file);
-		let entry: Entry;
-		if (cached && cached.stamp === stamp) {
-			entry = cached;
-		} else {
-			entry = { stamp };
+		let entry = cachedEntry(file, stamp);
+		if (!entry) {
+			entry = { stamp, at: Date.now() };
 			try {
 				entry.value = path.basename(file).toLowerCase() === "settings.json" ? readJsoncSettingsObjectSync(file) : parseJsonObject(readFileSync(file, "utf8"), file);
 			} catch (error) {
 				entry.error = error as Error;
 			}
-			cache.set(file, entry);
+			store(file, entry);
 		}
 		if (entry.error) throw entry.error;
 		return copyOf(entry.value);
@@ -125,6 +168,11 @@ export function readJsonObjectSync(file: string): JsonObject {
 /** 写路径改完文件后调用：同一毫秒内的等长写入不会改变校验戳，缓存必须被显式作废。 */
 export function invalidateJsonFile(file: string): void {
 	cache.delete(file);
+}
+
+/** 诊断/测试用：当前缓存条目数与生效上限（L4 容量/TTL 上限的可观测入口）。 */
+export function getAgentConfigCacheStats(): { entries: number; maxEntries: number; ttlMs: number } {
+	return { entries: cache.size, maxEntries: cacheMaxEntries(), ttlMs: cacheTtlMs() };
 }
 
 /**

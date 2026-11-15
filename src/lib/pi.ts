@@ -114,6 +114,29 @@ const settingsCache = new Map<string, SettingsManager>();
 /** 缓存键 → 原始目录。键在 Windows 上是小写的，不能拿它当目录交给 SDK 或算资源指纹 */
 const settingsCwds = new Map<string, string>();
 
+/**
+ * 缓存容量上限（L4）：`settingsCache` / `loaderCache` / `packageManagerCache` 都按工作区
+ * 长期保留，工作区一多就只增不减。默认 512 远大于正常使用规模，超限只淘汰最早插入的
+ * 条目（运行中的会话持有自己的实例引用，不受缓存淘汰影响）；env 可收紧。
+ */
+function piCacheMaxEntries(): number {
+	const raw = Number(process.env.PIWEB_PI_CACHE_MAX);
+	return Number.isSafeInteger(raw) && raw > 0 ? raw : 512;
+}
+
+/** 把 SettingsManager 缓存写下并保持两个同键缓存同步（settingsCwds 不能残留孤儿键）。 */
+function rememberSettingsManager(key: string, sm: SettingsManager, cwd: string): void {
+	settingsCache.set(key, sm);
+	settingsCwds.set(key, cwd);
+	const max = piCacheMaxEntries();
+	for (const oldest of settingsCache.keys()) {
+		if (settingsCache.size <= max) break;
+		settingsCache.delete(oldest);
+		settingsCwds.delete(oldest);
+	}
+}
+
+
 // ---------- 项目信任（与 pi 终端同一份 ~/.pi/agent/trust.json） ----------
 
 let trustStore: { agentDir: string; store: ProjectTrustStore } | null = null;
@@ -273,8 +296,7 @@ export function getSettingsManager(cwd: string): SettingsManager {
 	let sm = settingsCache.get(key);
 	if (!sm) {
 		sm = SettingsManagerClass.fromStorage(new JsoncSettingsStorage(resolved, getAgentDir()), { projectTrusted: resolveProjectTrust(resolved).trusted });
-		settingsCache.set(key, sm);
-		settingsCwds.set(key, resolved);
+		rememberSettingsManager(key, sm, resolved);
 	}
 	return sm;
 }
@@ -293,6 +315,15 @@ interface LoaderEntry {
 import { resourceFingerprint as fingerprintResources } from "./resource-fingerprint";
 
 const loaderCache = new Map<string, LoaderEntry>();
+
+/** 发现缓存也按工作区只增不减：超限淘汰最早插入的条目（L4）。 */
+function enforceLoaderCacheLimit(): void {
+	const max = piCacheMaxEntries();
+	for (const oldest of loaderCache.keys()) {
+		if (loaderCache.size <= max) break;
+		loaderCache.delete(oldest);
+	}
+}
 
 const nonInstallingManagers = new WeakSet<object>();
 /** The installed SDK has no loader-level missing-source option; scope its public resolver to this loader. */
@@ -370,6 +401,7 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "", packageRoots: [] };
 		disableImplicitPackageInstall(loader);
 		loaderCache.set(key, entry);
+		enforceLoaderCacheLimit();
 		queueLoaderReload(cwd, entry);
 	}
 	return entry.loader;
@@ -407,7 +439,9 @@ export function resourceLoaderVersion(cwd: string): number {
 /** 等待某 cwd 的加载器完成发现；消费 loader 前必须 await（ensureSession / 快照 / 技能面板等）。 */
 export async function resourceLoaderReady(cwd: string): Promise<void> {
 	getResourceLoader(cwd);
-	await loaderCache.get(loaderKey(cwd))!.ready;
+	const entry = loaderCache.get(loaderKey(cwd));
+	// 缓存超限淘汰与这次调用之间可能把条目删掉：重新创建过一次就不会再被删（容量只会继续增长到下一个上限）。
+	if (entry) await entry.ready;
 }
 
 function resourceFingerprint(cwd: string): string {
@@ -499,6 +533,15 @@ export async function reloadAllLoaders(): Promise<string[]> {
 
 const packageManagerCache = new Map<string, DefaultPackageManager>();
 
+/** 包管理器缓存同样按工作区增长：超限淘汰最早插入的条目（L4）。 */
+function enforcePackageManagerCacheLimit(): void {
+	const max = piCacheMaxEntries();
+	for (const oldest of packageManagerCache.keys()) {
+		if (packageManagerCache.size <= max) break;
+		packageManagerCache.delete(oldest);
+	}
+}
+
 export function getPackageManager(cwd: string): DefaultPackageManager {
 	const resolved = path.resolve(cwd);
 	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -510,6 +553,7 @@ export function getPackageManager(cwd: string): DefaultPackageManager {
 			settingsManager: getSettingsManager(resolved),
 		}));
 		packageManagerCache.set(key, packageManager);
+		enforcePackageManagerCacheLimit();
 	}
 	return packageManager;
 }

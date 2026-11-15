@@ -80,12 +80,19 @@ describe("update command runner without real subprocesses", () => {
 		mocks.spawn.mockReturnValue(child);
 		const task = runCommand("npm", ["run", "check"], { cwd: "/temporary/install", env: {} });
 		const failure = expect(task).rejects.toThrow("build failed");
-		const invocation = npmCommand(["run", "check"], {});
-		expect(mocks.spawn.mock.calls[0][0]).toBe(invocation.command);
-		expect(mocks.spawn.mock.calls[0][1]).toEqual(invocation.args);
-		child.stderr.write("build failed");
-		child.emit("close", 1);
-		await failure;
+		try {
+			const invocation = npmCommand(["run", "check"], {});
+			expect(mocks.spawn.mock.calls[0][0]).toBe(invocation.command);
+			expect(mocks.spawn.mock.calls[0][1]).toEqual(invocation.args);
+			child.stderr.write("build failed");
+			child.emit("close", 1);
+			await failure;
+		} catch (error) {
+			// E-7: observe the rejection assertion even when a setup step throws first,
+			// otherwise the unawaited `rejects` promise masks the real failure.
+			await failure.catch(() => {});
+			throw error;
+		}
 	});
 	it.skipIf(process.platform !== "win32")("reports a failed process-tree termination instead of claiming every descendant stopped", async () => {
 		const child = fakeChild(12345), killer = fakeChild(67890);

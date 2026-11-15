@@ -9,6 +9,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { parseNumstat, resolveGitBin } from "./growth-service";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
+import { gitEnv } from "./child-process-env";
 import { utf8Prefix } from "./text-sanitize";
 
 const exec = promisify(execFile);
@@ -63,10 +64,13 @@ const EMPTY: GitInfo = {
 /** 单次差异输出上限：超过则截断并标记（详情栏不是完整的 diff 工具） */
 const MAX_DIFF_BYTES = 400 * 1024;
 const SAFE_GIT_ARGS = ["-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "core.hooksPath=", "-c", "i18n.logOutputEncoding=UTF-8", "-c", "core.pager=cat", "-c", "core.quotePath=false"];
+/**
+ * A6/G3：git 子进程不再整体继承 `process.env`。`gitEnv` 默认剥掉名字像凭据的变量
+ * （启动令牌/provider key/代理口令）并移除继承的 GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+ * 等会话注入变量；PATH/HOME/LC_ALL 及 git 正常联网所需变量保留，`extra` 补 git 必需值。
+ */
 function gitEnvironment(cwd: string): NodeJS.ProcessEnv {
-	const environment = { ...process.env };
-	for (const key of Object.keys(environment)) if (/^GIT_(?:DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|CONFIG(?:_|$))/.test(key)) delete environment[key];
-	return { ...environment, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_CEILING_DIRECTORIES: path.dirname(cwd), LC_ALL: "C" };
+	return gitEnv({ GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_CEILING_DIRECTORIES: path.dirname(cwd), LC_ALL: "C" }) as NodeJS.ProcessEnv;
 }
 
 /** 与生长记录共用解析出的 git（macOS 从 GUI / launchd 启动时 PATH 里常常没有 Homebrew 的 git） */

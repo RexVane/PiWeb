@@ -9,6 +9,12 @@ const POLL_BATCH_MS = 50;
 const POLL_HOLD_MS = 25_000;
 /** 轮询模式：两次请求之间仍算有人在看（扩展弹窗不被当成无人值守、会话不被回收） */
 const POLL_VIEWER_GRACE_MS = 30_000;
+/** SSE 慢客户端背压上限：单条连接排队未读字节超过该值就断开（默认 4MiB，env 可调）。 */
+const DEFAULT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+function maxBufferedBytes(): number {
+	const raw = Number(process.env.PIWEB_SSE_MAX_BUFFERED_BYTES);
+	return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_BUFFERED_BYTES;
+}
 
 /**
  * SSE：先推完整快照，再推增量；心跳保活；断线由浏览器 EventSource 自动重连（带 Last-Event-ID）。
@@ -42,6 +48,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	let ping: ReturnType<typeof setInterval> | null = null;
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let batchTimer: ReturnType<typeof setTimeout> | null = null;
+	/** 这条连接的队列上限（按字节）：慢客户端积压超过它就断开。 */
+	const bufferedLimit = maxBufferedBytes();
 
 	const stop = () => {
 		closed = true;
@@ -60,6 +68,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 					controller.enqueue(encoder.encode(chunk));
 				} catch {
 					// 流已经被对端关掉 / 出错：收尾退订，别让异常顺着 publish 抛回会话
+					close();
+					return;
+				}
+				// L7 背压：队列按字节计量，desiredSize <= 0 表示慢客户端未读积压已达到上限。
+				// 继续 enqueue 只会把内存撑大，这里主动断开；浏览器按 Last-Event-ID 重连续放。
+				const desired = controller.desiredSize;
+				if (desired !== null && desired <= 0) {
+					console.warn(`[piweb] SSE 客户端积压超过 ${bufferedLimit} 字节，已断开慢连接`);
 					close();
 				}
 			};
@@ -110,6 +126,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 		cancel() {
 			if (!closed) stop();
 		},
+	}, {
+		// 队列按字节计量：desiredSize 直接反映这条连接还有多少未读积压额度（L7）。
+		highWaterMark: bufferedLimit,
+		size: (chunk: Uint8Array) => chunk.byteLength,
 	});
 
 	return new Response(stream, {

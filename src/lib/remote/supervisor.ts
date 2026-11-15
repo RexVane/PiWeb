@@ -1,7 +1,7 @@
 /**
  * 「远程连接」内置插件的控制面。它管两个监听：
  *
- *   1. 局域网入口 —— 手机排版注入代理，绑 0.0.0.0。默认就该有，手机连同一个 WiFi 就能用。
+ *   1. 局域网入口 —— 手机排版注入代理，默认绑 0.0.0.0（可用 PIWEB_REMOTE_LAN_BIND 覆盖）。默认就该有，手机连同一个 WiFi 就能用。
  *   2. 公网入口 —— cloudflared 快速隧道，指向局域网入口。随服务自动准备，失败后后台重试。
  *
  * 引擎（隧道实现）刻意做成可替换的：`startPublic` 只依赖「起一个进程 + 从输出里抓到
@@ -23,6 +23,7 @@ import { terminateProcessTree } from "../../../scripts/process-runner.mjs";
 import { isolatedCommandEnv } from "../../../scripts/update-environment.mjs";
 import { createRequestGuard } from "../../../scripts/http-request-guard.mjs";
 import { APP_ROOT } from "../app-root";
+import { registerShutdownHook } from "../graceful-shutdown";
 
 export const PLUGIN_ID = "builtin-remote";
 export const DEFAULT_LAN_PORT = 30142;
@@ -266,6 +267,11 @@ export function remoteLanPort(env: Record<string, string | undefined> = process.
 	return Number.isInteger(value) && value >= 1 && value <= 65535 ? value : DEFAULT_LAN_PORT;
 }
 
+/** 局域网入口监听地址：默认 0.0.0.0（现有行为），可用 PIWEB_REMOTE_LAN_BIND 覆盖（例如只绑某块网卡）。 */
+export function remoteLanBind(env: Record<string, string | undefined> = process.env): string {
+	return (env.PIWEB_REMOTE_LAN_BIND ?? "").trim() || "0.0.0.0";
+}
+
 /** 虚拟机、WSL、容器的虚拟网卡：地址也是私网段，但同一 WiFi 的手机连不到，排到最后 */
 const VIRTUAL_ADAPTER = /vmware|virtualbox|vboxnet|vethernet|hyper-v|wsl|docker|^br-|^veth/i;
 
@@ -387,7 +393,7 @@ export function setRemotePluginEnabled(enabled: boolean): void {
  * 插件启用时是「手机排版注入代理」；关闭时同一个端口退化成**纯转发**（不注入任何东西），
  * 这样自建反代指向 30142 的部署不会因为关掉插件而失效——用户要的是「插件可关、局域网照旧」。
  */
-export function startLan(port = remoteLanPort(), host = "0.0.0.0", targetPort = piwebPort()): Promise<LanState> {
+export function startLan(port = remoteLanPort(), host = remoteLanBind(), targetPort = piwebPort()): Promise<LanState> {
 	const current = state();
 	if (current.lanStopping) return current.lanStopping.then(() => startLan(port, host, targetPort));
 	if (current.lan) return Promise.resolve(remoteStatus().lan);
@@ -656,6 +662,22 @@ export async function stopAll(): Promise<void> {
 	await stopPublic();
 	await stopLan();
 }
+
+/**
+ * 统一的远程入口停机收尾：停止自动重试定时器、公网隧道与局域网入口。
+ * 供优雅停机（L5，见 graceful-shutdown）调用；重复调用安全，失败只记录不抛出。
+ */
+export async function shutdownRemote(): Promise<void> {
+	try {
+		await stopAll();
+	} catch (error) {
+		console.warn("[远程连接] 停机收尾失败：", error instanceof Error ? error.message : String(error));
+	}
+}
+
+// L5：把远程入口注册进进程级优雅停机。instrumentation 的启动链总会 import 本模块，
+// 所以这里就是安装点；graceful-shutdown 在第一个钩子注册时自动挂 SIGINT/SIGTERM/SIGHUP。
+registerShutdownHook(shutdownRemote, { name: "remote" });
 
 /** 仅供测试 */
 export function resetRemoteSupervisor(): void {

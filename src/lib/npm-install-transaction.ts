@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { runtimeRequire } from "../../scripts/runtime-require.mjs";
 import { processIdentity } from "../../scripts/process-identity.mjs";
 import { readJsoncSettingsObjectSync, mutateJsoncSettingsFileSync } from "./jsonc-settings-storage";
+import { syncDirectorySync } from "./atomic-file";
 import { assertNoRemovalMounts } from "./removal-boundary";
 import { windowsDirectoryApiSync } from "./sandbox/windows-file-operations";
 
@@ -123,8 +124,18 @@ function atomicJson(file: string, value: unknown): void {
 	const fd = fs.openSync(temporary, "wx", 0o600);
 	try { fs.writeFileSync(fd, JSON.stringify(value)); fs.fsyncSync(fd); }
 	finally { fs.closeSync(fd); }
+	// no-unsafe-finally：finally 里不能再 throw/return；把清理与主操作的错误分开记录，
+	// 清理失败仍按原语义优先抛出（和原先 finally 覆盖主错误一致）。
+	let writeError: unknown;
 	try { rename(temporary, file); }
-	finally { try { fs.unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
+	catch (error) { writeError = error; }
+	let cleanupError: unknown;
+	try { fs.unlinkSync(temporary); }
+	catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") cleanupError = error; }
+	if (cleanupError !== undefined) throw cleanupError;
+	if (writeError !== undefined) throw writeError;
+	// 目录项持久化：断电后恢复日志/安装标记必须真实存在（不可用时安全降级）。
+	syncDirectorySync(path.dirname(file));
 }
 function readJournal(root: string): Journal | undefined {
 	const file = path.join(path.dirname(root), JOURNAL);
