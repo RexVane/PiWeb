@@ -23,6 +23,24 @@ describe("origin validation", () => {
 		expect(isSafeOrigin(request)).toBe(false);
 	});
 
+	it("treats a different scheme as cross-origin even when host and port match", () => {
+		// 只比 host 会让 https://host 的 Origin 通过 http://host 的请求（协议降级/混合内容）。
+		expect(isSafeOrigin(new Request("http://localhost:30141/api/test", { headers: { origin: "https://localhost:30141" } }))).toBe(false);
+		expect(isSafeOrigin(new Request("https://localhost:30141/api/test", { headers: { origin: "http://localhost:30141" } }))).toBe(false);
+		expect(isSafeOrigin(new Request("https://localhost:30141/api/test", { headers: { origin: "https://localhost:30141" } }))).toBe(true);
+	});
+
+	it("trusts the proxy's x-forwarded-proto when comparing schemes", () => {
+		// 隧道/反代后面 request.url 是内网 http，浏览器 Origin 是公网 https；x-forwarded-proto 由代理写入，浏览器伪造不了
+		const request = new Request("http://localhost:30141/api/test", {
+			headers: { origin: "https://localhost:30141", "x-forwarded-proto": "https" },
+		});
+		expect(isSafeOrigin(request)).toBe(true);
+		expect(isSafeOrigin(new Request("http://localhost:30141/api/test", {
+			headers: { origin: "https://localhost:30141", "x-forwarded-proto": "http" },
+		}))).toBe(false);
+	});
+
 	it("does not trust a caller-supplied forwarded host", () => {
 		const request = new Request("http://localhost:30141/api/test", {
 			headers: { host: "localhost:30141", origin: "http://attacker.test:30141", "x-forwarded-host": "attacker.test:30141" },

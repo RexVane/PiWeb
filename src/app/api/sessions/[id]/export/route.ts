@@ -17,17 +17,22 @@ function attachmentDisposition(filename: string): string {
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
-	const format = new URL(req.url).searchParams.get("format") === "html" ? "html" : "jsonl";
+	const url = new URL(req.url);
+	const format = url.searchParams.get("format") === "html" ? "html" : "jsonl";
+	// 默认脱敏（会话里可能留着 key/token/代理口令）；显式 raw=1 才导出原文。
+	const rawParam = url.searchParams.get("raw");
+	const raw = rawParam === "1" || rawParam === "true";
 	try {
 		// 与 /api/agent/[id] 同一种解析（allowPending 返回原写法而不是 realpath）：会话表按路径字符串做键，
 		// ~/.pi 经过 junction / 符号链接时两种写法不同，导出 HTML 就会给同一个文件再起一个 agent
 		const m = getManaged(await resolveSessionPath(id, { allowPending: true }));
-		const { filename, content, contentType } = await exportSession(m, format);
+		const { filename, content, contentType } = await exportSession(m, format, { raw });
 		return new Response(content, {
 			headers: {
 				"Content-Type": `${contentType}; charset=utf-8`,
 				"Content-Disposition": attachmentDisposition(filename),
 				"Cache-Control": "no-store",
+				...(raw ? {} : { "X-PiWeb-Redacted": "1" }),
 			},
 		});
 	} catch (error) {

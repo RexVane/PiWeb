@@ -8,6 +8,7 @@ import { invalidateJsonFile } from "./agent-config";
 import { getAgentDir, reloadSettingsManagers, resolveProjectTrust } from "./pi";
 import { readFileBounded } from "./read-file-bounded";
 import { withSettingsWriteLock } from "./settings-write-lock";
+import { redactUrlCredentials } from "./secret-redaction";
 import { mutateJsoncSettingsFileSync, readJsoncSettingsObjectSync } from "./jsonc-settings-storage";
 import { resolveWorkspacePath } from "./path-security";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
@@ -129,6 +130,18 @@ export async function getPiSettings(cwd?: string): Promise<PiSettings> {
 	return { ...normalizedSettings(mergedSettings(global, project)), effective: normalizedSettings(trusted ? mergedSettings(global, project) : global), projectTrusted: trusted };
 }
 
+/**
+ * 回显用：httpProxy 的 userinfo 密码打码（写入路径仍保留原值）。
+ * 没有凭据的普通 URL 原样返回，回显与保存语义不变。
+ */
+export function redactPiSettingsForRead(settings: PiSettings): PiSettings {
+	const redact = (value: PiSettings): PiSettings => ({
+		...value,
+		httpProxy: typeof value.httpProxy === "string" ? redactUrlCredentials(value.httpProxy) : value.httpProxy,
+	});
+	return { ...redact(settings), ...(settings.effective ? { effective: redact(settings.effective) } : {}) };
+}
+
 export class PiSettingsValidationError extends Error {}
 export class PiSettingsRefreshError extends Error {
 	constructor(public readonly patch: PiSettingsPatch, cause: unknown) {
@@ -202,32 +215,24 @@ export async function patchPiSettings(value: unknown, cwd?: string): Promise<PiS
 	if (cwd && (patch.httpProxy !== undefined || patch.cacheWarming !== undefined)) throw new PiSettingsValidationError("Network proxy and cache warming are global settings");
 	const projectRoot = cwd ? await resolveWorkspacePath(cwd) : undefined;
 	const file = projectRoot ? path.join(projectRoot, ".pi", "settings.json") : settingsFile();
+	// retryBusy：Windows 并发写时 settings.json 的 rename/lock 可能暂时 EACCES/EPERM/EBUSY，
+	// 在锁内退避重试；合并式 patch 是幂等的，重试安全。重试耗尽由路由映射为 409/503。
 	await withSettingsWriteLock(file, async () => {
-		for (let attempt = 0; ; attempt++) {
-			try {
-				mutateJsoncSettingsFileSync(file, (raw) => {
-					if (patch.compaction) raw.compaction = { ...objectOf(raw.compaction), ...patch.compaction };
-					if (patch.retry) raw.retry = { ...objectOf(raw.retry), ...patch.retry };
-					for (const key of ["cacheWarming", "steeringMode", "followUpMode"] as const) {
-						if (patch[key] !== undefined) raw[key] = patch[key];
-					}
-					// 清空 = 删掉键，回到 pi 的默认行为（不留空字符串）
-					if (patch.httpProxy !== undefined) {
-						if (patch.httpProxy) raw.httpProxy = patch.httpProxy;
-						else delete raw.httpProxy;
-					}
-					return raw;
-				}, { projectRoot });
-				break;
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ELOCKED" || attempt >= 19) throw error;
-				// The synchronous SDK contract cannot await, but this HTTP action can.
-				// No filesystem lock or protected directory handle survives this await.
-				await new Promise((resolve) => setTimeout(resolve, Math.min(20 * (attempt + 1), 100)));
+		mutateJsoncSettingsFileSync(file, (raw) => {
+			if (patch.compaction) raw.compaction = { ...objectOf(raw.compaction), ...patch.compaction };
+			if (patch.retry) raw.retry = { ...objectOf(raw.retry), ...patch.retry };
+			for (const key of ["cacheWarming", "steeringMode", "followUpMode"] as const) {
+				if (patch[key] !== undefined) raw[key] = patch[key];
 			}
-		}
+			// 清空 = 删掉键，回到 pi 的默认行为（不留空字符串）
+			if (patch.httpProxy !== undefined) {
+				if (patch.httpProxy) raw.httpProxy = patch.httpProxy;
+				else delete raw.httpProxy;
+			}
+			return raw;
+		}, { projectRoot });
 		invalidateJsonFile(file);
-	});
+	}, { retryBusy: true });
 	// 正在运行的会话每次压缩/重试都从 SettingsManager 读：让它们重新读盘，改动立即生效
 	try { await reloadSettingsManagers(); }
 	catch (error) { throw new PiSettingsRefreshError(patch, error); }

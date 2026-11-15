@@ -61,11 +61,15 @@ function directoryError(error: unknown): Error {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
 	if (code === "ENOENT") return new BoundaryError("目录不存在");
 	if (code === "ENOTDIR") return new BoundaryError("这不是一个目录");
+	// NUL 字节 / 非法参数在 node:fs 里抛 ERR_INVALID_ARG_VALUE；这是调用方输入错误，不是 500
+	if (code === "ERR_INVALID_ARG_VALUE") return new BoundaryError("invalid path");
+	if (error instanceof TypeError) return new BoundaryError("invalid path");
 	return error instanceof Error ? error : new Error("directory read failed");
 }
 
 async function listDirectory(target: unknown) {
-	if (target !== undefined && (typeof target !== "string" || target.length === 0 || target.length > 4096)) {
+	// NUL 字节会让 node:fs 抛 ERR_INVALID_ARG_VALUE（曾收敛成 500）；这里提前按输入错误拒绝。
+	if (target !== undefined && (typeof target !== "string" || target.length === 0 || target.length > 4096 || target.includes("\0"))) {
 		throw new BoundaryError("invalid path");
 	}
 	const requested = typeof target === "string" ? target : os.homedir();

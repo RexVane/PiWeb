@@ -6,6 +6,34 @@ function validationMessage(message: string): string {
 		.replace(/(^|[\s'"])(\/[^\s"'<>]*)/g, "$1[local path]");
 }
 
+/**
+ * Stable errorCode → client dictionary key names.
+ *
+ * The client localizes by `errorCode` first (`localizeApiError` in `src/i18n.tsx`)
+ * and only falls back to the server message when a code has no mapping. The
+ * mapping lives here as plain strings because this module is server-only
+ * (`path-security` loads Node built-ins) and `src/i18n.tsx` is a client bundle;
+ * keep both tables in sync — `tests/lib/api-error.test.ts` and
+ * `tests/i18n.test.ts` assert every key exists in both dictionaries.
+ */
+export const API_ERROR_I18N_KEYS: Readonly<Record<string, string>> = {
+	INVALID_JSON: "apiErrorInvalidJson",
+	VALIDATION_ERROR: "apiErrorValidation",
+	ENOENT: "apiErrorEnoent",
+	EACCES: "apiErrorEacces",
+	EPERM: "apiErrorEperm",
+	ELOCKED: "apiErrorElocked",
+	EBUSY: "apiErrorEbusy",
+	ENOSPC: "apiErrorEnospc",
+	ETIMEDOUT: "apiErrorEtimedout",
+	REQUEST_FAILED: "apiErrorRequestFailed",
+};
+
+/** Dictionary key for an errorCode, or undefined when the client has no translation. */
+export function apiErrorI18nKey(errorCode: string | undefined): string | undefined {
+	return errorCode ? API_ERROR_I18N_KEYS[errorCode] : undefined;
+}
+
 /** Preserve validation and OS error categories without returning process commands or server paths. */
 export function apiError(error: unknown, fallback = "请求失败，请重试。", validation = false): { error: string; errorCode: string } {
 	if (error instanceof SyntaxError) return { error: "请求内容不是有效的 JSON。", errorCode: "INVALID_JSON" };

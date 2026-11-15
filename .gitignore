@@ -43,6 +43,14 @@ web-launch/
 web-devices.json
 web-revocations.json
 
+# 私钥与证书文件一律不进 git。测试用密钥是 .ts 源码夹具（tests/fixtures/localhost-tls.ts），不受这些规则影响。
+id_rsa*
+id_dsa*
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Local audit intermediates. Reports and summaries are tracked; these are not.
 .audit-*/**/*.heapsnapshot
 .audit-*/**/coverage/.tmp/

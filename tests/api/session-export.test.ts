@@ -29,4 +29,24 @@ describe("session export download name", () => {
 		await GET(new Request("http://localhost/api/sessions/abc/export?format=html"), { params: Promise.resolve({ id: "abc" }) });
 		expect(mocks.getManaged).toHaveBeenLastCalledWith("/link/sessions/abc");
 	});
+
+	it("redacts exports by default and only sends the raw file when raw=1 is explicit", async () => {
+		mocks.exportSession.mockResolvedValue({ filename: "a.jsonl", content: "{\"apiKey\":\"***\"}\n", contentType: "application/jsonl" });
+		const plain = await GET(new Request("http://localhost/api/sessions/abc/export"), { params: Promise.resolve({ id: "abc" }) });
+		expect(mocks.exportSession).toHaveBeenLastCalledWith(expect.anything(), "jsonl", { raw: false });
+		expect(plain.headers.get("X-PiWeb-Redacted")).toBe("1");
+
+		const raw = await GET(new Request("http://localhost/api/sessions/abc/export?raw=1"), { params: Promise.resolve({ id: "abc" }) });
+		expect(mocks.exportSession).toHaveBeenLastCalledWith(expect.anything(), "jsonl", { raw: true });
+		expect(raw.headers.get("X-PiWeb-Redacted")).toBeNull();
+	});
+
+	it("passes the raw flag through for html exports too", async () => {
+		mocks.exportSession.mockResolvedValue({ filename: "a.html", content: "<html></html>", contentType: "text/html" });
+		await GET(new Request("http://localhost/api/sessions/abc/export?format=html&raw=1"), { params: Promise.resolve({ id: "abc" }) });
+		expect(mocks.exportSession).toHaveBeenLastCalledWith(expect.anything(), "html", { raw: true });
+		const plain = await GET(new Request("http://localhost/api/sessions/abc/export?format=html"), { params: Promise.resolve({ id: "abc" }) });
+		expect((await plain.text())).toBe("<html></html>");
+		expect(plain.headers.get("X-PiWeb-Redacted")).toBe("1");
+	});
 });
