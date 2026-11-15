@@ -30,11 +30,24 @@ const explicitPaths = process.argv.slice(2);
 
 function installed() {
 	if (!fs.existsSync(eslintBin)) return false;
+	let stamp = "";
 	try {
-		return fs.readFileSync(stampFile, "utf8") === lockHash();
+		stamp = fs.readFileSync(stampFile, "utf8");
 	} catch {
-		return false;
+		// CI and manual installs use `npm ci --prefix scripts/testing/lint`, which cannot write
+		// this stamp. If the eslint binary exists and no stale stamp is present, trust that
+		// install and record the lock hash so later offline runs stay fast.
+		stamp = "";
 	}
+	const hash = lockHash();
+	if (stamp === hash) return true;
+	if (stamp) return false;
+	try {
+		fs.writeFileSync(stampFile, hash);
+	} catch {
+		// A read-only install still lints; the stamp is only a cache marker.
+	}
+	return true;
 }
 
 function lockHash() {
