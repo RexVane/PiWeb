@@ -38,7 +38,9 @@ describe.skipIf(!win32)("readonly sandbox mode", () => {
 
 	it("still runs read-only commands", async () => {
 		const chunks: Buffer[] = [];
-		const result = await sandbox!.exec("type nul", { cwd: workspace, onData: (chunk) => chunks.push(chunk) });
+		// `type nul` opens the NUL device, which an AppContainer without device access denies
+		// on hosted runners; `cd` is a pure cmd builtin that only reads the working directory.
+		const result = await sandbox!.exec("cd", { cwd: workspace, onData: (chunk) => chunks.push(chunk) });
 		expect(result.exitCode).toBe(0);
 	});
 

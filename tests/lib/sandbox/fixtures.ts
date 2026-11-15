@@ -47,14 +47,36 @@ const recycleScript = (target: string) => [
 	"}",
 ].join("\n");
 
-/** Test-owned fixtures are recycled; unrelated temporary files are never removed. */
+/** Best-effort cleanup of a test-owned fixture directory. */
 export async function recycleFixture(directory: string): Promise<void> {
 	const absolute = path.resolve(directory);
 	// Compare canonical spellings: Windows temp dirs can be given as 8.3 short names
 	// (`C:\Users\RUNNER~1\...`) while realpaths and `os.tmpdir()` disagree on spelling.
 	if (!comparablePath(absolute).startsWith(comparablePath(os.tmpdir()) + path.sep)) throw new Error("Fixture cleanup escaped the system temporary directory.");
-	if (process.platform !== "win32") return;
-	await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", recycleScript(absolute)], { windowsHide: true });
+	if (process.platform !== "win32") {
+		await fs.promises.rm(absolute, { recursive: true, force: true, maxRetries: 3 });
+		return;
+	}
+	try {
+		await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", recycleScript(absolute)], { windowsHide: true });
+		return;
+	} catch {
+		// Hosted runners have no Recycle Bin, and ACL/git fixtures contain read-only or
+		// hidden entries. Purge attributes, then delete recursively; cleanup is best-effort
+		// so a locked fixture never turns into a test failure.
+		try {
+			await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+				"$target = '" + absolute.replaceAll("'", "''") + "'\n" +
+				"if (-not [System.IO.Directory]::Exists($target)) { exit 0 }\n" +
+				"Get-ChildItem -LiteralPath $target -Recurse -Force | ForEach-Object { try { $_.Attributes = 'Normal' } catch {} }\n",
+			], { windowsHide: true });
+		} catch { /* best effort */ }
+		try {
+			await fs.promises.rm(absolute, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		} catch (error) {
+			console.warn("[test] could not remove fixture " + absolute + ": " + (error instanceof Error ? error.message : String(error)));
+		}
+	}
 }
 /**
  * Windows 8.3 spelling of an existing path (e.g. the CI temp dir `C:\Users\RUNNER~1\...`).
