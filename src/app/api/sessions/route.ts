@@ -19,9 +19,13 @@ export async function GET(req: Request) {
 			return NextResponse.json({ success: false, error: "invalid session pagination", errorCode: "VALIDATION_ERROR" }, { status: 400, headers: { "Cache-Control": "no-store" } });
 		}
 		const listed = await listSessions(q);
-		const cwds = new Map([...new Set(listed.map((session) => session.cwd))].map((cwd) => [cwd, canonicalWorkspacePath(cwd)]));
+		// canonicalWorkspacePath 是异步的：必须在这里解析完再放进响应，否则 JSON 会把
+		// Promise 序列化成 `{}`（侧栏随后在 cwd.replace 上崩溃）。
+		const cwds = new Map(await Promise.all(
+			[...new Set(listed.map((session) => session.cwd))].map(async (cwd) => [cwd, await canonicalWorkspacePath(cwd)] as const),
+		));
 		// CLI 会话头保留启动时的符号链接拼写；只统一列表身份，不改原始 JSONL。
-		const sessions = await Promise.all(listed.map(async (session) => ({ ...session, cwd: await cwds.get(session.cwd)! })));
+		const sessions = listed.map((session) => ({ ...session, cwd: cwds.get(session.cwd)! }));
 		const recentCwds = sessions.slice(0, 1).map((session) => session.cwd);
 		const workspaceRegistry = await getWorkspaceRegistry();
 		// CLI-discovered workspaces belong in this response without forcing a

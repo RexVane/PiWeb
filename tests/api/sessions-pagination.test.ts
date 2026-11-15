@@ -48,6 +48,7 @@ describe("sessions route pagination", () => {
 		const body = await response.json();
 		expect(response.status).toBe(200);
 		expect(body.data.sessions).toHaveLength(4);
+		expect(body.data.sessions.every((session: { cwd?: unknown }) => typeof session.cwd === "string")).toBe(true);
 		expect(body.data.total).toBeUndefined();
 		expect(body.data.nextOffset).toBeUndefined();
 		expect(state.calls).toEqual([{ query: undefined, options: undefined }]);
@@ -58,6 +59,8 @@ describe("sessions route pagination", () => {
 		const body = await response.json();
 		expect(response.status).toBe(200);
 		expect(body.data.sessions.map((session: { path: string }) => path.basename(session.path))).toEqual(["b.jsonl", "c.jsonl"]);
+		// 分页路径同样要把异步 canonicalWorkspacePath 解析成字符串，不能留下 Promise/{}。
+		expect(body.data.sessions.every((session: { cwd?: unknown }) => typeof session.cwd === "string")).toBe(true);
 		// 第一次全量（工作区发现 + total 需要），第二次带分页参数（命中 lib 的列表缓存）
 		expect(state.calls).toEqual([
 			{ query: undefined, options: undefined },
