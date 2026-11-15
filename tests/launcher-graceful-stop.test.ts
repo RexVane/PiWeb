@@ -61,8 +61,10 @@ describe("terminateProcessTreeGracefully", () => {
 		// POSIX signals the child's process group. There is no real group for the fake
 		// pid, so intercept it: the real kill would ESRCH into the child-level fallback.
 		const groupKill = vi.spyOn(process, "kill").mockReturnValue(true);
+		let groupKillArgs: unknown[][] = [];
 		try {
 			await terminateProcessTreeGracefully(child, { timeoutMs: 500 });
+			groupKillArgs = groupKill.mock.calls.slice();
 		} finally {
 			groupKill.mockRestore();
 		}
@@ -73,7 +75,8 @@ describe("terminateProcessTreeGracefully", () => {
 		} else {
 			// Catchable SIGTERM to the group; a child that exits inside the grace window
 			// is never force-killed (no SIGKILL and no direct child.kill fallback).
-			expect(groupKill).toHaveBeenCalledWith(-4321, "SIGTERM");
+			// Assert on captured calls: mockRestore() resets the spy's call history.
+			expect(groupKillArgs).toContainEqual([-4321, "SIGTERM"]);
 			expect(child.kill).not.toHaveBeenCalled();
 		}
 	});

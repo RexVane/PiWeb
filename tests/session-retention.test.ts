@@ -68,7 +68,9 @@ describe("archived session preservation", () => {
 		expect((await getWorkspaceRegistry()).archivedAt[keyOf(file)]).toBe(first + DAY);
 		const updatedAt = first + 2 * DAY;
 		await fs.utimes(file, new Date(updatedAt), new Date(updatedAt));
-		expect((await getWorkspaceRegistry()).archivedAt[keyOf(file)]).toBe(updatedAt);
+		// Filesystem mtime can have sub-millisecond fractions (ext4); the registry stores the
+		// sampled time in ms, so compare the rounded value instead of the raw float.
+		expect(Math.round((await getWorkspaceRegistry()).archivedAt[keyOf(file)])).toBe(updatedAt);
 		expect(await fs.readFile(file, "utf8")).toBe(content);
 	});
 });
