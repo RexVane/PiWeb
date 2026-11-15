@@ -1,0 +1,32 @@
+[
+  {
+    "path": "D:\\AIApp\\PiWeb\\src\\hooks\\useFileViewer.ts",
+    "before": "BDE36AF422BAAECC559F3D2E79A5A9748AC57C5F9CE6032EB9B3F1D8E7BA34F4",
+    "after": "BDE36AF422BAAECC559F3D2E79A5A9748AC57C5F9CE6032EB9B3F1D8E7BA34F4",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\AIApp\\PiWeb\\src\\components\\AppShell.tsx",
+    "before": "694625A589AAD4C128FD57FD09477EE75189941F43E818D9BEBCCFC7630F56EF",
+    "after": "694625A589AAD4C128FD57FD09477EE75189941F43E818D9BEBCCFC7630F56EF",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\AIApp\\PiWeb\\src\\components\\FileViewer.tsx",
+    "before": "E57051CD58753DBA2116E9746E31C0D56ED7A6C41BD735295EA3EE9D96343761",
+    "after": "E57051CD58753DBA2116E9746E31C0D56ED7A6C41BD735295EA3EE9D96343761",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\AIApp\\PiWeb\\tests\\components\\file-viewer-session-state.test.tsx",
+    "before": "CFC67CBA3592BA91F2123663B68C08FA4FF0706581CAF135082FFC91B01F8666",
+    "after": "CFC67CBA3592BA91F2123663B68C08FA4FF0706581CAF135082FFC91B01F8666",
+    "unchanged": true
+  },
+  {
+    "path": "D:\\AIApp\\PiWeb\\tests\\components\\app-shell-file-tabs.test.tsx",
+    "before": "C85717EF83C41B4FFAA518074BFAAEFED27A044BCB98A4778F1398B4DDD39E88",
+    "after": "C85717EF83C41B4FFAA518074BFAAEFED27A044BCB98A4778F1398B4DDD39E88",
+    "unchanged": true
+  }
+]

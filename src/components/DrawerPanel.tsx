@@ -41,7 +41,6 @@ export function DrawerPanel({
 	onJumpToChat,
 	onError,
 	onOpenContent,
-	onAskCommit,
 	onOpenFile,
 }: {
 	cwd: string;
@@ -71,8 +70,6 @@ export function DrawerPanel({
 	onError: (message: string) => void;
 	/** 提示词正文交给居中查看器 */
 	onOpenContent?: (path: string, content: string) => void;
-	/** 把「请提交当前变更」填进输入框 */
-	onAskCommit?: () => void;
 	/** 在本机编辑器打开(Git 文件) */
 	onOpenFile?: (absPath: string) => void;
 }) {
@@ -159,7 +156,6 @@ export function DrawerPanel({
 						onOpenEditor={onOpenEditor}
 						onJumpToChat={onJumpToChat}
 						gitRefreshKey={gitRefreshKey}
-						onAskCommit={onAskCommit}
 						// 「Git 详情」按钮切到抽屉的 git 入口(项目栏不再自己开一个面板)
 						onOpenGit={() => onSectionChange("git")}
 						onClose={onClose}
@@ -169,7 +165,7 @@ export function DrawerPanel({
 					// 三个面板的关闭按钮都收起整个抽屉(它们自己不再有"关闭"以外的语义)
 					<PromptPanel cwd={cwd} sessionId={sessionId} refreshKey={promptRefreshKey} onOpenContent={onOpenContent} onClose={onClose} />
 				) : (
-					<GitPanel cwd={cwd} refreshKey={gitRefreshKey} onClose={onClose} onAskCommit={onAskCommit} onOpenFile={onOpenFile} />
+					<GitPanel cwd={cwd} refreshKey={gitRefreshKey} onClose={onClose} onOpenFile={onOpenFile} />
 				)}
 			</div>
 		</div>

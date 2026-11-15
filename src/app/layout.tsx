@@ -13,10 +13,7 @@ export const viewport: Viewport = {
 	initialScale: 1,
 	viewportFit: "cover",
 	interactiveWidget: "resizes-content",
-	themeColor: [
-		{ media: "(prefers-color-scheme: light)", color: "#ffffff" },
-		{ media: "(prefers-color-scheme: dark)", color: "#09090c" },
-	],
+	themeColor: "#2e3440",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,7 +23,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 	const language = initialLang === "en" ? "en" : "zh-CN";
 	return (
 		<html lang={language} suppressHydrationWarning>
-			<head><script dangerouslySetInnerHTML={{ __html: `(function(){try{var r=document.documentElement;var m=localStorage.getItem("piweb.theme");var d=m==="dark"||(m!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);r.setAttribute(d?"data-ds-dark-theme":"data-ds-light-theme","");r.style.colorScheme=d?"dark":"light";var p=localStorage.getItem("piweb.pebrelTheme");if(p&&p!=="dsh")r.setAttribute("data-pebrel-theme",p);}catch(e){}})();` }} /></head>
+			<head><script dangerouslySetInnerHTML={{ __html: `(function(){try{var r=document.documentElement;var m=localStorage.getItem("piweb.theme");var d=true;if(m==="light")d=false;else if(m==="system")d=matchMedia("(prefers-color-scheme: dark)").matches;else if(m&&m!=="dark")localStorage.setItem("piweb.theme","dark");r.setAttribute(d?"data-ds-dark-theme":"data-ds-light-theme","");r.style.colorScheme=d?"dark":"light";var p=localStorage.getItem("piweb.pebrelTheme");if(p==="dsh")return;if(p==="ripple"||p==="dawn"||p==="nord-paper")r.setAttribute("data-pebrel-theme",p);else{if(p)localStorage.setItem("piweb.pebrelTheme","nord-paper");r.setAttribute("data-pebrel-theme","nord-paper");}}catch(e){}})();` }} /></head>
 			<body suppressHydrationWarning>
 				<I18nProvider initialLang={initialLang}>{children}</I18nProvider>
 			</body>

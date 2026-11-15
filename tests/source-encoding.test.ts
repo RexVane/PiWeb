@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOT_FILES = [".editorconfig", ".gitattributes", "AGENTS.md", "next.config.ts", "package.json", "tsconfig.json"];
+const ROOT_FILES = [".editorconfig", ".gitattributes", "next.config.ts", "package.json", "tsconfig.json"];
 const SOURCE_DIRS = ["bin", "scripts", "src", "tests"];
 const TEXT_EXTENSIONS = new Set([".css", ".js", ".json", ".md", ".mjs", ".ps1", ".ts", ".tsx"]);
 

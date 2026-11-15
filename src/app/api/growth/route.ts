@@ -49,7 +49,8 @@ export async function GET(req: Request) {
 
 /**
  * POST { action: "record", session: <会话 id> }：立即记录，把当前改动提交为「你的修改」（并广播给会话订阅者）
- * POST { action: "consent", session, allow: boolean }：回答「要不要在工作区建 git 仓库」；同意时立即拍基线
+ * POST { action: "setRecording", cwd, allow: boolean }：保存工作区记录开关。
+ * POST { action: "consent", session, allow: boolean }：兼容旧客户端的记录开关；开启时立即拍基线。
  */
 export async function POST(req: Request) {
 	try {

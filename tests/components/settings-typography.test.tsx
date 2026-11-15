@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** 字体族不再可配：界面固定系统无衬线、代码固定系统等宽；旧的字体偏好会在启动时清掉。 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { clearRetiredFontPreferences } from "@/lib/theme";
 
@@ -46,6 +46,19 @@ describe("font family is no longer configurable", () => {
 		expect(screen.queryByText("UI font family")).toBeNull();
 		expect(screen.getByText("对话字体")).toBeTruthy();
 		expect(screen.getAllByRole("button", { name: "decrease font size" }).length).toBeGreaterThan(0);
+	});
+
+	it("通用设置默认使用全局配置、不显示配置作用域，且界面字号同步缩放变量", async () => {
+		await renderSettings();
+		expect(screen.queryByText("配置作用域")).toBeNull();
+		expect(screen.queryByText("全局设置目录，所有工作区共用")).toBeNull();
+		expect(screen.queryByText("当前工作区")).toBeNull();
+		expect(screen.queryByText("个人目录下的技能，所有工作区都能用")).toBeNull();
+
+		const [uiIncrease] = screen.getAllByRole("button", { name: "increase font size" });
+		for (let i = 0; i < 4; i += 1) fireEvent.click(uiIncrease);
+		expect(document.documentElement.style.getPropertyValue("--dsh-content-font-size")).toBe("18px");
+		expect(document.documentElement.style.getPropertyValue("--dsh-content-font-delta")).toBe("4px");
 	});
 
 	it("启动时清掉历史字体偏好，字号偏好不动", () => {

@@ -155,11 +155,37 @@ describe("上下文圆环弹窗", () => {
 		expect(screen.getByTitle("2000 tok").textContent).toBe("2.00K tok");
 	});
 
-	it("压缩后用量未知，不将窗口全部显示成空闲", () => {
-		render(<ContextMeter percent={null} tokens={null} contextWindow={200000} source={{ systemChars: 0, messages: [], breakdown: WARM }} />);
+	it("压缩后未知真实用量时按字符/4估算圆环、进度条与 Free Space，普通未知会话保持未知", () => {
+		const COMPACTED: ContextBreakdown = { ...WARM, compacted: 800, characters: { ...WARM.characters!, compacted: 3200 } };
+		const postMessages = [
+			{ role: "user", content: [{ type: "text", text: "x".repeat(4000) }], timestamp: 1 },
+			{ role: "summary", summaryKind: "compaction", content: [], timestamp: 2 },
+			{ role: "user", content: [{ type: "text", text: "y".repeat(800) }], timestamp: 3 },
+		];
+		// charTotal = 10000 + 16400 + 3600 + 4800 + 1240 + 3200 + 800 = 40040
+		// ceil(40040 / 4) = 10010 tok → (10010 / 200000 * 100).toFixed(2) = "5.00%"
+		// Free Space = 200000 - 10010 - 16384 = 173606 = ~173.61K tok
+		render(<ContextMeter percent={null} tokens={null} contextWindow={200000} source={{ systemChars: 0, messages: postMessages, breakdown: COMPACTED }} />);
+		const button = screen.getByTitle("5.00% 压缩后估算");
+		const ringCircles = button.querySelectorAll("circle");
+		expect(Number.parseFloat((ringCircles[1]?.getAttribute("stroke-dasharray") ?? "0").split(" ")[0])).toBeGreaterThan(0);
+		fireEvent.click(button);
+		expect(screen.getByText("压缩后估算（字符/4）")).toBeTruthy();
+		expect(screen.getByTitle("10010 tok").textContent).toBe("~10.01K tok");
+		expect(screen.getByText("Free Space").parentElement?.textContent).toBe("Free Space~173.61K tok");
+		const bar = screen.getByTestId("context-bar") as HTMLElement;
+		expect(typeWidths(bar).reduce((sum, w) => sum + w, 0)).toBeCloseTo(10010 / 200000 * 100, 6);
+		expect(segmentWidth(bar, "reserved")).toBeCloseTo(8.192, 6);
+		expect(screen.getByText(/已压缩：真实 Token 用量将在下次对话回复后更新/)).toBeTruthy();
+
+		// 非压缩且未知用量的普通会话：保持「上下文用量未知」和 Free Space「—」，且未展开时不调用 getMessages
+		cleanup();
+		const getMessages = vi.fn(() => []);
+		render(<ContextMeter percent={null} tokens={null} contextWindow={200000} source={{ systemChars: 0, getMessages, breakdown: WARM }} />);
+		expect(getMessages).not.toHaveBeenCalled();
 		fireEvent.click(screen.getByTitle("上下文用量未知"));
 		expect(screen.getByText("Free Space").parentElement?.textContent).toBe("Free Space—");
-		expect(screen.queryByText("~183.62K tok")).toBeNull();
+		expect(screen.queryByText(/已压缩：真实 Token 用量将在下次对话回复后更新/)).toBeNull();
 	});
 });
 

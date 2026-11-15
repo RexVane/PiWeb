@@ -1,0 +1,82 @@
+[
+  {
+    "Path": "src/components/SessionSidebar.tsx",
+    "Hash": "728044F9EBCB8F0754BD3C11CB9BF18DF02F60A7FB282FA2C5BA5E736CF6CC98"
+  },
+  {
+    "Path": "src/components/AppShell.tsx",
+    "Hash": "6E9E949BC804071481BFD91317D53F22B222A4B644789052E2A1546D9535DF48"
+  },
+  {
+    "Path": "src/hooks/usePiWeb.ts",
+    "Hash": "8C1DB0E54B3805F408EA0BFBE59B396BFAF999E0F370FB20D7584F11F856E565"
+  },
+  {
+    "Path": "src/i18n.tsx",
+    "Hash": "2A3CE0DB14004F3F90669412B457B1E6953483F784232E629A410EF874544104"
+  },
+  {
+    "Path": "src/app/api/workspaces/route.ts",
+    "Hash": "94827E41EFB6C75FF239BC201F5E2D04B4D47086940782C2B49611FA08D01CE2"
+  },
+  {
+    "Path": "src/lib/agent-manager.ts",
+    "Hash": "D8423F53B6ED11957D0807E755D9B80A0C5C31ECF03A5D402A11664518AD3D5D"
+  },
+  {
+    "Path": "src/lib/workspace-store.ts",
+    "Hash": "3C64936040F6941FB0A8BE5664699444AA03F5090AB0A23606ADBE18B30C758D"
+  },
+  {
+    "Path": "src/lib/files-service.ts",
+    "Hash": "F923A238E096092877D8054A52489E88075DB0322340D2049864ACD9E463C8AF"
+  },
+  {
+    "Path": "tests/components/sidebar-menus.test.tsx",
+    "Hash": "9716CB193BE0BF70408697B227F40D1ED6B9C54C062E07541646719792CF364B"
+  },
+  {
+    "Path": "tests/components/sidebar-current.test.tsx",
+    "Hash": "3F5D28BEDA77AB495AF93F880212ACC49159B43B50F366BEFAB59BAEB307C7EF"
+  },
+  {
+    "Path": "tests/components/sidebar-search-pagination.test.tsx",
+    "Hash": "C28FABAC7A9E0D7C7DE5BC5A060DB9A8A4C1C697EBB5D4B26E2ACFFCCBF1CE9D"
+  },
+  {
+    "Path": "tests/components/sidebar-archive-time.test.tsx",
+    "Hash": "24A3A1DFDE1181498B1F37C98C309EB9C1A57DF07744A6CCC56C64C1AC596F21"
+  },
+  {
+    "Path": "tests/components/session-archive-time-state.test.tsx",
+    "Hash": "0DE6EDDF19E2CCBE6090970D4FB6E5DE9C464AA922685918E36F0EA33A507C75"
+  },
+  {
+    "Path": "tests/components/app-shell-sidebar-actions.test.tsx",
+    "Hash": "3D49080672E0E45D2026208D06B32AC9B41D4AA2CE85C0361DBC71D472148C3D"
+  },
+  {
+    "Path": "tests/workspace-store.test.ts",
+    "Hash": "43B352BBDC750B78BE847C8A8E1C63E41E63E89E7FC1D9A3C26410DC6109D1AA"
+  },
+  {
+    "Path": "tests/session-retention.test.ts",
+    "Hash": "E132B8FB9DDDADDE400E4CEC1C9C0C12426A244CEAB1C5403BB39FBBBDE0BB09"
+  },
+  {
+    "Path": "tests/session-retention-scheduler.test.ts",
+    "Hash": "0FC1B9523FCDCC39380DCEE54ACD7CB24B39E9677DAE14BA9E4F737CF667241D"
+  },
+  {
+    "Path": "tests/session-import-service.test.ts",
+    "Hash": "727DE85FE7D67BF91D6353C7BDAA02BFFD4F09DBAF77055361C5B5DA1324D3CF"
+  },
+  {
+    "Path": "tests/api/read-route-errors.test.ts",
+    "Hash": "3AED82E579FE12612BDE4D4DB3577A3184415C549AF00D975374B17075B26215"
+  },
+  {
+    "Path": "tests/api/session-workspaces.test.ts",
+    "Hash": "BA069BC8FF09FD57221771434ED259637B88A469A9A831F01910175A9EE8420F"
+  }
+]

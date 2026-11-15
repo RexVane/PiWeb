@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { SessionSidebar } from "@/components/SessionSidebar";
 import { usePiWeb, type SessionListItem } from "@/hooks/usePiWeb";
+import { I18nProvider } from "@/i18n";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -33,6 +34,7 @@ function renderSidebar(
 	} = {},
 	pinnedPaths: string[] = [],
 	extraSessions: SessionListItem[] = [],
+	lang: "zh" | "en" = "zh",
 ) {
 	return render(
 		<SessionSidebar
@@ -56,6 +58,7 @@ function renderSidebar(
 			onOpenSettings={vi.fn()}
 			onAddWorkspace={vi.fn()}
 		/>,
+		{ wrapper: ({ children }) => <I18nProvider initialLang={lang}>{children}</I18nProvider> },
 	);
 }
 
@@ -108,36 +111,40 @@ describe("sidebar row menus", () => {
 		expect(screen.queryByText("删除工作区")).toBeNull();
 	});
 
-	it("tells the user archived sessions are deleted 30 days after archiving", () => {
+	it("omits the inline archive retention hint while keeping archive tooltips free of auto-expiry wording", () => {
 		const archived: SessionListItem = { ...session, path: "/sessions/old.jsonl", firstMessage: "old" };
 		renderSidebar("flat", [archived]);
-		expect(screen.getByRole("button", { name: "归档会话" }).getAttribute("title")).toBe("归档会话 · 归档满 30 天自动删除");
+		const hint = "归档后一直保留，可随时恢复或手动删除";
+		expect(screen.getByRole("button", { name: "归档会话" }).getAttribute("title")).toBe("归档会话");
 
 		const group = screen.getByRole("button", { name: /已归档/ });
-		expect(group.getAttribute("title")).toContain("30 天");
-		expect(screen.queryByText("归档满 30 天自动删除")).toBeNull();
+		expect(group.getAttribute("title")).toContain(hint);
+		expect(group.getAttribute("title")).not.toMatch(/30|自动删除/);
+		expect(screen.queryByText(hint)).toBeNull();
 		fireEvent.click(group);
-		expect(screen.getByText("归档满 30 天自动删除")).toBeTruthy();
+		expect(screen.queryByText(hint)).toBeNull();
+		expect(screen.getByText("old")).toBeTruthy();
+		expect(screen.queryByText(/30 天|自动删除/)).toBeNull();
 	});
 
-	it("archives only after confirming the row action, and keeps archive out of the ⋮ menu", async () => {
-		const onArchive = vi.fn();
+	it("omits the inline archive retention hint in English", () => {
+		const archived: SessionListItem = { ...session, path: "/sessions/old.jsonl", firstMessage: "old" };
+		renderSidebar("flat", [archived], {}, [], [], "en");
+		const group = screen.getByRole("button", { name: /^Archived/ });
+		expect(group.title).toContain("kept indefinitely");
+		expect(group.title).not.toMatch(/30 days|automatically delet/i);
+		fireEvent.click(group);
+		expect(screen.queryByText("Kept indefinitely; restore or manually delete at any time")).toBeNull();
+		expect(screen.getByText("old")).toBeTruthy();
+	});
+
+	it("archives directly from the row without a confirmation, and keeps archive out of the ⋮ menu", async () => {
+		const onArchive = vi.fn(async () => {});
 		renderSidebar("flat", [], { onArchive });
-		fireEvent.click(screen.getByRole("button", { name: "归档会话" }));
-		expect(onArchive).not.toHaveBeenCalled();
-		const prompt = screen.getByRole("alertdialog");
-		expect(prompt.textContent).toContain("正在运行的任务会停止");
-		expect(prompt.textContent).toContain("内容会保留");
-		expect(prompt.textContent).toContain("30 天");
-		expect(prompt.textContent).toContain("恢复副本");
-		fireEvent.click(within(prompt).getByRole("button", { name: "取消" }));
-		expect(onArchive).not.toHaveBeenCalled();
+		await act(async () => fireEvent.click(screen.getByRole("button", { name: "归档会话" })));
+		expect(onArchive).toHaveBeenCalledExactlyOnceWith("/sessions/a.jsonl");
 		expect(screen.queryByRole("alertdialog")).toBeNull();
-		expect(screen.getByText("hello")).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: "归档会话" }));
-		fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "归档会话" }));
-		await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-		expect(onArchive).toHaveBeenCalledWith("/sessions/a.jsonl");
+		expect(screen.queryByRole("dialog")).toBeNull();
 
 		press(screen.getByRole("button", { name: "session-actions" }));
 		expect(screen.getByText("删除会话")).toBeTruthy();
@@ -145,35 +152,48 @@ describe("sidebar row menus", () => {
 		expect(screen.queryAllByText("归档会话")).toHaveLength(0);
 	});
 
-	it("keeps a failed archive confirmation open for retry and blocks repeated submissions while pending", async () => {
+	it("shows archive failures for retry and blocks repeated row actions while pending", async () => {
 		let reject!: (error: Error) => void;
 		const pending = new Promise<void>((_resolve, no) => { reject = no; });
 		const onArchive = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(undefined);
 		renderSidebar("flat", [], { onArchive });
-		fireEvent.click(screen.getByRole("button", { name: "归档会话" }));
-		const prompt = screen.getByRole("alertdialog");
-		const confirm = within(prompt).getByRole("button", { name: "归档会话" });
-		fireEvent.click(confirm); fireEvent.click(confirm);
+		const archive = screen.getByRole("button", { name: "归档会话" });
+		fireEvent.click(archive); fireEvent.click(archive);
 		expect(onArchive).toHaveBeenCalledTimes(1);
-		expect((confirm as HTMLButtonElement).disabled).toBe(true);
-		fireEvent.click(within(prompt).getByRole("button", { name: "取消" }));
-		expect(screen.getByRole("alertdialog")).toBe(prompt);
+		expect((archive as HTMLButtonElement).disabled).toBe(true);
+		expect(screen.queryByRole("alertdialog")).toBeNull();
 		await act(async () => reject(new Error("archive denied")));
 		expect(screen.getByRole("alert").textContent).toBe("archive denied");
 		expect(screen.getByText("hello")).toBeTruthy();
-		expect((confirm as HTMLButtonElement).disabled).toBe(false);
-		fireEvent.click(confirm);
-		await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+		expect((archive as HTMLButtonElement).disabled).toBe(false);
+		await act(async () => fireEvent.click(archive));
+		expect(screen.queryByRole("alert")).toBeNull();
+		expect(screen.queryByRole("alertdialog")).toBeNull();
 		expect(onArchive).toHaveBeenCalledTimes(2);
 	});
 
-	it("removes a session only after confirming its recoverable backup", async () => {
+	it("still asks before manually deleting an archived session", async () => {
+		const archived: SessionListItem = { ...session, path: "/sessions/old.jsonl", firstMessage: "old archive" };
+		const onDelete = vi.fn(async () => {});
+		renderSidebar("flat", [archived], { onDelete });
+		fireEvent.click(screen.getByRole("button", { name: /^已归档/ }));
+		press(screen.getAllByRole("button", { name: "session-actions" })[1]);
+		fireEvent.click(screen.getByText("删除会话"));
+		expect(onDelete).not.toHaveBeenCalled();
+		const dialog = screen.getByRole("dialog");
+		expect(dialog.textContent).toContain("永久删除");
+		expect(dialog.textContent).toContain("old archive");
+		await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "删除会话" })));
+		expect(onDelete).toHaveBeenCalledExactlyOnceWith(archived.path);
+	});
+
+	it("deletes a session directly only after confirmation", async () => {
 		const onDelete = vi.fn(async () => {});
 		renderSidebar("flat", [], { onDelete });
 		press(screen.getByRole("button", { name: "session-actions" }));
 		fireEvent.click(screen.getByText("删除会话"));
 		expect(onDelete).not.toHaveBeenCalled();
-		expect(screen.getByRole("dialog").textContent).toContain("恢复副本");
+		expect(screen.getByRole("dialog").textContent).toContain("永久删除");
 
 		fireEvent.click(screen.getByRole("button", { name: "取消" }));
 		expect(screen.queryByRole("dialog")).toBeNull();

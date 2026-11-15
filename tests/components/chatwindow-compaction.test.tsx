@@ -70,4 +70,31 @@ describe("compaction divider", () => {
 		fireEvent.click(screen.getByRole("button", { name: "关闭" }));
 		expect(onClearError).toHaveBeenCalledTimes(1);
 	});
+
+	it("renders compacting toast as a single card and completed compaction as an inline status row with summary toggle", async () => {
+		const { container, rerender } = render(
+			<ChatWindow messages={[marker]} tools={{}} isStreaming={false} compaction={{ phase: "start", ts: 1 }} />,
+		);
+		expect(screen.getByText("正在压缩上下文…")).toBeTruthy();
+		expect(container.querySelector(".pw-toast-stack")).toBeNull();
+		expect(container.querySelector(".pw-toast-card")).toBeTruthy();
+
+		const onClearCompaction = vi.fn();
+		rerender(
+			<ChatWindow
+				messages={[{ role: "user", id: "u1", content: text("q"), timestamp: 1 }, marker, { role: "user", id: "u2", content: text("q2"), timestamp: 4 }]}
+				tools={{}}
+				isStreaming={false}
+				compaction={{ phase: "end", ts: 2 }}
+				onClearCompaction={onClearCompaction}
+			/>,
+		);
+		expect(screen.getAllByText("上下文已压缩 · 压缩前约 12.35K tokens")).toHaveLength(2);
+		const toggles = screen.getAllByRole("button", { name: "查看摘要" });
+		expect(toggles).toHaveLength(2);
+		fireEvent.click(toggles[1]);
+		await waitFor(() => expect(screen.getByText("摘要正文")).toBeTruthy(), { timeout: MARKDOWN_READY_TIMEOUT_MS });
+		fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+		expect(onClearCompaction).toHaveBeenCalledTimes(1);
+	}, 30_000);
 });

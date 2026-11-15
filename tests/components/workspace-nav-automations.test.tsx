@@ -6,7 +6,8 @@ import { SessionSidebar } from "@/components/SessionSidebar";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import type { AutomationRun, AutomationTask } from "@/lib/automations/types";
 
-vi.mock("@/lib/theme", () => ({
+vi.mock("@/lib/theme", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/theme")>()),
 	applyPebrelTheme: () => {},
 	loadPebrelTheme: () => "dsh",
 	loadThemeMode: () => "system",
@@ -18,7 +19,7 @@ afterEach(() => {
 });
 
 describe("Top-level sidebar nav and Settings slimming", () => {
-	it("orders 技能, 插件, 自动化任务 top-to-bottom between 新会话 and 工作区", () => {
+	it("orders 扩展, 自动化任务 top-to-bottom between 新会话 and 工作区 without 技能 or 提示词", () => {
 		const onSelectView = vi.fn();
 		const { container } = render(
 			<SessionSidebar
@@ -55,14 +56,16 @@ describe("Top-level sidebar nav and Settings slimming", () => {
 
 		const text = container.textContent ?? "";
 		const idxNew = text.indexOf("新会话");
-		const idxSkills = text.indexOf("技能");
 		const idxPlugins = text.search(/插件|扩展/);
 		const idxAuto = text.indexOf("自动化任务");
 		const idxWs = text.indexOf("工作区");
 
 		expect(idxNew).toBeGreaterThanOrEqual(0);
-		expect(idxSkills).toBeGreaterThan(idxNew);
-		expect(idxPlugins).toBeGreaterThan(idxSkills);
+		expect(screen.queryByRole("button", { name: "技能" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "提示词" })).toBeNull();
+		// 资源市场已从产品里移除
+		expect(screen.queryByRole("button", { name: "资源市场" })).toBeNull();
+		expect(idxPlugins).toBeGreaterThan(idxNew);
 		expect(idxAuto).toBeGreaterThan(idxPlugins);
 		expect(idxWs).toBeGreaterThan(idxAuto);
 
@@ -71,10 +74,8 @@ describe("Top-level sidebar nav and Settings slimming", () => {
 		const sessionRow = screen.getByText("Session A").closest('[class*="isx-menu-item"]');
 		expect(sessionRow?.getAttribute("data-active")).toBeNull();
 
-		fireEvent.click(screen.getByRole("button", { name: "技能" }));
 		fireEvent.click(screen.getByRole("button", { name: /^(?:插件|扩展)$/ }));
-		expect(onSelectView).toHaveBeenNthCalledWith(1, "skills");
-		expect(onSelectView).toHaveBeenNthCalledWith(2, "plugins");
+		expect(onSelectView).toHaveBeenNthCalledWith(1, "plugins");
 	});
 
 	it("omits 技能 and 插件 tabs from SettingsPanel", () => {
@@ -171,6 +172,7 @@ describe("AutomationsWorkspaceView", () => {
 					json: async () => ({
 						success: true,
 						data: {
+							defaultCwd: "/agent/automations",
 							...state,
 							tasks: [...state.tasks],
 							runs: [...state.runs],
@@ -200,23 +202,30 @@ describe("AutomationsWorkspaceView", () => {
 		expect(screen.getByRole("tab", { name: /已结束/ })).toBeTruthy();
 		expect(screen.getByRole("tab", { name: /全部/ })).toBeTruthy();
 
-		// Clicking primary "+ 新建" jumps to in-session Hero creation with prefilled prompt
+		// Clicking primary "+ 新建" jumps to in-session Hero creation with independent dir and full permission
 		fireEvent.click(screen.getByRole("button", { name: "新建" }));
-		expect(onCreateInSession).toHaveBeenCalledWith("/ws", "请根据需求创建一个自动化任务。");
+		expect(onCreateInSession).toHaveBeenCalledWith("/agent/automations", "请根据需求创建一个自动化任务。", { toolPreset: "full" });
 
 		fireEvent.click(screen.getByRole("button", { name: "立即运行" }));
 		await waitFor(() => expect(posts.some((p) => p.action === "runNow" && p.id === "task-1")).toBe(true));
 
-		// Open split dropdown -> Manual create opens modal
+		// Open split dropdown -> Manual create opens modal with schedule rules & defaults cwd to independent dir
 		fireEvent.click(screen.getByRole("button", { name: "新建任务" }));
 		fireEvent.click(await screen.findByRole("menuitem", { name: "手动创建" }));
 		const dialog = await screen.findByRole("dialog");
+		expect(within(dialog).getByText("自动化工作区")).toBeTruthy();
 		fireEvent.change(within(dialog).getByPlaceholderText(/每日代码/), { target: { value: "Hourly Ping" } });
 		fireEvent.change(within(dialog).getByPlaceholderText(/描述每次触发/), { target: { value: "Say hi" } });
-		fireEvent.click(within(dialog).getByRole("button", { name: "固定间隔" }));
+		const dailyTab = within(dialog).getByRole("button", { name: "每天" });
+		expect(dailyTab.getAttribute("aria-pressed")).toBe("true");
+		fireEvent.click(within(dialog).getByRole("button", { name: "每周" }));
+		expect(within(dialog).getByRole("button", { name: "周一" }).getAttribute("aria-pressed")).toBe("true");
+		const intervalTab = within(dialog).getByRole("button", { name: "固定间隔" });
+		fireEvent.click(intervalTab);
+		expect(intervalTab.getAttribute("aria-pressed")).toBe("true");
 		fireEvent.click(within(dialog).getByRole("button", { name: "确认" }));
 
-		await waitFor(() => expect(posts.some((p) => p.action === "create" && p.name === "Hourly Ping")).toBe(true));
+		await waitFor(() => expect(posts.some((p) => p.action === "create" && p.name === "Hourly Ping" && p.cwd === "/agent/automations")).toBe(true));
 		await screen.findByText("Hourly Ping");
 
 		// Switch to Runs tab and open generated session

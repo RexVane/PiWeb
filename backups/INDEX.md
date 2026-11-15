@@ -123,3 +123,22 @@
 2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\viewer-1.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
 2026-11-14 15:58:42 +08:00 | D:\AIApp\PiWeb\assets\viewer-2.jpg | HEAD 1d4efba9054909cd9c8b2788028ce704c99b03ea；Windows 回收站 | 用户批准移除已被现行 README 图片替代、无引用的旧截图
 2026-11-14 | D:\AIApp\PiWeb\src\components\AppShell.tsx | D:\AIApp\PiWeb\.audit-2026-11-14\optimization\baseline-root\AppShell.tsx | 性能优化前的工作区内容对照快照，保留此前未提交修改
+2026-11-15 00:30:29 +08:00 | D:\AIApp\PiWeb\src\lib\session-retention.ts | HEAD 4a6a59e2941eac2047f94a9eea8d5caac0226f9b；Windows 回收站 | 用户要求取消会话自动删除，移除归档定时清理模块
+2026-11-15 11:17:48 +08:00 | d:\AIApp\PiWeb\.next-releases\mwh4hzzp-0a6c438d-f47e-4aec-9483-9d77c072bbb4 | d:\AIApp\PiWeb\backups\files\mwh4hzzp-0a6c438d-f47e-4aec-9483-9d77c072bbb4-20261115-111748 | 按 build-output 容量规则归档未完成的失败/中断发布目录
+2026-11-15 11:17:48 +08:00 | d:\AIApp\PiWeb\.next-releases\mwh4hzzp-0a6c438d-f47e-4aec-9483-9d77c072bbb4.owner.json | d:\AIApp\PiWeb\backups\files\mwh4hzzp-0a6c438d-f47e-4aec-9483-9d77c072bbb4-20261115-111748.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
+2026-11-15 11:17:48 +08:00 | d:\AIApp\PiWeb\.next-releases\mwh51w0j-64da52f1-581b-4539-ac5d-9e6d06d16237 | d:\AIApp\PiWeb\backups\files\mwh51w0j-64da52f1-581b-4539-ac5d-9e6d06d16237-20261115-111748 | 按 build-output 容量规则归档未完成的失败/中断发布目录
+2026-11-15 11:17:48 +08:00 | d:\AIApp\PiWeb\.next-releases\mwh51w0j-64da52f1-581b-4539-ac5d-9e6d06d16237.owner.json | d:\AIApp\PiWeb\backups\files\mwh51w0j-64da52f1-581b-4539-ac5d-9e6d06d16237-20261115-111748.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
+2026-11-15 11:17:48 +08:00 | d:\AIApp\PiWeb\.next-releases\mwh9652a-90edb0ca-4218-4eeb-9994-5638c0ad1ce3 | d:\AIApp\PiWeb\backups\files\mwh9652a-90edb0ca-4218-4eeb-9994-5638c0ad1ce3-20261115-111748 | 按 build-output 容量规则归档未完成的失败/中断发布目录
+2026-11-15 11:17:48 +08:00 | d:\AIApp\PiWeb\.next-releases\mwh9652a-90edb0ca-4218-4eeb-9994-5638c0ad1ce3.owner.json | d:\AIApp\PiWeb\backups\files\mwh9652a-90edb0ca-4218-4eeb-9994-5638c0ad1ce3-20261115-111748.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
+
+2026-11-15 12:03:43 | src/lib/marketplace-catalog.ts | backups/files/marketplace-feature-20261115-120343/ | 资源市场自有扩展源方案取消（未提交，功能下线）
+2026-11-15 12:03:43 | src/lib/marketplace-install.ts + src/data/marketplace-catalog.json + api/plugins/marketplace/install + docs/marketplace-source.md | backups/files/marketplace-feature-20261115-120343/ | 同上
+2026-11-15 12:03:43 | (被删改文件的 diff) | backups/files/marketplace-feature-20261115-120343/marketplace-changes.patch | 同上，便于回滚
+
+2026-11-15 19:03:45 +08:00 | d:\AIApp\PiWeb\.next-releases\update.lock | d:\AIApp\PiWeb\backups\files\update-20261115-190345.lock | 归档已失效的遗留构建锁（原持有进程 62000 已结束，children 中 47260 系 Windows 复用 PID 至 svchost.exe）
+2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhh8jse-cd72a23b-947d-40d7-baea-74231dce333c | d:\AIApp\PiWeb\backups\files\mwhh8jse-cd72a23b-947d-40d7-baea-74231dce333c-20261115-191015 | 按 build-output 容量规则归档未完成的失败/中断发布目录
+2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhh8jse-cd72a23b-947d-40d7-baea-74231dce333c.owner.json | d:\AIApp\PiWeb\backups\files\mwhh8jse-cd72a23b-947d-40d7-baea-74231dce333c-20261115-191015.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
+2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhont88-43cceebd-e42a-4f65-abde-fddcc59a39b1 | d:\AIApp\PiWeb\backups\files\mwhont88-43cceebd-e42a-4f65-abde-fddcc59a39b1-20261115-191015 | 按 build-output 容量规则归档未完成的失败/中断发布目录
+2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhont88-43cceebd-e42a-4f65-abde-fddcc59a39b1.owner.json | d:\AIApp\PiWeb\backups\files\mwhont88-43cceebd-e42a-4f65-abde-fddcc59a39b1-20261115-191015.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
+2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a | d:\AIApp\PiWeb\backups\files\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a-20261115-191015 | 按 build-output 容量规则归档未完成的失败/中断发布目录
+2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a.owner.json | d:\AIApp\PiWeb\backups\files\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a-20261115-191015.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单

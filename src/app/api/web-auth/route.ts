@@ -1,21 +1,33 @@
 /**
- * 网页认证：GET 状态 / POST 已废弃（密码登录移除）/ DELETE 登出。
+ * 网页认证：GET 状态 / POST 启动令牌或配对码换 Cookie（密码登录已永久移除，传 password 仍回 410）/ DELETE 登出。
  * DELETE 在服务端撤回本设备这张 Cookie 再清掉它（被拷走的副本同样失效）；
- * DELETE ?scope=all 让此刻之前签发的所有 Cookie 失效（所有设备都要重新用启动令牌登录）。
+ * DELETE ?scope=all 让此刻之前签发的所有 Cookie 失效（所有设备都要重新认证）。
  * 没启用认证时整体关闭（GET 返回 enabled:false）。
- *
- * 唯一的登录路径是启动令牌换 Cookie（见 src/proxy.ts）：根路径的 GET 带上 ?token=…
- * 换一张签名 Cookie，之后带着 Cookie 请求即可。这里不再收任何凭据。
  */
 import { NextResponse } from "next/server";
 import { configuredTrustedHosts, isSafeHost, isSafeOrigin } from "@/lib/auth";
-import { authEnabled, clearSessionCookie, clearedCookieOptions, sessionCookieFromRequest, validSessionCookie } from "@/lib/web-auth";
+import { getAuthRetryAfterMs, recordAuthFailure, recordAuthSuccess, retryAfterSeconds } from "@/lib/auth-throttle";
+import { authEnabled, clearSessionCookie, clearedCookieOptions, createSessionCookie, decodeSessionCookie, requestAuthority, requestDeviceType, sessionCookieFromRequest, sessionCookieId, sessionCookieOptions, validSessionCookie } from "@/lib/web-auth";
 import { loadSessionRevocations, loadWebSecret, revokeAllSessions, revokeSessionCookie } from "@/lib/web-secret";
-import { listWebDevices } from "@/lib/web-devices";
-import { invalidateLaunchTokens } from "@/lib/web-launch-token";
-import { invalidatePairCodes } from "@/lib/remote/pairing";
+import { listWebDevices, rememberWebDevice } from "@/lib/web-devices";
+import { consumeLaunchToken, invalidateLaunchTokens } from "@/lib/web-launch-token";
+import { invalidatePairCodes, verifyPairCode } from "@/lib/remote/pairing";
 
 export const dynamic = "force-dynamic";
+
+function parseLoginCredential(raw: string): { kind: "token" | "pair" | "either"; value: string } {
+	const trimmed = raw.trim();
+	try {
+		const parsed = trimmed.startsWith("/") ? new URL(trimmed, "http://piweb.local") : new URL(trimmed);
+		const token = parsed.searchParams.get("token")?.trim();
+		if (token) return { kind: "token", value: token };
+		const code = parsed.searchParams.get("code")?.trim();
+		if (code) return { kind: "pair", value: code };
+	} catch {
+		/* pure token or pairing code */
+	}
+	return { kind: "either", value: trimmed };
+}
 
 function untrusted(request: Request): NextResponse | null {
 	if (!isSafeHost(request, configuredTrustedHosts())) {
@@ -43,14 +55,89 @@ export async function GET(request: Request) {
 	);
 }
 
-/** 密码登录已移除：这里曾经用密码换会话 Cookie，现在只回答「此路已废」。 */
+/** 启动令牌或配对码登录；密码登录已永久移除（提交 password 字段仍返回 410 Gone）。 */
 export async function POST(request: Request) {
 	const blocked = untrusted(request);
 	if (blocked) return blocked;
-	return NextResponse.json(
-		{ success: false, error: "password login has been removed; run the PiWeb launcher on its host to open the login page" },
-		{ status: 410, headers: { "Cache-Control": "no-store" } },
-	);
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		return NextResponse.json({ success: false, error: "invalid JSON body" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+	}
+	if (!body || typeof body !== "object" || Array.isArray(body)) {
+		return NextResponse.json({ success: false, error: "invalid request body" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+	}
+	const record = body as Record<string, unknown>;
+	if ("password" in record) {
+		return NextResponse.json(
+			{ success: false, error: "password login has been removed; run the PiWeb launcher on its host to open the login page" },
+			{ status: 410, headers: { "Cache-Control": "no-store" } },
+		);
+	}
+	if (!authEnabled()) {
+		return NextResponse.json({ success: true, data: { enabled: false, authenticated: true } }, { headers: { "Cache-Control": "no-store" } });
+	}
+	const raw = record.credential ?? record.token ?? record.pairCode ?? record.code;
+	if (typeof raw !== "string" || !raw.trim() || raw.trim().length > 2048) {
+		return NextResponse.json({ success: false, error: "launch token or pairing code is required" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+	}
+	const retryAfterMs = getAuthRetryAfterMs();
+	if (retryAfterMs > 0) {
+		const seconds = retryAfterSeconds(retryAfterMs);
+		return NextResponse.json(
+			{ success: false, error: "too many login attempts; please try again shortly", retryAfterSeconds: seconds },
+			{ status: 429, headers: { "Cache-Control": "no-store", "Retry-After": String(seconds) } },
+		);
+	}
+	const revocations = loadSessionRevocations();
+	if (revocations.unavailable) {
+		return NextResponse.json({ success: false, error: "session authentication is temporarily unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+	}
+	const parsed = parseLoginCredential(raw);
+	let ok = false;
+	let pairFailure: "expired" | "unknown" | "rate-limited" | undefined;
+	let pairRetrySeconds: number | undefined;
+	if (parsed.kind === "token" || parsed.kind === "either") {
+		ok = consumeLaunchToken(parsed.value, process.env.PI_WEB_LAUNCH_TOKEN, Date.now(), revocations.notBefore);
+	}
+	if (!ok && (parsed.kind === "pair" || parsed.kind === "either")) {
+		const outcome = verifyPairCode(parsed.value, Date.now(), revocations.notBefore);
+		if (outcome.ok) ok = true;
+		else {
+			pairFailure = outcome.reason;
+			pairRetrySeconds = outcome.retryAfterSeconds;
+		}
+	}
+	if (pairFailure === "rate-limited") {
+		const seconds = pairRetrySeconds ?? 60;
+		return NextResponse.json(
+			{ success: false, error: "too many pairing attempts; please try again shortly", retryAfterSeconds: seconds },
+			{ status: 429, headers: { "Cache-Control": "no-store", "Retry-After": String(seconds) } },
+		);
+	}
+	if (!ok) {
+		const delay = recordAuthFailure();
+		return NextResponse.json(
+			{
+				success: false,
+				error: pairFailure === "expired" ? "pairing code expired" : "invalid launch token or pairing code",
+				retryAfterSeconds: retryAfterSeconds(delay),
+			},
+			{ status: 401, headers: { "Cache-Control": "no-store" } },
+		);
+	}
+	recordAuthSuccess();
+	const authority = requestAuthority(request);
+	if (!authority) {
+		return NextResponse.json({ success: false, error: "invalid request authority" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+	}
+	const secret = loadWebSecret();
+	const cookie = createSessionCookie(authority, secret, Date.now(), requestDeviceType(request), revocations.notBefore);
+	await rememberWebDevice(sessionCookieId(cookie.value), decodeSessionCookie(cookie.value, secret)!).catch((error) => console.error("[web-auth] Could not remember device:", error));
+	const response = NextResponse.json({ success: true, data: { enabled: true, authenticated: true } }, { headers: { "Cache-Control": "no-store" } });
+	response.cookies.set(cookie.name, cookie.value, sessionCookieOptions(request));
+	return response;
 }
 
 export async function DELETE(request: Request) {

@@ -19,7 +19,7 @@ beforeEach(() => {
 	for (const fn of [deps.list, deps.index, deps.read, deps.open, deps.info, deps.diff, deps.show, deps.cold]) fn.mockResolvedValue({});
 	deps.image.mockResolvedValue({ bytes: Buffer.from([1]), mimeType: "image/png" });
 	deps.sessions.mockResolvedValue([]); deps.resolve.mockResolvedValue("/private/session.jsonl");
-	deps.registry.mockResolvedValue({ workspaces: [], aliases: {}, archivedSessions: [], pinnedSessions: [], removedWorkspaces: [] });
+	deps.registry.mockResolvedValue({ workspaces: [], aliases: {}, archivedSessions: [], archivedAt: {}, pinnedSessions: [], removedWorkspaces: [] });
 	deps.add.mockResolvedValue({ workspaces: ["project"], removedWorkspaces: [] });
 	deps.recovery.mockResolvedValue({});
 });
@@ -72,6 +72,20 @@ it("the workspace mutation response immediately reports persisted recovery infor
 	const response = await workspacePost(new Request("http://local/api/workspaces", { method: "POST", body: JSON.stringify({ action: "add", path: "project" }) }));
 	expect(response.status).toBe(200);
 	expect(await response.json()).toMatchObject({ success: true, data: { workspaces: ["project"], ...notice } });
+	expect(response.headers.get("Cache-Control")).toContain("no-store");
+});
+
+it.each(["archiveSession", "forgetSession"])("%s immediately returns the archive timing snapshot", async (action) => {
+	const snapshot = { archivedSessions: action === "archiveSession" ? ["/private/session.jsonl"] : [],
+		archivedAt: action === "archiveSession" ? { "/private/session.jsonl": 1234 } : {},
+		warning: "请核对恢复结果", recovery: { source: "last-good", backup: "registry-copy.json" },
+	};
+	deps.registry.mockResolvedValue({ workspaces: [], aliases: {}, pinnedSessions: [], removedWorkspaces: [], ...snapshot });
+	const response = await workspacePost(new Request("http://local/api/workspaces", {
+		method: "POST", body: JSON.stringify({ action, path: "/private/session.jsonl" }),
+	}));
+	expect(response.status).toBe(200);
+	expect(await response.json()).toEqual({ success: true, data: snapshot });
 	expect(response.headers.get("Cache-Control")).toContain("no-store");
 });
 

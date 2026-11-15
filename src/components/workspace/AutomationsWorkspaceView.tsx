@@ -22,6 +22,14 @@ import { WorkspaceViewShell } from "./WorkspaceViewShell";
 
 type AutomationFilterTab = "active" | "paused" | "ended" | "all" | "runs";
 
+function sameWorkspacePath(left: string, right: string): boolean {
+	const norm = (value: string) => {
+		const clean = value.replace(/\\/g, "/").replace(/\/+$/, "");
+		return /^[A-Za-z]:\//.test(clean) || clean.startsWith("//") ? clean.toLowerCase() : clean;
+	};
+	return Boolean(left && right) && norm(left) === norm(right);
+}
+
 function taskLifecycle(task: AutomationTask): "active" | "paused" | "ended" {
 	if (!task.enabled) return "paused";
 	if (task.nextRunAt === null) return "ended";
@@ -45,7 +53,7 @@ function StatusBadge({ status, enabled }: { status?: AutomationRun["status"]; en
 		return (
 			<span
 				className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5"
-				style={{ fontSize: 11, background: "var(--dsw-hover)", color: "var(--dsw-label-caption)" }}
+				style={{ fontSize: "var(--dsh-ui-font-2xs)", background: "var(--dsw-hover)", color: "var(--dsw-label-caption)" }}
 			>
 				<span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--dsw-label-tertiary)" }} />
 				{t.autoStatusPaused}
@@ -57,7 +65,7 @@ function StatusBadge({ status, enabled }: { status?: AutomationRun["status"]; en
 			<span
 				className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5"
 				style={{
-					fontSize: 11,
+					fontSize: "var(--dsh-ui-font-2xs)",
 					background: "color-mix(in srgb, var(--dsw-label-primary) 12%, transparent)",
 					color: "var(--dsw-label-primary)",
 				}}
@@ -72,7 +80,7 @@ function StatusBadge({ status, enabled }: { status?: AutomationRun["status"]; en
 			<span
 				className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5"
 				style={{
-					fontSize: 11,
+					fontSize: "var(--dsh-ui-font-2xs)",
 					background: "color-mix(in srgb, var(--dsw-success) 14%, transparent)",
 					color: "var(--dsw-success)",
 				}}
@@ -87,7 +95,7 @@ function StatusBadge({ status, enabled }: { status?: AutomationRun["status"]; en
 			<span
 				className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5"
 				style={{
-					fontSize: 11,
+					fontSize: "var(--dsh-ui-font-2xs)",
 					background: "color-mix(in srgb, var(--dsw-danger) 14%, transparent)",
 					color: "var(--dsw-danger)",
 				}}
@@ -103,18 +111,31 @@ function StatusBadge({ status, enabled }: { status?: AutomationRun["status"]; en
 export function AutomationsWorkspaceView({
 	knownCwds,
 	defaultCwd,
-	getWorkspaceName,
+	getWorkspaceName: rawGetWorkspaceName,
 	models,
 	onOpenSession,
 	onCreateInSession,
+	onDefaultCwdChange,
 }: {
 	knownCwds: string[];
 	defaultCwd: string;
 	getWorkspaceName: (cwd: string) => string;
 	models: ModelChoiceItem[];
 	onOpenSession: (sessionPath: string) => void;
-	onCreateInSession?: (cwd: string, prefillText: string) => void;
+	onCreateInSession?: (cwd: string, prefillText: string, options?: { toolPreset?: ToolPreset }) => void;
+	onDefaultCwdChange?: (cwd: string) => void;
 }) {
+	const [automationDefaultCwd, setAutomationDefaultCwd] = useState("");
+	const { t: uiT } = useI18n();
+	const getWorkspaceName = useCallback(
+		(dir: string) => {
+			if (automationDefaultCwd && sameWorkspacePath(dir, automationDefaultCwd)) {
+				return uiT.autoWorkspaceName;
+			}
+			return rawGetWorkspaceName(dir);
+		},
+		[automationDefaultCwd, rawGetWorkspaceName, uiT.autoWorkspaceName],
+	);
 	const { t, lang } = useI18n();
 	const { confirm, confirmDialog } = useConfirmDialog();
 
@@ -149,6 +170,9 @@ export function AutomationsWorkspaceView({
 				return;
 			}
 			if (!preserveError) setError(null);
+			const nextDefaultCwd = json.data.defaultCwd ?? "";
+			setAutomationDefaultCwd(nextDefaultCwd);
+			if (nextDefaultCwd) onDefaultCwdChange?.(nextDefaultCwd);
 			setStoreError(json.data.storeError);
 			setTasks(json.data.tasks ?? []);
 			setRuns(json.data.runs ?? []);
@@ -158,7 +182,7 @@ export function AutomationsWorkspaceView({
 		} finally {
 			if (mountedRef.current && loadSeq === loadSeqRef.current) setLoading(false);
 		}
-	}, [t.toastError]);
+	}, [t.toastError, onDefaultCwdChange]);
 
 	const hasActiveRuns = activeTaskIds.size > 0 || runs.some((r) => r.status === "running");
 
@@ -200,13 +224,13 @@ export function AutomationsWorkspaceView({
 	}, []);
 
 	const handleCreateInChat = useCallback(() => {
-		const target = defaultCwd || knownCwds[0] || "";
+		const target = automationDefaultCwd || defaultCwd || knownCwds[0] || "";
 		if (onCreateInSession) {
-			onCreateInSession(target, t.autoInChatPrefill);
+			onCreateInSession(target, t.autoInChatPrefill, { toolPreset: "full" });
 		} else {
 			openCreateModal();
 		}
-	}, [defaultCwd, knownCwds, onCreateInSession, t.autoInChatPrefill, openCreateModal]);
+	}, [automationDefaultCwd, defaultCwd, knownCwds, onCreateInSession, t.autoInChatPrefill, openCreateModal]);
 
 	const taskCounts = useMemo(() => {
 		let active = 0;
@@ -347,7 +371,7 @@ export function AutomationsWorkspaceView({
 								style={{
 									padding: "0 12px 0 14px",
 									height: "100%",
-									fontSize: 13.5,
+									fontSize: "var(--dsh-ui-font-135)",
 									color: "var(--dsw-bg-base)",
 									background: "transparent",
 								}}
@@ -383,7 +407,7 @@ export function AutomationsWorkspaceView({
 									role="menuitem"
 									disabled={knownCwds.length === 0 && !onCreateInSession}
 									className="isx-menu-item flex w-full items-center gap-2.5 rounded-lg text-left disabled:opacity-45"
-									style={{ fontSize: 13, padding: "8px 12px", color: "var(--dsw-label-primary)" }}
+									style={{ fontSize: "var(--dsh-ui-font-sm)", padding: "8px 12px", color: "var(--dsw-label-primary)" }}
 									onClick={() => {
 										setNewMenuOpen(false);
 										handleCreateInChat();
@@ -400,7 +424,7 @@ export function AutomationsWorkspaceView({
 									disabled={knownCwds.length === 0}
 									title={knownCwds.length === 0 ? t.autoNeedWorkspace : undefined}
 									className="isx-menu-item flex w-full items-center gap-2.5 rounded-lg text-left disabled:opacity-45"
-									style={{ fontSize: 13, padding: "8px 12px", color: "var(--dsw-label-primary)" }}
+									style={{ fontSize: "var(--dsh-ui-font-sm)", padding: "8px 12px", color: "var(--dsw-label-primary)" }}
 									onClick={() => {
 										setNewMenuOpen(false);
 										openCreateModal();
@@ -429,7 +453,7 @@ export function AutomationsWorkspaceView({
 						role="alert"
 						className="rounded-lg px-3.5 py-2.5"
 						style={{
-							fontSize: 12.5,
+							fontSize: "var(--dsh-ui-font-125)",
 							background: "color-mix(in srgb, var(--dsw-danger) 12%, transparent)",
 							border: "0.5px solid color-mix(in srgb, var(--dsw-danger) 35%, transparent)",
 							color: "var(--dsw-danger)",
@@ -460,7 +484,7 @@ export function AutomationsWorkspaceView({
 								className="rounded-lg transition-colors"
 								style={{
 									padding: "6px 12px",
-									fontSize: 13,
+									fontSize: "var(--dsh-ui-font-sm)",
 									fontWeight: active ? 500 : 400,
 									background: active ? "var(--dsw-active)" : "transparent",
 									color: active ? "var(--dsw-label-primary)" : "var(--dsw-label-tertiary)",
@@ -468,7 +492,7 @@ export function AutomationsWorkspaceView({
 							>
 								<span>{item.label}</span>
 								{item.count > 0 && (
-									<span className="ml-1.5 tabular-nums opacity-70" style={{ fontSize: 11.5 }}>
+									<span className="ml-1.5 tabular-nums opacity-70" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))" }}>
 										{item.count}
 									</span>
 								)}
@@ -484,7 +508,7 @@ export function AutomationsWorkspaceView({
 						className="ml-auto rounded-lg transition-colors"
 						style={{
 							padding: "6px 12px",
-							fontSize: 13,
+							fontSize: "var(--dsh-ui-font-sm)",
 							fontWeight: tab === "runs" ? 500 : 400,
 							background: tab === "runs" ? "var(--dsw-active)" : "transparent",
 							color: tab === "runs" ? "var(--dsw-label-primary)" : "var(--dsw-label-tertiary)",
@@ -508,10 +532,11 @@ export function AutomationsWorkspaceView({
 						aria-label={t.autoSearchPlaceholder}
 						className="w-full rounded-lg outline-none"
 						style={{
-							height: 38,
+							minHeight: 38,
+							height: "max(38px, calc(38px + var(--dsh-content-font-delta)))",
 							paddingLeft: 36,
 							paddingRight: 12,
-							fontSize: 13,
+							fontSize: "var(--dsh-ui-font-sm)",
 							background: "var(--dsw-bg-elevated, transparent)",
 							border: "0.5px solid var(--dsw-border-l2)",
 							color: "var(--dsw-label-primary)",
@@ -534,7 +559,7 @@ export function AutomationsWorkspaceView({
 								>
 									<IconClockOutline16 size={22} />
 								</span>
-								<div style={{ fontSize: 13.5, color: "var(--dsw-label-tertiary)" }}>
+								<div style={{ fontSize: "var(--dsh-ui-font-135)", color: "var(--dsw-label-tertiary)" }}>
 									{emptyMessage}
 								</div>
 								{!q && (knownCwds.length > 0 || onCreateInSession) && (
@@ -544,7 +569,7 @@ export function AutomationsWorkspaceView({
 										className="mt-1 rounded-lg transition-colors hover:opacity-85"
 										style={{
 											padding: "7px 14px",
-											fontSize: 13,
+											fontSize: "var(--dsh-ui-font-sm)",
 											fontWeight: 500,
 											border: "0.5px solid var(--dsw-border-l2)",
 											background: "var(--dsw-hover)",
@@ -572,7 +597,7 @@ export function AutomationsWorkspaceView({
 									<div className="flex items-start gap-3">
 										<div className="min-w-0 flex-1">
 											<div className="flex flex-wrap items-center gap-2">
-												<span style={{ fontSize: 14.5, fontWeight: 600, color: "var(--dsw-label-primary)" }}>
+												<span style={{ fontSize: "calc(14.5px + var(--dsh-content-font-delta))", fontWeight: 600, color: "var(--dsw-label-primary)" }}>
 													{task.name}
 												</span>
 												<StatusBadge
@@ -582,7 +607,7 @@ export function AutomationsWorkspaceView({
 												<span
 													className="rounded-full px-2 py-0.5"
 													style={{
-														fontSize: 11,
+														fontSize: "var(--dsh-ui-font-2xs)",
 														background: "var(--dsw-hover)",
 														color: "var(--dsw-label-tertiary)",
 													}}
@@ -593,7 +618,7 @@ export function AutomationsWorkspaceView({
 												<span
 													className="rounded-full px-2 py-0.5"
 													style={{
-														fontSize: 11,
+														fontSize: "var(--dsh-ui-font-2xs)",
 														background: "var(--dsw-hover)",
 														color: "var(--dsw-label-tertiary)",
 													}}
@@ -604,7 +629,7 @@ export function AutomationsWorkspaceView({
 													<span
 														className="rounded-full px-2 py-0.5"
 														style={{
-															fontSize: 11,
+															fontSize: "var(--dsh-ui-font-2xs)",
 															fontFamily: "var(--font-mono)",
 															background: "var(--dsw-hover)",
 															color: "var(--dsw-label-tertiary)",
@@ -617,14 +642,14 @@ export function AutomationsWorkspaceView({
 
 											<p
 												className="mt-1.5 line-clamp-2 whitespace-pre-wrap"
-												style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)", lineHeight: 1.5 }}
+												style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-secondary)", lineHeight: 1.5 }}
 											>
 												{task.prompt}
 											</p>
 
 											<div
 												className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1"
-												style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}
+												style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-caption)" }}
 											>
 												<span>{describeSchedule(task.schedule, lang)}</span>
 												<span>
@@ -659,7 +684,7 @@ export function AutomationsWorkspaceView({
 										<button
 											type="button"
 											className="btn-outline"
-											style={{ height: 28, fontSize: 12, padding: "0 10px" }}
+											style={{ height: "max(28px, calc(28px + var(--dsh-content-font-delta)))", fontSize: "var(--dsh-ui-font-xs)", padding: "0 10px" }}
 											disabled={busy || isRunning}
 											onClick={() => void performTaskAction(task, "runNow")}
 										>
@@ -670,7 +695,7 @@ export function AutomationsWorkspaceView({
 											<button
 												type="button"
 												className="btn-outline"
-												style={{ height: 28, fontSize: 12, padding: "0 10px" }}
+												style={{ height: "max(28px, calc(28px + var(--dsh-content-font-delta)))", fontSize: "var(--dsh-ui-font-xs)", padding: "0 10px" }}
 												onClick={() => onOpenSession(task.lastSessionPath!)}
 											>
 												{t.autoOpenSession}
@@ -680,7 +705,7 @@ export function AutomationsWorkspaceView({
 										<button
 											type="button"
 											className="rounded-lg transition-colors hover:opacity-80"
-											style={{ fontSize: 12, padding: "4px 10px", color: "var(--dsw-label-secondary)" }}
+											style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-label-secondary)" }}
 											disabled={busy}
 											onClick={() => {
 												setEditingTask(task);
@@ -692,7 +717,7 @@ export function AutomationsWorkspaceView({
 										<button
 											type="button"
 											className="rounded-lg transition-colors hover:opacity-80"
-											style={{ fontSize: 12, padding: "4px 10px", color: "var(--dsw-danger)" }}
+											style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-danger)" }}
 											disabled={busy || isRunning}
 											onClick={() => void performTaskAction(task, "delete")}
 										>
@@ -710,7 +735,7 @@ export function AutomationsWorkspaceView({
 						{!loading && filteredRuns.length === 0 && (
 							<div
 								className="rounded-lg px-6 py-12 text-center"
-								style={{ fontSize: 13, color: "var(--dsw-label-caption)", border: "0.5px solid var(--dsw-border-l2)" }}
+								style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-caption)", border: "0.5px solid var(--dsw-border-l2)" }}
 							>
 								{q ? t.autoEmptyFiltered : t.autoRunsEmpty}
 							</div>
@@ -723,17 +748,17 @@ export function AutomationsWorkspaceView({
 								style={{ border: "0.5px solid var(--dsw-border-l2)" }}
 							>
 								<div className="flex flex-wrap items-center gap-2">
-									<span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
+									<span style={{ fontSize: "var(--dsh-ui-font-135)", fontWeight: 500, color: "var(--dsw-label-primary)" }}>
 										{run.taskName}
 									</span>
 									<StatusBadge status={run.status} />
 									<span
 										className="rounded-full px-2 py-0.5"
-										style={{ fontSize: 11, background: "var(--dsw-hover)", color: "var(--dsw-label-tertiary)" }}
+										style={{ fontSize: "var(--dsh-ui-font-2xs)", background: "var(--dsw-hover)", color: "var(--dsw-label-tertiary)" }}
 									>
 										{run.trigger === "manual" ? t.autoTriggerManual : t.autoTriggerSchedule}
 									</span>
-									<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+									<span style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-caption)" }}>
 										{getWorkspaceName(run.cwd) || run.cwd} · {formatTimestamp(run.startedAt, lang, "")}
 									</span>
 									<div className="flex-1" />
@@ -741,7 +766,7 @@ export function AutomationsWorkspaceView({
 										<button
 											type="button"
 											className="btn-outline"
-											style={{ height: 26, fontSize: 11.5, padding: "0 10px" }}
+											style={{ height: "max(26px, calc(26px + var(--dsh-content-font-delta)))", fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", padding: "0 10px" }}
 											onClick={() => onOpenSession(run.sessionPath!)}
 										>
 											{t.autoOpenSession}
@@ -752,7 +777,7 @@ export function AutomationsWorkspaceView({
 									<div
 										className="line-clamp-2"
 										style={{
-											fontSize: 12,
+											fontSize: "var(--dsh-ui-font-xs)",
 											color: run.error ? "var(--dsw-danger)" : "var(--dsw-label-secondary)",
 										}}
 									>
@@ -769,7 +794,7 @@ export function AutomationsWorkspaceView({
 				open={modalOpen}
 				initialTask={editingTask}
 				knownCwds={knownCwds}
-				defaultCwd={defaultCwd}
+				defaultCwd={automationDefaultCwd || defaultCwd}
 				getWorkspaceName={getWorkspaceName}
 				models={models}
 				onClose={() => setModalOpen(false)}

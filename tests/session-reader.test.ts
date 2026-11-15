@@ -223,4 +223,17 @@ describe("session-reader listSessions parity", () => {
 		process.env.PI_CODING_AGENT_DIR = second;
 		expect((await listSessions())[0].cwd).toBe("second");
 	});
+
+	it("deletes session files directly without creating backups and ignores missing pending files", async () => {
+		vi.resetModules();
+		const { deleteSession } = await import("../src/lib/session-reader");
+		const dir = path.join(tempDir, "agent", "sessions", "workspace");
+		await fs.mkdir(dir, { recursive: true });
+		const target = path.join(dir, "direct-delete.jsonl");
+		await fs.writeFile(target, JSON.stringify({ type: "session", cwd: "/project" }) + "\n");
+		await deleteSession(target);
+		await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(fs.stat(path.join(tempDir, "agent", "backups"))).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(deleteSession(path.join(dir, "unpersisted.jsonl"))).resolves.toBeUndefined();
+	});
 });

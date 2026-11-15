@@ -61,7 +61,7 @@ export async function GET(req: Request) {
 					sessionCwd = await resolveWorkspacePath(header.cwd);
 				} finally { await handle.close(); }
 			} else if (params.has("cwd")) sessionCwd = await resolveWorkspacePath(params.get("cwd"));
-			else throw new BoundaryError("pending session requires its workspace for model discovery");
+			else throw new BoundaryError("未落盘或不存在的会话缺少工作区信息，无法读取模型目录。");
 		}
 		const data = await (full ? listModels() : sessionCwd || cwd ? listWorkspaceModelsForPiWeb((sessionCwd || cwd)!) : listModelsForPiWeb(runtime));
 		// 页面挂载只需要选模型用的字段（1300+ 个模型带 api/baseUrl/cost/input 有 400KB）；设置页用 custom=1 拿完整版

@@ -35,6 +35,9 @@ describe("PiWeb SSE event folding", () => {
 		expect(ids(foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeStreamId: "stream-u2", ts: 5 }))).toEqual(["u1", "a1", "c1", "u2", "a2"]);
 		// 找不到保留消息就追加到末尾，不丢卡片
 		expect(ids(foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeId: "missing", ts: 5 }))).toEqual(["u1", "a1", "u2", "a2", "c1"]);
+		// 用户发出下一条消息时再清掉底部的压缩完成提示条（分隔卡本身仍留在消息流里）
+		const nextTurn = foldPiWebEvent(next, { type: "message", phase: "start", message: { role: "user", id: "u3", content: text("q3") }, ts: 7 });
+		expect(nextTurn.compaction).toBeNull();
 	});
 
 	it("updates a final already in the snapshot without duplicating it or losing the delayed end", () => {
@@ -202,7 +205,7 @@ describe("扩展面与 ! 命令的事件折叠", () => {
 	const base = (overrides: Partial<PiWebState> = {}): PiWebState => ({
 		snapshot: null, messages: [], tools: {}, toolPreset: "workspace", connected: true, error: null, compaction: null, retryNotice: null,
 		extensionDialogs: [], extensionNotices: [], extensionStatuses: {}, extensionWidgets: {}, extensionTitle: null, editorText: null,
-		workingMessage: null, growth: { rounds: [], error: null, consent: null },
+		workingMessage: null, growth: { rounds: [], error: null },
 		...overrides,
 	});
 	const pending: WebMessage = { role: "assistant", streamId: "run-1", content: [{ type: "text", text: "我来写文件" }], stopReason: "pending" };
@@ -297,5 +300,21 @@ describe("扩展面与 ! 命令的事件折叠", () => {
 		// 换回普通模型：显式 null 清掉
 		state = foldPiWebEvent(state, { type: "model", provider: "openai", model: "gpt-6", routedModel: null, ts: 3 });
 		expect(state.snapshot?.routedModel).toBeNull();
+	});
+
+	it("replaces a trailing optimistic user message in-place on server user message start and end", () => {
+		const optimistic: WebMessage = { role: "user", streamId: "__optimistic__:1", content: [{ type: "text", text: "你好" }] };
+		const startMsg: WebMessage = { role: "user", streamId: "srv-u1", content: [{ type: "text", text: "你好" }] };
+		const endMsg: WebMessage = { role: "user", id: "entry-u1", streamId: "srv-u1", content: [{ type: "text", text: "你好" }] };
+
+		let state = foldPiWebEvent(base({ messages: [optimistic] }), { type: "message", phase: "start", message: startMsg, ts: 1 });
+		expect(state.messages).toEqual([startMsg]);
+
+		state = foldPiWebEvent(state, { type: "message", phase: "end", message: endMsg, ts: 2 });
+		expect(state.messages).toEqual([endMsg]);
+
+		// 若服务端跳过 start 直接发 end，也应就地替换而不重复两条用户消息
+		const directEnd = foldPiWebEvent(base({ messages: [optimistic] }), { type: "message", phase: "end", message: endMsg, ts: 3 });
+		expect(directEnd.messages).toEqual([endMsg]);
 	});
 });

@@ -27,7 +27,7 @@ const messages: WebMessage[] = [
 const sessions = [{ path: "/session-a", cwd: "/workspace", name: "session-a" }];
 const models = { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] };
 const tools = {};
-const growth = { rounds: [], error: null, consent: null };
+const growth = { rounds: [], error: null };
 const breakdown = { systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0, autoCompactBuffer: 0, cold: false, characters: { systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0 } };
 const snapshot = {
 	cwd: "/workspace",
@@ -131,7 +131,6 @@ vi.mock("@/hooks/usePiWeb", () => ({
 			clearCompaction: noop,
 			setError: noop,
 			answerExtensionDialog: noop,
-			answerGrowthConsent: noop,
 			dismissExtensionNotice: noop,
 			renameWorkspace: noop,
 			patchSessionName: noop,

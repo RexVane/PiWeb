@@ -81,6 +81,92 @@ async function loadKoffi(): Promise<typeof import("koffi")> {
 	const mod = await import("koffi");
 	return (mod as unknown as { default?: typeof import("koffi") }).default ?? mod;
 }
+export interface Win32DesktopApi {
+	stationName(): string | null;
+	threadDesktopName(): string | null;
+	canOpenDesktop(name: string): boolean;
+}
+
+/**
+ * 宿主受限子桌面（如 Antigravity 的 `WinSta0\exebox-*`）能跑普通子进程，但 AppContainer 的
+ * `USER32.dll` 初始化会在这种桌面上直接以 `0xC0000142` (`STATUS_DLL_INIT_FAILED`) 退出。
+ * 当当前仍在 `WinSta0` 内、处于非 `Default` 桌面且 `WinSta0\Default` 可打开时，把子进程切回 `WinSta0\Default`。
+ */
+export function selectAppContainerDesktop(api: Win32DesktopApi): string | null {
+	const station = api.stationName();
+	const desktop = api.threadDesktopName();
+	if (!station || !desktop) return null;
+	if (station.toLowerCase() !== "winsta0") return null;
+	if (desktop.toLowerCase() === "default") return null;
+	return api.canOpenDesktop("Default") ? "WinSta0\\Default" : null;
+}
+
+/** 从 Win32 WindowStation / Desktop 对象句柄读取对象名 (`UOI_NAME = 2`)。 */
+function readUserObjectName(
+	GetUserObjectInformationW: (hObj: unknown, nIndex: number, pvInfo: Buffer, nLength: number, lpnLengthNeeded: Buffer) => number,
+	handle: unknown,
+): string | null {
+	if (!handle) return null;
+	const nameBuf = Buffer.alloc(512);
+	const neededBuf = Buffer.alloc(4);
+	if (!GetUserObjectInformationW(handle, 2, nameBuf, nameBuf.length, neededBuf)) return null;
+	const bytes = neededBuf.readUInt32LE(0);
+	if (bytes < 2 || bytes > nameBuf.length) return null;
+	return nameBuf.subarray(0, bytes).toString("utf16le").replace(/\0+$/, "") || null;
+}
+
+let cachedDesktopResolved = false;
+let cachedDesktopBuffer: Buffer | null = null;
+
+function getAppContainerDesktopBuffer(koffiModule: { load(name: string): { func(sig: string): (...args: never[]) => unknown } }): Buffer | null {
+	if (cachedDesktopResolved) return cachedDesktopBuffer;
+	cachedDesktopResolved = true;
+	try {
+		const user32 = koffiModule.load("user32.dll");
+		const kernel32 = koffiModule.load("kernel32.dll");
+		const GetProcessWindowStation = user32.func("void* GetProcessWindowStation()") as () => unknown;
+		const GetCurrentThreadId = kernel32.func("uint32 GetCurrentThreadId()") as () => number;
+		const GetThreadDesktop = user32.func("void* GetThreadDesktop(uint32 dwThreadId)") as (tid: number) => unknown;
+		const GetUserObjectInformationW = user32.func(
+			"int GetUserObjectInformationW(void* hObj, int nIndex, uint8* pvInfo, uint32 nLength, uint8* lpnLengthNeeded)",
+		) as (hObj: unknown, nIndex: number, pvInfo: Buffer, nLength: number, lpnLengthNeeded: Buffer) => number;
+		const OpenDesktopW = user32.func("void* OpenDesktopW(str16 lpszDesktop, uint32 dwFlags, int fInherit, uint32 dwDesiredAccess)") as (
+			name: string,
+			flags: number,
+			inherit: number,
+			access: number,
+		) => unknown;
+		const CloseDesktop = user32.func("int CloseDesktop(void* hDesktop)") as (handle: unknown) => number;
+
+		const selected = selectAppContainerDesktop({
+			stationName: () => readUserObjectName(GetUserObjectInformationW, GetProcessWindowStation()),
+			threadDesktopName: () => readUserObjectName(GetUserObjectInformationW, GetThreadDesktop(GetCurrentThreadId())),
+			canOpenDesktop: (name) => {
+				const handle = OpenDesktopW(name, 0, 0, 0x00020000);
+				if (!handle) return false;
+				CloseDesktop(handle);
+				return true;
+			},
+		});
+		cachedDesktopBuffer = selected ? Buffer.from(`${selected}\0`, "utf16le") : null;
+	} catch {
+		cachedDesktopBuffer = null;
+	}
+	return cachedDesktopBuffer;
+}
+
+export function formatAclProbeFailure(result: { exitCode: number | null; output: string }): string {
+	const detail = result.output.trim();
+	const codeLabel = result.exitCode === null
+		? "unknown exit code"
+		: result.exitCode > 0xffff || result.exitCode < 0
+			? `exit code ${result.exitCode} (0x${(result.exitCode >>> 0).toString(16).toUpperCase().padStart(8, "0")})`
+			: `exit code ${result.exitCode}`;
+	return detail
+		? `Isolated Node runtime could not start: ${detail} (${codeLabel})`
+		: `Isolated Node runtime could not start: ${codeLabel}`;
+}
+
 export async function probeAclSandboxCapability(): Promise<SandboxCapability> {
 	if (process.platform !== "win32") return { available: false, backend: null, unsupportedReason: "File-write isolation requires Windows." };
 	if (process.arch !== "x64") return { available: false, backend: null, unsupportedReason: "The Windows isolation backend currently requires x64." };
@@ -89,7 +175,7 @@ export async function probeAclSandboxCapability(): Promise<SandboxCapability> {
 		if (!sandbox) throw new Error(lastCreationFailure ?? "Could not create the isolated runtime.");
 		try {
 			const result = await sandbox.runNode("module.exports=()=>process.version;", null, { cwd: sandbox.tempDir, timeout: 5000 });
-			if (result.exitCode !== 0) throw new Error("Isolated Node runtime could not start: " + result.output.trim());
+			if (result.exitCode !== 0) throw new Error(formatAclProbeFailure(result));
 		} finally { await sandbox.dispose(); }
 		return { available: true, backend: "windows-appcontainer" };
 	} catch (error) {
@@ -498,7 +584,8 @@ function createWin32Backend(koffi: typeof import("koffi"), writableTemp: boolean
 			check(UpdateProcThreadAttribute(attrList, 0, 0x2000f, packagePolicy, packagePolicy.length, null, null), "AppContainer package policy");
 			const startup = Buffer.alloc(112);
 			startup.writeUInt32LE(startup.length, 0);
-			
+			const desktopBuffer = getAppContainerDesktopBuffer(koffi);
+			if (desktopBuffer) startup.writeBigUInt64LE(BigInt(koffi.address(desktopBuffer)), 16);
 			startup.writeUInt32LE(0x100, 60);
 			[stdin, out.write, err.write].forEach((handle, index) => startup.writeBigUInt64LE(address(handle), 80 + index * 8));
 			startup.writeBigUInt64LE(BigInt(koffi.address(attrList)), 104);

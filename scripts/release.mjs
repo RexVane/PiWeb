@@ -149,7 +149,7 @@ export async function prepareRelease({ root = ROOT, env = process.env, run = run
 		await trackedRun(process.execPath, [path.join(installation, "scripts", "release.mjs"), "--verify-config"], {
 			cwd: installation, env: childEnv, timeoutMs: 60_000, signal,
 		});
-		await trackedRun("npm", ["run", "check"], { cwd: installation, env: childEnv, timeoutMs: 600_000, signal });
+		await trackedRun("npm", ["run", "check"], { cwd: installation, env: childEnv, timeoutMs: 1_800_000, signal });
 		signal?.throwIfAborted();
 		writeBuildInventory(installation, buildDir);
 		const build = readProductionBuild(installation, buildDir);

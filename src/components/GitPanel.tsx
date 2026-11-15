@@ -4,8 +4,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
 
 /**
  * Git 面板（详情栏）：分支 / 上游 / ahead-behind、按状态分组的变更文件、最近提交；
- * 点文件看差异（暂存 / 工作区 / 未跟踪整文件），点提交看该次提交的内容。
- * 只读——提交、推送走对话让 pi 做（「让 pi 提交」会把请求填进输入框）。
+ * 点文件看差异（暂存 / 工作区 / 未跟踪整文件），点提交看该次提交的内容（只读查看）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DiffView, diffStats, parseUnifiedDiff } from "@/components/DiffView";
@@ -74,15 +73,12 @@ export function GitPanel({
 	cwd,
 	onClose,
 	refreshKey = 0,
-	onAskCommit,
 	onOpenFile,
 }: {
 	cwd: string;
 	onClose: () => void;
 	/** 外部触发刷新（回合结束 / pi 改了文件） */
 	refreshKey?: number;
-	/** 把「请提交当前变更」填进输入框 */
-	onAskCommit?: () => void;
 	/** 在本机编辑器打开（相对仓库根的路径） */
 	onOpenFile?: (absPath: string) => void;
 }) {
@@ -349,19 +345,6 @@ export function GitPanel({
 								{info.upstream ? t.gitUpstream.replace("{name}", info.upstream) : info.detached ? "" : t.gitNoUpstream}
 							</span>
 						</div>
-
-						{/* 让 pi 提交 */}
-						{!error && info.files.length > 0 && onAskCommit && (
-							<button
-								type="button"
-								className="btn-outline self-start"
-								style={{ height: 28, padding: "0 12px", fontSize: 12 }}
-								onClick={onAskCommit}
-								title={t.gitAskCommitPrompt}
-							>
-								{t.gitAskCommit}
-							</button>
-						)}
 
 						{/* 变更文件 */}
 						{error ? null : info.files.length === 0 ? (

@@ -36,16 +36,16 @@
 
 .sizeSm {
 	min-height: 32px;
-	padding: 0 9px;
-	font-size: 12.5px;
+	padding: 4px 9px;
+	font-size: var(--dsh-ui-font-125);
 	border-radius: 10px;
 }
 
 .sizeMd {
 	width: 100%;
 	min-height: 42px;
-	padding: 0 13px;
-	font-size: 13.5px;
+	padding: 6px 13px;
+	font-size: var(--dsh-ui-font-135);
 	border-radius: 13px;
 }
 
@@ -111,7 +111,7 @@
 	width: 100%;
 	padding: 6px 9px;
 	border-radius: 8px;
-	font-size: 12.5px;
+	font-size: var(--dsh-ui-font-125);
 	color: var(--dsw-label-primary);
 	background: transparent;
 	border: none;

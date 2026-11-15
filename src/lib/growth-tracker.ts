@@ -5,19 +5,19 @@
  *   （工作区还没有任何提交时记成基线）
  * - agent_start → agent_settled 是一轮：结束时提交本轮，提问首行做标题、用户消息 entryId 写进 trailers；
  *   没有改动也提交空 commit，轮号与对话一一对应
- * - 工作区还不是仓库根目录时，要先征得同意才 `git init`：没决定就向浏览器发一次 growth_consent 并暂不记录，
- *   拒绝了就停用；同意后（consentAnswered）立即拍基线
+ * - 生长记录默认开启，工作区还不是仓库根目录时自动初始化本地仓库；手动停用的工作区不记录。
+ *   重新开启时（consentAnswered）可立即拍基线。
  * 提交失败不影响 pi，只向浏览器报一次错；项目过大 / 没有 git 时本会话停用。
  */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { type CommitOptions, GrowthError, commitRound, recordWorkspaceChanges } from "./growth-service";
 import { promptsFromEntries, userTurnsFromEntries } from "./growth-turns";
-import type { GrowthConsentRequest, GrowthRound, GrowthRoundStatus, WebEvent } from "./types";
+import type { GrowthRound, GrowthRoundStatus, WebEvent } from "./types";
 import { isAbortMessage } from "./chat/cancellation";
 import { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-activity";
 
 const ERROR_THROTTLE_MS = 60_000;
-export const GROWTH_TRACKER_VERSION = 6;
+export const GROWTH_TRACKER_VERSION = 7;
 
 interface SessionEntryLike {
 	type?: string;
@@ -28,14 +28,12 @@ interface SessionEntryLike {
 export interface GrowthTracker {
 	version: number;
 	getError(): string | null;
-	/** 等用户回答的建仓库请求（快照里带上，页面重开也能看到） */
-	getConsentRequest(): GrowthConsentRequest | null;
 	/** 发 prompt 前完成「你的修改」提交，避免它被算进 pi 这一轮 */
 	prepare(): Promise<void>;
 	onEvent(evt: AgentSessionEvent): void;
 	/** 立即记录（项目栏按钮）：把当前改动提交为「你的修改」；没改动返回 null */
 	recordNow(): Promise<GrowthRound | null>;
-	/** 用户回答了建仓库请求（决定已由调用方存好）：同意就立即拍基线，拒绝就停用 */
+	/** 更新记录开关（已由调用方保存）：开启时可拍基线，停用时停止后续记录。 */
 	consentAnswered(allow: boolean, recordBaseline?: boolean): Promise<GrowthRound | null>;
 	dispose(): void;
 }
@@ -58,7 +56,7 @@ export function createGrowthTracker(opts: {
 	publish: (evt: WebEvent) => void;
 	/** 会话的持久条目（SessionManager.getEntries）：轮结束时从中取本轮的提问 */
 	entries: () => readonly SessionEntryLike[];
-	/** 该工作区是否同意建仓库：true 同意 / false 拒绝 / null 还没问过 */
+	/** 工作区记录开关：false 停用；null 兼容未保存过选择的旧调用方，默认开启。读取失败应抛错。 */
 	consent: () => Promise<boolean | null>;
 }): GrowthTracker {
 	const { cwd, sessionPath, publish, entries, consent } = opts;
@@ -73,8 +71,6 @@ export function createGrowthTracker(opts: {
 	let runStart: number | null = null;
 	/** 每开始一轮加一：prepare 排队期间 pi 已经开工，就不能再把工作区记成「你的修改」 */
 	let runEpoch = 0;
-	/** 正在等待用户同意为该工作区记录修改。 */
-	let consentRequest: GrowthConsentRequest | null = null;
 	const releaseActiveRun = () => {
 		const attribution = finishGrowthRun(cwd, sessionPath);
 		runStart = null;
@@ -120,39 +116,14 @@ export function createGrowthTracker(opts: {
 		releaseActiveRun();
 	};
 
-	/**
-	 * 带同意检查地提交：返回 undefined 表示这次没提交（还在等同意 / 已拒绝）。
-	 * 已知要建仓库且还没决定时直接跳过，不再每轮起一个 git 进程去探测。
-	 */
+	/** 默认记录；明确停用时跳过。开关读取失败交给错误处理，不能当成默认值。 */
 	const commit = async (run: (options: CommitOptions) => Promise<GrowthRound | null>, abortIf?: () => boolean): Promise<GrowthRound | null | undefined> => {
 		const decision = await consent();
 		if (decision === false) {
 			declined();
 			return undefined;
 		}
-		if (decision === null) {
-			if (!consentRequest && !disposed) {
-				consentRequest = { cwd, reason: "existing" };
-				publish({ type: "growth_consent", request: consentRequest, ts: Date.now() });
-			}
-			return undefined;
-		}
-		try {
-			return await run({ allowInit: decision === true, allowRecording: decision === true, abortIf });
-		} catch (error) {
-			if (!(error instanceof GrowthError) || error.code !== "needs-consent") throw error;
-			const answer = await consent();
-			if (answer === false) {
-				declined();
-				return undefined;
-			}
-			if (answer === true) return run({ allowInit: true, allowRecording: true, abortIf });
-			if (!consentRequest && !disposed) {
-				consentRequest = { cwd, reason: error.target?.reason ?? "not-git", parent: error.target?.parent };
-				publish({ type: "growth_consent", request: consentRequest, ts: Date.now() });
-			}
-			return undefined;
-		}
+		return run({ allowInit: true, allowRecording: true, abortIf });
 	};
 
 	const recordUserChanges = (abortIf?: () => boolean) =>
@@ -161,7 +132,6 @@ export function createGrowthTracker(opts: {
 	return {
 		version: GROWTH_TRACKER_VERSION,
 		getError: () => lastErrorMessage,
-		getConsentRequest: () => consentRequest,
 		prepare() {
 			if (disabled || disposed) return chain;
 			const epoch = runEpoch;
@@ -215,7 +185,7 @@ export function createGrowthTracker(opts: {
 					if (round === undefined) {
 						throw disabled
 							? disabledFailure ?? new GrowthError("growth tracking is disabled for this workspace", "unavailable")
-							: new GrowthError("growth tracking is waiting for permission to create a git repository", "needs-consent");
+							: new GrowthError("growth tracking is disabled for this workspace", "unavailable");
 					}
 					result = published(round);
 				} catch (error) {
@@ -227,9 +197,6 @@ export function createGrowthTracker(opts: {
 			return result;
 		},
 		async consentAnswered(allow, recordBaseline = true) {
-			const pending = consentRequest;
-			consentRequest = null;
-			if (pending && !disposed) publish({ type: "growth_consent", request: null, ts: Date.now() });
 			if (!allow) {
 				declined();
 				return null;

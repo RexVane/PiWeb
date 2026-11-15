@@ -213,7 +213,7 @@ export function SkillsSection({
 							height: 38,
 							paddingLeft: 36,
 							paddingRight: 12,
-							fontSize: 13,
+							fontSize: "var(--dsh-ui-font-sm)",
 							background: "var(--dsw-bg-elevated, transparent)",
 							border: "0.5px solid var(--dsw-border-l2)",
 							color: "var(--dsw-label-primary)",
@@ -230,7 +230,7 @@ export function SkillsSection({
 					>
 						<IconSkillOutline16 size={22} />
 					</span>
-					<div style={{ fontSize: 13.5, color: "var(--dsw-label-tertiary)" }}>{t.skillsEmpty}</div>
+					<div style={{ fontSize: "var(--dsh-ui-font-135)", color: "var(--dsw-label-tertiary)" }}>{t.skillsEmpty}</div>
 				</div>
 			)}
 
@@ -242,7 +242,7 @@ export function SkillsSection({
 					>
 						<IconSkillOutline16 size={20} />
 					</span>
-					<div style={{ fontSize: 13.5, color: "var(--dsw-label-tertiary)" }}>{t.skillFilterEmpty}</div>
+					<div style={{ fontSize: "var(--dsh-ui-font-135)", color: "var(--dsw-label-tertiary)" }}>{t.skillFilterEmpty}</div>
 				</div>
 			)}
 
@@ -270,13 +270,13 @@ export function SkillsSection({
 									<div className="min-w-0 flex-1">
 										<div className="flex items-center justify-between gap-2">
 											<div className="flex min-w-0 flex-wrap items-center gap-1.5">
-												<span className="truncate font-semibold" style={{ fontSize: 14, color: "var(--dsw-label-primary)" }}>
+												<span className="truncate font-semibold" style={{ fontSize: "var(--dsh-ui-font-md)", color: "var(--dsw-label-primary)" }}>
 													{s.name}
 												</span>
 												<span
 													className="rounded-full px-2 py-0.5"
 													style={{
-														fontSize: 10.5,
+														fontSize: "var(--dsh-ui-font-2xs)",
 														background: accent.bg,
 														color: accent.color,
 														fontWeight: 500,
@@ -289,7 +289,7 @@ export function SkillsSection({
 													<span
 														className="rounded-full px-2 py-0.5"
 														style={{
-															fontSize: 10.5,
+															fontSize: "var(--dsh-ui-font-2xs)",
 															background: "rgba(139, 92, 246, 0.12)",
 															color: "#8b5cf6",
 															fontWeight: 500,
@@ -303,7 +303,7 @@ export function SkillsSection({
 													<span
 														className="rounded-full px-2 py-0.5"
 														style={{
-															fontSize: 10.5,
+															fontSize: "var(--dsh-ui-font-2xs)",
 															background: "var(--dsw-hover)",
 															color: "var(--dsw-label-caption)",
 														}}
@@ -328,7 +328,7 @@ export function SkillsSection({
 
 										<p
 											className="mt-1.5 line-clamp-2"
-											style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--dsw-label-secondary)", minHeight: hideDesc ? 38 : undefined }}
+											style={{ fontSize: "var(--dsh-ui-font-125)", lineHeight: 1.5, color: "var(--dsw-label-secondary)", minHeight: hideDesc ? 38 : undefined }}
 											title={s.description}
 										>
 											{s.description || shortenSkillPath(s.filePath)}
@@ -341,7 +341,7 @@ export function SkillsSection({
 										<code
 											className="truncate rounded px-1.5 py-0.5"
 											style={{
-												fontSize: 11,
+												fontSize: "var(--dsh-ui-font-2xs)",
 												fontFamily: "var(--font-mono)",
 												background: "var(--dsw-hover)",
 												color: "var(--dsw-label-tertiary)",
@@ -352,7 +352,7 @@ export function SkillsSection({
 										</code>
 										<span
 											className="hidden truncate sm:inline"
-											style={{ fontSize: 11, color: "var(--dsw-label-caption)" }}
+											style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}
 											title={s.filePath}
 										>
 											{shortenSkillPath(s.filePath)}
@@ -361,7 +361,7 @@ export function SkillsSection({
 											<span
 												className="truncate rounded px-1.5 py-0.5"
 												style={{
-													fontSize: 10.5,
+													fontSize: "var(--dsh-ui-font-2xs)",
 													fontFamily: "var(--font-mono)",
 													background: "var(--dsw-hover)",
 													color: "var(--dsw-label-caption)",
@@ -377,7 +377,7 @@ export function SkillsSection({
 										<button
 											type="button"
 											className="inline-flex items-center gap-1 rounded-lg transition-colors hover:bg-[var(--dsw-active)]"
-											style={{ fontSize: 12, padding: "4px 10px", color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)" }}
+											style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)" }}
 											disabled={busy}
 											onClick={() => void perform(s, "read")}
 										>
@@ -388,7 +388,7 @@ export function SkillsSection({
 											<button
 												type="button"
 												className="rounded-lg transition-colors hover:bg-[var(--dsw-hover)]"
-												style={{ fontSize: 12, padding: "4px 10px", color: "var(--dsw-danger)" }}
+												style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-danger)" }}
 												title={t.deleteSkillHint}
 												disabled={busy}
 												onClick={() => void perform(s, "delete")}
@@ -397,7 +397,7 @@ export function SkillsSection({
 											</button>
 										)}
 										{s.origin === "package" && (
-											<span style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }} title={t.skillDeletePackageHint}>
+											<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }} title={t.skillDeletePackageHint}>
 												{t.skillDeletePackageHint}
 											</span>
 										)}

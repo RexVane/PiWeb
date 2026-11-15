@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import LoginPage from "../../src/app/login/page";
 
@@ -11,7 +11,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 /** /api/web-auth 的响应外壳 */
-const auth = (data: Record<string, unknown>) => ({ json: async () => ({ success: true, data }) }) as unknown as Response;
+const auth = (data: Record<string, unknown>, ok = true, status = 200) =>
+	({ ok, status, json: async () => ({ success: ok, ...(ok ? { data } : data) }) }) as unknown as Response;
 
 beforeEach(() => {
 	replace.mockReset();
@@ -19,14 +20,44 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-it("shows only the launch-token hint to anonymous users", async () => {
+it("shows the launch-token / pair-code form (and no legacy password field) to anonymous users", async () => {
 	render(<LoginPage />);
 	await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/web-auth"));
 	await screen.findByText("这个实例用启动令牌登录");
-	// 密码登录已移除：这里不该再有任何凭据输入或提交按钮
 	expect(screen.queryByPlaceholderText("密码")).toBeNull();
-	expect(screen.queryByRole("button", { name: "登录" })).toBeNull();
-	expect(document.querySelector("input")).toBeNull();
+	expect(screen.getByLabelText("启动令牌或配对码")).toBeTruthy();
+	expect(screen.getByRole("button", { name: "验证并登录" })).toBeTruthy();
+	expect(replace).not.toHaveBeenCalled();
+});
+
+it("submits credential via POST /api/web-auth and redirects on success", async () => {
+	const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+		if (init?.method === "POST") return auth({ authenticated: true });
+		return auth({ enabled: true, authenticated: false });
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	render(<LoginPage />);
+	const input = await screen.findByLabelText("启动令牌或配对码");
+	fireEvent.change(input, { target: { value: "tok-12345" } });
+	fireEvent.click(screen.getByRole("button", { name: "验证并登录" }));
+	await waitFor(() => expect(replace).toHaveBeenCalledWith("/?session=review"));
+	const postCall = fetchMock.mock.calls.find((call) => call[1]?.method === "POST");
+	expect(postCall?.[0]).toBe("/api/web-auth");
+	expect(JSON.parse(String(postCall?.[1]?.body))).toEqual({ credential: "tok-12345" });
+});
+
+it("shows an error alert and stays on the page when credential verification fails", async () => {
+	const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+		if (init?.method === "POST") return auth({ error: "invalid credential" }, false, 401);
+		return auth({ enabled: true, authenticated: false });
+	});
+	vi.stubGlobal("fetch", fetchMock);
+	render(<LoginPage />);
+	const input = await screen.findByLabelText("启动令牌或配对码");
+	fireEvent.change(input, { target: { value: "bad-token" } });
+	fireEvent.click(screen.getByRole("button", { name: "验证并登录" }));
+	const alert = await screen.findByRole("alert");
+	expect(alert.textContent).toContain("凭据无效或已过期");
 	expect(replace).not.toHaveBeenCalled();
 });
 

@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 vi.mock("../src/lib/growth-service", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../src/lib/growth-service")>();
@@ -22,7 +23,7 @@ it("releases active attribution when recording is declined or a terminal failure
 			if (terminal) { vi.mocked(recordWorkspaceChanges).mockRejectedValueOnce(new GrowthError("too large", "too-large")); await tracker.prepare(); }
 			else await tracker.consentAnswered(false);
 			expect(finishGrowthRun(cwd, session)).toEqual({});
-		} finally { tracker.dispose(); await fs.rm(cwd, { recursive: true, force: true }); vi.resetAllMocks(); }
+		} finally { tracker.dispose(); await recycleFixture(cwd); vi.resetAllMocks(); }
 	}
 });
 
@@ -34,7 +35,7 @@ it("reenables background trackers without taking duplicate baselines", async () 
 		expect(recordWorkspaceChanges).not.toHaveBeenCalled();
 		vi.mocked(recordWorkspaceChanges).mockResolvedValueOnce(null); await tracker.prepare();
 		expect(recordWorkspaceChanges).toHaveBeenCalledOnce();
-	} finally { tracker.dispose(); await fs.rm(cwd, { recursive: true, force: true }); vi.resetAllMocks(); }
+	} finally { tracker.dispose(); await recycleFixture(cwd); vi.resetAllMocks(); }
 });
 
 it("keeps real chat round numbers after a previous snapshot failed", async () => {
@@ -50,7 +51,7 @@ it("keeps real chat round numbers after a previous snapshot failed", async () =>
 			tracker.onEvent({ type: "agent_settled" } as never); await tracker.prepare();
 		}
 		expect(vi.mocked(commitRound).mock.calls.map((call) => call[1].roundNumber)).toEqual([1, 2]);
-	} finally { tracker.dispose(); await fs.rm(cwd, { recursive: true, force: true }); vi.resetAllMocks(); }
+	} finally { tracker.dispose(); await recycleFixture(cwd); vi.resetAllMocks(); }
 });
 
 it("reports a terminal size error even after a recent transient failure and stops committing", async () => {
@@ -77,7 +78,7 @@ it("reports a terminal size error even after a recent transient failure and stop
 		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
 	} finally {
 		tracker.dispose();
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 		vi.clearAllMocks();
 	}
 });
@@ -97,50 +98,57 @@ it("disables automatic tracking after a manual record hits a terminal error", as
 		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
 	} finally {
 		tracker.dispose();
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 		vi.clearAllMocks();
 	}
 });
 
-it("asks once before creating a repository, records nothing meanwhile, and takes a baseline after consent", async () => {
+it("records by default without asking when the workspace has no saved choice", async () => {
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-consent-"));
 	const events: WebEvent[] = [];
-	let decision: boolean | null = null;
-	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => decision });
-	const needsConsent = () => new GrowthError("needs consent", "needs-consent", { reason: "nested", parent: "/outer" });
+	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => null });
 	try {
 		vi.mocked(recordWorkspaceChanges).mockImplementation(async (_cwd, _session, options) => {
-			if (!options?.allowInit) throw needsConsent();
+			expect(options).toMatchObject({ allowInit: true, allowRecording: true });
 			return null;
 		});
 		vi.mocked(commitRound).mockImplementation(async (_cwd, _meta, options) => {
-			if (!options?.allowInit) throw needsConsent();
+			expect(options).toMatchObject({ allowInit: true, allowRecording: true });
 			return null;
 		});
 		await tracker.prepare();
 		tracker.onEvent({ type: "agent_start" } as never);
 		tracker.onEvent({ type: "agent_settled" } as never);
 		await tracker.prepare();
-		// 只问一次；没回答之前不再去探测仓库，也不报错
-		const asks = events.filter((event) => event.type === "growth_consent");
-		expect(asks).toEqual([{ type: "growth_consent", request: { cwd, reason: "existing" }, ts: expect.any(Number) }]);
-		expect(tracker.getConsentRequest()).toMatchObject({ reason: "existing" });
-		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(0);
-		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
-		expect(events.some((event) => event.type === "growth_error")).toBe(false);
-		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "needs-consent" });
-
-		decision = true;
-		await tracker.consentAnswered(true);
-		expect(tracker.getConsentRequest()).toBeNull();
-		expect(events.at(-1)).toMatchObject({ type: "growth_consent", request: null });
-		expect(vi.mocked(recordWorkspaceChanges).mock.calls.at(-1)?.[2]).toMatchObject({ allowInit: true });
-		tracker.onEvent({ type: "agent_start" } as never);
-		tracker.onEvent({ type: "agent_settled" } as never);
-		await vi.waitFor(() => expect(vi.mocked(commitRound)).toHaveBeenCalledWith(cwd, expect.objectContaining({ kind: "round" }), expect.objectContaining({ allowInit: true })));
+		expect(recordWorkspaceChanges).toHaveBeenCalledTimes(2);
+		expect(commitRound).toHaveBeenCalledOnce();
+		await expect(tracker.recordNow()).resolves.toBeNull();
+		expect(recordWorkspaceChanges).toHaveBeenCalledTimes(3);
+		expect(events).toEqual([]);
 	} finally {
 		tracker.dispose();
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
+		vi.resetAllMocks();
+	}
+});
+
+it("does not write a snapshot after a setting-read failure and recovers on retry", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-setting-retry-"));
+	const events: WebEvent[] = [];
+	const consent = vi.fn().mockRejectedValueOnce(new Error("setting unavailable")).mockResolvedValue(null);
+	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent });
+	try {
+		vi.mocked(recordWorkspaceChanges).mockResolvedValue(null);
+		await tracker.prepare();
+		expect(recordWorkspaceChanges).not.toHaveBeenCalled();
+		expect(tracker.getError()).toBe("setting unavailable");
+		await tracker.prepare();
+		expect(recordWorkspaceChanges).toHaveBeenCalledOnce();
+		expect(tracker.getError()).toBeNull();
+		expect(events.filter((event) => event.type === "growth_error").map((event) => event.message)).toEqual(["setting unavailable", null]);
+	} finally {
+		tracker.dispose();
+		await recycleFixture(cwd);
 		vi.resetAllMocks();
 	}
 });
@@ -161,7 +169,7 @@ it("stops tracking quietly when the workspace owner declined", async () => {
 		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "unavailable" });
 	} finally {
 		tracker.dispose();
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 		vi.resetAllMocks();
 	}
 });
@@ -185,7 +193,7 @@ it("does not file pi's edits as the user's when the pre-prompt snapshot runs aft
 		expect(abortIf?.()).toBe(true);
 	} finally {
 		tracker.dispose();
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 		vi.resetAllMocks();
 	}
 });
@@ -205,7 +213,7 @@ it("clears a transient manual record error after a successful retry", async () =
 		expect(events.filter((event) => event.type === "growth_error").map((event) => event.message)).toEqual(["temporary failure", null]);
 	} finally {
 		tracker.dispose();
-		await fs.rm(cwd, { recursive: true, force: true });
+		await recycleFixture(cwd);
 		vi.clearAllMocks();
 	}
 });

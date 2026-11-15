@@ -1,0 +1,27 @@
+{
+  "startedAt": "2026-11-14T13:58:58.007Z",
+  "finishedAt": "2026-11-14T14:02:46.565Z",
+  "buildDir": ".next-releases/mwgh1qf6-6dbeee0a-fc78-4353-9625-06cb97321d3f",
+  "buildId": "h4Bcfc-bDryvuiEHVKHLh",
+  "version": "0.3.30",
+  "needsRestart": true,
+  "sourceHash": "f902a3597236453a45b2f7b3e62e1081e74101b384820ff127fa0f4b55fec2f5",
+  "sourceFiles": 731,
+  "testFiles": 12,
+  "passedTests": 151,
+  "failedTests": 0,
+  "skippedTests": 1,
+  "wholeSuiteRerun": false,
+  "checks": [
+    {
+      "script": "typecheck",
+      "passed": true,
+      "durationMs": 4627
+    },
+    {
+      "script": "build",
+      "passed": true,
+      "durationMs": 201115
+    }
+  ]
+}

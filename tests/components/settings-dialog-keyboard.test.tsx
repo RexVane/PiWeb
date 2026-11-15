@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
-vi.mock("@/lib/theme", () => ({ applyPebrelTheme: () => {}, loadPebrelTheme: () => "dsh", loadThemeMode: () => "system" }));
+vi.mock("@/lib/theme", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/theme")>()),
+	applyPebrelTheme: () => {},
+	loadPebrelTheme: () => "dsh",
+	loadThemeMode: () => "system",
+}));
 beforeEach(() => {
 	vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => ({ success: true, data: url === "/api/pi-settings" ? { compaction: { enabled: true, reserveTokens: 100 }, retry: { enabled: true, maxRetries: 3 } } : {} }) })));
 });
@@ -15,7 +20,7 @@ describe("Settings dialog keyboard", () => {
 		const { container } = render(<><button>background</button><SettingsPanel {...props} open onClose={vi.fn()} /></>);
 		const dialog = screen.getByRole("dialog", { name: "设置" });
 		expect(dialog.getAttribute("aria-modal")).toBe("true");
-		await waitFor(() => expect((screen.getAllByRole("switch")[0] as HTMLButtonElement).disabled).toBe(false));
+		await waitFor(() => expect((screen.getByRole("switch", { name: "自动压缩" }) as HTMLButtonElement).disabled).toBe(false));
 		const items = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), a[href], [tabindex]')].filter((item) => item.tabIndex >= 0);
 		items.at(-1)!.focus();
 		fireEvent.keyDown(document.activeElement!, { key: "Tab" });

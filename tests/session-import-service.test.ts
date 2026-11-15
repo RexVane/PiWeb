@@ -23,8 +23,8 @@ vi.mock("../src/lib/session-import/paths", () => ({
 import { importSessions, scanAllSources } from "../src/lib/session-import";
 import { claudeSource } from "../src/lib/session-import/claude";
 import { deleteSession, readSession } from "../src/lib/session-reader";
-import { archiveSession, getArchivedSessions, getWorkspaceRegistry, registerCwds, removeWorkspace } from "../src/lib/workspace-store";
-import { sweepArchivedSessions } from "../src/lib/session-retention";
+import { archiveSession, forgetSession, getArchivedSessions, getWorkspaceRegistry, registerCwds, removeWorkspace } from "../src/lib/workspace-store";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
 let root: string;
 let agentDir: string;
@@ -46,7 +46,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	vi.unstubAllEnvs();
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleFixture(root);
 });
 
 async function write(file: string, lines: unknown[]): Promise<string> {
@@ -259,14 +259,14 @@ describe("幂等与失败报告", () => {
 		}
 	});
 
-	it("归档满 30 天自动清理后，同一源会话可以重新导入", async () => {
+	it("手动删除已归档会话后，同一源会话可以重新导入", async () => {
 		await seedClaude("s1", project);
 		const selection = { source: "claude" as const, externalId: "s1" };
 		const first = await importSessions([selection], { agentDir });
 		const file = first.results[0].path!;
 		await archiveSession(file, agentDir);
-		const cleanup = await sweepArchivedSessions({ now: Date.now() + 31 * 24 * 60 * 60 * 1000, log: () => {} });
-		expect(cleanup.deleted.map((entry) => entry.path)).toEqual([file]);
+		await deleteSession(file);
+		await forgetSession(file, agentDir);
 		expect(await scanAllSources(agentDir)).toMatchObject({ imported: [], archived: [] });
 		const second = await importSessions([selection], { agentDir });
 		expect(second).toMatchObject({ imported: 1, restored: 0, skipped: 0, failed: 0 });

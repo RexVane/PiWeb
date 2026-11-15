@@ -26,7 +26,24 @@ export function HEAD() {
 	return new NextResponse(null, { status: 405, headers: { ...NO_STORE, Allow: "GET" } });
 }
 
+function isPrefetchRequest(request: Request): boolean {
+	const purpose = [
+		request.headers.get("sec-purpose") ?? "",
+		request.headers.get("purpose") ?? "",
+		request.headers.get("x-purpose") ?? "",
+	]
+		.join(" ")
+		.toLowerCase();
+	if (purpose.includes("prefetch") || purpose.includes("preview") || purpose.includes("prerender")) {
+		return true;
+	}
+	return request.headers.has("next-router-prefetch") || request.headers.get("x-moz")?.toLowerCase() === "prefetch";
+}
+
 export async function GET(request: Request) {
+	if (isPrefetchRequest(request)) {
+		return new NextResponse(null, { status: 204, headers: NO_STORE });
+	}
 	const revocations = loadSessionRevocations();
 	if (revocations.unavailable) return NextResponse.json({ success: false, error: "session authentication is temporarily unavailable" }, { status: 503, headers: NO_STORE });
 	const url = new URL(request.url);

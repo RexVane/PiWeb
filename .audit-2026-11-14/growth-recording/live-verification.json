@@ -1,0 +1,73 @@
+{
+  "checkedAt": "2026-11-14T14:07:43.270Z",
+  "buildId": "h4Bcfc-bDryvuiEHVKHLh",
+  "buildDir": ".next-releases/mwgh1qf6-6dbeee0a-fc78-4353-9625-06cb97321d3f",
+  "url": "http://127.0.0.1:30141",
+  "checks": [
+    {
+      "route": "/api/sessions",
+      "anonymous": true,
+      "status": 401
+    },
+    {
+      "route": "/",
+      "status": 200,
+      "newBuild": true
+    },
+    {
+      "route": "/api/web-auth",
+      "status": 200,
+      "success": true
+    },
+    {
+      "route": "/api/sessions",
+      "status": 200,
+      "success": true
+    },
+    {
+      "route": "/api/workspaces",
+      "status": 200,
+      "success": true
+    },
+    {
+      "route": "/api/remote",
+      "status": 200,
+      "success": true
+    },
+    {
+      "route": "/api/growth",
+      "recordingEnabled": true,
+      "status": 200
+    }
+  ],
+  "remote": {
+    "blocked": null,
+    "lan": {
+      "running": true,
+      "port": 30142,
+      "error": null
+    },
+    "public": {
+      "running": true,
+      "ready": true,
+      "error": null,
+      "hasUrl": true
+    }
+  },
+  "browser": {
+    "engine": "Chromium",
+    "version": "156.0.8078.4",
+    "status": 200,
+    "readyMs": 440,
+    "title": "请根据需求创建一个自动化任务。我要测试piweb的自动化任务生不生效 · pi",
+    "lang": "zh-CN",
+    "horizontalOverflow": false,
+    "recordingEnabled": true,
+    "consentDialogPresent": false,
+    "cumulativeLimitHintPresent": false,
+    "errors": [],
+    "failures": [],
+    "businessWrites": []
+  },
+  "passed": true
+}

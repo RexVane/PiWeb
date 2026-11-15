@@ -28,6 +28,7 @@ type ContextSource = {
 	/** 惰性取最新消息：打开弹窗时才读，父组件流式更新不需要换 source 引用 */
 	getMessages?: () => ContextMessage[];
 	breakdown?: ContextBreakdown;
+	compacted?: boolean;
 	loadFull?: () => Promise<unknown> | unknown;
 };
 
@@ -67,16 +68,6 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 		return () => document.removeEventListener("mousedown", h);
 	}, [open]);
 
-	// 流式期间只在打开弹窗后扫描，分类是实际文本字符数，不是假设的 token 数。
-	// 打开时通过惰性 getter 取最新消息：父组件不必为了圆环每帧更换 source 引用。
-	const messages = open ? source?.getMessages?.() ?? source?.messages ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
-	const context = useMemo(() => inContext(messages), [messages]);
-	const chars = useMemo(() => classifyMessageChars(context.messages), [context]);
-	const lastUsage = useMemo(() => context.messages.findLast((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted" && m.stopReason !== "pending" &&
-		(context.since === undefined || (m.timestamp ?? 0) >= context.since) &&
-		(m.usage?.input ?? 0) + (m.usage?.cacheRead ?? 0) + (m.usage?.cacheWrite ?? 0) + (m.usage?.output ?? 0) > 0)?.usage, [context]);
-	const measuredInput = lastUsage ? (lastUsage.input ?? 0) + (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0) : null;
-
 	// 刚改过窗口：服务端已落盘，但页面上的 contextWindow 还是改之前的值（冷会话要等下一次快照）。
 	// 在它变之前先显示刚保存的值；contextWindow 一变（快照 / 用量追上来，或别处改了）就以 props 为准。
 	const modelKey = model ? `${model.provider}/${model.id}` : "";
@@ -91,18 +82,27 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	const window_ = override ?? contextWindow ?? 0;
 	const recomputed = override !== null && known;
 	const p = recomputed ? used / override * 100 : percent ?? 0;
-	/** 圆环与悬停提示仍用 SDK 估算（那是「占窗口多少」），弹窗正文只留 API 出来的真实数字 */
-	const usageLabel = percent === null && !recomputed ? t.contextUnknown : `${fmtPercent(p)} ${label ?? t.contextEstimated}`;
+
+	const hasCompactedBreakdown = Boolean(source?.compacted || (source?.breakdown?.characters?.compacted ?? 0) > 0 || (source?.breakdown?.compacted ?? 0) > 0);
+	// 流式期间只在打开弹窗后扫描；仅在刚压缩且尚无新回合 API 用量时读取最新上下文消息以算圆环估算值。
+	const shouldReadClosed = window_ > 0 && tokens === null && percent === null && hasCompactedBreakdown;
+	const messages = (open || shouldReadClosed) ? source?.getMessages?.() ?? source?.messages ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
+	const context = useMemo(() => inContext(messages), [messages]);
+	const chars = useMemo(() => classifyMessageChars(context.messages), [context]);
+	const lastUsage = useMemo(() => context.messages.findLast((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted" && m.stopReason !== "pending" &&
+		(context.since === undefined || (m.timestamp ?? 0) >= context.since) &&
+		(m.usage?.input ?? 0) + (m.usage?.cacheRead ?? 0) + (m.usage?.cacheWrite ?? 0) + (m.usage?.output ?? 0) > 0)?.usage, [context]);
+	const measuredInput = lastUsage ? (lastUsage.input ?? 0) + (lastUsage.cacheRead ?? 0) + (lastUsage.cacheWrite ?? 0) : null;
+
 	const r = 5.5;
 	const circumference = 2 * Math.PI * r;
 	const reserved = Math.max(0, source?.breakdown?.autoCompactBuffer ?? 0);
 	/**
 	 * 进度条与 Free Space 的「已用」基准：优先最近一次请求的真实输入（API 报的），
-	 * 没测到才退回 SDK 估算；两者都没有就不画（未知不能当空闲）。
+	 * 没测到才退回 SDK 估算；两者都没有且处于压缩后等待下轮回复期间，则按字符/4估算。
 	 */
 	const anchor = window_ > 0 ? (measuredInput !== null ? Math.min(measuredInput, window_) : known ? Math.min(used, window_) : null) : null;
-	// 超过窗口时预留不再画到窗口外；用量未知不能将整扇窗口显示为 Free Space。
-	const visibleReserved = anchor === null ? 0 : Math.min(reserved, Math.max(0, window_ - anchor));
+	// 超过窗口时预留不再画到窗口外；非压缩导致的用量未知仍不能将整扇窗口显示为 Free Space。
 	const free = anchor === null ? null : Math.max(0, window_ - anchor - reserved);
 	const b = source?.breakdown?.characters;
 	const rows = [
@@ -119,16 +119,28 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 		{ key: "compacted", label: t.contextCompacted, value: b?.compacted, color: "#ec4899" },
 	].filter((row) => row.value !== undefined && row.value > 0);
 	const charTotal = rows.reduce((sum, row) => sum + (row.value ?? 0), 0);
+	const isPostCompaction = hasCompactedBreakdown || context.since !== undefined;
 	/**
-	 * 进度条整条 = 全部上下文窗口：已用那一截按各类**字符数比例**分段（API 不给分类 token，
-	 * 所以只摊比例、不报每类的 token 数），剩下的部分就是背景色的 Free Space。
+	 * 压缩后、下一次模型响应返回真实 API usage 之前：真实 token 与 SDK 估算均为 null，
+	 * 此处按当前保留内容与摘要总字符 / 4 近似估算，同步反馈在圆环、进度条和 Free Space 上。
 	 */
-	const segments = anchor === null || charTotal === 0 ? [] : rows.map((row) => ({
+	const estimatedFromChars = anchor === null && window_ > 0 && isPostCompaction && charTotal > 0 ? Math.min(window_, Math.ceil(charTotal / 4)) : null;
+	const postCompactionPercent = estimatedFromChars !== null && window_ > 0 ? Math.max(0, Math.min(100, estimatedFromChars / window_ * 100)) : null;
+	const ringPercent = postCompactionPercent ?? p;
+	const usageLabel = postCompactionPercent !== null
+		? `${fmtPercent(postCompactionPercent)} ${t.contextCompactedEstimated}`
+		: percent === null && !recomputed
+			? t.contextUnknown
+			: `${fmtPercent(p)} ${label ?? t.contextEstimated}`;
+	const barAnchor = anchor ?? estimatedFromChars;
+	const barReserved = barAnchor === null ? 0 : Math.min(reserved, Math.max(0, window_ - barAnchor));
+	const displayFree = free ?? (estimatedFromChars !== null ? Math.max(0, window_ - estimatedFromChars - reserved) : null);
+	const segments = barAnchor === null || charTotal === 0 ? [] : rows.map((row) => ({
 		key: row.key,
 		label: row.label,
 		value: row.value as number,
 		color: row.color,
-		width: anchor / window_ * 100 * ((row.value as number) / charTotal),
+		width: barAnchor / window_ * 100 * ((row.value as number) / charTotal),
 	}));
 
 	return (
@@ -136,8 +148,8 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 			<button className="icon-btn isx-ring-btn" style={{ width: 28, height: 28 }} title={usageLabel} aria-label={usageLabel} onClick={() => setOpen((o) => !o)}>
 				<svg width="14" height="14" viewBox="0 0 14 14">
 					<circle cx="7" cy="7" r={r} fill="none" stroke="var(--dsw-border-l3)" strokeWidth="2" />
-					<circle cx="7" cy="7" r={r} fill="none" stroke={p > 85 ? "var(--dsw-warn)" : "var(--dsw-label-primary)"} strokeWidth="2"
-						strokeDasharray={`${circumference * Math.max(0, Math.min(100, p)) / 100} ${circumference}`} transform="rotate(-90 7 7)" strokeLinecap="round" />
+					<circle cx="7" cy="7" r={r} fill="none" stroke={ringPercent > 85 ? "var(--dsw-warn)" : "var(--dsw-label-primary)"} strokeWidth="2"
+						strokeDasharray={`${circumference * Math.max(0, Math.min(100, ringPercent)) / 100} ${circumference}`} transform="rotate(-90 7 7)" strokeLinecap="round" />
 				</svg>
 			</button>
 			{open && (
@@ -148,6 +160,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 				   或删掉这个类会让手机端重新冒出溢出。 */
 				<div className="pw-context-popover popover absolute bottom-9 right-0 z-50 w-72 max-w-[calc(100vw-96px)] p-4" style={{ fontSize: "var(--dsh-content-font-size-secondary)" }}>
 					{measuredInput !== null && <div className="mt-1 flex items-center justify-between gap-2" style={{ fontVariantNumeric: "tabular-nums" }}><span style={{ color: "var(--dsw-label-secondary)", fontWeight: 500 }}>{t.contextApiInput}</span><span title={`${measuredInput} tok`} style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--dsw-label-primary)" }}>{fmtTokens(measuredInput)} tok</span></div>}
+					{measuredInput === null && estimatedFromChars !== null && <div className="mt-1 flex items-center justify-between gap-2" style={{ fontVariantNumeric: "tabular-nums" }}><span style={{ color: "var(--dsw-label-secondary)", fontWeight: 500 }}>{t.contextCompactedEstimateLabel}</span><span title={`${estimatedFromChars} tok`} style={{ fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--dsw-label-primary)" }}>~{fmtTokens(estimatedFromChars)} tok</span></div>}
 					{window_ > 0 && (
 						<div className="pw-agent-limits-bar mt-3 flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} data-testid="context-bar" aria-hidden onMouseLeave={() => setHoverKey(null)}>
 							{segments.map((segment) => (
@@ -155,21 +168,26 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 									onMouseEnter={() => setHoverKey(segment.key)}
 									style={{ width: `${segment.width}%`, background: segment.color, opacity: hoverKey && hoverKey !== segment.key ? 0.32 : 1 }} />
 							))}
-							{visibleReserved > 0 && <span data-segment="reserved" className="pw-agent-limits-seg flex-none" onMouseEnter={() => setHoverKey("reserved")} style={{ width: `${visibleReserved / window_ * 100}%`, background: "var(--dsw-border-l3)", opacity: hoverKey && hoverKey !== "reserved" ? 0.32 : 1 }} />}
+							{barReserved > 0 && <span data-segment="reserved" className="pw-agent-limits-seg flex-none" onMouseEnter={() => setHoverKey("reserved")} style={{ width: `${barReserved / window_ * 100}%`, background: "var(--dsw-border-l3)", opacity: hoverKey && hoverKey !== "reserved" ? 0.32 : 1 }} />}
 						</div>
 					)}
 					<div className="mt-2.5 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }}>
 						{reserved > 0 && <DataRow itemKey="reserved" active={hoverKey === "reserved"} dimmed={hoverKey !== null && hoverKey !== "reserved"} onHover={setHoverKey} label={t.contextAutoCompactBuffer} value={`${fmtTokens(reserved)} tok`} exact={`${reserved} tok`} color="var(--dsw-border-l3)" />}
-						{window_ > 0 && <DataRow label={t.contextFreeSpace} value={free === null ? "—" : `~${fmtTokens(free)} tok`} color="var(--dsw-selector)" />}
+						{window_ > 0 && <DataRow label={t.contextFreeSpace} value={displayFree === null ? "—" : `~${fmtTokens(displayFree)} tok`} exact={displayFree !== null ? `${displayFree} tok` : undefined} color="var(--dsw-selector)" />}
 					</div>
+					{estimatedFromChars !== null && (
+						<div className="mt-2" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-caption)" }}>
+							{t.contextPostCompactionHint}
+						</div>
+					)}
 					{/* 进度条的图例：颜色跟上面的分段一一对应，数字是真实字符数 */}
 					<div className="mt-2.5 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }} onMouseLeave={() => setHoverKey(null)}>
 						{rows.map((row) => <DataRow key={row.key} itemKey={row.key} active={hoverKey === row.key} dimmed={hoverKey !== null && hoverKey !== row.key} onHover={setHoverKey} label={row.label} value={`${fmtTokens(row.value!)} ${t.contextChars}`} exact={`${row.value} ${t.contextChars}`} color={row.color} />)}
 					</div>
 					{cold && source?.loadFull && (
 						<div className="mt-3 flex items-center justify-between gap-2" style={{ color: "var(--dsw-label-tertiary)" }}>
-							<span className="min-w-0" style={{ fontSize: 11.5 }}>{t.contextColdHint}</span>
-							<button type="button" className="btn-outline flex-none" style={{ height: 24, padding: "0 10px", fontSize: 12 }} disabled={counting}
+							<span className="min-w-0" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))" }}>{t.contextColdHint}</span>
+							<button type="button" className="btn-outline flex-none" style={{ height: "max(24px, calc(24px + var(--dsh-content-font-delta)))", padding: "0 10px", fontSize: "var(--dsh-ui-font-xs)" }} disabled={counting}
 								onClick={() => {
 									setCounting(true);
 									void Promise.resolve(source.loadFull?.()).then((result) => {
@@ -250,7 +268,7 @@ function WindowEditor({ model, value, onSaved }: { model: { provider: string; id
 				<span>{t.contextWindowLabel}</span>
 				<span className="flex items-center gap-2">
 					<span style={{ color: "var(--dsw-label-secondary)", fontFamily: "var(--font-mono)" }}>{exact(value)}</span>
-					<button type="button" className="btn-outline" style={{ height: 22, padding: "0 8px", fontSize: 11.5 }} onClick={begin}>{t.contextWindowEdit}</button>
+					<button type="button" className="btn-outline" style={{ height: "max(22px, calc(22px + var(--dsh-content-font-delta)))", padding: "0 8px", fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))" }} onClick={begin}>{t.contextWindowEdit}</button>
 				</span>
 			</div>
 		);
@@ -277,15 +295,15 @@ function WindowEditor({ model, value, onSaved }: { model: { provider: string; id
 					aria-invalid={!valid}
 					spellCheck={false}
 					className="min-w-0 flex-1 rounded-md px-2"
-					style={{ height: 26, fontSize: 12.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-primary)", background: "var(--dsw-hover)", border: `0.5px solid ${valid ? "var(--dsw-border-l2)" : "var(--dsw-danger)"}` }}
+					style={{ height: "max(26px, calc(26px + var(--dsh-content-font-delta)))", fontSize: "var(--dsh-ui-font-125)", fontFamily: "var(--font-mono)", color: "var(--dsw-label-primary)", background: "var(--dsw-hover)", border: `0.5px solid ${valid ? "var(--dsw-border-l2)" : "var(--dsw-danger)"}` }}
 				/>
-				<button type="button" className="btn-primary-white flex-none" style={{ height: 26, padding: "0 10px", fontSize: 12 }} disabled={!valid || saving} onClick={() => void save()}>
+				<button type="button" className="btn-primary-white flex-none" style={{ height: "max(26px, calc(26px + var(--dsh-content-font-delta)))", padding: "0 10px", fontSize: "var(--dsh-ui-font-xs)" }} disabled={!valid || saving} onClick={() => void save()}>
 					{saving ? t.saving : t.save}
 				</button>
-				<button type="button" className="btn-outline flex-none" style={{ height: 26, padding: "0 10px", fontSize: 12 }} disabled={saving} onClick={cancel}>{t.cancel}</button>
+				<button type="button" className="btn-outline flex-none" style={{ height: "max(26px, calc(26px + var(--dsh-content-font-delta)))", padding: "0 10px", fontSize: "var(--dsh-ui-font-xs)" }} disabled={saving} onClick={cancel}>{t.cancel}</button>
 			</div>
 			{typeof builtin === "number" && (
-				<div className="mt-1.5 flex items-center gap-1.5" style={{ fontSize: 11.5 }}>
+				<div className="mt-1.5 flex items-center gap-1.5" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))" }}>
 					<span>{t.contextWindowBuiltin.replace("{value}", exact(builtin))}</span>
 					{target !== builtin && (
 						<button type="button" className="underline" style={{ color: "var(--dsw-label-secondary)" }} onClick={() => setText(formatCapacity(builtin))}>{t.contextWindowUseBuiltin}</button>
@@ -293,14 +311,14 @@ function WindowEditor({ model, value, onSaved }: { model: { provider: string; id
 				</div>
 			)}
 			{!valid ? (
-				<div className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}>{t.contextWindowInvalid}</div>
+				<div className="mt-1" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-danger)" }}>{t.contextWindowInvalid}</div>
 			) : over ? (
-				<div className="mt-1" style={{ fontSize: 11.5, color: "var(--dsw-warn)" }}>{t.contextWindowOverBuiltin}</div>
+				<div className="mt-1" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-warn)" }}>{t.contextWindowOverBuiltin}</div>
 			) : builtin === null ? (
-				<div className="mt-1" style={{ fontSize: 11.5 }}>{t.contextWindowNoBuiltin}</div>
+				<div className="mt-1" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))" }}>{t.contextWindowNoBuiltin}</div>
 			) : null}
-			<div className="mt-1" style={{ fontSize: 11.5 }}>{t.contextWindowScope}</div>
-			{error && <div className="mt-1" role="alert" style={{ fontSize: 11.5, color: "var(--dsw-danger)" }}>{error}</div>}
+			<div className="mt-1" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))" }}>{t.contextWindowScope}</div>
+			{error && <div className="mt-1" role="alert" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-danger)" }}>{error}</div>}
 		</div>
 	);
 }

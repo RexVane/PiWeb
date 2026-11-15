@@ -61,6 +61,21 @@ describe("PiWeb workspace registry", () => {
 		expect(await getArchivedSessions()).toEqual([path.resolve(archived)]);
 	});
 
+	it("defaults growth recording to enabled without writing and preserves a saved off switch", async () => {
+		const workspace = path.join(tempDir, "default-growth");
+		await fs.mkdir(workspace);
+		const target = path.join(tempDir, "web-workspaces.json");
+		expect(await getGrowthInitConsent(workspace)).toBe(true);
+		await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+		await setGrowthInitConsent(workspace, false);
+		const saved = await fs.readFile(target, "utf8");
+		expect(await getGrowthInitConsent(workspace)).toBe(false);
+		expect(await getGrowthInitConsent(path.join(tempDir, "new-workspace"))).toBe(true);
+		expect(await fs.readFile(target, "utf8")).toBe(saved);
+		await setGrowthInitConsent(workspace, true);
+		expect(await getGrowthInitConsent(workspace)).toBe(true);
+	});
+
 	it("normalizes alias keys case-insensitively on Windows", async () => {
 		const workspace = path.join(tempDir, "CaseDir");
 		await addWorkspace(workspace);
@@ -204,7 +219,7 @@ describe("PiWeb workspace registry", () => {
 		expect(await getArchivedSessions()).toEqual([]);
 	});
 
-	it("records when a session was archived and drops it on unarchive", async () => {
+	it("records archive time, clears it on restore and restarts it when archived again", async () => {
 		const archived = path.join(tempDir, "Session.jsonl");
 		const key = process.platform === "win32" ? path.resolve(archived).toLowerCase() : path.resolve(archived);
 		const registryPath = path.join(tempDir, "web-workspaces.json");
@@ -213,11 +228,52 @@ describe("PiWeb workspace registry", () => {
 		await archiveSession(archived);
 		const first = (await stored())[key];
 		expect(first).toBeGreaterThanOrEqual(before);
-		// 重复归档不改时间：保留期不会因为多点一次而重新起算
+		// 重复归档不改时间；恢复后再归档才重新开始显示时长。
 		await archiveSession(archived);
 		expect((await stored())[key]).toBe(first);
 		await forgetSession(archived);
 		expect(await stored()).toEqual({});
+		expect((await getWorkspaceRegistry()).archivedAt).toEqual({});
+		vi.spyOn(Date, "now").mockReturnValue(first + 60_000);
+		await archiveSession(archived);
+		expect((await stored())[key]).toBe(first + 60_000);
+		expect((await getWorkspaceRegistry()).archivedAt).toEqual({ [key]: first + 60_000 });
+	});
+
+	it("reports later archive activity without rewriting the registry and limits concurrent file queries", async () => {
+		const archived = Array.from({ length: 20 }, (_, i) => path.join(tempDir, `session-${i}.jsonl`));
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		const now = Date.now();
+		const old = now - 3 * 24 * 60 * 60 * 1000;
+		const key = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+		const original = JSON.stringify({ workspaces: [], archivedSessions: archived,
+			archivedAt: Object.fromEntries(archived.map((session) => [session, old])),
+		});
+		await fs.writeFile(registryPath, original);
+		const stat = fs.stat.bind(fs);
+		let running = 0, peak = 0;
+		vi.spyOn(fs, "stat").mockImplementation(async (...args: Parameters<typeof fs.stat>) => {
+			if (args[0] === registryPath) return stat(...args);
+			running++; peak = Math.max(peak, running);
+			await new Promise<void>((resolve) => setTimeout(resolve, 1));
+			running--;
+			return { isFile: () => true, mtimeMs: now } as Awaited<ReturnType<typeof fs.stat>>;
+		});
+		const snapshot = await getWorkspaceRegistry();
+		expect(snapshot.archivedAt).toEqual(Object.fromEntries(archived.map((session) => [key(session), now])));
+		expect(peak).toBeLessThanOrEqual(8);
+		expect(await fs.readFile(registryPath, "utf8")).toBe(original);
+	});
+
+	it("keeps legacy archive time unknown on reads and preserves known time when a file is unreadable", async () => {
+		const legacy = path.join(tempDir, "legacy.jsonl");
+		const unavailable = path.join(tempDir, "unavailable.jsonl");
+		const key = process.platform === "win32" ? unavailable.toLowerCase() : unavailable;
+		const original = JSON.stringify({ workspaces: [], archivedSessions: [legacy, unavailable], archivedAt: { [unavailable]: 1234 } });
+		const registryPath = path.join(tempDir, "web-workspaces.json");
+		await fs.writeFile(registryPath, original);
+		expect((await getWorkspaceRegistry()).archivedAt).toEqual({ [key]: 1234 });
+		expect(await fs.readFile(registryPath, "utf8")).toBe(original);
 	});
 
 	it("keeps the previous registry intact when atomic replacement fails", async () => {

@@ -1,6 +1,5 @@
 "use client";
 import { clientFetch as fetch } from "@/lib/client-fetch";
-import { useConfirmDialog } from "@/components/ConfirmDialog";
 
 
 /**
@@ -14,63 +13,9 @@ import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
-import { useDialog } from "@/hooks/useDialog";
 import type { GitInfo } from "@/lib/git-service";
 import type { TreeNode } from "@/lib/growth-tree";
-import type { GrowthChange, GrowthConsentRequest } from "@/lib/types";
-
-/**
- * 「要不要在这个工作区建 git 仓库」：工作区还不是仓库根目录时，生长记录第一次提交前问一次。
- * 关掉（Esc / 点遮罩外）不算回答，下次打开会话还会再问；只有两个按钮会被记住。
- */
-export function GrowthConsentDialog({ request, onAnswer }: { request: GrowthConsentRequest; onAnswer: (allow: boolean) => void }) {
-	const { t } = useI18n();
-	const [dismissed, setDismissed] = useState(false);
-	const ref = useRef<HTMLDivElement>(null);
-	useDialog({ open: !dismissed, ref, onClose: () => setDismissed(true) });
-	useEffect(() => {
-		setDismissed(false);
-		ref.current?.focus();
-	}, [request.cwd, request.reason]);
-	if (dismissed) return null;
-	const body = request.reason === "existing" ? t.growthConsentExisting : request.reason === "nested" ? t.growthConsentNested.replace("{parent}", request.parent ?? "") : t.growthConsentNotGit;
-	return (
-		<div
-			ref={ref}
-			tabIndex={-1}
-			className="fixed inset-0 z-[120] flex items-center justify-center"
-			style={{ background: "var(--dsw-mask)" }}
-			role="dialog"
-			aria-modal="true"
-			aria-label={t.growthConsentTitle}
-			data-testid="growth-consent-dialog"
-			onKeyDown={(event) => {
-				event.stopPropagation();
-				if (event.key === "Escape") setDismissed(true);
-			}}
-		>
-			<div className="popover flex w-[min(92vw,480px)] flex-col gap-3 p-5" style={{ background: "var(--dsw-glass-modal)" }}>
-				<div className="flex items-start gap-2.5">
-					<span className="flex flex-none items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "var(--dsw-hover)" }}>
-						<IconGitOutline16 size={16} style={{ color: "var(--dsw-label-secondary)" }} />
-					</span>
-					<div className="min-w-0 flex-1">
-						<div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.4 }}>{t.growthConsentTitle}</div>
-						<div className="mt-0.5 truncate" style={{ fontSize: 11, color: "var(--dsw-label-caption)", fontFamily: "var(--font-mono)" }} title={request.cwd}>{request.cwd}</div>
-					</div>
-				</div>
-				<div className="rounded-xl px-3 py-2.5" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)", lineHeight: 1.55, background: "var(--dsw-hover)" }}>
-					{body}
-					<div className="mt-1.5" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.growthConsentNote}</div>
-				</div>
-				<div className="flex justify-end gap-2">
-					<button className="btn-outline" style={{ height: 32 }} onClick={() => onAnswer(false)}>{t.growthConsentDecline}</button>
-					<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(true)}>{t.growthConsentAllow}</button>
-				</div>
-			</div>
-		</div>
-	);
-}
+import type { GrowthChange } from "@/lib/types";
 
 /** 「第 7 轮 · 把保存按钮改成红色」/「你的修改」 */
 export function roundTitle(round: GrowthEntry, t: Record<string, string>): string {
@@ -120,7 +65,6 @@ function sumChanges(changes: GrowthChange[]): { files: number; add: number; del:
 function growthFailureMessage(message: string, lang: "zh" | "en"): string {
 	if (/git is not installed/i.test(message)) return lang === "zh" ? "未找到 Git。安装 Git 后可重新开启项目记录。" : "Git is unavailable. Install Git, then enable project recording again.";
 	if (/workspace directory not found/i.test(message)) return lang === "zh" ? "工作区目录不存在，请重新选择工作区。" : "The workspace directory is unavailable. Select the workspace again.";
-	if (/history|历史/.test(message) && /上限|limit|budget/.test(message)) return lang === "zh" ? "项目记录已达到历史容量上限，现有历史已保留。请关闭记录，或导出后管理历史。" : "Project history reached its capacity. Existing history is retained. Turn recording off, or export and manage the history.";
 	if (/candidate limit|candidate files|文件过多/i.test(message)) return lang === "zh" ? "工作区文件过多，已停止记录。请在 .gitignore 中排除生成目录后重新开启记录。" : "The workspace has too many files to record. Exclude generated directories in .gitignore, then enable recording again.";
 	if (/exceeds.*(?:byte|limit)|exceeded.*(?:buffer|limit)/i.test(message)) return lang === "zh" ? "项目记录超过大小限制，上一份快照已保留。请缩小或排除大文件后重新开启记录。" : "Project recording exceeded its size limit. The previous snapshot is retained. Reduce or exclude large files, then enable recording again.";
 	return lang === "zh" ? "项目记录未能完成，请重试或查看错误详情。" : "Project recording could not finish. Retry or review the error details.";
@@ -137,7 +81,6 @@ export function ProjectPanel({
 	onOpenEditor,
 	onJumpToChat,
 	gitRefreshKey = 0,
-	onAskCommit,
 	onOpenGit,
 	onClose,
 	onError,
@@ -154,14 +97,12 @@ export function ProjectPanel({
 	/** 跳到对话里这一轮的提问（用户消息 entryId） */
 	onJumpToChat?: (messageId: string) => void;
 	gitRefreshKey?: number;
-	onAskCommit?: () => void;
 	onOpenGit?: () => void;
 	onClose: () => void;
 	onError: (message: string) => void;
 }) {
 	const { t, lang } = useI18n();
 	const tt = t as unknown as Record<string, string>;
-	const { confirm, confirmDialog } = useConfirmDialog();
 	const [filter, setFilter] = useState("");
 	const [onlyChanges, setOnlyChanges] = useState(true);
 	const [recording, setRecording] = useState(false);
@@ -173,8 +114,9 @@ export function ProjectPanel({
 	useEffect(() => {
 		let active = true;
 		setRecordingEnabled(null); recordingBusy.current = false; setRecordingSettingBusy(false);
+		if (!cwd) return;
 		void fetch(`/api/growth?cwd=${encodeURIComponent(cwd)}&consent=1`, { cache: "no-store" }).then((response) => response.json()).then((result) => {
-			if (active && result.success) setRecordingEnabled(result.data?.consent ?? null);
+			if (active && result.success) setRecordingEnabled(result.data?.consent !== false);
 		}).catch(() => undefined);
 		return () => { active = false; };
 	}, [cwd]);
@@ -295,7 +237,6 @@ export function ProjectPanel({
 	// 会变成贴在窗口最右边的一条多余发丝线,所以这里去掉;背景沿用侧栏填充色即可。
 	return (
 		<div className="pw-project flex h-full min-h-0 flex-1 flex-col" style={{ borderRight: "none" }} data-testid="project-panel">
-			{confirmDialog}
 			{/* 头部 */}
 			<div className="flex items-center gap-1.5 px-3 pt-3 pb-1.5">
 				<span className="min-w-0 flex-1 truncate" style={{ fontSize: 13, fontWeight: 600 }} title={cwd}>
@@ -313,21 +254,19 @@ export function ProjectPanel({
 			{/* 生长记录不可用（找不到 git 等）：明确提示 + 已退化为当前目录结构 */}
 			{cwd && hasSession && <div className="flex items-center gap-2 px-3 pb-2" style={{ fontSize: 11.5 }}>
 				<span className="flex-1">{t.growthRecordingSetting}</span>
-				<button type="button" className="pw-chip" aria-pressed={recordingEnabled === true} disabled={recordingSettingBusy} onClick={() => void (async () => {
-					if (recordingBusy.current) return;
+				<button type="button" className="pw-chip" aria-pressed={recordingEnabled === true} disabled={recordingSettingBusy || recordingEnabled === null} onClick={() => void (async () => {
+					if (recordingBusy.current || recordingEnabled === null) return;
 					recordingBusy.current = true; setRecordingSettingBusy(true);
 					const allow = recordingEnabled !== true;
 					try {
-						if (allow && !(await confirm({ title: t.growthRecordingSetting, message: t.growthRecordingConsent, confirmLabel: t.enabled }))) return;
 						if (cwdRef.current !== cwd) return;
 						const response = await fetch("/api/growth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "setRecording", cwd, allow }) });
 						const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || t.toastError);
 						if (cwdRef.current === cwd) setRecordingEnabled(allow);
 					} catch (error) { if (cwdRef.current === cwd) onError(error instanceof Error ? error.message : t.toastError); }
 					finally { if (cwdRef.current === cwd) { recordingBusy.current = false; setRecordingSettingBusy(false); } }
-				})()}>{recordingEnabled === true ? t.enabled : t.disabled}</button>
+				})()}>{recordingEnabled === null ? "…" : recordingEnabled ? t.enabled : t.disabled}</button>
 			</div>}
-			{cwd && hasSession && <div className="px-3 pb-2" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)" }}>{t.growthCapacityHint}</div>}
 			{cwd && hasSession && !growth.available && !growth.loading && (
 				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-warn-text)", background: "var(--dsw-hover)" }} role="status">
 					{t.growthUnavailableFallback}
@@ -352,7 +291,6 @@ export function ProjectPanel({
 							{untracked > 0 && <span>{t.gitUntracked} {untracked}</span>}
 						</span>
 					) : <span className="min-w-0 flex-1 truncate">{t.gitNoChanges}</span>}
-					{git.files.length > 0 && onAskCommit && <button type="button" className="pw-chip" onClick={onAskCommit}>{t.gitAskCommit}</button>}
 					{onOpenGit && <button type="button" className="pw-chip" onClick={onOpenGit}>{t.gitDetails}</button>}
 				</div>
 			)}

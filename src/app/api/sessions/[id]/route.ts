@@ -31,7 +31,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 		return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json(
-			{ success: false, ...apiError(error, "会话移除失败，原件或恢复副本已保留。") },
+			{ success: false, ...apiError(error, "会话删除失败，原会话已保留。") },
 			{ status: error instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } },
 		);
 	}

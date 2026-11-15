@@ -15,6 +15,7 @@ import {
 	IconFileOutline16,
 	IconFolderClose16,
 	IconSendArrowUp14,
+	IconSkillOutline16,
 	IconStopFill16,
 	IconRefreshOutline14,
 	IconTerminalOutline14,
@@ -127,6 +128,7 @@ export function ChatInput({
 		messages?: { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; bash?: { command: string; output: string; excludeFromContext?: boolean }; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
 		getMessages?: () => { role?: string; content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>; bash?: { command: string; output: string; excludeFromContext?: boolean }; usage?: import("@/lib/types").TrajTokens; stopReason?: string }[];
 		breakdown?: import("@/lib/types").ContextBreakdown;
+		compacted?: boolean;
 		loadFull?: () => Promise<unknown> | unknown;
 	};
 	/** 还没有对话时隐藏上下文计量 */
@@ -438,6 +440,9 @@ export function ChatInput({
 		window.addEventListener("resize", resize);
 		return () => window.removeEventListener("resize", resize);
 	}, []);
+	useEffect(() => {
+		autoSize();
+	}, [adopted, text]);
 
 	const doSend = (override?: "steer" | "followUp", forcedText?: string) => {
 		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || permissionChanging || uploadBusy) return;
@@ -704,22 +709,22 @@ export function ChatInput({
 					aria-label={t.mentionFiles}
 					style={{ overflowY: "auto" }}
 				>
-					<div className="flex items-center gap-2 px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+					<div className="flex items-center gap-2 px-4 pb-1 pt-1" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-caption)" }}>
 						<span>{t.mentionFiles}</span>
 						{files.truncated && <span style={{ color: "var(--dsw-warn)" }}>{t.mentionTruncated}</span>}
 						{files.source === "disk" && <span title={files.warning ? t.mentionGitFallback : t.mentionDiskSourceHint}>{t.mentionDiskSource}</span>}
 						<span className="flex-1" />
 						<span>{t.mentionHint}</span>
 					</div>
-					{files.warning && <div role="status" className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-warn)" }}>{t.mentionGitFallback}</div>}
+					{files.warning && <div role="status" className="px-4 py-2" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-warn)" }}>{t.mentionGitFallback}</div>}
 					{files.status === "loading" && (
-						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
+						<div className="px-4 py-2" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
 					)}
 					{files.status === "error" && (
-						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }} role="alert">{files.error}</div>
+						<div className="px-4 py-2" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-danger)" }} role="alert">{files.error}</div>
 					)}
 					{files.status === "ready" && suggestions.length === 0 && (
-						<div className="px-4 py-2" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.mentionNoMatch}</div>
+						<div className="px-4 py-2" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-caption)" }}>{t.mentionNoMatch}</div>
 					)}
 					{suggestions.map(({ candidate, label, description }, i) => (
 						<button
@@ -742,11 +747,11 @@ export function ChatInput({
 								)}
 							</span>
 							{/* 和 pi 终端一样：名字在前，路径在后；根目录下的条目两者相同，不重复显示 */}
-							<span className="isx-menu-shift flex-none truncate" style={{ maxWidth: "55%", fontSize: 12.5, fontFamily: "var(--font-mono)" }}>
+							<span className="isx-menu-shift flex-none truncate" style={{ maxWidth: "55%", fontSize: "var(--dsh-ui-font-125)", fontFamily: "var(--font-mono)" }}>
 								{label}
 							</span>
 							{description.replace(/\/$/, "") !== label.replace(/\/$/, "") && (
-								<span className="isx-menu-sub min-w-0 flex-1 truncate pr-2" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+								<span className="isx-menu-sub min-w-0 flex-1 truncate pr-2" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
 									{description}
 								</span>
 							)}
@@ -758,7 +763,7 @@ export function ChatInput({
 			{/* 斜杠命令菜单（dsh：悬浮于输入卡上方，同宽） */}
 			{commandMode && visibleCommands.length > 0 && (
 				<div ref={cmdMenuRef} className="popover absolute bottom-full left-0 right-0 z-50 mb-2 max-h-[340px] overflow-x-hidden overflow-y-auto py-1.5" role="listbox" aria-label={t.slashCatalog} style={{ overflowY: "auto" }}>
-					<div className="px-4 pb-1 pt-1" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+					<div className="px-4 pb-1 pt-1" style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-caption)" }}>
 						{t.slashCatalog}
 					</div>
 					{visibleCommands.map((c, i) => (
@@ -773,16 +778,16 @@ export function ChatInput({
 							onMouseEnter={() => setCmdIdx(i)}
 							onClick={() => runEntry(c)}
 						>
-							<span className="isx-menu-shift" style={{ fontSize: 14, fontWeight: 500, flex: "none" }}>{c.name}</span>
+							<span className="isx-menu-shift" style={{ fontSize: "var(--dsh-content-font-size)", fontWeight: 500, flex: "none" }}>{c.name}</span>
 							{c.kind !== "builtin" && (
-								<span className="isx-menu-sub rounded px-1.5 py-0.5" style={{ fontSize: 10.5, color: "var(--dsw-label-caption)", background: "var(--dsw-selector)", flex: "none" }}>
+								<span className="isx-menu-sub rounded px-1.5 py-0.5" style={{ fontSize: "max(9px, calc(10.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-caption)", background: "var(--dsw-selector)", flex: "none" }}>
 									{c.kind === "skill" ? t.skillType : c.kind === "template" ? t.promptType : t.extensionCmdType}
 								</span>
 							)}
 							{c.argumentHint && (
-								<span className="isx-menu-sub" style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", flex: "none" }}>{c.argumentHint}</span>
+								<span className="isx-menu-sub" style={{ fontSize: "var(--dsh-ui-font-xs)", fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)", flex: "none" }}>{c.argumentHint}</span>
 							)}
-							<span className="isx-menu-sub truncate pr-2" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
+							<span className="isx-menu-sub truncate pr-2" style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-tertiary)" }}>
 								{c.desc}
 							</span>
 						</button>
@@ -920,30 +925,28 @@ export function ChatInput({
 						</div>
 					</div>
 				)}
-				<div className="px-4 pt-3 flex flex-col items-stretch gap-1.5">
+				<div className="px-4 pt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 					{adopted && (
 						<button
 							type="button"
-							className="flex-none flex max-w-full items-center gap-1 self-start"
+							className="pw-cmd-chip group/cmd"
 							disabled={disabled || sendBusy}
 							aria-label={`${t.delete} /${adopted.name}`}
 							title={`${t.delete} /${adopted.name} (Backspace)`}
-							style={{
-								fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))",
-								lineHeight: "var(--piweb-chat-line-height, 1.55)",
-								padding: 0,
-								background: "transparent",
-								border: "none",
-								color: "var(--dsw-label-primary)",
-							}}
 							onClick={() => {
 								setAdopted(null);
 								requestAnimationFrame(() => taRef.current?.focus());
 							}}
 						>
-							<IconTerminalOutline14 size={14} style={{ color: "var(--dsw-accent)", flex: "none" }} />
-							<span className="min-w-0 truncate" style={{ color: "var(--dsw-accent)", fontWeight: 600 }}>/{adopted.name}</span>
-							<IconCloseOutline14 size={12} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
+							{adopted.kind === "skill" ? (
+								<IconSkillOutline16 size={13} style={{ flex: "none", opacity: 0.9 }} aria-hidden="true" />
+							) : (
+								<IconTerminalOutline14 size={13} style={{ flex: "none", opacity: 0.9 }} aria-hidden="true" />
+							)}
+							<span className="min-w-0 truncate">/{adopted.name}</span>
+							<span className="pw-cmd-close" aria-hidden="true">
+								<IconCloseOutline14 size={10} />
+							</span>
 						</button>
 					)}
 					<textarea
@@ -953,7 +956,7 @@ export function ChatInput({
 						rows={1}
 						placeholder={adopted ? (adopted.argumentHint ?? t.inputPlaceholder) : !disabled && isBlocked ? t.blockedComposer : t.inputPlaceholder}
 						suppressHydrationWarning
-						className="min-w-0 w-full resize-none"
+						className={adopted && (text.includes("\n") || text.length > 36) ? "min-w-0 basis-full w-full resize-none" : "min-w-[140px] flex-1 resize-none"}
 						style={{ fontSize: "var(--piweb-chat-font-size, var(--dsh-content-font-size))", lineHeight: 1.55 }}
 						onChange={(e) => {
 							const value = e.target.value;
@@ -1167,13 +1170,13 @@ export function ChatInput({
 						}}
 					>
 						<IconFileOutline16 size={32} style={{ color: "var(--dsw-accent)" }} />
-						<div style={{ fontSize: 15, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
+						<div style={{ fontSize: "var(--dsh-ui-font-lg)", fontWeight: 500, color: "var(--dsw-label-primary)" }}>
 							{uploadBusy ? t.uploading : t.dropToAttach}
 						</div>
-						<div style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.dropToAttachHint}</div>
+						<div style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>{t.dropToAttachHint}</div>
 						<div
 							className="rounded-full px-3 py-1"
-							style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)", lineHeight: "18px" }}
+							style={{ fontSize: "max(9.5px, calc(11.5px + var(--dsh-content-font-delta)))", color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)", lineHeight: 1.5 }}
 						>
 							{t.dropLimits}
 						</div>

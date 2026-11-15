@@ -169,4 +169,31 @@ describe("session model provider isolation", () => {
 		expect(pi.getResourceLoader(cwd).getExtensions().runtime.pendingProviderRegistrations).toHaveLength(1);
 		expect((await catalog.listWorkspaceModelsForPiWeb(path.join(root, "api-b"))).models.some((model) => model.provider === "workspace-private")).toBe(false);
 	});
+
+	it("applies toolPreset, model, and thinking in one createNewSession call and rejects invalid options", async () => {
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		await fs.writeFile(path.join(agentDir, "models.json"), JSON.stringify({ providers: { stored: provider("one") } }));
+		await pi.refreshModelRuntime();
+
+		const cwd = path.join(root, "single-rtt");
+		await fs.mkdir(cwd, { recursive: true });
+		await expect(manager.createNewSession(cwd, { provider: "stored" } as any)).rejects.toThrow();
+
+		const { sessionPath, setupApplied } = await manager.createNewSession(cwd, {
+			toolPreset: "full",
+			provider: "stored",
+			modelId: "probe",
+			thinking: "off",
+		});
+		expect(setupApplied).toBe(true);
+		const m = manager.getManaged(sessionPath);
+		managed.push(m);
+		expect(m.toolPreset).toBe("full");
+
+		const snapshot = await manager.buildSnapshot(m);
+		expect(snapshot.toolPreset).toBe("full");
+		expect(snapshot.toolPreferenceSaved).toBe(true);
+		expect(snapshot.model).toMatchObject({ provider: "stored", id: "probe" });
+		expect(snapshot.thinkingLevel).toBe("off");
+	});
 });

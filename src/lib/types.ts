@@ -260,9 +260,7 @@ export type WebEvent =
 	| { type: "retry_end"; attempt: number; ts: number }
 	/** 项目生长：提交了一个 commit（pi 的一轮 / 用户两轮之间的修改 / 工作区基线） */
 	| { type: "growth"; round: GrowthRound; ts: number }
-	| { type: "growth_error"; message: string | null; ts: number }
-	/** 项目生长要先在工作区建 git 仓库，等用户同意；request 为 null = 已回答（关掉弹窗） */
-	| { type: "growth_consent"; request: GrowthConsentRequest | null; ts: number };
+	| { type: "growth_error"; message: string | null; ts: number };
 
 /** 虚拟模型选择下，最近一次成功回复实际用的物理模型 */
 export interface WebRoutedModel {
@@ -297,13 +295,6 @@ export interface WebStats {
 /** round = pi 的一轮；user = 用户在两轮之间自己的修改；baseline = 工作区第一个 commit（起点，不算一轮） */
 export type GrowthRoundKind = "round" | "user" | "baseline";
 export type GrowthRoundStatus = "done" | "aborted" | "error";
-
-/** 工作区还不是 git 仓库根目录：not-git = 不在任何仓库里；nested = 是 parent 仓库的子目录（会嵌套建一个） */
-export interface GrowthConsentRequest {
-	cwd: string;
-	reason: "not-git" | "nested" | "existing";
-	parent?: string;
-}
 
 export interface GrowthChange {
 	status: "A" | "M" | "D" | "R";
@@ -413,8 +404,6 @@ export interface WebSnapshot {
 	/** 最近持久用户消息的索引；完整轮次保留在会话与 growth roundNumber 中。 */
 	userTurns: { id: string; ts: number }[];
 	growthError: string | null;
-	/** 等用户回答的建仓库请求；缺省按没有处理（兼容旧服务端） */
-	growthConsent?: GrowthConsentRequest | null;
 	model?: { provider: string; id: string; name: string };
 	/** 虚拟模型实际路由到的物理模型；缺省 = 不是虚拟模型 */
 	routedModel?: WebRoutedModel | null;

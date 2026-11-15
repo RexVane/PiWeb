@@ -202,9 +202,21 @@ export function AutomationModal({
 	}, [validSchedule, previewError, serverPreview, previewKey, lang, t]);
 
 	const workspaceOptions = useMemo(() => {
-		const values = Array.from(new Set([...knownCwds, ...(cwd ? [cwd] : [])].filter(Boolean)));
-		return values.map((c) => ({ value: c, label: getWorkspaceName(c) || c }));
-	}, [knownCwds, cwd, getWorkspaceName]);
+		const ordered: string[] = [];
+		const seen = new Set<string>();
+		const norm = (p: string) => {
+			const clean = p.replace(/\\/g, "/").replace(/\/+$/, "");
+			return /^[A-Za-z]:\//.test(clean) || clean.startsWith("//") ? clean.toLowerCase() : clean;
+		};
+		for (const candidate of [...(defaultCwd ? [defaultCwd] : []), ...knownCwds, ...(cwd ? [cwd] : [])]) {
+			if (!candidate) continue;
+			const key = norm(candidate);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			ordered.push(candidate);
+		}
+		return ordered.map((c) => ({ value: c, label: getWorkspaceName(c) || c }));
+	}, [defaultCwd, knownCwds, cwd, getWorkspaceName]);
 
 	const modelOptions = useMemo(() => {
 		const base: { value: string; label: string; disabled?: boolean }[] = [{ value: DEFAULT_MODEL_VALUE, label: t.autoModelDefault }];
@@ -294,9 +306,9 @@ export function AutomationModal({
 		}
 	};
 
-	const labelStyle: React.CSSProperties = { fontSize: 12.5, fontWeight: 500, color: "var(--dsw-label-secondary)" };
+	const labelStyle: React.CSSProperties = { fontSize: "var(--dsh-ui-font-125)", fontWeight: 500, color: "var(--dsw-label-secondary)" };
 	const fieldStyle: React.CSSProperties = {
-		fontSize: 13,
+		fontSize: "var(--dsh-ui-font-sm)",
 		background: "var(--dsw-hover)",
 		border: "0.5px solid var(--dsw-border-l2)",
 		color: "var(--dsw-label-primary)",
@@ -324,7 +336,7 @@ export function AutomationModal({
 				}}
 			>
 				<div className="hairline-b flex items-center justify-between px-6 py-4">
-					<h2 id={titleId} style={{ fontSize: 16, fontWeight: 600, color: "var(--dsw-label-primary)" }}>
+					<h2 id={titleId} style={{ fontSize: "calc(16px + var(--dsh-content-font-delta))", fontWeight: 600, color: "var(--dsw-label-primary)" }}>
 						{initialTask ? t.autoEditTitle : t.autoCreateTitle}
 					</h2>
 					<button type="button" className="icon-btn" aria-label={t.close} onClick={onClose} disabled={saving}>
@@ -339,7 +351,7 @@ export function AutomationModal({
 								role="alert"
 								className="rounded-xl px-3.5 py-2.5"
 								style={{
-									fontSize: 12.5,
+									fontSize: "var(--dsh-ui-font-125)",
 									background: "color-mix(in srgb, var(--dsw-danger) 12%, transparent)",
 									border: "0.5px solid color-mix(in srgb, var(--dsw-danger) 35%, transparent)",
 									color: "var(--dsw-danger)",
@@ -386,7 +398,7 @@ export function AutomationModal({
 										width={240}
 									/>
 								) : (
-									<div style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{t.autoNeedWorkspace}</div>
+									<div style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-danger)" }}>{t.autoNeedWorkspace}</div>
 								)}
 							</div>
 
@@ -419,9 +431,23 @@ export function AutomationModal({
 							{(modelsError || unavailableModel) && <div role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{modelsError || t.autoModelUnavailable}</div>}
 						</div>
 
-						<div className="space-y-2.5 rounded-2xl p-3.5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+						<div
+							className="space-y-3 rounded-2xl p-4"
+							style={{
+								border: "0.5px solid var(--dsw-border-l2)",
+								background: "color-mix(in srgb, var(--dsw-hover) 40%, transparent)",
+							}}
+						>
 							<div style={labelStyle}>{t.autoSchedule}</div>
-							<div className="flex flex-wrap gap-1.5">
+							<div
+								role="group"
+								aria-label={t.autoSchedule}
+								className="inline-flex flex-wrap gap-1 rounded-xl p-1"
+								style={{
+									background: "var(--dsw-hover)",
+									border: "0.5px solid var(--dsw-border-l2)",
+								}}
+							>
 								{(
 									[
 										{ id: "interval", label: t.autoKindInterval },
@@ -435,13 +461,16 @@ export function AutomationModal({
 										<button
 											key={opt.id}
 											type="button"
+											aria-pressed={active}
 											onClick={() => setKind(opt.id)}
-											className="rounded-lg px-2.5 py-1 transition-colors"
+											className="rounded-lg px-3 py-1.5 transition-all"
 											style={{
-												fontSize: 12.5,
+												fontSize: "var(--dsh-ui-font-125)",
 												fontWeight: active ? 500 : 400,
-												background: active ? "var(--dsw-label-primary)" : "var(--dsw-hover)",
-												color: active ? "var(--dsw-bg-base)" : "var(--dsw-label-secondary)",
+												backgroundColor: active ? "var(--dsw-bg-elevated)" : "transparent",
+												color: active ? "var(--dsw-label-primary)" : "var(--dsw-label-secondary)",
+												boxShadow: active ? "0 1px 3px rgba(0, 0, 0, 0.14)" : "none",
+												border: active ? "0.5px solid var(--dsw-border-l2)" : "0.5px solid transparent",
 											}}
 										>
 											{opt.label}
@@ -451,16 +480,16 @@ export function AutomationModal({
 							</div>
 
 							{kind === "interval" && (
-								<div className="flex flex-wrap items-center gap-2 pt-1">
-									<span style={{ fontSize: 13, color: "var(--dsw-label-secondary)" }}>{t.autoEvery}</span>
+								<div className="flex flex-wrap items-center gap-2.5 pt-0.5">
+									<span style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-secondary)" }}>{t.autoEvery}</span>
 									<input
 										type="number"
 										min={1}
 										max={unit === "minutes" ? 525600 : 8760}
 										value={every}
 										onChange={(e) => setEvery(Math.max(1, Number(e.target.value) || 1))}
-										className="w-24 rounded-xl px-3 py-1.5"
-										style={fieldStyle}
+										className="h-8 w-20 rounded-xl px-2.5 text-center tabular-nums"
+										style={{ ...fieldStyle, minHeight: "max(32px, calc(32px + var(--dsh-content-font-delta)))", fontWeight: 500 }}
 									/>
 									<SelectOption
 										value={unit}
@@ -476,10 +505,10 @@ export function AutomationModal({
 							)}
 
 							{(kind === "daily" || kind === "weekly") && (
-								<div className="flex flex-col gap-3 pt-1">
+								<div className="flex flex-col gap-3 pt-0.5">
 									{kind === "weekly" && (
 										<div className="flex flex-wrap items-center gap-1.5">
-											<span className="mr-1" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
+											<span className="mr-1" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-secondary)" }}>
 												{t.autoDays}
 											</span>
 											{WEEKDAY_ORDER.map((dayIndex) => {
@@ -488,12 +517,16 @@ export function AutomationModal({
 													<button
 														key={dayIndex}
 														type="button"
+														aria-label={lang === "zh" ? `周${WEEKDAY_SHORT.zh[dayIndex]}` : WEEKDAY_SHORT.en[dayIndex]}
+														aria-pressed={active}
 														onClick={() => toggleDay(dayIndex)}
-														className="rounded-lg px-2 py-1"
+														className="min-w-8 rounded-lg px-2.5 py-1.5 text-center transition-colors"
 														style={{
-															fontSize: 12,
-															background: active ? "var(--dsw-label-primary)" : "var(--dsw-hover)",
+															fontSize: "var(--dsh-ui-font-xs)",
+															fontWeight: active ? 500 : 400,
+															backgroundColor: active ? "var(--dsw-label-primary)" : "var(--dsw-bg-elevated)",
 															color: active ? "var(--dsw-bg-base)" : "var(--dsw-label-secondary)",
+															border: "0.5px solid var(--dsw-border-l2)",
 														}}
 													>
 														{WEEKDAY_SHORT[lang][dayIndex]}
@@ -502,35 +535,37 @@ export function AutomationModal({
 											})}
 										</div>
 									)}
-									<div className="flex items-center gap-2">
-										<span style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>{t.autoTime}</span>
+									<div className="flex items-center gap-2.5">
+										<span style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-secondary)" }}>{t.autoTime}</span>
 										<input
 											type="time"
 											value={time}
 											onChange={(e) => setTime(e.target.value)}
-											className="rounded-xl px-3 py-1.5"
-											style={fieldStyle}
+											className="h-8 rounded-xl px-3"
+											style={{ ...fieldStyle, minHeight: "max(32px, calc(32px + var(--dsh-content-font-delta)))" }}
 										/>
 									</div>
 								</div>
 							)}
 
 							{kind === "cron" && (
-								<div className="space-y-1.5 pt-1">
+								<div className="space-y-1.5 pt-0.5">
 									<input
 										value={cronExpr}
 										onChange={(e) => setCronExpr(e.target.value)}
 										placeholder={t.autoCronPlaceholder}
-										className="w-full rounded-xl px-3 py-1.5"
+										className="h-9 w-full rounded-xl px-3"
 										style={{ ...fieldStyle, fontFamily: "var(--font-mono)" }}
 									/>
-									<div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.autoCronHint}</div>
+									<div style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>{t.autoCronHint}</div>
 								</div>
 							)}
 
 							<div
+								className="pt-2.5"
 								style={{
-									fontSize: 12,
+									borderTop: "0.5px solid var(--dsw-border-l1)",
+									fontSize: "var(--dsh-ui-font-xs)",
 									color: schedulePreview.ok ? "var(--dsw-label-tertiary)" : "var(--dsw-danger)",
 								}}
 							>
@@ -540,13 +575,13 @@ export function AutomationModal({
 					</div>
 
 					<div className="hairline-t flex items-center justify-end gap-2 px-6 py-3.5">
-						<button type="button" className="btn-outline" style={{ height: 34 }} onClick={onClose} disabled={saving}>
+						<button type="button" className="btn-outline" style={{ height: "max(34px, calc(34px + var(--dsh-content-font-delta)))" }} onClick={onClose} disabled={saving}>
 							{t.cancel}
 						</button>
 						<button
 							type="submit"
 							className="btn-primary-white"
-							style={{ height: 34, padding: "0 16px" }}
+							style={{ height: "max(34px, calc(34px + var(--dsh-content-font-delta)))", padding: "0 16px" }}
 							disabled={saving || modelSelectionBlocked || !name.trim() || !prompt.trim() || !cwd.trim() || !validSchedule.ok}
 						>
 							{t.confirm}

@@ -11,7 +11,7 @@
 }
 .effortLabel {
 	flex: none;
-	font-size: 12px;
+	font-size: var(--dsh-ui-font-xs);
 	color: var(--dsw-label-secondary);
 }
 /* 虚拟模型实际路由到的后端：比选中的模型更次要，不抢注意力 */
@@ -21,7 +21,7 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 11px;
+	font-size: var(--dsh-ui-font-2xs);
 	color: var(--dsw-label-caption);
 }
 .menu {
@@ -65,8 +65,8 @@
 	outline: 0;
 	padding: 0;
 	font: inherit;
-	font-size: 12.5px;
-	line-height: 20px;
+	font-size: var(--dsh-ui-font-125);
+	line-height: 1.5;
 	background: transparent;
 	color: var(--dsw-label-primary);
 }
@@ -74,7 +74,7 @@
 .search kbd {
 	flex: none;
 	font-family: var(--font-mono);
-	font-size: 11px;
+	font-size: var(--dsh-ui-font-2xs);
 	color: var(--dsw-label-tertiary);
 }
 .list {
@@ -99,9 +99,9 @@
 	text-align: left;
 	cursor: pointer;
 	color: var(--dsw-label-secondary);
-	font-size: 12px;
+	font-size: var(--dsh-ui-font-xs);
 	font-weight: 600;
-	line-height: 20px;
+	line-height: 1.5;
 }
 .groupTitle:hover { background: var(--dsw-hover); }
 .groupChevron { flex: none; transition: transform 140ms ease; }
@@ -115,7 +115,7 @@
 }
 .count {
 	flex: none;
-	font-size: 11px;
+	font-size: var(--dsh-ui-font-2xs);
 	font-weight: 400;
 	font-variant-numeric: tabular-nums;
 	color: var(--dsw-label-tertiary);
@@ -141,8 +141,8 @@
 	min-width: 0;
 	flex-direction: column;
 	gap: 3px;
-	font-size: 13px;
-	line-height: 19px;
+	font-size: var(--dsh-ui-font-sm);
+	line-height: 1.45;
 }
 .optionName, .optionId {
 	overflow: hidden;
@@ -152,8 +152,8 @@
 .optionName { font-weight: 500; }
 .optionId {
 	font-family: var(--font-mono);
-	font-size: 11px;
-	line-height: 16px;
+	font-size: var(--dsh-ui-font-2xs);
+	line-height: 1.45;
 	color: var(--dsw-label-secondary);
 }
 .option > svg { flex: none; color: var(--dsw-accent); }
@@ -170,7 +170,7 @@
 .empty {
 	margin: 0;
 	padding: 24px 14px;
-	font-size: 12.5px;
+	font-size: var(--dsh-ui-font-125);
 	line-height: 1.6;
 	text-align: center;
 	color: var(--dsw-label-secondary);
@@ -187,13 +187,13 @@
 	border-top: 1px solid var(--dsw-border-l1);
 	border-radius: 0 0 var(--pw-radius-control, 10px) var(--pw-radius-control, 10px);
 	text-align: left;
-	font-size: 12.5px;
-	line-height: 19px;
+	font-size: var(--dsh-ui-font-125);
+	line-height: 1.5;
 	color: var(--dsw-label-secondary);
 }
 .effortLink:hover { background: var(--dsw-hover); }
 .effortValue { display: inline-flex; align-items: center; gap: 5px; color: var(--dsw-label-primary); }
-.unsupported > span:last-child { font-size: 11.5px; color: var(--dsw-label-tertiary); }
+.unsupported > span:last-child { font-size: max(9.5px, calc(11.5px + var(--dsh-content-font-delta))); color: var(--dsw-label-tertiary); }
 .effortPage { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .back {
 	display: flex;
@@ -203,7 +203,7 @@
 	margin-bottom: 4px;
 	padding: 10px;
 	border-bottom: 1px solid var(--dsw-border-l1);
-	font-size: 12.5px;
+	font-size: var(--dsh-ui-font-125);
 	color: var(--dsw-label-secondary);
 	text-align: left;
 }

@@ -346,8 +346,8 @@ describe("launcher lifecycle without real child processes", () => {
 			},
 		});
 		expect(result).toBe(0);
-		expect(warm).toHaveBeenCalledWith("http://127.0.0.1:30141", expect.objectContaining({ token: expect.any(String) }));
-		// 密码已移除：预热只可能带令牌换来的 Cookie，不存在 Basic 那条路
+		expect(warm).toHaveBeenCalledWith("http://127.0.0.1:30141", { signal: expect.any(AbortSignal), token: undefined });
+		// 密码已移除：本机预热由代理自动签发会话 Cookie，不消耗一次性启动令牌
 		expect(warm.mock.calls[0][1]).not.toHaveProperty("password");
 		// 开了认证就直接开登录链接：用户手里还没有会话 Cookie，开裸地址只会撞上登录页
 		expect(opened).toHaveLength(1);
@@ -356,6 +356,54 @@ describe("launcher lifecycle without real child processes", () => {
 		expect(logs.some((line) => line.includes("?token="))).toBe(false);
 		expect(logs.some((line) => line.includes("预热首屏"))).toBe(true);
 		expect(logs.some((line) => line.includes("就绪"))).toBe(true);
+	});
+
+	it("warns and falls back to the unconsumed startup token when pipe lookup returns null", async () => {
+		const root = await installation();
+		await productionBuild(root);
+		const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+		const opened: string[] = [];
+		const warnings: string[] = [];
+		const result = await runLauncher({
+			root,
+			args: ["--public-url", "https://pi.example.com"],
+			env: { PI_WEB_LAUNCH_TOKEN: "unconsumed_startup_token_123456" },
+			dependencies: {
+				spawn: vi.fn(() => { setTimeout(() => child.emit("exit", 0), 40); return child; }),
+				probePort: vi.fn<typeof probePort>(async () => "free"),
+				isPiWebRunning: vi.fn(async () => true),
+				warmFirstPaint: vi.fn(async () => true),
+				readCurrentLaunchToken: vi.fn(async () => null),
+				openBrowser: async (url: string) => { opened.push(url); },
+				warn: (message: string) => warnings.push(message),
+				log: vi.fn(),
+			},
+		});
+		expect(result).toBe(0);
+		expect(opened).toEqual(["https://pi.example.com/?token=unconsumed_startup_token_123456"]);
+		expect(warnings.some((line) => line.includes("未能从本地令牌管道读取最新启动令牌"))).toBe(true);
+	});
+
+	it("warns when attaching to an already running authenticated instance without a pipe token", async () => {
+		const root = await installation();
+		const opened: string[] = [];
+		const warnings: string[] = [];
+		await runLauncher({
+			root,
+			args: [],
+			env: { PI_WEB_AUTH: "1" },
+			dependencies: {
+				spawn: vi.fn(),
+				probePort: vi.fn<typeof probePort>(async () => "busy"),
+				isPiWebRunning: vi.fn(async () => true),
+				readCurrentLaunchToken: vi.fn(async () => null),
+				openBrowser: async (url: string) => { opened.push(url); },
+				warn: (message: string) => warnings.push(message),
+				log: vi.fn(),
+			},
+		});
+		expect(opened).toEqual(["http://127.0.0.1:30141"]);
+		expect(warnings.some((line) => line.includes("未能从本地令牌管道读取当前启动令牌"))).toBe(true);
 	});
 
 	it("turns authentication on by default because the LAN entry is on by default", async () => {

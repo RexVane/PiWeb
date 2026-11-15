@@ -319,6 +319,16 @@ export function FileViewer({
 		};
 		void (async () => {
 			try {
+				if (tab.sourcePath !== undefined) {
+					const response = await fetch("/api/prompts", {
+						method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+						body: JSON.stringify({ action: "read", cwd, filePath: tab.path, sourcePath: tab.sourcePath }),
+					});
+					const payload = await response.json();
+					if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
+					done({ content: payload.data.content });
+					return;
+				}
 				if (tab.lazy || !range) {
 					// 会话还没有任何快照时整棵树都是磁盘条目，「不在快照里」的提示会误导
 					await diskContent(tab.lazy && growth.rounds.length > 0 ? "disk" : null);
@@ -420,7 +430,7 @@ export function FileViewer({
 		try {
 			// MarkdownActions already decoded the path and removed the link's query/fragment.
 			const target = resolveMarkdownDocumentPath(activeTab.path, href.split("/").map(encodeURIComponent).join("/"));
-			if (activeTab.staticContent === undefined || !onOpenContent) {
+			if ((activeTab.staticContent === undefined && activeTab.sourcePath === undefined) || !onOpenContent) {
 				onOpen(target, { lazy: true });
 				return;
 			}
@@ -599,7 +609,7 @@ export function FileViewer({
 									disabled={!currentLoaded || currentLoaded.binary || currentLoaded.encodingUnsupported || (currentLoaded.content === null && currentLoaded.patch === null)} onClick={() => void copyCurrent()}>
 									<IconCopyOutline16 size={13} />
 								</button>
-								{activeTab.staticContent === undefined && <a className="icon-btn" style={{ width: 24, height: 24 }} download
+								{activeTab.staticContent === undefined && activeTab.sourcePath === undefined && <a className="icon-btn" style={{ width: 24, height: 24 }} download
 									title={t.viewerDownloadCurrent} aria-label={t.viewerDownloadCurrent}
 									href={`/api/files/download?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(activeTab.path)}`}>
 									<IconDownloadOutline16 size={13} />
@@ -667,7 +677,7 @@ export function FileViewer({
 								<MarkdownActionsProvider value={{
 									allowDocumentParents: true,
 									openFile: (href) => void openDocumentLink(href),
-									resolveImage: (href) => markdownDocumentImageUrl(cwd, activeTab.path, href, activeTab.staticContent === undefined ? undefined : activeTab.sourcePath ?? activeTab.path),
+									resolveImage: (href) => markdownDocumentImageUrl(cwd, activeTab.path, href, activeTab.sourcePath ?? (activeTab.staticContent === undefined ? undefined : activeTab.path)),
 								}}>
 									<MarkdownBlock text={currentLoaded.content} />
 								</MarkdownActionsProvider>

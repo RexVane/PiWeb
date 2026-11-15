@@ -34,8 +34,6 @@ export function RemoteSection() {
 	const [refresh, setRefresh] = useState(0);
 	const [copied, setCopied] = useState<"" | "ok" | "fail">("");
 	const [confirmSignOut, setConfirmSignOut] = useState(false);
-	const [devices, setDevices] = useState<Array<{ id: string; deviceType: string; lastSeenAt: number; current: boolean }>>([]);
-	const [deviceRefresh, setDeviceRefresh] = useState(0);
 	const alive = useRef(true);
 
 	useEffect(() => {
@@ -114,14 +112,6 @@ export function RemoteSection() {
 		return () => clearTimeout(timer);
 	}, [copied]);
 	useEffect(() => {
-		const controller = new AbortController();
-		void fetch("/api/web-auth?devices=1", { cache: "no-store", signal: controller.signal }).then(async (response) => {
-			const result = await response.json();
-			if (!controller.signal.aborted && response.ok && result.success && Array.isArray(result.data?.devices)) setDevices(result.data.devices);
-		}).catch(() => undefined);
-		return () => controller.abort();
-	}, [deviceRefresh]);
-	useEffect(() => {
 		if (!confirmSignOut) return;
 		const timer = setTimeout(() => setConfirmSignOut(false), 4_000);
 		return () => clearTimeout(timer);
@@ -148,68 +138,55 @@ export function RemoteSection() {
 
 	return <div className="flex flex-col gap-5">
 		<div>
-			<div style={{ fontSize: 15, fontWeight: 500 }}>{t.setRemote}</div>
-			<p style={{ marginTop: 6, fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>{t.remoteUnifiedHint}</p>
+			<div style={{ fontSize: "var(--dsh-ui-font-lg)", fontWeight: 500 }}>{t.setRemote}</div>
+			<p style={{ marginTop: 6, fontSize: "var(--dsh-ui-font-125)", lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>{t.remoteUnifiedHint}</p>
 		</div>
 
-		{blocked ? <div role="status" style={{ fontSize: 12.5, lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>
+		{blocked ? <div role="status" style={{ fontSize: "var(--dsh-ui-font-125)", lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>
 			{blocked === "auth" ? t.remoteBlockedAuth : t.remoteBlockedDev}
 		</div> : !status ? <div className="flex items-center gap-3">
-			<div role="status" aria-busy={!error} style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
+			<div role="status" aria-busy={!error} style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-secondary)" }}>
 				{error ? t.pairRetrying : t.remoteWorking}
 			</div>
 			{error ? <button type="button" className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button> : null}
 		</div> : <div className="flex flex-col items-center gap-4 rounded-xl p-5" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-			<div style={{ fontSize: 14, fontWeight: 500 }}>{t.pairTitle}</div>
+			<div style={{ fontSize: "var(--dsh-content-font-size)", fontWeight: 500 }}>{t.pairTitle}</div>
 			{visiblePair ? <img src={visiblePair.qr} alt={t.pairQrLabel} width={220} height={220}
 				style={{ background: "#fff", padding: 4, borderRadius: 10, maxWidth: "100%", height: "auto" }} />
 				: <div className="flex items-center justify-center rounded-xl" role="status" aria-busy={!error}
-					style={{ width: 220, minHeight: 220, maxWidth: "100%", padding: 20, textAlign: "center", fontSize: 13, color: "var(--dsw-label-caption)", background: "var(--dsw-hover)" }}>
+					style={{ width: 220, minHeight: 220, maxWidth: "100%", padding: 20, textAlign: "center", fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-caption)", background: "var(--dsw-hover)" }}>
 					{error ? t.pairRetrying : t.pairPreparing}
 				</div>}
-			<div className="flex flex-col items-center gap-1" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
+			<div className="flex flex-col items-center gap-1" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-secondary)" }}>
 				<span>{t.pairConnectHint}</span>
 				<span style={{ color: "var(--dsw-label-caption)" }}>{visiblePair ? t.pairAutoExpires.replace("{s}", String(remaining)) : t.pairHint}</span>
 			</div>
 			{visiblePair ? <div className="flex items-center gap-3">
-				<button type="button" className="btn-outline" style={{ height: 30, fontSize: 12 }}
+				<button type="button" className="btn-outline" style={{ height: "max(30px, calc(30px + var(--dsh-content-font-delta)))", fontSize: "var(--dsh-ui-font-xs)" }}
 					onClick={() => void copyText(visiblePair.url).then((ok) => { if (alive.current) setCopied(ok ? "ok" : "fail"); })}>
 					{copied === "ok" ? t.remoteLinkCopied : copied === "fail" ? t.copyFailed : t.pairCopyLink}
 				</button>
 			</div> : error ? <button type="button" className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button> : null}
 		</div>}
 
-		{status && !blocked ? <div className="flex items-center gap-2" style={{ fontSize: 12, color: "var(--dsw-label-secondary)" }}>
+		{status && !blocked ? <div className="flex items-center gap-2" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-secondary)" }}>
 			<Dot ready={publicReady || lanReady} />{publicReady || lanReady ? t.remoteConnected : status.public.error || status.lan.error ? t.remoteUnavailable : t.remoteWorking}
 		</div> : null}
-		{status?.public.error && !publicReady && !blocked ? <p role="status" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+		{status?.public.error && !publicReady && !blocked ? <p role="status" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>
 			{status.public.engineAvailable ? status.public.error : t.remoteEngineMissing}
 		</p> : null}
-		{error ? <div role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{error}</div> : null}
-		{status?.lan.error && !lanReady && !blocked ? <div role="alert" style={{ fontSize: 12, color: "var(--dsw-danger)" }}>{status.lan.error}<button className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button></div> : null}
-		{status && blocked !== "auth" ? <div className="flex flex-wrap items-center justify-between gap-3 hairline-b pb-4">
+		{error ? <div role="alert" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-danger)" }}>{error}</div> : null}
+		{status?.lan.error && !lanReady && !blocked ? <div role="alert" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-danger)" }}>{status.lan.error}<button className="btn-outline" onClick={() => setRefresh((value) => value + 1)}>{t.remoteRetry}</button></div> : null}
+		{status && blocked !== "auth" ? <div className={`flex flex-wrap items-center justify-between gap-3${lanReady ? " hairline-b pb-4" : ""}`}>
 			<div className="min-w-0 flex-1">
-				<div style={{ fontSize: 14 }}>{t.remoteSessionsTitle}</div>
-				<p style={{ marginTop: 3, fontSize: 12, lineHeight: 1.6, color: "var(--dsw-label-caption)" }}>{t.remoteSessionsHint}</p>
+				<div style={{ fontSize: "var(--dsh-content-font-size)" }}>{t.remoteSessionsTitle}</div>
+				<p style={{ marginTop: 3, fontSize: "var(--dsh-ui-font-xs)", lineHeight: 1.6, color: "var(--dsw-label-caption)" }}>{t.remoteSessionsHint}</p>
 			</div>
-			<button type="button" className="btn-outline" style={{ height: 30, fontSize: 12, color: confirmSignOut ? "var(--dsw-danger)" : undefined }} onClick={() => void signOutAll()}>
+			<button type="button" className="btn-outline" style={{ height: "max(30px, calc(30px + var(--dsh-content-font-delta)))", fontSize: "var(--dsh-ui-font-xs)", color: confirmSignOut ? "var(--dsw-danger)" : undefined }} onClick={() => void signOutAll()}>
 				{confirmSignOut ? t.remoteSignOutAllConfirm : t.remoteSignOutAll}
 			</button>
 		</div> : null}
-		{devices.length > 0 && <div className="flex flex-col gap-2">
-			{devices.map((device) => <div key={device.id} className="flex items-center gap-3" style={{ fontSize: 12 }}>
-				<span className="flex-1">{device.deviceType}{device.current ? ` · ${t.remoteThisDevice}` : ""} · {new Date(device.lastSeenAt).toLocaleDateString()}</span>
-				<button type="button" className="btn-outline" onClick={() => void (async () => {
-					try {
-						const response = await fetch(`/api/web-auth?device=${encodeURIComponent(device.id)}`, { method: "DELETE" });
-						const result = await response.json();
-						if (!response.ok || !result.success) throw new Error(result.error || t.remoteFailed);
-						if (device.current) window.location.href = "/login"; else setDeviceRefresh((value) => value + 1);
-					} catch (error) { setError(error instanceof Error ? error.message : t.remoteFailed); }
-				})()}>{t.remoteRevokeDevice}</button>
-			</div>)}
-		</div>}
-		{lanReady && <div className="flex items-center gap-2 break-all" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+		{lanReady && <div className="flex items-center gap-2 break-all" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>
 			<span className="flex-1">{status?.lan.urls[0]}</span><button type="button" className="btn-outline" onClick={() => void copyText(status!.lan.urls[0]).then((ok) => setCopied(ok ? "ok" : "fail"))}>{t.copy}</button>
 		</div>}
 	</div>;

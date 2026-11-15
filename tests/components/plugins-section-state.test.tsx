@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { PluginsSection } from "@/components/settings/PluginsSection";
-import { PluginMarketplace } from "@/components/settings/PluginMarketplace";
+
 
 afterEach(() => {
 	cleanup();
@@ -165,100 +165,5 @@ describe("插件页面状态与布局", () => {
 		expect(screen.queryByRole("tab", { name: /市场/ })).toBeNull();
 	});
 
-	it("插件市场展示运行时兼容性徽章、隐藏不兼容筛选及风险安装确认", async () => {
-		const pendingPlugins = new Promise(() => {});
-		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-			const url = String(input);
-			if (url.startsWith("/api/plugins/marketplace") && init?.method === "POST") {
-				return {
-					ok: true,
-					json: async () => ({
-						success: true,
-						data: {
-							runtime: { piCodingAgent: "1.5.2", piAi: "1.5.2", piAgentCore: "1.5.2", node: "24.12.0" },
-							compatibility: {
-								"pi-good": {
-									status: "compatible",
-									resources: { extensions: true, skills: false, prompts: false, themes: false },
-									hasPiManifest: true,
-									hasDshConfig: false,
-									hasTuiPeer: true,
-									blockers: [],
-									caveats: [{ kind: "tui_peer" }],
-								},
-								"pi-future-node": {
-									status: "incompatible",
-									resources: { extensions: true, skills: false, prompts: false, themes: false },
-									hasPiManifest: true,
-									hasDshConfig: false,
-									hasTuiPeer: false,
-									requiredNode: ">=24.15.0",
-									blockers: [{ kind: "node_version", required: ">=24.15.0", current: "24.12.0" }],
-									caveats: [],
-								},
-							},
-						},
-					}),
-				};
-			}
-			if (url.startsWith("/api/plugins/marketplace")) {
-				return {
-					ok: true,
-					json: async () => ({
-						total: 2,
-						runtime: { piCodingAgent: "1.5.2", piAi: "1.5.2", piAgentCore: "1.5.2", node: "24.12.0" },
-						items: [
-							{
-								name: "pi-good",
-								source: "npm:pi-good",
-								version: "1.0.0",
-								description: "Compatible extension",
-								author: "alice",
-								keywords: ["extension"],
-								updatedAt: "",
-								monthlyDownloads: 500,
-							},
-							{
-								name: "pi-future-node",
-								source: "npm:pi-future-node",
-								version: "2.0.0",
-								description: "Needs newer Node",
-								author: "bob",
-								keywords: ["context"],
-								updatedAt: "",
-								monthlyDownloads: 100,
-							},
-						],
-					}),
-				};
-			}
-			if (url === "/api/plugins" && init?.method === "POST") {
-				return { ok: true, json: async () => ({ success: true, data: {} }) };
-			}
-			return await pendingPlugins;
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		// 市场现在是独立的「资源市场」页，直接渲染市场组件
-		render(<PluginMarketplace installedPackageSources={[]} busy={false} busyKey={null} twoColumns={false} onInstall={() => {}} />);
 
-		await screen.findByText("pi-good");
-		await screen.findByText("兼容");
-		expect(screen.getByText("不兼容")).toBeTruthy();
-		expect(screen.getByText(/需要 Node >=24.15.0/)).toBeTruthy();
-
-		// Clicking install on incompatible card opens risk confirmation before POST /api/plugins
-		const installButtons = screen.getAllByRole("button", { name: "安装" });
-		fireEvent.click(installButtons[1]);
-		await screen.findByText(/插件会在运行时执行代码/);
-		fireEvent.click(screen.getAllByRole("button", { name: "安装" }).at(-1)!);
-		await screen.findByText("兼容风险提示");
-		expect(
-			fetchMock.mock.calls.some(([url, init]) => url === "/api/plugins" && init?.method === "POST"),
-		).toBe(false);
-
-		fireEvent.click(screen.getByRole("button", { name: "取消" }));
-		fireEvent.click(screen.getByRole("button", { name: /隐藏不兼容/ }));
-		expect(screen.queryByText("pi-future-node")).toBeNull();
-		expect(screen.getByText("pi-good")).toBeTruthy();
-	});
 });

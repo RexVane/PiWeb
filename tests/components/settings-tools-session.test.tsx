@@ -8,7 +8,13 @@ vi.mock("next/dynamic", async () => {
 	const { SettingsPanel } = await import("@/components/SettingsPanel");
 	return { default: (loader: () => unknown) => loader.toString().includes("SettingsPanel") ? SettingsPanel : () => null };
 });
-vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {}, applyPebrelTheme: () => {}, loadPebrelTheme: () => "dsh", loadThemeMode: () => "system" }));
+vi.mock("@/lib/theme", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/theme")>()),
+	syncPebrelTheme: () => {},
+	applyPebrelTheme: () => {},
+	loadPebrelTheme: () => "dsh",
+	loadThemeMode: () => "system",
+}));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({ rounds: [], select: () => {}, selectLatest: () => {} }) }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null, ExtensionWidgets: () => null }));
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: (props: any) => <>

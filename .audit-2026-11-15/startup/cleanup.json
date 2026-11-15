@@ -1,0 +1,9 @@
+{
+  "completedAt": "2026-11-15T01:36:38.9272609Z",
+  "recycled": [
+    "D:\\AIApp\\PiWeb\\.audit-2026-11-15\\startup\\prepare-current-release.mjs",
+    "D:\\AIApp\\PiWeb\\.audit-2026-11-15\\startup\\verify-running.mjs",
+    "D:\\AIApp\\PiWeb\\.audit-2026-11-15\\startup\\test-agent"
+  ],
+  "scope": "Only temporary helpers and isolated test-agent directory created during this startup task; logs and release directories retained."
+}

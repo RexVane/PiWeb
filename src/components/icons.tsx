@@ -570,3 +570,25 @@ export const IconChatBubbleOutline16 = ({ size = 16, ...rest }: P) => (
 		<path d="M5.25 6.8H10.75M5.25 9.1H8.75" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
 	</svg>
 );
+
+/** 地球仪线框（网络搜索 / 网页抓取步骤用） */
+export const IconGlobeOutline14 = ({ size = 14, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<circle cx="8" cy="8" r="6.15" stroke="currentColor" strokeWidth="1.2" />
+		<ellipse cx="8" cy="8" rx="2.65" ry="6.15" stroke="currentColor" strokeWidth="1.1" />
+		<path d="M1.85 8h12.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+	</svg>
+);
+
+/** 外部链接箭头（可点击来源链接用） */
+export const IconExternalLink12 = ({ size = 12, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 12 12" fill="none" {...rest}>
+		<path
+			d="M4.25 2.25H9.75V7.75M9.5 2.5L2.5 9.5"
+			stroke="currentColor"
+			strokeWidth="1.2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		/>
+	</svg>
+);

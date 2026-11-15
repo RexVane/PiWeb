@@ -32,7 +32,7 @@ describe("ProjectPanel rounds", () => {
 		expect(screen.getByTestId("growth-shared-attribution").textContent).toContain("a.jsonl, b.jsonl");
 		expect(screen.getByTestId("growth-round-picker").textContent).toContain("第 3/3 轮");
 		expect(screen.getByTestId("growth-timeline").textContent).toContain("缺号");
-		expect(screen.getByText(/2000 条历史或 1 GiB/)).toBeTruthy();
+		expect(screen.queryByText(/2000 条历史或 1 GiB/)).toBeNull();
 	});
 	it("summarizes the selected round and links back to the chat", () => {
 		vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
@@ -184,35 +184,59 @@ describe("ProjectPanel Git unknown state", () => {
 		vi.stubGlobal("fetch", kind === "status"
 			? vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: info }) })
 			: vi.fn().mockRejectedValue(new Error("request failed")));
-		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} onAskCommit={vi.fn()} />);
+		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
 		await act(async () => { await vi.advanceTimersByTimeAsync(300); });
 		const error = screen.getByTestId("growth-git-error");
 		expect(error.textContent).toMatch(/Git 状态读取失败|Git status unavailable/);
 		expect(error.getAttribute("title")).toBe(kind === "status" ? "index file corrupt" : "request failed");
 		expect(screen.queryByText(/工作区干净|Working tree clean/)).toBeNull();
-		expect(screen.queryByRole("button", { name: /让 pi 提交|Ask pi to commit/ })).toBeNull();
 	});
 });
 
-describe("GrowthConsentDialog", () => {
-	it("explains a nested repository, remembers only explicit answers, and Esc just closes", async () => {
-		const { GrowthConsentDialog } = await import("@/components/ProjectPanel");
-		const onAnswer = vi.fn();
-		const request = { cwd: "/outer/sub", reason: "nested" as const, parent: "/outer" };
-		const { rerender } = render(<GrowthConsentDialog request={request} onAnswer={onAnswer} />);
-		const dialog = screen.getByTestId("growth-consent-dialog");
-		expect(dialog.textContent).toContain("/outer/sub");
-		expect(dialog.textContent).toContain("/outer");
-		fireEvent.keyDown(dialog, { key: "Escape" });
-		expect(screen.queryByTestId("growth-consent-dialog")).toBeNull();
-		expect(onAnswer).not.toHaveBeenCalled();
-		// 换了工作区的请求要重新弹出
-		rerender(<GrowthConsentDialog request={{ cwd: "/plain", reason: "not-git" }} onAnswer={onAnswer} />);
-		const buttons = screen.getByTestId("growth-consent-dialog").querySelectorAll("button");
-		fireEvent.click(buttons[buttons.length - 1]);
-		expect(onAnswer).toHaveBeenCalledWith(true);
-		fireEvent.click(buttons[0]);
-		expect(onAnswer).toHaveBeenLastCalledWith(false);
+describe("ProjectPanel recording switch", () => {
+	it("defaults to enabled and stops or resumes recording without confirmation", async () => {
+		const saved: unknown[] = [];
+		vi.stubGlobal("fetch", vi.fn(async (_url: string, options?: RequestInit) => {
+			if (options?.method === "POST") {
+				saved.push(JSON.parse(String(options.body)));
+				return { ok: true, json: async () => ({ success: true }) };
+			}
+			return { ok: true, json: async () => ({ success: true, data: { consent: null } }) };
+		}));
+		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		const enabled = await screen.findByRole("button", { name: /已启用|^Enabled$/ });
+		expect(enabled.getAttribute("aria-pressed")).toBe("true");
+		expect(saved).toEqual([]);
+		await act(async () => { fireEvent.click(enabled); });
+		const disabled = screen.getByRole("button", { name: /已停用|^Disabled$/ });
+		expect(disabled.getAttribute("aria-pressed")).toBe("false");
+		await act(async () => { fireEvent.click(disabled); });
+		expect(screen.getByRole("button", { name: /已启用|^Enabled$/ })).toBeTruthy();
+		expect(saved).toEqual([
+			{ action: "setRecording", cwd: "/workspace", allow: false },
+			{ action: "setRecording", cwd: "/workspace", allow: true },
+		]);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(screen.queryByRole("alertdialog")).toBeNull();
+		expect(screen.queryByText(/2000 条历史或 1 GiB/)).toBeNull();
+	});
+
+	it("preserves an existing disabled choice", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { consent: false } }) }));
+		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		expect((await screen.findByRole("button", { name: /已停用|^Disabled$/ })).getAttribute("aria-pressed")).toBe("false");
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("does not offer a misleading off switch before its setting has loaded", () => {
+		const fetchMock = vi.fn().mockReturnValue(new Promise(() => {}));
+		vi.stubGlobal("fetch", fetchMock);
+		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		const pending = screen.getByRole("button", { name: "…" }) as HTMLButtonElement;
+		expect(pending.disabled).toBe(true);
+		fireEvent.click(pending);
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("button", { name: /已停用|^Disabled$/ })).toBeNull();
 	});
 });
 

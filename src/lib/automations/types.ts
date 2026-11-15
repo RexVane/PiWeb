@@ -70,6 +70,7 @@ export interface AutomationTaskInput {
 }
 
 export interface AutomationsStateSnapshot {
+	defaultCwd?: string;
 	storeError?: { message: string; expectedHash: string; canSalvage: boolean; canRestore: boolean };
 	tasks: AutomationTask[];
 	runs: AutomationRun[];

@@ -1,15 +1,15 @@
 /**
- * 外观 = pebrel 配色主题对（https://github.com/Kuddev/pebrel）
- *      + dsh 亮暗模式三选一（light / dark / system，见 dsh ui-theme 的 theme-settings.ts）。
+ * 外观 = 海与墨（dsh）+ 北欧纸墨（https://github.com/Kuddev/pebrel）
+ *      + Bloom 天青 / 粉霞（https://github.com/webkubor/dsh-bloom-theme）
+ *      + 亮暗模式三选一（light / dark / system，见 dsh ui-theme 的 theme-settings.ts）。
  * 两者独立持久化：配色 piweb.pebrelTheme，亮暗 piweb.theme。
+ * 未保存时默认北欧纸墨深色；已保存的配色和亮暗不变。
  */
 
 export type PebrelTheme =
-	| 'silver-steel'
-	| 'limestone-coal'
-	| 'linen-moss'
 	| 'nord-paper'
-	| 'pebrel'
+	| 'ripple'
+	| 'dawn'
 	| 'dsh';
 
 /** dsh 的 THEME_PREFERENCES：浅色/深色/跟随系统 */
@@ -17,17 +17,15 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 
 export const PEBREL_THEME_IDS: PebrelTheme[] = [
 	'dsh',
-	'silver-steel',
-	'limestone-coal',
-	'linen-moss',
 	'nord-paper',
-	'pebrel',
+	'ripple',
+	'dawn',
 ];
 
 export const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system'];
 
-export const DEFAULT_PEBREL_THEME: PebrelTheme = 'dsh';
-export const DEFAULT_THEME_MODE: ThemeMode = 'system';
+export const DEFAULT_PEBREL_THEME: PebrelTheme = 'nord-paper';
+export const DEFAULT_THEME_MODE: ThemeMode = 'dark';
 
 const THEME_KEY = 'piweb.pebrelTheme';
 const MODE_KEY = 'piweb.theme';

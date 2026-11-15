@@ -178,4 +178,14 @@ describe("automatic remote QR connection", () => {
 		await advance(3_000);
 		expect(screen.getByRole("img", { name: "连接二维码" })).toBeTruthy();
 	});
+
+	it("shows the sign-out-all control without fetching or listing individual devices", async () => {
+		await mount();
+		expect(screen.getByText("已登录的设备")).toBeTruthy();
+		expect(screen.getByRole("button", { name: "让所有设备重新登录" })).toBeTruthy();
+		expect(screen.queryByRole("button", { name: "退出此设备" })).toBeNull();
+		expect(fetcher.mock.calls.some(([url]) => String(url).includes("/api/web-auth?devices="))).toBe(false);
+		await act(async () => { fireEvent.click(screen.getByRole("button", { name: "让所有设备重新登录" })); });
+		expect(screen.getByRole("button", { name: "再点一次确认" })).toBeTruthy();
+	});
 });

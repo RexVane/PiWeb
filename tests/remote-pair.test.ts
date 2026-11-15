@@ -134,10 +134,35 @@ describe("unified remote pairing", () => {
 		expect(accepted.status).toBe(303);
 		expect(new URL(accepted.headers.get("location")!, scanned.origin).href).toBe(`${scanned.origin}/`);
 		expect(accepted.headers.get("set-cookie")).toContain("Secure");
+		expect(accepted.headers.get("set-cookie")?.toLowerCase()).toContain("samesite=lax");
 		const cookie = accepted.headers.get("set-cookie")!.split(";")[0];
 		expect(proxy(new NextRequest(`${scanned.origin}/api/settings`, { headers: { cookie } })).headers.get("x-middleware-next")).toBe("1");
 		const expired = await redeem(request());
 		expect(new URL(expired.headers.get("location")!, scanned.origin).href).toBe(`${scanned.origin}/login?pair=unknown`);
 		expect(expired.headers.get("cache-control")).toBe("no-store");
+	});
+
+	it("ignores link-preview and prefetch requests without consuming the one-time pairing code", async () => {
+		const data = (await (await pair()).json()).data;
+		const scanned = new URL(data.url);
+		const prefetchHeaders: Record<string, string>[] = [
+			{ host: scanned.host, "x-forwarded-proto": "https", "sec-purpose": "prefetch" },
+			{ host: scanned.host, "x-forwarded-proto": "https", purpose: "preview" },
+			{ host: scanned.host, "x-forwarded-proto": "https", "next-router-prefetch": "1" },
+		];
+		for (const headers of prefetchHeaders) {
+			const prefetched = await redeem(
+				new NextRequest(`http://127.0.0.1:30141${scanned.pathname}${scanned.search}`, { headers }),
+			);
+			expect(prefetched.status).toBe(204);
+			expect(prefetched.headers.get("set-cookie")).toBeNull();
+		}
+		const accepted = await redeem(
+			new NextRequest(`http://127.0.0.1:30141${scanned.pathname}${scanned.search}`, {
+				headers: { host: scanned.host, "x-forwarded-proto": "https" },
+			}),
+		);
+		expect(accepted.status).toBe(303);
+		expect(accepted.headers.get("set-cookie")).toContain("piweb_session_");
 	});
 });

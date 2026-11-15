@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 const deps = vi.hoisted(() => ({
 	skills: vi.fn(), skillToggle: vi.fn(), skillRead: vi.fn(), skillDelete: vi.fn(), skillPreview: vi.fn(),
 	packages: vi.fn(), extensions: vi.fn(), install: vi.fn(), remove: vi.fn(), update: vi.fn(), reload: vi.fn(), togglePackage: vi.fn(), toggleExtension: vi.fn(),
-	market: vi.fn(), compatibility: vi.fn(), rounds: vi.fn(), growthRecord: vi.fn(), growthConsent: vi.fn(),
+rounds: vi.fn(), growthRecord: vi.fn(), growthConsent: vi.fn(),
 	automations: vi.fn(), createTask: vi.fn(), updateTask: vi.fn(), deleteTask: vi.fn(), runTask: vi.fn(), stopTask: vi.fn(), repair: vi.fn(),
 	scan: vi.fn(), importSessions: vi.fn(),
 }));
@@ -21,7 +21,6 @@ vi.mock("@/lib/plugins-service", () => ({
 	listPackages: deps.packages, listLoadedExtensions: deps.extensions, installPackage: deps.install, removePackage: deps.remove,
 	updatePackages: deps.update, reloadExtensions: deps.reload, togglePackage: deps.togglePackage, toggleExtension: deps.toggleExtension,
 }));
-vi.mock("@/lib/plugins-marketplace", () => ({ searchMarketplacePlugins: deps.market, inspectMarketplacePackages: deps.compatibility, getLocalPiRuntimeInfo: () => ({}) }));
 vi.mock("@/lib/growth-service", () => ({
 	GrowthError: class GrowthError extends Error { constructor(message: string, public code = "failed") { super(message); } },
 	readRounds: deps.rounds, isAvailable: async () => true, changesBetween: vi.fn(), fileContent: vi.fn(), filePatch: vi.fn(), listTree: vi.fn(),
@@ -41,7 +40,6 @@ vi.mock("@/lib/session-import", () => ({ scanAllSources: deps.scan, importSessio
 
 import { GET as skillsGet, POST as skillsPost } from "@/app/api/skills/route";
 import { GET as pluginsGet, POST as pluginsPost } from "@/app/api/plugins/route";
-import { GET as marketGet, POST as marketPost } from "@/app/api/plugins/marketplace/route";
 import { GET as growthGet, POST as growthPost } from "@/app/api/growth/route";
 import { GET as automationsGet, POST as automationsPost } from "@/app/api/automations/route";
 import { GET as importGet, POST as importPost } from "@/app/api/sessions/import/route";
@@ -54,7 +52,7 @@ const privateError = () => Object.assign(new Error("EACCES: open C:\\Users\\priv
 beforeEach(() => {
 	vi.resetAllMocks();
 	deps.skills.mockResolvedValue([]); deps.packages.mockResolvedValue([]); deps.extensions.mockResolvedValue([]);
-	deps.market.mockResolvedValue({ items: [] }); deps.rounds.mockResolvedValue([]);
+	deps.rounds.mockResolvedValue([]);
 	deps.automations.mockResolvedValue({ tasks: [], runs: [], activeTaskIds: [], schedulerStarted: true });
 	deps.scan.mockResolvedValue({ summaries: [], errors: [], imported: [], archived: [], hasMore: {} });
 	deps.importSessions.mockResolvedValue({ imported: 0, restored: 0, skipped: 0, failed: 0, results: [], workspaces: [] });
@@ -63,7 +61,6 @@ beforeEach(() => {
 it.each([
 	["skills", deps.skills, () => skillsGet(request("skills")), 500],
 	["plugins", deps.packages, () => pluginsGet(request("plugins")), 500],
-	["marketplace", deps.market, () => marketGet(new NextRequest("http://local/api/plugins/marketplace")), 502],
 	["growth", deps.rounds, () => growthGet(request("growth")), 500],
 	["automations", deps.automations, () => automationsGet(), 500],
 	["import scan", deps.scan, () => importGet(request("sessions/import")), 500],
@@ -77,7 +74,6 @@ it.each([
 it.each([
 	["skills", deps.skillToggle, () => skillsPost(request("skills", { action: "toggle", filePath: "skill", disabled: true })), 500],
 	["plugins", deps.install, () => pluginsPost(request("plugins", { action: "install", source: "npm:plugin" })), 500],
-	["marketplace", deps.compatibility, () => marketPost(new NextRequest("http://local/api/plugins/marketplace", { method: "POST", body: '{"packages":[]}' })), 502],
 	["growth", deps.growthRecord, () => growthPost(request("growth", { action: "record", session: "session" })), 500],
 	["automations", deps.createTask, () => automationsPost(request("automations", { action: "create" })), 500],
 	["import", deps.importSessions, () => importPost(request("sessions/import", { sessions: [{ source: "claude", externalId: "one" }] })), 500],

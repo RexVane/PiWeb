@@ -314,4 +314,41 @@ describe("prompt acceptance boundary", () => {
 		});
 		expect(m.promptSubmitting).toBe(false);
 	});
+
+	it("accepts prompts immediately while growth.prepare is stalled, delaying only mutating tools", async () => {
+		const prepareDeferred = deferred();
+		const { m, session } = fixture(async (_text, opts) => {
+			opts.preflightResult(true);
+		}, {
+			getToolDefinition: () => undefined,
+		});
+		const readTool = session.agent.state.tools.find((t: any) => t.name === "read")!;
+		const editTool = session.agent.state.tools.find((t: any) => t.name === "edit")!;
+		const rawReadExec = readTool.execute;
+		const rawEditExec = editTool.execute;
+
+		(m.growth!.prepare as ReturnType<typeof vi.fn>).mockReturnValueOnce(prepareDeferred.promise);
+		await execute(m, { cmd: "setToolPreset", preset: "full" });
+
+		// 1. prompt returns accepted immediately without waiting for stalled growth.prepare
+		const result = await execute(m, { cmd: "prompt", text: "立刻发送" });
+		expect(result).toEqual({ ok: true, data: { accepted: true } });
+
+		// 2. read tool does NOT block on growthPrepare
+		await (readTool.execute as (...args: any[]) => Promise<unknown>)("tc-read", { path: "README.md" });
+		expect(rawReadExec).toHaveBeenCalledTimes(1);
+
+		// 3. mutating tool (edit) waits briefly for growthPrepare before running
+		let editSettled = false;
+		const editPromise = (editTool.execute as (...args: any[]) => Promise<unknown>)("tc-edit", { path: "a.txt" }).then(() => { editSettled = true; });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(rawEditExec).not.toHaveBeenCalled();
+		expect(editSettled).toBe(false);
+
+		prepareDeferred.resolve();
+		await editPromise;
+		expect(rawEditExec).toHaveBeenCalledTimes(1);
+		expect(editSettled).toBe(true);
+	});
 });

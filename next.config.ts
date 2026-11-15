@@ -42,6 +42,8 @@ export default (phase: string): NextConfig => {
 	if (phase === PHASE_PRODUCTION_BUILD) isolateHomeFromTracing();
 	const buildDir = development ? ".next-dev-webpack" : resolveBuildOutput(process.cwd(), process.env.PIWEB_BUILD_DIR);
 	return {
+		// 不要 next dev 再把「This is NOT the Next.js you know」写进 AGENTS.md。
+		agentRules: false,
 		// Keep dev output separate so `next build` cannot invalidate a running dev server.
 		distDir: buildDir,
 		// A global installation must not infer its tracing root from a lockfile in the user's home.

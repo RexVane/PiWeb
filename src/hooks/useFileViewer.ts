@@ -4,7 +4,8 @@
  * 文件查看器的页签状态（AppShell 持有；项目栏与查看器内部都能打开文件）。
  * 单独成文件是为了让 FileViewer 组件本体保持按需加载。
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { safeLocalStorage } from "@/lib/browser-storage";
 
 export interface ViewerTab {
 	path: string;
@@ -27,16 +28,82 @@ export interface ViewerState {
 	active: string | null;
 }
 
-export function useFileViewer() {
-	const [state, setState] = useState<ViewerState>({ open: false, tabs: [], active: null });
+interface ViewerScope {
+	sessionPath?: string | null;
+	cwd?: string;
+}
+
+const emptyState = (): ViewerState => ({ open: false, tabs: [], active: null });
+
+function scopeKey(scope?: ViewerScope): string | null {
+	const normalize = (value: string) => {
+		const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+		return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized;
+	};
+	if (scope?.sessionPath) return `piweb.fileViewer.session:${normalize(scope.sessionPath)}`;
+	return scope?.cwd ? `piweb.fileViewer.workspace:${normalize(scope.cwd)}` : null;
+}
+
+function restoreState(key: string | null): ViewerState {
+	if (!key) return emptyState();
+	try {
+		const saved = JSON.parse(safeLocalStorage.getItem(key) ?? "null");
+		if (!saved || saved.version !== 1 || saved.open !== true || !Array.isArray(saved.tabs)) return emptyState();
+		const tabs: ViewerTab[] = [];
+		const paths = new Set<string>();
+		for (const item of saved.tabs) {
+			if (!item || typeof item.path !== "string" || !item.path.trim() || paths.has(item.path)) continue;
+			paths.add(item.path);
+			tabs.push({
+				path: item.path,
+				...(typeof item.from === "string" ? { from: item.from } : {}),
+				...(typeof item.lazy === "boolean" ? { lazy: item.lazy } : {}),
+				...(item.kind === "file" || item.kind === "dir" ? { kind: item.kind } : {}),
+				...(typeof item.sourcePath === "string" ? { sourcePath: item.sourcePath, lazy: true } : {}),
+			});
+		}
+		const active = saved.active === null ? null : tabs.find((tab) => tab.path === saved.active)?.path ?? tabs.at(-1)?.path ?? null;
+		return { open: true, tabs, active };
+	} catch { return emptyState(); }
+}
+
+/** 按对话保存页签与当前文件；仅存路径等元数据，正文在打开时重新读取。 */
+export function useFileViewer(scope?: ViewerScope) {
+	const key = scopeKey(scope);
+	const currentKey = useRef(key);
+	currentKey.current = key;
+	const [saved, setSaved] = useState(() => ({ key, ready: key === null, value: emptyState() }));
+	useEffect(() => {
+		setSaved((current) => current.key === key && current.ready ? current : { key, ready: true, value: restoreState(key) });
+	}, [key]);
+	useEffect(() => {
+		if (!saved.ready || !saved.key) return;
+		if (!saved.value.open) {
+			safeLocalStorage.removeItem(saved.key);
+			return;
+		}
+		// 不把技能文档等正文复制进浏览器存储，恢复时仍走原来的来源校验。
+		const tabs = saved.value.tabs.map(({ staticContent: _content, ...tab }) => tab);
+		safeLocalStorage.setItem(saved.key, JSON.stringify({ version: 1, ...saved.value, tabs }));
+	}, [saved]);
+	const state = saved.key === key ? saved.value : emptyState();
+	const setState = useCallback((change: (state: ViewerState) => ViewerState) => {
+		// 旧对话里尚未完成的文档请求不能打开或关闭新对话的文件。
+		if (currentKey.current !== key) return;
+		setSaved((current) => {
+			if (currentKey.current !== key) return current;
+			const value = current.key === key && current.ready ? current.value : restoreState(key);
+			return { key, ready: true, value: change(value) };
+		});
+	}, [key]);
 	const open = useCallback((path: string, opts: { from?: string; lazy?: boolean; kind?: "dir" | "file" } = {}) => {
 		setState((s) => {
 			const exists = s.tabs.some((tab) => tab.path === path);
 			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, ...opts } : tab)) : [...s.tabs, { path, ...opts }];
 			return { open: true, tabs, active: path };
 		});
-	}, []);
-	const openTree = useCallback(() => setState((s) => ({ ...s, open: true, active: null })), []);
+	}, [setState]);
+	const openTree = useCallback(() => setState((s) => ({ ...s, open: true, active: null })), [setState]);
 	/** 打开内容已就绪的文件（如技能文档）：无需 cwd / 磁盘读取 */
 	const openStatic = useCallback((path: string, content: string, sourcePath = path) => {
 		setState((s) => {
@@ -44,9 +111,9 @@ export function useFileViewer() {
 			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, staticContent: content, sourcePath, lazy: true } : tab)) : [...s.tabs, { path, staticContent: content, sourcePath, lazy: true }];
 			return { open: true, tabs, active: path };
 		});
-	}, []);
-	const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
-	const reset = useCallback(() => setState({ open: false, tabs: [], active: null }), []);
+	}, [setState]);
+	const close = useCallback(() => setState(emptyState), [setState]);
+	const reset = close;
 	const closeTab = useCallback((path: string) => {
 		setState((s) => {
 			const idx = s.tabs.findIndex((tab) => tab.path === path);
@@ -56,7 +123,7 @@ export function useFileViewer() {
 			if (active === path) active = tabs[idx]?.path ?? tabs[idx - 1]?.path ?? null;
 			return { ...s, tabs, active };
 		});
-	}, []);
-	const select = useCallback((path: string | null) => setState((s) => ({ ...s, active: path })), []);
+	}, [setState]);
+	const select = useCallback((path: string | null) => setState((s) => ({ ...s, active: path })), [setState]);
 	return { state, open, openStatic, openTree, close, closeTab, select, reset };
 }

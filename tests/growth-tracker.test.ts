@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { recycleFixture } from "./lib/sandbox/fixtures";
 import { isAvailable } from "../src/lib/growth-service";
 import { createGrowthTracker } from "../src/lib/growth-tracker";
 import type { GrowthRound, WebEvent } from "../src/lib/types";
@@ -23,7 +24,7 @@ describe("growth-tracker (real git)", () => {
 		if (!(await isAvailable())) ctx.skip("Git unavailable; no growth-tracker assertions executed");
 	});
 	afterEach(async () => {
-		await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+		await recycleFixture(tempDir);
 	});
 
 	it("commits the user's edits before a prompt and exactly one commit per round", async () => {
@@ -103,5 +104,25 @@ describe("growth-tracker (real git)", () => {
 		} finally {
 			tracker.dispose();
 		}
+	}, 20_000);
+
+	it("automatically initializes and records an unset workspace without a dialog event", async () => {
+		const cwd = path.join(tempDir, "default-work");
+		await fs.mkdir(cwd);
+		await fs.writeFile(path.join(cwd, "a.txt"), "before\n");
+		const events: WebEvent[] = [];
+		const entries: Array<{ type: string; id: string; message: { role: string; content: string } }> = [];
+		const tracker = createGrowthTracker({ cwd, sessionPath: path.join(tempDir, "default.jsonl"), publish: (event) => events.push(event), entries: () => entries, consent: async () => null });
+		try {
+			await tracker.prepare();
+			expect(roundsOf(events).map((round) => round.kind)).toEqual(["baseline"]);
+			tracker.onEvent({ type: "agent_start" } as never);
+			entries.push({ type: "message", id: "u1", message: { role: "user", content: "edit" } });
+			await fs.writeFile(path.join(cwd, "a.txt"), "after\n");
+			tracker.onEvent({ type: "agent_settled" } as never);
+			await waitFor(() => roundsOf(events).length === 2);
+			expect(roundsOf(events)[1]).toMatchObject({ kind: "round", roundNumber: 1, changes: [{ status: "M", path: "a.txt", add: 1, del: 1 }] });
+			expect(events.every((event) => event.type === "growth")).toBe(true);
+		} finally { tracker.dispose(); }
 	}, 20_000);
 });

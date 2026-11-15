@@ -99,19 +99,19 @@ function ConfirmDialogInner({
 					<div className="min-w-0 flex-1">
 						<h3
 							id={titleId}
-							className="text-base font-semibold leading-snug"
-							style={{ color: "var(--dsw-label-primary)" }}
+							className="font-semibold leading-snug"
+							style={{ fontSize: "calc(16px + var(--dsh-content-font-delta))", color: "var(--dsw-label-primary)" }}
 						>
 							{resolvedTitle}
 						</h3>
 						<p
 							id={descId}
-							className="mt-2 text-sm leading-relaxed break-words"
-							style={{ color: "var(--dsw-label-secondary)" }}
+							className="mt-2 leading-relaxed break-words"
+							style={{ fontSize: "var(--dsh-content-font-size)", color: "var(--dsw-label-secondary)" }}
 						>
 							{message}
 						</p>
-						{error && <p role="alert" className="mt-3 text-sm leading-relaxed break-words" style={{ color: "var(--dsw-danger)" }}>{error}</p>}
+						{error && <p role="alert" className="mt-3 leading-relaxed break-words" style={{ fontSize: "var(--dsh-content-font-size)", color: "var(--dsw-danger)" }}>{error}</p>}
 					</div>
 				</div>
 

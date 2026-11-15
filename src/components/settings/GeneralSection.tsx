@@ -6,11 +6,12 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
 
 import { useEffect, useRef, useState } from "react";
 import { type EnterBehavior, getEnterBehavior, setEnterBehavior as saveEnterBehavior } from "@/lib/enter-behavior";
+import { type AttentionNotifySupport, attentionNotifySupport, setAttentionNotify, useAttentionNotifyPreferred } from "@/lib/attention-notify";
 import { ProxySettings } from "@/components/ProxySettings";
 import { CopyCommand } from "@/components/update/CopyCommand";
 import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } from "@/components/update/update-store";
 import { useI18n } from "@/i18n";
-import { applyPebrelTheme, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
+import { applyPebrelTheme, DEFAULT_PEBREL_THEME, DEFAULT_THEME_MODE, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import type { PiSettings } from "@/lib/pi-settings";
 import { FontSizeStepper, Row, RowColumn, SelectOption } from "./SharedControls";
 
@@ -19,18 +20,19 @@ import { FontSizeStepper, Row, RowColumn, SelectOption } from "./SharedControls"
 export function GeneralSection({
 	lang,
 	setLang,
-	cwd,
 }: {
 	lang: "zh" | "en";
 	setLang: (l: "zh" | "en") => void;
-	cwd?: string;
 }) {
 	const { t } = useI18n();
-	const [theme, setTheme] = useState<PebrelTheme>("dsh");
-	const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+	const [theme, setTheme] = useState<PebrelTheme>(DEFAULT_PEBREL_THEME);
+	const [themeMode, setThemeMode] = useState<ThemeMode>(DEFAULT_THEME_MODE);
 	const [fontSize, setFontSize] = useState(14);
 	const [chatFontSize, setChatFontSize] = useState(14);
 	const [enterBehavior, setEnterBehavior] = useState<EnterBehavior>("steer");
+	const [notifySupport, setNotifySupport] = useState<AttentionNotifySupport>("ok");
+	// 开关是用户的选择；这个地址发不了通知时显示为关
+	const notifyAttention = useAttentionNotifyPreferred() && notifySupport !== "unsupported";
 	const [piSettings, setPiSettings] = useState<PiSettings | null>(null);
 	const [versions, setVersions] = useState<{ piWeb: string; piEngine: string } | null>(null);
 	const [webAuth, setWebAuth] = useState<{ enabled: boolean; authenticated: boolean } | null>(null);
@@ -41,17 +43,14 @@ export function GeneralSection({
 	const [saveErrorDetail, setSaveErrorDetail] = useState("");
 	const [settingsWarning, setSettingsWarning] = useState("");
 	const settingsRequest = useRef(0);
+	const [reserveTokensDraft, setReserveTokensDraft] = useState("");
+	const [keepRecentTokensDraft, setKeepRecentTokensDraft] = useState("");
 	const [maxRetriesDraft, setMaxRetriesDraft] = useState("");
 	const [textDrafts, setTextDrafts] = useState({ httpProxy: "" });
 	const [logoutError, setLogoutError] = useState("");
-	const [scope, setScope] = useState<"user" | "project">("user");
-	const settingsUrl = scope === "project" && cwd ? `/api/pi-settings?cwd=${encodeURIComponent(cwd)}` : "/api/pi-settings";
-	const currentSettingsUrl = useRef(settingsUrl);
-	currentSettingsUrl.current = settingsUrl;
 
 	const loadRemoteSettings = async () => {
 		const requestId = ++settingsRequest.current;
-		const targetUrl = settingsUrl;
 		setSettingsLoading(true);
 		setSettingsSaving(false);
 		setSettingsError(null);
@@ -64,13 +63,15 @@ export function GeneralSection({
 		};
 		const [sec, ps, health, auth] = await Promise.allSettled([
 			request("/api/security"),
-			request(settingsUrl),
+			request("/api/pi-settings"),
 			request("/api/version"),
 			request("/api/web-auth"),
 		]);
-		if (requestId !== settingsRequest.current || targetUrl !== currentSettingsUrl.current) return;
+		if (requestId !== settingsRequest.current) return;
 		if (ps.status === "fulfilled") {
 			setPiSettings(ps.value);
+			setReserveTokensDraft(String(ps.value.compaction?.reserveTokens ?? ""));
+			setKeepRecentTokensDraft(String(ps.value.compaction?.keepRecentTokens ?? ""));
 			setMaxRetriesDraft(String(ps.value.retry.maxRetries));
 			setTextDrafts({ httpProxy: ps.value.httpProxy ?? "" });
 		} else setPiSettings(null);
@@ -90,8 +91,9 @@ export function GeneralSection({
 		const chatFs = parseInt(safeLocalStorage.getItem("piweb.chatFontSize") ?? "14", 10);
 		if (!Number.isNaN(chatFs)) setChatFontSize(chatFs);
 		setEnterBehavior(getEnterBehavior());
+		setNotifySupport(attentionNotifySupport());
 		void loadRemoteSettings();
-	}, [settingsUrl]);
+	}, []);
 
 	const pickTheme = (p: PebrelTheme) => {
 		setTheme(p);
@@ -131,26 +133,28 @@ export function GeneralSection({
 		setSettingsSaving(true);
 		setSettingsError(null);
 		setSaveErrorDetail("");
-		const targetUrl = settingsUrl;
 		try {
-			const r = await fetch(settingsUrl, {
+			const r = await fetch("/api/pi-settings", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(patch),
 			});
 			const j = await r.json();
-			if (targetUrl !== currentSettingsUrl.current) return true;
 			if (!r.ok || !j.success) throw new Error(j.error || "save failed");
-			if (j.data?.compaction && j.data?.retry) setPiSettings(j.data);
+			if (j.data?.compaction && j.data?.retry) {
+				setPiSettings(j.data);
+				if (j.data.compaction.reserveTokens !== undefined) setReserveTokensDraft(String(j.data.compaction.reserveTokens));
+				if (j.data.compaction.keepRecentTokens !== undefined) setKeepRecentTokensDraft(String(j.data.compaction.keepRecentTokens));
+				if (j.data.retry.maxRetries !== undefined) setMaxRetriesDraft(String(j.data.retry.maxRetries));
+			}
 			setSettingsWarning(typeof j.warning === "string" ? j.warning : "");
 			return true;
 		} catch (error) {
-			if (targetUrl !== currentSettingsUrl.current) return true;
 			setSettingsError("save");
 			setSaveErrorDetail(error instanceof Error && error.message !== "save failed" ? error.message : "");
 			return false;
 		} finally {
-			if (targetUrl === currentSettingsUrl.current) setSettingsSaving(false);
+			setSettingsSaving(false);
 		}
 	};
 
@@ -162,34 +166,35 @@ export function GeneralSection({
 		if (!(await patchPiSettings({ [field]: value }))) setTextDrafts((previous) => ({ ...previous, [field]: piSettings[field] }));
 	};
 
-	const commitMaxRetries = async () => {
+	const commitIntegerSetting = async (
+		section: "compaction" | "retry",
+		field: "reserveTokens" | "keepRecentTokens" | "maxRetries",
+		draft: string,
+		setDraft: (value: string) => void,
+		saved: number | undefined,
+	) => {
 		if (!piSettings) return;
-		const raw = maxRetriesDraft.trim();
+		const rollback = saved === undefined ? "" : String(saved);
+		const raw = draft.trim();
 		const value = Number(raw);
 		if (!raw || !Number.isSafeInteger(value) || value < 0 || value > 1_000_000_000) {
 			setSettingsError("save");
-			setMaxRetriesDraft(String(piSettings.retry.maxRetries));
+			setDraft(rollback);
 			return;
 		}
-		if (value === piSettings.retry.maxRetries) return;
-		const targetUrl = currentSettingsUrl.current;
-		if (!(await patchPiSettings({ retry: { maxRetries: value } })) && currentSettingsUrl.current === targetUrl) setMaxRetriesDraft(String(piSettings.retry.maxRetries));
+		if (saved !== undefined && value === saved) return;
+		if (!(await patchPiSettings({ [section]: { [field]: value } }))) setDraft(rollback);
 	};
 
 	const themes: { id: PebrelTheme; label: string; light: string; dark: string; accent: string }[] = [
 		{ id: "dsh", label: t.themeDsh, light: "#FFFFFF", dark: "#040405", accent: "#02DEFC" },
-		{ id: "silver-steel", label: t.themeSilverSteel, light: "#F3F4F6", dark: "#1A1C24", accent: "#94A3B8" },
-		{ id: "limestone-coal", label: t.themeLimestoneCoal, light: "#F0EFEB", dark: "#171717", accent: "#CEB27E" },
-		{ id: "linen-moss", label: t.themeLinenMoss, light: "#F2F2EC", dark: "#1E211E", accent: "#A3B3A3" },
 		{ id: "nord-paper", label: t.themeNordPaper, light: "#FCFBF9", dark: "#2E3440", accent: "#88C0D0" },
-		{ id: "pebrel", label: t.themePebrel, light: "#F3F4F6", dark: "#0F111A", accent: "#52A8FF" },
+		{ id: "ripple", label: t.themeRipple, light: "#EBF4F4", dark: "#0A1919", accent: "#2CC5C5" },
+		{ id: "dawn", label: t.themeDawn, light: "#FCF7F8", dark: "#251D1E", accent: "#A93755" },
 	];
 
 	return (
 		<div className="flex flex-col gap-6">
-			{cwd && <Row title={t.workspaceScope} desc={scope === "project" ? cwd : t.skillScopeUserHint}>
-			<SelectOption label={t.workspaceScope} value={scope} disabled={settingsSaving} options={[{ value: "user", label: t.skillScopeUser }, { value: "project", label: t.skillScopeProject }]} onChange={(value) => setScope(value as "user" | "project")} />
-			</Row>}
 			{(settingsLoading || settingsError) && (
 				<div role={settingsError ? "alert" : "status"} className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: "var(--dsw-hover)", color: settingsError ? "var(--dsw-danger)" : "var(--dsw-label-secondary)" }}>
 					<span className="flex-1">{settingsError === "load" ? t.settingsLoadFailed : settingsError === "save" ? `${t.settingsSaveFailed}${saveErrorDetail ? ` (${saveErrorDetail})` : ""}` : t.settingsLoading}</span>
@@ -206,36 +211,14 @@ export function GeneralSection({
 				onChange={(v) => setLang(v as "zh" | "en")}
 			/>
 			</Row>
-			<RowColumn title={t.appearance}>
-				<div className="flex w-full flex-wrap gap-2">
-					{themes.map((th) => (
-						<button
-							key={th.id}
-							className="isx-card flex flex-col items-center justify-center gap-1"
-							style={{
-								flex: "1 1 150px",
-								padding: "20px 32px",
-								borderRadius: 20,
-								background: theme === th.id ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
-								color: "var(--dsw-label-primary)",
-								fontSize: 14,
-								lineHeight: "22px",
-							}}
-							aria-pressed={theme === th.id}
-							onClick={() => pickTheme(th.id)}
-						>
-							<span className="flex items-center overflow-hidden rounded-md" style={{ border: "1px solid var(--dsw-border-l3)", width: 42, height: 20 }}>
-								<span style={{ background: th.light, flex: 1, height: "100%" }} />
-								<span style={{ background: th.dark, flex: 1, height: "100%" }} />
-							</span>
-							<span className="flex items-center gap-1.5">
-								<span className="inline-block rounded-full" style={{ width: 8, height: 8, background: th.accent }} />
-								{th.label}
-							</span>
-						</button>
-					))}
-				</div>
-			</RowColumn>
+			<Row title={t.appearance}>
+				<SelectOption
+					label={t.appearance}
+					value={theme}
+					options={themes.map((th) => ({ value: th.id, label: th.label, dotColor: th.accent }))}
+					onChange={(v) => pickTheme(v as PebrelTheme)}
+				/>
+			</Row>
 			<RowColumn title={t.appearanceMode}>
 				<div className="flex w-full flex-wrap gap-2">
 					{([
@@ -252,8 +235,8 @@ export function GeneralSection({
 								borderRadius: 20,
 								background: themeMode === mode.id ? "var(--dsw-module-platform)" : "var(--dsw-bg-elevated)",
 								color: "var(--dsw-label-primary)",
-								fontSize: 14,
-								lineHeight: "22px",
+								fontSize: "var(--dsh-content-font-size)",
+								lineHeight: 1.55,
 							}}
 							aria-pressed={themeMode === mode.id}
 							onClick={() => pickThemeMode(mode.id)}
@@ -279,16 +262,49 @@ export function GeneralSection({
 				onChange={(v) => pickEnter(v as EnterBehavior)}
 			/>
 			</Row>
+			<Row title={t.notifyAttention} desc={notifySupport === "unsupported" ? t.notifyAttentionUnsupported : !notifyAttention || notifySupport === "ok" ? t.notifyAttentionDesc : notifySupport === "blocked" ? t.notifyAttentionBlocked : t.notifyAttentionPending}>
+				<button aria-label={t.notifyAttention} disabled={notifySupport === "unsupported"} className="liq-sw flex-none" data-on={notifyAttention ? "true" : undefined} role="switch" aria-checked={notifyAttention} onClick={() => void setAttentionNotify(!notifyAttention).then(setNotifySupport)}>
+					<span className="liq-thumb" />
+				</button>
+			</Row>
 			<div role="group" aria-label={t.autoCompact} className="hairline-b flex min-w-0 flex-col gap-4 pb-5">
 				<div className="flex items-center justify-between gap-6">
 					<div className="min-w-0">
-						<div style={{ fontSize: 14 }}>{t.autoCompact}</div>
-						<div className="mt-0.5" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.autoCompactDesc}</div>
+						<div style={{ fontSize: "var(--dsh-content-font-size)" }}>{t.autoCompact}</div>
+						<div className="mt-0.5" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>{t.autoCompactDesc}</div>
 					</div>
 					<button aria-label={t.autoCompact} disabled={!piSettings || settingsSaving} className="liq-sw flex-none" data-on={piSettings?.compaction.enabled ? "true" : undefined} role="switch" aria-checked={piSettings?.compaction.enabled ?? false} onClick={() => void patchPiSettings({ compaction: { enabled: !piSettings?.compaction.enabled } })}>
 						<span className="liq-thumb" />
 					</button>
 				</div>
+				{piSettings?.compaction.enabled && (
+					<div className="flex flex-col gap-3 rounded-xl px-3.5 py-3" style={{ background: "var(--dsw-bg-elevated)" }}>
+						{[
+							{ key: "reserveTokens" as const, label: t.reserveTokens, desc: t.reserveTokensDesc, value: reserveTokensDraft, setValue: setReserveTokensDraft, saved: piSettings.compaction.reserveTokens },
+							{ key: "keepRecentTokens" as const, label: t.keepRecentTokens, desc: t.keepRecentTokensDesc, value: keepRecentTokensDraft, setValue: setKeepRecentTokensDraft, saved: piSettings.compaction.keepRecentTokens },
+						].map((item) => (
+							<div key={item.key} className="flex items-center justify-between gap-6">
+								<div className="min-w-0">
+									<div style={{ fontSize: "var(--dsh-ui-font-sm)" }}>{item.label}</div>
+									<div className="mt-0.5" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>{item.desc}</div>
+								</div>
+								<input
+									type="number"
+									min={0}
+									aria-label={item.label}
+									value={item.value}
+									disabled={!piSettings || settingsLoading || settingsSaving}
+									onChange={(event) => item.setValue(event.target.value)}
+									onBlur={() => void commitIntegerSetting("compaction", item.key, item.value, item.setValue, item.saved)}
+									onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+									className="flex-none rounded-lg px-2 py-1 tabular-nums"
+									title={item.label}
+									style={{ width: 110, textAlign: "right", background: "var(--dsw-hover)" }}
+								/>
+							</div>
+						))}
+					</div>
+				)}
 			</div>
 			<Row title={t.autoRetry} desc={t.autoRetryDesc}>
 				<div className="flex items-center gap-2">
@@ -302,7 +318,7 @@ export function GeneralSection({
 						value={maxRetriesDraft}
 						disabled={!piSettings || settingsLoading || settingsSaving}
 						onChange={(event) => setMaxRetriesDraft(event.target.value)}
-						onBlur={() => void commitMaxRetries()}
+						onBlur={() => void commitIntegerSetting("retry", "maxRetries", maxRetriesDraft, setMaxRetriesDraft, piSettings?.retry.maxRetries)}
 						onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
 						className="rounded-lg px-2 py-1"
 						title={t.maxRetries}
@@ -310,12 +326,11 @@ export function GeneralSection({
 					/>
 				</div>
 			</Row>
-			{scope === "project" && piSettings?.projectTrusted === false && <p role="status">{lang === "en" ? "Project settings are saved here. They take effect after this project is trusted; current chats use personal settings." : "这里编辑项目设置。信任此项目后才会生效，当前会话使用个人设置。"}</p>}
 			{settingsWarning && <p role="status" style={{ color: "var(--dsw-warning)" }}>{settingsWarning}</p>}
-			<Row title={t.cacheWarming} desc={scope === "project" ? (lang === "en" ? "This setting applies to all projects. Change it under Personal settings." : "此设置对所有项目生效，请在个人设置中修改。") : t.cacheWarmingDesc}>
+			<Row title={t.cacheWarming} desc={t.cacheWarmingDesc}>
 				<SelectOption
 					value={piSettings?.cacheWarming ?? "idle"}
-					disabled={!piSettings || settingsSaving || scope === "project"}
+					disabled={!piSettings || settingsSaving}
 					options={[
 						{ value: "idle", label: t.cacheWarmingIdle },
 						{ value: "streaming", label: t.cacheWarmingStreaming },
@@ -348,10 +363,10 @@ export function GeneralSection({
 					onChange={(v) => void patchPiSettings({ followUpMode: v })}
 				/>
 			</Row>
-			{scope === "user" && <Row title={t.httpProxy} desc={t.httpProxyRestart}>
+			<Row title={t.httpProxy} desc={t.httpProxyRestart}>
 				<ProxySettings value={textDrafts.httpProxy} disabled={!piSettings || settingsLoading || settingsSaving}
 					onChange={(httpProxy) => setTextDrafts({ httpProxy })} onCommit={() => void commitText("httpProxy")} />
-			</Row>}
+			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
 				<div className="flex items-center gap-2.5">
 					<VersionLink href="https://github.com/RexVane/PiWeb" value={versions?.piWeb} />
@@ -368,7 +383,7 @@ export function GeneralSection({
 				<Row title={t.webAuth} desc={t.webAuthTokenOn}>
 					<button
 						className="btn-outline"
-						style={{ height: 30, padding: "0 14px", fontSize: 12.5 }}
+						style={{ height: "max(30px, calc(30px + var(--dsh-content-font-delta)))", padding: "0 14px", fontSize: "var(--dsh-ui-font-125)" }}
 						onClick={async () => {
 							setLogoutError("");
 							try {
@@ -395,7 +410,7 @@ function VersionLink({ href, value }: { href: string; value?: string }) {
 			href={href}
 			target="_blank"
 			rel="noreferrer"
-			style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--dsw-label-secondary)", textDecoration: "none" }}
+			style={{ fontFamily: "var(--font-mono)", fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-secondary)", textDecoration: "none" }}
 			onMouseEnter={(e) => (e.currentTarget.style.color = "var(--dsw-accent)")}
 			onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dsw-label-secondary)")}
 		>
@@ -423,7 +438,7 @@ function UpdateControl({ target }: { target: UpdateTarget }) {
 			<button
 				type="button"
 				className="btn-outline"
-				style={{ height: 26, padding: "0 10px", fontSize: 12, color }}
+				style={{ height: "max(26px, calc(26px + var(--dsh-content-font-delta)))", padding: "0 10px", fontSize: "var(--dsh-ui-font-xs)", color }}
 				title={error || undefined}
 				disabled={busy}
 				onClick={() => void checkUpdate(target)}
@@ -438,7 +453,7 @@ function UpdateControl({ target }: { target: UpdateTarget }) {
 			return (
 				<span className="flex flex-col items-end gap-0.5" style={{ maxWidth: 300 }}>
 					<CopyCommand command={command} />
-					<span style={{ fontSize: 11, color: "var(--dsw-label-tertiary)", textAlign: "right" }}>{t.updateManualHint}</span>
+					<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-tertiary)", textAlign: "right" }}>{t.updateManualHint}</span>
 				</span>
 			);
 		}

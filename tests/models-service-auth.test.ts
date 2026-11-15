@@ -5,12 +5,23 @@ import {
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getModelRuntime: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+	getModelRuntime: vi.fn(),
+	refreshModelRuntime: vi.fn(),
+	reloadSessionsForCwd: vi.fn(),
+}));
 vi.mock("../src/lib/pi", () => ({
 	getModelRuntime: mocks.getModelRuntime,
 	getAgentDir: () => { throw new Error("auth tests must not access user files"); },
-	refreshModelRuntime: vi.fn(),
+	refreshModelRuntime: mocks.refreshModelRuntime,
 }));
+vi.mock("../src/lib/agent-manager", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../src/lib/agent-manager")>();
+	return {
+		...actual,
+		reloadSessionsForCwd: mocks.reloadSessionsForCwd,
+	};
+});
 
 import { answerLogin, cancelLogin, loginState, removeApiKey, setApiKey, startLogin } from "../src/lib/models-service";
 
@@ -67,6 +78,8 @@ beforeEach(async () => {
 		streamSimple: () => { throw new Error("model calls are forbidden"); },
 	});
 	mocks.getModelRuntime.mockReset().mockResolvedValue(runtime);
+	mocks.refreshModelRuntime.mockReset().mockResolvedValue(undefined);
+	mocks.reloadSessionsForCwd.mockReset().mockResolvedValue(0);
 });
 
 afterEach(async () => {
@@ -243,9 +256,33 @@ describe("cancelable SDK authentication", () => {
 		await startLogin(providerId);
 		await vi.waitFor(() => expect(oauth).toHaveBeenCalledOnce());
 		await removeApiKey(providerId);
+		expect(mocks.refreshModelRuntime).toHaveBeenCalledOnce();
+		expect(mocks.reloadSessionsForCwd).toHaveBeenCalledOnce();
 		completion.resolve(token("late"));
 		await microtasks();
 		expect(await credentials.read(providerId)).toBeUndefined();
 		expect(loginState(providerId).error).toBe("canceled");
+		expect(mocks.refreshModelRuntime).toHaveBeenCalledOnce();
+		expect(mocks.reloadSessionsForCwd).toHaveBeenCalledOnce();
+	});
+
+	it("refreshes the model runtime and reloads active sessions when API key, OAuth, or logout completes", async () => {
+		await setApiKey(providerId, "sync-key");
+		expect(mocks.refreshModelRuntime).toHaveBeenCalledTimes(1);
+		expect(mocks.reloadSessionsForCwd).toHaveBeenCalledTimes(1);
+
+		const completion = deferred<OAuthCredential>();
+		oauth.mockImplementation(() => completion.promise);
+		await startLogin(providerId);
+		await vi.waitFor(() => expect(oauth).toHaveBeenCalledOnce());
+		expect(mocks.reloadSessionsForCwd).toHaveBeenCalledTimes(1);
+		completion.resolve(token("oauth-token"));
+		await vi.waitFor(() => expect(loginState(providerId).done).toBe(true));
+		expect(mocks.refreshModelRuntime).toHaveBeenCalledTimes(2);
+		expect(mocks.reloadSessionsForCwd).toHaveBeenCalledTimes(2);
+
+		await removeApiKey(providerId);
+		expect(mocks.refreshModelRuntime).toHaveBeenCalledTimes(3);
+		expect(mocks.reloadSessionsForCwd).toHaveBeenCalledTimes(3);
 	});
 });

@@ -131,7 +131,7 @@ export function isSecureRequest(request: Request): boolean {
 export function sessionCookieOptions(request: Request) {
 	return {
 		httpOnly: true,
-		sameSite: "strict" as const,
+		sameSite: "lax" as const,
 		secure: isSecureRequest(request),
 		path: "/",
 		maxAge: SESSION_MAX_AGE_SECONDS,

@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { PluginsSection } from "@/components/settings/PluginsSection";
 
-vi.mock("@/lib/theme", () => ({
+vi.mock("@/lib/theme", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/theme")>()),
 	applyPebrelTheme: () => {},
 	loadPebrelTheme: () => "dsh",
 	loadThemeMode: () => "system",

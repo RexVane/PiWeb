@@ -114,3 +114,40 @@ it("cancels a previous workspace catalog and the active request on unmount", asy
 	expect(pending[1].signal.aborted).toBe(true);
 	await act(async () => { pending[0].resolve(response(catalog("global"))); pending[1].resolve(response(catalog("b"))); });
 });
+
+it("passes workspace cwd immediately when opening a new pending session or switching from a listed session", async () => {
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = String(input);
+		if (url.startsWith("/api/models")) return new Promise<Response>((resolve) => pending.push({ url, signal: init?.signal as AbortSignal, resolve }));
+		if (url === "/api/agent/new") return response({ sessionPath: "/sessions/pending-new.jsonl", setupApplied: true });
+		if (url.startsWith("/api/sessions")) {
+			return response({
+				sessions: [{ path: "/sessions/existing.jsonl", cwd: "/workspace-existing", name: "existing", created: "", modified: "", messageCount: 1, firstMessage: "hi" }],
+				running: {},
+				workspaceRegistry: { workspaces: [], removedWorkspaces: [], aliases: {}, archivedSessions: [] },
+			});
+		}
+		return response({});
+	}));
+	const hook = renderHook(() => usePiWeb());
+	await waitFor(() => expect(pending).toHaveLength(1));
+	await act(async () => pending[0].resolve(response(catalog("global"))));
+
+	await act(async () => {
+		await hook.result.current.newSession("/workspace-new");
+	});
+	await waitFor(() => expect(pending.length).toBeGreaterThanOrEqual(2));
+	const newReq = pending.at(-1)!;
+	const newParams = new URL(newReq.url, "http://localhost").searchParams;
+	expect(newParams.get("session")).toBeTruthy();
+	expect(newParams.get("cwd")).toBe("/workspace-new");
+	expect(hook.result.current.pendingSessionCwd).toBe("/workspace-new");
+	await act(async () => newReq.resolve(response(catalog("ws-new"))));
+
+	const countBeforeSwitch = pending.length;
+	act(() => hook.result.current.openSession("/sessions/existing.jsonl"));
+	await waitFor(() => expect(pending.length).toBeGreaterThan(countBeforeSwitch));
+	const switchReq = pending.at(-1)!;
+	expect(new URL(switchReq.url, "http://localhost").searchParams.get("cwd")).toBe("/workspace-existing");
+	await act(async () => switchReq.resolve(response(catalog("ws-existing"))));
+});

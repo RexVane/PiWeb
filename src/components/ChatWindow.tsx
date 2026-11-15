@@ -22,6 +22,7 @@ import {
 	IconDataOutline16,
 	IconEditOutline16,
 	IconFileOutline16,
+	IconGlobeOutline14,
 	IconRefreshOutline14,
 	IconSearchOutline16,
 	IconSkillOutline16,
@@ -39,11 +40,22 @@ import { OutlineRail } from "@/components/OutlineRail";
 import { PreviewImage } from "@/components/PreviewImage";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
+import { WebSourcesPanel, WebSourcesTrigger } from "@/components/chat/web-sources";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
 import type { ToolCardState } from "@/hooks/usePiWeb";
 import type { ContextResource, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
+import {
+	classifyWebTool,
+	extractWebQuery,
+	extractWebSources,
+	formatWebUrlLabel,
+	mergeWebSources,
+	normalizeWebUrl,
+	type WebSource,
+	type WebToolRole,
+} from "@/lib/web-search";
 import {
 	classifyModelError,
 	cleanCommand,
@@ -373,7 +385,7 @@ function fmtSpan(ms: number): string {
 }
 
 type StepTone = "dim" | "live" | "fail" | "warn";
-type StepKind = ToolKind | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
+type StepKind = ToolKind | "web_search" | "web_fetch" | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
 
 function KindIcon({ kind }: { kind: StepKind }) {
 	const p = { size: 14, style: { flex: "none" as const } };
@@ -384,6 +396,9 @@ function KindIcon({ kind }: { kind: StepKind }) {
 			return <IconBrowseOutline14 {...p} />;
 		case "search":
 			return <IconSearchOutline16 {...p} />;
+		case "web_search":
+		case "web_fetch":
+			return <IconGlobeOutline14 {...p} />;
 		case "write":
 			return <IconEditOutline16 {...p} />;
 		case "think":
@@ -525,30 +540,41 @@ function permissionPreview(body: string[], t: Dict): Preview {
 	return body.length ? { lines: body.slice(0, 2), hidden: Math.max(0, body.length - 2) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
 }
 
-/** 从工具参数或摘要里提取至多 3 个外部域名（对齐 BoardUI WebSearch 站点徽章） */
-function extractToolDomains(summaryText: string, args: unknown): string[] {
-	const seen = new Set<string>();
-	const scan = (input: string) => {
-		const matches = input.match(/https?:\/\/([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g);
-		if (!matches) return;
-		for (const raw of matches) {
-			try {
-				const host = new URL(raw).hostname.replace(/^www\./, "");
-				if (host && host !== "localhost" && host !== "127.0.0.1") seen.add(host);
-			} catch {
-				/* ignore */
-			}
-			if (seen.size >= 3) break;
-		}
-	};
-	scan(summaryText);
-	if (seen.size < 3 && args && typeof args === "object") {
-		for (const val of Object.values(args as Record<string, unknown>)) {
-			if (typeof val === "string") scan(val);
-			if (seen.size >= 3) break;
+const EMPTY_WEB_SOURCES: WebSource[] = [];
+
+function nestedHasWebTool(nodes: ToolNode[] | undefined): boolean {
+	if (!nodes?.length) return false;
+	for (const node of nodes) {
+		const out = node.state.result ?? node.state.partialResult;
+		if (classifyWebTool(node.state.name, node.state.args, out) !== null) return true;
+		if (nestedHasWebTool(node.children)) return true;
+	}
+	return false;
+}
+
+function collectToolWebData(
+	name: string,
+	args: unknown,
+	state: ToolCardState | undefined,
+	nested: ToolNode[] | undefined,
+): { hasWeb: boolean; role: WebToolRole | null; sources: WebSource[] } {
+	const output = state?.result ?? state?.partialResult ?? "";
+	const role = classifyWebTool(name, args, output);
+	const childLists: WebSource[][] = [];
+	let hasWeb = role !== null;
+	if (nested?.length) {
+		const stack = [...nested];
+		while (stack.length > 0) {
+			const node = stack.shift()!;
+			const sub = collectToolWebData(node.state.name, node.state.args, node.state, node.children);
+			if (sub.hasWeb) hasWeb = true;
+			if (sub.sources.length > 0) childLists.push(sub.sources);
 		}
 	}
-	return [...seen];
+	if (!hasWeb) return { hasWeb: false, role: null, sources: EMPTY_WEB_SOURCES };
+	const ownSources = extractWebSources(args, output, role);
+	const sources = childLists.length > 0 ? mergeWebSources([...childLists, ownSources]) : ownSources;
+	return { hasWeb: true, role, sources };
 }
 
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
@@ -606,12 +632,19 @@ const ToolStep = memo(function ToolStep({
 	onOpenFile?: (path: string) => void;
 }) {
 	const [open, setOpen] = useState(false);
+	const [sourcesOpen, setSourcesOpen] = useState(false);
 	const { t } = useI18n();
 	const tt = t as unknown as Dict;
 	const kind = toolKind(name);
 	const running = !state || state.state === "running";
 	const elapsed = useElapsed(state?.startedAt, running);
 	const output = state?.result ?? state?.partialResult ?? "";
+	const webInfo = useMemo(() => collectToolWebData(name, args, state, nested), [args, name, nested, state]);
+	const webRole = webInfo.role;
+	const stepKind: StepKind = webRole === "search" ? "web_search" : webRole === "fetch" ? "web_fetch" : kind;
+	const webQuery = useMemo(() => (webRole ? extractWebQuery(name, args, webRole) : ""), [args, name, webRole]);
+	const webTargetHref = useMemo(() => (webRole === "fetch" && webQuery ? normalizeWebUrl(webQuery) : null), [webQuery, webRole]);
+	const webSources = webInfo.sources;
 	const isWriteTool = name.toLowerCase() === "write";
 	const diff = useMemo(() => {
 		// 失败的编辑同样渲染 diff：出错信息单独展示，不因为失败就把红绿藏掉
@@ -628,7 +661,6 @@ const ToolStep = memo(function ToolStep({
 	const cancelled = Boolean(state && isCancelledTool(state.name, state.isError, output));
 	const failed = Boolean(state?.isError) && !cancelled && !running;
 	const summary = toolSummary(name, args, cwd);
-	const domains = useMemo(() => extractToolDomains(summary.text, args), [summary.text, args]);
 	// 标题 JSON：先截断超长字符串值再序列化——write 的 content 几 MB，直接 stringify
 	// 每次渲染白算一遍再扔掉 99.9%；截后仍保 2000 字符上限的展示语义不变
 	const argsTitle = useMemo(() => {
@@ -679,81 +711,171 @@ const ToolStep = memo(function ToolStep({
 			toggle();
 		}
 	};
-	return (
-		<Step kind={kind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
-			<div
-				className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}
-				role={lineInteractive ? "button" : undefined}
-				tabIndex={lineInteractive ? 0 : undefined}
-				aria-expanded={lineInteractive ? open : undefined}
-				style={lineInteractive ? { cursor: "pointer" } : undefined}
-				title={lineInteractive ? (open ? t.collapseOutput : hasDiff ? t.expandDiff : t.expandOutput) : undefined}
-				onClick={lineInteractive ? toggle : undefined}
-				onKeyDown={lineInteractive ? onKey : undefined}
+	const splitInteractiveLine = webRole !== null || webSources.length > 0;
+	const actionButtons = (
+		<>
+			{deletedTarget && (
+				<span className="pw-meta" style={{ color: "var(--dsw-danger)" }} title={deletedTarget}>
+					{t.deletedFile.replace("{path}", relativizeInText(deletedTarget, cwd || ""))}
+				</span>
+			)}
+			{summary.scriptLines > 1 && <span className="pw-meta">{t.commandLines.replace("{n}", String(summary.scriptLines))}</span>}
+			{running && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
+			{!running && duration >= 1000 && <span className="pw-meta">{fmtSpan(duration)}</span>}
+			{onOpenFile && argPath && (
+				<button
+					type="button"
+					className="icon-btn pw-touch-reveal opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
+					style={{ width: 22, height: 22, flex: "none" }}
+					title={t.fileOpenEditor}
+					aria-label={t.fileOpenEditor}
+					onClick={(e) => {
+						e.stopPropagation();
+						onOpenFile(argPath);
+					}}
+				>
+					<IconFileOutline16 size={13} />
+				</button>
+			)}
+			{onInspectTool && (
+				<button
+					type="button"
+					className="icon-btn pw-touch-reveal opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
+					style={{ width: 22, height: 22, flex: "none" }}
+					title={t.viewInTrajectory}
+					aria-label={t.viewInTrajectory}
+					onClick={(e) => {
+						e.stopPropagation();
+						onInspectTool(id);
+					}}
+				>
+					<IconDataOutline16 size={13} />
+				</button>
+			)}
+		</>
+	);
+	const rawChevron = lineInteractive ? (
+		<span
+			className={hasDiff ? "pw-meta" : "pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"}
+			aria-hidden
+			style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)", opacity: open ? 1 : undefined }}
+		>
+			<IconChevronRight14 size={11} />
+		</span>
+	) : null;
+	const webVerbNode = running ? (
+		<span className="pw-shimmer">{webRole === "fetch" ? t.stepWebFetching : t.stepWebSearching}</span>
+	) : (
+		<span className="pw-verb" data-failed={failed || undefined}>{webRole === "fetch" ? t.stepWebFetched : t.stepWebSearched}</span>
+	);
+	const regularSummaryNode = (
+		<>
+			{running ? <span className="pw-shimmer">{name === ASK_USER_TOOL ? t.stepAskWaiting : t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
+			{badge && <span className="pw-badge">{badge}</span>}
+			{summary.text ? (
+				<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={argsTitle}>{summary.text}</span>
+			) : (
+				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
+			)}
+		</>
+	);
+	const renderMainSlot = (content: ReactNode) =>
+		canExpand ? (
+			<button
+				type="button"
+				className="pw-line-main"
+				aria-expanded={open}
+				title={open ? t.collapseOutput : t.expandOutput}
+				onClick={toggle}
 			>
-				{running ? <span className="pw-shimmer">{name === ASK_USER_TOOL ? t.stepAskWaiting : t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
-				{badge && <span className="pw-badge">{badge}</span>}
-				{summary.text ? (
-					<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={argsTitle}>{summary.text}</span>
-				) : (
-					<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
-				)}
-				{domains.length > 0 && (
-					<span className="pw-domain-stack" aria-hidden="true">
-						{domains.map((domain) => (
-							<span key={domain} className="pw-domain-chip" data-domain={domain} />
-						))}
-					</span>
-				)}
-				{diffStat && <span className="pw-meta">{diffStat}</span>}
-				{lineInteractive && (
-					<span
-						className={hasDiff ? "pw-meta" : "pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"}
-						aria-hidden
-						style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)", opacity: open ? 1 : undefined }}
-					>
-						<IconChevronRight14 size={11} />
-					</span>
-				)}
-				{deletedTarget && (
-					<span className="pw-meta" style={{ color: "var(--dsw-danger)" }} title={deletedTarget}>
-						{t.deletedFile.replace("{path}", relativizeInText(deletedTarget, cwd || ""))}
-					</span>
-				)}
-				{summary.scriptLines > 1 && <span className="pw-meta">{t.commandLines.replace("{n}", String(summary.scriptLines))}</span>}
-				{running && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
-				{!running && duration >= 1000 && <span className="pw-meta">{fmtSpan(duration)}</span>}
-				{onOpenFile && argPath && (
-					<button
-						type="button"
-						className="icon-btn pw-touch-reveal opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
-						style={{ width: 22, height: 22, flex: "none" }}
-						title={t.fileOpenEditor}
-						aria-label={t.fileOpenEditor}
-						onClick={(e) => {
-							e.stopPropagation();
-							onOpenFile(argPath);
-						}}
-					>
-						<IconFileOutline16 size={13} />
-					</button>
-				)}
-				{onInspectTool && (
-					<button
-						type="button"
-						className="icon-btn pw-touch-reveal opacity-0 group-hover/tool:opacity-100 focus-visible:opacity-100"
-						style={{ width: 22, height: 22, flex: "none" }}
-						title={t.viewInTrajectory}
-						aria-label={t.viewInTrajectory}
-						onClick={(e) => {
-							e.stopPropagation();
-							onInspectTool(id);
-						}}
-					>
-						<IconDataOutline16 size={13} />
-					</button>
-				)}
-			</div>
+				{content}
+			</button>
+		) : (
+			<span className="pw-line-main">{content}</span>
+		);
+	const webSearchBody = (
+		<>
+			{webVerbNode}
+			{badge && <span className="pw-badge">{badge}</span>}
+			{webQuery ? (
+				<>
+					<span className="pw-web-for">{t.stepWebFor}</span>
+					<span className="pw-arg pw-arg-web" title={webQuery}>{`“${webQuery}”`}</span>
+				</>
+			) : summary.text ? (
+				<span className="pw-arg pw-arg-web" title={argsTitle}>{summary.text}</span>
+			) : (
+				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
+			)}
+		</>
+	);
+	return (
+		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
+			{splitInteractiveLine ? (
+				<div className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}>
+					{webRole === "search" ? (
+						renderMainSlot(webSearchBody)
+					) : webRole === "fetch" ? (
+						<>
+							{renderMainSlot(
+								<>
+									{webVerbNode}
+									{badge && <span className="pw-badge">{badge}</span>}
+								</>,
+							)}
+							{webTargetHref ? (
+								<a
+									href={webTargetHref}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="pw-arg pw-arg-web-link"
+									title={webTargetHref}
+								>
+									{formatWebUrlLabel(webTargetHref)}
+								</a>
+							) : summary.text ? (
+								<span className="pw-arg" title={argsTitle}>{summary.text}</span>
+							) : (
+								<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
+							)}
+						</>
+					) : (
+						renderMainSlot(regularSummaryNode)
+					)}
+					{webSources.length > 0 && (
+						<WebSourcesTrigger
+							sources={webSources}
+							expanded={sourcesOpen}
+							onToggle={() => setSourcesOpen((v) => !v)}
+						/>
+					)}
+					{diffStat && <span className="pw-meta">{diffStat}</span>}
+					{webSources.length === 0 && rawChevron}
+					{actionButtons}
+				</div>
+			) : (
+				<div
+					className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}
+					role={lineInteractive ? "button" : undefined}
+					tabIndex={lineInteractive ? 0 : undefined}
+					aria-expanded={lineInteractive ? open : undefined}
+					style={lineInteractive ? { cursor: "pointer" } : undefined}
+					title={lineInteractive ? (open ? t.collapseOutput : hasDiff ? t.expandDiff : t.expandOutput) : undefined}
+					onClick={lineInteractive ? toggle : undefined}
+					onKeyDown={lineInteractive ? onKey : undefined}
+				>
+					{regularSummaryNode}
+					{diffStat && <span className="pw-meta">{diffStat}</span>}
+					{rawChevron}
+					{actionButtons}
+				</div>
+			)}
+			{sourcesOpen && webSources.length > 0 && (
+				<WebSourcesPanel
+					sources={webSources}
+					rawToggle={canExpand ? { open, onToggle: toggle } : undefined}
+				/>
+			)}
 			{showPreview && (
 				<div
 					className="pw-result"
@@ -1006,7 +1128,19 @@ type Item =
 	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
 	| { kind: "abort"; key: string; msgIndex: number };
 
-type Run = { kind: "run"; key: string; items: Item[]; hasThink: boolean; cmds: number; reads: number; searches: number; durationMs?: number };
+type Run = {
+	kind: "run";
+	key: string;
+	items: Item[];
+	hasThink: boolean;
+	cmds: number;
+	reads: number;
+	searches: number;
+	webSearches: number;
+	webFetches: number;
+	webSources: WebSource[];
+	durationMs?: number;
+};
 type Block = { kind: "item"; item: Item } | Run;
 
 /** 消息里的文本块拼成一段（扩展消息 / `!` 命令的输出都用它） */
@@ -1077,7 +1211,12 @@ function buildItems(messages: WebMessage[], k: number, tools: Record<string, Too
 	return items;
 }
 
-/** 可折进摘要的步骤：完成的思考，以及成功完成的命令 / 读取 / 搜索（编辑与写入永远单独可见） */
+function itemWebInfo(it: Item): { hasWeb: boolean; role: WebToolRole | null; sources: WebSource[] } {
+	if (it.kind !== "tool") return { hasWeb: false, role: null, sources: EMPTY_WEB_SOURCES };
+	return collectToolWebData(it.call.name, it.call.arguments, it.state, it.nested);
+}
+
+/** 可折进摘要的步骤：完成的思考，以及成功完成的命令 / 读取 / 搜索 / 联网（编辑与写入永远单独可见） */
 function isCollapsible(it: Item, finalIdx: number): boolean {
 	if (it.msgIndex === finalIdx) return false;
 	if (it.kind === "think") return !it.live;
@@ -1087,7 +1226,8 @@ function isCollapsible(it: Item, finalIdx: number): boolean {
 		const s = it.state;
 		if (!s || s.state !== "done" || s.isError) return false;
 		const k = toolKind(it.call.name);
-		return k === "cmd" || k === "read" || k === "search";
+		if (k === "cmd" || k === "read" || k === "search") return true;
+		return classifyWebTool(it.call.name, it.call.arguments, s.result ?? s.partialResult) !== null || nestedHasWebTool(it.nested);
 	}
 	return false;
 }
@@ -1107,21 +1247,51 @@ function collapseRuns(items: Item[], finalIdx: number, spanOf: (a: number, b: nu
 		let cmds = 0;
 		let reads = 0;
 		let searches = 0;
+		let webSearches = 0;
+		let webFetches = 0;
 		let hasThink = false;
+		const sourceBatches: WebSource[][] = [];
 		for (const it of run) {
 			if (it.kind === "think") hasThink = true;
 			else if (it.kind === "tool") {
-				const k = toolKind(it.call.name);
-				if (k === "cmd") cmds += 1;
-				else if (k === "read") reads += 1;
-				else searches += 1;
+				const web = itemWebInfo(it);
+				if (web.sources.length > 0) sourceBatches.push(web.sources);
+				if (web.role === "search") {
+					webSearches += 1;
+				} else if (web.role === "fetch") {
+					webFetches += 1;
+				} else if (web.hasWeb) {
+					webSearches += 1;
+				} else {
+					const k = toolKind(it.call.name);
+					if (k === "cmd") cmds += 1;
+					else if (k === "read") reads += 1;
+					else searches += 1;
+				}
 			}
 		}
 		const durationMs = spanOf(run[0].msgIndex, run[run.length - 1].msgIndex);
-		if (cmds + reads + searches === 0 && durationMs === undefined) {
+		const webSources = sourceBatches.length > 0 ? mergeWebSources(sourceBatches) : EMPTY_WEB_SOURCES;
+		const totalTools = cmds + reads + searches + webSearches + webFetches;
+		// 单条独立的联网步骤直接展示查询词与来源，避免多包一层折叠
+		if (run.length === 1 && !hasThink && cmds + reads + searches === 0 && webSearches + webFetches === 1) {
+			blocks.push({ kind: "item", item: run[0] });
+		} else if (totalTools === 0 && durationMs === undefined) {
 			for (const it of run) blocks.push({ kind: "item", item: it });
 		} else {
-			blocks.push({ kind: "run", key: `run-${run[0].key}`, items: run, hasThink, cmds, reads, searches, durationMs });
+			blocks.push({
+				kind: "run",
+				key: `run-${run[0].key}`,
+				items: run,
+				hasThink,
+				cmds,
+				reads,
+				searches,
+				webSearches,
+				webFetches,
+				webSources,
+				durationMs,
+			});
 		}
 		i = j;
 	}
@@ -1130,26 +1300,71 @@ function collapseRuns(items: Item[], finalIdx: number, spanOf: (a: number, b: nu
 
 function SummaryStep({ run, expanded, onToggle }: { run: Run; expanded: boolean; onToggle: () => void }) {
 	const { t } = useI18n();
+	const [sourcesOpen, setSourcesOpen] = useState(false);
+	const isPureWeb = run.cmds === 0 && run.reads === 0 && run.searches === 0 && (run.webSearches > 0 || run.webFetches > 0);
+	if (isPureWeb) {
+		const stepKind: StepKind = run.webSearches > 0 ? "web_search" : "web_fetch";
+		const label = run.webSearches > 0 ? t.sumWebSearched : t.sumWebFetched;
+		return (
+			<Step kind={stepKind}>
+				<div className="pw-summary-row">
+					<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
+						<span className="pw-gist">
+							<strong>{label}</strong>
+						</span>
+						<IconChevronRight14 size={12} className="pw-chev" />
+					</button>
+					{run.webSources.length > 0 && (
+						<WebSourcesTrigger
+							sources={run.webSources}
+							expanded={sourcesOpen}
+							onToggle={() => setSourcesOpen((v) => !v)}
+						/>
+					)}
+				</div>
+				{sourcesOpen && run.webSources.length > 0 && <WebSourcesPanel sources={run.webSources} />}
+			</Step>
+		);
+	}
 	const parts: ReactNode[][] = [];
 	if (run.hasThink && run.durationMs !== undefined) parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
 	if (run.cmds) parts.push(fillBold(run.cmds === 1 ? t.sumRan1 : t.sumRan, { n: String(run.cmds) }));
 	if (run.reads) parts.push(fillBold(run.reads === 1 ? t.sumRead1 : t.sumRead, { n: String(run.reads) }));
 	if (run.searches) parts.push(fillBold(run.searches === 1 ? t.sumSearched1 : t.sumSearched, { n: String(run.searches) }));
+	if (run.webSearches) parts.push(fillBold(t.sumWebSearchedN, { n: String(run.webSearches) }));
+	if (run.webFetches) parts.push(fillBold(t.sumWebFetchedN, { n: String(run.webFetches) }));
 	// 英文时首字母大写（模板里只有第一段是大写开头）
 	if (parts.length && typeof parts[0][0] === "string") parts[0][0] = (parts[0][0] as string).replace(/^[a-z]/, (ch) => ch.toUpperCase());
+	const toggleButton = (
+		<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
+			<span className="pw-gist">
+				{parts.map((p, i) => (
+					<span key={i}>
+						{i > 0 ? t.sumJoin : ""}
+						{p}
+					</span>
+				))}
+			</span>
+			<IconChevronRight14 size={12} className="pw-chev" />
+		</button>
+	);
 	return (
-		<Step kind={run.hasThink ? "summary" : run.cmds ? "cmd" : run.reads ? "read" : "search"}>
-			<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
-				<span className="pw-gist">
-					{parts.map((p, i) => (
-						<span key={i}>
-							{i > 0 ? t.sumJoin : ""}
-							{p}
-						</span>
-					))}
-				</span>
-				<IconChevronRight14 size={12} className="pw-chev" />
-			</button>
+		<Step kind={run.hasThink ? "summary" : run.cmds ? "cmd" : run.reads ? "read" : run.webSearches ? "web_search" : run.webFetches ? "web_fetch" : "search"}>
+			{run.webSources.length > 0 ? (
+				<>
+					<div className="pw-summary-row">
+						{toggleButton}
+						<WebSourcesTrigger
+							sources={run.webSources}
+							expanded={sourcesOpen}
+							onToggle={() => setSourcesOpen((v) => !v)}
+						/>
+					</div>
+					{sourcesOpen && <WebSourcesPanel sources={run.webSources} />}
+				</>
+			) : (
+				toggleButton
+			)}
 		</Step>
 	);
 }
@@ -1491,6 +1706,7 @@ function TurnBlockView({
 	const { t } = useI18n();
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 	const [processOpen, setProcessOpen] = useState(false);
+	const [turnSourcesOpen, setTurnSourcesOpen] = useState(false);
 	const user = turn.userIndex >= 0 ? messages[turn.userIndex] : undefined;
 	// 技能展开的用户消息不在这一层当「发言」渲染，改成本轮过程里的一个技能步骤
 	const skill = useMemo(() => (user ? parseExpandedSkill(userTextOf(user)) : null), [user]);
@@ -1541,6 +1757,23 @@ function TurnBlockView({
 		return duration;
 	};
 	const blocks: Block[] = turnLive ? items.map((item) => ({ kind: "item", item })) : collapseRuns(items, finalIdx, spanOf);
+	const turnWeb = (() => {
+		let hasWeb = false;
+		let hasSearch = false;
+		const batches: WebSource[][] = [];
+		for (const it of items) {
+			const info = itemWebInfo(it);
+			if (!info.hasWeb) continue;
+			hasWeb = true;
+			if (info.role !== "fetch") hasSearch = true;
+			if (info.sources.length > 0) batches.push(info.sources);
+		}
+		return {
+			hasWeb,
+			hasSearch,
+			sources: batches.length > 0 ? mergeWebSources(batches) : EMPTY_WEB_SOURCES,
+		};
+	})();
 	const last = items[items.length - 1];
 	const hasLiveStep = Boolean(runningTool) || (last?.kind === "think" && last.live) || (last?.kind === "narr" && last.live);
 	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
@@ -1581,7 +1814,33 @@ function TurnBlockView({
 								</span>
 								<IconChevronRight14 size={12} className="pw-turn-chev" />
 							</button>
+							{processCollapsed && turnWeb.hasWeb && (
+								<span className="pw-turn-web">
+									<IconGlobeOutline14 size={13} aria-hidden="true" />
+									{turnWeb.sources.length > 0 ? (
+										<>
+											<span className="pw-turn-web-label">{turnWeb.hasSearch ? t.stepWebSearched : t.stepWebFetched}</span>
+											<WebSourcesTrigger
+												sources={turnWeb.sources}
+												expanded={turnSourcesOpen}
+												onToggle={() => setTurnSourcesOpen((v) => !v)}
+											/>
+										</>
+									) : (
+										<button
+											type="button"
+											className="pw-turn-web-btn"
+											onClick={() => setProcessOpen(true)}
+										>
+											{turnWeb.hasSearch ? t.stepWebSearched : t.stepWebFetched}
+										</button>
+									)}
+								</span>
+							)}
 						</div>
+					)}
+					{processCollapsed && turnSourcesOpen && turnWeb.sources.length > 0 && (
+						<WebSourcesPanel sources={turnWeb.sources} />
 					)}
 					<div className="pw-turn-body" data-collapsed={processCollapsed || undefined} inert={processCollapsed || undefined} aria-hidden={processCollapsed || undefined}>
 						<div className="pw-turn-body-inner">
@@ -1738,6 +1997,38 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
  * 压缩分隔卡：卡片以上的消息照常显示（可编辑、可分叉），但模型只看得到它们的摘要；摘要可展开。
  * 分支摘要卡：切换分支时离开的那条分支被总结成摘要发给模型。
  */
+function CompactionNoticeRow({ summaryMessage, onClear }: { summaryMessage?: WebMessage; onClear?: () => void }) {
+	const { t } = useI18n();
+	const [open, setOpen] = useState(false);
+	const summary = summaryMessage?.summary?.trim();
+	const label = summaryMessage?.tokensBefore
+		? t.compactedTitleTokens.replace("{tokens}", fmtTokens(summaryMessage.tokensBefore))
+		: t.compactedTitle;
+	return (
+		<div className="mt-4 flex flex-col gap-1.5" role="status" style={{ fontSize: "var(--piweb-chat-font-s)", color: "var(--dsw-label-caption)" }}>
+			<div className="flex flex-wrap items-center gap-2">
+				<IconDataOutline16 size={15} className="flex-none opacity-80" />
+				<span style={{ color: "var(--dsw-label-secondary)" }}>{label}</span>
+				{summary && (
+					<button type="button" className="hover:underline" aria-expanded={open} onClick={() => setOpen((value) => !value)} style={{ color: "var(--dsw-label-secondary)" }}>
+						{open ? t.hideSummary : t.showSummary}
+					</button>
+				)}
+				{onClear && (
+					<button type="button" onClick={onClear} aria-label={t.close} className="icon-btn ml-auto" style={{ width: 20, height: 20 }}>
+						<IconCloseOutline14 size={12} />
+					</button>
+				)}
+			</div>
+			{open && summary && (
+				<div className="rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-label-primary)" }}>
+					<Markdown text={summary} />
+				</div>
+			)}
+		</div>
+	);
+}
+
 function SummaryCard({ message }: { message: WebMessage }) {
 	const { t } = useI18n();
 	const [open, setOpen] = useState(false);
@@ -2287,15 +2578,20 @@ export function ChatWindow({
 								</div>
 							</div>
 						)}
-						{compaction && (
+						{compaction && (compaction.phase === "start" || compaction.errorMessage ? (
 							<div className="mt-3 flex justify-center" role="status">
-								<div className="pw-toast-stack pw-toast-info flex items-center gap-2.5" style={{ fontSize: "var(--piweb-chat-font-s)" }}>
+								<div className="pw-toast-card pw-toast-info flex items-center gap-2.5" style={{ fontSize: "var(--piweb-chat-font-s)" }}>
 									<span className="pw-toast-icon" aria-hidden="true">i</span>
-									<span className="pw-toast-body">{compaction.phase === "start" ? t.compacting : compaction.errorMessage ? `${t.compactionFailed}: ${compaction.errorMessage}` : t.compactionComplete}</span>
+									<span className="pw-toast-body">{compaction.phase === "start" ? t.compacting : `${t.compactionFailed}: ${compaction.errorMessage}`}</span>
 									{compaction.phase === "end" && <button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn pw-toast-close">×</button>}
 								</div>
 							</div>
-						)}
+						) : (
+							<CompactionNoticeRow
+								summaryMessage={messages.findLast((m) => m.role === "summary" && m.summaryKind === "compaction")}
+								onClear={onClearCompaction}
+							/>
+						))}
 						{error && (
 							<div className="mt-3 flex justify-center">
 								<ErrorToast message={error} onDismiss={onClearError} fontSize="var(--piweb-chat-font-s)" />

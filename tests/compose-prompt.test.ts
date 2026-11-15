@@ -7,7 +7,7 @@ describe("skill invocation with attachment references", () => {
 	it.each(["@README.md", "Attached file: /uploads/note.txt (4 B)"])("expands the actual SDK skill command with %s and no prose arguments", async (addition) => {
 		const { AgentSession } = await import("@earendil-works/pi-coding-agent");
 		const expand = (AgentSession.prototype as unknown as { _expandSkillCommand(text: string): string })._expandSkillCommand;
-		const location = path.resolve("AGENTS.md");
+		const location = path.resolve("README.md");
 		const input = composePrompt("/skill:probe", [addition]);
 		const expanded = expand.call({ resourceLoader: { getSkills: () => ({ skills: [{ name: "probe", filePath: location, baseDir: path.dirname(location) }] }) } }, input);
 		expect(expanded).toContain('<skill name="probe"');

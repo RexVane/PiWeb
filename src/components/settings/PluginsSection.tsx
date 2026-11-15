@@ -293,7 +293,6 @@ export function PluginsSection({
 	onInstallOpenChange,
 	reloadSeq = 0,
 	onReloadBusyChange,
-	onOpenMarket,
 	workspaceOptions,
 	onCwdChange,
 }: {
@@ -303,7 +302,6 @@ export function PluginsSection({
 	onInstallOpenChange?: (open: boolean) => void;
 	reloadSeq?: number;
 	onReloadBusyChange?: (busy: boolean) => void;
-	onOpenMarket?: () => void;
 	/** 切到「项目」页签时用来切换工作区 */
 	workspaceOptions?: { value: string; label: string }[];
 	onCwdChange?: (cwd: string) => void;
@@ -651,8 +649,8 @@ export function PluginsSection({
 			{!hideHeader && (
 				<div className="flex flex-wrap items-start justify-between gap-4">
 					<div>
-						<div style={{ fontSize: 20, fontWeight: 600, color: "var(--dsw-label-primary)" }}>{t.setPlugins}</div>
-						<div className="mt-1" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
+						<div style={{ fontSize: "var(--dsh-ui-font-xl)", fontWeight: 600, color: "var(--dsw-label-primary)" }}>{t.setPlugins}</div>
+						<div className="mt-1" style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-tertiary)" }}>
 							{t.pluginPageDesc}
 						</div>
 					</div>
@@ -660,7 +658,7 @@ export function PluginsSection({
 						<button
 							type="button"
 							className="btn-outline"
-							style={{ height: 32, padding: "0 12px", fontSize: 13 }}
+							style={{ height: 32, padding: "0 12px", fontSize: "var(--dsh-ui-font-sm)" }}
 							disabled={busy}
 							onClick={() => void handleReload()}
 						>
@@ -669,7 +667,7 @@ export function PluginsSection({
 						<button
 							type="button"
 							className="btn-primary-white"
-							style={{ height: 32, padding: "0 14px", fontSize: 13 }}
+							style={{ height: 32, padding: "0 14px", fontSize: "var(--dsh-ui-font-sm)" }}
 							onClick={() => setModalOpen(true)}
 						>
 							+ {t.addPluginAction}
@@ -707,7 +705,7 @@ export function PluginsSection({
 						placeholder={t.searchPlugins}
 						aria-label={t.searchPlugins}
 						className="w-full bg-transparent outline-none"
-						style={{ fontSize: 13, color: "var(--dsw-label-primary)" }}
+						style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-primary)" }}
 					/>
 				</div>
 			)}
@@ -716,10 +714,10 @@ export function PluginsSection({
 			{visibleBuiltins.length > 0 && (
 				<section className="flex flex-col gap-2">
 					<div className="flex items-center gap-2" style={{ paddingLeft: 4 }}>
-						<h2 style={{ fontSize: 13, fontWeight: 500, color: "var(--dsw-label-secondary)" }}>
+						<h2 style={{ fontSize: "var(--dsh-ui-font-sm)", fontWeight: 500, color: "var(--dsw-label-secondary)" }}>
 							{t.builtinPluginsSection}
 						</h2>
-						<span className="tabular-nums" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+						<span className="tabular-nums" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>
 							{visibleBuiltins.length}
 						</span>
 					</div>
@@ -976,16 +974,6 @@ export function PluginsSection({
 							</div>
 						</div>
 					</div>
-					{onOpenMarket && (
-						<button
-							type="button"
-							className="btn-outline flex-none"
-							style={{ height: 30, padding: "0 12px", fontSize: 12.5 }}
-							onClick={onOpenMarket}
-						>
-							{t.openMarketAction}
-						</button>
-					)}
 				</div>
 			)}
 
@@ -1006,16 +994,6 @@ export function PluginsSection({
 							? t.pluginsEmptyScopeUserDesc
 							: t.extensionsEmpty}
 					</div>
-					{!query && onOpenMarket && (
-						<button
-							type="button"
-							className="btn-outline flex-none"
-							style={{ height: 30, padding: "0 12px", fontSize: 12.5 }}
-							onClick={onOpenMarket}
-						>
-							{t.openMarketAction}
-						</button>
-					)}
 				</div>
 			)}
 

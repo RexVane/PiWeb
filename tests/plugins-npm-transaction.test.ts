@@ -74,6 +74,8 @@ it("removes a disabled-only npm package without manufacturing an absent packages
 });
 
 it("updates both npm scopes through their private stages", async () => {
+	// Version lookup and npm execution are mocked; exercise updates even in the offline suite.
+	vi.stubEnv("PI_OFFLINE", "");
 	await updatePackages(undefined, cwd);
 	expect(command).toHaveBeenCalledTimes(2);
 	expect(readVersion(false)).toBe("2.0.0"); expect(readVersion(true)).toBe("2.0.0");

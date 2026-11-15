@@ -1,42 +1,54 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-const deps = vi.hoisted(() => ({ entries: vi.fn(), forget: vi.fn() }));
-vi.mock("../src/lib/workspace-store", () => ({ getArchivedEntries: deps.entries, forgetSession: deps.forget }));
+import { recycleFixture } from "./lib/sandbox/fixtures";
 
-type State = { timer?: ReturnType<typeof setTimeout>; repeat?: ReturnType<typeof setInterval>; running?: Promise<void> };
-const retentionGlobal = globalThis as typeof globalThis & { __piWebArchivedRetention?: State };
-beforeEach(() => { vi.useFakeTimers(); vi.resetModules(); vi.resetAllMocks(); });
-afterEach(async () => {
-	const state = retentionGlobal.__piWebArchivedRetention;
-	clearTimeout(state?.timer); clearInterval(state?.repeat);
-	await state?.running;
-	delete retentionGlobal.__piWebArchivedRetention;
-	vi.useRealTimers();
+let agentDir: string;
+type Timers = { timer?: ReturnType<typeof setTimeout>; repeat?: ReturnType<typeof setInterval>; running?: Promise<void> };
+const state = globalThis as typeof globalThis & {
+	__piWebReaper?: ReturnType<typeof setInterval>;
+	__piWebArchivedRetention?: Timers;
+};
+
+beforeEach(async () => {
+	agentDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-no-archive-cleanup-")));
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
+	vi.stubEnv("PI_OFFLINE", "1");
+	vi.spyOn(os, "homedir").mockReturnValue(path.join(agentDir, "unrelated-home"));
 });
 
-it("creates one process-wide scheduler across module reloads and does not overlap a pending sweep", async () => {
-	let finish!: () => void;
-	const gate = new Promise<void>((resolve) => { finish = resolve; });
-	let active = 0, maxActive = 0;
-	deps.entries.mockImplementation(async () => {
-		active += 1; maxActive = Math.max(maxActive, active);
-		try { await gate; return []; } finally { active -= 1; }
-	});
-	const first = await import("../src/lib/session-retention");
-	first.startArchivedSessionRetention({ delayMs: 1, intervalMs: 1, log: () => {} });
-	try {
-		await vi.advanceTimersByTimeAsync(1);
-		expect(deps.entries).toHaveBeenCalledTimes(1);
-		await vi.advanceTimersByTimeAsync(10);
-		expect(deps.entries).toHaveBeenCalledTimes(1);
-		const timers = vi.getTimerCount();
-		vi.resetModules();
-		const second = await import("../src/lib/session-retention");
-		second.startArchivedSessionRetention({ delayMs: 1, intervalMs: 1, log: () => {} });
-		expect(vi.getTimerCount()).toBe(timers);
-		finish();
-		await retentionGlobal.__piWebArchivedRetention?.running;
-		await vi.advanceTimersByTimeAsync(2);
-		expect(deps.entries.mock.calls.length).toBeGreaterThan(1);
-		expect(maxActive).toBe(1);
-	} finally { finish(); }
+afterEach(async () => {
+	clearInterval(state.__piWebReaper);
+	delete state.__piWebReaper;
+	const legacy = state.__piWebArchivedRetention;
+	clearTimeout(legacy?.timer); clearInterval(legacy?.repeat);
+	await legacy?.running;
+	delete state.__piWebArchivedRetention;
+	vi.useRealTimers();
+	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
+	await recycleFixture(agentDir);
+});
+
+it("keeps old archived session files and metadata when application background timers run", async () => {
+	const directory = path.join(agentDir, "sessions", "--ws--");
+	await fs.mkdir(directory, { recursive: true });
+	const sessionPath = path.join(directory, "old.jsonl");
+	const content = JSON.stringify({ type: "session", version: 3, id: "old", timestamp: new Date().toISOString(), cwd: "/ws" }) + "\n";
+	await fs.writeFile(sessionPath, content);
+	const archivedAt = Date.now() - 90 * 24 * 60 * 60 * 1000;
+	await fs.utimes(sessionPath, new Date(archivedAt), new Date(archivedAt));
+	const key = process.platform === "win32" ? sessionPath.toLowerCase() : sessionPath;
+	const registry = path.join(agentDir, "web-workspaces.json");
+	const original = JSON.stringify({ workspaces: [], archivedSessions: [sessionPath], archivedAt: { [key]: archivedAt } });
+	await fs.writeFile(registry, original);
+	vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+	await import("../src/lib/agent-manager");
+	await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 + 5_000);
+	// Await a legacy sweep if one regresses back into startup, so a pending
+	// filesystem removal cannot produce a false pass.
+	await state.__piWebArchivedRetention?.running;
+	expect(await fs.readFile(sessionPath, "utf8")).toBe(content);
+	expect(await fs.readFile(registry, "utf8")).toBe(original);
 });

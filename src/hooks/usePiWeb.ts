@@ -1,5 +1,6 @@
 "use client";
 import { clientFetch as fetch } from "@/lib/client-fetch";
+import { sortArchivedSessions } from "@/lib/archived-sessions-sort";
 import { savedSessionLocation, storeSessionLocation } from "@/lib/chat/session-location";
 import { MAX_VISIBLE_TOOLS, previewMessage, recentMessages, recentTrajectory } from "@/lib/chat/web-history";
 
@@ -14,7 +15,6 @@ import { notifySessionsChanged } from "@/lib/session-change-events";
 import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "@/lib/tool-preset";
 import type { AskQuestion } from "@/lib/ask-user";
 import type {
-	GrowthConsentRequest,
 	GrowthRound,
 	SessionSummary,
 	WebEvent,
@@ -102,13 +102,71 @@ export interface PiWebState {
 	/** 扩展覆盖的「工作中」文案（setWorkingMessage） */
 	workingMessage: string | null;
 	/** 项目生长：本次连接期间收到的 commit（完整时间轴由 useGrowth 拉取后按 commit 去重合并） */
-	growth: { rounds: GrowthRound[]; error: string | null; consent: GrowthConsentRequest | null };
+	growth: { rounds: GrowthRound[]; error: string | null };
 }
 
 export interface SessionListItem extends SessionSummary {
 	streaming: boolean;
 	/** 正在运行的会话最后一个工具步骤（侧栏副标题） */
 	lastStep?: string;
+}
+
+const OPTIMISTIC_STREAM_PREFIX = "__optimistic__:";
+
+interface PendingOptimisticPrompt {
+	streamId: string;
+	message: WebMessage;
+	anchorId: string | null;
+	rawText: string;
+	signature: string;
+	settled: boolean;
+}
+
+function isOptimisticUserMessage(message: WebMessage | undefined): boolean {
+	return Boolean(message && message.role === "user" && !message.id && message.streamId?.startsWith(OPTIMISTIC_STREAM_PREFIX));
+}
+
+function userMessageSignature(message: WebMessage): string {
+	const parts: string[] = [];
+	for (const part of message.content ?? []) {
+		if (part.type === "text") parts.push(`t:${part.text.trim()}`);
+		else if (part.type === "image") parts.push(`i:${part.mimeType}:${part.data.length}:${part.data.slice(0, 24)}`);
+	}
+	return parts.join("|");
+}
+
+function buildOptimisticUserMessage(text: string, images: unknown, streamId: string): WebMessage {
+	const content: WebMessage["content"] = [];
+	const trimmed = text.trim();
+	if (trimmed) content.push({ type: "text", text: trimmed });
+	if (Array.isArray(images)) {
+		for (const item of images) {
+			if (
+				item
+				&& typeof item === "object"
+				&& typeof (item as { data?: unknown }).data === "string"
+				&& typeof (item as { mimeType?: unknown }).mimeType === "string"
+			) {
+				content.push({
+					type: "image",
+					data: (item as { data: string }).data,
+					mimeType: (item as { mimeType: string }).mimeType,
+				});
+			}
+		}
+	}
+	return { role: "user", content, streamId, timestamp: Date.now() };
+}
+
+function snapshotContainsOptimisticPrompt(messages: WebMessage[], pending: PendingOptimisticPrompt): boolean {
+	if (pending.anchorId) {
+		const idx = messages.findIndex((m) => (m.id ?? m.streamId) === pending.anchorId);
+		if (idx >= 0) {
+			return messages.slice(idx + 1).some((m) => m.role === "user" && !isOptimisticUserMessage(m));
+		}
+		return messages.slice(-4).some((m) => m.role === "user" && !isOptimisticUserMessage(m) && userMessageSignature(m) === pending.signature);
+	}
+	return messages.some((m) => m.role === "user" && !isOptimisticUserMessage(m));
 }
 
 const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
@@ -190,6 +248,16 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				if (evt.phase === "end") msgs[same] = { ...msgs[same], ...evt.message };
 				s.messages = msgs;
 				return s;
+			}
+			if (evt.message.role === "user") {
+				if (s.compaction?.phase === "end" && !s.compaction.errorMessage) s.compaction = null;
+				for (let i = msgs.length - 1; i >= 0; i -= 1) {
+					if (isOptimisticUserMessage(msgs[i])) {
+						msgs[i] = evt.message;
+						s.messages = msgs;
+						return s;
+					}
+				}
 			}
 			if (evt.phase === "start") {
 				// custom：扩展注入并声明要显示的消息；bashExecution：用户 `!` 命令
@@ -359,9 +427,6 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 		case "growth_error":
 			s.growth = { ...s.growth, error: evt.message };
 			return s;
-		case "growth_consent":
-			s.growth = { ...s.growth, consent: evt.request };
-			return s;
 		case "retry":
 			// 只保留最后一次尝试:重试过程在界面上是「重试 3/5」这一条,而不是五行报错
 			s.retryNotice = evt.maxAttempts
@@ -528,7 +593,7 @@ const emptyState = (toolPreset: ToolPreset = DEFAULT_TOOL_PRESET): PiWebState =>
 	extensionTitle: null,
 	editorText: null,
 	workingMessage: null,
-	growth: { rounds: [], error: null, consent: null },
+	growth: { rounds: [], error: null },
 });
 
 function pathKey(value: string): string {
@@ -567,6 +632,9 @@ export function usePiWeb() {
 	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
+	const pendingOptimisticRef = useRef(new Map<string, PendingOptimisticPrompt>());
+	const pendingToolPresetRef = useRef(new Map<string, ToolPreset>());
+	const optimisticSeqRef = useRef(0);
 	const shownReloadsRef = useRef(new Set<string>());
 	const presetRestoreAttemptRef = useRef<string | null>(null);
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
@@ -577,6 +645,13 @@ export function usePiWeb() {
 	liveStateRef.current = state;
 	const activeSessionRef = useRef(currentId);
 	activeSessionRef.current = currentId;
+	const currentPathRef = useRef(currentPath);
+	currentPathRef.current = currentPath;
+	const sessionsRef = useRef(sessions);
+	sessionsRef.current = sessions;
+	const sessionCwdByPathRef = useRef(new Map<string, string>());
+	const deletedPathsRef = useRef(new Set<string>());
+	const [pendingSession, setPendingSession] = useState<{ path: string; cwd: string } | null>(null);
 	/** 扩展命令换会话（session_navigate 事件）时打开目标会话；SSE 处理器定义在 openSession 之前 */
 	const openSessionRef = useRef<((path: string) => void) | null>(null);
 	const subscribedSessionRef = useRef<string | null>(null);
@@ -586,7 +661,7 @@ export function usePiWeb() {
 	const clearCompaction = useCallback(() => setState((current) => ({ ...current, compaction: null })), []);
 	useEffect(() => {
 		const notice = state.compaction;
-		if (!notice || notice.phase !== "end") return;
+		if (!notice || notice.phase !== "end" || !notice.errorMessage) return;
 		const timer = setTimeout(() => {
 			setState((current) => current.compaction?.ts === notice.ts ? { ...current, compaction: null } : current);
 		}, 8_000);
@@ -618,6 +693,7 @@ export function usePiWeb() {
 
 	const [workspaceAliases, setWorkspaceAliases] = useState<Record<string, string>>({});
 	const [archivedSessionPaths, setArchivedSessionPaths] = useState<string[]>([]);
+	const [archivedAt, setArchivedAt] = useState<Record<string, number>>({});
 	const [pinnedSessionPaths, setPinnedSessionPaths] = useState<string[]>([]);
 
 	// 手动添加的工作区与别名、归档、置顶
@@ -632,6 +708,7 @@ export function usePiWeb() {
 				if (Array.isArray(j.data.removedWorkspaces)) setRemovedWorkspaces(j.data.removedWorkspaces);
 				if (j.data.aliases && typeof j.data.aliases === "object") setWorkspaceAliases(j.data.aliases);
 				if (Array.isArray(j.data.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+				setArchivedAt(j.data.archivedAt ?? {});
 				if (Array.isArray(j.data.pinnedSessions)) setPinnedSessionPaths(j.data.pinnedSessions);
 			}
 		} catch (error) {
@@ -683,6 +760,7 @@ export function usePiWeb() {
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+			setArchivedAt(j.data?.archivedAt ?? {});
 			const key = pathKey(sessionPath);
 			setPinnedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
 			notifySessionsChanged();
@@ -704,6 +782,7 @@ export function usePiWeb() {
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			if (typeof j.data?.warning === "string") setWorkspaceRegistryWarning(j.data.warning);
 			if (Array.isArray(j.data?.archivedSessions)) setArchivedSessionPaths(j.data.archivedSessions);
+			setArchivedAt(j.data?.archivedAt ?? {});
 			notifySessionsChanged();
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to unarchive session";
@@ -755,8 +834,12 @@ export function usePiWeb() {
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			const key = pathKey(sessionPath);
+			sessionCwdByPathRef.current.delete(key);
+			deletedPathsRef.current.add(key);
+			setPendingSession((prev) => (prev && pathKey(prev.path) === key ? null : prev));
 			setSessions((prev) => prev.filter((s) => pathKey(s.path) !== key));
 			setArchivedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
+			setArchivedAt((prev) => Object.fromEntries(Object.entries(prev).filter(([p]) => pathKey(p) !== key)));
 			setPinnedSessionPaths((prev) => prev.filter((p) => pathKey(p) !== key));
 			notifySessionsChanged();
 		} catch (error) {
@@ -926,6 +1009,7 @@ export function usePiWeb() {
 					if (Array.isArray(registry.removedWorkspaces)) setRemovedWorkspaces(registry.removedWorkspaces);
 					if (registry.aliases && typeof registry.aliases === "object") setWorkspaceAliases(registry.aliases);
 					if (Array.isArray(registry.archivedSessions)) setArchivedSessionPaths(registry.archivedSessions);
+					setArchivedAt(registry.archivedAt ?? {});
 					if (Array.isArray(registry.pinnedSessions)) setPinnedSessionPaths(registry.pinnedSessions);
 				}
 				setSessions(
@@ -968,9 +1052,19 @@ export function usePiWeb() {
 	} | null>(null);
 	const modelCwdRef = useRef(modelCwd);
 	modelCwdRef.current = modelCwd;
+	const resolveModelCwd = useCallback(() => {
+		const path = currentPathRef.current;
+		if (!path) return modelCwdRef.current;
+		const key = pathKey(path);
+		if (deletedPathsRef.current.has(key)) return "";
+		return sessionsRef.current.find((s) => pathKey(s.path) === key)?.cwd
+			|| sessionCwdByPathRef.current.get(key)
+			|| modelCwdRef.current
+			|| "";
+	}, []);
 	const refreshModels = useCallback(async ({ reusePending = false }: { reusePending?: boolean } = {}) => {
 		if (activeSessionRef.current !== currentId) return { success: false, error: "会话已切换，请重新刷新模型目录。" };
-		const cwd = modelCwdRef.current;
+		const cwd = resolveModelCwd();
 		const key = JSON.stringify([currentId, cwd]);
 		const previous = pendingModelRequest.current;
 		// Initial selection and its SSE snapshot need the same catalog. Explicit
@@ -999,7 +1093,7 @@ export function usePiWeb() {
 		})();
 		pendingModelRequest.current = { key, controller, promise };
 		return promise;
-	}, [currentId]);
+	}, [currentId, resolveModelCwd]);
 	useEffect(() => {
 		setModels(null);
 		void refreshModels({ reusePending: true });
@@ -1022,9 +1116,16 @@ export function usePiWeb() {
 		}
 		const reconnectingCurrentSession = subscribedSessionRef.current === currentId;
 		subscribedSessionRef.current = currentId;
+		const presetOverride = reconnectingCurrentSession ? undefined : pendingToolPresetRef.current.get(currentId);
+		if (presetOverride) pendingToolPresetRef.current.delete(currentId);
+		const pendingOpt = reconnectingCurrentSession ? undefined : pendingOptimisticRef.current.get(currentId);
 		setState((current) => reconnectingCurrentSession
 			? { ...current, connected: false }
-			: { ...emptyState(savedToolPreset()), connected: false });
+			: {
+				...emptyState(presetOverride ?? savedToolPreset()),
+				...(pendingOpt ? { messages: [pendingOpt.message] } : {}),
+				connected: false,
+			});
 		let retryDelayMs = 2000;
 		let lastFrameAt = Date.now();
 		let disposed = false;
@@ -1087,12 +1188,21 @@ export function usePiWeb() {
 					const receivedMessages = Array.isArray(parsed.snapshot.messages) ? parsed.snapshot.messages.map((message: WebMessage) => previewMessage(message)) : [];
 					const visibleMessages = recentMessages(receivedMessages);
 					const snap = { ...parsed.snapshot, sessionPath: parsed.snapshot.sessionPath ?? currentPath, messages: visibleMessages, trajectory: recentTrajectory(Array.isArray(parsed.snapshot.trajectory) ? parsed.snapshot.trajectory : []), history: { total: parsed.snapshot.history?.total ?? receivedMessages.length, omitted: (parsed.snapshot.history?.omitted ?? 0) + receivedMessages.length - visibleMessages.length } } as WebSnapshot;
+					const pendingOpt = pendingOptimisticRef.current.get(currentId);
+					let nextMessages = snap.messages;
+					if (pendingOpt) {
+						if (snapshotContainsOptimisticPrompt(snap.messages, pendingOpt)) {
+							pendingOptimisticRef.current.delete(currentId);
+						} else {
+							nextMessages = [...snap.messages, pendingOpt.message];
+						}
+					}
 					const notice = reloadNotice(snap.externalReload);
 					setSnapshotEpoch((epoch) => epoch + 1);
 					setState((prev) => ({
 						snapshot: snap,
-						messages: snap.messages,
-						tools: toolsFromMessages(snap.messages, snap.isStreaming),
+						messages: nextMessages,
+						tools: toolsFromMessages(nextMessages, snap.isStreaming),
 						toolPreset: snap.toolPreset,
 						connected: true,
 						error: null,
@@ -1108,9 +1218,12 @@ export function usePiWeb() {
 						editorText: prev.editorText,
 						workingMessage: null,
 						// 重连的快照不带生长账本；连接期间已收到的步保留，useGrowth 会按 seq 与拉取结果去重
-						growth: { ...prev.growth, error: snap.growthError ?? null, consent: snap.growthConsent ?? null },
+						growth: { ...prev.growth, error: snap.growthError ?? null },
 					}));
 				} else {
+					if (parsed.type === "message" && parsed.message?.role === "user") {
+						pendingOptimisticRef.current.delete(currentId);
+					}
 					if (parsed.type === "resources" || parsed.type === "model") void refreshModels();
 					batcher.push(parsed as WebEvent);
 				}
@@ -1188,6 +1301,48 @@ export function usePiWeb() {
 		const reportError = () => options?.shouldReportError ? options.shouldReportError() : !(id === undefined && isPrompt);
 		if (isPrompt && promptRequestsRef.current.has(target)) return { success: false, error: "prompt acceptance pending" };
 		if (isPrompt) promptRequestsRef.current.add(target);
+		let optimisticId: string | null = null;
+		if (cmd.cmd === "prompt" && !cmd.behavior) {
+			const rawText = typeof cmd.text === "string" ? cmd.text : "";
+			const hasImages = Array.isArray(cmd.images) && cmd.images.length > 0;
+			if (rawText.trim() || hasImages) {
+				const optId = `${OPTIMISTIC_STREAM_PREFIX}${++optimisticSeqRef.current}`;
+				optimisticId = optId;
+				const optMsg = buildOptimisticUserMessage(rawText, cmd.images, optId);
+				const existingMsgs = activeSessionRef.current === target ? liveStateRef.current.messages : [];
+				let anchorId: string | null = null;
+				for (let i = existingMsgs.length - 1; i >= 0; i -= 1) {
+					const entry = existingMsgs[i];
+					if (!isOptimisticUserMessage(entry) && (entry.id || entry.streamId)) {
+						anchorId = entry.id ?? entry.streamId ?? null;
+						break;
+					}
+				}
+				pendingOptimisticRef.current.set(target, {
+					streamId: optId,
+					message: optMsg,
+					anchorId,
+					rawText,
+					signature: userMessageSignature(optMsg),
+					settled: false,
+				});
+				if (activeSessionRef.current === target) {
+					setState((s) => ({ ...s, messages: [...s.messages, optMsg] }));
+				}
+			}
+		}
+		const clearOptimistic = () => {
+			if (!optimisticId) return;
+			if (pendingOptimisticRef.current.get(target)?.streamId === optimisticId) {
+				pendingOptimisticRef.current.delete(target);
+			}
+			const removedId = optimisticId;
+			setState((s) =>
+				s.messages.some((m) => m.streamId === removedId)
+					? { ...s, messages: s.messages.filter((m) => m.streamId !== removedId) }
+					: s,
+			);
+		};
 		try {
 			const r = await fetch(`/api/agent/${target}`, {
 				method: "POST",
@@ -1195,9 +1350,18 @@ export function usePiWeb() {
 				body: JSON.stringify(cmd),
 			});
 			const result = await r.json();
-			if ((!r.ok || !result.success) && reportError()) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
+			if (!r.ok || !result.success) {
+				clearOptimistic();
+				if (reportError()) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
+			} else if (result.data?.command === true) {
+				clearOptimistic();
+			} else if (optimisticId) {
+				const pending = pendingOptimisticRef.current.get(target);
+				if (pending?.streamId === optimisticId) pending.settled = true;
+			}
 			return result;
 		} catch (error) {
+			clearOptimistic();
 			const message = error instanceof Error ? error.message : "request failed";
 			if (reportError()) setState((s) => ({ ...s, error: message }));
 			return { success: false, error: message };
@@ -1208,22 +1372,23 @@ export function usePiWeb() {
 
 	const newSession = useCallback(async (
 		cwd: string,
-		overrides: { provider?: string; modelId?: string; thinking?: string } = {},
+		overrides: { provider?: string; modelId?: string; thinking?: string; toolPreset?: ToolPreset } = {},
 	): Promise<string | null> => {
 		try {
+			const toolPreset = overrides.toolPreset ?? savedToolPreset();
 			const r = await fetch("/api/agent/new", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ cwd }),
+				body: JSON.stringify({ cwd, ...overrides, toolPreset }),
 			});
 			const j = await r.json();
 			if (j.success) {
 				const p = j.data.sessionPath as string;
 				const id = idOf(p);
-				// 工具预设取通用设置的持久化选择；模型/思考级别由 Hero 页显式下发
-				const setup: Record<string, unknown>[] = [{ cmd: "setToolPreset", preset: savedToolPreset() }];
-				if (overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId, fresh: true });
-				if (overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
+				// 新服务在创建时一次应用预设；旧服务没有确认字段时仍走逐条配置。
+				const setup: Record<string, unknown>[] = j.data.setupApplied === true ? [] : [{ cmd: "setToolPreset", preset: toolPreset }];
+				if (j.data.setupApplied !== true && overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId, fresh: true });
+				if (j.data.setupApplied !== true && overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
 				for (const command of setup) {
 					const configured = await sendCommand(command, id);
 					if (!configured.success) {
@@ -1234,6 +1399,13 @@ export function usePiWeb() {
 						return null;
 					}
 				}
+				pendingToolPresetRef.current.set(id, toolPreset);
+				const key = pathKey(p);
+				deletedPathsRef.current.delete(key);
+				sessionCwdByPathRef.current.set(key, cwd);
+				setPendingSession({ path: p, cwd });
+				modelCwdRef.current = cwd;
+				setModelCwd(cwd);
 				setCurrentPath(p);
 				setCurrentId(id);
 				try {
@@ -1252,7 +1424,13 @@ export function usePiWeb() {
 	}, [idOf, sendCommand]);
 
 	const openSession = useCallback(
-		(path: string) => {
+		(path: string, cwd?: string) => {
+			const key = pathKey(path);
+			deletedPathsRef.current.delete(key);
+			if (cwd) sessionCwdByPathRef.current.set(key, cwd);
+			const resolvedCwd = cwd || sessionsRef.current.find((s) => pathKey(s.path) === key)?.cwd || sessionCwdByPathRef.current.get(key) || "";
+			modelCwdRef.current = resolvedCwd;
+			setModelCwd(resolvedCwd);
 			setCurrentPath(path);
 			setCurrentId(idOf(path));
 			// 持久化当前会话：刷新页面时恢复到这里，而不是回到新会话草稿
@@ -1349,28 +1527,6 @@ export function usePiWeb() {
 		},
 		[currentId, resync, sendCommand],
 	);
-	/** 回答「要不要在工作区建 git 仓库给生长记录用」：决定按工作区记住；失败就重连拿回服务端的待答状态 */
-	const answerGrowthConsent = useCallback(
-		async (allow: boolean) => {
-			const target = currentId;
-			if (!target) return;
-			setState((s) => ({ ...s, growth: { ...s.growth, consent: null } }));
-			try {
-				const r = await fetch("/api/growth", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ action: "consent", session: target, allow }),
-				});
-				const result = await r.json();
-				if (!r.ok || !result.success) throw new Error(result.error || `request failed (${r.status})`);
-			} catch (error) {
-				if (activeSessionRef.current !== target) return;
-				setState((s) => ({ ...s, error: error instanceof Error ? error.message : String(error) }));
-				resync();
-			}
-		},
-		[currentId, resync],
-	);
 	const dismissExtensionNotice = useCallback((id: string) => setState((s) => ({ ...s, extensionNotices: s.extensionNotices.filter((n) => n.id !== id) })), []);
 	const clearError = useCallback(() => setState((s) => ({ ...s, error: null })), []);
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
@@ -1410,8 +1566,12 @@ export function usePiWeb() {
 	}, [sessions, archivedSessionPaths]);
 	const archivedSessions = useMemo(() => {
 		const set = new Set(archivedSessionPaths.map(pathKey));
-		return sessions.filter((s) => set.has(pathKey(s.path)));
-	}, [sessions, archivedSessionPaths]);
+		return sortArchivedSessions(
+			sessions.filter((s) => set.has(pathKey(s.path))),
+			archivedAt,
+			archivedSessionPaths,
+		);
+	}, [sessions, archivedSessionPaths, archivedAt]);
 
 	return {
 		sessions: sessionSearch ? sessions : visibleSessions,
@@ -1425,6 +1585,7 @@ export function usePiWeb() {
 		archivedSessions,
 		/** 原始归档路径列表（含被豁免的当前会话，供菜单显示真实归档态） */
 		archivedSessionPaths,
+		archivedAt,
 		pinnedSessionPaths,
 		currentId,
 		currentPath,
@@ -1453,6 +1614,7 @@ export function usePiWeb() {
 		removeWorkspace,
 		refreshModels,
 		setModelCwd,
+		pendingSessionCwd: pendingSession && currentPath && pathKey(pendingSession.path) === pathKey(currentPath) ? pendingSession.cwd : "",
 		sendCommand,
 		newSession,
 		openSession,
@@ -1463,7 +1625,6 @@ export function usePiWeb() {
 		clearCompaction,
 		setError,
 		answerExtensionDialog,
-		answerGrowthConsent,
 		dismissExtensionNotice,
 	};
 }

@@ -50,9 +50,9 @@ export function WorkspaceViewShell({
 							>
 								{icon}
 							</span>
-							<h1 style={{ fontSize: 20, fontWeight: 600, color: "var(--dsw-label-primary)" }}>{title}</h1>
+							<h1 style={{ fontSize: "var(--dsh-ui-font-xl)", fontWeight: 600, color: "var(--dsw-label-primary)" }}>{title}</h1>
 						</div>
-						<p className="mt-1.5" style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>
+						<p className="mt-1.5" style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-tertiary)" }}>
 							{description}
 						</p>
 					</div>
@@ -60,7 +60,7 @@ export function WorkspaceViewShell({
 					<div className="flex flex-wrap items-center gap-2.5">
 						{workspaceOptions && workspaceOptions.length > 0 && cwd !== undefined && onCwdChange && (
 							<div className="flex items-center gap-2">
-								<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.workspaceScope}</span>
+								<span style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>{t.workspaceScope}</span>
 								<SelectOption
 									value={cwd}
 									label={t.workspaceScope}
