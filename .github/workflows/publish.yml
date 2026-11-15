@@ -29,17 +29,21 @@ jobs:
       contents: write # push the version tag and create the release
       id-token: write # npm provenance attestation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
       - run: npm ci
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
 
       - name: Validate the release version from the merged PR
         id: version
@@ -56,6 +60,7 @@ jobs:
       # 预构建：发布物自带 .next 产物（排除 cache），用户安装后零编译直接运行——
       # 安装时构建在 macOS 上踩了一串坑（staging 目录/junction/执行位），成品发布根除。
       - name: Prebuild the production bundle
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           npm run build
@@ -63,11 +68,20 @@ jobs:
           rm -rf .next-releases
           test -f .next/BUILD_ID
           du -sh .next
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
 
       # 打包前用真实 tarball 校验 .next 完整（files 是白名单，漏一个 Next 清单
       # 就会发出「装得上、起不来」的包），避免再出现 required-server-files.json 缺失。
       - name: Verify the packed artifact runs
+        timeout-minutes: 20
         run: npm run verify:package
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
 
       - name: Confirm main still points at the tested source
         run: |
@@ -80,6 +94,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PIWEB_SKIP_INSTALL_BUILD: "1"
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-publish-agent
+          PI_OFFLINE: "1"
           NEXT_TELEMETRY_DISABLED: "1"
 
       - name: Push the release tag

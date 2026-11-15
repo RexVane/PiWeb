@@ -13,16 +13,22 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [22.22.2, 24]
+        # 22.19.0 is the README/engines minimum; 22.22.2 and 24 are the supported tracks.
+        node: [22.19.0, 22.22.2, 24]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Audit dependencies for high-severity vulnerabilities
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        run: npm audit --audit-level=high
+      - name: Install the pinned lint toolchain
+        run: npm ci --prefix scripts/testing/lint --ignore-scripts --no-audit --no-fund
       - name: Prepare SDK search tools
         run: node scripts/testing/prepare-sdk-tools.mjs
         env:
@@ -36,14 +42,47 @@ jobs:
           PIWEB_TEST_REPORT: ${{ runner.temp }}/piweb-vitest.json
           PIWEB_COVERAGE: "1"
           PIWEB_COVERAGE_REPORT_DIR: ${{ runner.temp }}/piweb-coverage
+      - name: Lint
+        run: npm run lint
+        env:
+          PIWEB_LINT_SKIP_INSTALL: "1"
       - name: Reject unexpected skipped tests
         if: always()
         run: node scripts/testing/check-skips.mjs
         env:
           PIWEB_TEST_REPORT: ${{ runner.temp }}/piweb-vitest.json
       - name: Verify a clean installed artifact on this platform
+        timeout-minutes: 20
         run: npm run verify:package
         env:
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-package-agent
           PI_OFFLINE: "1"
           NEXT_TELEMETRY_DISABLED: "1"
+
+  # Minimal macOS coverage: the full production build takes >15 minutes on hosted macOS
+  # runners, so this job only pins the platform-sensitive paths that historically broke
+  # (path handling, install/build decisions, update command runner). A full macOS build
+  # gate is tracked as deferred in the audit fix report.
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install the pinned lint toolchain
+        run: npm ci --prefix scripts/testing/lint --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Run the platform-sensitive test subset
+        run: node node_modules/vitest/vitest.mjs run tests/install-build.test.ts tests/lib/file-path.test.ts tests/update-service-process.test.ts --maxWorkers=1
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-macos-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: Lint
+        run: npm run lint
+        env:
+          PIWEB_LINT_SKIP_INSTALL: "1"

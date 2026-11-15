@@ -32,7 +32,11 @@ const windowsOnly = new Map([
 	["tests/lib/sandbox/readonly-mode.test.ts", ["still runs read-only commands", "refuses writes inside the workspace too", "refuses writes outside and outside temp usage", "reads explicitly allowed files", "cannot write a root that another workspace sandbox has made writable"]],
 	["tests/lib/sandbox/manager.test.ts", ["probes actual runtime support and reports a reason when unavailable", "reuses only an identical session/cwd/roots/shell configuration", "gives readonly its readable workspace while denying file writes", "does not remove a replacement instance's scratch while an older release finishes", "disposes a creation that was invalidated while it was pending", "awaits an already-started release after its holder has left the pool"]],
 	["tests/atomic-confined-file-operations.test.ts", ["pins Windows directories while creating and replacing files without a shell backend", "edits source in a pnpm-style hard-linked workspace without changing dependency ACLs", "prevents ancestor replacement during an in-flight Windows write", "rejects readonly and outside junction writes without starting a Windows command", "keeps the original file when permission is lowered before atomic replacement"]],
-	["tests/agent-resource-isolation.test.ts", ["runs workspace-tier bash through the OS sandbox: inside writes land, outside writes are refused"]],
+	["tests/agent-resource-isolation.test.ts", [
+		"runs workspace-tier bash through the OS sandbox: inside writes land, outside writes are refused",
+		"finds a remembered trust decision whatever case pi wrote the key in",
+	]],
+	["tests/powershell-encoding.test.ts", ["decodes multilingual output without replacement characters"]],
 	["tests/lib/permission-gate.test.ts", ["treats a differently cased drive/path as the same location on Windows"]],
 ]);
 export function unexpectedSkips(report, { platform = process.platform, nodeVersion = process.versions.node, cwd = process.cwd(), tunnelEnabled = process.env.PIWEB_TEST_TUNNEL === "1", ci = /^(1|true)$/i.test(process.env.CI ?? "") } = {}) {

@@ -1,0 +1,16 @@
+{
+	"name": "@rexvane/piweb-lint",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Pinned ESLint toolchain for PiWeb. Isolated from the root tree because the repository builds with TypeScript 7 (native), which typescript-eslint does not support yet; this directory pins TypeScript 6 only for the parser.",
+	"type": "module",
+	"devDependencies": {
+		"@eslint/js": "10.0.1",
+		"@next/eslint-plugin-next": "16.4.5",
+		"eslint": "10.15.0",
+		"eslint-plugin-react-hooks": "7.1.1",
+		"globals": "17.14.0",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.72.2"
+	}
+}

@@ -30,6 +30,17 @@ describe("CI skipped test guard", () => {
 			for (const title of titles) expect(unexpectedSkips(report(file, title), { platform: "linux" }).unexpected, `${file}: ${title}`).toEqual([]);
 		}
 	});
+	it("allows the Windows-only PowerShell encoding case on non-Windows runners", () => {
+		const sample = report("tests/powershell-encoding.test.ts", "decodes multilingual output without replacement characters");
+		expect(unexpectedSkips(sample, { platform: "linux" }).unexpected).toEqual([]);
+		expect(unexpectedSkips(sample, { platform: "win32" }).unexpected).toHaveLength(1);
+	});
+	it("allows the case-insensitive trust decision regression on non-Windows runners", () => {
+		const sample = report("tests/agent-resource-isolation.test.ts", "finds a remembered trust decision whatever case pi wrote the key in");
+		expect(unexpectedSkips(sample, { platform: "linux" }).unexpected).toEqual([]);
+		expect(unexpectedSkips(sample, { platform: "win32" }).unexpected).toHaveLength(1);
+		expect(unexpectedSkips(report("tests/agent-resource-isolation.test.ts", "unregistered new platform skip"), { platform: "linux" }).unexpected).toHaveLength(1);
+	});
 	it("requires the prepared SDK search parity case in CI", () => {
 		const sample = report("tests/mention-parity.test.ts", "各类查询逐条相等：空查询、文件名、限定目录、整条路径、smart case、正则字符");
 		expect(unexpectedSkips(sample, { ci: true }).unexpected).toHaveLength(1);
