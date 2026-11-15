@@ -20,10 +20,10 @@ interface WorkspaceFile {
 	aliases?: Record<string, string>;
 	archivedSessions?: string[];
 	pinnedSessions?: string[];
-	/** 归档时间（毫秒）：pathKey → 时间戳；保留期从这里起算 */
+	/** 归档时间（毫秒）：pathKey → 时间戳；用于侧栏显示已归档多久。 */
 	archivedAt?: Record<string, number>;
 	removedWorkspaces?: string[];
-	/** 项目生长能否在该目录 `git init`（目录还不是仓库根目录时问过用户）：pathKey → 决定 */
+	/** 生长记录工作区开关（沿用旧字段兼容已有选择）：未设置默认开启，false 保持停用。 */
 	growthInit?: Record<string, boolean>;
 	recovery?: WorkspaceRegistryRecovery;
 }
@@ -40,6 +40,8 @@ export interface WorkspaceRegistrySnapshot {
 	workspaces: string[];
 	aliases: Record<string, string>;
 	archivedSessions: string[];
+	/** 有效归档起点（毫秒）：归档时间与文件 mtime 取较晚者，更新后重新显示时长。 */
+	archivedAt: Record<string, number>;
 	pinnedSessions: string[];
 	removedWorkspaces: string[];
 	error?: string;
@@ -161,11 +163,18 @@ async function normalizeWorkspaces(data: WorkspaceFile, fresh = false): Promise<
 		}
 		return result;
 	};
+	const archivedAt: Record<string, number> = {};
+	for (const [original, value] of Object.entries(data.archivedAt ?? {})) {
+		if (value <= 0) continue;
+		const key = pathKey(original);
+		archivedAt[key] = Math.max(archivedAt[key] ?? 0, value);
+	}
 	return {
 		...data,
 		workspaces: unique(data.workspaces),
 		removedWorkspaces: unique(data.removedWorkspaces ?? []),
 		aliases: normalizeKeys(data.aliases ?? {}),
+		archivedAt,
 		...(data.growthInit ? { growthInit: normalizeKeys(data.growthInit) } : {}),
 	};
 }
@@ -175,6 +184,8 @@ async function write(data: WorkspaceFile, target: string): Promise<void> {
 	const temporary = `${target}.${randomUUID()}.tmp`;
 	try {
 		await fs.writeFile(temporary, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+		// D3：replaceFileAtomically 在 rename 前 fsync 临时文件、成功后 fsync 目录项，
+		// 断电时注册表要么是完整旧版、要么是完整新版（目录 fsync 不可用时安全降级）。
 		await replaceFileAtomically(temporary, target);
 		lastGood = { path: target, data: structuredClone(data) };
 	} finally {
@@ -289,9 +300,9 @@ export async function setAlias(dir: string, name: string): Promise<Record<string
 	});
 }
 
-/** 项目生长能否在该目录建仓库：true 同意 / false 拒绝 / null 还没问过 */
-export async function getGrowthInitConsent(dir: string): Promise<boolean | null> {
-	return (await read()).growthInit?.[pathKey(await canonicalWorkspacePath(dir))] ?? null;
+/** 生长记录默认开启；读取默认值不写入注册表，已有停用选择继续生效。 */
+export async function getGrowthInitConsent(dir: string): Promise<boolean> {
+	return (await read()).growthInit?.[pathKey(await canonicalWorkspacePath(dir))] ?? true;
 }
 
 export async function setGrowthInitConsent(dir: string, allow: boolean): Promise<void> {
@@ -310,6 +321,35 @@ export async function getPinnedSessions(): Promise<string[]> {
 	return (await read()).pinnedSessions ?? [];
 }
 
+/** 只读查询：旧记录缺失归档时间时保持未知，不在侧栏轮询中迁移或写盘。 */
+async function effectiveArchiveTimes(data: WorkspaceFile): Promise<Record<string, number>> {
+	const sessions = data.archivedSessions ?? [];
+	const times: Record<string, number> = {};
+	// 按归档列表预先固定键顺序，文件查询只更新值，保证轮询 ETag 稳定。
+	for (const sessionPath of sessions) {
+		const key = pathKey(sessionPath);
+		const archivedAt = data.archivedAt?.[key];
+		if (archivedAt !== undefined) times[key] = archivedAt;
+	}
+	let next = 0;
+	// 大量归档也只保留有限个文件查询，避免一次轮询排入数千个 I/O 请求。
+	await Promise.all(Array.from({ length: Math.min(8, sessions.length) }, async () => {
+		while (next < sessions.length) {
+			const sessionPath = sessions[next++];
+			const key = pathKey(sessionPath);
+			const archivedAt = data.archivedAt?.[key];
+			if (archivedAt === undefined) continue;
+			let since = archivedAt;
+			try {
+				const stat = await fs.stat(sessionPath);
+				if (stat.isFile()) since = Math.max(since, stat.mtimeMs);
+			} catch { /* 文件暂不可读时仍保留已知的归档时间，不影响整个侧栏。 */ }
+			times[key] = since;
+		}
+	}));
+	return times;
+}
+
 export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot> {
 	let data: WorkspaceFile;
 	let error: string | undefined;
@@ -320,12 +360,13 @@ export async function getWorkspaceRegistry(): Promise<WorkspaceRegistrySnapshot>
 		error = corrupt ? "工作区记录无法读取，原文件已保留；下一次修改会先备份再恢复记录。"
 			: "工作区记录无法读取，原文件已保留；请检查文件权限或稍后重试。";
 		errorCode = corrupt ? "REGISTRY_CORRUPT" : apiError(failure).errorCode;
-		data = lastGood?.path === file() ? lastGood.data : emptyRegistry();
+		data = await normalizeWorkspaces(lastGood?.path === file() ? lastGood.data : emptyRegistry());
 	}
 	return {
 		workspaces: data.workspaces,
 		aliases: data.aliases ?? {},
 		archivedSessions: data.archivedSessions ?? [],
+		archivedAt: await effectiveArchiveTimes(data),
 		pinnedSessions: data.pinnedSessions ?? [],
 		removedWorkspaces: data.removedWorkspaces ?? [],
 		...(error ? { error } : {}),
@@ -408,45 +449,6 @@ export async function forgetSession(sessionPath: string, agentDir?: string): Pro
 		}
 		return next;
 	}, agentDir);
-}
-
-/** Serialize expiry removal with unarchive/rearchive so a stale sweep cannot delete a restored session. */
-export async function removeArchivedSessionIfUnchanged(sessionPath: string, archivedAt: number, remove: () => Promise<boolean>): Promise<boolean> {
-	const key = pathKey(path.resolve(sessionPath));
-	return mutate(async (data, target) => {
-		if (!data.archivedSessions?.some((entry) => pathKey(entry) === key) || data.archivedAt?.[key] !== archivedAt) return false;
-		if (!(await remove())) return false;
-		data.archivedSessions = data.archivedSessions.filter((entry) => pathKey(entry) !== key);
-		if (data.archivedAt) delete data.archivedAt[key];
-		if (data.pinnedSessions) data.pinnedSessions = data.pinnedSessions.filter((entry) => pathKey(entry) !== key);
-		await write(data, target);
-		return true;
-	});
-}
-
-/**
- * 归档列表连同各自的归档时间。没有归档时间的条目（这个字段出现之前就归档的、或注册表被外部改写过的）
- * 一律按 now 补记并写回——保留期从这一刻起算，而不是拿旧文件的 mtime 一上来就删。
- * persist=false 时只在返回值里补，不写盘（供 dry run 使用）。
- */
-export async function getArchivedEntries({ now = Date.now(), persist = true }: { now?: number; persist?: boolean } = {}): Promise<{ path: string; archivedAt: number }[]> {
-	const current = await read();
-	const known = current.archivedAt ?? {};
-	const list = current.archivedSessions ?? [];
-	if (!persist || list.every((p) => typeof known[pathKey(p)] === "number")) {
-		return list.map((p) => ({ path: p, archivedAt: known[pathKey(p)] ?? now }));
-	}
-	return mutate(async (data, target) => {
-		const sessions = data.archivedSessions ?? [];
-		const times: Record<string, number> = {};
-		for (const p of sessions) {
-			const key = pathKey(p);
-			times[key] = data.archivedAt?.[key] ?? now;
-		}
-		data.archivedAt = times;
-		await write(data, target);
-		return sessions.map((p) => ({ path: p, archivedAt: times[pathKey(p)] }));
-	});
 }
 
 export async function addWorkspace(dir: string): Promise<{ workspaces: string[]; removedWorkspaces: string[] }> {

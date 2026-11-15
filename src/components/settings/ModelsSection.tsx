@@ -7,7 +7,7 @@ import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { IconChevronDown14, IconPlusOutline16, IconWarningOutline16 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { ModelCatalog, ProviderSetupModal, type BuiltinProviderSetup, type CustomProviderSetup } from "@/components/ProviderSetupModal";
-import { useI18n } from "@/i18n";
+import { localizeApiError, useI18n } from "@/i18n";
 import { fmtTokens } from "@/lib/format";
 import { customModelGaps, fillModelFields, formatCapacity, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
@@ -117,8 +117,8 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 			<div className="flex items-start gap-2.5">
 				<IconWarningOutline16 size={16} style={{ flex: "none", marginTop: 1, color: "var(--dsw-warn)" }} />
 				<div className="min-w-0 flex-1">
-					<div style={{ fontSize: 13.5, fontWeight: 600 }}>{t.modelAuditTitle.replace("{n}", String(gaps.length))}</div>
-					<div className="mt-1" style={{ fontSize: 12, color: "var(--dsw-label-caption)", lineHeight: 1.65 }}>
+					<div style={{ fontSize: "var(--dsh-ui-font-135)", fontWeight: 600 }}>{t.modelAuditTitle.replace("{n}", String(gaps.length))}</div>
+					<div className="mt-1" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)", lineHeight: 1.65 }}>
 						{t.modelAuditDesc
 							.replace("{ctx}", formatCapacity(PI_MODEL_FALLBACKS.contextWindow))
 							.replace("{out}", formatCapacity(PI_MODEL_FALLBACKS.maxTokens))}
@@ -126,8 +126,8 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 				</div>
 			</div>
 
-			<div style={{ fontSize: 12.5 }} role="table" aria-label={t.modelAuditTitle.replace("{n}", String(gaps.length))}>
-				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+			<div style={{ fontSize: "var(--dsh-ui-font-125)" }} role="table" aria-label={t.modelAuditTitle.replace("{n}", String(gaps.length))}>
+				<div role="row" className="hidden gap-x-2 px-1 pb-1.5 sm:grid sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>
 					<span role="columnheader">{t.modelAuditColModel}</span>
 					<span role="columnheader">{t.modelAuditColContext}</span>
 					<span role="columnheader">{t.modelAuditColOutput}</span>
@@ -144,7 +144,7 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 							<div role="row" className="grid grid-cols-2 items-center gap-x-2 gap-y-1.5 px-1 py-2 sm:grid-cols-[minmax(0,1fr)_80px_80px_108px_104px]">
 								<div role="cell" className="col-span-2 min-w-0 sm:col-span-1" title={`${gap.provider} / ${gap.id}`}>
 									<div className="truncate" style={{ fontWeight: 500 }}>{gap.name ?? gap.id}</div>
-									<div className="truncate" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
+									<div className="truncate" style={{ fontSize: "var(--dsh-ui-font-2xs)", fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>
 										{providerLabel(gap.provider)} / {gap.id}
 									</div>
 								</div>
@@ -170,13 +170,13 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 											</label>
 										</div>
 										{gap.missing.includes("input") && rowOf(gap).vision === "" && (
-											<button type="button" className="text-left underline" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}
+											<button type="button" className="text-left underline" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}
 												disabled={busy} aria-label={`${gap.id} ${t.modelAuditTextOnly}`} onClick={() => edit(gap, { vision: "text" })}>
 												{t.modelAuditTextOnly}
 											</button>
 										)}
 										{gap.missing.includes("input") && rowOf(gap).vision === "text" && (
-											<span style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.visionOff}</span>
+											<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>{t.visionOff}</span>
 										)}
 									</div>
 								</div>
@@ -192,7 +192,7 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 								</div>
 							</div>
 							<div role="row">
-								<div role="cell" aria-colspan={5} className="px-1 pb-2" style={{ fontSize: 11.5, color: "var(--dsw-warn)" }}>
+								<div role="cell" aria-colspan={5} className="px-1 pb-2" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-warn)" }}>
 									{t.modelAuditRemaining.replace("{fields}", gap.missing.map((field) => fieldLabels[field]).join(lang === "zh" ? "、" : ", "))}
 								</div>
 							</div>
@@ -224,10 +224,8 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 	);
 }
 
-export interface ModelConfigurationChange { requiresSessionReopen: boolean }
-
-export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigurationChange) => void | Promise<void> }) {
-	const { t } = useI18n();
+export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<void> }) {
+	const { t, lang } = useI18n();
 	const { confirm, confirmDialog } = useConfirmDialog();
 	const [providers, setProviders] = useState<ProviderView[]>([]);
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
@@ -308,7 +306,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 		try {
 			const r = await fetch("/api/models?custom=1");
 			const j = await r.json();
-			if (!r.ok || !j.success) throw new Error(j.error || "failed to load model configuration");
+			if (!r.ok || !j.success) throw Object.assign(new Error(j.error || "failed to load model configuration"), { errorCode: j.errorCode });
 			const parsed = JSON.parse(j.data.customProviders?.content ?? "{}");
 			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed.providers !== undefined && (!parsed.providers || typeof parsed.providers !== "object" || Array.isArray(parsed.providers)))) {
 				throw new Error("invalid model configuration");
@@ -321,11 +319,13 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 			setCustomRevision(typeof j.data.customProviders?.revision === "string" ? j.data.customProviders.revision : null);
 		} catch (error) {
 			setCustomRevision(null);
-			setToast({ ok: false, msg: error instanceof Error ? error.message : "failed to load model configuration" });
+			const code = (error as { errorCode?: string }).errorCode;
+			const message = error instanceof Error ? error.message : "failed to load model configuration";
+			setToast({ ok: false, msg: localizeApiError(lang, code, message) });
 		}
-	}, []);
-	const changed = useCallback(async (result: { data?: { requiresSessionReopen?: boolean } }) => {
-		await onChanged?.({ requiresSessionReopen: result.data?.requiresSessionReopen === true });
+	}, [lang]);
+	const changed = useCallback(async () => {
+		await onChanged?.();
 	}, [onChanged]);
 
 	useEffect(() => {
@@ -348,7 +348,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 				if (j.data.done) {
 					finished = true;
 					setOauthDone({ ok: !j.data.error, msg: j.data.error ?? `${oauthProvider} ✓` });
-					if (!j.data.error) await Promise.all([load(), changed(j)]);
+					if (!j.data.error) await Promise.all([load(), changed()]);
 				}
 			} catch {
 				// 短暂断线后继续轮询，不能留下未处理的 Promise 拒绝。
@@ -469,7 +469,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 					<div key={`${w.limitWindowSeconds ?? w.name ?? "window"}-${w.variant ?? ""}-${index}`} className="flex items-center gap-2">
 						<span style={{ width: 84, flex: "none" }}>{quotaWindowHeading(w)}</span>
 						<span style={{ width: 92, flex: "none" }}>{t.usageQuotaRemaining} {w.remainingPercent}%</span>
-						<span>{t.usageReset} {fmtQuotaReset(w.resetAt)}</span>
+						<span>{t.usageReset} {fmtQuotaReset(w.resetAt, lang)}</span>
 						<div className="h-1 overflow-hidden rounded-full" style={{ width: 120, flex: "none", background: "var(--dsw-border-l2)" }}>
 							<div className="h-full rounded-full" style={{ width: `${w.remainingPercent}%`, background: quotaToneColor(w.remainingPercent) }} />
 						</div>
@@ -492,7 +492,8 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 				body: JSON.stringify(body),
 			});
 			const result = await r.json();
-			return r.ok ? result : { ...result, success: false, status: r.status, error: result.error || `request failed (${r.status})` };
+			if (r.ok) return result;
+			return { ...result, success: false, status: r.status, error: localizeApiError(lang, result?.errorCode, result.error || `request failed (${r.status})`) };
 		} catch (error) {
 			return { success: false, error: error instanceof Error ? error.message : t.toastError };
 		}
@@ -505,7 +506,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
 		notify(j.success, j.error);
-		if (j.success) await Promise.all([load(), ["setKey", "removeKey"].includes(String(body.action)) ? changed(j) : Promise.resolve()]);
+		if (j.success) await Promise.all([load(), ["setKey", "removeKey"].includes(String(body.action)) ? changed() : Promise.resolve()]);
 		return j;
 	};
 
@@ -566,7 +567,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 			// 写入已确认，列表刷新失败也不能重新显示旧缺口、把已保存的容量变回空格。
 			setCustom(next);
 			setCustomRevision(null);
-			await Promise.all([load(), changed(result)]);
+			await Promise.all([load(), changed()]);
 		} else if (result.status === 409 || result.errorCode === "CONFIG_CHANGED") {
 			await load();
 			notify(false, result.error);
@@ -716,7 +717,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 				const removed = await request({ action: "removeKey", providerId: id });
 				await load();
 				if (!removed.success) { notify(false, t.modelCredentialRemovalFailed.replace("{error}", removed.error || t.toastError)); return; }
-				await changed(removed);
+				await changed();
 			}
 			setEditing(null);
 		} finally { setEditBusy(false); }
@@ -745,11 +746,11 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 	return (
 		<div className="flex flex-col gap-5">
 			<div>
-				<div style={{ fontSize: 14, fontWeight: 400 }}>{t.modelsTitle}</div>
-				<div className="mt-0.5" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>
+				<div style={{ fontSize: "var(--dsh-ui-font-md)", fontWeight: 400 }}>{t.modelsTitle}</div>
+				<div className="mt-0.5" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-caption)" }}>
 					{t.modelsDesc}
 				</div>
-				<div className="mt-1" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>
+				<div className="mt-1" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)" }}>
 					{t.customModelIdentityNotice}
 				</div>
 			</div>
@@ -758,7 +759,7 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 				<div
 					className="rounded-xl px-3 py-2"
 					style={{
-						fontSize: 12.5,
+						fontSize: "var(--dsh-ui-font-125)",
 						background: toast.ok ? "rgba(34,197,94,.1)" : "rgba(236,19,19,.1)",
 						color: toast.ok ? "var(--dsw-success)" : "var(--dsw-danger)",
 					}}
@@ -781,15 +782,15 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 									<ProviderBrand id={p.id} name={providerName(p.id)} size={34} />
 									{/* 名称列给最小宽度:窄屏时宁可换行,也不要把名字压成几个像素 */}
 									<div className="min-w-[132px] flex-1">
-										<div className="truncate" style={{ fontSize: 14, fontWeight: 500 }}>{providerName(p.id)}</div>
-										<div className="truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>
+										<div className="truncate" style={{ fontSize: "var(--dsh-ui-font-md)", fontWeight: 500 }}>{providerName(p.id)}</div>
+										<div className="truncate" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>
 											{p.id}{p.baseUrl ? ` · ${p.baseUrl}` : ""}
 										</div>
 									</div>
 									{isCustom && (
 										<span
 											className="flex-none rounded-md px-1.5 py-0.5"
-											style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
+											style={{ fontSize: "var(--dsh-ui-font-2xs)", border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
 										>
 											{t.customBadge}
 										</span>
@@ -801,18 +802,18 @@ export function ModelsSection({ onChanged }: { onChanged?: (change: ModelConfigu
 									/>
 									<span
 										className="flex-none rounded-md px-1.5 py-0.5"
-										style={{ fontSize: 10.5, border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
+										style={{ fontSize: "var(--dsh-ui-font-2xs)", border: "0.5px solid var(--dsw-border-l3)", color: "var(--dsw-label-tertiary)" }}
 									>
 										{t.credentialSource.replace("{source}", credentialSource(p))}
 									</span>
 									{/* 操作组整体不压缩:按钮加 whitespace-nowrap,中文标签永不竖排 */}
-									<button className="btn-outline flex-none whitespace-nowrap" style={{ height: 28, padding: "0 12px", fontSize: 12 }} onClick={() => startEdit(p.id)}>
+									<button className="btn-outline flex-none whitespace-nowrap" style={{ height: 28, padding: "0 12px", fontSize: "var(--dsh-ui-font-xs)" }} onClick={() => startEdit(p.id)}>
 										{t.edit}
 									</button>
 									{p.storedAuthType === "oauth" && (
 										<button
 											className="flex-none whitespace-nowrap"
-											style={{ height: 28, padding: "0 12px", fontSize: 12, color: "var(--dsw-danger)" }}
+											style={{ height: 28, padding: "0 12px", fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-danger)" }}
 											onClick={async () => {
 												if (!(await confirm({ title: t.removeOAuth, message: t.confirmRemoveOAuth.replace("{name}", providerName(p.id)), confirmLabel: t.removeOAuth }))) return;
 												await call({ action: "removeKey", providerId: p.id });
@@ -1169,10 +1170,15 @@ function titleCase(value: string): string {
 	return value.length === 0 ? value : value[0].toUpperCase() + value.slice(1);
 }
 
-function fmtQuotaReset(value: string | undefined): string {
+/** 界面语言对应的日期区域设置；显式传入，避免跟随操作系统语言。 */
+const DATE_LOCALES: Record<"zh" | "en", string> = { zh: "zh-CN", en: "en-US" };
+
+function fmtQuotaReset(value: string | undefined, lang?: "zh" | "en"): string {
 	if (!value) return "—";
 	const date = new Date(value);
-	return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+	if (Number.isNaN(date.getTime())) return "—";
+	// 无界面语言时保留旧的跟随系统行为（调用方总能传入当前语言）。
+	return lang ? date.toLocaleString(DATE_LOCALES[lang]) : date.toLocaleString();
 }
 
 /** 剩余越少越警示：<30% 红、≤60% 黄、其余常规。 */

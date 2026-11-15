@@ -254,6 +254,21 @@ export function invalidateModelList(): void {
 	invalidateJsonFilesNamed("auth.json");
 }
 
+/**
+ * 模型或凭据配置落盘后：作废目录缓存、就地刷新共享/会话私有 ModelRuntime，并让活动会话重加载。
+ */
+async function syncModelsAfterChange(): Promise<void> {
+	invalidateModelList();
+	try {
+		await refreshModelRuntime();
+		// Refresh each active session's private runtime and current model object;
+		// busy sessions defer this until the current round finishes.
+		await reloadSessionsForCwd();
+	} finally {
+		invalidateModelList();
+	}
+}
+
 /** Read the unmodified SDK catalog through its public modelsPath:null option: provider ID → model ID → built-in context window. */
 function getBuiltInCatalog(): Promise<Map<string, Map<string, number>>> {
 	if (!builtInCatalogPromise) {
@@ -574,7 +589,7 @@ export async function removeApiKey(providerId: string): Promise<void> {
 	cancelLogin(providerId);
 	const rt = await getModelRuntime();
 	await rt.logout(providerId);
-	invalidateModelList();
+	await syncModelsAfterChange();
 }
 
 interface ConfiguredCredential {
@@ -596,10 +611,13 @@ interface ConfiguredCredential {
 async function configuredCredentialFor(providerId: string): Promise<ConfiguredCredential | undefined> {
 	try {
 		const rt = await getModelRuntime();
-		const resolved = await rt.getAuth(providerId, { signal: AbortSignal.timeout(20_000) });
+		// L2：两条认证查询共用一个 20s 超时控制器——getAuth 与 checkAuth 都可能碰网络
+		// （OAuth 刷新/探测），应用层必须保证整段有上限，不能只给第一条传 signal。
+		const deadline = AbortSignal.timeout(20_000);
+		const resolved = await rt.getAuth(providerId, { signal: deadline });
 		const key = (resolved?.auth.apiKey ?? bearerToken(resolved?.auth.headers))?.trim();
 		if (!resolved || !key) return undefined;
-		const oauth = (await rt.checkAuth(providerId).catch(() => undefined))?.type === "oauth";
+		const oauth = (await rt.checkAuth(providerId, { signal: deadline }).catch(() => undefined))?.type === "oauth";
 		// SDK 发 Codex 请求时也是从令牌里取账号 ID
 		const accountId = oauth && providerId === "openai-codex" ? openaiAuthClaims(key)?.chatgpt_account_id : undefined;
 		return {
@@ -1481,7 +1499,8 @@ async function runLogin(pl: PendingLogin, rt: ModelRuntime, type: AuthType, apiK
 		assertActiveLogin(pl);
 		await rt.login(pl.providerId, type, interaction);
 		assertActiveLogin(pl);
-		if (finishLogin(pl)) invalidateModelList();
+		await syncModelsAfterChange();
+		finishLogin(pl);
 	} catch (error) {
 		finishLogin(pl, error);
 		throw error;
@@ -1771,11 +1790,7 @@ export async function writeCustomProviders(content: string, revision?: string): 
 			applyLocalPlaceholderKeys(parsed);
 		});
 	}));
-	await refreshModelRuntime();
-	invalidateModelList();
-	// Refresh each active session's private runtime and current model object;
-	// busy sessions defer this until the current round finishes.
-	await reloadSessionsForCwd();
+	await syncModelsAfterChange();
 }
 
 export interface ContextWindowInfo {

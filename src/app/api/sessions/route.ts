@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { after, NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
+import { sortArchivedSessions } from "@/lib/archived-sessions-sort";
 import { listSessions } from "@/lib/session-reader";
 import { activeStatus, warmSessionResources } from "@/lib/agent-manager";
 import { canonicalWorkspacePath, getWorkspaceRegistry } from "@/lib/workspace-store";
@@ -36,9 +37,22 @@ export async function GET(req: Request) {
 		const keyOfSession = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
 		const archived = new Set(workspaceRegistry.archivedSessions.map(keyOfSession));
 		const scope = params.get("archived");
-		const visible = scope === "only" ? sessions.filter((session) => archived.has(keyOfSession(session.path)))
+		const archiveFilter = scope === "only" || scope === "exclude";
+		const visible = scope === "only"
+			? sortArchivedSessions(
+				sessions.filter((session) => archived.has(keyOfSession(session.path))),
+				workspaceRegistry.archivedAt,
+				workspaceRegistry.archivedSessions,
+			)
 			: scope === "exclude" ? sessions.filter((session) => !archived.has(keyOfSession(session.path))) : sessions;
-		const page = limit === null ? visible : visible.slice(offset, offset + limit);
+		// 分页参数透传给 session-reader（不传 limit 时它返回全量，默认行为不变）。
+		// 普通视图可以直接在 lib 层分页；归档视图必须先按归档状态过滤再分页，所以仍在这里切片。
+		// 上面的全量 listSessions 结果还要用于工作区发现与 total，下面的调用命中它 1.2s 的列表缓存，不会重复扫盘。
+		const page = limit === null
+			? visible
+			: archiveFilter
+				? visible.slice(offset, offset + limit)
+				: (await listSessions(q, { limit, offset })).map((session) => ({ ...session, cwd: cwds.get(session.cwd)! }));
 		const nextOffset = limit !== null && offset + limit < visible.length ? offset + limit : null;
 		const body = JSON.stringify({ success: true, data: { sessions: page, running: activeStatus(), workspaceRegistry, ...(limit !== null ? { total: visible.length, nextOffset } : {}) } });
 		const etag = `"${createHash("sha1").update(body).digest("base64url")}"`;

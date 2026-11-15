@@ -21,6 +21,9 @@ import { apiError } from "@/lib/api-error";
 
 export const dynamic = "force-dynamic";
 
+/** 工作区别名上限：过长的名字会被原样持久化进 web-workspaces.json，撑大注册表与前端渲染 */
+const MAX_WORKSPACE_NAME_LENGTH = 1000;
+
 function json(body: unknown, init: ResponseInit = {}) {
 	const headers = new Headers(init.headers);
 	headers.set("Cache-Control", "private, no-store");
@@ -29,6 +32,14 @@ function json(body: unknown, init: ResponseInit = {}) {
 
 async function mutationResponse(data: Record<string, unknown>) {
 	return json({ success: true, data: { ...data, ...await getWorkspaceRecoveryNotice() } });
+}
+
+async function archiveMutationResponse() {
+	const { archivedSessions, archivedAt, error, errorCode, warning, recovery } = await getWorkspaceRegistry();
+	return json({ success: true, data: { archivedSessions, archivedAt,
+		...(error ? { error } : {}), ...(errorCode ? { errorCode } : {}),
+		...(warning ? { warning } : {}), ...(recovery ? { recovery } : {}),
+	} });
 }
 
 /**
@@ -73,6 +84,9 @@ export async function POST(req: Request) {
 			|| (body.cwds !== undefined && (!Array.isArray(body.cwds) || body.cwds.some((cwd) => typeof cwd !== "string")))) {
 			return json({ success: false, error: "invalid workspace action", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 		}
+		if (typeof body.name === "string" && body.name.length > MAX_WORKSPACE_NAME_LENGTH) {
+			return json({ success: false, error: "workspace name is too long", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+		}
 		if (body.action === "pick") {
 			if (!isLoopbackRequest(req)) {
 				// 远程设备：不弹主机上的对话框，让前端改用应用内目录浏览器。
@@ -108,14 +122,14 @@ export async function POST(req: Request) {
 			// 归档即收工：会话随即从工作区消失，不能让它继续在后台跑（看不见却仍消耗 token）。
 			// 只影响这一个会话，其它运行中的会话不受影响。
 			await disposeSessionPath(sessionPath);
-			const archivedSessions = await archiveSession(sessionPath);
-			return mutationResponse({ archivedSessions });
+			await archiveSession(sessionPath);
+			return await archiveMutationResponse();
 		}
 		if (body.action === "forgetSession") {
 			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
-			const archivedSessions = await forgetSession(sessionPath);
-			return mutationResponse({ archivedSessions });
+			await forgetSession(sessionPath);
+			return await archiveMutationResponse();
 		}
 		if (body.action === "pinSession") {
 			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });

@@ -11,6 +11,7 @@ import { resolveGitBin } from "./growth-service";
 import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
 import { StringDecoder } from "node:string_decoder";
 import { recoverableRemove } from "./recoverable-remove";
+import { childProcessEnv } from "./child-process-env";
 
 export interface FileEntry {
 	name: string;
@@ -507,49 +508,122 @@ function scheduleUploadSweep(): void {
 	void sweepUploads(now).catch(() => undefined);
 }
 
-/**
- * 清理 web-uploads：消息里引用的是上传文件的绝对路径，所以只要还有会话 JSONL 提到文件名就保留
- * （会话被删、或归档过期删除后，它的附件才变成孤儿）；没发出去的草稿留 30 天的余量。
- * 会话目录读不全就整次放弃，宁可不删也不误删。返回删掉的文件名。
- */
-export async function sweepUploads(now = Date.now(), retentionDays = UPLOAD_RETENTION_DAYS, limits: { scanByteLimit?: number; sessionLimit?: number; timeoutMs?: number } = {}): Promise<string[]> {
-	if (!Number.isFinite(now) || !Number.isFinite(retentionDays) || retentionDays <= 0 || process.env.PI_WEB_UPLOAD_RETENTION === "0") return [];
-	const scanByteLimit = limits.scanByteLimit ?? 256 * 1024 * 1024;
-	const sessionLimit = limits.sessionLimit ?? 10_000;
-	const timeoutMs = limits.timeoutMs ?? 5_000;
-	const deadline = performance.now() + timeoutMs;
-	if (!Number.isSafeInteger(scanByteLimit) || scanByteLimit <= 0 || !Number.isSafeInteger(sessionLimit) || sessionLimit <= 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return [];
-	const agentDir = getAgentDir();
-	const dir = path.join(agentDir, "web-uploads");
-	const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
-	const candidates = new Map<string, string[]>();
-	const uploadStamps = new Map<string, { ino: number; size: number; mtimeMs: number }>();
-	// Bound both the inventory and comparison work; incomplete evidence never permits a removal.
-	try {
-		let entries = 0;
-		for await (const entry of await fs.opendir(dir)) {
-			if (++entries > 10_000 || performance.now() > deadline) return [];
-			if (!entry.isFile()) continue;
-			const stat = await fs.stat(path.join(dir, entry.name));
-			if (stat.mtimeMs > cutoff) continue;
-			candidates.set(entry.name, [entry.name, JSON.stringify(entry.name).slice(1, -1)]);
-			uploadStamps.set(entry.name, stat);
-			if (candidates.size > 200) return [];
-		}
-	} catch { return []; }
-	if (!candidates.size) return [];
+/** 清理预算：扫描字节数、会话文件数、总时长。任何一项用尽都视为“证据不足”，一个文件都不删。 */
+export interface UploadSweepLimits {
+	scanByteLimit?: number;
+	sessionLimit?: number;
+	timeoutMs?: number;
+}
 
-	const sessionsRoot = path.join(agentDir, "sessions");
+const DEFAULT_SCAN_BYTE_LIMIT = 256 * 1024 * 1024;
+const DEFAULT_SESSION_LIMIT = 10_000;
+const DEFAULT_SWEEP_TIMEOUT_MS = 5_000;
+/** 候选上限：每个候选都要拿文件名去比每段文本，候选无限会让扫描退化成 O(文件数 × 文本量) */
+const MAX_UPLOAD_CANDIDATES = 200;
+/** 会话目录遍历上限（条目数、深度、目录数） */
+const MAX_SESSION_ENTRIES = 20_000;
+const MAX_SESSION_DEPTH = 32;
+const MAX_SESSION_DIRS = 10_000;
+
+interface UploadStamp {
+	ino: number;
+	size: number;
+	mtimeMs: number;
+}
+
+type UploadFileStats = Awaited<ReturnType<typeof fs.stat>>;
+
+function sameUploadStamp(a: { ino: number; size: number; mtimeMs: number }, b: { ino: number; size: number; mtimeMs: number }): boolean {
+	return a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+}
+
+function normalizeSweepLimits(limits: UploadSweepLimits): { scanByteLimit: number; sessionLimit: number; timeoutMs: number } | null {
+	const scanByteLimit = limits.scanByteLimit ?? DEFAULT_SCAN_BYTE_LIMIT;
+	const sessionLimit = limits.sessionLimit ?? DEFAULT_SESSION_LIMIT;
+	const timeoutMs = limits.timeoutMs ?? DEFAULT_SWEEP_TIMEOUT_MS;
+	if (!Number.isSafeInteger(scanByteLimit) || scanByteLimit <= 0 || !Number.isSafeInteger(sessionLimit) || sessionLimit <= 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
+	return { scanByteLimit, sessionLimit, timeoutMs };
+}
+
+/** 引用检索的两种写法：原始文件名，以及 JSON 字符串里的转义写法（Windows 路径在 JSONL 里是双反斜杠） */
+function uploadNeedles(name: string): string[] {
+	return [name, JSON.stringify(name).slice(1, -1)];
+}
+
+function maxNeedleLength(candidates: Map<string, string[]>): number {
+	let max = 0;
+	for (const needles of candidates.values()) for (const needle of needles) max = Math.max(max, needle.length);
+	return max;
+}
+
+/**
+ * 扫描一个 JSONL 文件，把命中的候选文件名收进 found 并从 candidates 删除。
+ * 返回 ok:false 表示这次读取不能作为“没被引用”的证据（打不开/超预算/读取期间文件被改）。
+ */
+async function scanSessionFileForUploads(
+	file: string,
+	candidates: Map<string, string[]>,
+	overlap: number,
+	state: { bytesRemaining: number },
+	deadline: number,
+	found: Set<string>,
+): Promise<{ ok: false } | { ok: true; stamp: UploadStamp }> {
+	let handle: Awaited<ReturnType<typeof fs.open>>;
+	let metadata: UploadFileStats;
+	try {
+		handle = await fs.open(file, "r");
+		try { metadata = await handle.stat(); } catch (error) { await handle.close(); throw error; }
+	} catch {
+		return { ok: false };
+	}
+	try {
+		if (!metadata.isFile() || metadata.size > state.bytesRemaining) return { ok: false };
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(64 * 1024);
+		let tail = "";
+		for (;;) {
+			if (performance.now() > deadline) return { ok: false };
+			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+			if (!bytesRead) break;
+			state.bytesRemaining -= bytesRead;
+			if (state.bytesRemaining < 0) return { ok: false };
+			const text = tail + decoder.write(buffer.subarray(0, bytesRead));
+			for (const [name, needles] of candidates) if (needles.some((needle) => text.includes(needle))) { found.add(name); candidates.delete(name); }
+			if (!candidates.size) return { ok: true, stamp: metadata };
+			tail = overlap > 0 ? text.slice(-overlap) : "";
+		}
+		const final = tail + decoder.end();
+		for (const [name, needles] of candidates) if (needles.some((needle) => final.includes(needle))) { found.add(name); candidates.delete(name); }
+		// 读取期间被追加/替换的文件不能用来证明“后面没人引用”
+		if (!sameUploadStamp(metadata, await handle.stat())) return { ok: false };
+		return { ok: true, stamp: metadata };
+	} catch {
+		return { ok: false };
+	} finally {
+		await handle.close().catch(() => undefined);
+	}
+}
+
+/**
+ * 会话引用扫描：把 sessions 目录下仍被任意 JSONL 引用的候选从 candidates 里删掉。
+ * 会话目录读不全、超预算或扫描期间有变化一律返回 false —— 证据不足时一个都不能删。
+ */
+async function dropReferencedUploads(
+	sessionsRoot: string,
+	candidates: Map<string, string[]>,
+	limits: { scanByteLimit: number; sessionLimit: number; timeoutMs: number },
+	deadline: number,
+): Promise<boolean> {
+	if (!candidates.size) return true;
 	const files: string[] = [];
-	const stamps = new Map<string, { ino: number; size: number; mtimeMs: number }>();
-	let bytesRemaining = scanByteLimit;
-	const unchanged = (a: { ino: number; size: number; mtimeMs: number }, b: { ino: number; size: number; mtimeMs: number }) => a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+	const stamps = new Map<string, UploadStamp>();
+	const state = { bytesRemaining: limits.scanByteLimit };
 	try {
 		const enumerate = async (directory: string, depth: number): Promise<void> => {
-			if (depth > 32 || stamps.size > 10_000 || performance.now() > deadline) throw new Error("Upload reference inventory exceeded its limit");
+			if (depth > MAX_SESSION_DEPTH || stamps.size > MAX_SESSION_DIRS || performance.now() > deadline) throw new Error("Upload reference inventory exceeded its limit");
 			stamps.set(directory, await fs.stat(directory));
 			for await (const entry of await fs.opendir(directory)) {
-				if (performance.now() > deadline || stamps.size + files.length > 20_000) throw new Error("Upload reference inventory exceeded its limit");
+				if (performance.now() > deadline || stamps.size + files.length > MAX_SESSION_ENTRIES) throw new Error("Upload reference inventory exceeded its limit");
 				if (entry.isSymbolicLink()) throw new Error("Upload reference inventory contains an unresolved link");
 				const file = path.join(directory, entry.name);
 				if (entry.isDirectory()) {
@@ -558,61 +632,136 @@ export async function sweepUploads(now = Date.now(), retentionDays = UPLOAD_RETE
 				}
 				else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
 					files.push(file);
-					if (files.length > sessionLimit) throw new Error("Too many session files to establish orphaned uploads");
+					if (files.length > limits.sessionLimit) throw new Error("Too many session files to establish orphaned uploads");
 				}
 			}
 		};
 		let rootMissing = false;
 		try { await fs.stat(sessionsRoot); }
-		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; rootMissing = true; }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false; rootMissing = true; }
 		if (!rootMissing) await enumerate(sessionsRoot, 0);
 
-		const overlap = Math.max(...[...candidates.values()].flat().map((needle) => needle.length)) - 1;
+		const overlap = Math.max(0, maxNeedleLength(candidates) - 1);
 		for (const file of files) {
-			const handle = await fs.open(file, "r");
-			try {
-				const metadata = await handle.stat();
-				if (!metadata.isFile() || metadata.size > bytesRemaining) return [];
-				stamps.set(file, metadata);
-				const decoder = new StringDecoder("utf8");
-				const buffer = Buffer.allocUnsafe(64 * 1024);
-				let tail = "";
-				for (;;) {
-					if (performance.now() > deadline) return [];
-					const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-					if (!bytesRead) break;
-					bytesRemaining -= bytesRead;
-					if (bytesRemaining < 0) return [];
-					const text = tail + decoder.write(buffer.subarray(0, bytesRead));
-					for (const [name, needles] of candidates) if (needles.some((needle) => text.includes(needle))) candidates.delete(name);
-					if (!candidates.size) return [];
-					tail = overlap > 0 ? text.slice(-overlap) : "";
-				}
-				const final = tail + decoder.end();
-				for (const [name, needles] of candidates) if (needles.some((needle) => final.includes(needle))) candidates.delete(name);
-				if (!unchanged(metadata, await handle.stat())) return [];
-			} finally { await handle.close(); }
+			const scanned = await scanSessionFileForUploads(file, candidates, overlap, state, deadline, new Set());
+			if (!scanned.ok) return false;
+			stamps.set(file, scanned.stamp);
+			if (!candidates.size) return true;
 		}
 		// Concurrent appends, new sessions, and directory replacements invalidate absence evidence.
 		for (const [file, stamp] of stamps) {
-			if (performance.now() > deadline || !unchanged(stamp, await fs.stat(file))) return [];
+			if (performance.now() > deadline || !sameUploadStamp(stamp, await fs.stat(file))) return false;
 		}
 		if (rootMissing && await fs.stat(sessionsRoot).then(() => true, (error: NodeJS.ErrnoException) => {
 			if (error.code !== "ENOENT") throw error;
 			return false;
-		})) return [];
-	} catch { return []; }
+		})) return false;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/** 按“不真删”约定清理候选：先备份并记 INDEX（recoverableRemove 负责），确认删除前端文件没被改过。 */
+async function removeUploadCandidates(dir: string, candidates: Map<string, string[]>, uploadStamps: Map<string, UploadStamp>): Promise<string[]> {
 	const removed: string[] = [];
 	for (const file of candidates.keys()) {
 		try {
 			const target = path.join(dir, file);
-			const stamp = uploadStamps.get(file)!;
-			if (!unchanged(stamp, await fs.stat(target))) continue;
-			await recoverableRemove(target, { reason: "清理无会话引用的过期上传附件，保留恢复副本" });
+			const stamp = uploadStamps.get(file);
+			if (!stamp || !sameUploadStamp(stamp, await fs.stat(target))) continue;
+			await recoverableRemove(target, { reason: "清理无会话引用的上传附件，保留恢复副本" });
 			removed.push(file);
 		} catch { /* Keep the upload when backup or removal cannot be completed. */ }
 	}
 	return removed;
+}
+
+/**
+ * 清理 web-uploads：消息里引用的是上传文件的绝对路径，所以只要还有会话 JSONL 提到文件名就保留
+ * （会话被手动删除后，它的附件才变成孤儿）；没发出去的草稿留 30 天的余量。
+ * 会话目录读不全就整次放弃，宁可不删也不误删。返回删掉的文件名。
+ */
+export async function sweepUploads(now = Date.now(), retentionDays = UPLOAD_RETENTION_DAYS, limits: UploadSweepLimits = {}): Promise<string[]> {
+	if (!Number.isFinite(now) || !Number.isFinite(retentionDays) || retentionDays <= 0 || process.env.PI_WEB_UPLOAD_RETENTION === "0") return [];
+	const normalized = normalizeSweepLimits(limits);
+	if (!normalized) return [];
+	const deadline = performance.now() + normalized.timeoutMs;
+	const agentDir = getAgentDir();
+	const dir = path.join(agentDir, "web-uploads");
+	const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+	const candidates = new Map<string, string[]>();
+	const uploadStamps = new Map<string, UploadStamp>();
+	// Bound both the inventory and comparison work; incomplete evidence never permits a removal.
+	try {
+		let entries = 0;
+		for await (const entry of await fs.opendir(dir)) {
+			if (++entries > 10_000 || performance.now() > deadline) return [];
+			if (!entry.isFile()) continue;
+			const stat = await fs.stat(path.join(dir, entry.name));
+			if (stat.mtimeMs > cutoff) continue;
+			candidates.set(entry.name, uploadNeedles(entry.name));
+			uploadStamps.set(entry.name, stat);
+			if (candidates.size > MAX_UPLOAD_CANDIDATES) return [];
+		}
+	} catch { return []; }
+	if (!candidates.size) return [];
+	const sessionsRoot = path.join(agentDir, "sessions");
+	if (!(await dropReferencedUploads(sessionsRoot, candidates, normalized, deadline))) return [];
+	return removeUploadCandidates(dir, candidates, uploadStamps);
+}
+
+/**
+ * 删除会话前调用：列出这个会话文件引用到的上传附件（web-uploads 下现存文件）。
+ * 证据不足（目录读不全、超预算、文件读失败）返回空数组——宁可不清理，也不能误删别的会话还在用的附件。
+ */
+export async function listUploadsReferencedBySession(sessionPath: string, limits: UploadSweepLimits = {}): Promise<string[]> {
+	const normalized = normalizeSweepLimits(limits);
+	if (!normalized || typeof sessionPath !== "string" || !sessionPath) return [];
+	const deadline = performance.now() + normalized.timeoutMs;
+	const dir = path.join(getAgentDir(), "web-uploads");
+	const candidates = new Map<string, string[]>();
+	try {
+		let entries = 0;
+		for await (const entry of await fs.opendir(dir)) {
+			if (++entries > 10_000 || performance.now() > deadline) return [];
+			if (!entry.isFile()) continue;
+			candidates.set(entry.name, uploadNeedles(entry.name));
+			if (candidates.size > MAX_UPLOAD_CANDIDATES) return [];
+		}
+	} catch { return []; }
+	if (!candidates.size) return [];
+	const found = new Set<string>();
+	const state = { bytesRemaining: normalized.scanByteLimit };
+	const scanned = await scanSessionFileForUploads(sessionPath, candidates, Math.max(0, maxNeedleLength(candidates) - 1), state, deadline, found);
+	return scanned.ok ? [...found] : [];
+}
+
+/**
+ * 删除会话后调用：这些附件如果已经没有任何会话引用，就按仓库“不真删”约定清理
+ * （recoverableRemove 先写恢复副本 + INDEX，再把原件移走/放进回收站）。
+ * 返回实际清理的文件名；证据不足时返回空数组且不删任何文件。
+ * 可用 PI_WEB_DELETE_ATTACHMENT_CLEANUP=0 单独关掉这项定向清理（与 sweepUploads 的留存开关互不影响）。
+ */
+export async function removeUnreferencedUploads(names: readonly string[], limits: UploadSweepLimits = {}): Promise<string[]> {
+	if (process.env.PI_WEB_DELETE_ATTACHMENT_CLEANUP === "0") return [];
+	const normalized = normalizeSweepLimits(limits);
+	if (!normalized || !Array.isArray(names) || !names.length) return [];
+	const agentDir = getAgentDir();
+	const dir = path.join(agentDir, "web-uploads");
+	const candidates = new Map<string, string[]>();
+	const uploadStamps = new Map<string, UploadStamp>();
+	for (const name of names) {
+		if (typeof name !== "string" || !name || name !== path.basename(name)) continue;
+		const stat = await fs.stat(path.join(dir, name)).catch(() => null);
+		if (!stat?.isFile()) continue;
+		candidates.set(name, uploadNeedles(name));
+		uploadStamps.set(name, stat);
+	}
+	if (!candidates.size) return [];
+	const deadline = performance.now() + normalized.timeoutMs;
+	if (!(await dropReferencedUploads(path.join(agentDir, "sessions"), candidates, normalized, deadline))) return [];
+	return removeUploadCandidates(dir, candidates, uploadStamps);
 }
 
 export function parseUploadLength(value: string | null): number {
@@ -683,8 +832,8 @@ export async function openInEditor(cwdValue: unknown, relOrAbs: unknown, line?: 
 	await new Promise<void>((resolve, reject) => {
 		// Windows 下 code 是 code.cmd，必须经 cmd.exe 启动；Node 会给带空格的参数自动加引号
 		const child = process.platform === "win32"
-			? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/c", editor, ...args], { stdio: "ignore", windowsHide: true })
-			: spawn(editor, args, { stdio: "ignore", detached: true });
+			? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/c", editor, ...args], { stdio: "ignore", windowsHide: true, env: childProcessEnv() })
+			: spawn(editor, args, { stdio: "ignore", detached: true, env: childProcessEnv() });
 		const timer = setTimeout(() => {
 			// 编辑器进程长期不退出（首次启动 GUI）也视为成功
 			resolve();

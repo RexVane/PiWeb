@@ -2,8 +2,8 @@
  * growth-service：项目生长 = 每轮一个 git commit（工作区自带 git，无影子仓库、无旁路账本）。
  *
  * commit 直接落在工作区自己的 git 仓库里：工作区已是仓库根目录就直接用；
- * 非 git 目录、或只是别的仓库的子目录，要用户同意后（allowInit）才在工作区根 `git init`
- * （子目录则嵌套 init），保证记录范围恰好等于工作区；没同意就抛 needs-consent。
+ * 非 git 目录、或只是别的仓库的子目录，默认记录开启时在工作区根 `git init`
+ * （子目录则嵌套 init），保证记录范围恰好等于工作区；只读操作不会初始化仓库。
  * 每轮结束 = 往 PiWeb 独立暂存区 <gitdir>/piweb/index（GIT_INDEX_FILE 传入）add 全部改动，
  * write-tree + commit-tree，挂到专用引用 refs/piweb/rounds/<key>：不碰 HEAD、不碰用户暂存区、不占分支。
  * 排除规则 <gitdir>/piweb/exclude 只叠加、绝不改写用户的 info/exclude。
@@ -18,12 +18,12 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
-import { measureGitObjectBytes } from "./git-object-size";
 import path from "node:path";
 import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
 import { utf8Prefix } from "./text-sanitize";
 import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
 import { enableGrowthActivity, resolveGrowthAttribution, completeGrowthRun, type GrowthAttribution } from "./growth-activity";
+import { gitEnv } from "./child-process-env";
 import lockfile from "proper-lockfile";
 export { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-activity";
 import type { GrowthChange, GrowthRound, GrowthRoundKind, GrowthRoundStatus } from "./types";
@@ -37,8 +37,6 @@ const MAX_CONTENT_BYTES = 256 * 1024;
 /** 防止意外把依赖/缓存目录完整哈希入库，导致工作区长时间卡住。 */
 const MAX_CANDIDATES = 50_000;
 export const MAX_SNAPSHOT_BYTES = 200 * 1024 * 1024;
-export const MAX_GROWTH_HISTORY_BYTES = 1024 * 1024 * 1024;
-export const MAX_GROWTH_HISTORY_ROUNDS = 2000;
 /** 每轮最多列多少条变更；更多的由前端按 tree 对再取 */
 const MAX_CHANGES_PER_ROUND = 2000;
 /** 每轮 commit 链的专用引用前缀：每个工作区一条 refs/piweb/rounds/<key>，多 worktree 互不覆盖 */
@@ -90,6 +88,8 @@ interface WorkspaceState {
 	excludeRules?: string;
 	/** 同一工作区的快照串行执行（共用同一个 PiWeb 暂存区） */
 	lock: Promise<unknown>;
+	/** 本进程的成功提交计数；首次提交也检查 Git 的自动整理阈值，不扫描累计历史。 */
+	commitsSinceGc?: number;
 }
 
 interface Registry {
@@ -138,6 +138,14 @@ interface RunResult {
 type Env = Record<string, string | undefined>;
 
 /**
+ * git 子进程环境（A6/G3）：`gitEnv` 返回纯 string 映射，spawn 的类型要求 NodeJS.ProcessEnv
+ * （Next 把 NODE_ENV 声明成必填）。清洗规则见 child-process-env.ts。
+ */
+function gitChildEnv(extra: Env = {}): NodeJS.ProcessEnv {
+	return gitEnv({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...extra }) as NodeJS.ProcessEnv;
+}
+
+/**
  * 解析 git 可执行文件：macOS GUI/launchd 启动的进程 PATH 常不含 Homebrew，
  * spawn("git") 会 ENOENT → 生长快照整体误判不可用。PATH 找不到时退回常见安装位置。
  * 只在非 Windows 生效；结果缓存到 registry（成功后不再变）。git-service 也用它。
@@ -147,15 +155,17 @@ export async function resolveGitBin(): Promise<string> {
 	let bin = "git";
 	if (process.platform !== "win32") {
 		const candidates = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git", "/usr/local/git/bin/git"];
+		// A6/G3：探测进程也不继承凭据类变量；PATH 保留，找不到 git 时仍能按 PATH 判定。
+		const probeEnv = gitChildEnv();
 		const inPath = await new Promise<boolean>((resolve) => {
-			const child = spawn("git", ["--version"], { stdio: "ignore" });
+			const child = spawn("git", ["--version"], { stdio: "ignore", env: probeEnv });
 			child.on("error", () => resolve(false));
 			child.on("close", (code) => resolve(code === 0));
 		});
 		if (!inPath) {
 			for (const candidate of candidates) {
 				const ok = await new Promise<boolean>((resolve) => {
-					const child = spawn(candidate, ["--version"], { stdio: "ignore" });
+					const child = spawn(candidate, ["--version"], { stdio: "ignore", env: probeEnv });
 					child.on("error", () => resolve(false));
 					child.on("close", (code) => resolve(code === 0));
 				});
@@ -177,7 +187,8 @@ function runGit(args: string[], opts: { cwd?: string; input?: Buffer | string; m
 			new Promise<RunResult>((resolve, reject) => {
 				const child = spawn(gitBin, args, {
 					cwd: opts.cwd,
-					env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...opts.env },
+					// A6/G3：环境清洗后再补 git 需要的值；GIT_INDEX_FILE 等由 opts.env 显式传，不从父进程继承。
+					env: gitChildEnv(opts.env),
 					windowsHide: true,
 					stdio: ["pipe", "pipe", "pipe"],
 				});
@@ -388,7 +399,7 @@ async function createWorkspace(cwd: string, allowInit: boolean): Promise<Workspa
 	return ws;
 }
 
-/** allowInit：工作区还不是仓库根目录时是否允许 `git init`（只有提交路径、且用户同意过才传 true；读取一律不建仓库） */
+/** allowInit：工作区还不是仓库根目录时是否允许 `git init`（记录开启的提交路径传 true；读取一律不建仓库） */
 async function getWorkspace(cwdValue: string, allowInit = false): Promise<WorkspaceState> {
 	const cwd = await fs.realpath(path.resolve(cwdValue)).catch(() => path.resolve(cwdValue));
 	const key = workspaceKey(cwd);
@@ -428,24 +439,6 @@ async function withSnapshotLock<T>(ws: WorkspaceState, operation: () => Promise<
 		retries: { retries: 120, minTimeout: 100, maxTimeout: 1000 },
 	});
 	try { return await operation(); } finally { await release(); }
-}
-
-async function assertHistoryCapacity(ws: WorkspaceState, tree: string): Promise<number> {
-	const head = await readHead(ws);
-	let count = 0;
-	if (head) {
-		count = Number((await shadow(ws, ["rev-list", "--count", head.commit])).stdout.toString("utf8").trim());
-		if (!Number.isSafeInteger(count) || count < 0) throw new GrowthError("无法验证项目历史数量，现有历史已保留");
-		if (count >= MAX_GROWTH_HISTORY_ROUNDS) throw new GrowthError(`增长历史已达到 ${MAX_GROWTH_HISTORY_ROUNDS} 轮上限，现有历史已保留，请关闭记录或导出后管理历史。`, "too-large");
-	}
-	try {
-		await measureGitObjectBytes(await resolveGitBin(), ["--git-dir", ws.gitDir, "--work-tree", ws.cwd, ...BASE_CONFIG], [...(head ? [head.commit] : []), tree], {
-			cwd: ws.cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_INDEX_FILE: ws.indexFile }, limit: MAX_GROWTH_HISTORY_BYTES,
-		});
-	} catch (error) {
-		throw new GrowthError(error instanceof Error ? error.message : String(error), (error as { code?: string }).code === "too-large" ? "too-large" : "failed");
-	}
-	return count;
 }
 
 const HASH_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -772,9 +765,9 @@ export interface RoundMeta extends GrowthAttribution {
 }
 
 export interface CommitOptions {
-	/** Explicit workspace consent is required even when a Git repository already exists. */
+	/** 记录开关由调用方读取；明确开启后才能写快照。 */
 	allowRecording?: boolean;
-	/** 工作区还不是仓库根目录时允许 `git init`（用户同意过） */
+	/** 记录开启时允许在工作区根目录执行 `git init`。 */
 	allowInit?: boolean;
 	/** 拍完快照、提交之前再问一次：返回 true 就放弃这次提交（返回 null） */
 	abortIf?: () => boolean;
@@ -788,7 +781,7 @@ async function gcInBackground(ws: WorkspaceState): Promise<void> {
 	const gitBin = await resolveGitBin();
 	const child = spawn(gitBin, ["--git-dir", ws.gitDir, "gc", "--auto", "--quiet"], {
 		cwd: ws.cwd,
-		env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+		env: gitChildEnv(),
 		stdio: "ignore",
 		windowsHide: true,
 	});
@@ -815,7 +808,6 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 		await refreshIndex(ws);
 		const tree = (await shadow(ws, ["write-tree"])).stdout.toString("utf8").trim();
 		assertHash(tree, "tree");
-		let historyCount = await assertHistoryCapacity(ws, tree);
 		// 快照拍到一半时 pi 已经开始改文件：分不清谁改的，宁可不记（改动并入 pi 这一轮）
 		if (options.abortIf?.()) return null;
 		const env = {
@@ -837,7 +829,6 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 				}
 				ws.lastCommit = head?.commit;
 				ws.lastTree = head?.tree;
-				historyCount = await assertHistoryCapacity(ws, tree);
 				continue;
 			}
 			const parentTree = parent ? ws.lastTree ?? ws.emptyTree : ws.emptyTree;
@@ -865,8 +856,12 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 			// commit-tree 是底层命令，不会像 git commit 那样顺手 gc --auto：快照对象一直是松散文件、只增不减。
 			// 隔一段补一次，没到阈值 git 什么都不做。不带 PiWeb 暂存区：用户自己 index 里的对象照常算可达；
 			// PiWeb 暂存区此刻刚整体提交，里面的对象都已挂在专用引用上
-			// The persisted chain length survives restarts; no per-process counter.
-			if ((historyCount + 1) % GC_EVERY_COMMITS === 0) void gcInBackground(ws);
+			// 重启后的第一次记录也检查阈值，短期会话不会一直跳过整理；不再枚举整条历史。
+			ws.commitsSinceGc = (ws.commitsSinceGc ?? GC_EVERY_COMMITS - 1) + 1;
+			if (ws.commitsSinceGc >= GC_EVERY_COMMITS) {
+				ws.commitsSinceGc = 0;
+				void gcInBackground(ws).catch(() => console.warn("[piweb] Could not start automatic project history maintenance"));
+			}
 			return round;
 		}
 	})).finally(() => completeGrowthRun(ws.cwd, meta.runId));

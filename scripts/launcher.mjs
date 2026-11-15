@@ -6,14 +6,16 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { acquireFileLock } from "./file-lock.mjs";
-import { terminateProcessTree } from "./process-runner.mjs";
+import { terminateProcessTreeGracefully } from "./process-runner.mjs";
 import { assertInstallation, selectProductionBuild } from "./build-output.mjs";
 import { ensureInstallBuild, isProductionOnlyInstall } from "./install-build.mjs";
 import { readSystemProxy } from "./system-proxy.mjs";
 import { launchTokenIpcPath, launchIpcProof, validLaunchIpcProof } from "./web-auth-protocol.mjs";
 import { lockChildEnvironment } from "./lock-child-env.mjs";
 import { readHttpProxySetting } from "./update-environment.mjs";
+import { applyProxyEnv, nodeSupportsEnvProxy } from "./proxy-env.mjs";
 export { readHttpProxySetting } from "./update-environment.mjs";
+export { applyProxyEnv, nodeSupportsEnvProxy } from "./proxy-env.mjs";
 export { isMainModule } from "./entrypoint.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -157,10 +159,6 @@ export async function readCurrentLaunchToken(port, env = process.env, { timeoutM
  * @returns {string | null}
  */
 /** Node 自带的环境变量代理（NODE_USE_ENV_PROXY）：24.0 起支持，22.x 从 22.21 起 */
-export function nodeSupportsEnvProxy(version = process.versions.node) {
-	const [major, minor] = String(version).split(".").map(Number);
-	return major >= 24 || (major === 22 && minor >= 21);
-}
 
 /** 日志里的代理地址：去掉账号密码 */
 function redactProxy(proxy) {
@@ -177,45 +175,6 @@ function redactProxy(proxy) {
 	}
 }
 
-/**
- * 给服务进程配代理环境。pi 的 CLI 入口会做这两件事，而 PiWeb 走的是 SDK，得自己做，
- * 否则在 pi 终端里配好的代理到了网页端对模型请求完全不生效：
- *  1. 手动 `httpProxy` 优先，其次代理环境变量，再跟随 Windows 系统代理；
- *  2. 让 Node 的 fetch / http 认这些变量（NODE_USE_ENV_PROXY）——默认它们是被忽略的。
- * 本机地址默认不走代理（本地 llama.cpp / Ollama），用户自己设了 NO_PROXY 就照他的。
- * @param {Environment} childEnv 就地修改
- * @param {{proxySetting?: string | null, systemProxy?: import('./system-proxy.mjs').SystemProxy | null, nodeVersion?: string}} [options]
- * @returns {{proxy: string | null, source: 'env' | 'settings' | 'system' | null, supported: boolean}}
- */
-export function applyProxyEnv(childEnv, { proxySetting = null, systemProxy = null, nodeVersion = process.versions.node } = {}) {
-	// Windows 上环境变量不分大小写，但展开成普通对象后分：两种写法都要查，免得补出一个只差大小写的重复键
-	const current = (name) => String(childEnv[name] ?? childEnv[name.toLowerCase()] ?? "").trim();
-	const fromEnv = current("HTTPS_PROXY") || current("HTTP_PROXY");
-	const set = (name, value) => {
-		if (childEnv[name.toLowerCase()] !== undefined) childEnv[name.toLowerCase()] = value;
-		if (childEnv[name] !== undefined || childEnv[name.toLowerCase()] === undefined) childEnv[name] = value;
-	};
-	if (proxySetting) {
-		set("HTTP_PROXY", proxySetting);
-		set("HTTPS_PROXY", proxySetting);
-	} else if (!fromEnv && systemProxy) {
-		if (systemProxy.http) set("HTTP_PROXY", systemProxy.http);
-		if (systemProxy.https) set("HTTPS_PROXY", systemProxy.https);
-	}
-	const proxy = proxySetting || fromEnv || systemProxy?.https || systemProxy?.http || null;
-	if (!proxy) return { proxy: null, source: null, supported: true };
-	const source = proxySetting ? "settings" : fromEnv ? "env" : "system";
-	const supported = nodeSupportsEnvProxy(nodeVersion);
-	if (supported) {
-		// 用户自己表过态（哪怕是 0）就尊重
-		if (!String(childEnv.NODE_USE_ENV_PROXY ?? "").trim()) childEnv.NODE_USE_ENV_PROXY = "1";
-		if (childEnv.NO_PROXY === undefined && childEnv.no_proxy === undefined) {
-			childEnv.NO_PROXY = source === "system" && systemProxy?.noProxy === "*" ? "*"
-				: ["localhost,127.0.0.1,::1", source === "system" ? systemProxy?.noProxy : null].filter(Boolean).join(",");
-		}
-	}
-	return { proxy, source, supported };
-}
 
 function mergeHostnames(current, hostname) {
 	const list = (current ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean);
@@ -394,22 +353,26 @@ export async function warmFirstPaint(base, { fetchImpl = fetch, token, timeoutMs
 	const headers = {};
 	if (cookie) headers.cookie = cookie;
 	const headerInit = Object.keys(headers).length > 0 ? headers : undefined;
-	const get = async (route) => {
-		if (signal?.aborted) return false;
+	const get = async (route, extraHeaders) => {
+		if (signal?.aborted) return { ok: false, status: 0 };
 		try {
-			const response = await fetchImpl(new URL(route, base), { credentials: "omit", redirect: "error", headers: headerInit, signal: timeoutFor() });
+			const mergedHeaders = extraHeaders ? { ...(headerInit ?? {}), ...extraHeaders } : headerInit;
+			const response = await fetchImpl(new URL(route, base), { credentials: "omit", redirect: "error", headers: mergedHeaders, signal: timeoutFor() });
 			// 只需让服务端把这条路由跑完；响应体要么丢弃，要么读干净以释放连接。
 			await response.arrayBuffer();
-			return response.ok;
+			return { ok: response.ok, status: response.status };
 		} catch {
 			/* 预热失败不影响启动 */
-			return false;
+			return { ok: false, status: 0 };
 		}
 	};
-	const sessionsReady = await get("/api/sessions");
+	let sessions = await get("/api/sessions");
 	if (signal?.aborted) return false;
-	for (const route of ["/api/version", ...FIRST_PAINT_ROUTES.filter((route) => route !== "/api/sessions")]) void get(route);
-	return sessionsReady;
+	// F1：本机直连自动签发 Cookie 的分支已删除（proxy 侧死代码），预热不再伪造
+	// `x-piweb-warmup` 去换会话 Cookie；没有令牌就只预热公开路由。
+	const backgroundHeaders = cookie ? { cookie } : undefined;
+	for (const route of ["/api/version", ...FIRST_PAINT_ROUTES.filter((route) => route !== "/api/sessions")]) void get(route, backgroundHeaders);
+	return sessions.ok;
 }
 
 /** @param {number} port @param {string} hostname @returns {Promise<'busy' | 'free' | NodeJS.ErrnoException>} */
@@ -435,6 +398,14 @@ async function openBrowser(url) {
 	const child = spawn(command, args, { env, detached: true, stdio: "ignore", windowsHide: true });
 	child.once("error", () => {});
 	child.unref();
+}
+
+async function resolveExistingInstanceUrl(port, url, env, dependencies, warn, authOn = authenticationEnabled(env.PI_WEB_AUTH)) {
+	const token = await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env);
+	if (!token && authOn) {
+		warn?.("[piweb] 未能从本地令牌管道读取当前启动令牌，已直接打开页面地址。");
+	}
+	return token ? tokenLoginUrl(url, token) : url;
 }
 
 /**
@@ -491,10 +462,7 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 		if (await checkHealth(url)) {
 			log(`[piweb] 检测到已有 PiWeb：${url}（未发送凭据）`);
 			if (!options.noOpen) {
-				// 那个实例开了认证的话，裸地址只会落到登录页，而这里手里没有它的令牌；
-				// 它启动时留下过令牌就直接开登录链接（浏览器里已有 Cookie 时令牌也无害）
-				const token = await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env);
-				await browse(token ? tokenLoginUrl(url, token) : url);
+				await browse(await resolveExistingInstanceUrl(port, url, env, dependencies, dependencies.warn ?? console.warn, authenticationEnabled(plan.env.PI_WEB_AUTH)));
 			}
 			return 0;
 		}
@@ -567,11 +535,15 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 	if (child.pid) instanceLock?.childStarted(child.pid);
 	const controller = new AbortController();
 	let timer;
+	const warn = dependencies.warn ?? console.warn;
 	// 首屏预热：开发模式每次请求都要现场编译，预热只会白占 CPU，因此只在生产模式下做。
+	// 本机地址通过代理自动签发会话 Cookie 预热，避免消耗一次性的启动令牌。
+	const canRunWarmup = plan.command !== "dev" && env.PIWEB_SKIP_WARMUP !== "1";
+	const warmToken = canRunWarmup && authOn && !isLoopback(new URL(url).hostname) ? plan.env.PI_WEB_LAUNCH_TOKEN : undefined;
 	let warmPromise = null;
-	if (plan.command !== "dev" && env.PIWEB_SKIP_WARMUP !== "1") {
+	if (canRunWarmup) {
 		const warm = dependencies.warmFirstPaint ?? warmFirstPaint;
-		warmPromise = Promise.resolve(warm(url, { token: authOn ? plan.env.PI_WEB_LAUNCH_TOKEN : undefined, signal: controller.signal })).then(() => true, () => false);
+		warmPromise = Promise.resolve(warm(url, { token: warmToken, signal: controller.signal })).then(() => true, () => false);
 	}
 	const ready = async (attempt = 0) => {
 		if (controller.signal.aborted || attempt > 240) return;
@@ -586,7 +558,11 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 			// 开了认证就直接开登录链接：否则用户打开的是登录页，而他手里还没有会话 Cookie。
 			if (!options.noOpen) {
 				const latestToken = authOn ? await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env) : null;
-				await browse(latestToken ? tokenLoginUrl(loginBase, latestToken) : url);
+				if (authOn && !latestToken) {
+					warn("[piweb] 未能从本地令牌管道读取最新启动令牌；若打开后仍停在登录页，请重新运行 piweb 或手动输入令牌/配对码。");
+				}
+				const browserToken = latestToken ?? (authOn && !warmToken ? plan.env.PI_WEB_LAUNCH_TOKEN : null);
+				await browse(browserToken ? tokenLoginUrl(loginBase, browserToken) : loginBase);
 			}
 		} else if (!controller.signal.aborted) {
 			timer = setTimeout(() => void ready(attempt + 1), 250);
@@ -594,8 +570,17 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 		}
 	};
 	return new Promise((resolve, reject) => {
-		const interrupt = () => { void terminateProcessTree(child).catch((error) => { cleanup(); reject(error); }); };
-		const terminate = interrupt;
+		// 优雅停机（L6）：收到 SIGINT/SIGTERM 不再直接强杀进程树：先让服务进程自己收尾
+		// （POSIX 转发可捕获的 SIGTERM；Windows 等它响应控制台 Ctrl+C），超过预算仍未退出
+		// 才 taskkill /T /F 兜底，保证不留孤儿。由信号发起的关闭仍以非 0 结束，退出码约定不变。
+		let stopping = false;
+		const shutdown = () => {
+			if (stopping) return;
+			stopping = true;
+			void terminateProcessTreeGracefully(child).catch((error) => { cleanup(); reject(error); });
+		};
+		const interrupt = shutdown;
+		const terminate = shutdown;
 		const cleanup = () => {
 			controller.abort();
 			clearTimeout(timer);
@@ -605,7 +590,7 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 		process.once("SIGINT", interrupt);
 		process.once("SIGTERM", terminate);
 		child.once("error", (error) => { cleanup(); reject(error); });
-		child.once("exit", (code) => { cleanup(); resolve(code ?? 1); });
+		child.once("exit", (code) => { cleanup(); resolve(stopping ? 1 : (code ?? 1)); });
 		void ready().catch(() => {});
 	});
 }
@@ -635,8 +620,8 @@ export async function runLauncher(options = {}) {
 		while (Date.now() < deadline) {
 			if (await (options.dependencies?.isPiWebRunning ?? isPiWebRunning)(url)) {
 				if (!parsed.noOpen) {
-					const token = await (options.dependencies?.readCurrentLaunchToken ?? readCurrentLaunchToken)(owner.port, env);
-					await (options.dependencies?.openBrowser ?? openBrowser)(token ? tokenLoginUrl(url, token) : url);
+					const authOnExisting = authenticationEnabled(env.PI_WEB_AUTH) || Boolean(parsed.publicUrl) || !isLoopback(owner.hostname || parsed.hostname);
+					await (options.dependencies?.openBrowser ?? openBrowser)(await resolveExistingInstanceUrl(owner.port, url, env, options.dependencies ?? {}, options.dependencies?.warn ?? console.warn, authOnExisting));
 				}
 				return 0;
 			}

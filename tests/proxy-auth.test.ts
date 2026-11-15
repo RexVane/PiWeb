@@ -92,7 +92,39 @@ describe("proxy authentication gate", () => {
 
 	it("enables authentication from PI_WEB_AUTH alone (the only switch)", () => {
 		expect(proxy(pageRequest("/api/version")).status).toBe(401);
-		expect(proxy(pageRequest("/")).status).toBe(307);
+		const page = proxy(pageRequest("/"));
+		expect(page.status).toBe(307);
+		expect(page.headers.get("set-cookie")).toBeNull();
+		expect(proxy(pageRequest("/", { "x-piweb-remote": "1" })).status).toBe(307);
+	});
+
+	it("does not auto-authenticate direct loopback page navigations (no cookie minted without the launch token)", () => {
+		// 回归（F1）：曾经本机直连 + Host 可伪造 + 代理头缺失就自动发 Cookie，属于可绕过的认证分支；
+		// 现在唯一登录路径是启动令牌/登录接口。本机直连也必须先登录。
+		const response = proxy(pageRequest("/", { "x-piweb-warmup": "1" }));
+		expect(response.status).toBe(307);
+		expect(response.headers.get("set-cookie")).toBeNull();
+		expect(proxy(pageRequest("/api/version")).status).toBe(401);
+		expect(proxy(pageRequest("/", { cookie: "" })).status).toBe(307);
+		// 启动令牌并未被消耗，仍可换会话
+		expect(proxy(pageRequest(`/?token=${LAUNCH_TOKEN}`)).status).toBe(303);
+	});
+
+	it("does not authenticate proxied or forwarded requests even when Host is localhost", () => {
+		for (const headers of [
+			{},
+			{ "x-piweb-remote": "1" },
+			{ "x-forwarded-for": "203.0.113.10" },
+			{ "x-forwarded-host": "tunnel.example.com" },
+			{ "x-real-ip": "192.168.1.50" },
+			{ forwarded: "for=192.0.2.43;proto=https" },
+			{ "cf-connecting-ip": "203.0.113.11" },
+		] as Record<string, string>[]) {
+			const response = proxy(pageRequest("/", headers));
+			expect(response.status, JSON.stringify(headers)).toBe(307);
+			expect(response.headers.get("set-cookie")).toBeNull();
+		}
+		expect(proxy(pageRequest("/api/version")).status).toBe(401);
 	});
 
 	it("redirects anonymous page requests to the login page with a next target", () => {
@@ -149,10 +181,12 @@ describe("proxy authentication gate", () => {
 		}
 	});
 
-	it("rejects a tampered session cookie", () => {
+	it("rejects a tampered session cookie and clears it", () => {
 		const cookie = sessionCookie();
 		const tampered = cookie.replace(/.$/, (c) => (c === "A" ? "B" : "A"));
-		expect(proxy(pageRequest("/", { cookie: tampered, host: HOST })).status).toBe(307);
+		const response = proxy(pageRequest("/", { cookie: tampered, host: HOST }));
+		expect(response.status).toBe(307);
+		expect((response.headers.get("set-cookie") ?? "").toLowerCase()).toContain("max-age=0");
 	});
 
 	it("rejects a cookie that was issued for another host", () => {
@@ -194,7 +228,7 @@ describe("launch token exchange", () => {
 		const setCookie = (response.headers.get("set-cookie") ?? "").toLowerCase();
 		expect(setCookie).toContain("piweb_session_");
 		expect(setCookie).toContain("httponly");
-		expect(setCookie).toContain("samesite=strict");
+		expect(setCookie).toContain("samesite=lax");
 	});
 
 	it("mints a cookie that then authenticates", () => {
@@ -268,6 +302,53 @@ describe("web-auth route", () => {
 			body: JSON.stringify({ password: "x" }),
 		}));
 		expect(response.status).toBe(403);
+	});
+
+	it("accepts launch tokens, login URLs, and pairing codes via POST and mints a session cookie", async () => {
+		const byToken = await POST(apiRequest("/api/web-auth", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ credential: LAUNCH_TOKEN }),
+		}));
+		expect(byToken.status).toBe(200);
+		const cookieMatch = /^(piweb_session_[A-Za-z0-9_-]+=[^;]+)/.exec(byToken.headers.get("set-cookie") ?? "");
+		expect(cookieMatch).not.toBeNull();
+		expect(proxy(pageRequest("/api/version", { cookie: cookieMatch![1] })).headers.get("x-middleware-next")).toBe("1");
+
+		const current = currentLaunchToken() ?? LAUNCH_TOKEN;
+		const byUrl = await POST(apiRequest("/api/web-auth", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ credential: `http://${HOST}/?token=${current}` }),
+		}));
+		expect(byUrl.status).toBe(200);
+		expect(byUrl.headers.get("set-cookie") ?? "").toContain("piweb_session_");
+
+		const pending = issuePairCode();
+		const byPair = await POST(apiRequest("/api/web-auth", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ pairCode: pending.code }),
+		}));
+		expect(byPair.status).toBe(200);
+		expect(byPair.headers.get("set-cookie") ?? "").toContain("piweb_session_");
+	});
+
+	it("returns 401 for wrong credentials and throttles immediate retries with 429", async () => {
+		const first = await POST(apiRequest("/api/web-auth", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ credential: "wrong-credential" }),
+		}));
+		expect(first.status).toBe(401);
+
+		const second = await POST(apiRequest("/api/web-auth", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ credential: "wrong-credential-2" }),
+		}));
+		expect(second.status).toBe(429);
+		expect(Number(second.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
 	});
 
 	it("clears the session cookie on logout", async () => {

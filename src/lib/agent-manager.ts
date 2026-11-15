@@ -52,8 +52,8 @@ import { historyPage, previewMessage, recentTrajectory, MAX_VISIBLE_MESSAGES, ty
 import { recycleTemporaryDirectory } from "./recycle-temporary";
 import { projectedContextUsage } from "./session/metrics";
 import { TrajLedger, buildTrajectoryFromEntries, toolStepPreview, toTrajTokens } from "./trajectory";
-import { startArchivedSessionRetention } from "./session-retention";
 import { sanitizeToolOutput } from "./text-sanitize";
+import { redactJsonl, redactSecrets } from "./secret-redaction";
 import { isAbortMessage, isCancellationError } from "./chat/cancellation";
 import { isClaudeTaskNotification } from "./chat/task-notification";
 import { SessionDiskTracker } from "./session-disk-sync";
@@ -66,10 +66,11 @@ import { sandboxSupported, releaseSandbox, probeSandboxSupport } from "./sandbox
 import { createSandboxBashOperations, type EscalationScope } from "./sandbox/bash-operations";
 import { createPermissionRequestTool } from "./permission-request-tool";
 import { appendPermissionAudit } from "./permission-audit";
-import { newSessionThinkingLevel } from "./thinking-level";
+import { clampThinkingLevelTo, newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { readToolPreference, saveToolPreference, type ToolPreference } from "./tool-preferences";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { normalizeToolPreset } from "./tool-preset";
 import type {
 	AgentCommand,
 	ContextBreakdown,
@@ -138,6 +139,8 @@ export interface Managed {
 	/** 会话还在冷启动时用户就点了停止：这次提交在交给 SDK 之前放弃 */
 	submissionCancelled?: boolean;
 	commandRunning?: boolean;
+	/** 后台异步拍生长基线：不在发消息前阻塞，只在改动类工具真正执行前短暂等它收尾。 */
+	growthPrepare?: Promise<void>;
 	/** `tool_call` 已消耗一次性升权并放行的 write/edit toolCallId，供紧随其后的 `guardToolExecution` 放行。 */
 	escalatedCallIds?: Set<string>;
 	/** 显式逐项选择优先于 preset；保留失效名称以便资源重新启用后恢复用户选择。 */
@@ -188,6 +191,8 @@ export interface Managed {
 	shutdownRequested?: boolean;
 	/** 用户的 `!` 命令正在跑：算忙（不回收、不重载），停止按钮能中断它 */
 	bashActive?: boolean;
+	/** 可选单回合预算（env 显式开启时才有）：步数 / 时长 / token 上限 */
+	budget?: AgentBudgetState;
 }
 
 const globalForAgentManager = globalThis as typeof globalThis & {
@@ -900,10 +905,135 @@ function publishToolCallProgress(m: Managed, e: { type: "toolcall_start" | "tool
 	});
 }
 
+// ---------- 可选单回合预算（默认关闭） ----------
+
+/**
+ * 单回合预算。三项都通过 env 显式开启，未设置 = 原行为（不限制）：
+ *   PIWEB_AGENT_MAX_STEPS        一回合最多多少个模型步（turn）
+ *   PIWEB_AGENT_MAX_DURATION_MS  一回合最长运行时间（毫秒）
+ *   PIWEB_AGENT_TOKEN_BUDGET     一回合累计 token 上限（input+output+cache）
+ * 超限时中止本回合并推一条明确的 error 事件，不发没有任何解释的“停止”。
+ */
+export interface AgentBudget {
+	maxSteps?: number;
+	maxDurationMs?: number;
+	tokenBudget?: number;
+}
+
+interface AgentBudgetState {
+	startedAt: number;
+	turns: number;
+	tokens: number;
+	exceeded?: string;
+	timer?: ReturnType<typeof setTimeout>;
+}
+
+const BUDGET_ENV = {
+	maxSteps: "PIWEB_AGENT_MAX_STEPS",
+	maxDurationMs: "PIWEB_AGENT_MAX_DURATION_MS",
+	tokenBudget: "PIWEB_AGENT_TOKEN_BUDGET",
+} as const;
+
+/** 解析预算 env；未设置/非法/非正整数一律视为不限制（保持默认行为）。 */
+export function parseAgentBudget(env: Record<string, string | undefined> = process.env): AgentBudget | null {
+	const read = (name: string): number | undefined => {
+		const raw = env[name];
+		if (raw === undefined || raw.trim() === "") return undefined;
+		const value = Number(raw.trim());
+		return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+	};
+	const budget: AgentBudget = {
+		maxSteps: read(BUDGET_ENV.maxSteps),
+		maxDurationMs: read(BUDGET_ENV.maxDurationMs),
+		tokenBudget: read(BUDGET_ENV.tokenBudget),
+	};
+	return budget.maxSteps === undefined && budget.maxDurationMs === undefined && budget.tokenBudget === undefined ? null : budget;
+}
+
+function messageTokens(message: unknown): number {
+	const usage = (message as { usage?: Record<string, unknown> } | undefined)?.usage;
+	if (!usage || typeof usage !== "object") return 0;
+	let total = 0;
+	for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+		const value = Number(usage[key]);
+		if (Number.isFinite(value) && value > 0) total += value;
+	}
+	return total;
+}
+
+function formatBudgetLimit(ms: number): string {
+	return ms >= 1000 ? `${Math.round(ms / 100) / 10} 秒` : `${ms} 毫秒`;
+}
+
+function clearAgentBudget(m: Managed): void {
+	const state = m.budget;
+	if (state?.timer) clearTimeout(state.timer);
+	m.budget = undefined;
+}
+
+function abortForBudget(m: Managed, message: string): void {
+	const state = m.budget;
+	if (!state || state.exceeded) return;
+	state.exceeded = message;
+	if (state.timer) clearTimeout(state.timer);
+	publish(m, { type: "error", message, ts: Date.now() });
+	const session = m.session;
+	if (session) void session.abort().catch(() => undefined);
+}
+
+function startAgentBudget(m: Managed, now: number): void {
+	clearAgentBudget(m);
+	const budget = parseAgentBudget();
+	if (!budget) return;
+	const state: AgentBudgetState = { startedAt: now, turns: 0, tokens: 0 };
+	m.budget = state;
+	if (budget.maxDurationMs !== undefined) {
+		state.timer = setTimeout(() => {
+			if (m.budget !== state || state.exceeded) return;
+			abortForBudget(m, `本回合运行超过 ${formatBudgetLimit(budget.maxDurationMs!)}（PIWEB_AGENT_MAX_DURATION_MS=${budget.maxDurationMs}），已中止本回合。`);
+		}, budget.maxDurationMs);
+		state.timer.unref?.();
+	}
+}
+
+/**
+ * 预算钩子：translate 收到 SDK 事件时调用（导出仅为单测可覆盖）。
+ * - agent_start：本回合开始计数并装时长定时器；
+ * - turn_start：步数 +1，超过步数上限立即中止（不等这一步跑完）；
+ * - turn_end：累计 token 并检查 token 上限；
+ * - agent_settled：清掉计数与定时器。
+ */
+export function trackAgentBudget(m: Managed, event: { type: string; message?: unknown }, now = Date.now()): void {
+	if (event.type === "agent_start") { startAgentBudget(m, now); return; }
+	if (event.type === "agent_settled") { clearAgentBudget(m); return; }
+	const state = m.budget;
+	if (!state || state.exceeded) return;
+	const budget = parseAgentBudget();
+	if (!budget) return;
+	if (event.type === "turn_start") {
+		state.turns += 1;
+		if (budget.maxSteps !== undefined && state.turns > budget.maxSteps) {
+			abortForBudget(m, `本回合已到 ${state.turns} 步，超过步数上限（PIWEB_AGENT_MAX_STEPS=${budget.maxSteps}），已中止本回合。`);
+		}
+		return;
+	}
+	if (event.type === "turn_end") {
+		state.tokens += messageTokens(event.message);
+		if (budget.tokenBudget !== undefined && state.tokens > budget.tokenBudget) {
+			abortForBudget(m, `本回合已用 ${state.tokens} tokens，超过用量上限（PIWEB_AGENT_TOKEN_BUDGET=${budget.tokenBudget}），已中止本回合。`);
+			return;
+		}
+	}
+	if (budget.maxDurationMs !== undefined && now - state.startedAt > budget.maxDurationMs) {
+		abortForBudget(m, `本回合运行超过 ${formatBudgetLimit(budget.maxDurationMs)}（PIWEB_AGENT_MAX_DURATION_MS=${budget.maxDurationMs}），已中止本回合。`);
+	}
+}
+
 function translate(m: Managed, evt: AgentSessionEvent): void {
 	m.ledger.onEvent(evt);
 	growthOf(m).onEvent(evt);
 	const now = Date.now();
+	trackAgentBudget(m, evt as { type: string; message?: unknown }, now);
 	switch (evt.type) {
 		case "message_start": {
 			const raw = evt.message;
@@ -1122,7 +1252,7 @@ function growthOf(m: Managed): GrowthTracker {
 		sessionPath: m.sessionPath,
 		publish: (evt) => publish(m, evt),
 		entries: () => m.sm.getEntries() as never,
-		consent: () => getGrowthInitConsent(m.cwd).catch(() => null),
+		consent: () => getGrowthInitConsent(m.cwd),
 	}));
 }
 
@@ -1133,8 +1263,8 @@ export async function growthRecord(m: Managed): Promise<GrowthRound | null> {
 }
 
 /**
- * 用户回答了「要不要在这个工作区建 git 仓库」：决定按工作区记住，同一工作区的其他会话一并收起弹窗；
- * 同意时由发起的会话立即拍基线（返回这一笔）。
+ * 兼容旧客户端的记录开关接口：选择按工作区记住，同一工作区的其他会话同步开关。
+ * 开启时由发起的会话立即拍基线（返回这一笔）。
  */
 export async function growthConsent(m: Managed, allow: boolean): Promise<GrowthRound | null> {
 	touch(m);
@@ -1409,7 +1539,7 @@ function sessionCustomTools(m: Managed): CustomTools {
 		createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" }))),
 		createPermissionRequestTool({
 			ask: (questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })),
-			deniedAction: (id) => id ? m.deniedActions?.get(id) : m.lastDeniedAction,
+			deniedAction: (id) => resolveDeniedAction(m, id),
 			grant: (scope, action) => {
 				clearEscalation(m);
 				m.escalation = { scope, remaining: 1, actionKey: permissionActionKey(action), action, expiresAt: Date.now() + 5 * 60_000 };
@@ -1892,6 +2022,26 @@ async function evaluateToolCallGate(
 	return undefined;
 }
 
+/**
+ * Resolve a blocked action for `request_permission`: exact `deniedToolCallId` match first,
+ * falling back to the most recent denied action for that tool name if the model passed a tool
+ * name (e.g. `"bash"`) instead of the opaque call ID, or `lastDeniedAction` when omitted.
+ */
+export function resolveDeniedAction<T extends { toolName: string }>(
+	state: { lastDeniedAction?: T; deniedActions?: ReadonlyMap<string, T> },
+	id?: string,
+): T | undefined {
+	const key = id?.trim();
+	if (!key) return state.lastDeniedAction;
+	const byId = state.deniedActions?.get(key);
+	if (byId) return byId;
+	const values = state.deniedActions ? Array.from(state.deniedActions.values()) : [];
+	for (let i = values.length - 1; i >= 0; i -= 1) {
+		if (values[i].toolName === key) return values[i];
+	}
+	return state.lastDeniedAction?.toolName === key ? state.lastDeniedAction : undefined;
+}
+
 function toolPolicyDenial(m: Managed, name: string, options?: { allowEscalation?: boolean }): string | undefined {
 	if (m.disposed) return "Session is disposed";
 	// workspace / readonly 档的 bash 依赖 OS 级沙箱：机器上没有后端时（非 Windows / koffi 缺失），
@@ -1900,7 +2050,7 @@ function toolPolicyDenial(m: Managed, name: string, options?: { allowEscalation?
 	const escalation = options?.allowEscalation ? m.escalation : undefined;
 	if (name === "bash" && (m.toolPreset === "workspace" || m.toolPreset === "readonly") && !sandboxSupported()) {
 		if (escalation?.scope !== "full") {
-			return `Tool "bash" is blocked: ${m.toolPreset} has no OS-level sandbox on this machine, so shell commands are unavailable. Switch to 完全权限 (full) if the user approves.`;
+			return `Tool "bash" is blocked: ${m.toolPreset} has no OS-level sandbox on this machine, so shell commands are unavailable. Ask the user to switch the preset above the composer to 完全权限 (full).`;
 		}
 	}
 	const effectivePreset = escalation && ESCALATABLE_TOOLS.has(name) ? widenPreset(m.toolPreset, escalation.scope) : m.toolPreset;
@@ -1955,6 +2105,7 @@ function guardCustomToolDefinition(m: Managed, tool: CustomTools[number], comman
 			const denial = await evaluateToolCallGate(m, action);
 			if (denial) throw new Error(denial.reason);
 		} while (preset !== m.toolPreset || custom !== m.customActiveTools);
+		if (GROWTH_MUTATING_TOOLS.has(tool.name.toLowerCase())) await awaitGrowthPrepareBriefly(m);
 		const grant = m.escalation;
 		if (grant && grant.expiresAt >= Date.now() && grant.remaining > 0 && grant.actionKey === permissionActionKey(action) && m.toolPreset !== "full") {
 			// No await between matching and taking the grant: concurrent identical
@@ -1993,6 +2144,7 @@ function guardToolExecution(m: Managed, session: AgentSession): void {
 				const denial = await evaluateToolCallGate(m, action);
 				if (denial) throw new Error(denial.reason);
 			} while (currentPreset !== m.toolPreset || currentCustom !== m.customActiveTools);
+			if (GROWTH_MUTATING_TOOLS.has(tool.name.toLowerCase())) await awaitGrowthPrepareBriefly(m);
 			return execute.call(tool, ...args);
 		};
 		guardedTools.add(tool);
@@ -2319,6 +2471,7 @@ export function disposeSession(m: Managed): Promise<void> {
 	m.ui = null;
 	m.growth?.dispose();
 	m.growth = null;
+	clearAgentBudget(m);
 	for (const send of m.subscribers) {
 		try {
 			send(m.seq, JSON.stringify({ type: "status", isStreaming: false, state: "disposed", ts: Date.now() }));
@@ -2393,17 +2546,6 @@ export function reap(): void {
 	store.__piWebReaper = setInterval(reap, 60_000);
 	store.__piWebReaper.unref?.();
 }
-
-/** 归档会话的保留期清理：只删「已归档且长期无活动」的会话；正在使用的会话一律跳过 */
-function isSessionInUse(sessionPath: string): boolean {
-	const key = process.platform === "win32" ? sessionPath.toLowerCase() : sessionPath;
-	for (const managed of sessions.keys()) {
-		if ((process.platform === "win32" ? managed.toLowerCase() : managed) === key) return true;
-	}
-	return false;
-}
-
-startArchivedSessionRetention({ isActive: isSessionInUse, log: (message) => console.log(message) });
 
 // ---------- 资源清单（技能 / 提示模板 / 扩展命令 / 信任 / 诊断） ----------
 
@@ -2735,7 +2877,6 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		history: { total: history.total, omitted: history.pageStart },
 		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]).slice(-MAX_VISIBLE_MESSAGES),
 		growthError: m.growth?.getError?.() ?? null,
-		growthConsent: m.growth?.getConsentRequest?.() ?? null,
 		model,
 		routedModel: session ? routedModelOf(session) : null,
 		thinkingLevel,
@@ -2782,6 +2923,14 @@ export function parseLastEventId(m: Managed, raw: string | null): number | undef
 	return Number.isSafeInteger(seq) ? seq : undefined;
 }
 
+/** 解析会话订阅者上限（默认关闭）：未设置/非法 = 不限制，保持原行为。 */
+export function maxSessionSubscribers(env: Record<string, string | undefined> = process.env): number | null {
+	const raw = env.PIWEB_MAX_SESSION_SUBSCRIBERS;
+	if (raw === undefined) return null;
+	const value = Number(raw.trim());
+	return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 export function subscribe(
 	m: Managed,
 	send: (seq: number, json: string) => void,
@@ -2789,6 +2938,9 @@ export function subscribe(
 ): boolean {
 	touch(m);
 	if (lastEventId < 0 || lastEventId > m.seq) return false;
+	// 可选订阅者上限（默认关闭）：拒绝新增订阅，路由会退回快照模式，订阅集合不会无限增长。
+	const limit = maxSessionSubscribers();
+	if (limit !== null && !m.subscribers.has(send) && m.subscribers.size >= limit) return false;
 	const replay = m.buffer.filter((b) => b.seq > lastEventId);
 	if (replay.length !== m.seq - lastEventId) return false;
 	const pending = new Set(m.ui?.getPendingRequests().map((request) => request.id));
@@ -2826,16 +2978,32 @@ export interface CommandResult {
 	data?: Record<string, unknown>;
 }
 
+const GROWTH_MUTATING_TOOLS = new Set(["edit", "write", "bash", "powershell", "pwsh"]);
+const GROWTH_PREPARE_TOOL_WAIT_MS = 2000;
+
 /**
- * 发 prompt 前给生长记录拍基线。基线不能无限阻塞提问（git 不可用时每次探测至多 30s 超时）：
- * 5s 内没完成就放行，快照后台补拍（工具结束后照常记步，外部修改兜底）。
+ * 在后台给生长记录拍基线，避免把提问送出卡在同步 git 探测上；
+ * 改动工作区文件的工具执行前再短暂等它收尾。
  */
-async function prepareGrowthBriefly(m: Managed): Promise<void> {
+function kickoffGrowthPrepare(m: Managed): void {
+	if (m.disposed || m.growthPrepare) return;
+	const pending = growthOf(m)
+		.prepare()
+		.catch(() => undefined)
+		.finally(() => {
+			if (m.growthPrepare === pending) m.growthPrepare = undefined;
+		});
+	m.growthPrepare = pending;
+}
+
+async function awaitGrowthPrepareBriefly(m: Managed): Promise<void> {
+	const pending = m.growthPrepare;
+	if (!pending) return;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		await Promise.race([
-			growthOf(m).prepare().catch(() => undefined),
-			new Promise<void>((resolve) => { timer = setTimeout(resolve, 5000); timer.unref?.(); }),
+			pending,
+			new Promise<void>((resolve) => { timer = setTimeout(resolve, GROWTH_PREPARE_TOOL_WAIT_MS); timer.unref?.(); }),
 		]);
 	} finally { clearTimeout(timer); }
 }
@@ -3035,11 +3203,12 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const busy = await claimSubmission(m);
 				if (busy) return { ok: false, error: busy };
 				try {
+					if (!cmd.behavior && !m.runActive && !m.session?.isStreaming) kickoffGrowthPrepare(m);
 					const session = await ensureSession(m);
 					if (m.disposed) throw new Error("session is disposed");
 					// 只有用户显式选择 steer/followUp 才排队；旧的普通提交不能悄悄成为 steering。
 					if ((session.isStreaming || m.runActive) && !cmd.behavior) return { ok: false, error: "session is busy; choose steer or followUp" };
-					if (!session.isStreaming) await prepareGrowthBriefly(m);
+					if (!session.isStreaming && !cmd.behavior) kickoffGrowthPrepare(m);
 					if (m.disposed) throw new Error("session is disposed");
 					if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
 					return await submitPrompt(m, session, text, { images: cmd.images, streamingBehavior: cmd.behavior });
@@ -3083,8 +3252,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					if (!text && images.length === 0) return { ok: true, data: { skipped: true } };
 					await abortRunAndWaitIdle(m, session);
 					if (m.disposed) throw new Error("session is disposed");
-					await prepareGrowthBriefly(m);
-					if (m.disposed) throw new Error("session is disposed");
+					kickoffGrowthPrepare(m);
 					const result = await submitPrompt(m, session, text, images.length ? { images } : {});
 					return result.ok ? result : { ...result, data: cleared };
 				} catch (error) {
@@ -3153,7 +3321,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					m.sm.appendModelChange(model.provider, model.id);
 					const settings = getSettingsManager(m.cwd);
 					const requested = m.desiredThinkingLevel ?? (cmd.fresh ? newSessionThinkingLevel({ supported: model.thinkingLevels, modelOverride: settings.getModelThinkingLevel(model.provider, model.id), defaultLevel: settings.getDefaultThinkingLevel() }) : m.sm.buildSessionContext().thinkingLevel);
-					const effective = clampThinkingLevel(model as any, requested as any);
+					const effective = clampThinkingLevelTo(model.thinkingLevels, requested ?? "off");
 					m.sm.appendThinkingLevelChange(effective);
 					publish(m, { type: "model", provider: model.provider, model: model.id, thinkingLevel: effective, thinkingLevels: model.thinkingLevels, ts: Date.now() });
 					return { ok: true, data: { thinkingLevel: effective, thinkingLevels: model.thinkingLevels } };
@@ -3178,7 +3346,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					const { listWorkspaceModelsForPiWeb } = await import("./models-service");
 					const model = context.model ? (await listWorkspaceModelsForPiWeb(m.cwd)).models.find((item) => item.provider === context.model!.provider && item.id === context.model!.modelId) : undefined;
 					if (m.session || m.creating) return execute(m, cmd);
-					const effective = model ? clampThinkingLevel(model as any, requested as any) : "off";
+					const effective = model ? clampThinkingLevelTo(model.thinkingLevels, requested) : "off";
 					m.desiredThinkingLevel = requested; m.sm.appendThinkingLevelChange(effective);
 					publish(m, { type: "model", provider: context.model?.provider, model: context.model?.modelId, thinkingLevel: effective, thinkingLevels: model?.thinkingLevels ?? ["off"], ts: Date.now() });
 					return { ok: true, data: { requested, thinkingLevel: effective, clamped: requested !== effective } };
@@ -3287,8 +3455,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					const images = userMessageImages(session, entryId);
 					const moved = await session.navigateTree(entryId);
 					if (moved?.cancelled) return { ok: false, error: "edit cancelled" };
-					await prepareGrowthBriefly(m);
-					if (m.disposed) throw new Error("session is disposed");
+					kickoffGrowthPrepare(m);
 					// 与普通 prompt 一样在受理时就返回：等整轮跑完的话，这期间 promptSubmitting 一直为真，
 					// 插话 / 排队 / 新消息全被拒，HTTP 请求也一直挂着
 					return await submitPrompt(m, session, text, images.length ? { images } : {});
@@ -3350,15 +3517,79 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 	}
 }
 
+export interface CreateSessionOptions {
+	toolPreset?: ToolPreset;
+	provider?: string;
+	modelId?: string;
+	thinking?: string;
+}
+
 /** 新建会话（不启动 agent；发第一条消息时才冷启动） */
-export async function createNewSession(cwd: string): Promise<{ sessionPath: string }> {
+export async function createNewSession(
+	cwd: string,
+	options?: CreateSessionOptions,
+): Promise<{ sessionPath: string; setupApplied?: boolean }> {
+	let preset: ToolPreset | undefined;
+	if (options?.toolPreset !== undefined) {
+		const normalized = normalizeToolPreset(options.toolPreset);
+		if (!normalized) throw new BoundaryError("invalid tool preset");
+		preset = normalized;
+	}
+	const hasProvider = options?.provider !== undefined;
+	const hasModelId = options?.modelId !== undefined;
+	if (hasProvider !== hasModelId) {
+		throw new BoundaryError("provider and modelId must both be provided");
+	}
+	const provider = options?.provider?.trim();
+	const modelId = options?.modelId?.trim();
+	let selectedModel: Awaited<ReturnType<typeof import("./models-service")["listWorkspaceModelsForPiWeb"]>>["models"][number] | undefined;
+	if (hasProvider && hasModelId) {
+		if (!provider || !modelId) throw new BoundaryError("provider and modelId must both be provided");
+		const { listWorkspaceModelsForPiWeb } = await import("./models-service");
+		selectedModel = (await listWorkspaceModelsForPiWeb(cwd)).models.find(
+			(item) => item.provider === provider && item.id === modelId,
+		);
+		if (!selectedModel) throw new BoundaryError(`unknown model ${provider}/${modelId}`);
+	}
+
+	const requestedThinking = options?.thinking?.trim();
 	const sm = SessionManager.create(cwd);
 	const p = sm.getSessionFile() ?? "";
 	if (!p) throw new Error("failed to create session file");
 	// 必须直接注册 create 得到的实例：JSONL 落盘前 SessionManager.open(p) 找不到
 	// 文件会走新建分支，cwd 回退 process.cwd()，把会话偷换到服务器进程目录。
-	registerManaged(p, cwd, sm);
-	return { sessionPath: p };
+	const m = registerManaged(p, cwd, sm);
+	try {
+		if (preset) {
+			await persistToolPreference(m, { toolPreset: preset });
+			m.toolPreferenceLoaded = Promise.resolve();
+			m.toolPreset = preset;
+			m.customActiveTools = undefined;
+			clearEscalation(m);
+		}
+		if (selectedModel) {
+			m.sm.appendModelChange(selectedModel.provider, selectedModel.id);
+			const settings = getSettingsManager(m.cwd);
+			const baseThinking = requestedThinking
+				? requestedThinking
+				: newSessionThinkingLevel({
+					supported: selectedModel.thinkingLevels,
+					modelOverride: settings.getModelThinkingLevel(selectedModel.provider, selectedModel.id),
+					defaultLevel: settings.getDefaultThinkingLevel(),
+				});
+			const effectiveThinking = clampThinkingLevelTo(selectedModel.thinkingLevels, baseThinking);
+			if (requestedThinking) m.desiredThinkingLevel = requestedThinking;
+			m.sm.appendThinkingLevelChange(effectiveThinking);
+		} else if (requestedThinking) {
+			m.desiredThinkingLevel = requestedThinking;
+			m.sm.appendThinkingLevelChange("off");
+		}
+		const setupApplied = Boolean(preset || selectedModel || requestedThinking);
+		return { sessionPath: p, ...(setupApplied ? { setupApplied: true } : {}) };
+	} catch (error) {
+		await disposeSession(m).catch(() => undefined);
+		throw error;
+	}
 }
 
 /** 活跃会话状态（给侧栏状态点用） */
@@ -3384,11 +3615,14 @@ export function activeStatus(): Record<string, { streaming: boolean; lastStep?: 
 export async function exportSession(
 	m: Managed,
 	format: "jsonl" | "html",
+	options: { raw?: boolean } = {},
 ): Promise<{ filename: string; content: string; contentType: string }> {
 	const base = m.sessionPath.replace(/\\/g, "/").split("/").pop() ?? "session";
 	if (format === "jsonl") {
 		const { readFile } = await import("node:fs/promises");
-		return { filename: base, content: await readFile(m.sessionPath, "utf8"), contentType: "application/jsonl" };
+		const content = await readFile(m.sessionPath, "utf8");
+		// 默认脱敏导出：会话里可能留着用户贴过的 key/token/代理口令；raw=1 才给原文。
+		return { filename: base, content: options.raw ? content : redactJsonl(content), contentType: "application/jsonl" };
 	}
 	const session = await ensureSession(m);
 	// exportToHtml 返回的是写入磁盘的路径，不是内容；读回后删掉临时副本
@@ -3397,7 +3631,8 @@ export async function exportSession(
 	const temporary = await mkdtemp(path.join(tmpdir(), "piweb-export-"));
 	try {
 		const outPath = await session.exportToHtml(path.join(temporary, "session.html"));
-		return { filename: base.replace(/\.jsonl$/, ".html"), content: await readFile(outPath, "utf8"), contentType: "text/html" };
+		const content = await readFile(outPath, "utf8");
+		return { filename: base.replace(/\.jsonl$/, ".html"), content: options.raw ? content : redactSecrets(content), contentType: "text/html" };
 	} finally {
 		await recycleTemporaryDirectory(temporary).catch((error) => console.warn("[piweb] Temporary export was retained because recycling failed", error));
 	}

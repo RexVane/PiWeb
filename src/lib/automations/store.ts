@@ -84,6 +84,17 @@ export function defaultAutomationsStorePath(agentDir = getAgentDir()): string {
 	return path.join(agentDir, "web-automations.json");
 }
 
+export function defaultAutomationWorkspaceDir(agentDir = getAgentDir()): string {
+	return path.join(agentDir, "automations");
+}
+
+export async function ensureAutomationWorkspaceDir(agentDir = getAgentDir()): Promise<string> {
+	const dir = defaultAutomationWorkspaceDir(agentDir);
+	const { mkdir } = await import("node:fs/promises");
+	await mkdir(dir, { recursive: true });
+	return dir;
+}
+
 function normalizeModelRef(raw: unknown): AutomationModelRef | undefined {
 	if (raw === undefined || raw === null) return undefined;
 	if (typeof raw !== "object" || Array.isArray(raw)) throw new AutomationValidationError("Invalid model selection");
@@ -214,6 +225,7 @@ async function writeStore(data: AutomationsFile, filePath: string): Promise<void
 			flag: "wx",
 			mode: 0o600,
 		});
+		// D3：replaceFileAtomically 负责「数据 fsync → rename → 目录 fsync」，断电后不出现半份存储。
 		await replaceFileAtomically(tmp, filePath);
 		const recovery = `${filePath}.last-good`; const recoveryTemporary = `${recovery}.${randomUUID()}.tmp`;
 		try { await fs.copyFile(filePath, recoveryTemporary); await replaceFileAtomically(recoveryTemporary, recovery); }

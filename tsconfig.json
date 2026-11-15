@@ -45,6 +45,8 @@
     "pi",
     "dsh",
     "bin",
-    "backups"
+    "backups",
+    "audit_tmp",
+    "scripts/testing/lint"
   ]
 }

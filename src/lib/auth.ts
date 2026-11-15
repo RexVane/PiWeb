@@ -1,8 +1,22 @@
 import { isIP } from "node:net";
 
+/** 请求实际的协议：反代/隧道会带 x-forwarded-proto，浏览器无法伪造它。 */
+function requestProtocol(request: Request): string {
+	const forwarded = request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim().toLowerCase();
+	if (forwarded === "http" || forwarded === "https") return `${forwarded}:`;
+	try {
+		return new URL(request.url).protocol;
+	} catch {
+		return "http:";
+	}
+}
+
 /**
  * 同源校验。跨站一律拒绝（Sec-Fetch-Site 由浏览器给出，脚本改不了），
  * 没有 Origin 的请求（curl、服务端调用）放行。
+ *
+ * 同源 = scheme + host 都相同：只比 host 会让 https://host 的 Origin 通过
+ * http://host 上的请求，协议降级/混合内容场景下这就是跨源。
  */
 export function isSafeOrigin(request: Request): boolean {
 	if (request.headers.get("sec-fetch-site") === "cross-site") return false;
@@ -11,7 +25,8 @@ export function isSafeOrigin(request: Request): boolean {
 	try {
 		const originUrl = new URL(origin);
 		const expectedHost = request.headers.get("host") || new URL(request.url).host;
-		return originUrl.host.toLowerCase() === expectedHost.toLowerCase();
+		if (originUrl.host.toLowerCase() !== expectedHost.toLowerCase()) return false;
+		return originUrl.protocol === requestProtocol(request);
 	} catch {
 		return false;
 	}

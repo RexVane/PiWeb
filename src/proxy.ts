@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { configuredTrustedHosts, isSafeHost, isSafeOrigin } from "@/lib/auth";
-import { authEnabled, createSessionCookie, requestAuthority, requestDeviceType, sessionCookieOptions, sessionCookieFromRequest, validSessionCookie, sessionCookieId, decodeSessionCookie } from "@/lib/web-auth";
+import { authEnabled, clearSessionCookie, clearedCookieOptions, cookieNameForAuthority, createSessionCookie, decodeSessionCookie, readCookieHeader, requestAuthority, requestDeviceType, sessionCookieFromRequest, sessionCookieId, sessionCookieOptions, validSessionCookie } from "@/lib/web-auth";
 import { rememberWebDevice } from "@/lib/web-devices";
 import { TOKEN_QUERY, consumeLaunchToken } from "@/lib/web-launch-token";
 import { loadSessionRevocations, loadWebSecret } from "@/lib/web-secret";
@@ -62,6 +62,9 @@ export function proxy(request: NextRequest) {
 	}
 	if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
 
+	const authority = requestAuthority(request);
+	const hasExplicitCookie = authority ? Boolean(readCookieHeader(request.headers.get("cookie"), cookieNameForAuthority(authority))) : false;
+
 	// 页面请求 → 登录页（带返回地址）；API → 401（没有 Basic，不发挑战头）。
 	if (pathname.startsWith("/api/")) {
 		return new NextResponse(JSON.stringify({ success: false, error: "authentication required" }), {
@@ -75,7 +78,12 @@ export function proxy(request: NextRequest) {
 	const login = request.nextUrl.clone();
 	login.pathname = "/login";
 	login.search = `?next=${encodeURIComponent(`${pathname}${request.nextUrl.search}`)}`;
-	return NextResponse.redirect(login, 307);
+	const response = NextResponse.redirect(login, 307);
+	if (hasExplicitCookie) {
+		const cleared = clearSessionCookie(request);
+		response.cookies.set(cleared.name, cleared.value, clearedCookieOptions(request));
+	}
+	return response;
 }
 
 /** 去掉查询串的根地址：令牌不能留在地址栏和浏览器历史里 */

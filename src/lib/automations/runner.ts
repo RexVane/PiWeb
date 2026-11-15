@@ -1,6 +1,7 @@
 import path from "node:path";
 import { createNewSession, disposeSession, execute, getManaged, observeManagedEvents, type Managed } from "../agent-manager";
 import { resolveWorkspacePath } from "../path-security";
+import { registerShutdownHook } from "../graceful-shutdown";
 import type { AgentCommand, WebEvent, WebMessage } from "../types";
 import {
 	attachRunSession,
@@ -518,7 +519,7 @@ export function startAutomationScheduler(opts?: { storePath?: string; intervalMs
 	}, intervalMs);
 	runtime.timer.unref?.();
 
-	return () => {
+	const stop = () => {
 		if (runtime.generation !== generation) return;
 		runtime.generation += 1;
 		if (runtime.timer) {
@@ -527,6 +528,15 @@ export function startAutomationScheduler(opts?: { storePath?: string; intervalMs
 		}
 		runtime.started = false;
 	};
+	// L5：服务收到退出信号时先停调度器，别再启动新任务；同名钩子替换旧的（HMR 安全）。
+	registerShutdownHook(stop, { name: "automations" });
+	return stop;
+}
+
+/** 调度器运行状态（只读快照）：readiness 用它区分「没起来」和「正在跑」。 */
+export function getAutomationSchedulerStatus(): { running: boolean; ticking: boolean; reconciled: boolean } {
+	const runtime = runtimeState();
+	return { running: Boolean(runtime.started && runtime.timer), ticking: runtime.ticking, reconciled: runtime.reconciled };
 }
 
 /** Lazily ensure the scheduler loop is running if an API route loads outside instrumentation context. */
@@ -539,10 +549,14 @@ export function ensureAutomationSchedulerStarted(): void {
 }
 
 export async function getAutomationsSnapshot(storePath = defaultAutomationsStorePath()) {
+	const pathMod = await import("node:path");
+	const { ensureAutomationWorkspaceDir } = await import("./store");
+	const defaultCwd = await ensureAutomationWorkspaceDir(pathMod.dirname(storePath));
 	const runtime = runtimeState(storePath);
 	await retryPendingFinishes(runtime, storePath);
 	const data = await inspectAutomationStore(storePath);
 	return {
+		defaultCwd,
 		...data,
 		activeTaskIds: Array.from(new Set([...runtime.activeTaskIds, ...data.runs.filter((run) => run.status === "running" && hasLiveRunOwner(run)).map((run) => run.taskId)])),
 		schedulerStarted: runtime.started && !data.storeError,

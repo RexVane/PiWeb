@@ -20,6 +20,8 @@
 
 PiWeb is a web shell that bundles the official pi SDK and leaves the separately installed pi CLI untouched. They **share the same agent directory** (`~/.pi/agent` by default, or `PI_CODING_AGENT_DIR`): settings, models and credentials, sessions, skills and packages. The bundled pi engine is upgraded with PiWeb releases. Only PiWeb checks for updates automatically; the pi version and a manual update entry remain in Settings.
 
+The agent directory is the main data store but **not the only data root**: session import reads other tools' history from your home directory and global skills may live in `~/.agents/skills`. Deployment isolation and the full data map are in [data, privacy and retention](docs/operations/data-and-privacy.md).
+
 Extension dialogs, notifications, status text, text widgets and injected messages reach the page; extension commands can create, fork and switch sessions. Extensions can provide interactive browser panels through the [JSON UI bridge](docs/extension-web-ui.md). Compatible terminal components have a read-only text fallback; terminal keyboard interaction and custom headers, footers or editors are not reproduced.
 
 ## Features
@@ -27,8 +29,8 @@ Extension dialogs, notifications, status text, text widgets and injected message
 - **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown.
 - **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
 - **Session import:** Browse and import local history from Claude Code, Codex, Grok, ZCode, dsh and opencode. Search and select across sources, restore archived imports, and leave the original data untouched.
-- **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting.
-- **Models and resources:** Configure providers and models in Settings. Open Skills, Extensions, Prompts and Marketplace directly from the sidebar, with an explicit workspace selector and resource origin.
+- **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting. Each conversation keeps its file tabs in the same browser across switches and refreshes; closing the viewer clears all of its tabs.
+- **Models and resources:** Configure providers and models in Settings. The sidebar opens an Extensions workspace that manages npm packages for the selected workspace, showing local/package origin separately from personal/project scope. Automations live in their own sidebar workspace. Skills and prompts are loaded from the shared pi resources but have no dedicated entry in the current UI.
 - **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace, model and permission preset, then inspect each run's session. PiWeb must remain running for scheduled work.
 - **Permissions:** Choose Read Only, Workspace Write or Full Access, with one-time approval for a specific blocked action. See the [platform boundaries](docs/workspace-isolation.md).
 - **Multiple devices:** Remote access prepares automatically. Scan one dynamic QR code from the same Wi-Fi or another network.
@@ -69,15 +71,15 @@ Extension dialogs, notifications, status text, text widgets and injected message
 
 ### Archives and data
 
-Archived sessions can be viewed or restored from the sidebar. Background cleanup removes them after 30 days, counting from the later of the archive time or subsequent file activity; sessions managed by the current process are skipped. Removal preserves a recovery copy and appends its location to `backups/INDEX.md` (under `~/.agents/backups` for the default home-directory store). Export important sessions for long-term retention. Set `PI_WEB_ARCHIVE_RETENTION=0` to disable automatic removal.
+Archived sessions remain available in the sidebar until you restore or manually delete them. Archiving takes effect immediately without a confirmation dialog; manual deletion still asks for confirmation and permanently deletes the session file — it keeps **no recovery copy**. Sessions are never deleted automatically. Deleting a session also cleans up the uploads that only that session referenced: those are removed with a recovery copy under `~/.agents/backups` and an entry in `backups/INDEX.md` (`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` disables that cleanup). Uploads no session references are swept after 30 days when a later upload triggers the sweep. Back up data you need to keep; the [data and privacy guide](docs/operations/data-and-privacy.md) lists every store.
 
-The project growth tree stores each round of file changes as a commit under `refs/piweb/rounds/…` in the workspace's Git repository, without changing branches or the index. If the workspace is not its own Git repository, PiWeb asks before initializing one; declining disables recording there.
+The project growth tree records changes by default without a confirmation dialog. Each round is stored as a commit under `refs/piweb/rounds/…` in the workspace's Git repository, without changing branches or the index. PiWeb initializes a local repository automatically when needed. Recording has no cumulative entry or storage limit; the project panel can stop or resume recording, and previously disabled workspaces stay disabled. Existing history is preserved when recording stops. Individual file, snapshot and preview size safeguards still apply.
 
-### Skills, extensions and automations
+### Extensions and automations
 
-The sidebar entries are separate from Settings. Skills and Extensions show personal/project scope separately from local/package origin. Personal resources normally live in `<agent dir>/skills` and `<agent dir>/extensions`; trusted projects can provide `.pi/skills`, `.pi/extensions`, `.agents/skills` and configured resource paths. Changing the selected workspace changes the project scope being managed.
+The sidebar workspaces are separate from Settings. The Extensions workspace manages npm packages for the selected workspace; package scope (personal/project) and origin (local/package) are shown separately. Personal resources normally live in `<agent dir>/skills` and `<agent dir>/extensions`; trusted projects can provide `.pi/skills`, `.pi/extensions`, `.agents/skills` and configured resource paths. Skills and prompt sources are still loaded from those stores and used by the engine, but the current UI has no dedicated Skills/Prompts workspace entry (the resource-market page has been removed).
 
-A package-owned skill can be disabled; removing its package is an explicit action in Extensions. npm package installation, update and removal prepare a separate directory before switching the active installation and settings. Failed preparation keeps the previous installation; interrupted commits are recovered before resources are loaded. Previous generations and their recovery index are retained. npm lifecycle scripts are disabled, but loaded extensions still execute trusted code in the host process.
+Adding, updating and removing an npm package prepares a separate directory before switching the active installation and settings. Failed preparation keeps the previous installation; interrupted commits are recovered before resources are loaded. Previous generations and their recovery index are retained. npm lifecycle scripts are disabled, but loaded extensions still execute trusted code in the host process.
 
 Automations store their tasks and run history in `<agent dir>/web-automations.json`. Schedules use the server's time zone shown in the editor. Up to four runs may execute concurrently; each uses a separate session and the saved permission preset. Unattended work cannot approve an interactive permission request. Offline occurrences outside the grace period are recorded as skipped rather than all being replayed after startup.
 
@@ -90,7 +92,9 @@ npm install -g @rexvane/piweb
 piweb
 ```
 
-The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI. Requires Node.js ≥ 22.19.0 (24 recommended); Git is needed for growth-history features.
+The package registers only the `piweb` command, so it never conflicts with the official `pi` CLI. Requires Node.js **≥ 22.19.0** (`engines`); CI covers 22.19.0, 22.22.2 and 24, and Node 24 is recommended. The automatic proxy needs Node 24 or ≥ 22.21 (older versions only inherit the proxy variables for external tools; see [Proxy](#proxy)). Git is needed for growth-history features.
+
+The published package ships a sealed production build, so a normal global install does not compile anything. The `postinstall` hook prepares that build for **production-only** installs only: it is a no-op in a source checkout, and if installs skip lifecycle scripts the first `piweb` start builds once in a staging directory before serving (a one-time, roughly 6–15 minute step on current hardware). Build/repair details and timeouts are in [install and build](docs/operations/install-and-build.md).
 
 ### Update
 
@@ -103,7 +107,7 @@ is npm's default tag, so `npm install -g @rexvane/piweb` behaves identically; if
 is a mirror that syncs with a delay, add `--registry=https://registry.npmjs.org` to get a
 release the moment it is published. Restart `piweb` afterwards to serve the new version.
 
-To install a specific release, replace `latest` with its version number.
+To install a specific release, replace `latest` with its version number. If a release misbehaves, the [release, downgrade and rollback guide](docs/operations/release-and-rollback.md) covers exact-version downgrades, stale `latest` tags and recovery.
 
 **Updating from the UI**: every time PiWeb starts it checks PiWeb for new versions in the
 background. When one is available it prints `[更新] 有新版本：…` in the terminal and shows a notice
@@ -121,7 +125,7 @@ so; the process never restarts itself.
 npm uninstall -g @rexvane/piweb
 ```
 
-This removes PiWeb only — your pi data lives in `~/.pi/agent/` and is left untouched.
+This removes PiWeb only — your pi data lives in the agent directory (`~/.pi/agent/` by default, or `PI_CODING_AGENT_DIR`) and is left untouched. Other tools' session history that PiWeb imported from your home directory is not modified either; see the [data and privacy guide](docs/operations/data-and-privacy.md).
 
 ### Run
 
@@ -169,6 +173,8 @@ The local proxy provides the mobile layout; `127.0.0.1:30141` on the host serves
 - the address can change after a restart or tunnel recreation; DNS and reachability checks must finish before the QR code is ready;
 - the QR address uses HTTPS, with TLS terminating at Cloudflare. Direct LAN HTTP remains unencrypted; using the same QR on Wi-Fi still requires the public tunnel to be reachable.
 
+The built-in LAN proxy listens on `0.0.0.0:30142` by default. Deployment overrides: `PIWEB_REMOTE_LAN=0` disables automatic LAN proxy/tunnel preparation, `PIWEB_REMOTE_LAN_PORT` changes the proxy port, `PIWEB_REMOTE_LAN_BIND` changes the bind address (for example to one NIC), and `-H 0.0.0.0` exposes the main server to the LAN. HTML injection is bounded: above `PIWEB_MOBILE_PROXY_MAX_HTML_BYTES` (default 16 MiB) or `PIWEB_MOBILE_PROXY_TIMEOUT_MS` (default 30 s) the page is streamed without injection, and decoded bodies above `PIWEB_MOBILE_PROXY_MAX_DECODED_BYTES` (default 64 MiB) are refused. The full list is in the [environment reference](docs/operations/environment.md).
+
 `cloudflared` is looked up as: `PIWEB_CLOUDFLARED` → `<agent dir>/web-bin/cloudflared{,.exe}` (managed by PiWeb) → `PATH`.
 The panel says so explicitly when it cannot find it.
 
@@ -201,12 +207,24 @@ Use a separate checkout or staging directory for validation: `npm run build` wri
 
 ```bash
 npm run typecheck
+npm run lint
 npm run test
 npm run build
 npm run verify:package
 ```
 
-`verify:package` packs the production build, installs it in an empty prefix and starts that installed copy with temporary data. CI also prepares SDK search tools, checks unexpected skips and enables coverage with `PIWEB_COVERAGE=1`; public tunnel testing is a separate opt-in check. The dated [verification record](docs/state/progress.md) distinguishes source tests, installed-package checks and browser checks. Documentation navigation is in [docs/README.md](docs/README.md).
+`verify:package` packs the production build, installs it in an empty prefix and starts that installed copy with temporary data. CI also runs the pinned lint toolchain, a high-severity dependency audit on Linux/Node 24, prepares SDK search tools, checks unexpected skips and enables coverage with `PIWEB_COVERAGE=1`; public tunnel testing is a separate opt-in check. A production build takes roughly 6–7 minutes on the audit machine (`next build --webpack` measured 370 s under concurrent load), so allow at least 15 minutes for build timeouts and 30–45 minutes for a full `check` job. The dated [verification record](docs/state/progress.md) distinguishes source tests, installed-package checks and browser checks. Documentation navigation is in [docs/README.md](docs/README.md); installation/build details and timeouts are in [install and build](docs/operations/install-and-build.md).
+
+## Operations
+
+- [Install and build](docs/operations/install-and-build.md): install layouts, `postinstall`, first-start self-healing build, build time and timeout baselines.
+- [Environment reference](docs/operations/environment.md): deployment variables, optional limits introduced by the 2026-11-15 hardening pass, internal process variables.
+- [Data, privacy and retention](docs/operations/data-and-privacy.md): every data root, deployment isolation, telemetry switches, deletion and recovery behavior.
+- [Release, downgrade and rollback](docs/operations/release-and-rollback.md): exact-version downgrades, failed in-app updates, `.next-releases` rollback, data compatibility.
+
+## Acknowledgements
+
+Thanks to [@webkubor](https://github.com/webkubor) for the Ripple and Dawn palettes.
 
 ## License
 

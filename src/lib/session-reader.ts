@@ -12,7 +12,7 @@ import { getAgentDir } from "./pi";
 import { BoundaryError, isPathInside } from "./path-security";
 import { promptTitleText } from "./chat/skill-expansion";
 import { canonicalWorkspacePath } from "./workspace-store";
-import { recoverableRemove } from "./recoverable-remove";
+import { listUploadsReferencedBySession, removeUnreferencedUploads } from "./files-service";
 
 function toSummary(info: {
 	path: string;
@@ -273,20 +273,32 @@ async function saveIndex(): Promise<void> {
 	}
 }
 
+/** 扫描失败的可见记录：以前所有 readdir 异常都被当成“没有会话”，EACCES/磁盘故障会让侧栏静默变空 */
+function logSessionScanFailure(scope: string, target: string, error: unknown): void {
+	console.warn(`[session-reader] 读取${scope}失败（${target}）：${error instanceof Error ? error.message : String(error)}`);
+}
+
 async function scanSessions(): Promise<SessionSummary[]> {
 	const root = path.join(getAgentDir(), "sessions");
 	const files: string[] = [];
 	let dirs: import("node:fs").Dirent[] = [];
 	try {
 		dirs = await fs.readdir(root, { withFileTypes: true });
-	} catch {
-		return [];
+	} catch (error) {
+		// 会话库根目录还没有（首次启动/从未用过 pi）才是“没有会话”；其它错误必须向上报，不能伪装成空列表
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+		logSessionScanFailure("会话目录", root, error);
+		throw error;
 	}
 	await Promise.all(dirs.filter((d) => d.isDirectory() || d.isSymbolicLink()).map(async (d) => {
+		const directory = path.join(root, d.name);
 		try {
-			for (const f of await fs.readdir(path.join(root, d.name))) if (f.endsWith(".jsonl")) files.push(path.join(root, d.name, f));
-		} catch {
-			/* 目录读不了就跳过 */
+			for (const f of await fs.readdir(directory)) if (f.endsWith(".jsonl")) files.push(path.join(directory, f));
+		} catch (error) {
+			// 目录在扫描期间被删掉是正常并发，按空处理；其它错误（权限、IO）上报
+			if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+			logSessionScanFailure("会话子目录", directory, error);
+			throw error;
 		}
 	}));
 	const seen = new Set<string>();
@@ -325,7 +337,14 @@ async function scanSessions(): Promise<SessionSummary[]> {
 /** 列表短缓存：多标签每 3 秒各轮询一次，1.2 秒 TTL 吸收并发请求 */
 let listCache: { at: number; source: string; list: SessionSummary[] } | null = null;
 
-export async function listSessions(query?: string): Promise<SessionSummary[]> {
+export interface SessionListOptions {
+	/** 跳过排序后的前 N 条；只在传了 limit 时生效 */
+	offset?: number;
+	/** 最多返回多少条；不传（默认）= 返回全量，不设任何默认上限 */
+	limit?: number;
+}
+
+export async function listSessions(query?: string, options: SessionListOptions = {}): Promise<SessionSummary[]> {
 	const source = indexPath();
 	let list: SessionSummary[];
 	if (listCache && listCache.source === source && Date.now() - listCache.at < 1200) {
@@ -351,7 +370,13 @@ export async function listSessions(query?: string): Promise<SessionSummary[]> {
 	}
 	// 同一时间戳的会话按路径定序：扫描是并发的，顺序不固定会让 ETag 抖动、侧栏顺序跳动
 	list = [...list].sort((a, b) => b.modified.localeCompare(a.modified) || a.path.localeCompare(b.path));
-	return list;
+	const { limit, offset } = options;
+	// 分页是可选的：不传 limit 时返回全量（老调用方语义），只在调用方显式要一页时才截断。
+	// 参数非法时整段忽略（退化成全量），不静默返回一个不完整的列表。
+	if (limit === undefined) return list;
+	const start = offset ?? 0;
+	if (!Number.isSafeInteger(limit) || limit < 0 || !Number.isSafeInteger(start) || start < 0) return list;
+	return list.slice(start, start + limit);
 }
 
 export async function deleteSession(sessionPath: string): Promise<void> {
@@ -366,12 +391,16 @@ export async function deleteSession(sessionPath: string): Promise<void> {
 		throw error;
 	});
 	if (realTarget !== target && !isPathInside(realRoot, realTarget)) throw new BoundaryError("session path escapes the Pi session store");
+	// I3：删除会话时把它独占引用的上传附件也清掉。先读要删的会话找出候选附件，再删文件，
+	// 最后确认没有别的会话还引用它们；任何一步证据不足都保留附件（宁可不删也不误删）。
+	const uploads = await listUploadsReferencedBySession(target).catch(() => []);
 	try {
-		await recoverableRemove(target, { reason: "移除 PiWeb 会话，保留恢复副本" });
+		await fs.unlink(target);
 	} catch (error) {
 		// 未落盘的惰性会话（还没发过消息）本来就没有文件，删除视为成功
 		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 	}
+	if (uploads.length) await removeUnreferencedUploads(uploads).catch(() => undefined);
 }
 
 /** 冷读取：还原消息（含被压缩掉的历史）+ 会话名（不启动 agent） */
