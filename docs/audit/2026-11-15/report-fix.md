@@ -1,11 +1,13 @@
 # PiWeb 审计问题修复报告（修复轮 · 2026-11-15）
 
+> 归档说明：原始证据目录（`audit_tmp/`、`.audit-2026-*`）已在 2026-11-15 收尾清理；文中路径为历史记录，结论以本文件与同目录归档为准。
+
 > **修复口径（用户选择）**：**只修缺陷，不改默认行为**。默认值、默认接口语义、默认 UI 表现保持不变；安全/性能缺陷按“缺陷语义”修复；需要新能力的一律用 env 或显式参数 opt-in；无法在不改默认行为下完成的项标为 deferred 并说明。
 > 修复基线：`audit_tmp/run-20261115-full/fix/fix-baseline.txt`（136 项未提交改动，HEAD `4a6a59e2`，branch `main`）
 > 执行时间：2026-11-15 20:14–22:15（Asia/Shanghai）
 > 执行方式：Lead + 5 个并行修复 agent（A1 tests-ci / A2 auth-exports / A3 retention-tunnel / A4 sre-core / A5 docs-ui，共享任务 task-6～10）+ 独立验证 agent（task-11）+ C5 死代码清理 agent（task-12）
-> 整体验证：**通过（无阻塞）** → [`audit_tmp/run-20261115-full/fix/verify/verification.md`](audit_tmp/run-20261115-full/fix/verify/verification.md)
-> 审计基线：报告 [`audit_tmp/report_final.md`](audit_tmp/report_final.md)（42 项“有问题”、6 项无法验证、1 项不适用）
+> 整体验证：**通过（无阻塞）** → [verification.md](verification.md)
+> 审计基线：报告 [report-final.md](report-final.md)（42 项“有问题”、6 项无法验证、1 项不适用）
 > 提交记录：见 §8（2026-11-15 已按用户选择提交 5 个 commit，仅含本轮新增/修改且修复前无旧改动的文件）
 
 ---

@@ -6,8 +6,8 @@ PiWeb 本体以 MIT 许可证发布，全文见仓库根目录的 [LICENSE](./LI
 
 > 本文件是合规信息汇总，不构成法律意见；最终使用以各组件自身的许可证原文为准。
 > 数据基线：仓库 HEAD 的 `package-lock.json`（lockfileVersion 3，508 个包条目），
-> 由审计脚本逐包读取 `node_modules/<pkg>/package.json` 的 `license` 字段与 lock 字段核对，
-> 见审计证据 `audit_tmp/run-20261115-full/i-run/i6-licenses.json`。
+> 由审计脚本逐包读取 `node_modules/<pkg>/package.json` 的 `license` 字段与 lock 字段核对；
+> 审计证据目录已随 2026-11-15 收尾清理移出工作区，结论见 [审计归档](docs/audit/2026-11-15/report-final.md)。
 
 ## 1. 总体情况
 

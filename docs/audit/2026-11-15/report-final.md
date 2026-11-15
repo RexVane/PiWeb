@@ -3,7 +3,7 @@
 > 审计对象：`D:\AIApp\PiWeb`（`@rexvane/piweb` 0.3.30，Next.js 16.4.5 / React 19.3.0 / TypeScript 7.0.2 / vitest 5.0.5 / jsdom 30.0.1）
 > 代码快照：git HEAD `4a6a59e2941eac2047f94a9eea8d5caac0226f9b` + 工作区 125 项未提交改动（2026-11-15 18:41 基线 `audit_tmp/run-20261115-full/baseline-20261115T1845.txt`）
 > 执行时间：2026-11-15 18:12–20:00（Asia/Shanghai）；上半场 Codex（A/C/D/F/G/H/K/L/M/N/O/P 12 节）18:12–18:31 因用量上限中断，下半场 DSH 续审（B/E/I/J 4 节）18:43–19:51
-> 交付物：本报告 + 16 份分节报告 `audit_tmp/report_A…P.md`（合计约 354KB）+ 证据目录 `audit_tmp/run-20261115-full/` + 附录（命令/文件/清单/状态检查）
+> 交付物：本报告 + 16 份分节报告（原始目录已随 2026-11-15 收尾清理移出工作区）+ 证据目录（同上）；归档见 [docs/audit](README.md)。
 
 ---
 
