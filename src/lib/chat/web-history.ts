@@ -55,25 +55,6 @@ export function previewMessage(message: WebMessage, imageUrl?: (part: number) =>
 	return { ...message, content, ...(message.bash ? { bash: { ...message.bash, command: text(message.bash.command), output: text(message.bash.output) } } : {}), ...(message.summary ? { summary: text(message.summary) } : {}), ...(truncated ? { truncated: true } : {}) };
 }
 
-/** Count string lengths without serializing the whole live conversation on each delta. */
-export function recentMessages(messages: WebMessage[]): WebMessage[] {
-	let characters = 0;
-	let start = messages.length;
-	while (start > 0 && messages.length - start < MAX_VISIBLE_MESSAGES) {
-		const message = messages[start - 1];
-		let size = (message.summary?.length ?? 0) + (message.bash?.output.length ?? 0) + 512;
-		for (const part of message.content) {
-			if (part.type === "text" || part.type === "toolResult") size += part.text.length + (part.type === "toolResult" ? part.patch?.length ?? 0 : 0);
-			else if (part.type === "thinking") size += part.thinking.length;
-			else if (part.type === "image") size += part.data.length;
-			else size += 8_000;
-		}
-		if (start < messages.length && characters + size > 2_000_000) break;
-		start--; characters += size;
-	}
-	return start ? messages.slice(start) : messages;
-}
-
 export interface HistoryPage {
 	messages: WebMessage[];
 	trajectory: TrajEntry[];

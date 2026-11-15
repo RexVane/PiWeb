@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as sdk from "@earendil-works/pi-coding-agent";
-import { historyPage, previewMessage, recentMessages, recentTrajectory } from "../src/lib/chat/web-history";
+import { historyPage, previewMessage, recentTrajectory } from "../src/lib/chat/web-history";
 import type { WebMessage } from "../src/lib/types";
 
 const message = (index: number, text = `message ${index}`): WebMessage => ({ id: String(index), role: "user", content: [{ type: "text", text }] });
@@ -35,7 +35,6 @@ describe("bounded web history", () => {
 		expect(previewMessage(original)).toMatchObject({ truncated: true });
 		expect(JSON.stringify(previewMessage(original)).length).toBeLessThan(101_000);
 		expect(original.content[0]).toHaveProperty("text", "x".repeat(2_000_000));
-		expect(recentMessages(Array.from({ length: 1000 }, (_, index) => message(index))).length).toBe(1000);
 		expect(recentTrajectory(Array.from({ length: 1500 }, (_, seq) => ({ seq, kind: "tool", ts: seq }))).length).toBe(1000);
 	});
 	it("shares the byte budget across all nested tool results", () => {

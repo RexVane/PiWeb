@@ -2,7 +2,7 @@
 import { clientFetch as fetch } from "@/lib/client-fetch";
 import { sortArchivedSessions } from "@/lib/archived-sessions-sort";
 import { savedSessionLocation, storeSessionLocation } from "@/lib/chat/session-location";
-import { MAX_VISIBLE_TOOLS, previewMessage, recentMessages, recentTrajectory } from "@/lib/chat/web-history";
+import { MAX_VISIBLE_TOOLS, previewMessage, recentTrajectory } from "@/lib/chat/web-history";
 
 
 /**
@@ -452,11 +452,6 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 export const foldPiWebEvent = (state: PiWebState, event: WebEvent): PiWebState => {
 	const evt = event.type === "message" ? { ...event, message: previewMessage(event.message) } : event;
 	const next = foldEvent(state, evt);
-	if (next.messages !== state.messages) {
-		const messages = recentMessages(next.messages);
-		if (messages !== next.messages && next.snapshot) next.snapshot = { ...next.snapshot, history: { total: Math.max(next.snapshot.history?.total ?? 0, next.messages.length), omitted: (next.snapshot.history?.omitted ?? 0) + next.messages.length - messages.length } };
-		next.messages = messages;
-	}
 	if (next.tools !== state.tools && Object.keys(next.tools).length > MAX_VISIBLE_TOOLS) {
 		const entries = Object.entries(next.tools);
 		const keep = new Set(entries.slice(-MAX_VISIBLE_TOOLS).map(([id]) => id));
@@ -1186,8 +1181,8 @@ export function usePiWeb() {
 					batcher.cancel();
 					retryDelayMs = 2000;
 					const receivedMessages = Array.isArray(parsed.snapshot.messages) ? parsed.snapshot.messages.map((message: WebMessage) => previewMessage(message)) : [];
-					const visibleMessages = recentMessages(receivedMessages);
-					const snap = { ...parsed.snapshot, sessionPath: parsed.snapshot.sessionPath ?? currentPath, messages: visibleMessages, trajectory: recentTrajectory(Array.isArray(parsed.snapshot.trajectory) ? parsed.snapshot.trajectory : []), history: { total: parsed.snapshot.history?.total ?? receivedMessages.length, omitted: (parsed.snapshot.history?.omitted ?? 0) + receivedMessages.length - visibleMessages.length } } as WebSnapshot;
+					// 聊天窗口保留完整历史（不再按窗口截断）；单条体积仍受 previewMessage 限制。
+					const snap = { ...parsed.snapshot, sessionPath: parsed.snapshot.sessionPath ?? currentPath, messages: receivedMessages, trajectory: recentTrajectory(Array.isArray(parsed.snapshot.trajectory) ? parsed.snapshot.trajectory : []) } as WebSnapshot;
 					const pendingOpt = pendingOptimisticRef.current.get(currentId);
 					let nextMessages = snap.messages;
 					if (pendingOpt) {

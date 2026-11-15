@@ -41,7 +41,7 @@ const ChatWindow = dynamic(() => import("@/components/ChatWindow").then((m) => m
 	),
 });
 const SessionStatsBar = dynamic(() => import("@/components/ChatWindow").then((m) => m.SessionStatsBar), { ssr: false });
-const SessionHistory = dynamic(() => import("@/components/SessionHistory").then((m) => m.SessionHistory), { ssr: false });
+
 const TrajInspector = dynamic(() => import("@/components/TrajectoryView").then((m) => m.TrajInspector), { ssr: false });
 
 const samePath = sameWorkspacePath;
@@ -274,7 +274,7 @@ export function AppShell() {
 	const sessionUploadProgress = useCallback((delta: 1 | -1) => trackUpload(draftKey, delta), [draftKey, trackUpload]);
 	const sessionSendPending = useCallback((pending: boolean) => trackSend(draftKey, pending), [draftKey, trackSend]);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [historySessionId, setHistorySessionId] = useState<string | null>(null);
+
 	/** 第一次打开后才加载设置分块；关闭时保持挂载，设置页的当前分区不会每次重置。 */
 	const [settingsLoaded, setSettingsLoaded] = useState(false);
 	const [activeView, setActiveView] = useState<WorkspaceView>("chat");
@@ -1325,7 +1325,7 @@ export function AppShell() {
 								</div>
 							) : (
 							<div className="flex min-h-0 flex-1 flex-col justify-end">
-								{(snapshot?.history?.omitted ?? 0) > 0 && <button type="button" className="btn-outline mx-auto my-1" onClick={() => setHistorySessionId(currentId)}>{lang === "en" ? "View earlier messages" : "查看更早的聊天记录"} ({snapshot?.history?.omitted})</button>}
+
 								<ChatWindow
 									key={currentId ?? "none"}
 									messages={state.messages}
@@ -1452,7 +1452,7 @@ export function AppShell() {
 			)}
 
 			<ExtensionDialogHost dialog={modalDialog} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
-			{historySessionId && <SessionHistory sessionId={historySessionId} onClose={() => setHistorySessionId(null)} />}
+
 			{/* 只有远程设备（手机走 tailnet）会走到这里：本机仍然用系统原生对话框 */}
 			{dirPickerOpen && <DirectoryPicker open onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />}
 			<ExtensionNotices notices={state.extensionNotices} onDismiss={dismissExtensionNotice}>

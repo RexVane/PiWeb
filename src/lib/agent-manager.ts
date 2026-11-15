@@ -2861,7 +2861,9 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 
 	const baseTrajectory = m.ledger.entries.length ? m.ledger.entries : coldTrajectory(m);
 	const trajectory = recentTrajectory([...environmentTrajectory(m, session, contextResourcesLoaded ? contextResources : undefined), ...baseTrajectory]);
-	const history = historyPage(messages, { limit: MAX_VISIBLE_MESSAGES }, (message) => previewMessage(message, imagePreviewUrl(m, message)));
+	// 聊天窗口加载完整历史（已按要求去掉“查看更早的聊天记录”分页按钮）；
+	// 单条消息体积仍由 previewMessage 控制，避免工具输出把快照撑爆。
+	const projectedMessages = messages.map((message) => previewMessage(message, imagePreviewUrl(m, message)));
 
 	return {
 		seq: snapSeq ?? m.seq,
@@ -2873,8 +2875,8 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		contextResources,
 		contextBreakdown,
 		...resources,
-		messages: history.messages,
-		history: { total: history.total, omitted: history.pageStart },
+		messages: projectedMessages,
+		history: { total: messages.length, omitted: 0 },
 		userTurns: userTurnsFromEntries(m.sm.getEntries() as any[]).slice(-MAX_VISIBLE_MESSAGES),
 		growthError: m.growth?.getError?.() ?? null,
 		model,
