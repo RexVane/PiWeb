@@ -14,7 +14,14 @@ it("terminates its owned engine after the parent IPC disconnects", async () => {
 	const child = spawn(process.execPath, [path.resolve("scripts/remote-engine.mjs"), file], { stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, detached: process.platform !== "win32", env: { ...process.env, NODE_OPTIONS: "", NODE_ENV: "production" } });
 	cleanups.push(() => child.exitCode === null ? terminateProcessTree(child) : Promise.resolve());
 	const pid = await new Promise<number>((resolve, reject) => { let output = ""; child.stdout!.on("data", (chunk) => { output += chunk; const match = /PID:(\d+)/.exec(output); if (match) resolve(Number(match[1])); }); child.once("error", reject); child.once("exit", (code) => reject(new Error(`watchdog exited ${code}`))); });
+	cleanups.push(() => {
+		if (alive(pid)) {
+			try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+		}
+		return Promise.resolve();
+	});
 	expect(alive(pid)).toBe(true);
 	const exited = new Promise<void>((resolve) => child.once("exit", () => resolve())); child.disconnect(); await exited;
+	for (let i = 0; i < 100 && alive(pid); i += 1) await new Promise((resolve) => setTimeout(resolve, 20));
 	expect(alive(pid)).toBe(false);
 });

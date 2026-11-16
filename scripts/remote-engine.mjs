@@ -15,6 +15,17 @@ if (isMainModule(import.meta.url)) {
 	const stop = async () => {
 		if (stopping) return; stopping = true;
 		if (process.platform !== "win32") {
+			// Reap the direct child before killing the whole process group so callers
+			// waiting on watchdog exit do not observe an unreaped reparented zombie.
+			if (engine.exitCode === null && engine.signalCode === null && engine.pid) {
+				await new Promise((resolve) => {
+					let done = false;
+					const finish = () => { if (!done) { done = true; clearTimeout(timer); engine.off("exit", finish); resolve(); } };
+					const timer = setTimeout(finish, 1500);
+					engine.once("exit", finish);
+					try { engine.kill("SIGKILL"); } catch { finish(); }
+				});
+			}
 			// The supervisor creates this watchdog's own process group; its engine
 			// and descendants inherit it, so no unrelated process can be targeted.
 			try { process.kill(-process.pid, "SIGKILL"); return; } catch { /* Fall back for a test harness without a process group. */ }
