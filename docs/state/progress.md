@@ -2,6 +2,14 @@
 
 > 说明（2026-11-15 收尾）：历史条目中的 `.audit-*` 与 `audit_tmp/` 证据目录已随收尾清理移出工作区，归档见 [docs/audit](../audit/README.md)。历史数字与命令保留原样，仅作当时记录。
 
+## 2026-11-16 | 发布 0.3.31：权限默认与持久、附件穿透、Windows 打开浏览器及项目记录防膨胀
+
+- 默认权限模式改为 `"full"`（完全权限），并在会话、浏览器偏好与 `web-tool-preferences.json` 间保持持久同步。
+- 修复输入区附件条带（`composer-images` / `composer-uploads` / `composer-references`）遮挡回到底部按钮（`.pw-slingshot-btn`）的交互问题。
+- 修复 Windows `openBrowser` 使用 `DETACHED_PROCESS` 导致未拉起浏览器的问题，并在需要时等待 `powershell.exe` `Start-Process` 启动。
+- `.gitignore` 忽略 `audit_tmp/` 并扩展排除规则，补充私有索引自愈裁剪、tracked 大小缓存、有界 diff 缓冲、更早触发 `gc.auto=800` 及瞬时失败冷却，解决 `1411` 个未跟踪文件与 `git timed out`。
+- 将 `@types/qrcode` 移入 `dependencies`，将版本升至 `0.3.31` 并恢复 `package-lock.json` 中 `@emnapi/*` 条目以保证全平台 `npm ci` 通过。
+
 ## 2026-11-15 | 全栈审计修复轮：文档、错误文案与发布说明
 
 按 2026-11-15 审计结论修复“文档/UI 文案/发布说明”一类问题，原则是**只修缺陷、不改默认行为**：
