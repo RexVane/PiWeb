@@ -47,7 +47,10 @@ const FIELD_SEP = "\x1f";
 
 /** 不进快照的目录 / 文件（写进 <gitdir>/piweb/exclude）；工作区自己的 .gitignore 等同样生效 */
 export const EXCLUDE_DIRS = GROWTH_EXCLUDE_DIRS;
-const EXCLUDE_FILES = [".DS_Store", "Thumbs.db", "*.log", ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*"];
+const EXCLUDE_FILES = [
+	".DS_Store", "Thumbs.db", "*.log", ".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*",
+	".audit-*/", "*.heapsnapshot", "*.cpuprofile", "*.heapprofile", ".eslintcache", "*.tsbuildinfo", "*.tmp",
+];
 const EXCLUDE_CONTENT = `# PiWeb growth snapshot exclusions (generated, do not edit)\n${[...EXCLUDE_DIRS.map((d) => `${d}/`), ...EXCLUDE_FILES].join("\n")}\n`;
 
 /** 工作区还不是仓库根目录：not-git = 不在任何仓库里；nested = 是 parent 仓库的子目录 */
@@ -86,6 +89,9 @@ interface WorkspaceState {
 	loadedHead?: string;
 	emptyTree: string;
 	excludeRules?: string;
+	/** 最近快照树里已追踪文件的字节数缓存（按需从 ls-tree 填充），避免每次快照全盘串行 lstat */
+	trackedSizes?: Map<string, number>;
+	trackedSizesTree?: string;
 	/** 同一工作区的快照串行执行（共用同一个 PiWeb 暂存区） */
 	lock: Promise<unknown>;
 	/** 本进程的成功提交计数；首次提交也检查 Git 的自动整理阈值，不扫描累计历史。 */
@@ -105,7 +111,7 @@ const globalForGrowth = globalThis as typeof globalThis & { __piWebGrowthRounds?
 const registry: Registry = (globalForGrowth.__piWebGrowthRounds ??= { workspaces: new Map() });
 const workspaceLastUse = new Map<string, number>();
 const activeWorkspaceOperations = new Map<string, number>();
-const MAX_CACHED_WORKSPACES = 64;
+const MAX_CACHED_WORKSPACES = 8;
 
 // ---------- 基础工具 ----------
 
@@ -133,9 +139,100 @@ interface RunResult {
 	stdout: Buffer;
 	stderr: string;
 	code: number;
+	truncated?: boolean;
 }
 
 type Env = Record<string, string | undefined>;
+
+const DEFAULT_GIT_TIMEOUT_MS = 30_000;
+const HEAVY_GIT_TIMEOUT_MS = 60_000;
+
+function gitSubcommandLabel(args: readonly string[]): string {
+	for (let i = 0; i < args.length; i += 1) {
+		const arg = args[i];
+		if (arg === "-c" || arg === "--git-dir" || arg === "--work-tree") { i += 1; continue; }
+		if (!arg.startsWith("-")) return arg;
+	}
+	return "command";
+}
+
+function runGit(
+	args: string[],
+	opts: { cwd?: string; input?: Buffer | string; maxBuffer?: number; maxRecords?: number; retainMaxBytes?: number; timeoutMs?: number; env?: Env } = {},
+): Promise<RunResult> {
+	const maxBuffer = opts.maxBuffer ?? 64 * 1024 * 1024;
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
+	const cmdLabel = gitSubcommandLabel(args);
+	return resolveGitBin().then(
+		(gitBin) =>
+			new Promise<RunResult>((resolve, reject) => {
+				const child = spawn(gitBin, args, {
+					cwd: opts.cwd,
+					// A6/G3：环境清洗后再补 git 需要的值；GIT_INDEX_FILE 等由 opts.env 显式传，不从父进程继承。
+					env: gitChildEnv(opts.env),
+					windowsHide: true,
+					stdio: ["pipe", "pipe", "pipe"],
+				});
+				const out: Buffer[] = [];
+				const err: Buffer[] = [];
+				let size = 0;
+				let retained = 0;
+				let records = 0;
+				let errorSize = 0;
+				let settled = false;
+				const timer = setTimeout(() => fail(new GrowthError(`git ${cmdLabel} timed out`, "failed")), timeoutMs);
+				const fail = (error: Error) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					child.kill();
+					reject(error);
+				};
+				child.stdout.on("data", (chunk: Buffer) => {
+					if (settled) return;
+					if (opts.maxRecords !== undefined) {
+						for (const byte of chunk) if (byte === 0) records += 1;
+						if (records > opts.maxRecords) { fail(new GrowthError("snapshot candidate limit exceeded while scanning", "too-large")); return; }
+					}
+					size += chunk.length;
+					if (opts.retainMaxBytes !== undefined) {
+						if (retained < opts.retainMaxBytes) {
+							const part = chunk.subarray(0, opts.retainMaxBytes - retained);
+							out.push(part);
+							retained += part.length;
+						}
+						return;
+					}
+					if (size > maxBuffer) {
+						child.kill();
+						fail(new GrowthError("git output exceeded the buffer limit", "too-large"));
+						return;
+					}
+					out.push(chunk);
+				});
+				child.stderr.on("data", (chunk: Buffer) => {
+					if (settled) return;
+					errorSize += chunk.length;
+					if (errorSize > maxBuffer) { fail(new GrowthError("git error output exceeded the buffer limit", "too-large")); return; }
+					err.push(chunk);
+				});
+				child.stdin.on("error", (error) => fail(new GrowthError(`git input failed: ${error.message}`)));
+				child.on("error", (error: NodeJS.ErrnoException) => {
+					if (error.code === "ENOENT" && opts.cwd && !existsSync(opts.cwd)) fail(new GrowthError("workspace directory not found", "failed"));
+					else fail(error.code === "ENOENT" ? new GrowthError("git is not installed", "unavailable") : error);
+				});
+				child.on("close", (code) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					const truncated = opts.retainMaxBytes !== undefined ? size > opts.retainMaxBytes : false;
+					resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8"), code: code ?? -1, ...(truncated ? { truncated: true } : {}) });
+				});
+				if (opts.input !== undefined) child.stdin.end(opts.input);
+				else child.stdin.end();
+			}),
+	);
+}
 
 /**
  * git 子进程环境（A6/G3）：`gitEnv` 返回纯 string 映射，spawn 的类型要求 NodeJS.ProcessEnv
@@ -180,69 +277,6 @@ export async function resolveGitBin(): Promise<string> {
 	return bin;
 }
 
-function runGit(args: string[], opts: { cwd?: string; input?: Buffer | string; maxBuffer?: number; maxRecords?: number; env?: Env } = {}): Promise<RunResult> {
-	const maxBuffer = opts.maxBuffer ?? 64 * 1024 * 1024;
-	return resolveGitBin().then(
-		(gitBin) =>
-			new Promise<RunResult>((resolve, reject) => {
-				const child = spawn(gitBin, args, {
-					cwd: opts.cwd,
-					// A6/G3：环境清洗后再补 git 需要的值；GIT_INDEX_FILE 等由 opts.env 显式传，不从父进程继承。
-					env: gitChildEnv(opts.env),
-					windowsHide: true,
-					stdio: ["pipe", "pipe", "pipe"],
-				});
-				const out: Buffer[] = [];
-				const err: Buffer[] = [];
-				let size = 0;
-				let records = 0;
-				let errorSize = 0;
-				let settled = false;
-				const timer = setTimeout(() => fail(new GrowthError("git timed out", "failed")), 30_000);
-				const fail = (error: Error) => {
-					if (settled) return;
-					settled = true;
-					clearTimeout(timer);
-					child.kill();
-					reject(error);
-				};
-				child.stdout.on("data", (chunk: Buffer) => {
-					if (settled) return;
-					if (opts.maxRecords !== undefined) {
-						for (const byte of chunk) if (byte === 0) records += 1;
-						if (records > opts.maxRecords) { fail(new GrowthError("snapshot candidate limit exceeded while scanning", "too-large")); return; }
-					}
-					size += chunk.length;
-					if (size > maxBuffer) {
-						child.kill();
-						fail(new GrowthError("git output exceeded the buffer limit", "too-large"));
-						return;
-					}
-					out.push(chunk);
-				});
-				child.stderr.on("data", (chunk: Buffer) => {
-					if (settled) return;
-					errorSize += chunk.length;
-					if (errorSize > maxBuffer) { fail(new GrowthError("git error output exceeded the buffer limit", "too-large")); return; }
-					err.push(chunk);
-				});
-				child.stdin.on("error", (error) => fail(new GrowthError(`git input failed: ${error.message}`)));
-				child.on("error", (error: NodeJS.ErrnoException) => {
-					if (error.code === "ENOENT" && opts.cwd && !existsSync(opts.cwd)) fail(new GrowthError("workspace directory not found", "failed"));
-					else fail(error.code === "ENOENT" ? new GrowthError("git is not installed", "unavailable") : error);
-				});
-				child.on("close", (code) => {
-					if (settled) return;
-					settled = true;
-					clearTimeout(timer);
-					resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8"), code: code ?? -1 });
-				});
-				if (opts.input !== undefined) child.stdin.end(opts.input);
-				else child.stdin.end();
-			}),
-	);
-}
-
 /** git 不可用时短时间缓存否定结果：避免每个会话重复 30s 超时把 UI 拖死 */
 const GIT_FAIL_RETRY_MS = 60_000;
 
@@ -284,10 +318,22 @@ const BASE_CONFIG = [
  * 工作区仓库命令：固定 git-dir / work-tree，一律使用 PiWeb 专用暂存区。
  * GIT_INDEX_FILE 对纯对象读取（cat-file/diff-tree…）无副作用，统一带上避免漏传。
  */
-async function shadow(ws: WorkspaceState, args: string[], opts: { input?: Buffer | string; maxBuffer?: number; maxRecords?: number; allowFail?: boolean; env?: Env } = {}): Promise<RunResult> {
+async function shadow(
+	ws: WorkspaceState,
+	args: string[],
+	opts: { input?: Buffer | string; maxBuffer?: number; maxRecords?: number; retainMaxBytes?: number; timeoutMs?: number; allowFail?: boolean; env?: Env } = {},
+): Promise<RunResult> {
 	const base = ["--git-dir", ws.gitDir, "--work-tree", ws.cwd, ...BASE_CONFIG];
 	const env: Env = { GIT_INDEX_FILE: ws.indexFile, ...opts.env };
-	const r = await runGit([...base, ...args], { cwd: ws.cwd, input: opts.input, maxBuffer: opts.maxBuffer, maxRecords: opts.maxRecords, env });
+	const r = await runGit([...base, ...args], {
+		cwd: ws.cwd,
+		input: opts.input,
+		maxBuffer: opts.maxBuffer,
+		maxRecords: opts.maxRecords,
+		retainMaxBytes: opts.retainMaxBytes,
+		timeoutMs: opts.timeoutMs,
+		env,
+	});
 	if (r.code !== 0 && !opts.allowFail) {
 		throw new GrowthError(`git ${args[0]} failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`);
 	}
@@ -671,13 +717,31 @@ async function diffTreesRaw(ws: WorkspaceState, from: string, to: string): Promi
 	return withStats(parseNameStatus(names.stdout.toString("utf8")), parseNumstat(nums.stdout.toString("utf8")));
 }
 
-/** 候选路径 → 更新 PiWeb 专用索引；返回本次处理的文件数 */
+async function ensureTrackedSizes(ws: WorkspaceState): Promise<Map<string, number>> {
+	if (ws.trackedSizes && ws.trackedSizesTree === ws.lastTree) return ws.trackedSizes;
+	const next = new Map<string, number>();
+	if (ws.lastTree && ws.lastTree !== ws.emptyTree) {
+		const r = await shadow(ws, ["ls-tree", "-r", "-l", "-z", ws.lastTree], { timeoutMs: HEAVY_GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 });
+		for (const entry of parseLsTree(r.stdout.toString("utf8"))) {
+			if (typeof entry.size === "number") next.set(entry.path, entry.size);
+		}
+	}
+	ws.trackedSizes = next;
+	ws.trackedSizesTree = ws.lastTree;
+	return next;
+}
+
+/** 候选路径 → 更新 PiWeb 专用索引（自动剔除后来被 .gitignore / EXCLUDE 屏蔽的旧条目）；返回本次处理的文件数 */
 async function refreshIndex(ws: WorkspaceState): Promise<number> {
 	// --exclude-standard 让工作区的 .gitignore / info/exclude / 全局 excludesFile 生效；
 	// --exclude-from 叠加 PiWeb 自己的排除文件（用户仓库的 info/exclude 一个字节都不改）
 	const excludeFrom = ws.excludeFile.replace(/\\/g, "/");
-	const listed = await shadow(ws, ["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard", `--exclude-from=${excludeFrom}`], { maxRecords: MAX_CANDIDATES * 2, maxBuffer: 8 * 1024 * 1024 });
-	const candidates = Array.from(new Set(listed.stdout.toString("utf8").split("\0").filter((p) => p && !p.endsWith("/"))));
+	const [ignoredOut, listed] = await Promise.all([
+		shadow(ws, ["ls-files", "-c", "-i", "-z", "--exclude-standard", `--exclude-from=${excludeFrom}`], { timeoutMs: HEAVY_GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 }),
+		shadow(ws, ["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard", `--exclude-from=${excludeFrom}`], { maxRecords: MAX_CANDIDATES * 2, maxBuffer: 8 * 1024 * 1024, timeoutMs: HEAVY_GIT_TIMEOUT_MS }),
+	]);
+	const ignoredSet = new Set(ignoredOut.stdout.toString("utf8").split("\0").filter(Boolean));
+	const candidates = Array.from(new Set(listed.stdout.toString("utf8").split("\0").filter((p) => p && !p.endsWith("/") && !ignoredSet.has(p))));
 	if (candidates.length > MAX_CANDIDATES) {
 		const counts = new Map<string, number>();
 		for (const candidate of candidates) {
@@ -689,10 +753,15 @@ async function refreshIndex(ws: WorkspaceState): Promise<number> {
 		throw new GrowthError(`snapshot has ${candidates.length} candidate files (limit ${MAX_CANDIDATES}); largest directories: ${largest}. Exclude generated directories with .gitignore`, "too-large");
 	}
 	const adds: string[] = [];
-	const removals: string[] = [];
-	const tracked = new Set((await shadow(ws, ["ls-files", "-z"])).stdout.toString("utf8").split("\0"));
+	const removals: string[] = [...ignoredSet];
+	const trackedList = (await shadow(ws, ["ls-files", "-z"], { timeoutMs: HEAVY_GIT_TIMEOUT_MS })).stdout.toString("utf8").split("\0").filter(Boolean);
+	const tracked = new Set(trackedList);
+	const knownSizes = await ensureTrackedSizes(ws);
+	const sizeUpdates: Array<[string, number | null]> = [];
+	for (const rel of ignoredSet) sizeUpdates.push([rel, null]);
 	let snapshotBytes = 0;
 	const BATCH = 256;
+	const LSTAT_BATCH = 64;
 	const INDEX_BATCH = 256;
 	const directories = new Map<string, Promise<boolean>>();
 	const regularDirectory = (rel: string): Promise<boolean> => {
@@ -717,7 +786,7 @@ async function refreshIndex(ws: WorkspaceState): Promise<number> {
 			candidates.slice(i, i + BATCH).map(async (rel) => {
 				// Git for Windows 会枚举 junction 内的文件；只查叶子 lstat 无法发现它。
 				const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
-				if (!(await regularDirectory(parent))) return { rel, include: false };
+				if (!(await regularDirectory(parent))) return { rel, include: false, size: 0 };
 				const stat = await fs.lstat(path.join(ws.cwd, rel)).catch((error: NodeJS.ErrnoException) => {
 					if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
 					throw error;
@@ -725,29 +794,64 @@ async function refreshIndex(ws: WorkspaceState): Promise<number> {
 				if (stat?.isFile() && stat.size > MAX_FILE_BYTES && tracked.has(rel)) {
 					throw new GrowthError(`Previously recorded file exceeds the ${MAX_FILE_BYTES} byte limit: ${rel}; snapshot retained without recording a deletion`, "too-large");
 				}
-				if (stat?.isFile() && stat.size <= MAX_FILE_BYTES) snapshotBytes += stat.size;
-				return { rel, include: Boolean(stat?.isFile() && stat.size <= MAX_FILE_BYTES) };
+				const include = Boolean(stat?.isFile() && stat.size <= MAX_FILE_BYTES);
+				const size = include && stat ? stat.size : 0;
+				if (include) snapshotBytes += size;
+				return { rel, include, size };
 			}),
 		);
-		for (const { rel, include } of classified) (include ? adds : removals).push(rel);
+		for (const { rel, include, size } of classified) {
+			(include ? adds : removals).push(rel);
+			sizeUpdates.push([rel, include ? size : null]);
+		}
 	}
 	// Unmodified entries remain in the private index and count toward the same budget.
+	// 优先用已提交树缓存的文件大小；仅缓存缺失条目再分批 lstat，避免大仓库每次全盘串行 lstat。
 	const candidateSet = new Set(candidates);
+	const missingSizes: string[] = [];
 	for (const rel of tracked) {
-		if (!rel || candidateSet.has(rel)) continue;
-		const stat = await fs.lstat(path.join(ws.cwd, rel)).catch(() => undefined);
-		if (stat?.isFile() && stat.size <= MAX_FILE_BYTES) snapshotBytes += stat.size;
+		if (candidateSet.has(rel) || ignoredSet.has(rel)) continue;
+		const cached = knownSizes.get(rel);
+		if (cached !== undefined) {
+			if (cached <= MAX_FILE_BYTES) snapshotBytes += cached;
+		} else {
+			missingSizes.push(rel);
+		}
+	}
+	for (let i = 0; i < missingSizes.length; i += LSTAT_BATCH) {
+		const stats = await Promise.all(
+			missingSizes.slice(i, i + LSTAT_BATCH).map(async (rel) => {
+				const stat = await fs.lstat(path.join(ws.cwd, rel)).catch(() => undefined);
+				return [rel, stat?.isFile() ? stat.size : null] as const;
+			}),
+		);
+		for (const [rel, size] of stats) {
+			if (size !== null && size <= MAX_FILE_BYTES) {
+				snapshotBytes += size;
+				sizeUpdates.push([rel, size]);
+			}
+		}
 	}
 	if (snapshotBytes > MAX_SNAPSHOT_BYTES) throw new GrowthError(`snapshot exceeds the ${MAX_SNAPSHOT_BYTES} byte budget; previous snapshot was retained`, "too-large");
 	// --remove 只移除磁盘上已消失的路径；符号链接/目录/超大文件仍在，必须 force-remove。
 	// 全体移除先完成，保证 p → p/child 和 p/child → p 都不受候选顺序、批次边界影响。
-	for (let i = 0; i < removals.length; i += INDEX_BATCH) {
-		await shadow(ws, ["update-index", "--force-remove", "-z", "--stdin"], { input: `${removals.slice(i, i + INDEX_BATCH).join("\0")}\0` });
+	try {
+		for (let i = 0; i < removals.length; i += INDEX_BATCH) {
+			await shadow(ws, ["update-index", "--force-remove", "-z", "--stdin"], { input: `${removals.slice(i, i + INDEX_BATCH).join("\0")}\0`, timeoutMs: HEAVY_GIT_TIMEOUT_MS });
+		}
+		for (let i = 0; i < adds.length; i += INDEX_BATCH) {
+			// Git 的 --replace 只移除与待添加项冲突的索引项，兜底扫描期间的类型转换；
+			// --remove 同时容忍 lstat 后刚被删掉的文件。这些命令始终只操作 PiWeb 专用索引。
+			await shadow(ws, ["update-index", "--add", "--remove", "--replace", "-z", "--stdin"], { input: `${adds.slice(i, i + INDEX_BATCH).join("\0")}\0`, timeoutMs: HEAVY_GIT_TIMEOUT_MS });
+		}
+	} catch (error) {
+		ws.trackedSizes = undefined;
+		ws.trackedSizesTree = undefined;
+		throw error;
 	}
-	for (let i = 0; i < adds.length; i += INDEX_BATCH) {
-		// Git 的 --replace 只移除与待添加项冲突的索引项，兜底扫描期间的类型转换；
-		// --remove 同时容忍 lstat 后刚被删掉的文件。这些命令始终只操作 PiWeb 专用索引。
-		await shadow(ws, ["update-index", "--add", "--remove", "--replace", "-z", "--stdin"], { input: `${adds.slice(i, i + INDEX_BATCH).join("\0")}\0` });
+	for (const [rel, size] of sizeUpdates) {
+		if (size === null) knownSizes.delete(rel);
+		else knownSizes.set(rel, size);
 	}
 	return candidates.length;
 }
@@ -773,13 +877,13 @@ export interface CommitOptions {
 	abortIf?: () => boolean;
 }
 
-/** 每个工作区每提交这么多次跑一次 `git gc --auto`（与 git commit 自己的做法一样，没到阈值时什么也不做） */
-const GC_EVERY_COMMITS = 50;
+/** 每个工作区每提交这么多次跑一次 `git gc --auto`（阈值降到 800 个松散对象，及时压缩包文件减盘占；没到阈值时什么也不做） */
+const GC_EVERY_COMMITS = 25;
 
 /** 不等、不设超时（大仓库打包可能要很久，中途杀掉白干）；也不占工作区锁，并发由 git 自己的锁处理 */
 async function gcInBackground(ws: WorkspaceState): Promise<void> {
 	const gitBin = await resolveGitBin();
-	const child = spawn(gitBin, ["--git-dir", ws.gitDir, "gc", "--auto", "--quiet"], {
+	const child = spawn(gitBin, ["-c", "gc.auto=800", "--git-dir", ws.gitDir, "gc", "--auto", "--quiet"], {
 		cwd: ws.cwd,
 		env: gitChildEnv(),
 		stdio: "ignore",
@@ -806,7 +910,7 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 			ws.excludeRules = EXCLUDE_CONTENT;
 		}
 		await refreshIndex(ws);
-		const tree = (await shadow(ws, ["write-tree"])).stdout.toString("utf8").trim();
+		const tree = (await shadow(ws, ["write-tree"], { timeoutMs: HEAVY_GIT_TIMEOUT_MS })).stdout.toString("utf8").trim();
 		assertHash(tree, "tree");
 		// 快照拍到一半时 pi 已经开始改文件：分不清谁改的，宁可不记（改动并入 pi 这一轮）
 		if (options.abortIf?.()) return null;
@@ -853,6 +957,7 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 			}
 			ws.lastCommit = commit;
 			ws.lastTree = tree;
+			if (ws.trackedSizes) ws.trackedSizesTree = tree;
 			// commit-tree 是底层命令，不会像 git commit 那样顺手 gc --auto：快照对象一直是松散文件、只增不减。
 			// 隔一段补一次，没到阈值 git 什么都不做。不带 PiWeb 暂存区：用户自己 index 里的对象照常算可达；
 			// PiWeb 暂存区此刻刚整体提交，里面的对象都已挂在专用引用上
@@ -972,9 +1077,9 @@ export async function filePatch(cwdValue: string, from: unknown, to: unknown, re
 	const rel = assertRelPath(relPath);
 	const paths = [rel];
 	if (typeof renamedFrom === "string" && renamedFrom) paths.push(assertRelPath(renamedFrom));
-	const r = await shadow(ws, ["diff", "-M", "--no-color", "--no-ext-diff", "-U1000000", assertHash(from, "from"), assertHash(to, "to"), "--", ...paths]);
+	const r = await shadow(ws, ["diff", "-M", "--no-color", "--no-ext-diff", "-U1000000", assertHash(from, "from"), assertHash(to, "to"), "--", ...paths], { retainMaxBytes: MAX_PATCH_BYTES + 4 });
 	if (/^Binary files .* differ$/m.test(r.stdout.toString("utf8", 0, Math.min(r.stdout.length, 64 * 1024)))) return { patch: "", binary: true, truncated: false };
-	if (r.stdout.length <= MAX_PATCH_BYTES) return { patch: r.stdout.toString("utf8"), binary: false, truncated: false };
+	if (!r.truncated && r.stdout.length <= MAX_PATCH_BYTES) return { patch: r.stdout.toString("utf8"), binary: false, truncated: false };
 	return { patch: utf8Prefix(r.stdout, MAX_PATCH_BYTES).toString("utf8"), binary: false, truncated: true };
 }
 

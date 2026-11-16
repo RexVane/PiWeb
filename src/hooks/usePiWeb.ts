@@ -639,6 +639,8 @@ export function usePiWeb() {
 	const presetRestoreAttemptRef = useRef<string | null>(null);
 	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
 	const pendingPresetChangesRef = useRef(new Set<string | null>());
+	const lastServerDefaultRef = useRef<ToolPreset | undefined>(undefined);
+	const presetMutationSeqRef = useRef(0);
 	const [, setPresetChangeVersion] = useState(0);
 	const toolPresetChanging = pendingPresetChangesRef.current.has(currentId);
 	const liveStateRef = useRef(state);
@@ -976,6 +978,7 @@ export function usePiWeb() {
 		const load = async (force: boolean) => {
 			if (!alive || (!force && document.visibilityState !== "visible")) return;
 			controller = new AbortController();
+			const presetSeq = presetMutationSeqRef.current;
 			try {
 				const r = await fetch(`/api/sessions?limit=${Math.min(sessionPageLimit, 500)}${sessionSearch ? `&q=${encodeURIComponent(sessionSearch)}` : ""}`, { signal: controller.signal, headers: lastEtag ? { "If-None-Match": lastEtag } : undefined });
 				if (r.status === 304) {
@@ -1011,6 +1014,15 @@ export function usePiWeb() {
 					if (Array.isArray(registry.archivedSessions)) setArchivedSessionPaths(registry.archivedSessions);
 					setArchivedAt(registry.archivedAt ?? {});
 					if (Array.isArray(registry.pinnedSessions)) setPinnedSessionPaths(registry.pinnedSessions);
+				}
+				const serverDefault = normalizeToolPreset(j.data.defaultToolPreset);
+				const serverDefaultSaved = j.data.defaultToolPresetSaved === true;
+				if (serverDefaultSaved && serverDefault && presetSeq === presetMutationSeqRef.current && serverDefault !== lastServerDefaultRef.current) {
+					lastServerDefaultRef.current = serverDefault;
+					try { localStorage.setItem("piweb.toolPreset", serverDefault); } catch { /* ignore */ }
+					if (!activeSessionRef.current && !pendingPresetChangesRef.current.has(null)) {
+						setState((prev) => (prev.toolPreset === serverDefault ? prev : { ...prev, toolPreset: serverDefault }));
+					}
 				}
 				setSessions(
 					page.map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
@@ -1489,11 +1501,25 @@ export function usePiWeb() {
 			try {
 				await presetRestorePromiseRef.current;
 				if (!current()) return { success: false, error: "session changed" };
+				presetMutationSeqRef.current += 1;
 				if (currentId) {
 					const result = await sendCommand({ cmd: "setToolPreset", preset }, currentId, { shouldReportError: current });
 					if (!current()) return { success: false, error: "session changed" };
 					if (!result?.success) return { success: false, error: result?.error };
+				} else {
+					const response = await fetch("/api/tool-preferences", {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ toolPreset: preset }),
+					});
+					if (!current()) return { success: false, error: "session changed" };
+					let body: { success?: boolean; error?: string } | null = null;
+					try { body = await response.json(); } catch { body = null; }
+					if (response.status !== 404 && (!response.ok || (body && body.success === false))) {
+						return { success: false, error: body?.error || `request failed (${response.status})` };
+					}
 				}
+				lastServerDefaultRef.current = preset;
 				try { localStorage.setItem("piweb.toolPreset", preset); } catch (error) { if (!currentId) throw error; }
 				setState((s) => ({
 					...s,

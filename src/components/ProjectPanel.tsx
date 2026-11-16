@@ -67,6 +67,7 @@ function growthFailureMessage(message: string, lang: "zh" | "en"): string {
 	if (/workspace directory not found/i.test(message)) return lang === "zh" ? "工作区目录不存在，请重新选择工作区。" : "The workspace directory is unavailable. Select the workspace again.";
 	if (/candidate limit|candidate files|文件过多/i.test(message)) return lang === "zh" ? "工作区文件过多，已停止记录。请在 .gitignore 中排除生成目录后重新开启记录。" : "The workspace has too many files to record. Exclude generated directories in .gitignore, then enable recording again.";
 	if (/exceeds.*(?:byte|limit)|exceeded.*(?:buffer|limit)/i.test(message)) return lang === "zh" ? "项目记录超过大小限制，上一份快照已保留。请缩小或排除大文件后重新开启记录。" : "Project recording exceeded its size limit. The previous snapshot is retained. Reduce or exclude large files, then enable recording again.";
+	if (/timed out/i.test(message)) return lang === "zh" ? "项目记录耗时超时，上一份快照已保留。若工作区包含大量临时/缓存或生成文件，请加入 .gitignore 后重试。" : "Project recording timed out (previous snapshot retained). Exclude large temp, cache, or build directories in .gitignore, then retry.";
 	return lang === "zh" ? "项目记录未能完成，请重试或查看错误详情。" : "Project recording could not finish. Retry or review the error details.";
 }
 

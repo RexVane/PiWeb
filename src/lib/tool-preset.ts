@@ -26,7 +26,7 @@ export function toolPresetLabel(preset: ToolPreset): string {
 	return TOOL_PRESET_LABELS[preset];
 }
 
-export const DEFAULT_TOOL_PRESET: ToolPreset = "workspace";
+export const DEFAULT_TOOL_PRESET: ToolPreset = "full";
 
 export function isToolPreset(value: unknown): value is ToolPreset {
 	return value === "readonly" || value === "workspace" || value === "full";

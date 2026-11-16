@@ -5,6 +5,7 @@ import { sortArchivedSessions } from "@/lib/archived-sessions-sort";
 import { listSessions } from "@/lib/session-reader";
 import { activeStatus, warmSessionResources } from "@/lib/agent-manager";
 import { canonicalWorkspacePath, getWorkspaceRegistry } from "@/lib/workspace-store";
+import { readDefaultToolPreset } from "@/lib/tool-preferences";
 import path from "node:path";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +59,17 @@ export async function GET(req: Request) {
 				? visible.slice(offset, offset + limit)
 				: (await listSessions(q, { limit, offset })).map((session) => ({ ...session, cwd: cwds.get(session.cwd)! }));
 		const nextOffset = limit !== null && offset + limit < visible.length ? offset + limit : null;
-		const body = JSON.stringify({ success: true, data: { sessions: page, running: activeStatus(), workspaceRegistry, ...(limit !== null ? { total: visible.length, nextOffset } : {}) } });
+		const defaultToolPreference = await readDefaultToolPreset().catch(() => null);
+		const body = JSON.stringify({
+			success: true,
+			data: {
+				sessions: page,
+				running: activeStatus(),
+				workspaceRegistry,
+				...(defaultToolPreference ? { defaultToolPreset: defaultToolPreference.toolPreset, defaultToolPresetSaved: defaultToolPreference.saved } : {}),
+				...(limit !== null ? { total: visible.length, nextOffset } : {}),
+			},
+		});
 		const etag = `"${createHash("sha1").update(body).digest("base64url")}"`;
 		// Resource discovery can load extensions and read many source files. Start
 		// it after the sidebar response is sent, not while computing that response.

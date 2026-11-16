@@ -146,7 +146,7 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 
 	return (
 		<>
-			<div ref={railRef} className="pointer-events-auto flex flex-wrap items-end gap-2 px-1 pb-1" data-testid="composer-images">
+			<div ref={railRef} className="pointer-events-none flex flex-wrap items-end gap-2 px-1 pb-1" data-testid="composer-images">
 				{collapsible ? (
 					<div
 						className="pw-image-fan"
@@ -170,7 +170,7 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 							return (
 								<div
 									key={keyOf(image)}
-									className="pw-image-card"
+									className={`pw-image-card ${pose.hidden ? "pointer-events-none" : "pointer-events-auto"}`}
 									data-hidden={pose.hidden || undefined}
 									data-lifted={up || undefined}
 									style={{
@@ -204,7 +204,7 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 					</div>
 				) : (
 					images.map((image, i) => (
-						<div key={keyOf(image)} className="pw-image-thumb">
+						<div key={keyOf(image)} className="pw-image-thumb pointer-events-auto">
 							<button type="button" className="block" title={t.imagePreview} aria-label={t.imagePreview} onClick={() => setPreview(i)}>
 								<img src={srcOf(image)} alt="" className="max-h-24 max-w-32 rounded-[10px] object-contain" draggable={false} />
 							</button>
@@ -212,7 +212,7 @@ export function ComposerImages({ images, disabled, onRemove, onClear }: { images
 						</div>
 					))
 				)}
-				<div className="flex items-center gap-1.5 self-end pb-0.5">
+				<div className="pointer-events-auto flex items-center gap-1.5 self-end pb-0.5">
 					{collapsible ? (
 						<button
 							type="button"

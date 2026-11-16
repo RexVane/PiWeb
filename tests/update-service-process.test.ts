@@ -42,7 +42,10 @@ describe("update command runner without real subprocesses", () => {
 			await fs.mkdir(path.join(root, "node_modules", "vitest"), { recursive: true });
 			await fs.writeFile(path.join(root, "node_modules", "vitest", "package.json"), "{}");
 			const child = Object.assign(fakeChild(), { unref: vi.fn() });
-			mocks.spawn.mockReturnValue(child);
+			mocks.spawn.mockImplementation(() => {
+				if (process.platform === "win32") queueMicrotask(() => child.emit("close", 0));
+				return child;
+			});
 			const { runLauncher } = await import("../scripts/launcher.mjs");
 			const result = await runLauncher({
 				root, args: [], env: { PI_CODING_AGENT_DIR: root },
@@ -53,9 +56,37 @@ describe("update command runner without real subprocesses", () => {
 			const url = "http://127.0.0.1:30141";
 			const { command, args, env } = browserLaunchSpec(url);
 			expect(result).toBe(0);
-			expect(mocks.spawn).toHaveBeenCalledExactlyOnceWith(command, args, { env, detached: true, stdio: "ignore", windowsHide: true });
-			expect(child.unref).toHaveBeenCalledOnce();
+			expect(mocks.spawn).toHaveBeenCalledExactlyOnceWith(command, args, { env, detached: process.platform !== "win32", stdio: "ignore", windowsHide: true });
+			if (process.platform !== "win32") expect(child.unref).toHaveBeenCalledOnce();
 		} finally { await recycleFixture(root); }
+	});
+
+	it("avoids Windows DETACHED_PROCESS and waits cleanly for PowerShell Start-Process before exiting", async () => {
+		vi.useFakeTimers();
+		const { openBrowser } = await import("../scripts/launcher.mjs");
+		const winChild = Object.assign(fakeChild(), { unref: vi.fn() });
+		mocks.spawn.mockReturnValueOnce(winChild);
+		let resolved = false;
+		const winTask = openBrowser("http://127.0.0.1:30141", "win32").then(() => { resolved = true; });
+		expect(mocks.spawn).toHaveBeenCalledWith("powershell.exe", expect.any(Array), expect.objectContaining({ detached: false, stdio: "ignore", windowsHide: true }));
+		await Promise.resolve();
+		expect(resolved).toBe(false);
+		winChild.emit("close", 0);
+		await winTask;
+		expect(resolved).toBe(true);
+
+		const hungChild = Object.assign(fakeChild(), { unref: vi.fn() });
+		mocks.spawn.mockReturnValueOnce(hungChild);
+		const timeoutTask = openBrowser("http://127.0.0.1:30141", "win32");
+		await vi.advanceTimersByTimeAsync(5_000);
+		await timeoutTask;
+		expect(hungChild.unref).toHaveBeenCalledOnce();
+
+		const linuxChild = Object.assign(fakeChild(), { unref: vi.fn() });
+		mocks.spawn.mockReturnValueOnce(linuxChild);
+		await openBrowser("http://127.0.0.1:30141", "linux");
+		expect(mocks.spawn).toHaveBeenLastCalledWith("xdg-open", ["http://127.0.0.1:30141"], expect.objectContaining({ detached: true, stdio: "ignore", windowsHide: true }));
+		expect(linuxChild.unref).toHaveBeenCalledOnce();
 	});
 
 	it("uses fixed argv and cwd, waits for close and bounds captured output", async () => {

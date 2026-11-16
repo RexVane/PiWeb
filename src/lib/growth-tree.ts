@@ -6,7 +6,8 @@ import type { GrowthChange } from "./types";
 
 /** 不进快照的目录（影子仓库 info/exclude 与项目树的懒加载目录共用；浏览器可导入） */
 export const GROWTH_EXCLUDE_DIRS = [
-	"node_modules", ".git", ".next", ".next-dev", ".next-dev-webpack", ".next-dev-clean", "dist", "build", "out",
+	"node_modules", ".git", ".next", ".next-dev", ".next-dev-webpack", ".next-dev-clean", ".next-prod", "dist", "build", "out",
+	"audit_tmp", "npm-cache", ".npm-cache", "_cacache", ".vitest", ".vite", ".nitro", ".vercel", ".netlify", ".nx", ".yarn-cache", ".tmp", "tmp_cache",
 	".venv", "venv", "__pycache__", ".cache", "target", ".turbo", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".idea",
 	".pnpm", ".pnpm-store", ".npm", ".yarn", ".gradle", ".tox", ".nox", ".uv", ".pixi", ".conda",
 	".svelte-kit", ".nuxt", ".output", ".parcel-cache", ".angular", ".expo", ".dart_tool", ".terraform", ".serverless", ".aws-sam", "coverage", "htmlcov",

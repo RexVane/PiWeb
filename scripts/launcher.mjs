@@ -393,11 +393,33 @@ export function browserLaunchSpec(url, platform = process.platform) {
 	}
 	return { command: platform === "darwin" ? "open" : "xdg-open", args: [url], env: process.env };
 }
-async function openBrowser(url) {
-	const { command, args, env } = browserLaunchSpec(url);
-	const child = spawn(command, args, { env, detached: true, stdio: "ignore", windowsHide: true });
-	child.once("error", () => {});
-	child.unref();
+export async function openBrowser(url, platform = process.platform) {
+	const { command, args, env } = browserLaunchSpec(url, platform);
+	const win32 = platform === "win32";
+	const child = spawn(command, args, { env, detached: !win32, stdio: "ignore", windowsHide: true });
+	if (!win32) {
+		child.once("error", () => {});
+		child.unref();
+		return;
+	}
+	// Windows 的 powershell.exe 在 detached: true（DETACHED_PROCESS）下会跳过 -Command；
+	// 用 detached: false 并等 Start-Process 触发完浏览器再返回，避免复用实例先退出带走子进程。
+	await new Promise((resolve) => {
+		let settled = false;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve();
+		};
+		const timer = setTimeout(() => {
+			child.unref?.();
+			finish();
+		}, 5_000);
+		timer.unref?.();
+		child.once("error", finish);
+		child.once("close", finish);
+	});
 }
 
 async function resolveExistingInstanceUrl(port, url, env, dependencies, warn, authOn = authenticationEnabled(env.PI_WEB_AUTH)) {

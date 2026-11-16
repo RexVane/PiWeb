@@ -17,6 +17,8 @@ import { isAbortMessage } from "./chat/cancellation";
 import { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-activity";
 
 const ERROR_THROTTLE_MS = 60_000;
+const TRANSIENT_COOLDOWN_MS = 120_000;
+const COOLDOWN_AFTER_FAILURES = 2;
 export const GROWTH_TRACKER_VERSION = 7;
 
 interface SessionEntryLike {
@@ -66,11 +68,14 @@ export function createGrowthTracker(opts: {
 	let lastErrorAt = 0;
 	let errorActive = false;
 	let lastErrorMessage: string | null = null;
+	let consecutiveFailures = 0;
+	let cooldownUntil = 0;
 	let chain: Promise<void> = Promise.resolve();
 	/** 本轮开始时会话条目的数量；null = 不在一轮之中 */
 	let runStart: number | null = null;
 	/** 每开始一轮加一：prepare 排队期间 pi 已经开工，就不能再把工作区记成「你的修改」 */
 	let runEpoch = 0;
+	const inCooldown = () => cooldownUntil > Date.now();
 	const releaseActiveRun = () => {
 		const attribution = finishGrowthRun(cwd, sessionPath);
 		runStart = null;
@@ -85,6 +90,12 @@ export function createGrowthTracker(opts: {
 			disabled = true;
 			disabledFailure = error;
 			releaseActiveRun();
+		} else {
+			consecutiveFailures += 1;
+			if (consecutiveFailures >= COOLDOWN_AFTER_FAILURES) {
+				cooldownUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
+				releaseActiveRun();
+			}
 		}
 		errorActive = true;
 		lastErrorMessage = message;
@@ -101,6 +112,8 @@ export function createGrowthTracker(opts: {
 	};
 
 	const published = (round: GrowthRound | null) => {
+		consecutiveFailures = 0;
+		cooldownUntil = 0;
 		if (errorActive) {
 			errorActive = false;
 			lastErrorMessage = null;
@@ -133,10 +146,10 @@ export function createGrowthTracker(opts: {
 		version: GROWTH_TRACKER_VERSION,
 		getError: () => lastErrorMessage,
 		prepare() {
-			if (disabled || disposed) return chain;
+			if (disabled || disposed || inCooldown()) return chain;
 			const epoch = runEpoch;
 			return enqueue(async () => {
-				if (disabled || disposed) return;
+				if (disabled || disposed || inCooldown()) return;
 				// 5 秒没拍完提问就放行了：pi 开工后再拍的快照会把它的改动记成「你的修改」
 				const round = await recordUserChanges(() => runEpoch !== epoch);
 				if (round !== undefined) published(round);
@@ -146,6 +159,7 @@ export function createGrowthTracker(opts: {
 			if (disposed || disabled) return;
 			switch (evt.type) {
 				case "agent_start":
+					if (inCooldown()) break;
 					// 自动重试会再次 agent_start：一轮只从第一次开始算
 					if (runStart === null) {
 						beginGrowthRun(cwd, sessionPath);
@@ -161,9 +175,13 @@ export function createGrowthTracker(opts: {
 					const ordinal = userTurnsFromEntries(all).findIndex((turn) => turn.id === ids[0]) + 1;
 					const attribution = finishGrowthRun(cwd, sessionPath);
 					runStart = null;
+					if (inCooldown()) {
+						void completeGrowthRun(cwd, attribution.runId).catch(() => undefined);
+						break;
+					}
 					void enqueue(async () => {
 						try {
-							if (disabled || disposed) return;
+							if (disabled || disposed || inCooldown()) return;
 							const round = await commit((options) => commitRound(cwd, { kind: "round", session: sessionPath, title, promptIds: ids, ...(ordinal > 0 ? { roundNumber: ordinal } : {}), status: roundStatus(run), ...attribution }, options));
 							if (round !== undefined) published(round);
 						} finally { await completeGrowthRun(cwd, attribution.runId); }
@@ -176,6 +194,8 @@ export function createGrowthTracker(opts: {
 		},
 		async recordNow() {
 			if (disabled) throw disabledFailure ?? new GrowthError("growth tracking is disabled for this workspace", "unavailable");
+			consecutiveFailures = 0;
+			cooldownUntil = 0;
 			let result: GrowthRound | null = null;
 			let failure: unknown;
 			await enqueue(async () => {
@@ -204,6 +224,8 @@ export function createGrowthTracker(opts: {
 			if (disposed) return null;
 			disabled = false;
 			disabledFailure = null;
+			consecutiveFailures = 0;
+			cooldownUntil = 0;
 			if (!recordBaseline) return null;
 			let result: GrowthRound | null = null;
 			await enqueue(async () => {

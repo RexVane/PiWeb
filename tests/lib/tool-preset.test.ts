@@ -18,7 +18,7 @@ describe("normalizeToolPreset", () => {
 
 	it("keeps the three current ids", () => {
 		for (const id of TOOL_PRESET_IDS) expect(normalizeToolPreset(id), id).toBe(id);
-		expect(DEFAULT_TOOL_PRESET).toBe("workspace");
+		expect(DEFAULT_TOOL_PRESET).toBe("full");
 	});
 
 	it("rejects anything else instead of silently defaulting", () => {

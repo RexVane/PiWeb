@@ -11,21 +11,26 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getAgentDir } from "./pi";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
-import { normalizeToolPreset } from "./tool-preset";
+import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "./tool-preset";
 import type { ToolPreset } from "./types";
 import { readFileBounded } from "./read-file-bounded";
 
 export interface ToolPreference {
-toolPreset: ToolPreset;
-/** 有值表示用户逐项选择；undefined 表示跟随 preset。 */
-customActiveTools?: string[];
-updatedAt?: number;
+	toolPreset: ToolPreset;
+	/** 有值表示用户逐项选择；undefined 表示跟随 preset。 */
+	customActiveTools?: string[];
+	updatedAt?: number;
+}
+
+export interface SaveToolPreferenceOptions {
+	/** 用户显式切换档位时同步保存为全局默认，重启或开新对话仍沿用。 */
+	updateDefault?: boolean;
 }
 
 interface ToolPreferencesFile {
-version: 2;
-/** pathKey(sessionPath) → 该会话自己的偏好 */
-sessions: Record<string, unknown>;
+	version: 2;
+	defaultToolPreset?: ToolPreset;
+	sessions: Record<string, unknown>;
 }
 
 export class ToolPreferencesValidationError extends Error {}
@@ -71,44 +76,83 @@ if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Er
 const raw = parsed as Record<string, unknown>;
 // v1 曾按工作区保存，无法可靠映射回会话（工作区里可能有多个会话），直接忽略。
 if (raw.version === 1) return { version: 2, sessions: {} };
-if (raw.version !== 2) throw new ToolPreferencesValidationError("Unsupported saved tool permissions version");
-return { version: 2, sessions: readSessions(raw.sessions) };
-} catch (error) {
-if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-return { version: 2, sessions: {} };
-}
+			if (raw.version !== 2) throw new ToolPreferencesValidationError("Unsupported saved tool permissions version");
+			let defaultToolPreset: ToolPreset | undefined;
+			if (raw.defaultToolPreset !== undefined) {
+				defaultToolPreset = normalizeToolPreset(raw.defaultToolPreset);
+				if (!defaultToolPreset) throw new ToolPreferencesValidationError("Saved default tool permission is invalid; the original record was retained");
+			}
+			return {
+				version: 2,
+				...(defaultToolPreset ? { defaultToolPreset } : {}),
+				sessions: readSessions(raw.sessions),
+			};
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			return { version: 2, sessions: {} };
+		}
 }
 
 async function write(data: ToolPreferencesFile, target: string): Promise<void> {
-await fs.mkdir(path.dirname(target), { recursive: true });
-const temporary = `${target}.${randomUUID()}.tmp`;
-try {
-await fs.writeFile(temporary, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
-await fs.rename(temporary, target);
-} finally {
-await fs.rm(temporary, { force: true }).catch(() => undefined);
+	await fs.mkdir(path.dirname(target), { recursive: true });
+	const temporary = `${target}.${randomUUID()}.tmp`;
+	const payload: ToolPreferencesFile = {
+		version: 2,
+		...(data.defaultToolPreset ? { defaultToolPreset: data.defaultToolPreset } : {}),
+		sessions: data.sessions,
+	};
+	try {
+		await fs.writeFile(temporary, JSON.stringify(payload, null, 2), { encoding: "utf8", flag: "wx", mode: 0o600 });
+		await fs.rename(temporary, target);
+	} finally {
+		await fs.rm(temporary, { force: true }).catch(() => undefined);
+	}
 }
+
+/** 读取服务端保存的全局默认权限；从未保存过时回落到 DEFAULT_TOOL_PRESET（完全权限）。 */
+export async function readDefaultToolPreset(): Promise<{ toolPreset: ToolPreset; saved: boolean }> {
+	const data = await readFile();
+	return data.defaultToolPreset
+		? { toolPreset: data.defaultToolPreset, saved: true }
+		: { toolPreset: DEFAULT_TOOL_PRESET, saved: false };
+}
+
+/** 保存全局默认权限（不改写已有会话记录，即使某些记录校验异常也保留原值）。 */
+export async function saveDefaultToolPreset(preset: ToolPreset): Promise<void> {
+	const normalized = normalizeToolPreset(preset);
+	if (!normalized) throw new ToolPreferencesValidationError("Invalid tool permission preset");
+	const target = file();
+	await withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
+		const data = await readFile();
+		data.defaultToolPreset = normalized;
+		await write(data, target);
+	}));
 }
 
 /** 读取某会话的工具偏好；没有保存过返回 null。 */
 export async function readToolPreference(sessionPath: string): Promise<ToolPreference | null> {
-const data = await readFile();
-const key = pathKey(sessionPath);
-return Object.hasOwn(data.sessions, key) ? sanitize(data.sessions[key]) : null;
+	const data = await readFile();
+	const key = pathKey(sessionPath);
+	return Object.hasOwn(data.sessions, key) ? sanitize(data.sessions[key]) : null;
 }
 
 /** 保存某会话的工具偏好（原子替换 + 与 pi 的设置写入共用锁协议）。 */
-export async function saveToolPreference(sessionPath: string, preference: ToolPreference): Promise<void> {
-const target = file();
-const key = pathKey(sessionPath);
-const value = sanitize({
-toolPreset: preference.toolPreset,
-...(preference.customActiveTools ? { customActiveTools: [...preference.customActiveTools] } : {}),
-updatedAt: Date.now(),
-});
-await withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
-const data = await readFile();
-data.sessions[key] = value;
-await write(data, target);
-}));
+export async function saveToolPreference(
+	sessionPath: string,
+	preference: ToolPreference,
+	options?: SaveToolPreferenceOptions,
+): Promise<void> {
+	const target = file();
+	const key = pathKey(sessionPath);
+	const value = sanitize({
+		toolPreset: preference.toolPreset,
+		...(preference.customActiveTools ? { customActiveTools: [...preference.customActiveTools] } : {}),
+		updatedAt: Date.now(),
+	});
+	await withSettingsWriteLock(target, () => withExternalSettingsLock(target, async () => {
+		const data = await readFile();
+		data.sessions[key] = value;
+		if (options?.updateDefault) data.defaultToolPreset = value.toolPreset;
+		await write(data, target);
+	}));
 }

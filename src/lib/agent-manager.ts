@@ -68,9 +68,9 @@ import { createPermissionRequestTool } from "./permission-request-tool";
 import { appendPermissionAudit } from "./permission-audit";
 import { clampThinkingLevelTo, newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
-import { readToolPreference, saveToolPreference, type ToolPreference } from "./tool-preferences";
+import { readDefaultToolPreset, readToolPreference, saveToolPreference, type SaveToolPreferenceOptions, type ToolPreference } from "./tool-preferences";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { normalizeToolPreset } from "./tool-preset";
+import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "./tool-preset";
 import type {
 	AgentCommand,
 	ContextBreakdown,
@@ -1431,7 +1431,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		growth: null,
 		ledger: new TrajLedger(initialTrajectory),
 		lastActive: Date.now(),
-		toolPreset: "readonly",
+		toolPreset: DEFAULT_TOOL_PRESET,
 		requestedTools: new Set(),
 		resourceVersion: 0,
 		resourceReloadPending: false,
@@ -1449,12 +1449,20 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 	return m;
 }
 
-/** 首次打开某会话时，把服务端保存的 preset / 逐项选择装进 Managed。只读一次文件。 */
+/** 首次打开某会话时，把服务端保存的 preset / 逐项选择装进 Managed；未单独保存过的旧会话跟随后台全局默认。 */
 function ensureToolPreference(m: Managed): Promise<void> {
-	m.toolPreferenceLoaded ??= readToolPreference(m.sessionPath).then((preference) => {
-		if (!preference || m.disposed) return;
-		m.toolPreset = preference.toolPreset;
-		m.customActiveTools = preference.customActiveTools;
+	m.toolPreferenceLoaded ??= readToolPreference(m.sessionPath).then(async (preference) => {
+		if (m.disposed) return;
+		if (preference) {
+			m.toolPreset = preference.toolPreset;
+			m.customActiveTools = preference.customActiveTools;
+			m.toolPreferenceSaved = true;
+			return;
+		}
+		const fallback = await readDefaultToolPreset();
+		if (m.disposed || !fallback.saved) return;
+		m.toolPreset = fallback.toolPreset;
+		m.customActiveTools = undefined;
 		m.toolPreferenceSaved = true;
 	}).catch((error) => {
 		m.toolPreset = "readonly";
@@ -1468,13 +1476,13 @@ function ensureToolPreference(m: Managed): Promise<void> {
 /**
  * 显式选择先保存候选值，再应用到运行时。保存失败保留原权限。
  */
-async function persistToolPreference(m: Managed, candidate?: ToolPreference): Promise<void> {
+async function persistToolPreference(m: Managed, candidate?: ToolPreference, options?: SaveToolPreferenceOptions): Promise<void> {
 	const preference: ToolPreference = candidate ?? {
 		toolPreset: m.toolPreset,
 		...(m.customActiveTools ? { customActiveTools: m.customActiveTools } : {}),
 	};
 	try {
-		await saveToolPreference(m.sessionPath, preference);
+		await saveToolPreference(m.sessionPath, preference, options);
 		m.toolPreferenceSaved = true;
 	} catch (error) {
 		publish(m, { type: "error", message: candidate ? "权限保存失败，保留原来的选择，请重试。" : "权限已在当前会话生效，但保存失败。重启后可能恢复旧选择，请重试保存。", ts: Date.now() });
@@ -3371,7 +3379,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
 					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复保存的档位，
 					// 若这里 ensureSession，光是浏览历史会话就会跑一遍扩展的 session_start。
-					await persistToolPreference(m, { toolPreset: preset });
+					await persistToolPreference(m, { toolPreset: preset }, { updateDefault: true });
 					m.toolPreset = preset;
 					m.customActiveTools = undefined;
 					clearEscalation(m);
@@ -3380,7 +3388,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				}
 				const session = await ensureSession(m);
 				if (m.disposed) return { ok: false, error: "session is disposed" };
-				await persistToolPreference(m, { toolPreset: preset });
+				await persistToolPreference(m, { toolPreset: preset }, { updateDefault: true });
 				m.toolPreset = preset;
 				m.customActiveTools = undefined;
 				clearEscalation(m);
@@ -3566,6 +3574,8 @@ export async function createNewSession(
 			m.toolPreset = preset;
 			m.customActiveTools = undefined;
 			clearEscalation(m);
+		} else {
+			await ensureToolPreference(m);
 		}
 		if (selectedModel) {
 			m.sm.appendModelChange(selectedModel.provider, selectedModel.id);

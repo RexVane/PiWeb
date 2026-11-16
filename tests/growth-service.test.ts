@@ -492,4 +492,19 @@ describe("growth-service rounds (real git)", () => {
 		await expect(commitRound(work, { kind: "round", session: "large.jsonl" }, INIT)).rejects.toMatchObject({ code: "too-large" });
 		expect((await listTree(work, base!.tree)).map((item) => item.path)).toContain("growing.txt");
 	});
+
+	it("prunes tracked paths that become excluded by .gitignore or internal excludes without deleting workspace files", async () => {
+		const session = path.join(tempDir, "prune.jsonl");
+		await fs.writeFile(path.join(work, "keep.txt"), "keep\n");
+		await fs.mkdir(path.join(work, "generated"), { recursive: true });
+		await fs.writeFile(path.join(work, "generated", "cache.bin"), "cached\n");
+		const base = await recordWorkspaceChanges(work, session, INIT);
+		expect((await listTree(work, base!.tree)).map((item) => item.path)).toEqual(["generated/cache.bin", "keep.txt"]);
+
+		await fs.writeFile(path.join(work, ".gitignore"), "generated/\n");
+		await fs.writeFile(path.join(work, "keep.txt"), "keep v2\n");
+		const next = await commitRound(work, { kind: "round", session, title: "ignore generated" }, INIT);
+		expect((await listTree(work, next!.tree)).map((item) => item.path).sort()).toEqual([".gitignore", "keep.txt"]);
+		expect(await fs.readFile(path.join(work, "generated", "cache.bin"), "utf8")).toBe("cached\n");
+	}, 20_000);
 });

@@ -217,3 +217,35 @@ it("clears a transient manual record error after a successful retry", async () =
 		vi.clearAllMocks();
 	}
 });
+
+it("backs off automatic background snapshots after consecutive transient failures until manual recordNow recovers", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-cooldown-"));
+	const events: WebEvent[] = [];
+	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => true });
+	try {
+		vi.mocked(recordWorkspaceChanges)
+			.mockRejectedValueOnce(new GrowthError("git ls-files timed out", "failed"))
+			.mockRejectedValueOnce(new GrowthError("git update-index timed out", "failed"))
+			.mockResolvedValueOnce(null);
+		await tracker.prepare();
+		await tracker.prepare();
+		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(2);
+		// 进入冷却期后，后台自动 prepare / 回合记录不再反复扫盘。
+		await tracker.prepare();
+		tracker.onEvent({ type: "agent_start" } as never);
+		tracker.onEvent({ type: "agent_settled" } as never);
+		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
+		// 用户手动点“立即记录”不受冷却阻止，成功后清除冷却并恢复自动记录。
+		await expect(tracker.recordNow()).resolves.toBeNull();
+		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(3);
+		expect(tracker.getError()).toBeNull();
+		vi.mocked(recordWorkspaceChanges).mockResolvedValueOnce(null);
+		await tracker.prepare();
+		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(4);
+	} finally {
+		tracker.dispose();
+		await recycleFixture(cwd);
+		vi.clearAllMocks();
+	}
+});

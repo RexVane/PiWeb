@@ -229,15 +229,27 @@ describe("附件轨的浮层与上传文件折叠", () => {
 		expect(rail.querySelectorAll("[title]")).toHaveLength(4);
 	});
 
-	it("三条轨道都在浮层里，浮层绝对定位于输入卡上方", () => {
-		renderInput({ uploads: [{ name: "note.txt", path: "/uploads/note.txt", size: 4 }], references: ["src/lib/format.ts"] });
+	it("三条轨道都在浮层里，浮层与全宽轨道保持穿透，只让具体附件和按钮接点击", () => {
+		const png = { type: "image" as const, data: "AAAA", mimeType: "image/png" };
+		renderInput({
+			images: [png],
+			uploads: [{ name: "note.txt", path: "/uploads/note.txt", size: 4 }],
+			references: ["src/lib/format.ts"],
+		});
 		const overlay = screen.getByTestId("composer-attachments");
 		expect(overlay.className).toContain("absolute");
 		expect(overlay.className).toContain("bottom-full");
-		// 点击穿透要靠 pointer-events-none + 轨道自己 pointer-events-auto
+		// 浮层和全宽轨道本身都保持 pointer-events-none，避免右侧透明空白盖住“回到底部”按钮
 		expect(overlay.className).toContain("pointer-events-none");
-		expect(overlay.contains(screen.getByTestId("composer-uploads"))).toBe(true);
-		expect(overlay.contains(screen.getByTestId("composer-references"))).toBe(true);
+		for (const railId of ["composer-images", "composer-uploads", "composer-references"] as const) {
+			const rail = screen.getByTestId(railId);
+			expect(overlay.contains(rail)).toBe(true);
+			expect(rail.className).toContain("pointer-events-none");
+			expect(rail.className).not.toContain("pointer-events-auto");
+		}
+		expect(screen.getByTestId("composer-images").querySelector(".pw-image-thumb")?.className).toContain("pointer-events-auto");
+		expect(screen.getByTestId("composer-uploads").querySelector(".pw-file-card")?.className).toContain("pointer-events-auto");
+		expect(screen.getByTestId("composer-references").querySelector(".pw-ref-chip")?.className).toContain("pointer-events-auto");
 	});
 
 	it("上传文件用与引用一致的降噪样式，删除按钮带文件名的无障碍标签", () => {

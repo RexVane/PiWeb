@@ -146,3 +146,43 @@ it("changes the actual session permission while a task is running", async () => 
 	await act(async () => stream.emit({ type: "status", isStreaming: false }));
 	expect(trigger.textContent).toBe("仅可查看");
 });
+
+it("defaults new chats to full access, persists Hero permission changes to /api/tool-preferences, and restores them across fresh mounts", async () => {
+	let savedServerDefault: string | undefined;
+	vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+		const url = String(input);
+		if (init?.method === "PUT" && url === "/api/tool-preferences") {
+			const body = JSON.parse(String(init.body));
+			savedServerDefault = body.toolPreset;
+			return response({ toolPreset: savedServerDefault, saved: true });
+		}
+		if (init?.method === "POST" && url.startsWith("/api/agent/")) {
+			const command = JSON.parse(String(init.body));
+			commands.push({ url, ...command });
+			return response({});
+		}
+		return response(url.startsWith("/api/sessions")
+			? {
+				sessions: [],
+				running: {},
+				workspaceRegistry: { workspaces: [], removedWorkspaces: [], aliases: {}, archivedSessions: [] },
+				...(savedServerDefault ? { defaultToolPreset: savedServerDefault, defaultToolPresetSaved: true } : { defaultToolPreset: "full", defaultToolPresetSaved: false }),
+			}
+			: url === "/api/models" ? { models: [], providers: [] }
+			: url === "/api/version" ? { piWeb: "test", piEngine: "test" }
+			: { compaction: {}, retry: {}, modelThinkingLevels: {} });
+	}));
+
+	const first = render(<AppShell />);
+	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("完全权限"));
+	choosePermission("工作区内修改");
+	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("工作区内修改"));
+	expect(savedServerDefault).toBe("workspace");
+	expect(commands).toEqual([]);
+	first.unmount();
+
+	// 模拟重启 / 清空浏览器本地缓存后重开：仍能从服务端全局默认偏好恢复到上次切换的“工作区内修改”。
+	localStorage.clear();
+	render(<AppShell />);
+	await waitFor(() => expect(screen.getByTestId("permission-trigger").textContent).toBe("工作区内修改"));
+});

@@ -814,13 +814,13 @@ export function ChatInput({
 
 			{/* 路径引用(项目结构图/文件面板的「引用到输入框」):独立于正文,发送时拼成 @路径 */}
 			{references.length > 0 && (
-				<div className="pointer-events-auto flex flex-wrap gap-1 px-1" data-testid="composer-references">
+				<div className="pointer-events-none flex flex-wrap gap-1 px-1" data-testid="composer-references">
 					{(refsExpanded ? references : references.slice(0, COLLAPSE_AT)).map((path, i) => {
 						const chip = referenceChipOf(path);
 						return (
 							<span
 								key={path}
-								className="pw-ref-chip group/ref"
+								className="pw-ref-chip group/ref pointer-events-auto"
 								title={path}
 								/* 与图片卡组同一套时序：从左往右错开浮上来，收起反向；不旋转（带文字转着读着累） */
 								style={{ animationDelay: `${Math.min(i * 14, 140)}ms` }}
@@ -844,7 +844,7 @@ export function ChatInput({
 						);
 					})}
 					{references.length > COLLAPSE_AT ? (
-						<button type="button" className="pw-chip" data-testid="references-toggle" onClick={() => setRefsExpanded((open) => !open)}>
+						<button type="button" className="pw-chip pointer-events-auto" data-testid="references-toggle" onClick={() => setRefsExpanded((open) => !open)}>
 							{refsExpanded ? t.chipCollapse : t.chipExpandMore.replace("{n}", String(references.length - COLLAPSE_AT))}
 						</button>
 					) : null}

@@ -126,7 +126,7 @@ export function ComposerFiles({
 		return (
 			<div
 				key={`${f.path}:${i}`}
-				className="pw-ref-chip group/ref pw-file-card"
+				className="pw-ref-chip group/ref pw-file-card pointer-events-auto"
 				title={f.path}
 				data-lifted={up || undefined}
 				style={
@@ -171,7 +171,7 @@ export function ComposerFiles({
 	};
 
 	return (
-		<div ref={railRef} className="pointer-events-auto flex flex-wrap items-end gap-2 px-1 pb-1" data-testid="composer-uploads">
+		<div ref={railRef} className="pointer-events-none flex flex-wrap items-end gap-2 px-1 pb-1" data-testid="composer-uploads">
 			{collapsible ? (
 				<div
 					className="pw-file-fan-container relative flex items-center gap-2"
@@ -188,7 +188,7 @@ export function ComposerFiles({
 				files.map((f, i) => renderFileCard(f, i))
 			)}
 
-			<div className="flex items-center gap-1.5 self-end pb-0.5">
+			<div className="pointer-events-auto flex items-center gap-1.5 self-end pb-0.5">
 				{collapsible && (
 					<button
 						type="button"

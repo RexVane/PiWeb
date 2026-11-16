@@ -147,7 +147,7 @@ describe("real SDK session resource isolation", () => {
 
 	it("keeps explicit SDK default tools consistent between cold and hot snapshots within the preset", async () => {
 		await withDefaultTools(["read", "codemode"], async () => {
-			const { sessionPath } = await manager.createNewSession(cwd);
+			const { sessionPath } = await manager.createNewSession(cwd, { toolPreset: "readonly" });
 			const m = manager.getManaged(sessionPath);
 			managed.push(m);
 			const readonly = await manager.buildSnapshot(m);
@@ -240,7 +240,10 @@ describe("real SDK session resource isolation", () => {
 	});
 
 	it("reapplies readonly and custom allowlists on direct, command and resource reload", async () => {
-		const { m, session } = await create();
+		const { sessionPath } = await manager.createNewSession(cwd, { toolPreset: "readonly" });
+		const m = manager.getManaged(sessionPath);
+		managed.push(m);
+		const session = await manager.ensureSession(m);
 		expect(session.getAllTools().map((tool) => tool.name)).toContain("probe_tool");
 		expect(session.getActiveToolNames()).toContain("probe_tool");
 		await session.reload();

@@ -52,5 +52,6 @@ id_dsa*
 *.pfx
 
 # Local audit intermediates. Reports and summaries are tracked; these are not.
+audit_tmp/
 .audit-*/**/*.heapsnapshot
 .audit-*/**/coverage/.tmp/

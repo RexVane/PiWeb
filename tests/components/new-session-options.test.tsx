@@ -61,7 +61,7 @@ it("applies explicit creation options once without replacing the saved default",
 });
 
 it.each([
-	[null, "workspace"], ["standard", "workspace"], ["readonly", "readonly"],
+	[null, "full"], ["standard", "workspace"], ["readonly", "readonly"],
 ])("keeps the existing default behavior for stored preset %s", async (stored, expected) => {
 	if (stored) localStorage.setItem("piweb.toolPreset", stored);
 	const hook = renderHook(() => usePiWeb());

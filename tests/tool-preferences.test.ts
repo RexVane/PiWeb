@@ -86,4 +86,29 @@ await store.saveToolPreference(session, { toolPreset: "readonly" });
 expect(await store.readToolPreference(session)).toMatchObject({ toolPreset: "readonly" });
 expect((await store.readToolPreference(session))?.customActiveTools).toBeUndefined();
 });
+
+it("defaults to full access until explicitly switched, and persists the switched default cleanly", async () => {
+const store = await import("../src/lib/tool-preferences");
+expect(await store.readDefaultToolPreset()).toEqual({ toolPreset: "full", saved: false });
+await store.saveDefaultToolPreset("workspace");
+expect(await store.readDefaultToolPreset()).toEqual({ toolPreset: "workspace", saved: true });
+// Session-specific saves without updateDefault preserve the saved global default.
+const session = path.join(cwd, "session.jsonl");
+await store.saveToolPreference(session, { toolPreset: "readonly" });
+expect(await store.readDefaultToolPreset()).toEqual({ toolPreset: "workspace", saved: true });
+// Updating with updateDefault moves both session and global default.
+await store.saveToolPreference(session, { toolPreset: "readonly" }, { updateDefault: true });
+expect(await store.readDefaultToolPreset()).toEqual({ toolPreset: "readonly", saved: true });
+expect(await store.readToolPreference(session)).toMatchObject({ toolPreset: "readonly" });
+});
+
+it("rejects malformed defaultToolPreset records without discarding valid sessions", async () => {
+const store = await import("../src/lib/tool-preferences");
+const file = path.join(agentDir, "web-tool-preferences.json");
+const content = JSON.stringify({ version: 2, defaultToolPreset: "invalid", sessions: {} });
+await fs.writeFile(file, content);
+await expect(store.readDefaultToolPreset()).rejects.toThrow("invalid");
+await expect(store.saveDefaultToolPreset("workspace")).rejects.toThrow("invalid");
+expect(await fs.readFile(file, "utf8")).toBe(content);
+});
 });
