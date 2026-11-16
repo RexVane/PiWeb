@@ -191,17 +191,26 @@ describe("ProjectPanel Git unknown state", () => {
 		expect(error.getAttribute("title")).toBe(kind === "status" ? "index file corrupt" : "request failed");
 		expect(screen.queryByText(/工作区干净|Working tree clean/)).toBeNull();
 	});
+
+	it("renders safely when a git response lacks a files array", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { isRepo: true } }) }));
+		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+		await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+		expect(screen.getByTestId("growth-git-summary").textContent).toMatch(/工作区干净|No changes|Working tree clean/);
+	});
 });
 
 describe("ProjectPanel recording switch", () => {
 	it("defaults to enabled and stops or resumes recording without confirmation", async () => {
 		const saved: unknown[] = [];
-		vi.stubGlobal("fetch", vi.fn(async (_url: string, options?: RequestInit) => {
+		vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+			if (url.startsWith("/api/git")) return new Promise(() => {});
 			if (options?.method === "POST") {
 				saved.push(JSON.parse(String(options.body)));
-				return { ok: true, json: async () => ({ success: true }) };
+				return Promise.resolve({ ok: true, json: async () => ({ success: true }) });
 			}
-			return { ok: true, json: async () => ({ success: true, data: { consent: null } }) };
+			return Promise.resolve({ ok: true, json: async () => ({ success: true, data: { consent: null } }) });
 		}));
 		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
 		const enabled = await screen.findByRole("button", { name: /已启用|^Enabled$/ });
@@ -222,7 +231,7 @@ describe("ProjectPanel recording switch", () => {
 	});
 
 	it("preserves an existing disabled choice", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { consent: false } }) }));
+		vi.stubGlobal("fetch", vi.fn((url: string) => (url.startsWith("/api/git") ? new Promise(() => {}) : Promise.resolve({ ok: true, json: async () => ({ success: true, data: { consent: false } }) }))));
 		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
 		expect((await screen.findByRole("button", { name: /已停用|^Disabled$/ })).getAttribute("aria-pressed")).toBe("false");
 		expect(screen.queryByRole("dialog")).toBeNull();

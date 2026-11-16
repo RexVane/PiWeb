@@ -207,10 +207,11 @@ export function ProjectPanel({
 		growth.select(round.commit);
 		setRoundPickerOpen(false);
 	};
-	const conflicts = git?.files.filter((file) => file.kind === "conflict").length ?? 0;
-	const staged = git?.files.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length ?? 0;
-	const unstaged = git?.files.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length ?? 0;
-	const untracked = git?.files.filter((file) => file.kind === "untracked").length ?? 0;
+	const gitFiles = Array.isArray(git?.files) ? git.files : [];
+	const conflicts = gitFiles.filter((file) => file.kind === "conflict").length;
+	const staged = gitFiles.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length;
+	const unstaged = gitFiles.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length;
+	const untracked = gitFiles.filter((file) => file.kind === "untracked").length;
 
 	useEffect(() => {
 		if (!notice) return;
@@ -284,7 +285,7 @@ export function ProjectPanel({
 					<span className="max-w-[45%] truncate" style={{ fontWeight: 600, color: "var(--dsw-label-primary)" }} title={git.branch ?? undefined}>{git.detached ? t.gitDetached : git.branch ?? "Git"}</span>
 					{git.ahead > 0 && <span title={t.gitAhead.replace("{n}", String(git.ahead))}>↑{git.ahead}</span>}
 					{git.behind > 0 && <span title={t.gitBehind.replace("{n}", String(git.behind))}>↓{git.behind}</span>}
-					{git.files.length ? (
+					{gitFiles.length ? (
 						<span className="min-w-0 flex-1 truncate" title={`${conflicts ? `${t.gitConflict} ${conflicts} · ` : ""}${t.gitStaged} ${staged} · ${t.gitUnstaged} ${unstaged} · ${t.gitUntracked} ${untracked}`}>
 							{conflicts > 0 && <span style={{ color: "var(--dsw-danger)" }}>{t.gitConflict} {conflicts} </span>}
 							{staged > 0 && <span style={{ color: "var(--dsw-success-text)" }}>{t.gitStaged} {staged} </span>}
