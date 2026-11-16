@@ -95,7 +95,7 @@
 		"@vitest/coverage-v8": "5.0.5",
 		"jsdom": "30.0.1",
 		"material-icon-theme": "^5.38.1",
-		"vitest": "5.0.5"
+		"vitest": "5.1.0"
 	},
 	"engines": {
 		"node": ">=22.19.0"
