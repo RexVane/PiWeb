@@ -8,8 +8,8 @@ name: publish
 #   2. prebuild and verify the production package with a clean installation
 #   3. run the typecheck/test publish gate, then publish to npm
 #   4. push only the version tag and create a GitHub Release
-# The workflow never writes to main. Update package.json/package-lock.json and
-# docs/state/progress.md on rexvane-piweb before merging the release PR.
+# The workflow never writes to main. Update package.json/package-lock.json on the
+# release branch before merging the release PR.
 #
 # Requires the repository secret NPM_TOKEN. Only a user-triggered run on main
 # can publish; version changes are reviewed in the release PR.

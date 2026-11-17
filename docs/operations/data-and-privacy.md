@@ -1,6 +1,6 @@
 # 数据目录、隐私与留存
 
-维护日期：2026-11-15。本文说明 PiWeb 实际读写哪些位置、如何做部署隔离、会联网做什么、删除与恢复的真实行为。历史审查记录见[进度](../state/progress.md)。
+维护日期：2026-11-15。本文说明 PiWeb 实际读写哪些位置、如何做部署隔离、会联网做什么、删除与恢复的真实行为。历史审查记录属于工程档案，只保留在本机。
 
 ## 数据根不止 agent 目录
 
@@ -59,7 +59,7 @@ $env:APPDATA = 'D:\srv\piweb\appdata'; $env:LOCALAPPDATA = 'D:\srv\piweb\localap
 
 ## 遥测与联网
 
-**PiWeb 自身没有第三方埋点**：源码与依赖里没有 Sentry / PostHog / Segment / Umami / GA / Mixpanel / Datadog 之类 SDK；`scripts/install-build.mjs` 与 CI 会设置 `NEXT_TELEMETRY_DISABLED=1`，启动器给第三方 installer 的子进程环境也固定带 `NEXT_TELEMETRY_DISABLED=1`。审计结论见 [审计归档](../audit/2026-11-15/report-final.md)（原始证据目录已清理）。
+**PiWeb 自身没有第三方埋点**：源码与依赖里没有 Sentry / PostHog / Segment / Umami / GA / Mixpanel / Datadog 之类 SDK；`scripts/install-build.mjs` 与 CI 会设置 `NEXT_TELEMETRY_DISABLED=1`，启动器给第三方 installer 的子进程环境也固定带 `NEXT_TELEMETRY_DISABLED=1`。该结论来自 2026-11-15 审计（原始证据目录与审计报告已移出仓库，可由 git 历史恢复）。
 
 联网行为分为四类：
 
@@ -107,5 +107,5 @@ $env:APPDATA = 'D:\srv\piweb\appdata'; $env:LOCALAPPDATA = 'D:\srv\piweb\localap
 ## 核对证据
 
 - 数据路径源码：`src/lib/session-import/paths.ts`、`src/lib/skills-service.ts`、`src/lib/recoverable-remove.ts`、`src/lib/files-service.ts`、`src/lib/session-reader.ts`。
-- 审计证据：原始报告目录已随 2026-11-15 收尾清理移出工作区；数据路径判定见 [审计归档](../audit/2026-11-15/report-final.md)。
-- 修复轮验证：见 [验证记录](../audit/2026-11-15/verification.md)。
+- 审计证据：原始报告目录与审计归档已随 2026-11-15 收尾清理移出仓库（可由 git 历史恢复）。
+- 修复轮验证：随同批审计归档移出仓库（可由 git 历史恢复）。

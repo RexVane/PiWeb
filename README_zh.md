@@ -200,7 +200,7 @@ npm run build
 npm run verify:package
 ```
 
-`verify:package` 打包生产构建，安装到空目录，再用临时数据启动安装后的副本。CI 还会运行锁定的 lint 工具链、在 Linux/Node 24 上执行高危依赖审计、准备 SDK 搜索工具、检查异常跳过，并通过 `PIWEB_COVERAGE=1` 开启覆盖率；真实公网隧道使用单独的显式测试开关。生产构建在审计机器上实测约 6–7 分钟（`next build --webpack` 并发负载下 370 秒），本地/CI 构建超时建议 ≥ 15 分钟、完整 `check` 任务建议 30–45 分钟。带日期的[验证记录](docs/state/progress.md)分别记录源码测试、安装包和浏览器检查。更多文档见[文档导航](docs/README.md)；安装/构建细节与超时基线见[安装与构建机制](docs/operations/install-and-build.md)。
+`verify:package` 打包生产构建，安装到空目录，再用临时数据启动安装后的副本。CI 还会运行锁定的 lint 工具链、在 Linux/Node 24 上执行高危依赖审计、准备 SDK 搜索工具、检查异常跳过，并通过 `PIWEB_COVERAGE=1` 开启覆盖率；真实公网隧道使用单独的显式测试开关。生产构建在审计机器上实测约 6–7 分钟（`next build --webpack` 并发负载下 370 秒），本地/CI 构建超时建议 ≥ 15 分钟、完整 `check` 任务建议 30–45 分钟。源码测试、安装包和浏览器检查由 `npm run check` 分别报告。更多文档见[文档导航](docs/README.md)；安装/构建细节与超时基线见[安装与构建机制](docs/operations/install-and-build.md)。
 
 ## 运维与部署
 
