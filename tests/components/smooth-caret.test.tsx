@@ -39,6 +39,9 @@ function stubLayout() {
 	Range.prototype.getClientRects = () => [rect] as unknown as DOMRectList;
 	vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
 	vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+	// 光标位置按「边框盒 + 边框宽度」算，边界判定也读 getBoundingClientRect；jsdom 默认全是 0，这里给个固定盒子。
+	const box = { left: 0, top: 0, right: 300, bottom: 100, width: 300, height: 100, x: 0, y: 0, toJSON: () => ({}) };
+	vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(box as DOMRect);
 }
 
 const originalRangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
