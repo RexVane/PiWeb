@@ -26,7 +26,6 @@ import { ErrorToast } from "@/components/ErrorToast";
 import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
 import { ComposerFiles } from "@/components/composer/ComposerFiles";
 import { PermissionSelector, type PermissionChangeResult } from "@/components/composer/PermissionSelector";
-import { SmoothCaret } from "@/components/composer/SmoothCaret";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
@@ -931,8 +930,7 @@ export function ChatInput({
 						</div>
 					</div>
 				)}
-				{/* relative：滑行光标以这一层为定位基准 */}
-				<div className="relative px-4 pt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+				<div className="px-4 pt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 					{adopted && (
 						<button
 							type="button"
@@ -1073,7 +1071,6 @@ export function ChatInput({
 							}
 						}}
 					/>
-					<SmoothCaret target={taRef} />
 				</div>
 
 				{/* 权限与模型常驻输入框；图片通过拖放或粘贴添加。 */}

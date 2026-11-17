@@ -142,3 +142,5 @@
 2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhont88-43cceebd-e42a-4f65-abde-fddcc59a39b1.owner.json | d:\AIApp\PiWeb\backups\files\mwhont88-43cceebd-e42a-4f65-abde-fddcc59a39b1-20261115-191015.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
 2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a | d:\AIApp\PiWeb\backups\files\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a-20261115-191015 | 按 build-output 容量规则归档未完成的失败/中断发布目录
 2026-11-15 19:10:15 +08:00 | d:\AIApp\PiWeb\.next-releases\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a.owner.json | d:\AIApp\PiWeb\backups\files\mwhq8k6a-ff66fb48-e0de-46bc-a546-9f30a4301f0a-20261115-191015.owner.json | 按 build-output 容量规则归档未完成发布对应的 owner 清单
+2026-11-17 18:15:50 +08:00 | src/lib/chat/stream-fade.ts | bcf9076 | 用户要求去掉模型输出淡入效果
+2026-11-17 18:15:50 +08:00 | tests/components/stream-fade.test.tsx | bcf9076 | 用户要求去掉模型输出淡入效果

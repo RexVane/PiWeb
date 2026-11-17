@@ -1,14 +1,14 @@
 /*
- * 输入框的滑行光标。原生光标是瞬移的；这里叠一个自绘光标，按指数阻尼滑到新位置。
- * 只动 transform 和 opacity，不触发布局。
+ * 全局滑行光标。原生光标是瞬移的；这里叠一个自绘光标，按指数阻尼滑到新位置。
+ * 只动 transform 和 opacity，不触发布局。固定定位，盖在所有浮层之上。
  */
 .caret {
-	position: absolute;
+	position: fixed;
 	top: 0;
 	left: 0;
+	z-index: 2147483647;
 	width: 2px;
 	border-radius: 1px;
-	background: currentColor;
 	pointer-events: none;
 	opacity: 0;
 	will-change: transform;
@@ -26,7 +26,7 @@
 	opacity: 1;
 }
 
-/* 首次出现、滚动、改尺寸时直接到位，不从旧位置滑过来 */
+/* 换输入框、页面滚动、输入框移动时直接到位，不从旧位置滑过来 */
 .caret[data-jump] {
 	transition: none;
 }

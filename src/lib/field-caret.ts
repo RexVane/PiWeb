@@ -1,12 +1,12 @@
 /**
- * 量出 textarea 里光标的像素位置（相对 textarea 的 padding box 左上角，未扣滚动）。
+ * 量出输入框（input / textarea）里光标的像素位置，相对输入框的 padding box 左上角，未扣滚动。
  *
- * 浏览器不提供这个坐标，这里用一个不可见的镜像 div 复刻 textarea 的排版：
+ * 浏览器不提供这个坐标，这里用一个不可见的镜像 div 复刻输入框的排版：
  * 把光标前的文字放进镜像，再跟一个 span，span 的位置就是光标的位置。
  * 本文件不依赖 React 和其他模块，可以直接放进浏览器做排版一致性验证。
  */
 
-/** 影响换行与字宽的样式；镜像必须逐项与 textarea 一致，否则换行点会错位。 */
+/** 影响换行与字宽的样式；镜像必须逐项与输入框一致，否则换行点和字宽会错位。 */
 const MIRRORED_PROPERTIES = [
 	"direction",
 	"fontFamily",
@@ -37,17 +37,19 @@ const LINE_FEED = String.fromCharCode(10);
 const CARRIAGE_RETURN = String.fromCharCode(13);
 const ZERO_WIDTH_SPACE = String.fromCharCode(0x200b);
 
+export type CaretField = HTMLInputElement | HTMLTextAreaElement;
+
 export type CaretBox = {
-	/** 光标左缘，相对 textarea 的 padding box，未扣 scrollLeft */
+	/** 光标左缘，相对输入框的 padding box，未扣 scrollLeft */
 	x: number;
-	/** 光标所在行文字区的上缘，相对 textarea 的 padding box，未扣 scrollTop */
+	/** 光标所在行文字区的上缘，相对输入框的 padding box，未扣 scrollTop */
 	y: number;
 	/** 文字区高度：原生光标也画这么高，比行高矮一圈 */
 	height: number;
 };
 
 export type CaretMirror = {
-	measure: (textarea: HTMLTextAreaElement, index: number) => CaretBox | null;
+	measure: (field: CaretField, index: number) => CaretBox | null;
 	destroy: () => void;
 };
 
@@ -65,8 +67,6 @@ export function createCaretMirror(doc: Document = document): CaretMirror {
 	base.border = "0";
 	base.margin = "0";
 	base.height = "auto";
-	base.whiteSpace = "pre-wrap";
-	base.overflowWrap = "break-word";
 	const before = doc.createTextNode("");
 	const marker = doc.createElement("span");
 	mirror.append(before, marker);
@@ -74,23 +74,37 @@ export function createCaretMirror(doc: Document = document): CaretMirror {
 	let styleKey = "";
 
 	return {
-		measure(textarea, index) {
+		measure(field, index) {
 			const view = doc.defaultView;
 			if (!view) return null;
+			const singleLine = field.tagName === "INPUT";
+			// 密码框显示的是圆点而不是真实字符，镜像量不准
+			if (singleLine && (field as HTMLInputElement).type === "password") return null;
 			if (!mirror.isConnected) doc.body.appendChild(mirror);
-			const computed = view.getComputedStyle(textarea);
+			const computed = view.getComputedStyle(field);
 			// clientWidth 已扣掉滚动条；镜像没有边框，于是两边的内容区宽度一致
-			const width = textarea.clientWidth;
-			const key = `${width}|${MIRRORED_PROPERTIES.map((property) => computed[property]).join("|")}`;
+			const width = field.clientWidth;
+			const key = `${singleLine}|${width}|${MIRRORED_PROPERTIES.map((property) => computed[property]).join("|")}`;
 			if (key !== styleKey) {
 				styleKey = key;
 				for (const property of MIRRORED_PROPERTIES) base[property] = computed[property];
 				base.width = `${width}px`;
+				// 单行输入框不换行，文字超宽时横向滚动
+				base.whiteSpace = singleLine ? "pre" : "pre-wrap";
+				base.overflowWrap = singleLine ? "normal" : "break-word";
 			}
-			const value = textarea.value;
+			const value = field.value;
 			const at = Math.max(0, Math.min(index, value.length));
 			before.data = value.slice(0, at);
 			const origin = mirror.getBoundingClientRect();
+			const paddingTop = Number.parseFloat(computed.paddingTop) || 0;
+			const paddingBottom = Number.parseFloat(computed.paddingBottom) || 0;
+			// 单行输入框里文字在内容区垂直居中，和行高无关；多行则按镜像里的实际行位置
+			const place = (left: number, top: number, height: number): CaretBox => ({
+				x: left - origin.left,
+				y: singleLine ? paddingTop + (field.clientHeight - paddingTop - paddingBottom - height) / 2 : top - origin.top,
+				height,
+			});
 			const rest = value.slice(at, at + TRAILING_CONTEXT);
 			const atLineEnd = !rest || rest[0] === LINE_FEED || rest[0] === CARRIAGE_RETURN;
 			const previous = at > 0 ? value[at - 1] : LINE_FEED;
@@ -103,9 +117,9 @@ export function createCaretMirror(doc: Document = document): CaretMirror {
 				const rects = range.getClientRects();
 				const last = rects[rects.length - 1];
 				if (last) {
-					// 悬挂的空格画在内容区之外，光标停在内容区右缘
-					const contentRight = width - (Number.parseFloat(computed.paddingRight) || 0);
-					return { x: Math.min(last.right - origin.left, contentRight), y: last.top - origin.top, height: last.height };
+					// 多行里悬挂的空格画在内容区之外，光标停在内容区右缘；单行会横向滚动，不用夹
+					const contentRight = origin.left + width - (Number.parseFloat(computed.paddingRight) || 0);
+					return place(singleLine ? last.right : Math.min(last.right, contentRight), last.top, last.height);
 				}
 			}
 			// 空行或文首没有前一个字符可量，用零宽空格撑出一个不占宽度的行内框；
@@ -113,7 +127,7 @@ export function createCaretMirror(doc: Document = document): CaretMirror {
 			marker.textContent = atLineEnd ? ZERO_WIDTH_SPACE : rest;
 			const first = marker.getClientRects()[0];
 			if (!first) return null;
-			return { x: first.left - origin.left, y: first.top - origin.top, height: first.height };
+			return place(first.left, first.top, first.height);
 		},
 		destroy() {
 			mirror.remove();
