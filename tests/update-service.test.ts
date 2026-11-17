@@ -251,6 +251,17 @@ describe("update service transactions", () => {
 		expect(await createUpdateService({ root, run }).checkForUpdate("piweb")).toEqual({ current: "1.0.0", latest: "1.2.0", behind: 2, canUpdate: true, selfUpdate: true });
 		expect(run.mock.calls.some(([, args]) => args[0] === "tag")).toBe(false);
 	});
+
+	it("does not treat extra upstream commits as an update when the version is unchanged", async () => {
+		const root = await installation();
+		const run = vi.fn(async (_command: string, args: string[]) => {
+			if (args[0] === "rev-list") return "5\n";
+			if (args[0] === "show") return JSON.stringify({ name: "pi-web", version: "1.0.0" });
+			return "";
+		});
+		// 版本号没变：behind 只保留作信息，不再触发「有新版本」。
+		expect(await createUpdateService({ root, run }).checkForUpdate("piweb")).toEqual({ current: "1.0.0", latest: "1.0.0", behind: 5, canUpdate: false, selfUpdate: true });
+	});
 });
 
 /**

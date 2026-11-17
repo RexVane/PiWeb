@@ -78,8 +78,8 @@ describe("updateNoticeLine", () => {
 		})).toBe("[更新] 有新版本：PiWeb 0.3.18 → 0.3.20。打开 设置 → 通用 点「更新」；PiWeb 要先停掉 piweb 再运行：npm install -g @rexvane/piweb@latest");
 	});
 
-	it("Git 检出版本号没变、只有新提交时写提交数", () => {
-		expect(updateNoticeLine({ piweb: { current: "0.3.20", latest: "0.3.20", behind: 3, canUpdate: true, selfUpdate: true } }))
-			.toBe("[更新] 有新版本：PiWeb（main 新增 3 个提交）。打开 设置 → 通用 点「更新」");
+	it("Git 上版本号没变、只是 main 有额外提交时不再提醒更新", () => {
+		// 检查结果里 canUpdate=false（即使 behind>0），启动提醒只认版本号变化。
+		expect(updateNoticeLine({ piweb: { current: "0.3.20", latest: "0.3.20", behind: 3, canUpdate: false, selfUpdate: true } })).toBeNull();
 	});
 });

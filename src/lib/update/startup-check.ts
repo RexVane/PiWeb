@@ -57,8 +57,8 @@ export function updateNoticeLine(results: StartupUpdates["results"]): string | n
 	for (const target of TARGETS) {
 		const result = results[target];
 		if (!result || "error" in result || !result.canUpdate) continue;
-		// Git 检出版本号没变、只是 main 上有新提交时，写提交数而不是「0.3.20 → 0.3.20」
-		parts.push(result.latest === result.current && result.behind ? `${LABEL[target]}（main 新增 ${result.behind} 个提交）` : `${LABEL[target]} ${result.current} → ${result.latest}`);
+		// 只有版本号更新才提示；main 上多出来的普通提交不算新版本，也不再出现在启动提醒里。
+		parts.push(`${LABEL[target]} ${result.current} → ${result.latest}`);
 		if (!result.selfUpdate && result.command) manual = result.command;
 	}
 	if (!parts.length) return null;

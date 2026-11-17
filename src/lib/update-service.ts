@@ -22,7 +22,7 @@ export interface UpdateCheck {
 	current: string;
 	latest: string;
 	canUpdate: boolean;
-	/** Only piweb: commits behind the branch which the update command pulls. */
+	/** Only piweb: commits behind the branch which the update command pulls. Informational only. */
 	behind?: number;
 	/**
 	 * Whether PiWeb can apply the update itself. False on an npm installation running on
@@ -162,7 +162,8 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		if (!["piweb", "pi-web", "@rexvane/piweb"].includes(String(remotePkg.name)) || typeof remotePkg.version !== "string" || !remotePkg.version) throw new Error("upstream is not a PiWeb package");
 		exactRegistryVersion(remotePkg.version);
 		// Do not advertise a tag version that `git pull origin main` will never install.
-		return { current: piWeb, latest: remotePkg.version, behind, canUpdate: isNewer(remotePkg.version, piWeb) || behind > 0, selfUpdate: true };
+		// 只有版本号更新才算「有新版本」：main 上多出来的普通提交不再触发更新提醒。
+		return { current: piWeb, latest: remotePkg.version, behind, canUpdate: isNewer(remotePkg.version, piWeb), selfUpdate: true };
 	}
 
 	/**

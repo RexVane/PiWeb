@@ -763,7 +763,6 @@ export const ja: Dict = {
 	updateManualHint: "先に piweb を停止してから、上記のコマンドを実行してください（Windows では実行中のインストールディレクトリを置き換えられません）",
 	updateCopied: "コピーしました",
 	updateBusy: "実行中のセッションがあります。終了してから更新してください",
-	updateCommits: "main に {n} 個のコミットを追加",
 	updateNoticeTitle: "新しいバージョンがあります",
 	updateNoticeUpdatingTitle: "更新中…",
 	updateNoticeDoneTitle: "更新完了",

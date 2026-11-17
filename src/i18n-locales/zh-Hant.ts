@@ -763,7 +763,6 @@ export const zhHant: Dict = {
 	updateManualHint: "請先停止 piweb，再執行上方的命令（Windows 無法取代正在執行的安裝目錄）",
 	updateCopied: "已複製",
 	updateBusy: "有工作階段正在執行，請等它結束後再更新",
-	updateCommits: "main 新增 {n} 個提交",
 	updateNoticeTitle: "有新版本",
 	updateNoticeUpdatingTitle: "正在更新…",
 	updateNoticeDoneTitle: "更新完成",

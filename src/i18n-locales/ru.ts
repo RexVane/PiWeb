@@ -763,7 +763,6 @@ export const ru: Dict = {
 	updateManualHint: "Сначала остановите piweb, затем выполните команду выше (Windows не может заменить работающий каталог установки)",
 	updateCopied: "Скопировано",
 	updateBusy: "Есть работающие сеансы; обновите после их завершения",
-	updateCommits: "В main появилось {n} новых коммитов",
 	updateNoticeTitle: "Доступна новая версия",
 	updateNoticeUpdatingTitle: "Обновление…",
 	updateNoticeDoneTitle: "Обновление завершено",

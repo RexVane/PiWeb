@@ -122,11 +122,5 @@ function ItemStatus({ item }: { item: TargetUpdate }) {
 			</span>
 		);
 	}
-	return <span>{versionChange(item, t.updateCommits)}</span>;
-}
-
-/** 「0.3.18 → 0.3.20」；Git 检出版本号没变、只有新提交时写提交数 */
-export function versionChange(item: Pick<TargetUpdate, "current" | "latest" | "behind">, commitsText: string): string {
-	if (item.latest === item.current && item.behind > 0) return commitsText.replace("{n}", String(item.behind));
-	return `${item.current} → ${item.latest}`;
+	return <span>{`${item.current} → ${item.latest}`}</span>;
 }
