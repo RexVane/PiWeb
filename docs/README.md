@@ -15,6 +15,6 @@
 | [扩展示例](../examples/piweb-extensions/README.md) | 可运行扩展及其验证方式 |
 | [发布流程](../.github/RELEASING.md) | 发布构建、安装验证和发布门禁 |
 | [第三方许可证清单](../THIRD-PARTY-NOTICES.md) | 随包分发的第三方依赖许可证与合规说明 |
-| [测试与审查记录索引](testing/README.md) | 日期化结果、修复证据与清理记录 |
+| [测试与审查记录索引](testing/README.md) | 历史验证批次索引（原始证据只留本机） |
 
 维护文档中的当前说明优先于历史章节；历史报告中的命令、目录和测试数量不能直接作为今天的操作指引。项目规则保留在 `AGENTS.md`，个人规则以 `~/.agents/AGENTS.md` 正本为准。
