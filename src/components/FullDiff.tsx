@@ -255,18 +255,52 @@ function scrollSmoothly(el: HTMLElement, top: number): void {
 	else el.scrollTop = top;
 }
 
+/** 估算文本展示宽度（用于撑开虚拟滚动水平容器，避免长短行在左栏粘性行号列错位） */
+function visualColumns(text: string): number {
+	let col = 0;
+	for (let i = 0; i < text.length; i += 1) {
+		const code = text.charCodeAt(i);
+		if (code === 9) {
+			col += 8 - (col % 8);
+		} else if (code >= 0xd800 && code <= 0xdbff) {
+			col += 2;
+			i += 1;
+		} else {
+			col += code > 0xff ? 2 : 1;
+		}
+	}
+	return col;
+}
+
+function widestRowText(rows: readonly Row[]): string {
+	let best = "";
+	let bestCols = 0;
+	for (const r of rows) {
+		if (r.kind !== "line") continue;
+		const cols = visualColumns(r.line.text);
+		if (cols > bestCols) {
+			bestCols = cols;
+			best = r.line.text;
+		}
+	}
+	return best;
+}
+
 /** 根据滚动位置平顺选取读取基线：顶对齐 0、中间对齐视口 1/3、底对齐底端 */
-function syncAnchorOffset(scrollTop: number, maxScroll: number, clientHeight: number): number {
-	if (maxScroll <= 0 || clientHeight <= 0) return 0;
-	const midOffset = clientHeight / 3;
-	if (scrollTop <= midOffset) return scrollTop;
-	const tailZone = Math.max(1, clientHeight - midOffset);
+function syncAnchorOffset(scrollTop: number, maxScroll: number, srcHeight: number, dstHeight = srcHeight): { src: number; dst: number } {
+	if (maxScroll <= 0 || srcHeight <= 0) return { src: 0, dst: 0 };
+	const midOffset = srcHeight / 3;
+	if (scrollTop <= midOffset) return { src: scrollTop, dst: scrollTop };
+	const tailZone = Math.max(1, srcHeight - midOffset);
 	const remaining = maxScroll - scrollTop;
 	if (remaining < tailZone) {
 		const t = 1 - remaining / tailZone;
-		return midOffset + t * (clientHeight - midOffset);
+		return {
+			src: midOffset + t * (srcHeight - midOffset),
+			dst: midOffset + t * Math.max(0, dstHeight - midOffset),
+		};
 	}
-	return midOffset;
+	return { src: midOffset, dst: midOffset };
 }
 
 function renderLineContent(
@@ -320,13 +354,24 @@ export const FullDiff = memo(function FullDiff({
 	const inlineScrollRef = useRef<HTMLDivElement>(null);
 	const leftScrollRef = useRef<HTMLDivElement>(null);
 	const rightScrollRef = useRef<HTMLDivElement>(null);
+	const bridgeRef = useRef<HTMLDivElement>(null);
 	const syncSourceRef = useRef<"left" | "right" | null>(null);
 	const syncTimerRef = useRef<number | null>(null);
+	const expectedEchoRef = useRef<{ left: number | null; right: number | null }>({ left: null, right: null });
+	const programmaticUntilRef = useRef<number>(0);
 
 	const [inlineVp, setInlineVp] = useState({ top: 0, height: 800 });
-	const [splitVp, setSplitVp] = useState({ leftTop: 0, rightTop: 0, height: 800 });
+	const [splitVp, setSplitVp] = useState({ leftTop: 0, rightTop: 0, width: BRIDGE_WIDTH - 2, height: 800 });
 	const [current, setCurrent] = useState(-1);
 	const cache = useRef(new Map<string, string | null>());
+
+	const getBridgeSize = useCallback(
+		() => ({
+			width: bridgeRef.current?.clientWidth || BRIDGE_WIDTH - 2,
+			height: bridgeRef.current?.clientHeight || rightScrollRef.current?.clientHeight || leftScrollRef.current?.clientHeight || 800,
+		}),
+		[],
+	);
 
 	useEffect(() => setUnfolded(new Set()), [lines]);
 	useEffect(() => () => { if (syncTimerRef.current !== null) cancelAnimationFrame(syncTimerRef.current); }, []);
@@ -340,6 +385,9 @@ export const FullDiff = memo(function FullDiff({
 		() => (layout === "split" ? buildSplitModel(lines, folded, unfolded) : null),
 		[layout, lines, folded, unfolded],
 	);
+	const widestInline = useMemo(() => (inlineModel ? widestRowText(inlineModel.rows) : ""), [inlineModel]);
+	const widestLeft = useMemo(() => (splitModel ? widestRowText(splitModel.leftRows) : ""), [splitModel]);
+	const widestRight = useMemo(() => (splitModel ? widestRowText(splitModel.rightRows) : ""), [splitModel]);
 
 	const width = useMemo(() => String(maxLineNumber(lines)).length, [lines]);
 	const totalRows = layout === "inline" ? (inlineModel?.rows.length ?? 0) : (splitModel?.rightRows.length ?? 0);
@@ -351,7 +399,10 @@ export const FullDiff = memo(function FullDiff({
 		if (layout !== "inline") return;
 		const el = inlineScrollRef.current;
 		if (!el) return;
-		const update = () => setInlineVp({ top: el.scrollTop, height: el.clientHeight });
+		const update = () => {
+			el.style.setProperty("--pw-pane-w", `${el.clientWidth}px`);
+			setInlineVp({ top: el.scrollTop, height: el.clientHeight });
+		};
 		update();
 		el.addEventListener("scroll", update, { passive: true });
 		const ro = new ResizeObserver(update);
@@ -362,50 +413,71 @@ export const FullDiff = memo(function FullDiff({
 		};
 	}, [layout]);
 
-	// 监听并排双栏高度变化与滚动位置
+	// 监听并排双栏高度变化与滚动位置（严格以 bridgeRef 内盒宽高为 1:1 SVG 坐标基准，避免边框或单侧水平滚动条触发任何缩放）
 	useEffect(() => {
 		if (layout !== "split") return;
 		const leftEl = leftScrollRef.current;
 		const rightEl = rightScrollRef.current;
+		const bridgeEl = bridgeRef.current;
 		if (!leftEl || !rightEl) return;
 		const measure = () => {
+			leftEl.style.setProperty("--pw-pane-w", `${leftEl.clientWidth}px`);
+			rightEl.style.setProperty("--pw-pane-w", `${rightEl.clientWidth}px`);
+			const { width: vpWidth, height: vpHeight } = getBridgeSize();
 			setSplitVp({
 				leftTop: leftEl.scrollTop,
 				rightTop: rightEl.scrollTop,
-				height: rightEl.clientHeight || leftEl.clientHeight || 800,
+				width: vpWidth,
+				height: vpHeight,
 			});
 		};
 		measure();
 		const ro = new ResizeObserver(measure);
 		ro.observe(leftEl);
 		ro.observe(rightEl);
+		if (bridgeEl) ro.observe(bridgeEl);
 		return () => ro.disconnect();
-	}, [layout]);
+	}, [layout, getBridgeSize]);
 
 	const handleSplitScroll = useCallback((side: "left" | "right") => {
 		if (!splitModel) return;
 		const leftEl = leftScrollRef.current;
 		const rightEl = rightScrollRef.current;
 		if (!leftEl || !rightEl) return;
+		const { width: vpWidth, height: vpHeight } = getBridgeSize();
 
-		if (syncSourceRef.current && syncSourceRef.current !== side) {
-			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, height: rightEl.clientHeight || 800 });
+		const srcEl = side === "left" ? leftEl : rightEl;
+		const expected = expectedEchoRef.current[side];
+		if (expected !== null && Math.abs(srcEl.scrollTop - expected) < 2) {
+			expectedEchoRef.current[side] = null;
+			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
+			return;
+		}
+		if (performance.now() < programmaticUntilRef.current || (syncSourceRef.current && syncSourceRef.current !== side)) {
+			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
 			return;
 		}
 		syncSourceRef.current = side;
 		if (syncTimerRef.current !== null) cancelAnimationFrame(syncTimerRef.current);
-		syncTimerRef.current = requestAnimationFrame(() => { syncSourceRef.current = null; });
+		syncTimerRef.current = requestAnimationFrame(() => {
+			syncSourceRef.current = null;
+			expectedEchoRef.current.left = null;
+			expectedEchoRef.current.right = null;
+		});
 
-		const srcEl = side === "left" ? leftEl : rightEl;
 		const dstEl = side === "left" ? rightEl : leftEl;
+		const dstSide: "left" | "right" = side === "left" ? "right" : "left";
 		const maxSrc = Math.max(0, srcEl.scrollHeight - srcEl.clientHeight);
 		const maxDst = Math.max(0, dstEl.scrollHeight - dstEl.clientHeight);
-		const offset = syncAnchorOffset(srcEl.scrollTop, maxSrc, srcEl.clientHeight);
-		const mapped = mapAnchorY(splitModel.anchors, srcEl.scrollTop + offset, side === "left" ? "LtoR" : "RtoL");
-		const nextDstTop = Math.max(0, Math.min(maxDst, mapped - offset));
-		if (Math.abs(dstEl.scrollTop - nextDstTop) >= 0.5) dstEl.scrollTop = nextDstTop;
-		setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, height: rightEl.clientHeight || 800 });
-	}, [splitModel]);
+		const offset = syncAnchorOffset(srcEl.scrollTop, maxSrc, srcEl.clientHeight, dstEl.clientHeight);
+		const mapped = mapAnchorY(splitModel.anchors, srcEl.scrollTop + offset.src, side === "left" ? "LtoR" : "RtoL");
+		const nextDstTop = Math.max(0, Math.min(maxDst, mapped - offset.dst));
+		if (Math.abs(dstEl.scrollTop - nextDstTop) >= 0.5) {
+			expectedEchoRef.current[dstSide] = nextDstTop;
+			dstEl.scrollTop = nextDstTop;
+		}
+		setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
+	}, [getBridgeSize, splitModel]);
 
 	const scrollToBlock = useCallback(
 		(b: number) => {
@@ -423,18 +495,16 @@ export const FullDiff = memo(function FullDiff({
 				const blk = splitModel.blocks[b];
 				if (!leftEl || !rightEl || !blk) return;
 				setCurrent(b);
-				syncSourceRef.current = "left";
-				if (syncTimerRef.current !== null) cancelAnimationFrame(syncTimerRef.current);
-				syncTimerRef.current = requestAnimationFrame(() => {
-					syncTimerRef.current = requestAnimationFrame(() => { syncSourceRef.current = null; });
-				});
-				const leftTarget = Math.max(0, blk.leftStartRow * ROW_H - leftEl.clientHeight / 3);
-				const rightTarget = Math.max(0, blk.rightStartRow * ROW_H - rightEl.clientHeight / 3);
+				const anchorY = Math.round(getBridgeSize().height / 3);
+				programmaticUntilRef.current = performance.now() + 650;
+				syncSourceRef.current = null;
+				const leftTarget = Math.max(0, blk.leftStartRow * ROW_H - anchorY);
+				const rightTarget = Math.max(0, blk.rightStartRow * ROW_H - anchorY);
 				scrollSmoothly(leftEl, leftTarget);
 				scrollSmoothly(rightEl, rightTarget);
 			}
 		},
-		[layout, inlineModel, splitModel],
+		[getBridgeSize, layout, inlineModel, splitModel],
 	);
 
 	useImperativeHandle(handle, () => ({
@@ -462,16 +532,19 @@ export const FullDiff = memo(function FullDiff({
 			const rightEl = rightScrollRef.current;
 			const blk = splitModel.blocks[0];
 			if (!leftEl || !rightEl || !blk) return;
-			const lt = Math.max(0, blk.leftStartRow * ROW_H - leftEl.clientHeight / 3);
-			const rt = Math.max(0, blk.rightStartRow * ROW_H - rightEl.clientHeight / 3);
+			const { width: vpWidth, height: vpHeight } = getBridgeSize();
+			const anchorY = Math.round(vpHeight / 3);
+			const lt = Math.max(0, blk.leftStartRow * ROW_H - anchorY);
+			const rt = Math.max(0, blk.rightStartRow * ROW_H - anchorY);
+			programmaticUntilRef.current = 0;
 			syncSourceRef.current = "left";
 			leftEl.scrollTop = lt;
 			rightEl.scrollTop = rt;
-			setSplitVp({ leftTop: lt, rightTop: rt, height: rightEl.clientHeight || 800 });
+			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
 			syncSourceRef.current = null;
 			setCurrent(0);
 		}
-	}, [layout, inlineModel, splitModel, blockCount, initialChange]);
+	}, [getBridgeSize, layout, inlineModel, splitModel, blockCount, initialChange]);
 
 	const html = useCallback((text: string): string | null => {
 		if (!canHighlight || !text.trim()) return null;
@@ -526,7 +599,14 @@ export const FullDiff = memo(function FullDiff({
 		return (
 			<div className="pw-fdiff relative min-h-0 flex-1" data-layout="inline">
 				<div ref={inlineScrollRef} className="pw-fdiff-scroll h-full overflow-auto">
-					<div style={{ height: rows.length * ROW_H, position: "relative", minWidth: "100%" }}>
+					<div style={{ height: rows.length * ROW_H, position: "relative", minWidth: "100%", width: "max-content" }}>
+						{widestInline && (
+							<div className="pw-sdiff-sizer" aria-hidden>
+								<span className="pw-fdiff-gutter" style={{ width: `${width * 2 + 3}ch` }} />
+								<span className="pw-fdiff-sign">+</span>
+								<span className="pw-fdiff-text">{`${widestInline}    `}</span>
+							</div>
+						)}
 						{rows.slice(start, end).map((row, i) => {
 							const rowIndex = start + i;
 							const top = rowIndex * ROW_H;
@@ -539,7 +619,7 @@ export const FullDiff = memo(function FullDiff({
 										style={{ top }}
 										onClick={() => setUnfolded((s) => new Set(s).add(row.from))}
 									>
-										{t.viewerFoldedLines.replace("{n}", String(row.count))}
+										<span className="pw-fdiff-fold-label">{t.viewerFoldedLines.replace("{n}", String(row.count))}</span>
 									</button>
 								);
 							}
@@ -602,15 +682,23 @@ export const FullDiff = memo(function FullDiff({
 	const rightStart = Math.max(0, Math.floor(splitVp.rightTop / ROW_H) - OVERSCAN);
 	const rightEnd = Math.min(rightRows.length, Math.ceil((splitVp.rightTop + splitVp.height) / ROW_H) + OVERSCAN);
 
+	const blockEnds = (b: SplitBlock) => {
+		const rawL = b.leftStartRow * ROW_H - splitVp.leftTop;
+		const rawR = b.rightStartRow * ROW_H - splitVp.rightTop;
+		const yL1 = b.anchor.delCount === 0 && b.leftStartRow > 0 ? rawL - 1 : rawL;
+		const yL2 = b.anchor.delCount === 0 ? yL1 + 2 : b.leftEndRow * ROW_H - splitVp.leftTop;
+		const yR1 = b.anchor.addCount === 0 && b.rightStartRow > 0 ? rawR - 1 : rawR;
+		const yR2 = b.anchor.addCount === 0 ? yR1 + 2 : b.rightEndRow * ROW_H - splitVp.rightTop;
+		return { yL1, yL2, yR1, yR2 };
+	};
+	const fmt = (n: number) => Number(n.toFixed(2));
 	const visibleBlocks = blocks.filter((b) => {
-		const yL1 = b.leftStartRow * ROW_H - splitVp.leftTop;
-		const yL2 = b.leftEndRow * ROW_H - splitVp.leftTop;
-		const yR1 = b.rightStartRow * ROW_H - splitVp.rightTop;
-		const yR2 = b.rightEndRow * ROW_H - splitVp.rightTop;
+		const { yL1, yL2, yR1, yR2 } = blockEnds(b);
 		const minY = Math.min(yL1, yR1);
 		const maxY = Math.max(yL2, yR2);
 		return maxY >= -40 && minY <= splitVp.height + 40;
 	});
+	const cancelProgrammaticLock = () => { programmaticUntilRef.current = 0; };
 
 	return (
 		<div className="pw-fdiff pw-sdiff relative flex min-h-0 flex-1 flex-col" data-layout="split" data-testid="split-diff">
@@ -626,9 +714,18 @@ export const FullDiff = memo(function FullDiff({
 				<div
 					ref={leftScrollRef}
 					className="pw-sdiff-pane pw-sdiff-left min-w-0 flex-1 overflow-auto"
+					onWheel={cancelProgrammaticLock}
+					onPointerDown={cancelProgrammaticLock}
 					onScroll={() => handleSplitScroll("left")}
 				>
-					<div style={{ height: leftRows.length * ROW_H, position: "relative", minWidth: "100%" }}>
+					<div style={{ height: leftRows.length * ROW_H, position: "relative", minWidth: "100%", width: "max-content" }}>
+						{widestLeft && (
+							<div className="pw-sdiff-sizer" aria-hidden>
+								<span className="pw-fdiff-sign pw-sdiff-sign"> </span>
+								<span className="pw-fdiff-text">{`${widestLeft}    `}</span>
+								<span className="pw-sdiff-num pw-sdiff-num-left" style={{ width: `${width + 2}ch` }} />
+							</div>
+						)}
 						{leftRows.slice(leftStart, leftEnd).map((row, i) => {
 							const top = (leftStart + i) * ROW_H;
 							if (row.kind === "fold") {
@@ -640,7 +737,7 @@ export const FullDiff = memo(function FullDiff({
 										style={{ top }}
 										onClick={() => setUnfolded((s) => new Set(s).add(row.from))}
 									>
-										{t.viewerFoldedLines.replace("{n}", String(row.count))}
+										<span className="pw-fdiff-fold-label">{t.viewerFoldedLines.replace("{n}", String(row.count))}</span>
 									</button>
 								);
 							}
@@ -661,23 +758,21 @@ export const FullDiff = memo(function FullDiff({
 				</div>
 
 				{/* 中间连接桥：SVG 贝塞尔曲线 + 块级勾选控件 */}
-				<div className="pw-sdiff-bridge relative flex-none select-none overflow-hidden" style={{ width: BRIDGE_WIDTH }}>
+				<div ref={bridgeRef} className="pw-sdiff-bridge relative flex-none select-none overflow-hidden" style={{ width: BRIDGE_WIDTH }}>
 					<svg
 						className="pw-sdiff-svg"
-						width={BRIDGE_WIDTH}
-						height={splitVp.height}
-						viewBox={`0 0 ${BRIDGE_WIDTH} ${Math.max(1, splitVp.height)}`}
+						width={Math.max(1, splitVp.width)}
+						height={Math.max(1, splitVp.height)}
+						viewBox={`0 0 ${Math.max(1, splitVp.width)} ${Math.max(1, splitVp.height)}`}
 						preserveAspectRatio="none"
 						aria-hidden
 					>
 						{visibleBlocks.map((b) => {
-							const yL1 = b.leftStartRow * ROW_H - splitVp.leftTop;
-							const yL2 = Math.max(yL1 + (b.anchor.delCount === 0 ? 2 : 0), b.leftEndRow * ROW_H - splitVp.leftTop);
-							const yR1 = b.rightStartRow * ROW_H - splitVp.rightTop;
-							const yR2 = Math.max(yR1 + (b.anchor.addCount === 0 ? 2 : 0), b.rightEndRow * ROW_H - splitVp.rightTop);
-							const c1 = BRIDGE_WIDTH * 0.45;
-							const c2 = BRIDGE_WIDTH * 0.55;
-							const d = `M 0 ${yL1} C ${c1} ${yL1}, ${c2} ${yR1}, ${BRIDGE_WIDTH} ${yR1} L ${BRIDGE_WIDTH} ${yR2} C ${c2} ${yR2}, ${c1} ${yL2}, 0 ${yL2} Z`;
+							const { yL1, yL2, yR1, yR2 } = blockEnds(b);
+							const svgW = Math.max(1, splitVp.width);
+							const c1 = fmt(svgW * 0.45);
+							const c2 = fmt(svgW * 0.55);
+							const d = `M 0 ${fmt(yL1)} C ${c1} ${fmt(yL1)}, ${c2} ${fmt(yR1)}, ${svgW} ${fmt(yR1)} L ${svgW} ${fmt(yR2)} C ${c2} ${fmt(yR2)}, ${c1} ${fmt(yL2)}, 0 ${fmt(yL2)} Z`;
 							return (
 								<path
 									key={b.index}
@@ -690,14 +785,13 @@ export const FullDiff = memo(function FullDiff({
 						})}
 					</svg>
 					{hunkAction && visibleBlocks.map((b) => {
-						const yL1 = b.leftStartRow * ROW_H - splitVp.leftTop;
-						const yR1 = b.rightStartRow * ROW_H - splitVp.rightTop;
-						const yL2 = b.leftEndRow * ROW_H - splitVp.leftTop;
-						const yR2 = b.rightEndRow * ROW_H - splitVp.rightTop;
-						const rawTop = Math.round((yL1 + yR1) / 2) + 1;
-						const maxBot = Math.max(yL2, yR2) - 18;
-						const top = Math.max(2, Math.min(maxBot, rawTop));
-						if (maxBot < 2 || rawTop > splitVp.height) return null;
+						const { yL1, yL2, yR1, yR2 } = blockEnds(b);
+						if (Math.max(yL2, yR2) < 10 || Math.min(yL1, yR1) > splitVp.height - 6) return null;
+						const midTop = (yL1 + yR1) / 2;
+						const midBot = (yL2 + yR2) / 2;
+						const idealTop = midBot - midTop <= 36 ? Math.round((midTop + midBot) / 2 - 9) : Math.round(midTop + 2);
+						const maxTop = Math.max(2, Math.min(splitVp.height - 20, Math.round(Math.max(yL2, yR2) - 18)));
+						const top = Math.max(2, Math.min(maxTop, idealTop));
 						return (
 							<button
 								key={`h${b.index}`}
@@ -720,9 +814,18 @@ export const FullDiff = memo(function FullDiff({
 				<div
 					ref={rightScrollRef}
 					className="pw-sdiff-pane pw-sdiff-right min-w-0 flex-1 overflow-auto"
+					onWheel={cancelProgrammaticLock}
+					onPointerDown={cancelProgrammaticLock}
 					onScroll={() => handleSplitScroll("right")}
 				>
-					<div style={{ height: rightRows.length * ROW_H, position: "relative", minWidth: "100%" }}>
+					<div style={{ height: rightRows.length * ROW_H, position: "relative", minWidth: "100%", width: "max-content" }}>
+						{widestRight && (
+							<div className="pw-sdiff-sizer" aria-hidden>
+								<span className="pw-sdiff-num pw-sdiff-num-right" style={{ width: `${width + 2}ch` }} />
+								<span className="pw-fdiff-sign pw-sdiff-sign">+</span>
+								<span className="pw-fdiff-text">{`${widestRight}    `}</span>
+							</div>
+						)}
 						{rightRows.slice(rightStart, rightEnd).map((row, i) => {
 							const top = (rightStart + i) * ROW_H;
 							if (row.kind === "fold") {
@@ -734,7 +837,7 @@ export const FullDiff = memo(function FullDiff({
 										style={{ top }}
 										onClick={() => setUnfolded((s) => new Set(s).add(row.from))}
 									>
-										{t.viewerFoldedLines.replace("{n}", String(row.count))}
+										<span className="pw-fdiff-fold-label">{t.viewerFoldedLines.replace("{n}", String(row.count))}</span>
 									</button>
 								);
 							}

@@ -25,6 +25,16 @@ describe("word diff engine", () => {
 		]);
 	});
 
+	it("suppresses alignment whitespace noise instead of highlighting blank padding runs", () => {
+		expect(diffLinePair(" * ?cwd=                 状态说明", " * ?cwd=                                     状态说明")).toBeNull();
+
+		const mixed = diffLinePair(" * ?cwd=&show=<hash>     旧说明", " * ?cwd=&show=<hash>                         新说明（补充）");
+		expect(mixed).not.toBeNull();
+		const changedTexts = mixed!.newSegments.filter((s) => s.changed).map((s) => s.text);
+		expect(changedTexts.every((t) => !/^\s+$/.test(t))).toBe(true);
+		expect(changedTexts).toEqual(["新", "（补充）"]);
+	});
+
 	it("suppresses fragmented highlights when lines are nearly disjoint", () => {
 		const res = diffLinePair("import fs from 'node:fs/promises';", "export const MAX_RETRY_COUNT = 42;");
 		expect(res).toBeNull();

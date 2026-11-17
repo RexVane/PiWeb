@@ -44,6 +44,20 @@ function tokenize(text: string): string[] {
 	return text.match(TOKEN_RE) ?? [];
 }
 
+function suppressWhitespaceNoise(tokens: readonly string[], changedFlags: boolean[]): void {
+	for (let i = 0; i < tokens.length; i += 1) {
+		if (!changedFlags[i] || !/^\s+$/.test(tokens[i])) continue;
+		// 多空格对齐/缩进或首尾空白不做词级绿/红条高亮，仅保留两个已变更词之间的单个分隔空格
+		if (tokens[i].length > 1) {
+			changedFlags[i] = false;
+			continue;
+		}
+		const prevChanged = i > 0 && changedFlags[i - 1] && !/^\s+$/.test(tokens[i - 1]);
+		const nextChanged = i + 1 < tokens.length && changedFlags[i + 1] && !/^\s+$/.test(tokens[i + 1]);
+		if (!prevChanged || !nextChanged) changedFlags[i] = false;
+	}
+}
+
 function coalesce(tokens: readonly string[], changedFlags: readonly boolean[]): DiffSegment[] {
 	const out: DiffSegment[] = [];
 	for (let i = 0; i < tokens.length; i += 1) {
@@ -138,8 +152,12 @@ export function diffLinePair(oldText: string, newText: string): { oldSegments: D
 		}
 	}
 
+	suppressWhitespaceNoise(a, oldChanged);
+	suppressWhitespaceNoise(b, newChanged);
+
 	const oldSegments = coalesce(a, oldChanged);
 	const newSegments = coalesce(b, newChanged);
+	if (!oldSegments.some((s) => s.changed) && !newSegments.some((s) => s.changed)) return null;
 
 	// Skip confetti highlights on completely rewritten lines
 	const unchangedOld = nonSpaceChars(oldSegments, false);
