@@ -383,29 +383,43 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [providerUsages, setProviderUsages] = useState<Record<string, ProviderUsage | null>>({});
 	const [usageBusyId, setUsageBusyId] = useState<string | null>(null);
 	const [usageFailedIds, setUsageFailedIds] = useState<Record<string, boolean>>({});
-	const fetchProviderUsage = useCallback(async (providerId: string, force: boolean) => {
-		setUsageBusyId(providerId);
-		setUsageFailedIds((prev) => ({ ...prev, [providerId]: false }));
+	const fetchProviderUsage = useCallback(async (providerId: string, force: boolean, silent = false) => {
+		// 静默刷新（定时器 / 切回页面）不闪「探测中」，失败了也不把卡片打成失败，保留上一次的数据
+		if (!silent) setUsageBusyId(providerId);
 		try {
 			const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "providerUsage", providerId, force }) });
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || "usage probe failed");
 			setProviderUsages((prev) => ({ ...prev, [providerId]: j.data.usage ?? null }));
+			setUsageFailedIds((prev) => (prev[providerId] ? { ...prev, [providerId]: false } : prev));
 		} catch {
-			setUsageFailedIds((prev) => ({ ...prev, [providerId]: true }));
+			if (!silent) setUsageFailedIds((prev) => ({ ...prev, [providerId]: true }));
 		} finally {
-			setUsageBusyId((current) => (current === providerId ? null : current));
+			if (!silent) setUsageBusyId((current) => (current === providerId ? null : current));
 		}
 	}, []);
 
-	// 这些端点都是只读探测、不消耗额度，登录后自动取一次；xAI 那条会发一次可能计费的请求，仍然只手动触发
+	// 这些端点都是只读探测、不消耗额度：进页面先各取一次，之后每 60 秒静默刷新
+	// （后端还有 5 分钟缓存兜底，不会真的每分钟打提供商）。xAI 那条会发一次可能计费的请求，仍然只手动触发。
 	const requestedUsage = useRef(new Set<string>());
 	useEffect(() => {
-		for (const p of providers) {
-			if (!p.authReady || p.authCommand || !supportsUsageProbe(p.id) || p.id === "xai" || requestedUsage.current.has(p.id)) continue;
+		const eligible = providers.filter((p) => p.authReady && !p.authCommand && supportsUsageProbe(p.id) && p.id !== "xai");
+		if (!eligible.length) return;
+		for (const p of eligible) {
+			if (requestedUsage.current.has(p.id)) continue;
 			requestedUsage.current.add(p.id);
 			void fetchProviderUsage(p.id, false);
 		}
+		const refresh = () => {
+			for (const p of eligible) void fetchProviderUsage(p.id, false, true);
+		};
+		const timer = setInterval(refresh, 60_000);
+		const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+		document.addEventListener("visibilitychange", onVisible);
+		return () => {
+			clearInterval(timer);
+			document.removeEventListener("visibilitychange", onVisible);
+		};
 	}, [providers, fetchProviderUsage]);
 
 	// 倒计时与「几分钟前更新」需要一个会走的时钟：60 秒一跳，够准也不会让设置页频繁重绘

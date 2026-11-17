@@ -10,7 +10,6 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-	IconCloseOutline14,
 	IconEditOutline16,
 	IconFileOutline16,
 	IconFolderClose16,
@@ -934,10 +933,10 @@ export function ChatInput({
 					{adopted && (
 						<button
 							type="button"
-							className="pw-cmd-chip group/cmd"
+							className="pw-cmd-chip"
 							disabled={disabled || sendBusy}
-							aria-label={`${t.delete} /${adopted.name}`}
-							title={`${t.delete} /${adopted.name} (Backspace)`}
+							aria-label={`${t.delete} ${adopted.name}`}
+							title={`${adopted.name} · ${t.delete}`}
 							onClick={() => {
 								setAdopted(null);
 								requestAnimationFrame(() => taRef.current?.focus());
@@ -948,10 +947,7 @@ export function ChatInput({
 							) : (
 								<IconTerminalOutline14 size={13} style={{ flex: "none", opacity: 0.9 }} aria-hidden="true" />
 							)}
-							<span className="min-w-0 truncate">/{adopted.name}</span>
-							<span className="pw-cmd-close" aria-hidden="true">
-								<IconCloseOutline14 size={10} />
-							</span>
+							<span className="min-w-0 truncate">{adopted.name}</span>
 						</button>
 					)}
 					<textarea
