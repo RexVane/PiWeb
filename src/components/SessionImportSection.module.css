@@ -31,7 +31,7 @@
 .sourceMenu { position: absolute; z-index: 10; top: calc(100% + 6px); left: 0; right: 0; padding: 7px; border: 1px solid var(--dsw-border-l2); border-radius: 14px; background: var(--dsw-glass-popover); backdrop-filter: blur(20px); box-shadow: var(--dsw-elevation-soft); }
 .sourceSearch { display: flex; align-items: center; gap: 7px; margin: 2px 2px 7px; padding: 0 10px; min-height: 36px; border-radius: 8px; background: var(--dsw-hover); color: var(--dsw-label-tertiary); }
 .sourceSearch input { width: 100%; min-width: 0; outline: none; color: var(--dsw-label-primary); font-size: 12px; background: transparent; }
-.sourceList { max-height: min(288px, 36dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.sourceList { max-height: min(288px, 36dvh); overflow-y: auto; overscroll-behavior: contain; }
 .sourceOption { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 51px; padding: 8px 10px; border-radius: 9px; text-align: left; }
 .sourceOption:hover, .sourceOption[data-highlighted="true"] { background: var(--dsw-hover); }
 .sourceOption[aria-selected="true"] { background: var(--dsw-accent-soft); }

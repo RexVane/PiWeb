@@ -1714,7 +1714,11 @@ function TurnBlockView({
 	const lastIdx = assistants[assistants.length - 1];
 	const turnLive = isStreaming && isLast;
 	// 正在流式的那条永远先在过程里，回合结束后才作为最终回答"走出"过程
-	const finalIdx = lastIdx !== undefined && isFinalAnswer(messages[lastIdx]) && !(isStreaming && lastIdx === lastAssistantIndex) ? lastIdx : -1;
+	// 正在流式的那条永远先在过程里，回合结束后才作为最终回答"走出"过程。
+	// 注意这里用 turnLive 而不是 isStreaming：发送新消息时（新回合刚挂上、助手还没开始回）
+	// isStreaming 已经是 true 了，但上一回合并不是正在流式的那个回合；否则它已经折叠的过程
+	// 会先展开再收起，看起来就是发消息前闪一下。
+	const finalIdx = lastIdx !== undefined && isFinalAnswer(messages[lastIdx]) && !(turnLive && lastIdx === lastAssistantIndex) ? lastIdx : -1;
 
 	// 连续相同的模型错误（内容为空的错误消息）合并成一行，标连续次数
 	const errorCounts = new Map<number, number>();
@@ -1744,7 +1748,7 @@ function TurnBlockView({
 		...assistants.filter((k) => k !== finalIdx || messages[k].content.some((c) => c.type === "thinking" && c.thinking.trim())),
 		...turn.extraIndexes,
 	].sort((a, b) => a - b);
-	const items = processIdx.flatMap((k) => buildItems(messages, k, tools, isStreaming && k === lastAssistantIndex, k === finalIdx, errorCounts.get(k)));
+	const items = processIdx.flatMap((k) => buildItems(messages, k, tools, turnLive && k === lastAssistantIndex, k === finalIdx, errorCounts.get(k)));
 	// 仅累计模型生成时间；相邻助手消息之间可能在等工具或等用户，不能算成思考。
 	const spanOf = (a: number, b: number): number | undefined => {
 		let duration = 0;
