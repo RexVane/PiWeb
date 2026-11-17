@@ -1,6 +1,6 @@
 # 进度
 
-> 说明（2026-11-15 收尾）：历史条目中的 `.audit-*` 与 `audit_tmp/` 证据目录已随收尾清理移出工作区，归档见 [docs/audit](../audit/README.md)。历史数字与命令保留原样，仅作当时记录。
+> 说明（2026-11-15 收尾）：历史条目中的 `.audit-*` 与 `audit_tmp/` 证据目录已随收尾清理移出工作区，归档（含 `docs/audit`）已移出仓库，可由 git 历史恢复。历史数字与命令保留原样，仅作当时记录。
 
 ## 2026-11-17 | 发布 0.3.32：新会话模型冷启动保留、启动产物校验加速与链接双图标修复
 
@@ -26,7 +26,7 @@
 - 统一 Node 版本说明：`engines` 下限 22.19.0；CI 矩阵 22.22.2 / 24；自动代理需要 Node 24 或 22.21+。
 - 错误文案本地化：`src/lib/api-error.ts` 增加 errorCode→i18n key 映射，`src/i18n.tsx` 补中英文案并提供 `localizeApiError`，设置页模型错误优先按 errorCode 显示；配额重置时间显式按界面语言格式化。未知错误码保留原服务器消息（中文兜底）。删除会话的确认文案同步 I3 附件可恢复清理的实际行为（会话记录本身仍永久删除）。
 - 文档同步了本修复轮已落地的可选开关与运维能力：`PIWEB_FS_STRICT_WORKSPACES`/`PIWEB_FS_ALLOWED_ROOTS`（严格工作区模式，默认关）、`PIWEB_AGENT_*` 单回合预算（默认不限）、`PIWEB_MAX_SESSION_SUBSCRIBERS` 与 `PIWEB_SSE_MAX_BUFFERED_BYTES`（默认宽松）、`PIWEB_MOBILE_PROXY_*` 手机代理上限与 `PIWEB_REMOTE_LAN_BIND`、`PIWEB_SHUTDOWN_TIMEOUT_MS` 优雅停机预算、`PI_WEB_DELETE_ATTACHMENT_CLEANUP`、导出默认脱敏（`?raw=1` 取原文）、`/api/health/readiness` 就绪检查（`/api/health` 仍为 liveness）、`npm run lint` 与 CI 的 22.19.0/22.22.2/24 矩阵。
-- 证据目录：原始 `audit_tmp/run-20261115-full/fix/docs-ui/` 已随收尾清理移除；归档见 [docs/audit/2026-11-15](../audit/2026-11-15/README.md)。
+- 证据目录：原始 `audit_tmp/run-20261115-full/fix/docs-ui/` 已随收尾清理移除，审计归档也已移出仓库（可由 git 历史恢复）。
 
 ## 2026-11-15 | 整合与本机启动
 
@@ -317,3 +317,5 @@
 - 2026-11-13 02:15 | #219 | 测试与 CI | 修 Node 22.19 上失败的代理测试（CI 矩阵里 22.19.0 的两个任务红、24 的两个绿）：`testProxyConnection` 增加 `nodeVersion` 注入（默认仍取运行时），代理单测钉到 24.12.0、真实探测用例在没有 NODE_USE_ENV_PROXY 的旧 Node 上跳过，launcher 的系统代理用例显式传 nodeVersion，并新增「旧 Node 直接报 unsupported」用例；本地 61 项相关测试与类型检查通过 | deepseek-flash
 
 - 2026-11-15 23:55 | #220 | 审查与修复 | 完成全栈真实审查与修复收尾：16 节/87 条判定（通过 38 / 有问题 42 / 无法验证 6 / 不适用 1），42 项问题修复 32、部分修复 7、deferred 3；默认行为未翻转，新增能力均 opt-in。修复含导出脱敏、认证/Origin 加固、子进程环境清洗、原子写 fsync、优雅停机、SSE 背压、手机代理上限、设置写并发、C5 死视图删除等；新增 27 个测试文件与独立 lint 工具链。typecheck/lint exit 0，全量 2505 passed（唯一失败为宿主 AppContainer 环境限制），生产构建与打包通过。GitHub CI：macOS 与 ubuntu×3 已通过，Windows 剩余 hosted-runner 测试夹具/沙箱环境问题已修复但未等待最后一轮。报告归档到 docs/audit/2026-11-15/ | deepseek-harness
+
+- 2026-11-17 19:51 | #221 | 仓库整理 | 按用户要求把只对本机有意义的记录移出 GitHub：`backups/`（含 `INDEX.md`）取消跟踪并整体写进 `.gitignore`；`docs/audit/` 的 11 份按日期审查/修复报告一并删除，并把 6 处指向它的相对链接（文档导航、第三方许可证说明、环境变量、数据与隐私、测试索引、本文件）改成「已移出仓库、可由 git 历史恢复」的说明，避免指南指向不存在的文件。两份内容都仍在 git 历史里：`git restore --source=d0909c1 -- <路径>` 可取回；本地 `backups/` 实体与 `INDEX.md` 未动。仓库整理未改产品代码 | deepseek-harness
