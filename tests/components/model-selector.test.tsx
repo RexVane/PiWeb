@@ -56,17 +56,23 @@ describe("searchable model selector", () => {
 		expect(document.activeElement).toBe(screen.getByRole("combobox"));
 	});
 
-	it("groups authorized models with the existing provider logos and custom-provider fallback", () => {
+	it("groups authorized models with only the selected model's provider expanded by default", () => {
 		const { container } = render(<ModelSelector {...props()} />);
 		const search = open();
 		expect(document.activeElement).toBe(search);
-		expect(options()).toHaveLength(4);
+		expect(options()).toHaveLength(2);
 		expect(screen.queryByRole("option", { name: /Private Model/ })).toBeNull();
 		expect(screen.getAllByRole("group")[0].getAttribute("aria-labelledby")).toBeTruthy();
 		expect(screen.getByRole("group", { name: "OpenAI" })).toBeTruthy();
+		expect(screen.getByRole("button", { name: "OpenAI" }).getAttribute("aria-expanded")).toBe("true");
+		expect(screen.getByRole("button", { name: "Anthropic" }).getAttribute("aria-expanded")).toBe("false");
+		expect(screen.getByRole("button", { name: "Local Lab" }).getAttribute("aria-expanded")).toBe("false");
 		expect(container.querySelector('img[src="/provider-icons/openai.svg"]')).toBeTruthy();
 		expect(within(screen.getByRole("group", { name: "Local Lab" })).getByText("LL")).toBeTruthy();
 		expect(screen.getByRole("option", { name: /^GPT Code/ }).getAttribute("aria-selected")).toBe("true");
+		fireEvent.click(screen.getByRole("button", { name: "Anthropic" }));
+		fireEvent.click(screen.getByRole("button", { name: "Local Lab" }));
+		expect(options()).toHaveLength(4);
 	});
 
 	it("matches all search words across names, IDs and provider names without exposing blocked providers", () => {
@@ -85,34 +91,51 @@ describe("searchable model selector", () => {
 		expect(options()).toHaveLength(0);
 		expect(screen.getByRole("status").textContent).toContain("没有匹配的模型");
 		fireEvent.change(search, { target: { value: "" } });
-		expect(options()).toHaveLength(4);
+		expect(options()).toHaveLength(2);
+		expect(screen.getByRole("button", { name: "Anthropic" }).getAttribute("aria-expanded")).toBe("false");
 	});
 
-	it("starts provider groups expanded and toggles only the clicked group without choosing a model", () => {
+	it("collapses all providers when no model is selected, toggles individually, and resets on reopen", () => {
+		const noModel = render(<ModelSelector {...props({ model: undefined })} />);
+		fireEvent.click(screen.getByRole("button", { name: "选择模型" }));
+		expect(options()).toHaveLength(0);
+		expect(screen.getByRole("button", { name: "OpenAI" }).getAttribute("aria-expanded")).toBe("false");
+		expect(screen.getByRole("button", { name: "Anthropic" }).getAttribute("aria-expanded")).toBe("false");
+		expect(screen.getByRole("button", { name: "Local Lab" }).getAttribute("aria-expanded")).toBe("false");
+		noModel.unmount();
+
 		const config = props();
 		render(<ModelSelector {...config} />);
 		open();
-		const group = screen.getByRole("button", { name: "OpenAI" });
-		expect(group.getAttribute("aria-expanded")).toBe("true");
-		fireEvent.click(group);
-		expect(group.getAttribute("aria-expanded")).toBe("false");
+		const openaiBtn = screen.getByRole("button", { name: "OpenAI" });
+		const anthropicBtn = screen.getByRole("button", { name: "Anthropic" });
+		expect(openaiBtn.getAttribute("aria-expanded")).toBe("true");
+		expect(anthropicBtn.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(anthropicBtn);
+		expect(anthropicBtn.getAttribute("aria-expanded")).toBe("true");
+		expect(screen.getByRole("option", { name: /^Claude Work/ })).toBeTruthy();
+		fireEvent.click(openaiBtn);
+		expect(openaiBtn.getAttribute("aria-expanded")).toBe("false");
 		expect(screen.queryByRole("option", { name: /^GPT/ })).toBeNull();
 		expect(screen.getByRole("option", { name: /^Claude Work/ })).toBeTruthy();
 		expect(config.onSelectModel).not.toHaveBeenCalled();
 		expect(screen.getByRole("dialog")).toBeTruthy();
-		fireEvent.click(group);
-		expect(group.getAttribute("aria-expanded")).toBe("true");
-		expect(options()).toHaveLength(4);
+		fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
+		open();
+		expect(screen.getByRole("button", { name: "OpenAI" }).getAttribute("aria-expanded")).toBe("true");
+		expect(screen.getByRole("button", { name: "Anthropic" }).getAttribute("aria-expanded")).toBe("false");
 	});
 
 	it("skips collapsed models in keyboard selection and expands matching groups for a new search", () => {
 		const config = props();
 		render(<ModelSelector {...config} />);
 		const search = open();
+		fireEvent.click(screen.getByRole("button", { name: "Anthropic" }));
 		fireEvent.click(screen.getByRole("button", { name: "OpenAI" }));
 		for (let i = 0; i < 4; i += 1) {
 			fireEvent.keyDown(search, { key: "ArrowDown" });
 			const option = document.getElementById(search.getAttribute("aria-activedescendant")!);
+			expect(option).toBeTruthy();
 			expect(option?.textContent).not.toMatch(/GPT/);
 		}
 		fireEvent.change(search, { target: { value: "gpt mini" } });
@@ -126,7 +149,7 @@ describe("searchable model selector", () => {
 		const config = props();
 		render(<ModelSelector {...config} />);
 		const search = open();
-		for (const label of ["OpenAI", "Anthropic", "Local Lab"]) fireEvent.click(screen.getByRole("button", { name: label }));
+		fireEvent.click(screen.getByRole("button", { name: "OpenAI" }));
 		expect(options()).toHaveLength(0);
 		expect(screen.queryByRole("status")).toBeNull();
 		expect(search.getAttribute("aria-activedescendant")).toBeNull();
@@ -180,7 +203,7 @@ describe("searchable model selector", () => {
 		expect(outer).not.toHaveBeenCalled();
 		expect(screen.queryByRole("dialog")).toBeNull();
 		expect(open().value).toBe("");
-		expect(options()).toHaveLength(4);
+		expect(options()).toHaveLength(2);
 	});
 
 	it("preserves thinking navigation, keyboard selection and the current search when returning", () => {

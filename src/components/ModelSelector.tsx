@@ -49,7 +49,10 @@ export function ModelSelector({
 	const open = !disabled && (openProp ?? openState);
 	const [pane, setPane] = useState<"model" | "effort">("model");
 	const [query, setQuery] = useState("");
-	const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(() => new Set());
+	const [expandedProviders, setExpandedProviders] = useState<Set<string>>(() => (
+		model?.provider ? new Set([model.provider]) : new Set()
+	));
+	const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(() => new Set());
 	const [activeKey, setActiveKey] = useState<string | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
@@ -57,6 +60,7 @@ export function ModelSelector({
 	const searchRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const effortRefs = useRef<Array<HTMLButtonElement | null>>([]);
+	const wasOpenRef = useRef(open);
 	const setOpen = useCallback((value: boolean) => {
 		setOpenState(value);
 		onOpenChange?.(value);
@@ -67,6 +71,12 @@ export function ModelSelector({
 	};
 
 	useEffect(() => {
+		const justOpened = !wasOpenRef.current && open;
+		wasOpenRef.current = open;
+		if (!open || justOpened) {
+			setExpandedProviders(model?.provider ? new Set([model.provider]) : new Set());
+			setSearchCollapsed(new Set());
+		}
 		if (!open) {
 			setPane("model");
 			setQuery("");
@@ -78,7 +88,7 @@ export function ModelSelector({
 			const selected = thinkingLevels.indexOf(thinkingLevel ?? "");
 			effortRefs.current[Math.max(0, selected)]?.focus({ preventScroll: true });
 		}
-	}, [open, pane]);
+	}, [open, pane, model?.provider]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -138,14 +148,18 @@ export function ModelSelector({
 		if (selectedGroup > 0) result.unshift(...result.splice(selectedGroup, 1));
 		return result;
 	}, [models, providerNames, authByProvider, model?.provider, words]);
+	const isGroupExpanded = useCallback(
+		(provider: string) => (words.length > 0 ? !searchCollapsed.has(provider) : expandedProviders.has(provider)),
+		[words.length, searchCollapsed, expandedProviders],
+	);
 	const showDefault = defaultOption && words.every((word) => defaultOption.label.toLowerCase().includes(word));
 	const candidates: Candidate[] = useMemo(() => [
 		...(showDefault ? [{ key: DEFAULT_KEY, model: null, selected: defaultOption!.selected }] : []),
-		...groups.flatMap((group) => collapsedProviders.has(group.provider) ? [] : group.models.map((entry) => ({
+		...groups.flatMap((group) => !isGroupExpanded(group.provider) ? [] : group.models.map((entry) => ({
 			key: modelKey(entry), model: entry,
 			selected: !defaultOption?.selected && model?.provider === entry.provider && model?.id === entry.id,
 		}))),
-	], [groups, collapsedProviders, showDefault, defaultOption?.selected, model?.provider, model?.id]);
+	], [groups, isGroupExpanded, showDefault, defaultOption?.selected, model?.provider, model?.id]);
 	const active = candidates.find((candidate) => candidate.key === activeKey)
 		?? (!words.length ? candidates.find((candidate) => candidate.selected) : undefined)
 		?? candidates[0];
@@ -171,7 +185,8 @@ export function ModelSelector({
 		closeMenu();
 	};
 	const toggleProvider = (provider: string) => {
-		setCollapsedProviders((previous) => {
+		const update = words.length > 0 ? setSearchCollapsed : setExpandedProviders;
+		update((previous) => {
 			const next = new Set(previous);
 			if (next.has(provider)) next.delete(provider);
 			else next.add(provider);
@@ -285,7 +300,7 @@ export function ModelSelector({
 									placeholder={t.modelSearchPlaceholder} value={query} autoComplete="off" spellCheck={false}
 									aria-expanded="true" aria-autocomplete="list" aria-controls={`${id}-list`}
 									aria-activedescendant={active ? optionIds.get(active.key) : undefined}
-									onChange={(event) => { setQuery(event.target.value); setActiveKey(null); setCollapsedProviders(new Set()); }} />
+									onChange={(event) => { setQuery(event.target.value); setActiveKey(null); setSearchCollapsed(new Set()); }} />
 								<kbd aria-hidden="true">↑↓</kbd>
 							</div>
 							<div ref={listRef} id={`${id}-list`} className={styles.list} role="listbox" aria-label={t.selectModel}>
@@ -296,17 +311,19 @@ export function ModelSelector({
 									{defaultOption!.selected && <IconCheckOutline14 size={15} />}
 								</button>}
 								{groups.length === 0 && !showDefault && <p className={styles.empty} role="status">{words.length ? t.modelSearchEmpty : t.emptyModels}</p>}
-								{groups.map((group, groupIndex) => (
+								{groups.map((group, groupIndex) => {
+									const expanded = isGroupExpanded(group.provider);
+									return (
 									<section key={group.provider} role="group" aria-labelledby={`${id}-provider-${groupIndex}`} className={styles.group}>
 										<button type="button" id={`${id}-provider-${groupIndex}`} className={styles.groupTitle} title={group.label}
-											aria-label={group.label} aria-expanded={!collapsedProviders.has(group.provider)} aria-controls={`${id}-provider-models-${groupIndex}`}
+											aria-label={group.label} aria-expanded={expanded} aria-controls={`${id}-provider-models-${groupIndex}`}
 											onClick={() => toggleProvider(group.provider)}>
 											<ProviderBrand id={group.provider} name={group.label} size={22} />
 											<span>{group.label}</span><span className={styles.count} aria-hidden="true">{group.models.length}</span>
 											<IconChevronDown14 className={styles.groupChevron} size={13} />
 										</button>
-										<div id={`${id}-provider-models-${groupIndex}`} hidden={collapsedProviders.has(group.provider)}>
-										{!collapsedProviders.has(group.provider) && group.models.map((entry) => {
+										<div id={`${id}-provider-models-${groupIndex}`} hidden={!expanded}>
+										{expanded && group.models.map((entry) => {
 											const key = modelKey(entry);
 											const candidate = candidates.find((item) => item.key === key)!;
 											return <button key={key} id={optionIds.get(key)} type="button" role="option" tabIndex={-1}
@@ -321,7 +338,8 @@ export function ModelSelector({
 										})}
 										</div>
 									</section>
-								))}
+									);
+								})}
 							</div>
 							{hasModel && !modelOnly && (thinkingLevels.length > 1 ? (
 								<button type="button" className={styles.effortLink} aria-label={`${t.thinking}: ${thinkingLevel ?? t.thinkingOff}`} onClick={() => setPane("effort")}>

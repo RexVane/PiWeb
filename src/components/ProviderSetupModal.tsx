@@ -66,7 +66,9 @@ export function ProviderSetupModal({
 	const [advanced, setAdvanced] = useState(false);
 	const [baseUrl, setBaseUrl] = useState("");
 	const [providerId, setProviderId] = useState("");
-	const [displayName, setDisplayName] = useState("");
+	// 显示名称默认跟随 ID 同步填写；用户一旦手动改过就不再跟随（清空后再改 ID 会重新跟随）
+	const [displayNameDraft, setDisplayNameDraft] = useState<string | null>(null);
+	const displayName = displayNameDraft ?? providerId;
 	const allApis = customApiOptions(providers.flatMap((provider) => provider.apis));
 	const [api, setApi] = useState(allApis.includes("openai-completions") ? "openai-completions" : (allApis[0] ?? "openai-completions"));
 	const [models, setModels] = useState<ModelDraft[]>([]);
@@ -290,14 +292,17 @@ export function ProviderSetupModal({
 						<>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.providerId}</label>
-								<input className={styles.input} autoFocus value={providerId} onChange={(event) => setProviderId(event.target.value.toLocaleLowerCase())} placeholder="acme-gateway" />
+								<input className={styles.input} autoFocus value={providerId} onChange={(event) => {
+									setProviderId(event.target.value.toLocaleLowerCase());
+									if (displayNameDraft === "") setDisplayNameDraft(null);
+								}} placeholder="acme-gateway" />
 								<div className={styles.hint}>{t.providerIdHint}</div>
 								{normalizedId && !customIdValid ? <div className={styles.hint} style={{ color: "var(--dsw-danger)" }}>{t.providerIdInvalid}</div> : null}
 								{normalizedId && existingIds.includes(normalizedId) ? <div className={styles.hint} style={{ color: "var(--dsw-danger)" }}>{t.providerIdTaken}</div> : null}
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.displayName}</label>
-								<input className={styles.input} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={t.displayName} />
+								<input className={styles.input} value={displayName} onChange={(event) => setDisplayNameDraft(event.target.value)} placeholder={normalizedId || t.displayName} />
 							</div>
 							<div className={styles.field}>
 								<label className={styles.label}>{t.apiAddress}</label>

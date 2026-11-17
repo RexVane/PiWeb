@@ -215,6 +215,39 @@ describe("ProviderSetupModal (custom mode): 保存", () => {
 	});
 });
 
+describe("ProviderSetupModal (custom mode): 显示名称跟随 ID", () => {
+	const renderCustom = () => render(
+		<ProviderSetupModal mode="custom" providers={[]} existingIds={[]} onClose={vi.fn()}
+			onSaveBuiltin={vi.fn(async () => ({ success: true }))} onSaveCustom={vi.fn(async () => ({ success: true }))} />,
+	);
+	const displayInput = () => screen.getAllByRole("textbox")[1] as HTMLInputElement;
+
+	it("默认跟随 ID 同步填写，手动修改后不再跟随", () => {
+		vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+		renderCustom();
+		const idInput = screen.getByPlaceholderText("acme-gateway");
+		fireEvent.change(idInput, { target: { value: "magpie" } });
+		expect(displayInput().value).toBe("magpie");
+		fireEvent.change(idInput, { target: { value: "magpie-ai" } });
+		expect(displayInput().value).toBe("magpie-ai");
+		fireEvent.change(displayInput(), { target: { value: "Magpie AI" } });
+		fireEvent.change(idInput, { target: { value: "magpie-x" } });
+		expect(displayInput().value).toBe("Magpie AI");
+	});
+
+	it("清空显示名称后再改 ID 会重新跟随", () => {
+		vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+		renderCustom();
+		const idInput = screen.getByPlaceholderText("acme-gateway");
+		fireEvent.change(idInput, { target: { value: "acme" } });
+		fireEvent.change(displayInput(), { target: { value: "" } });
+		expect(displayInput().value).toBe("");
+		expect(displayInput().placeholder).toBe("acme");
+		fireEvent.change(idInput, { target: { value: "acme-2" } });
+		expect(displayInput().value).toBe("acme-2");
+	});
+});
+
 describe("ProviderSetupModal (custom mode): 自动识别", () => {
 	const URL_PLACEHOLDER = "https://gateway.example/v1";
 	const KEY_PLACEHOLDER = "输入 API 密钥，或留空使用环境认证";
