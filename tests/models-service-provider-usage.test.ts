@@ -10,6 +10,7 @@ import {
 	parseOpencodeUsagePayload,
 	parseOpenRouterKeyPayload,
 	parseVercelGatewayCreditsPayload,
+	parseZaiQuotaPayload,
 	planTypeFromAccessToken,
 	quotaWindowKind,
 	supportsUsageProbe,
@@ -230,13 +231,14 @@ describe("balance payloads", () => {
 
 describe("usage probe support", () => {
 	it("covers the providers with real read-only usage endpoints", () => {
-		for (const id of ["xai", "openai-codex", "anthropic", "deepseek", "openrouter", "moonshotai", "moonshotai-cn", "kimi-coding", "github-copilot", "vercel-ai-gateway", "opencode-go"]) {
+		for (const id of ["xai", "openai-codex", "anthropic", "deepseek", "openrouter", "moonshotai", "moonshotai-cn", "kimi-coding", "github-copilot", "vercel-ai-gateway", "opencode-go", "zai", "zai-coding-cn"]) {
 			expect(supportsUsageProbe(id)).toBe(true);
 		}
 	});
 
 	it("leaves providers without such an endpoint unprobed", () => {
-		for (const id of ["openai", "google", "google-vertex", "azure-openai-responses", "amazon-bedrock", "groq", "mistral", "together", "cerebras", "fireworks", "nvidia", "baseten", "ant-ling", "minimax", "minimax-cn", "huggingface", "zai", "zai-coding-cn", "qwen-token-plan", "qwen-token-plan-cn", "xiaomi-token-plan-cn", "opencode", "cloudflare-workers-ai", "cloudflare-ai-gateway"]) {
+		// MiniMax 的 coding_plan/remains 依赖网页登录 Cookie，没有能带 API Key 直接读的端点
+		for (const id of ["openai", "google", "google-vertex", "azure-openai-responses", "amazon-bedrock", "groq", "mistral", "together", "cerebras", "fireworks", "nvidia", "baseten", "ant-ling", "minimax", "minimax-cn", "huggingface", "qwen-token-plan", "qwen-token-plan-cn", "xiaomi-token-plan-cn", "opencode", "cloudflare-workers-ai", "cloudflare-ai-gateway"]) {
 			expect(supportsUsageProbe(id)).toBe(false);
 		}
 	});
@@ -337,5 +339,148 @@ describe("opencode go usage", () => {
 	it("reports nothing for an entitlement error envelope", () => {
 		expect(parseOpencodeUsagePayload({ type: "error", error: { type: "EntitlementError" } }).windows).toEqual([]);
 		expect(parseOpencodeUsagePayload({ usage: { rolling: {} } }).windows).toEqual([]);
+	});
+});
+
+describe("codex credits and code review window", () => {
+	it("adds the code review window the same response carries", () => {
+		const parsed = parseCodexUsagePayload({
+			plan_type: "pro",
+			rate_limit: { allowed: true, limit_reached: false, primary_window: windowOf(WEEKLY_WINDOW_SECONDS, 12) },
+			code_review_rate_limit: { primary_window: windowOf(FIVE_HOURS, 40) },
+		});
+		expect(parsed.windows.map((w) => w.name)).toEqual(["codeReview", undefined]);
+		expect(parsed.windows.map((w) => w.remainingPercent)).toEqual([60, 88]);
+	});
+
+	it("reads the credits pool as a balance with the overage flag", () => {
+		const parsed = parseCodexUsagePayload({ plan_type: "plus", credits: { has_credits: true, unlimited: false, balance: "12.5", overage_limit_reached: true } });
+		expect(parsed.extra).toEqual({ kind: "credits", balance: { amount: "12.50" }, limitReached: true });
+	});
+
+	it("marks an unlimited credits pool and drops a disabled one", () => {
+		expect(parseCodexUsagePayload({ credits: { has_credits: true, unlimited: true } }).extra).toEqual({ kind: "credits", unlimited: true });
+		expect(parseCodexUsagePayload({ credits: { has_credits: false } }).extra).toBeUndefined();
+	});
+
+	it("keeps the limit_reached flag from the rate limit block", () => {
+		const parsed = parseCodexUsagePayload({ rate_limit: { limit_reached: true, primary_window: windowOf(WEEKLY_WINDOW_SECONDS, 100) } });
+		expect(parsed.limitReached).toBe(true);
+		expect(parsed.windows[0].remainingPercent).toBe(0);
+	});
+});
+
+describe("claude subscription windows and extra usage", () => {
+	it("reports the sonnet-specific weekly window next to the shared ones", () => {
+		const parsed = parseAnthropicUsagePayload({
+			five_hour: { utilization: 10 },
+			seven_day: { utilization: 30 },
+			seven_day_sonnet: { utilization: 55, resets_at: "2026-11-20T00:00:00Z" },
+		});
+		expect(parsed.windows.map((w) => w.limitWindowSeconds)).toEqual([FIVE_HOURS, WEEKLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS]);
+		expect(parsed.windows.map((w) => w.variant)).toEqual([undefined, undefined, "sonnet"]);
+		expect(parsed.windows[2].remainingPercent).toBe(45);
+	});
+
+	it("converts the minor-unit pay-as-you-go pool into dollars", () => {
+		const parsed = parseAnthropicUsagePayload({
+			seven_day: { utilization: 30 },
+			extra_usage: { is_enabled: true, monthly_limit: 20000, used_credits: 14375, utilization: 71.9 },
+		});
+		expect(parsed.extra).toEqual({
+			kind: "extra",
+			used: { amount: "143.75", currency: "USD" },
+			limit: { amount: "200.00", currency: "USD" },
+			remainingPercent: 28,
+		});
+	});
+
+	it("stays silent when the pay-as-you-go pool is disabled", () => {
+		expect(parseAnthropicUsagePayload({ seven_day: { utilization: 30 }, extra_usage: { is_enabled: false, monthly_limit: 20000 } }).extra).toBeUndefined();
+	});
+});
+
+describe("openrouter spend periods", () => {
+	it("carries the daily, weekly and monthly spend the key reports", () => {
+		const parsed = parseOpenRouterKeyPayload({ data: { limit: 20, limit_remaining: 12.5, usage: 7.5, usage_daily: 1.25, usage_weekly: 3, usage_monthly: 7.5 } });
+		expect(parsed.primary).toEqual({ amount: "12.50", currency: "USD" });
+		expect(parsed.periodSpend).toEqual([
+			{ period: "daily", amount: "1.25", currency: "USD" },
+			{ period: "weekly", amount: "3.00", currency: "USD" },
+			{ period: "monthly", amount: "7.50", currency: "USD" },
+		]);
+	});
+
+	it("flags a free-tier key without inventing a period", () => {
+		const parsed = parseOpenRouterKeyPayload({ data: { usage: 0.11, is_free_tier: true } });
+		expect(parsed.isFreeTier).toBe(true);
+		expect(parsed.periodSpend).toBeUndefined();
+		expect(parsed.primaryKey).toBe("used");
+	});
+});
+
+describe("copilot exact request counts", () => {
+	it("keeps the entitlement numbers the dashboard shows", () => {
+		const parsed = parseCopilotUserPayload({
+			copilot_plan: "pro",
+			quota_snapshots: { premium_interactions: { percent_remaining: 31, entitlement: 300, quota_remaining: 93, overage_permitted: true } },
+		});
+		expect(parsed.windows[0]).toMatchObject({ limit: 300, remaining: 93, used: 207, overagePermitted: true });
+	});
+
+	it("does not invent counts when the snapshot only carries a percentage", () => {
+		const parsed = parseCopilotUserPayload({ quota_snapshots: { chat: { percent_remaining: 50 } } });
+		expect(parsed.windows[0]).toEqual({ remainingPercent: 50, name: "chat" });
+	});
+});
+
+describe("deepseek availability flag", () => {
+	it("passes through the account availability the endpoint reports", () => {
+		expect(parseDeepSeekBalancePayload({ is_available: false, balance_infos: [{ currency: "CNY", total_balance: "0.00" }] }).available).toBe(false);
+		expect(parseDeepSeekBalancePayload({ balance_infos: [{ currency: "CNY", total_balance: "1.00" }] }).available).toBeUndefined();
+	});
+});
+
+describe("zai coding plan usage", () => {
+	const payload = {
+		success: true,
+		data: {
+			level: "max",
+			limits: [
+				{ type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 20.4, nextResetTime: 1_791_823_822_000 },
+				{ type: "TOKENS_LIMIT", unit: 6, number: 1, percentage: 63, nextResetTime: 1_791_823_822 },
+				{ type: "TIME_LIMIT", number: 4000, percentage: 0 },
+			],
+		},
+	};
+
+	it("maps the 5-hour, weekly and tool windows the Coding Plan reports", () => {
+		const parsed = parseZaiQuotaPayload(payload);
+		expect(parsed.planType).toBe("max");
+		expect(parsed.windows.map((w) => w.limitWindowSeconds)).toEqual([FIVE_HOURS, WEEKLY_WINDOW_SECONDS, undefined]);
+		expect(parsed.windows.map((w) => w.remainingPercent)).toEqual([80, 37, 100]);
+		expect(parsed.windows[2].name).toBe("mcp");
+	});
+
+	it("treats nextResetTime as seconds or milliseconds without guessing wrong", () => {
+		const parsed = parseZaiQuotaPayload(payload);
+		expect(parsed.windows[0].resetAt).toBe(new Date(1_791_823_822_000).toISOString());
+		expect(parsed.windows[1].resetAt).toBe(new Date(1_791_823_822_000).toISOString());
+	});
+
+	it("understands the monthly unit code as well", () => {
+		const parsed = parseZaiQuotaPayload({ data: { limits: [{ type: "TOKENS_LIMIT", unit: 5, number: 1, percentage: 10 }] } });
+		expect(parsed.windows[0].limitWindowSeconds).toBe(MONTHLY_WINDOW_SECONDS);
+	});
+
+	it("keeps the exact tool-call quota when the endpoint reports it", () => {
+		const parsed = parseZaiQuotaPayload({ data: { limits: [{ type: "TIME_LIMIT", number: 400, percentage: 25, usage: 400, currentValue: 100, remaining: 300 }] } });
+		expect(parsed.windows[0]).toMatchObject({ name: "mcp", limit: 400, used: 100, remaining: 300, remainingPercent: 75 });
+	});
+
+	it("skips unknown unit codes and error envelopes", () => {
+		expect(parseZaiQuotaPayload({ data: { limits: [{ type: "TOKENS_LIMIT", unit: 9, percentage: 50 }] } }).windows).toEqual([]);
+		expect(parseZaiQuotaPayload({ success: false, data: { limits: [{ type: "TOKENS_LIMIT", unit: 3, number: 1, percentage: 50 }] } }).windows).toEqual([]);
+		expect(parseZaiQuotaPayload(null).windows).toEqual([]);
 	});
 });

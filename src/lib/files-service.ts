@@ -359,6 +359,42 @@ export async function readWorkspaceFile(cwdValue: unknown, relPath: unknown): Pr
 	return { path: relative, truncated, ...decodeFilePreview(buffer.subarray(0, bytesRead), MAX_READ_BYTES, truncated) };
 }
 
+/** 上传附件的只读预览：只允许 <agentDir>/web-uploads 下的文件（输入框里还没发出去的附件也能看） */
+export async function readUploadFile(uploadPath: unknown): Promise<FilePreview> {
+	if (typeof uploadPath !== "string" || !uploadPath.trim() || uploadPath.length > 4096 || /[\u0000-\u001f\u007f]/.test(uploadPath)) throw new BoundaryError("invalid file path");
+	if (!path.isAbsolute(uploadPath.trim())) throw new BoundaryError("upload path must be absolute");
+	const uploadsRoot = await fs.realpath(path.join(getAgentDir(), "web-uploads")).catch(() => {
+		throw new BoundaryError("uploads directory not found");
+	});
+	const target = path.resolve(uploadPath.trim());
+	const real = await fs.realpath(target).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new BoundaryError("file not found");
+		throw error;
+	});
+	if (!isPathInside(uploadsRoot, real)) throw new BoundaryError("upload path escapes the uploads directory");
+	const stat = await fs.stat(real);
+	if (!stat.isFile()) throw new BoundaryError("not a file");
+	const handle = await fs.open(real, "r");
+	try {
+		const opened = await handle.stat();
+		const checked = await fs.realpath(real);
+		const current = await fs.stat(checked);
+		if (!isPathInside(uploadsRoot, checked) || !opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino
+			|| opened.dev !== current.dev || opened.ino !== current.ino) throw new BoundaryError("file changed while opening");
+		const buffer = Buffer.allocUnsafe(MAX_READ_BYTES + 1);
+		let bytesRead = 0;
+		while (bytesRead < buffer.length) {
+			const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+			if (result.bytesRead === 0) break;
+			bytesRead += result.bytesRead;
+		}
+		const truncated = opened.size > MAX_READ_BYTES || bytesRead > MAX_READ_BYTES;
+		return { path: target, truncated, ...decodeFilePreview(buffer.subarray(0, bytesRead), MAX_READ_BYTES, truncated) };
+	} finally {
+		await handle.close();
+	}
+}
+
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
 	".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",

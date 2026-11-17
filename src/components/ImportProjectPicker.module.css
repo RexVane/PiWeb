@@ -96,7 +96,7 @@
 	line-height: 20px;
 }
 .search input::placeholder { color: var(--dsw-label-tertiary); }
-.list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+.list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .option {
 	display: flex;
 	align-items: center;

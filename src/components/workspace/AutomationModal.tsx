@@ -7,6 +7,7 @@ import { IconCloseOutline14 } from "@/components/icons";
 import { SelectOption } from "@/components/settings/SharedControls";
 import { useDialog } from "@/hooks/useDialog";
 import { useI18n } from "@/i18n";
+import type { Lang } from "@/lib/lang";
 import { validateSchedule } from "@/lib/automations/schedule";
 import type { AutomationModelRef, AutomationSchedule, AutomationSchedulePreview, AutomationTask } from "@/lib/automations/types";
 import { DEFAULT_TOOL_PRESET } from "@/lib/tool-preset";
@@ -19,10 +20,13 @@ export interface ModelChoiceItem {
 }
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
-const WEEKDAY_SHORT = {
+const WEEKDAY_SHORT: Record<Lang, string[]> = {
 	zh: ["日", "一", "二", "三", "四", "五", "六"],
+	"zh-Hant": ["日", "一", "二", "三", "四", "五", "六"],
 	en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-} as const;
+	ja: ["日", "月", "火", "水", "木", "金", "土"],
+	ru: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"],
+};
 const DEFAULT_MODEL_VALUE = "__default__";
 
 export function AutomationModal({
@@ -517,7 +521,7 @@ export function AutomationModal({
 													<button
 														key={dayIndex}
 														type="button"
-														aria-label={lang === "zh" ? `周${WEEKDAY_SHORT.zh[dayIndex]}` : WEEKDAY_SHORT.en[dayIndex]}
+														aria-label={lang === "zh" ? `周${WEEKDAY_SHORT.zh[dayIndex]}` : lang === "zh-Hant" ? `週${WEEKDAY_SHORT["zh-Hant"][dayIndex]}` : lang === "ja" ? `${WEEKDAY_SHORT.ja[dayIndex]}曜日` : WEEKDAY_SHORT[lang][dayIndex]}
 														aria-pressed={active}
 														onClick={() => toggleDay(dayIndex)}
 														className="min-w-8 rounded-lg px-2.5 py-1.5 text-center transition-colors"

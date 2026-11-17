@@ -14,6 +14,7 @@ import {
 	IconSearchOutline16,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
+import { htmlLangOf, type Lang } from "@/lib/lang";
 import { describeSchedule } from "@/lib/automations/schedule";
 import type { AutomationRun, AutomationTask, AutomationsStateSnapshot } from "@/lib/automations/types";
 import type { ToolPreset } from "@/lib/types";
@@ -36,9 +37,9 @@ function taskLifecycle(task: AutomationTask): "active" | "paused" | "ended" {
 	return "active";
 }
 
-function formatTimestamp(ms: number | undefined | null, lang: "zh" | "en", fallback: string): string {
+function formatTimestamp(ms: number | undefined | null, lang: Lang, fallback: string): string {
 	if (!ms) return fallback;
-	return new Intl.DateTimeFormat(lang === "en" ? "en-US" : "zh-CN", {
+	return new Intl.DateTimeFormat(htmlLangOf(lang), {
 		month: "2-digit",
 		day: "2-digit",
 		hour: "2-digit",

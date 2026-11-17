@@ -10,7 +10,6 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-	IconCloseOutline14,
 	IconEditOutline16,
 	IconFileOutline16,
 	IconFolderClose16,
@@ -107,6 +106,7 @@ export function ChatInput({
 	onUploadProgress,
 	uploadFailure,
 	pendingUploadCount = 0,
+	onPreviewFile,
 	pendingSend = false,
 	onSendPendingChange,
 	attachmentLayout = "overlay",
@@ -166,6 +166,8 @@ export function ChatInput({
 	onUploadProgress?: (delta: 1 | -1) => void;
 	uploadFailure?: string;
 	pendingUploadCount?: number;
+	/** 点上传附件卡：用页内文件查看器预览（文件可能还没发出去） */
+	onPreviewFile?: (path: string) => void;
 	pendingSend?: boolean;
 	onSendPendingChange?: (pending: boolean) => void;
 	/** Hero 在输入卡上方预留空间；聊天中仍让附件悬浮、不占布局高度 */
@@ -425,18 +427,23 @@ export function ChatInput({
 	};
 
 	// 自动高度：上限 14 行（约 336px）；清空后恢复自然单行高度，避免被弹性容器拉伸后的 scrollHeight 自锁
-	const autoSize = () => {
+	// 每次量高度都要强制浏览器重排一次。按键时 onChange 和下面的 effect 会先后各调一次，
+	// 文字和宽度都没变就不必再量。
+	const sizedFor = useRef({ value: "", width: -1 });
+	const autoSize = (force = false) => {
 		const ta = taRef.current;
 		if (!ta) return;
+		if (!force && sizedFor.current.value === ta.value && sizedFor.current.width === ta.clientWidth) return;
 		if (!ta.value) {
 			ta.style.height = "";
-			return;
+		} else {
+			ta.style.height = "auto";
+			ta.style.height = `${Math.min(ta.scrollHeight, 336)}px`;
 		}
-		ta.style.height = "auto";
-		ta.style.height = `${Math.min(ta.scrollHeight, 336)}px`;
+		sizedFor.current = { value: ta.value, width: ta.clientWidth };
 	};
 	useEffect(() => {
-		const resize = () => autoSize();
+		const resize = () => autoSize(true);
 		window.addEventListener("resize", resize);
 		return () => window.removeEventListener("resize", resize);
 	}, []);
@@ -858,6 +865,7 @@ export function ChatInput({
 					disabled={sendBusy}
 					onRemove={(index) => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, at) => at !== index) }))}
 					onClear={() => changeDraft((previous) => ({ ...previous, uploads: [] }))}
+					onOpen={onPreviewFile ? (file) => onPreviewFile(file.path) : undefined}
 				/>
 			)}
 
@@ -929,10 +937,10 @@ export function ChatInput({
 					{adopted && (
 						<button
 							type="button"
-							className="pw-cmd-chip group/cmd"
+							className="pw-cmd-chip"
 							disabled={disabled || sendBusy}
-							aria-label={`${t.delete} /${adopted.name}`}
-							title={`${t.delete} /${adopted.name} (Backspace)`}
+							aria-label={`${t.delete} ${adopted.name}`}
+							title={`${adopted.name} · ${t.delete}`}
 							onClick={() => {
 								setAdopted(null);
 								requestAnimationFrame(() => taRef.current?.focus());
@@ -943,10 +951,7 @@ export function ChatInput({
 							) : (
 								<IconTerminalOutline14 size={13} style={{ flex: "none", opacity: 0.9 }} aria-hidden="true" />
 							)}
-							<span className="min-w-0 truncate">/{adopted.name}</span>
-							<span className="pw-cmd-close" aria-hidden="true">
-								<IconCloseOutline14 size={10} />
-							</span>
+							<span className="min-w-0 truncate">{adopted.name}</span>
 						</button>
 					)}
 					<textarea

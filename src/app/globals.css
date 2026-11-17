@@ -553,6 +553,9 @@ html[data-pw-background] *::after {
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
 
 /* ============================================================
    通用组件样式（Iconsax 组件体系：高对比反转、高斯彩虹光晕、25px 胶囊、弹性微交互）
@@ -3004,43 +3007,31 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 .pw-cmd-chip {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: 6px;
 	flex: none;
 	max-width: 100%;
 	height: 24px;
-	padding: 0 7px 0 8px;
-	border-radius: 7px;
+	padding: 0 10px;
+	border-radius: 999px;
 	font-size: var(--dsh-ui-font-sm, 13px);
 	font-weight: 500;
 	line-height: 1;
 	color: var(--dsw-accent);
-	background: color-mix(in srgb, var(--dsw-accent) 10%, transparent);
-	border: 0.5px solid color-mix(in srgb, var(--dsw-accent) 22%, transparent);
-	transition: background var(--ds-duration-fast) var(--ds-ease-in-out), border-color var(--ds-duration-fast) var(--ds-ease-in-out);
+	background: color-mix(in srgb, var(--dsw-accent) 9%, transparent);
+	border: 0.5px solid color-mix(in srgb, var(--dsw-accent) 20%, transparent);
+	box-shadow: inset 0 0.5px 0 color-mix(in srgb, #fff 7%, transparent);
+	transition: background var(--ds-duration-fast) var(--ds-ease-in-out), border-color var(--ds-duration-fast) var(--ds-ease-in-out), box-shadow var(--ds-duration-fast) var(--ds-ease-in-out);
 }
 .pw-cmd-chip:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--dsw-accent) 15%, transparent);
-	border-color: color-mix(in srgb, var(--dsw-accent) 34%, transparent);
+	border-color: color-mix(in srgb, var(--dsw-accent) 32%, transparent);
+	box-shadow: inset 0 0.5px 0 color-mix(in srgb, #fff 10%, transparent), 0 1px 4px color-mix(in srgb, var(--dsw-accent) 12%, transparent);
+}
+.pw-cmd-chip:active:not(:disabled) {
+	background: color-mix(in srgb, var(--dsw-accent) 19%, transparent);
 }
 .pw-cmd-chip:disabled {
 	opacity: 0.5;
-}
-.pw-cmd-close {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 14px;
-	height: 14px;
-	margin-left: 1px;
-	border-radius: 4px;
-	color: color-mix(in srgb, var(--dsw-accent) 72%, var(--dsw-label-caption));
-	opacity: 0.55;
-	transition: opacity var(--ds-duration-fast) ease, background var(--ds-duration-fast) ease;
-}
-.pw-cmd-chip:hover .pw-cmd-close,
-.pw-cmd-chip:focus-visible .pw-cmd-close {
-	opacity: 1;
-	background: color-mix(in srgb, var(--dsw-accent) 12%, transparent);
 }
 
 /* 文件牌堆与扇形卡片（多文件折叠与竖直向上弧度展开） */
@@ -3940,11 +3931,21 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 	gap: 6px;
 	height: 36px;
 	padding: 0 12px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.pw-viewer-toolbar::-webkit-scrollbar {
+	display: none;
+}
+.pw-viewer-toolbar > button,
+.pw-viewer-toolbar > a {
+	flex: none;
 }
 .pw-crumb {
 	display: flex;
 	align-items: center;
 	flex-wrap: nowrap;
+	min-width: 80px;
 	overflow: hidden;
 	font-size: var(--dsh-ui-font-125);
 	color: var(--dsw-label-tertiary);
@@ -4074,11 +4075,19 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 	left: 0;
 	right: 0;
 	height: 20px;
+	display: flex;
+	align-items: center;
 	font-size: 11px;
 	color: var(--dsw-label-caption);
 	background: var(--dsw-hover);
-	text-align: center;
 	letter-spacing: 0.02em;
+}
+.pw-fdiff-fold-label {
+	position: sticky;
+	left: 0;
+	width: var(--pw-pane-w, 100%);
+	flex: none;
+	text-align: center;
 }
 .pw-fdiff-fold:hover {
 	color: var(--dsw-accent);
@@ -4108,6 +4117,250 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 .pw-fdiff-tick[data-current] {
 	opacity: 1;
 	box-shadow: 0 0 0 1px var(--dsw-label-tertiary);
+}
+
+/* 词级差异高亮（行内与并排视图共用，零水平留白以免破坏等宽列对齐） */
+mark.pw-diff-word {
+	background: transparent;
+	color: inherit;
+	border-radius: 2px;
+	padding: 0;
+}
+mark.pw-diff-word[data-kind="add"] {
+	background: rgba(34, 197, 94, 0.28);
+	box-shadow: inset 0 -1px 0 rgba(34, 197, 94, 0.45);
+}
+mark.pw-diff-word[data-kind="del"] {
+	background: rgba(236, 19, 19, 0.24);
+	box-shadow: inset 0 -1px 0 rgba(236, 19, 19, 0.42);
+}
+
+/* 并排 Diff（左右连续双栏 + 中间 SVG 曲线连接带 + 块级暂存勾选） */
+.pw-sdiff-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	height: 24px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--dsw-label-caption);
+	background: color-mix(in srgb, var(--dsw-hover) 60%, transparent);
+}
+.pw-sdiff-head-side {
+	flex: 1;
+	min-width: 0;
+	padding: 0 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.pw-sdiff-head-bridge {
+	flex: none;
+	height: 100%;
+	border-left: 1px solid var(--dsw-border-l2);
+	border-right: 1px solid var(--dsw-border-l2);
+}
+.pw-sdiff-right {
+	scrollbar-gutter: stable;
+}
+.pw-sdiff-left::-webkit-scrollbar:vertical {
+	width: 0;
+}
+.pw-sdiff-sizer {
+	height: 0;
+	overflow: hidden;
+	visibility: hidden;
+	pointer-events: none;
+	display: flex;
+	align-items: stretch;
+	white-space: pre;
+}
+.pw-sdiff-row {
+	left: 0;
+	right: 0;
+	min-width: 100%;
+	--pw-sdiff-gutter: var(--dsw-glass-modal);
+}
+.pw-sdiff-row[data-kind="add"] {
+	--pw-sdiff-gutter: color-mix(in srgb, var(--dsw-success) 14%, var(--dsw-glass-modal));
+}
+.pw-sdiff-row[data-kind="del"] {
+	--pw-sdiff-gutter: color-mix(in srgb, var(--dsw-danger) 12%, var(--dsw-glass-modal));
+}
+.pw-sdiff-pane .pw-fdiff-text {
+	flex: 1 0 auto;
+	padding: 0 12px 0 4px;
+}
+.pw-sdiff-sign {
+	padding-left: 8px;
+}
+.pw-sdiff-num {
+	flex: none;
+	display: inline-block;
+	padding: 0 8px;
+	color: var(--dsw-label-caption);
+	user-select: none;
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+	background: var(--pw-sdiff-gutter);
+	z-index: 1;
+}
+.pw-sdiff-num-left {
+	position: sticky;
+	right: 0;
+	border-left: 1px solid var(--dsw-border-l2);
+}
+.pw-sdiff-num-right {
+	position: sticky;
+	left: 0;
+	border-right: 1px solid var(--dsw-border-l2);
+}
+.pw-sdiff-bridge {
+	border-left: 1px solid var(--dsw-border-l2);
+	border-right: 1px solid var(--dsw-border-l2);
+	background: color-mix(in srgb, var(--dsw-hover) 45%, transparent);
+}
+.pw-sdiff-svg {
+	display: block;
+	position: absolute;
+	top: 0;
+	left: 0;
+	pointer-events: none;
+}
+.pw-sdiff-ribbon {
+	stroke-width: 1;
+	vector-effect: non-scaling-stroke;
+}
+.pw-sdiff-ribbon[data-kind="mod"] {
+	fill: color-mix(in srgb, var(--dsw-accent) 20%, transparent);
+	stroke: color-mix(in srgb, var(--dsw-accent) 52%, transparent);
+}
+.pw-sdiff-ribbon[data-kind="add"] {
+	fill: rgba(34, 197, 94, 0.16);
+	stroke: rgba(34, 197, 94, 0.50);
+}
+.pw-sdiff-ribbon[data-kind="del"] {
+	fill: rgba(236, 19, 19, 0.14);
+	stroke: rgba(236, 19, 19, 0.45);
+}
+.pw-sdiff-ribbon[data-current] {
+	stroke-width: 1.6;
+}
+.pw-sdiff-ribbon[data-kind="mod"][data-current] {
+	fill: color-mix(in srgb, var(--dsw-accent) 30%, transparent);
+	stroke: var(--dsw-accent);
+}
+.pw-sdiff-ribbon[data-kind="add"][data-current] {
+	fill: rgba(34, 197, 94, 0.25);
+	stroke: var(--dsw-success);
+}
+.pw-sdiff-ribbon[data-kind="del"][data-current] {
+	fill: rgba(236, 19, 19, 0.22);
+	stroke: var(--dsw-danger);
+}
+.pw-hunk-check {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
+	border: 1.5px solid color-mix(in srgb, var(--dsw-label-secondary) 52%, transparent);
+	background: var(--dsw-bg-elevated);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+	color: color-mix(in srgb, var(--dsw-label-caption) 65%, transparent);
+	display: inline-grid;
+	place-items: center;
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+	z-index: 2;
+	transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+.pw-hunk-check:empty::before {
+	content: "+";
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 1;
+	opacity: 0.72;
+}
+.pw-hunk-check:hover:not(:disabled) {
+	border-color: var(--dsw-accent);
+	color: var(--dsw-accent);
+}
+.pw-hunk-check[data-checked] {
+	background: var(--dsw-accent);
+	border-color: var(--dsw-accent);
+	color: #fff;
+}
+.pw-hunk-check[data-checked]:hover:not(:disabled) {
+	color: #fff;
+	filter: brightness(1.08);
+}
+.pw-hunk-check:disabled {
+	opacity: 0.5;
+	cursor: wait;
+}
+.pw-hunk-check-inline {
+	position: sticky;
+	left: auto;
+	right: 16px;
+	transform: none;
+	flex: none;
+	align-self: center;
+	margin-left: auto;
+}
+
+/* Git 抽屉控台（360px 紧凑列表 + 提交框） */
+.pw-git-commit-box {
+	border: 1px solid var(--dsw-border-l2);
+	background: var(--dsw-hover);
+	transition: border-color 160ms ease;
+}
+.pw-git-commit-box:focus-within {
+	border-color: var(--dsw-accent);
+}
+.pw-git-commit-btn {
+	font-size: 12px;
+	background: var(--dsw-accent);
+	color: #fff;
+	cursor: pointer;
+}
+.pw-git-commit-btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+.pw-git-row-op {
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	display: inline-grid;
+	place-items: center;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--dsw-label-caption);
+	cursor: pointer;
+	transition: background 140ms ease, color 140ms ease;
+}
+.pw-git-row-op:hover:not(:disabled) {
+	background: var(--dsw-active);
+	color: var(--dsw-label-primary);
+}
+.pw-git-row-op:disabled {
+	opacity: 0.4;
+	cursor: wait;
+}
+.pw-git-file-row,
+.pw-git-commit-item,
+.pw-git-commit-file {
+	transition: background 140ms ease;
+}
+.pw-git-file-row:hover,
+.pw-git-commit-item:hover,
+.pw-git-commit-file:hover {
+	background: var(--dsw-hover);
 }
 
 /* 回合懒渲染的纯文本占位：尽量贴近正式渲染的排版，升级前的过渡形态 */

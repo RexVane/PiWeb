@@ -11,6 +11,7 @@ import { ProxySettings } from "@/components/ProxySettings";
 import { CopyCommand } from "@/components/update/CopyCommand";
 import { checkUpdate, loadUpdates, runUpdate, useUpdates, type UpdateTarget } from "@/components/update/update-store";
 import { useI18n } from "@/i18n";
+import { LANGUAGES, type Lang } from "@/lib/lang";
 import { applyPebrelTheme, DEFAULT_PEBREL_THEME, DEFAULT_THEME_MODE, loadPebrelTheme, loadThemeMode, type PebrelTheme, type ThemeMode } from "@/lib/theme";
 import type { PiSettings } from "@/lib/pi-settings";
 import { FontSizeStepper, Row, RowColumn, SelectOption } from "./SharedControls";
@@ -21,8 +22,8 @@ export function GeneralSection({
 	lang,
 	setLang,
 }: {
-	lang: "zh" | "en";
-	setLang: (l: "zh" | "en") => void;
+	lang: Lang;
+	setLang: (l: Lang) => void;
 }) {
 	const { t } = useI18n();
 	const [theme, setTheme] = useState<PebrelTheme>(DEFAULT_PEBREL_THEME);
@@ -204,11 +205,8 @@ export function GeneralSection({
 			<Row title={t.language}>
 				<SelectOption
 				value={lang}
-				options={[
-					{ value: "zh", label: "中文" },
-					{ value: "en", label: "English" },
-				]}
-				onChange={(v) => setLang(v as "zh" | "en")}
+				options={LANGUAGES}
+				onChange={(v) => setLang(v as Lang)}
 			/>
 			</Row>
 			<Row title={t.appearance}>

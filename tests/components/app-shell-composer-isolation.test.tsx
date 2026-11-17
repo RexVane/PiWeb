@@ -14,6 +14,8 @@ import type { WebMessage } from "@/lib/types";
 
 const counters = vi.hoisted(() => ({
 	chatInputRenders: 0,
+	/** 所有按需加载的子组件（ChatWindow、FileViewer 等）的渲染次数总和 */
+	lazyChildRenders: 0,
 	pushMessages: null as null | ((update: (messages: WebMessage[]) => WebMessage[]) => void),
 	lastProps: null as null | Record<string, unknown>,
 	diff: [] as string[],
@@ -53,7 +55,12 @@ const noop = () => {};
 // usePiWeb 的真实回调都是 useCallback；mock 也必须在多次渲染间保持同一引用，
 // 否则测到的是 mock 抖动，不是 Composer 隔离。
 const sendCommand = vi.fn(async () => ({ success: true }));
-vi.mock("next/dynamic", () => ({ default: () => () => null }));
+vi.mock("next/dynamic", () => ({
+	default: () => () => {
+		counters.lazyChildRenders += 1;
+		return null;
+	},
+}));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
 vi.mock("@/hooks/useGrowth", () => ({
 	useGrowth: () => ({
@@ -160,5 +167,23 @@ describe("Composer isolation", () => {
 		});
 
 		expect(counters.chatInputRenders, `changed props: ${counters.diff.join(", ") || "none"}`).toBe(before);
+	});
+
+	it("re-renders only the composer on each keystroke, not the shell or the chat window", () => {
+		render(<AppShell />);
+		const lazyBefore = counters.lazyChildRenders;
+		const inputBefore = counters.chatInputRenders;
+		expect(lazyBefore).toBeGreaterThan(0);
+		const type = (text: string) => act(() => {
+			(counters.lastProps!.onDraftChange as (update: (draft: { text: string }) => unknown) => void)((draft) => ({ ...draft, text }));
+		});
+
+		type("a");
+		type("ab");
+		type("abc");
+
+		expect((counters.lastProps!.draft as { text: string }).text).toBe("abc");
+		expect(counters.chatInputRenders - inputBefore).toBe(3);
+		expect(counters.lazyChildRenders - lazyBefore, "keystrokes must not re-render ChatWindow and the other shell children").toBe(0);
 	});
 });

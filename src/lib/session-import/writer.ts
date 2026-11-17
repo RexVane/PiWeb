@@ -24,6 +24,12 @@ const SOURCE_LABEL: Record<ImportSource, string> = {
 	zcode: "ZCode",
 	dsh: "dsh",
 	opencode: "opencode",
+	kimi: "Kimi Code",
+	workbuddy: "WorkBuddy",
+	antigravity: "Antigravity",
+	"antigravity-cli": "Antigravity CLI",
+	qwen: "Qwen Code",
+	cursor: "Cursor",
 };
 
 const PROVENANCE_TYPE = "piweb-import";

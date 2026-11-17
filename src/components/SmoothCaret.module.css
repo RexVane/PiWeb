@@ -1,0 +1,57 @@
+/*
+ * 全局滑行光标。原生光标是瞬移的；这里叠一个自绘光标，按指数阻尼滑到新位置。
+ * 只动 transform 和 opacity，不触发布局。固定定位，盖在所有浮层之上。
+ */
+.caret {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 2147483647;
+	width: 2px;
+	border-radius: 1px;
+	pointer-events: none;
+	opacity: 0;
+	will-change: transform;
+	/* 不支持 linear() 的浏览器用这条近似曲线 */
+	transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+	/*
+	 * 1 - e^(-t/36ms) 每 18ms 取一个点：时间常数 36ms，约 108ms 走完 95%。
+	 * 指数衰减没有记忆，中途改目标时从当前位置重新出发，轨迹仍然连续，
+	 * 连续按键时光标会一直贴着手走而不是一段一段地重启。
+	 */
+	transition: transform 180ms linear(0, 0.393, 0.632, 0.777, 0.865, 0.918, 0.95, 0.97, 0.982, 0.989, 1);
+}
+
+.caret[data-visible] {
+	opacity: 1;
+}
+
+/* 换输入框、页面滚动、输入框移动时直接到位，不从旧位置滑过来 */
+.caret[data-jump] {
+	transition: none;
+}
+
+/* 停手后才闪烁；移动中保持常亮，和原生光标一致 */
+.caret[data-visible]:not([data-moving]) {
+	animation: caret-blink 1060ms ease-in-out infinite;
+}
+
+@keyframes caret-blink {
+	0%,
+	42% {
+		opacity: 1;
+	}
+	50%,
+	92% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.caret {
+		transition: none;
+	}
+}

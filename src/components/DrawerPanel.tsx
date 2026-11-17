@@ -12,7 +12,7 @@ import { useId, useRef } from "react";
  * 不能放在本组件的局部 state 里,否则轨迹详情来回切换会丢掉入口。
  */
 import { PromptPanel } from "@/components/PromptPanel";
-import { GitPanel } from "@/components/GitPanel";
+import { GitPanel, type GitDiffOpenTarget } from "@/components/GitPanel";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import { SessionImportSection } from "@/components/SessionImportSection";
 import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
@@ -42,6 +42,8 @@ export function DrawerPanel({
 	onError,
 	onOpenContent,
 	onOpenFile,
+	onOpenGitDiff,
+	onGitMutated,
 }: {
 	cwd: string;
 	/** 当前入口(由 AppShell 持有:轨迹详情关掉后要回到这个入口) */
@@ -72,6 +74,10 @@ export function DrawerPanel({
 	onOpenContent?: (path: string, content: string) => void;
 	/** 在本机编辑器打开(Git 文件) */
 	onOpenFile?: (absPath: string) => void;
+	/** 在居中 FileViewer 打开 Git 并排差异 */
+	onOpenGitDiff?: (target: GitDiffOpenTarget) => void;
+	/** Git 面板产生写操作后通知上层刷新 */
+	onGitMutated?: () => void;
 }) {
 	const { t } = useI18n();
 	const id = useId();
@@ -165,7 +171,7 @@ export function DrawerPanel({
 					// 三个面板的关闭按钮都收起整个抽屉(它们自己不再有"关闭"以外的语义)
 					<PromptPanel cwd={cwd} sessionId={sessionId} refreshKey={promptRefreshKey} onOpenContent={onOpenContent} onClose={onClose} />
 				) : (
-					<GitPanel cwd={cwd} refreshKey={gitRefreshKey} onClose={onClose} onOpenFile={onOpenFile} />
+					<GitPanel cwd={cwd} refreshKey={gitRefreshKey} onClose={onClose} onOpenFile={onOpenFile} onOpenDiff={onOpenGitDiff} onMutated={onGitMutated} />
 				)}
 			</div>
 		</div>

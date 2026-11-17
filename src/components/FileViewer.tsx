@@ -11,8 +11,8 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownBlock } from "@/components/MarkdownBlock";
 import { MarkdownActionsProvider } from "@/components/chat/markdown-actions";
-import { parseUnifiedDiff, type DiffLine } from "@/components/DiffView";
-import { FullDiff, type FullDiffHandle } from "@/components/FullDiff";
+import { diffStats, parseUnifiedDiff, type DiffLine } from "@/components/DiffView";
+import { FullDiff, type DiffHunkAnchor, type DiffLayout, type FullDiffHandle } from "@/components/FullDiff";
 import { GrowthTree } from "@/components/GrowthTree";
 import { IconAtOutline16, IconChevronDown14, IconChevronUp14, IconCloseOutline14, IconFileOutline16, IconPlusOutline16, IconSearchOutline16, IconRefreshOutline14 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
@@ -20,7 +20,7 @@ import { useI18n } from "@/i18n";
 import { fileIconSrc } from "@/lib/file-icons";
 import { fmtBytes } from "@/lib/format";
 import { fuzzyScore, type TreeNode } from "@/lib/growth-tree";
-import type { ViewerState } from "@/hooks/useFileViewer";
+import type { ViewerOpenOptions, ViewerState } from "@/hooks/useFileViewer";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { highlightCode, languageForPath } from "@/lib/highlight";
 import { markdownDocumentImageUrl, resolveMarkdownDocumentPath } from "@/lib/chat/file-path";
@@ -138,6 +138,7 @@ export function FileViewer({
 	state,
 	growth,
 	cwd,
+	gitRefreshKey = 0,
 	onClose,
 	onSelectTab,
 	onCloseTab,
@@ -145,24 +146,30 @@ export function FileViewer({
 	onOpenContent,
 	onReference,
 	onOpenEditor,
+	onGitMutated,
 }: {
 	state: ViewerState;
 	growth: GrowthApi;
 	cwd: string;
+	gitRefreshKey?: number;
 	onClose: () => void;
 	onSelectTab: (path: string | null) => void;
 	onCloseTab: (path: string) => void;
-	onOpen: (path: string, opts?: { from?: string; lazy?: boolean; kind?: "dir" | "file" }) => void;
+	onOpen: (path: string, opts?: ViewerOpenOptions) => void;
 	onOpenContent?: (path: string, content: string, sourcePath?: string) => void;
 	onReference?: (path: string) => void;
 	onOpenEditor?: (path: string) => void;
+	onGitMutated?: () => void;
 }) {
 	const { t } = useI18n();
 	const [refreshKey, setRefreshKey] = useState(0);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [mode, setMode] = useState<Mode>("diff");
+	const [diffLayout, setDiffLayout] = useState<DiffLayout>("split");
 	const [modeTouched, setModeTouched] = useState(false);
 	const [folded, setFolded] = useState(true);
+	const [busyHunk, setBusyHunk] = useState<number | null>(null);
+	const [busyFileAction, setBusyFileAction] = useState(false);
 	const [quickOpen, setQuickOpen] = useState(false);
 	const [quickQuery, setQuickQuery] = useState("");
 	const [quickIndex, setQuickIndex] = useState(0);
@@ -185,17 +192,18 @@ export function FileViewer({
 	const change = useMemo(() => (activeTab ? growth.changes.find((c) => c.path === activeTab.path) ?? null : null), [activeTab, growth.changes]);
 	const isMarkdown = Boolean(activeTab && /\.(md|mdx|markdown)$/i.test(activeTab.path));
 	const range = growth.range;
-	const contentKey = activeTab ? `${cwd}|${activeTab.path}|${mode}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}|${refreshKey}` : null;
+	const gitKeyPart = activeTab?.git ? `${activeTab.git.mode}:${activeTab.git.hash ?? ""}:${gitRefreshKey}` : "";
+	const contentKey = activeTab ? `${cwd}|${activeTab.path}|${mode}|${gitKeyPart}|${range?.from ?? ""}|${range?.to ?? ""}|${change?.status ?? ""}|${refreshKey}` : null;
 
 	// 切页签：模式按是否有改动自动选，用户手动切过才保留
 	useEffect(() => {
 		setModeTouched(false);
 		setDirFallback(null);
 		setLinkError(null);
-	}, [state.active, cwd]);
+	}, [state.active, activeTab?.git?.mode, activeTab?.git?.hash, cwd]);
 	useEffect(() => {
 		if (modeTouched || !activeTab) return;
-		setMode(change && !activeTab.lazy ? "diff" : isMarkdown ? "render" : "content");
+		setMode(activeTab.git || (change && !activeTab.lazy) ? "diff" : isMarkdown ? "render" : "content");
 	}, [activeTab, change, isMarkdown, modeTouched]);
 
 	/** 目录兜底：文件读取报 400（不存在 / 不是文件）时探一下目录接口，成功就当文件夹显示 */
@@ -265,6 +273,21 @@ export function FileViewer({
 				alive = false;
 			};
 		}
+		// 输入框里上传的附件不在工作区内：走只读的 uploads 预览接口
+		if (tab.kind === "upload") {
+			void (async () => {
+				try {
+					const data = await requestJson<FilePreview>(`/api/files?upload=1&path=${encodeURIComponent(tab.path)}`, controller.signal);
+					done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice: null });
+				} catch (error) {
+					if (!alive) return;
+					done({ error: error instanceof Error ? error.message : t.viewerLoadFailed });
+				}
+			})();
+			return () => {
+				alive = false;
+			};
+		}
 		if (!cwd) {
 			setLoaded(null);
 			return;
@@ -327,6 +350,37 @@ export function FileViewer({
 					const payload = await response.json();
 					if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
 					done({ content: payload.data.content });
+					return;
+				}
+				if (tab.git) {
+					if (mode === "diff") {
+						const gitUrl = `/api/git?${q}&diff=${encodeURIComponent(tab.path)}&mode=${encodeURIComponent(tab.git.mode)}&full=1${tab.git.hash ? `&hash=${encodeURIComponent(tab.git.hash)}` : ""}${tab.from ? `&from=${encodeURIComponent(tab.from)}` : ""}`;
+						const data = await requestJson<{ patch: string; binary: boolean; truncated: boolean }>(gitUrl, controller.signal);
+						if (data.binary) {
+							done({ binary: true });
+							return;
+						}
+						const lines = parseUnifiedDiff(data.patch);
+						if (!lines) {
+							done({ notice: "nochange" });
+							return;
+						}
+						done({ diff: lines, patch: data.patch, truncated: data.truncated, notice: null });
+						return;
+					}
+					if (tab.git.mode === "commit" || tab.git.mode === "staged") {
+						const rev = tab.git.mode === "commit" ? (tab.git.hash ?? "HEAD") : "INDEX";
+						try {
+							const data = await requestJson<FilePreview>(`/api/git?${q}&cat=${encodeURIComponent(tab.path)}&rev=${encodeURIComponent(rev)}`, controller.signal);
+							done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice: null });
+							return;
+						} catch (err) {
+							if ((err as { status?: number }).status !== 404) throw err;
+							done({ notice: "missing" });
+							return;
+						}
+					}
+					await diskContent(null);
 					return;
 				}
 				if (tab.lazy || !range) {
@@ -448,6 +502,64 @@ export function FileViewer({
 			if (linkScope.current === activeTab) setLinkError(error instanceof Error ? error.message : t.viewerLoadFailed);
 		}
 	};
+	const toggleGitHunk = useCallback(async (blockIndex: number, anchor: DiffHunkAnchor) => {
+		if (!activeTab?.git || activeTab.git.mode === "commit" || busyHunk !== null) return;
+		const action = activeTab.git.mode === "staged" ? "unstageHunk" : "stageHunk";
+		setBusyHunk(blockIndex);
+		setLinkError(null);
+		try {
+			const response = await fetch("/api/git", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action, cwd, path: activeTab.path, mode: activeTab.git.mode, blockIndex, anchor }),
+			});
+			const payload = await response.json();
+			if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
+			const nextEntry = (payload.data?.info?.files as Array<{ path: string; kind: string }> | undefined)?.find((f) => f.path === activeTab.path);
+			if (action === "unstageHunk" && nextEntry?.kind === "untracked") {
+				onOpen(activeTab.path, {
+					...(activeTab.from ? { from: activeTab.from } : {}),
+					git: { mode: "untracked", label: t.gitUntracked },
+				});
+			}
+			setRefreshKey((k) => k + 1);
+			onGitMutated?.();
+		} catch (error) {
+			setLinkError(error instanceof Error ? error.message : t.viewerLoadFailed);
+			setRefreshKey((k) => k + 1);
+		} finally {
+			setBusyHunk(null);
+		}
+	}, [activeTab, busyHunk, cwd, onGitMutated, onOpen, t.gitUntracked, t.viewerLoadFailed]);
+	const mutateActiveGitFile = useCallback(async () => {
+		if (!activeTab?.git || activeTab.git.mode === "commit" || busyFileAction) return;
+		const isStaged = activeTab.git.mode === "staged";
+		const action = isStaged ? "unstage" : "stage";
+		setBusyFileAction(true);
+		setLinkError(null);
+		try {
+			const response = await fetch("/api/git", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action, cwd, path: activeTab.path }),
+			});
+			const payload = await response.json();
+			if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
+			const nextEntry = (payload.data?.info?.files as Array<{ path: string; kind: string }> | undefined)?.find((f) => f.path === activeTab.path);
+			const nextMode = isStaged ? (nextEntry?.kind === "untracked" ? "untracked" : "worktree") : "staged";
+			const nextLabel = nextMode === "staged" ? t.gitStagedDiff : nextMode === "untracked" ? t.gitUntracked : t.gitWorktreeDiff;
+			onOpen(activeTab.path, {
+				...(activeTab.from ? { from: activeTab.from } : {}),
+				git: { mode: nextMode, label: nextLabel },
+			});
+			setRefreshKey((k) => k + 1);
+			onGitMutated?.();
+		} catch (error) {
+			setLinkError(error instanceof Error ? error.message : t.viewerLoadFailed);
+		} finally {
+			setBusyFileAction(false);
+		}
+	}, [activeTab, busyFileAction, cwd, onGitMutated, onOpen, t.gitStagedDiff, t.gitUntracked, t.gitWorktreeDiff, t.viewerLoadFailed]);
 
 	if (!state.open) return null;
 
@@ -458,12 +570,35 @@ export function FileViewer({
 		setReveal({ path: dir, key: Date.now() });
 		onSelectTab(null);
 	};
-	const roundName = growth.selected ? (growth.selected.n ? t.growthRoundLabel.replace("{n}", String(growth.selected.n)) : t.growthKindUser) : "";
-	const stepBadge = roundName
-		? `${roundName}${change ? ` · +${change.add ?? 0} −${change.del ?? 0}` : ""}`
-		: "";
 	const currentLoaded = loaded?.key === contentKey ? loaded : null;
+	const roundName = growth.selected ? (growth.selected.n ? t.growthRoundLabel.replace("{n}", String(growth.selected.n)) : t.growthKindUser) : "";
+	const gitBadgeText = activeTab?.git
+		? (activeTab.git.label ?? (activeTab.git.mode === "staged" ? t.gitStagedDiff : activeTab.git.mode === "untracked" ? t.gitUntracked : activeTab.git.mode === "commit" ? (activeTab.git.hash ?? t.gitCommitMode) : t.gitWorktreeDiff))
+		: "";
+	const gitStats = activeTab?.git && currentLoaded?.diff ? diffStats(currentLoaded.diff) : null;
+	const stepBadge = activeTab?.git
+		? `${gitBadgeText}${gitStats ? ` · +${gitStats.add} −${gitStats.del}` : ""}`
+		: roundName
+			? `${roundName}${change ? ` · +${change.add ?? 0} −${change.del ?? 0}` : ""}`
+			: "";
 	const isDiffMode = mode === "diff" && Boolean(currentLoaded?.diff);
+	const diffPaneLabels = activeTab?.git
+		? activeTab.git.mode === "staged"
+			? { left: t.viewerDiffHead, right: t.viewerDiffStaged }
+			: activeTab.git.mode === "untracked"
+				? { left: "/dev/null", right: t.viewerDiffWorktree }
+				: activeTab.git.mode === "commit"
+					? { left: `${activeTab.git.hash ?? "commit"}^`, right: activeTab.git.hash ?? t.gitCommitMode }
+					: { left: t.viewerDiffStaged, right: t.viewerDiffWorktree }
+		: { left: t.viewerDiffBefore, right: t.viewerDiffAfter };
+	const hunkAction = activeTab?.git && activeTab.git.mode !== "commit" && !currentLoaded?.truncated
+		? {
+			label: activeTab.git.mode === "staged" ? t.gitUnstageHunk : t.gitStageHunk,
+			checked: activeTab.git.mode === "staged",
+			busyBlock: busyHunk,
+			onToggle: (blockIndex: number, anchor: DiffHunkAnchor) => void toggleGitHunk(blockIndex, anchor),
+		}
+		: undefined;
 	const copyLabel = currentLoaded?.patch ? (currentLoaded.truncated ? t.viewerCopyPatchPreview : t.viewerCopyPatch)
 		: currentLoaded?.truncated ? t.viewerCopyPreview : t.viewerCopyAll;
 	const copyCurrent = async () => {
@@ -550,12 +685,22 @@ export function FileViewer({
 									</span>
 								))}
 							</div>
-							{stepBadge && !activeTab.lazy && (
+							{stepBadge && (Boolean(activeTab.git) || !activeTab.lazy) && (
 								<span className="flex-none truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", maxWidth: 220 }}>
 									{stepBadge}
 								</span>
 							)}
-							{!activeTab.lazy && !isDir && (
+							{activeTab.git && activeTab.git.mode !== "commit" && !isDir && (
+								<button
+									type="button"
+									className="pw-chip"
+									disabled={busyFileAction}
+									onClick={() => void mutateActiveGitFile()}
+								>
+									{activeTab.git.mode === "staged" ? `− ${t.gitUnstage}` : `+ ${t.gitStage}`}
+								</button>
+							)}
+							{(Boolean(activeTab.git) || !activeTab.lazy) && !isDir && (
 								<span className="pw-seg" role="radiogroup">
 									{(["diff", "content", ...(isMarkdown ? ["render" as const] : [])] as Mode[]).map((m) => (
 										<button
@@ -574,7 +719,7 @@ export function FileViewer({
 									))}
 								</span>
 							)}
-							{!isDir && activeTab.lazy && isMarkdown && (
+							{!isDir && activeTab.lazy && !activeTab.git && isMarkdown && (
 								<span className="pw-seg" role="radiogroup">
 									{(["content", "render"] as Mode[]).map((m) => (
 										<button key={m} type="button" role="radio" aria-checked={mode === m} data-active={mode === m} onClick={() => { setModeTouched(true); setMode(m); }}>
@@ -585,6 +730,20 @@ export function FileViewer({
 							)}
 							{isDiffMode && !isDir && (
 								<>
+									<span className="pw-seg" role="radiogroup" aria-label="Diff layout">
+										{(["split", "inline"] as DiffLayout[]).map((layoutOption) => (
+											<button
+												key={layoutOption}
+												type="button"
+												role="radio"
+												aria-checked={diffLayout === layoutOption}
+												data-active={diffLayout === layoutOption}
+												onClick={() => setDiffLayout(layoutOption)}
+											>
+												{layoutOption === "split" ? t.viewerDiffSplit : t.viewerDiffInline}
+											</button>
+										))}
+									</span>
 									<button type="button" className="pw-chip" data-active={folded} onClick={() => setFolded((f) => !f)}>
 										{folded ? t.viewerFold : t.viewerUnfold}
 									</button>
@@ -596,7 +755,7 @@ export function FileViewer({
 									</button>
 								</>
 							)}
-							{activeTab.staticContent === undefined && (
+							{activeTab.staticContent === undefined && activeTab.kind !== "upload" && (
 								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.panelRefresh} aria-label={t.panelRefresh} onClick={() => {
 									refreshCachedFile(cwd, activeTab.path);
 									setRefreshKey((key) => key + 1);
@@ -609,7 +768,7 @@ export function FileViewer({
 									disabled={!currentLoaded || currentLoaded.binary || currentLoaded.encodingUnsupported || (currentLoaded.content === null && currentLoaded.patch === null)} onClick={() => void copyCurrent()}>
 									<IconCopyOutline16 size={13} />
 								</button>
-								{activeTab.staticContent === undefined && activeTab.sourcePath === undefined && <a className="icon-btn" style={{ width: 24, height: 24 }} download
+								{activeTab.staticContent === undefined && activeTab.sourcePath === undefined && activeTab.kind !== "upload" && <a className="icon-btn" style={{ width: 24, height: 24 }} download
 									title={t.viewerDownloadCurrent} aria-label={t.viewerDownloadCurrent}
 									href={`/api/files/download?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(activeTab.path)}`}>
 									<IconDownloadOutline16 size={13} />
@@ -671,7 +830,17 @@ export function FileViewer({
 						) : currentLoaded.binary ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.fileBinary}</div>
 						) : currentLoaded.encodingUnsupported ? null : currentLoaded.diff ? (
-							<FullDiff lines={currentLoaded.diff} language={languageForPath(activeTab.path)} folded={folded} handle={diffRef} initialChange />
+							<FullDiff
+								lines={currentLoaded.diff}
+								language={languageForPath(activeTab.path)}
+								folded={folded}
+								layout={diffLayout}
+								leftLabel={diffPaneLabels.left}
+								rightLabel={diffPaneLabels.right}
+								hunkAction={hunkAction}
+								handle={diffRef}
+								initialChange
+							/>
 						) : mode === "render" && currentLoaded.content !== null ? (
 							<div className="min-h-0 flex-1 overflow-auto px-6 py-4" style={{ fontSize: 14 }}>
 								<MarkdownActionsProvider value={{

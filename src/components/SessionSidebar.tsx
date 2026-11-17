@@ -2,6 +2,7 @@
 
 import { safeLocalStorage } from "@/lib/browser-storage";
 import { archivedSessionPathKey as normPath, sortArchivedSessions } from "@/lib/archived-sessions-sort";
+import { htmlLangOf, type Lang } from "@/lib/lang";
 
 /**
  * 侧栏 —— 照抄 dsh ui-sidebar：
@@ -42,16 +43,25 @@ import { useI18n } from "@/i18n";
 import type { SessionListItem } from "@/hooks/usePiWeb";
 import { useDialog } from "@/hooks/useDialog";
 
-function relTime(timestamp: number, lang: "zh" | "en", now: number): string {
+const REL_TIME_UNITS: Record<Lang, { now: string; minute: string; hour: string; day: string; month: string }> = {
+	zh: { now: "刚刚", minute: "分钟", hour: "小时", day: "天", month: "个月" },
+	"zh-Hant": { now: "剛剛", minute: "分鐘", hour: "小時", day: "天", month: "個月" },
+	en: { now: "now", minute: "m", hour: "h", day: "d", month: "mo" },
+	ja: { now: "たった今", minute: "分", hour: "時間", day: "日", month: "か月" },
+	ru: { now: "только что", minute: " мин", hour: " ч", day: " дн", month: " мес" },
+};
+
+function relTime(timestamp: number, lang: Lang, now: number): string {
 	const d = Math.max(0, now - timestamp);
+	const units = REL_TIME_UNITS[lang];
 	const m = Math.floor(d / 60000);
-	if (m < 1) return lang === "zh" ? "刚刚" : "now";
-	if (m < 60) return lang === "zh" ? `${m}分钟` : `${m}m`;
+	if (m < 1) return units.now;
+	if (m < 60) return `${m}${units.minute}`;
 	const h = Math.floor(m / 60);
-	if (h < 24) return lang === "zh" ? `${h}小时` : `${h}h`;
+	if (h < 24) return `${h}${units.hour}`;
 	const days = Math.floor(h / 24);
-	if (days < 30) return lang === "zh" ? `${days}天` : `${days}d`;
-	return lang === "zh" ? `${Math.floor(days / 30)}个月` : `${Math.floor(days / 30)}mo`;
+	if (days < 30) return `${days}${units.day}`;
+	return `${Math.floor(days / 30)}${units.month}`;
 }
 
 function basename(p: string): string {
@@ -562,7 +572,7 @@ function SessionSidebarImpl({
 				const justNow = knownTime && Math.max(timeNow, Date.now()) - timestamp < 60_000;
 				const label = !knownTime ? t.sessionUpdateTimeUnknown : justNow ? t.sessionJustUpdated : t.sessionUpdatedAgo.replace("{time}", elapsed);
 				const title = knownTime
-					? t.sessionUpdateTime.replace("{time}", new Date(timestamp).toLocaleString(lang === "zh" ? "zh-CN" : "en-US"))
+					? t.sessionUpdateTime.replace("{time}", new Date(timestamp).toLocaleString(htmlLangOf(lang)))
 					: label;
 				return { label, title };
 			})();

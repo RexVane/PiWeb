@@ -35,3 +35,52 @@ export function zcodeDb(): string {
 export function opencodeDb(): string {
 	return path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
 }
+
+/** Kimi Code：~/.kimi/sessions/<工作区>/<会话>/agents/<agent>/wire.jsonl，state.json 在会话目录里 */
+export function kimiSessionsRoot(): string {
+	return path.join(os.homedir(), ".kimi", "sessions");
+}
+
+/** Kimi Code 的 session_index.jsonl 在 sessions/ 旁边（老会话的 workDir 兜底） */
+export function kimiHome(): string {
+	return path.join(os.homedir(), ".kimi");
+}
+
+/** WorkBuddy / WorkBuddy AI：~/.workbuddy(-ai)/projects/<项目>/<会话>.jsonl，每行带 cwd */
+export function workbuddyRoots(): string[] {
+	const roots: string[] = [];
+	const configured = process.env.WORKBUDDY_CONFIG_DIR;
+	if (configured) roots.push(configured);
+	for (const dir of [".workbuddy", ".workbuddy-ai"]) roots.push(path.join(os.homedir(), dir));
+	return roots;
+}
+
+/** Antigravity（桌面 / IDE）：~/.gemini/antigravity */
+export function antigravityRoot(): string {
+	return path.join(os.homedir(), ".gemini", "antigravity");
+}
+
+/** Antigravity CLI：~/.gemini/antigravity-cli */
+export function antigravityCliRoot(): string {
+	return path.join(os.homedir(), ".gemini", "antigravity-cli");
+}
+
+/** Qwen Code：$QWEN_HOME 或 ~/.qwen（新布局 projects/<编码项目>/chats/*.jsonl，老布局 tmp/<项目>/chats/*.json） */
+export function qwenHome(): string {
+	return process.env.QWEN_HOME || path.join(os.homedir(), ".qwen");
+}
+
+/** Qwen Code 新布局：~/.qwen/projects/<编码项目>/chats/ */
+export function qwenProjectsRoot(): string {
+	return path.join(qwenHome(), "projects");
+}
+
+/** Qwen Code 老布局（Gemini CLI fork 早期）：~/.qwen/tmp/<项目>/chats/ */
+export function qwenLegacyTmpRoot(): string {
+	return path.join(qwenHome(), "tmp");
+}
+
+/** Cursor Agent CLI：~/.cursor/chats/<工作区 md5>/<会话 uuid>/store.db */
+export function cursorChatsRoot(): string {
+	return path.join(os.homedir(), ".cursor", "chats");
+}

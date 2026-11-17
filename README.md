@@ -1,20 +1,47 @@
-# PiWeb
+# PiWeb — Web UI for Pi Coding Agent
 
 <p align="center">
-  <strong>A modern web UI for the Pi Coding Agent.</strong>
+  <strong>A self-hosted AI coding agent web UI for desktop and mobile.</strong>
 </p>
 
 <p align="center">
   <strong>English</strong> | <a href="README_zh.md">简体中文</a>
 </p>
 
+**PiWeb** is an open-source, self-hosted web UI for the [Pi Coding Agent](https://github.com/earendil-works/pi). Run your AI coding assistant on your own computer or server and use it from a desktop or mobile browser. Manage project workspaces, review file diffs and tool calls, and continue coding from your phone.
+
+Built on the official Pi SDK, PiWeb works with your existing pi configuration, model providers, extensions, skills and Model Context Protocol (MCP) servers. Import conversation history from **Claude Code, Codex and OpenCode**, or schedule coding tasks with built-in automations.
+
+[Quick start](#quick-start) · [Features](#features) · [Screenshots](#screenshots) · [Installation and deployment](#usage) · [Documentation](docs/README.md)
+
 <p align="center">
-  <img src="assets/readme-chat.jpg" alt="PiWeb on desktop: workspace, conversation and tool calls" width="840" />
+  <img src="assets/readme-chat.jpg" alt="PiWeb: self-hosted Pi Coding Agent web UI with project workspaces, AI chat and tool calls" width="840" />
 </p>
 
----
+## Quick start
 
-**PiWeb** brings the [pi coding agent](https://github.com/earendil-works/pi) to desktop and mobile browsers. Organize workspaces, review conversations and file changes, configure models, and import conversations from other coding tools. Your existing pi configuration and data are available after installation.
+Requires **Node.js ≥ 22.19.0**; Node 24 is recommended. Install and launch:
+
+```bash
+npm install -g @rexvane/piweb
+piweb
+```
+
+PiWeb opens an authenticated browser page at `http://127.0.0.1:30141` by default (the port auto-increments if busy). Configure a model provider in Settings, or reuse your existing pi configuration. To use the mobile web UI, scan the connection QR code in **Settings → Remote access**.
+
+See [installation details](#install), [remote access](#connect-another-device) and [data and privacy](docs/operations/data-and-privacy.md) for requirements and deployment behavior.
+
+## Features
+
+- **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown.
+- **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
+- **Session import:** Browse and import local history from Claude Code, Codex, OpenCode, Grok, ZCode and dsh. Search and select across sources, restore archived imports, and leave the original data untouched.
+- **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting. Each conversation keeps its file tabs in the same browser across switches and refreshes; closing the viewer clears all of its tabs.
+- **Models, MCP and extensions:** Configure model providers in Settings and use the MCP tools and resources from your pi configuration. The sidebar opens an Extensions workspace that manages npm packages for the selected workspace, showing local/package origin separately from personal/project scope. Automations live in their own sidebar workspace. Skills and prompts are loaded from the shared pi resources but have no dedicated entry in the current UI.
+- **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace, model and permission preset, then inspect each run's session. PiWeb must remain running for scheduled work.
+- **Permissions:** Choose Read Only, Workspace Write or Full Access, with one-time approval for a specific blocked action. See the [platform boundaries](docs/workspace-isolation.md).
+- **Multiple devices:** Remote access prepares automatically. Scan one dynamic QR code from the same Wi-Fi or another network.
+- **Interface languages:** English, Simplified Chinese, Traditional Chinese, Japanese and Russian.
 
 ## Relationship to pi
 
@@ -23,17 +50,6 @@ PiWeb is a web shell that bundles the official pi SDK and leaves the separately 
 The agent directory is the main data store but **not the only data root**: session import reads other tools' history from your home directory and global skills may live in `~/.agents/skills`. Deployment isolation and the full data map are in [data, privacy and retention](docs/operations/data-and-privacy.md).
 
 Extension dialogs, notifications, status text, text widgets and injected messages reach the page; extension commands can create, fork and switch sessions. Extensions can provide interactive browser panels through the [JSON UI bridge](docs/extension-web-ui.md). Compatible terminal components have a read-only text fallback; terminal keyboard interaction and custom headers, footers or editors are not reproduced.
-
-## Features
-
-- **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown.
-- **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
-- **Session import:** Browse and import local history from Claude Code, Codex, Grok, ZCode, dsh and opencode. Search and select across sources, restore archived imports, and leave the original data untouched.
-- **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting. Each conversation keeps its file tabs in the same browser across switches and refreshes; closing the viewer clears all of its tabs.
-- **Models and resources:** Configure providers and models in Settings. The sidebar opens an Extensions workspace that manages npm packages for the selected workspace, showing local/package origin separately from personal/project scope. Automations live in their own sidebar workspace. Skills and prompts are loaded from the shared pi resources but have no dedicated entry in the current UI.
-- **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace, model and permission preset, then inspect each run's session. PiWeb must remain running for scheduled work.
-- **Permissions:** Choose Read Only, Workspace Write or Full Access, with one-time approval for a specific blocked action. See the [platform boundaries](docs/workspace-isolation.md).
-- **Multiple devices:** Remote access prepares automatically. Scan one dynamic QR code from the same Wi-Fi or another network.
 
 ## Screenshots
 

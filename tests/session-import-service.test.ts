@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const roots = { claude: "", codex: "", grok: "", dsh: "", zcode: "", opencode: "" };
+const roots = { claude: "", codex: "", grok: "", dsh: "", zcode: "", opencode: "", kimi: "", workbuddy: "", antigravity: "", antigravityCli: "", qwenProjects: "", qwenTmp: "", cursor: "" };
 
 vi.mock("../src/lib/session-import/paths", () => ({
 	claudeRoot: () => roots.claude,
@@ -18,6 +18,14 @@ vi.mock("../src/lib/session-import/paths", () => ({
 	dshRoot: () => roots.dsh,
 	zcodeDb: () => roots.zcode,
 	opencodeDb: () => roots.opencode,
+	kimiSessionsRoot: () => roots.kimi,
+	kimiHome: () => roots.kimi,
+	workbuddyRoots: () => [roots.workbuddy],
+	antigravityRoot: () => roots.antigravity,
+	antigravityCliRoot: () => roots.antigravityCli,
+	qwenProjectsRoot: () => roots.qwenProjects,
+	qwenLegacyTmpRoot: () => roots.qwenTmp,
+	cursorChatsRoot: () => roots.cursor,
 }));
 
 import { importSessions, scanAllSources } from "../src/lib/session-import";
@@ -38,7 +46,19 @@ beforeEach(async () => {
 	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir);
 	project = path.join(root, "project");
 	otherWorkspace = path.join(root, "other");
-	for (const key of Object.keys(roots) as Array<keyof typeof roots>) roots[key] = path.join(root, key);
+	roots.claude = path.join(root, "claude");
+	roots.codex = path.join(root, "codex");
+	roots.grok = path.join(root, "grok");
+	roots.dsh = path.join(root, "dsh");
+	roots.zcode = path.join(root, "zcode");
+	roots.opencode = path.join(root, "opencode");
+	roots.kimi = path.join(root, "kimi");
+	roots.workbuddy = path.join(root, "workbuddy");
+	roots.antigravity = path.join(root, "antigravity");
+	roots.antigravityCli = path.join(root, "antigravity-cli");
+	roots.qwenProjects = path.join(root, "qwen-projects");
+	roots.qwenTmp = path.join(root, "qwen-tmp");
+	roots.cursor = path.join(root, "cursor-chats");
 	await fs.mkdir(agentDir, { recursive: true });
 	await fs.mkdir(project, { recursive: true });
 	await fs.mkdir(otherWorkspace, { recursive: true });

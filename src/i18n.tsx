@@ -6,6 +6,10 @@ import { safeLocalStorage } from "@/lib/browser-storage";
  * 界面语言：简体中文 / English。偏好存 safeLocalStorage。
  */
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { htmlLangOf, isLang, type Lang } from "@/lib/lang";
+import { ja } from "./i18n-locales/ja";
+import { ru } from "./i18n-locales/ru";
+import { zhHant } from "./i18n-locales/zh-Hant";
 
 const zh = {
 	// 通用
@@ -202,6 +206,25 @@ const zh = {
 	gitRecentCommits: "最近提交",
 	gitStagingArea: "暂存区",
 	gitWorkingTree: "工作区",
+	gitStage: "暂存",
+	gitUnstage: "取消暂存",
+	gitStageAll: "全部暂存",
+	gitUnstageAll: "全部取消暂存",
+	gitStageHunk: "暂存此块",
+	gitUnstageHunk: "取消暂存此块",
+	gitCommitPlaceholder: "提交说明（Ctrl/⌘+Enter 提交）…",
+	gitCommit: "提交",
+	gitCommitAndPush: "提交并推送",
+	gitPush: "推送",
+	gitPull: "拉取",
+	gitCommitSuccess: "已提交 {hash}",
+	gitPushSuccess: "推送成功",
+	gitPullSuccess: "拉取完成",
+	gitCommitEmptyHint: "先在下方暂存要提交的改动",
+	gitCommitFilesLoading: "正在读取提交变更…",
+	gitCommitFilesEmpty: "此提交没有文件差异",
+	gitCommitMode: "提交",
+	gitOpenDiffViewer: "在并排查看器中打开",
 	toolNoOutput: "无输出",
 	toolFailed: "失败",
 	thinkingClamped: "当前模型不支持「{requested}」，已改为「{level}」",
@@ -345,6 +368,8 @@ const zh = {
 	usageWindowChat: "对话",
 	usageWindowCompletions: "补全",
 	usageWindowPremium: "高级请求",
+	usageWindowMcp: "MCP 工具",
+	usageWindowCodeReview: "代码审查",
 	usageVariantOpus: "Opus",
 	usageVariantCode: "代码",
 	usageBalanceGranted: "赠金",
@@ -353,6 +378,26 @@ const zh = {
 	usageBalanceCash: "现金",
 	usageBalanceUsed: "已用",
 	usageBalanceLimit: "上限",
+	usageLimitReached: "额度已用尽",
+	usageExtraUsage: "按量额度",
+	usageCredits: "积分余额",
+	usageCreditsUnlimited: "不限量",
+	usageFreeTier: "免费层",
+	usageUnavailable: "账户当前不可用",
+	usageSpendDaily: "今日",
+	usageSpendWeekly: "本周",
+	usageSpendMonthly: "本月",
+	usageSpendOfLimit: "已用 {used} / 上限 {limit}",
+	usageWindowExact: "剩余 {remaining} / {limit}",
+	usageUpdatedJustNow: "刚刚更新",
+	usageUpdatedMinutesAgo: "{n} 分钟前更新",
+	usageUpdatedHoursAgo: "{n} 小时前更新",
+	usageUpdatedDaysAgo: "{n} 天前更新",
+	usageResetsInMinutes: "{n} 分钟后刷新",
+	usageResetsInHours: "{n} 小时后刷新",
+	usageResetsInDays: "{n} 天后刷新",
+	usageResetDueNow: "等待刷新",
+	usageNoWindows: "该提供商没有返回配额窗口",
 	oauthWait: "等待授权…",
 	oauthCancel: "取消登录",
 	noSessions: "暂无会话",
@@ -399,6 +444,7 @@ const zh = {
 	uploadTooLarge: "单个文件不能超过 100 MB",
 	uploadCountLimit: "一次最多添加 16 个文件",
 	attachmentLine: "附件：{path}（{size}）",
+	previewInViewer: "在文件查看器中打开",
 
 	slashCatalog: "命令与技能",
 	skillType: "技能",
@@ -573,6 +619,12 @@ const zh = {
 	importSourceZcode: "ZCode",
 	importSourceDsh: "dsh",
 	importSourceOpencode: "opencode",
+	importSourceKimi: "Kimi Code",
+	importSourceWorkbuddy: "WorkBuddy",
+	importSourceAntigravity: "Antigravity",
+	importSourceAntigravityCli: "Antigravity CLI",
+	importSourceQwen: "Qwen Code",
+	importSourceCursor: "Cursor",
 	importSourceError: "{source} 扫描失败：{message}",
 	importGroupCount: "{n} 条 · 已导入 {imported}",
 	importPickSource: "选择来源",
@@ -894,6 +946,13 @@ const zh = {
 	viewerOpenFolder: "打开文件夹预览",
 	viewerDirHint: "文件夹：共 {n} 项（已按 .gitignore 过滤）",
 	viewerDirMore: "加载更多",
+	viewerDiffSplit: "并排",
+	viewerDiffInline: "行内",
+	viewerDiffBefore: "变更前",
+	viewerDiffAfter: "变更后",
+	viewerDiffStaged: "暂存区",
+	viewerDiffWorktree: "工作区",
+	viewerDiffHead: "HEAD",
 	// 侧栏与主工作区视图（扩展 / 自动化任务）
 	navPlugins: "扩展",
 	navAutomations: "自动化任务",
@@ -974,7 +1033,10 @@ const zh = {
 	apiErrorEtimedout: "操作超时，请重试。",
 } as const;
 
-type Dict = { [K in keyof typeof zh]: string };
+export type Dict = { [K in keyof typeof zh]: string };
+
+export type { Lang } from "@/lib/lang";
+export { LANGUAGES, htmlLangOf, isLang } from "@/lib/lang";
 
 const en: Dict = {
 	confirm: "Confirm",
@@ -1104,7 +1166,7 @@ const en: Dict = {
 	sumRead: "read {n} files",
 	sumRead1: "read {n} file",
 	sumSearched: "searched {n} times",
-	sumSearched1: "searched once",
+	sumSearched1: "searched {n} times",
 	sumWebSearched: "Searched the web",
 	sumWebSearchedN: "searched the web {n} times",
 	sumWebFetched: "Fetched pages",
@@ -1169,6 +1231,25 @@ const en: Dict = {
 	gitRecentCommits: "Recent commits",
 	gitStagingArea: "Staging area",
 	gitWorkingTree: "Working tree",
+	gitStage: "Stage",
+	gitUnstage: "Unstage",
+	gitStageAll: "Stage all",
+	gitUnstageAll: "Unstage all",
+	gitStageHunk: "Stage hunk",
+	gitUnstageHunk: "Unstage hunk",
+	gitCommitPlaceholder: "Commit message (Ctrl/⌘+Enter)…",
+	gitCommit: "Commit",
+	gitCommitAndPush: "Commit & Push",
+	gitPush: "Push",
+	gitPull: "Pull",
+	gitCommitSuccess: "Committed {hash}",
+	gitPushSuccess: "Pushed",
+	gitPullSuccess: "Pulled",
+	gitCommitEmptyHint: "Stage changes below before committing",
+	gitCommitFilesLoading: "Loading commit files…",
+	gitCommitFilesEmpty: "No file diffs in this commit",
+	gitCommitMode: "Commit",
+	gitOpenDiffViewer: "Open in diff viewer",
 	toolNoOutput: "no output",
 	toolFailed: "failed",
 	thinkingClamped: "This model does not support \"{requested}\"; using \"{level}\" instead",
@@ -1312,6 +1393,8 @@ const en: Dict = {
 	usageWindowChat: "Chat",
 	usageWindowCompletions: "Completions",
 	usageWindowPremium: "Premium requests",
+	usageWindowMcp: "MCP tools",
+	usageWindowCodeReview: "Code review",
 	usageVariantOpus: "Opus",
 	usageVariantCode: "Code",
 	usageBalanceGranted: "Granted",
@@ -1320,6 +1403,26 @@ const en: Dict = {
 	usageBalanceCash: "Cash",
 	usageBalanceUsed: "Used",
 	usageBalanceLimit: "Limit",
+	usageLimitReached: "Quota exhausted",
+	usageExtraUsage: "Pay-as-you-go",
+	usageCredits: "Credit balance",
+	usageCreditsUnlimited: "Unlimited",
+	usageFreeTier: "Free tier",
+	usageUnavailable: "Account unavailable",
+	usageSpendDaily: "Today",
+	usageSpendWeekly: "This week",
+	usageSpendMonthly: "This month",
+	usageSpendOfLimit: "Used {used} / limit {limit}",
+	usageWindowExact: "{remaining} / {limit} left",
+	usageUpdatedJustNow: "Updated just now",
+	usageUpdatedMinutesAgo: "Updated {n} min ago",
+	usageUpdatedHoursAgo: "Updated {n}h ago",
+	usageUpdatedDaysAgo: "Updated {n}d ago",
+	usageResetsInMinutes: "Resets in {n} min",
+	usageResetsInHours: "Resets in {n}h",
+	usageResetsInDays: "Resets in {n}d",
+	usageResetDueNow: "Awaiting reset",
+	usageNoWindows: "This provider returned no quota windows",
 	oauthWait: "Waiting for authorization…",
 	oauthCancel: "Cancel login",
 	noSessions: "No sessions yet",
@@ -1364,6 +1467,7 @@ const en: Dict = {
 	uploadTooLarge: "Each file must be 100 MB or smaller",
 	uploadCountLimit: "You can attach up to 16 files",
 	attachmentLine: "Attachment: {path} ({size})",
+	previewInViewer: "Open in file viewer",
 
 	slashCatalog: "Commands and skills",
 	skillType: "Skill",
@@ -1534,6 +1638,12 @@ const en: Dict = {
 	importSourceZcode: "ZCode",
 	importSourceDsh: "dsh",
 	importSourceOpencode: "opencode",
+	importSourceKimi: "Kimi Code",
+	importSourceWorkbuddy: "WorkBuddy",
+	importSourceAntigravity: "Antigravity",
+	importSourceAntigravityCli: "Antigravity CLI",
+	importSourceQwen: "Qwen Code",
+	importSourceCursor: "Cursor",
 	importSourceError: "{source} scan failed: {message}",
 	importGroupCount: "{n} sessions · {imported} imported",
 	importPickSource: "Choose a source",
@@ -1853,6 +1963,13 @@ const en: Dict = {
 	viewerOpenFolder: "Preview folder",
 	viewerDirHint: "Folder: {n} items (ignored files hidden)",
 	viewerDirMore: "Load more",
+	viewerDiffSplit: "Split",
+	viewerDiffInline: "Inline",
+	viewerDiffBefore: "Before",
+	viewerDiffAfter: "After",
+	viewerDiffStaged: "Staged",
+	viewerDiffWorktree: "Working tree",
+	viewerDiffHead: "HEAD",
 	navPlugins: "Extensions",
 	navAutomations: "Automations",
 	workspaceScope: "Workspace",
@@ -1931,7 +2048,9 @@ const en: Dict = {
 	apiErrorEtimedout: "The operation timed out. Try again.",
 };
 
-const dicts: Record<string, Dict> = { zh, en };
+const dicts: Record<Lang, Dict> = { zh, en, ja, ru, "zh-Hant": zhHant };
+/** Exposed for tests: every supported language's dictionary (same keys, translated values). */
+export const TRANSLATIONS: Record<Lang, Dict> = dicts;
 
 /**
  * errorCode → dictionary key. Mirrors `API_ERROR_I18N_KEYS` in
@@ -1956,39 +2075,39 @@ export const API_ERROR_LOCALE_KEYS: Readonly<Record<string, keyof Dict>> = {
  * Unknown codes keep the server message (Chinese fallback) so no error context
  * is lost; a missing message falls back to the localized generic text.
  */
-export function localizeApiError(lang: "zh" | "en", errorCode: string | undefined, fallback?: string): string {
+export function localizeApiError(lang: Lang, errorCode: string | undefined, fallback?: string): string {
 	const key = errorCode ? API_ERROR_LOCALE_KEYS[errorCode] : undefined;
 	if (key) return dicts[lang][key];
 	return fallback?.trim() ? fallback : dicts[lang].apiErrorRequestFailed;
 }
 
 interface I18nCtx {
-	lang: "zh" | "en";
-	setLang: (l: "zh" | "en") => void;
+	lang: Lang;
+	setLang: (l: Lang) => void;
 	t: Dict;
 }
 
 const DEFAULT_CONTEXT: I18nCtx = { lang: "zh", setLang: () => {}, t: zh };
 const Ctx = createContext<I18nCtx>(DEFAULT_CONTEXT);
 
-export function I18nProvider({ children, initialLang }: { children: React.ReactNode; initialLang?: "zh" | "en" }) {
+export function I18nProvider({ children, initialLang }: { children: React.ReactNode; initialLang?: Lang }) {
 	const inherited = useContext(Ctx);
 	const ownsContext = initialLang !== undefined || inherited === DEFAULT_CONTEXT;
 	// The server and first browser render use exactly the same serialized value.
-	const [lang, setLangState] = useState<"zh" | "en">(initialLang ?? inherited.lang);
+	const [lang, setLangState] = useState<Lang>(initialLang ?? inherited.lang);
 	useEffect(() => {
 		if (!ownsContext || initialLang !== undefined) return;
 		const saved = safeLocalStorage.getItem("piweb.lang");
-		if (saved === "en" || saved === "zh") {
+		if (isLang(saved)) {
 			setLangState(saved);
 			document.cookie = `piweb.lang=${saved}; Path=/; Max-Age=31536000; SameSite=Strict`;
 		}
 	}, [ownsContext, initialLang]);
 	useEffect(() => {
 		if (!ownsContext) return;
-		document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+		document.documentElement.lang = htmlLangOf(lang);
 	}, [lang, ownsContext]);
-	const setLang = useCallback((l: "zh" | "en") => {
+	const setLang = useCallback((l: Lang) => {
 		setLangState(l);
 		safeLocalStorage.setItem("piweb.lang", l);
 		document.cookie = `piweb.lang=${l}; Path=/; Max-Age=31536000; SameSite=Strict`;

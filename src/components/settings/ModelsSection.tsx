@@ -8,10 +8,11 @@ import { IconChevronDown14, IconPlusOutline16, IconWarningOutline16 } from "@/co
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { ModelCatalog, ProviderSetupModal, type BuiltinProviderSetup, type CustomProviderSetup } from "@/components/ProviderSetupModal";
 import { localizeApiError, useI18n } from "@/i18n";
+import type { Lang } from "@/lib/lang";
 import { fmtTokens } from "@/lib/format";
 import { customModelGaps, fillModelFields, formatCapacity, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
-import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type ProviderUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
+import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type BalanceUsage, type ProviderUsage, type QuotaExtraUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
 import { Field, fieldCls, SelectOption } from "./SharedControls";
 
@@ -193,7 +194,7 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 							</div>
 							<div role="row">
 								<div role="cell" aria-colspan={5} className="px-1 pb-2" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-warn)" }}>
-									{t.modelAuditRemaining.replace("{fields}", gap.missing.map((field) => fieldLabels[field]).join(lang === "zh" ? "、" : ", "))}
+									{t.modelAuditRemaining.replace("{fields}", gap.missing.map((field) => fieldLabels[field]).join(lang === "zh" || lang === "zh-Hant" ? "、" : ", "))}
 								</div>
 							</div>
 						</div>
@@ -379,34 +380,64 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		}
 	}, []);
 
-	// 窗口制/余额制配额：各提供商走各自的只读端点（后端 5 分钟缓存，force 跳过）
+	// 窗口制/余额制配额：各提供商走各自的只读端点（后端有 5 分钟缓存，force 跳过）
 	const [providerUsages, setProviderUsages] = useState<Record<string, ProviderUsage | null>>({});
 	const [usageBusyId, setUsageBusyId] = useState<string | null>(null);
 	const [usageFailedIds, setUsageFailedIds] = useState<Record<string, boolean>>({});
-	const fetchProviderUsage = useCallback(async (providerId: string, force: boolean) => {
-		setUsageBusyId(providerId);
-		setUsageFailedIds((prev) => ({ ...prev, [providerId]: false }));
+	const usageFetchAt = useRef(new Map<string, number>());
+	const fetchProviderUsage = useCallback(async (providerId: string, force: boolean, silent = false) => {
+		// 静默刷新（定时器 / 切回页面）不闪「探测中」，失败了也不把卡片打成失败，保留上一次的数据
+		if (!silent) setUsageBusyId(providerId);
+		usageFetchAt.current.set(providerId, Date.now());
 		try {
 			const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "providerUsage", providerId, force }) });
 			const j = await r.json();
 			if (!r.ok || !j.success) throw new Error(j.error || "usage probe failed");
 			setProviderUsages((prev) => ({ ...prev, [providerId]: j.data.usage ?? null }));
+			setUsageFailedIds((prev) => (prev[providerId] ? { ...prev, [providerId]: false } : prev));
 		} catch {
-			setUsageFailedIds((prev) => ({ ...prev, [providerId]: true }));
+			if (!silent) setUsageFailedIds((prev) => ({ ...prev, [providerId]: true }));
 		} finally {
-			setUsageBusyId((current) => (current === providerId ? null : current));
+			if (!silent) setUsageBusyId((current) => (current === providerId ? null : current));
 		}
 	}, []);
 
-	// 这些端点都是只读探测、不消耗额度，登录后自动取一次；xAI 那条会发一次可能计费的请求，仍然只手动触发
+	// 这些端点都是只读探测、不消耗额度：进页面先各取一次；之后每 60 秒自动刷新一次，切回页面时也补一次。
+	// 自动刷新必须带 force：不跳过服务端 5 分钟缓存的话，拿到的永远是同一份旧数据，看起来就像没自动刷新。
+	// 连续切标签页/开关弹窗时 45 秒内不重复探测。xAI 那条会发一次可能计费的请求，仍然只手动触发。
+	const USAGE_AUTO_REFRESH_MS = 60_000;
+	const USAGE_AUTO_REFRESH_MIN_GAP_MS = 45_000;
 	const requestedUsage = useRef(new Set<string>());
 	useEffect(() => {
-		for (const p of providers) {
-			if (!p.authReady || p.authCommand || !supportsUsageProbe(p.id) || p.id === "xai" || requestedUsage.current.has(p.id)) continue;
+		const eligible = providers.filter((p) => p.authReady && !p.authCommand && supportsUsageProbe(p.id) && p.id !== "xai");
+		if (!eligible.length) return;
+		for (const p of eligible) {
+			if (requestedUsage.current.has(p.id)) continue;
 			requestedUsage.current.add(p.id);
 			void fetchProviderUsage(p.id, false);
 		}
+		const refresh = () => {
+			const now = Date.now();
+			for (const p of eligible) {
+				if (now - (usageFetchAt.current.get(p.id) ?? 0) < USAGE_AUTO_REFRESH_MIN_GAP_MS) continue;
+				void fetchProviderUsage(p.id, true, true);
+			}
+		};
+		const timer = setInterval(refresh, USAGE_AUTO_REFRESH_MS);
+		const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+		document.addEventListener("visibilitychange", onVisible);
+		return () => {
+			clearInterval(timer);
+			document.removeEventListener("visibilitychange", onVisible);
+		};
 	}, [providers, fetchProviderUsage]);
+
+	// 倒计时与「几分钟前更新」需要一个会走的时钟：60 秒一跳，够准也不会让设置页频繁重绘
+	const [nowTick, setNowTick] = useState(() => Date.now());
+	useEffect(() => {
+		const timer = setInterval(() => setNowTick(Date.now()), 60_000);
+		return () => clearInterval(timer);
+	}, []);
 
 	// 窗口时长 → 标签：7 天叫「周限」、30 天叫「月限」，更短的按小时/天如实标注
 	const quotaWindowLabel = (seconds: number): string => {
@@ -415,12 +446,14 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		if (kind === "monthly") return t.usageWindowMonthly;
 		return (kind === "hours" ? t.usageWindowHours : t.usageWindowDays).replace("{n}", String(Math.round(seconds / (kind === "hours" ? 3600 : 86400))));
 	};
-	// 服务端不给周期时（Copilot 的额度类别、OpenCode 的 rolling）按名字标注
+	// 服务端不给周期时（Copilot 的额度类别、OpenCode 的 rolling、Codex 的代码审查、智谱的 MCP 工具）按名字标注
 	const quotaWindowName = (name: string): string => {
 		if (name === "premium") return t.usageWindowPremium;
 		if (name === "chat") return t.usageWindowChat;
 		if (name === "completions") return t.usageWindowCompletions;
 		if (name === "rolling") return t.usageWindowRolling;
+		if (name === "mcp") return t.usageWindowMcp;
+		if (name === "codeReview") return t.usageWindowCodeReview;
 		return titleCase(name);
 	};
 	const quotaVariantLabel = (variant: string): string => {
@@ -428,9 +461,13 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		if (variant === "code") return t.usageVariantCode;
 		return titleCase(variant);
 	};
+	// 标题三种来源可以并存：周期（周限/5 小时）、服务端给的用途名（代码审查/MCP 工具）、同类周期里的变体（Sonnet/Opus）。
+	// 例：Codex 的代码审查窗口既是 5 小时窗又有用途名，只显示周期会和普通 5 小时窗混在一起。
 	const quotaWindowHeading = (w: QuotaWindow): string => {
-		if (w.limitWindowSeconds !== undefined) return `${quotaWindowLabel(w.limitWindowSeconds)}${w.variant ? ` (${quotaVariantLabel(w.variant)})` : ""}`;
-		return w.name ? quotaWindowName(w.name) : "";
+		const parts: string[] = [];
+		if (w.limitWindowSeconds !== undefined) parts.push(quotaWindowLabel(w.limitWindowSeconds));
+		if (w.name) parts.push(quotaWindowName(w.name));
+		return `${parts.join(" · ")}${w.variant ? ` (${quotaVariantLabel(w.variant)})` : ""}`;
 	};
 
 	// 余额明细项的标签由界面翻译，服务端只给语义 key
@@ -442,40 +479,219 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		if (key === "used") return t.usageBalanceUsed;
 		return t.usageBalanceLimit;
 	};
+	// 结构条的色块只表达语义，标签照旧由界面翻译
+	const balanceDetailColor = (key: BalanceDetailKey): string => {
+		if (key === "granted") return "var(--dsw-accent)";
+		if (key === "toppedUp") return "var(--dsw-success)";
+		if (key === "voucher") return "var(--dsw-warn)";
+		if (key === "limit") return "var(--dsw-border-l3)";
+		return "var(--dsw-label-tertiary)";
+	};
 	const fmtAmount = (value: BalanceAmount): string => `${value.currency === "USD" ? "$" : value.currency === "CNY" ? "¥" : ""}${value.amount}${value.currency && value.currency !== "USD" && value.currency !== "CNY" ? ` ${value.currency}` : ""}`;
+	/** 只用来算比例；拿不到数字就当 0，不猜。 */
+	const amountValue = (value: BalanceAmount | undefined): number => {
+		if (!value) return 0;
+		const parsed = Number(value.amount);
+		return Number.isFinite(parsed) ? parsed : 0;
+	};
 
-	// 一个提供商的配额行：窗口制显示每个窗口的剩余与重置，余额制显示主余额与明细
+	// 重置倒计时：分钟 → 小时 → 天，粗一档；悬停给精确时刻。上游没给重置时间就整行不显示
+	const resetCountdown = (value: string | undefined): { text?: string; title?: string } => {
+		if (!value) return {};
+		const at = new Date(value);
+		if (Number.isNaN(at.getTime())) return {};
+		const title = fmtQuotaReset(value, lang);
+		const diff = at.getTime() - nowTick;
+		if (diff <= 0) return { text: t.usageResetDueNow, title };
+		const minutes = Math.max(1, Math.round(diff / 60000));
+		if (minutes < 60) return { text: t.usageResetsInMinutes.replace("{n}", String(minutes)), title };
+		const hours = Math.round(minutes / 60);
+		if (hours < 48) return { text: t.usageResetsInHours.replace("{n}", String(hours)), title };
+		return { text: t.usageResetsInDays.replace("{n}", String(Math.round(hours / 24))), title };
+	};
+
+	// 探测时刻 → 「3 分钟前更新」
+	const stampLabel = (probedAt: number): string => {
+		const minutes = Math.max(0, Math.round((nowTick - probedAt) / 60000));
+		if (minutes < 1) return t.usageUpdatedJustNow;
+		if (minutes < 60) return t.usageUpdatedMinutesAgo.replace("{n}", String(minutes));
+		const hours = Math.round(minutes / 60);
+		if (hours < 24) return t.usageUpdatedHoursAgo.replace("{n}", String(hours));
+		return t.usageUpdatedDaysAgo.replace("{n}", String(Math.round(hours / 24)));
+	};
+
+	const usageBadge = (label: string, tone: "muted" | "danger" = "muted") => (
+		<span
+			className="flex-none rounded-md px-1.5 py-0.5"
+			style={{
+				fontSize: "var(--dsh-ui-font-2xs)",
+				border: `0.5px solid ${tone === "danger" ? "var(--dsw-danger)" : "var(--dsw-border-l3)"}`,
+				color: tone === "danger" ? "var(--dsw-danger)" : "var(--dsw-label-secondary)",
+			}}
+		>
+			{label}
+		</span>
+	);
+
+	/** 条形容器：占比由调用方给，颜色已经带语义 */
+	const meterBar = (percent: number, tone: string, height = 6) => (
+		<div className="w-full overflow-hidden rounded-full" style={{ height, background: "var(--dsw-selector)" }}>
+			<div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, percent))}%`, background: tone }} />
+		</div>
+	);
+
+	// 一个配额窗口 = 一张小卡：名字 + 剩余% + 进度条 + 倒计时（有精确次数就并排给出）
+	const renderQuotaCard = (w: QuotaWindow, index: number) => {
+		const tone = quotaToneColor(w.remainingPercent);
+		const countdown = resetCountdown(w.resetAt);
+		const exact = w.remaining !== undefined && w.limit !== undefined
+			? t.usageWindowExact.replace("{remaining}", String(w.remaining)).replace("{limit}", String(w.limit))
+			: undefined;
+		return (
+			<div key={`${w.limitWindowSeconds ?? w.name ?? "window"}-${w.variant ?? ""}-${index}`} className="flex min-w-0 flex-col gap-1.5 rounded-lg px-2.5 py-2" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+				<div className="flex items-baseline justify-between gap-2">
+					<span className="truncate" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-secondary)" }}>{quotaWindowHeading(w)}</span>
+					<span style={{ fontSize: 15, lineHeight: 1, fontWeight: 600, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: tone }}>{w.remainingPercent}%</span>
+				</div>
+				{meterBar(w.remainingPercent, tone)}
+				{(countdown.text || exact) && (
+					<div className="flex items-baseline justify-between gap-2" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>
+						{countdown.text ? <span className="truncate" title={countdown.title}>{countdown.text}</span> : <span />}
+						{exact && <span className="flex-none" style={{ fontVariantNumeric: "tabular-nums", color: "var(--dsw-label-secondary)" }}>{exact}</span>}
+					</div>
+				)}
+			</div>
+		);
+	};
+
+	// 订阅附带的按量池：Claude 的 extra_usage、Codex 的 credits
+	const renderExtraPool = (extra: QuotaExtraUsage) => {
+		const label = extra.kind === "credits" ? t.usageCredits : t.usageExtraUsage;
+		const parts: string[] = [];
+		if (extra.used) parts.push(`${t.usageBalanceUsed} ${fmtAmount(extra.used)}`);
+		if (extra.limit) parts.push(`${t.usageBalanceLimit} ${fmtAmount(extra.limit)}`);
+		if (extra.balance) parts.push(`${t.usageQuotaRemaining} ${fmtAmount(extra.balance)}`);
+		const tone = extra.remainingPercent === undefined ? "var(--dsw-label-tertiary)" : quotaToneColor(extra.remainingPercent);
+		return (
+			<div className="flex min-w-0 flex-col gap-1.5 rounded-lg px-2.5 py-2" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+				<div className="flex items-baseline justify-between gap-2">
+					<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-secondary)" }}>{label}</span>
+					{extra.limitReached ? (
+						<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-danger)" }}>{t.usageLimitReached}</span>
+					) : extra.unlimited ? (
+						<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>{t.usageCreditsUnlimited}</span>
+					) : extra.remainingPercent !== undefined ? (
+						<span style={{ fontSize: 15, lineHeight: 1, fontWeight: 600, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: tone }}>{extra.remainingPercent}%</span>
+					) : null}
+				</div>
+				{extra.remainingPercent !== undefined && !extra.unlimited && meterBar(extra.remainingPercent, tone)}
+				{parts.length > 0 && <span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}>{parts.join(" · ")}</span>}
+			</div>
+		);
+	};
+
+	// 余额制：大号金额与语义标签 + 结构条（赠金/充值…）或消耗条（已用/上限）+ 日周月消耗
+	const renderBalance = (usage: BalanceUsage) => {
+		const stack = usage.details.filter((detail) => detail.key === "granted" || detail.key === "toppedUp" || detail.key === "voucher" || detail.key === "cash");
+		const stackTotal = stack.reduce((sum, detail) => sum + amountValue(detail), 0);
+		const limit = usage.details.find((detail) => detail.key === "limit");
+		const used = usage.details.find((detail) => detail.key === "used");
+		const limitValue = amountValue(limit);
+		const usedValue = amountValue(used);
+		const usedShare = limitValue > 0 ? Math.min(100, Math.max(0, (usedValue / limitValue) * 100)) : undefined;
+		const periods = usage.periodSpend ?? [];
+		return (
+			<div className="flex flex-col gap-1.5">
+				<div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+					<span style={{ fontSize: 20, lineHeight: 1.1, fontWeight: 600, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: "var(--dsw-label-primary)" }}>{usage.primary ? fmtAmount(usage.primary) : "—"}</span>
+					<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>{usage.primaryKey === "used" ? t.usageBalanceUsed : t.usageQuotaRemaining}</span>
+				</div>
+				{stackTotal > 0 && (
+					<div className="flex w-full overflow-hidden rounded-full" style={{ height: 6, background: "var(--dsw-selector)" }}>
+						{stack.map((detail) => (
+							<span key={detail.key} className="h-full flex-none" title={`${balanceDetailLabel(detail.key)} ${fmtAmount(detail)}`} style={{ width: `${(amountValue(detail) / stackTotal) * 100}%`, background: balanceDetailColor(detail.key) }} />
+						))}
+					</div>
+				)}
+				{usedShare !== undefined && meterBar(usedShare, quotaToneColor(100 - usedShare))}
+				{(stack.length > 0 || used) && (
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-1" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-tertiary)" }}>
+						{stack.map((detail) => (
+							<span key={detail.key} className="flex items-center gap-1">
+								<i className="inline-block h-1.5 w-1.5 flex-none rounded-full" style={{ background: balanceDetailColor(detail.key) }} />
+								{balanceDetailLabel(detail.key)}
+								<span style={{ color: "var(--dsw-label-secondary)", fontVariantNumeric: "tabular-nums" }}>{fmtAmount(detail)}</span>
+							</span>
+						))}
+						{usedShare !== undefined && limit && used && (
+							<span style={{ fontVariantNumeric: "tabular-nums" }}>{t.usageSpendOfLimit.replace("{used}", fmtAmount(used)).replace("{limit}", fmtAmount(limit))}</span>
+						)}
+						{usedShare === undefined && used && (
+							<span style={{ fontVariantNumeric: "tabular-nums" }}>{t.usageBalanceUsed} {fmtAmount(used)}</span>
+						)}
+					</div>
+				)}
+				{periods.length > 0 && (
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-1" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>
+						{periods.map((period) => (
+							<span key={period.period} className="flex items-center gap-1">
+								{period.period === "daily" ? t.usageSpendDaily : period.period === "weekly" ? t.usageSpendWeekly : t.usageSpendMonthly}
+								<span style={{ color: "var(--dsw-label-secondary)", fontVariantNumeric: "tabular-nums" }}>{fmtAmount(period)}</span>
+							</span>
+						))}
+					</div>
+				)}
+			</div>
+		);
+	};
+
+	// xAI 的 x-ratelimit 余量：请求数与 Token 各一张卡，口径与窗口卡一致
+	const renderXaiMeter = (label: string, remaining: number, limit: number, format: (value: number) => string) => {
+		const percent = limit > 0 ? Math.min(100, Math.max(0, Math.round((remaining / limit) * 100))) : 0;
+		const tone = quotaToneColor(percent);
+		return (
+			<div className="flex min-w-0 flex-col gap-1.5 rounded-lg px-2.5 py-2" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+				<div className="flex items-baseline justify-between gap-2">
+					<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-secondary)" }}>{label}</span>
+					<span style={{ fontSize: 15, lineHeight: 1, fontWeight: 600, fontFamily: "var(--font-mono)", fontVariantNumeric: "tabular-nums", color: tone }}>{percent}%</span>
+				</div>
+				{meterBar(percent, tone)}
+				<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)", fontVariantNumeric: "tabular-nums" }}>{format(remaining)} / {format(limit)}</span>
+			</div>
+		);
+	};
+
+	// 一个提供商的配额区：套餐/状态徽章 + 更新时间 + 刷新，下面是窗口卡或余额条
 	const renderProviderUsage = (providerId: string) => {
 		const usage = providerUsages[providerId];
 		const busy = usageBusyId === providerId;
 		const failed = usageFailedIds[providerId];
+		const quota = usage?.kind === "quota" ? usage : undefined;
+		const balance = usage?.kind === "balance" ? usage : undefined;
 		return (
-			<>
-				<div className="flex items-center gap-2">
-					{!usage && <span>{failed ? t.usageProbeFailed : busy ? t.queryingQuota : t.usageReadOnlyDisclosure}</span>}
-					{usage?.kind === "quota" && usage.planType && <span>{t.usagePlan} {titleCase(usage.planType)}</span>}
-					{usage?.kind === "balance" && usage.primary && (
-						<span>{usage.primaryKey === "used" ? t.usageBalanceUsed : t.usageQuotaRemaining} <span style={{ color: "var(--dsw-label-secondary)" }}>{fmtAmount(usage.primary)}</span></span>
-					)}
-					<button type="button" className="pw-chip" disabled={busy} title={t.usageReadOnlyDisclosure} onClick={() => void fetchProviderUsage(providerId, true)}>
-						{busy ? t.usageProbing : usage ? t.usageRefresh : t.usageProbe}
-					</button>
-				</div>
-				{usage?.kind === "balance" && usage.details.length > 0 && (
-					<span>{usage.details.map((detail) => `${balanceDetailLabel(detail.key)} ${fmtAmount(detail)}`).join(" · ")}</span>
-				)}
-				{usage?.kind === "quota" && usage.windows.length === 0 && <span>{t.usageQuotaRemaining} —</span>}
-				{usage?.kind === "quota" && usage.windows.map((w, index) => (
-					<div key={`${w.limitWindowSeconds ?? w.name ?? "window"}-${w.variant ?? ""}-${index}`} className="flex items-center gap-2">
-						<span style={{ width: 84, flex: "none" }}>{quotaWindowHeading(w)}</span>
-						<span style={{ width: 92, flex: "none" }}>{t.usageQuotaRemaining} {w.remainingPercent}%</span>
-						<span>{t.usageReset} {fmtQuotaReset(w.resetAt, lang)}</span>
-						<div className="h-1 overflow-hidden rounded-full" style={{ width: 120, flex: "none", background: "var(--dsw-border-l2)" }}>
-							<div className="h-full rounded-full" style={{ width: `${w.remainingPercent}%`, background: quotaToneColor(w.remainingPercent) }} />
-						</div>
+			<div className="flex flex-col gap-2">
+				<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+					{!usage && <span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-tertiary)" }}>{failed ? t.usageProbeFailed : busy ? t.queryingQuota : t.usageReadOnlyDisclosure}</span>}
+					{quota?.planType && usageBadge(`${t.usagePlan} ${titleCase(quota.planType)}`)}
+					{quota?.limitReached && usageBadge(t.usageLimitReached, "danger")}
+					{balance?.isFreeTier && usageBadge(t.usageFreeTier)}
+					{balance?.available === false && usageBadge(t.usageUnavailable, "danger")}
+					<div className="ml-auto flex flex-none items-center gap-2">
+						{usage && <span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>{stampLabel(usage.probedAt)}</span>}
+						<button type="button" className="pw-chip" disabled={busy} title={t.usageReadOnlyDisclosure} onClick={() => void fetchProviderUsage(providerId, true)}>
+							{busy ? t.usageProbing : usage ? t.usageRefresh : t.usageProbe}
+						</button>
 					</div>
-				))}
-			</>
+				</div>
+				{quota && quota.windows.length === 0 && <span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-tertiary)" }}>{t.usageNoWindows}</span>}
+				{quota && quota.windows.length > 0 && (
+					<div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))" }}>
+						{quota.windows.map((w, index) => renderQuotaCard(w, index))}
+					</div>
+				)}
+				{quota?.extra && renderExtraPool(quota.extra)}
+				{balance && renderBalance(balance)}
+			</div>
 		);
 	};
 
@@ -839,18 +1055,31 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 							</div>
 
 							{p.id === "xai" && p.authReady && (
-								<div className="mt-3 flex items-center gap-2 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)", fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
-									{xaiUsage ? (
-										<span>{t.usageQuotaLabel} · {xaiUsage.model} · {t.usageRequests} {xaiUsage.requestRemaining.toLocaleString()}/{xaiUsage.requestLimit.toLocaleString()} · Tokens {fmtQuotaTokens(xaiUsage.tokenRemaining)}/{fmtQuotaTokens(xaiUsage.tokenLimit)}</span>
-									) : <span>{usageError ? t.usageProbeFailed : t.usageProbeDisclosure}</span>}
-									<button type="button" className="pw-chip" disabled={usageBusy} title={t.usageProbeDisclosure} onClick={() => void fetchUsage(true)}>
-										{usageBusy ? t.usageProbing : xaiUsage ? t.usageRefresh : t.usageProbe}
-									</button>
+								<div className="mt-3 flex flex-col gap-2 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }}>
+									<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+										{xaiUsage ? (
+											<>
+												{usageBadge(t.usageQuotaLabel)}
+												{usageBadge(xaiUsage.model)}
+											</>
+										) : <span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-tertiary)" }}>{usageError ? t.usageProbeFailed : t.usageProbeDisclosure}</span>}
+										<div className="ml-auto flex flex-none items-center gap-2">
+											<button type="button" className="pw-chip" disabled={usageBusy} title={t.usageProbeDisclosure} onClick={() => void fetchUsage(true)}>
+												{usageBusy ? t.usageProbing : xaiUsage ? t.usageRefresh : t.usageProbe}
+											</button>
+										</div>
+									</div>
+									{xaiUsage && (
+										<div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))" }}>
+											{renderXaiMeter(t.usageRequests, xaiUsage.requestRemaining, xaiUsage.requestLimit, (value) => value.toLocaleString())}
+											{renderXaiMeter("Tokens", xaiUsage.tokenRemaining, xaiUsage.tokenLimit, fmtQuotaTokens)}
+										</div>
+									)}
 								</div>
 							)}
 
 							{supportsUsageProbe(p.id) && p.id !== "xai" && p.authReady && (
-								<div className="mt-3 flex flex-col gap-1.5 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)", fontSize: 11.5, color: "var(--dsw-label-tertiary)" }}>
+								<div className="mt-3 pt-3" style={{ borderTop: "0.5px solid var(--dsw-border-l2)" }}>
 									{renderProviderUsage(p.id)}
 								</div>
 							)}
@@ -1171,9 +1400,9 @@ function titleCase(value: string): string {
 }
 
 /** 界面语言对应的日期区域设置；显式传入，避免跟随操作系统语言。 */
-const DATE_LOCALES: Record<"zh" | "en", string> = { zh: "zh-CN", en: "en-US" };
+const DATE_LOCALES: Record<Lang, string> = { zh: "zh-CN", "zh-Hant": "zh-Hant", en: "en-US", ja: "ja-JP", ru: "ru-RU" };
 
-function fmtQuotaReset(value: string | undefined, lang?: "zh" | "en"): string {
+function fmtQuotaReset(value: string | undefined, lang?: Lang): string {
 	if (!value) return "—";
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return "—";

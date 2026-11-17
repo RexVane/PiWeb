@@ -13,6 +13,7 @@ import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
+import type { Lang } from "@/lib/lang";
 import type { GitInfo } from "@/lib/git-service";
 import type { TreeNode } from "@/lib/growth-tree";
 import type { GrowthChange } from "@/lib/types";
@@ -62,13 +63,57 @@ function sumChanges(changes: GrowthChange[]): { files: number; add: number; del:
 	return { files: changes.length, add, del };
 }
 
-function growthFailureMessage(message: string, lang: "zh" | "en"): string {
-	if (/git is not installed/i.test(message)) return lang === "zh" ? "未找到 Git。安装 Git 后可重新开启项目记录。" : "Git is unavailable. Install Git, then enable project recording again.";
-	if (/workspace directory not found/i.test(message)) return lang === "zh" ? "工作区目录不存在，请重新选择工作区。" : "The workspace directory is unavailable. Select the workspace again.";
-	if (/candidate limit|candidate files|文件过多/i.test(message)) return lang === "zh" ? "工作区文件过多，已停止记录。请在 .gitignore 中排除生成目录后重新开启记录。" : "The workspace has too many files to record. Exclude generated directories in .gitignore, then enable recording again.";
-	if (/exceeds.*(?:byte|limit)|exceeded.*(?:buffer|limit)/i.test(message)) return lang === "zh" ? "项目记录超过大小限制，上一份快照已保留。请缩小或排除大文件后重新开启记录。" : "Project recording exceeded its size limit. The previous snapshot is retained. Reduce or exclude large files, then enable recording again.";
-	if (/timed out/i.test(message)) return lang === "zh" ? "项目记录耗时超时，上一份快照已保留。若工作区包含大量临时/缓存或生成文件，请加入 .gitignore 后重试。" : "Project recording timed out (previous snapshot retained). Exclude large temp, cache, or build directories in .gitignore, then retry.";
-	return lang === "zh" ? "项目记录未能完成，请重试或查看错误详情。" : "Project recording could not finish. Retry or review the error details.";
+const GROWTH_FAILURES: Record<Lang, Record<"git" | "workspace" | "tooMany" | "tooLarge" | "timeout" | "generic", string>> = {
+	zh: {
+		git: "未找到 Git。安装 Git 后可重新开启项目记录。",
+		workspace: "工作区目录不存在，请重新选择工作区。",
+		tooMany: "工作区文件过多，已停止记录。请在 .gitignore 中排除生成目录后重新开启记录。",
+		tooLarge: "项目记录超过大小限制，上一份快照已保留。请缩小或排除大文件后重新开启记录。",
+		timeout: "项目记录耗时超时，上一份快照已保留。若工作区包含大量临时/缓存或生成文件，请加入 .gitignore 后重试。",
+		generic: "项目记录未能完成，请重试或查看错误详情。",
+	},
+	"zh-Hant": {
+		git: "找不到 Git。安裝 Git 後即可重新開啟專案記錄。",
+		workspace: "工作區目錄不存在，請重新選擇工作區。",
+		tooMany: "工作區檔案過多，已停止記錄。請在 .gitignore 中排除產生目錄後重新開啟記錄。",
+		tooLarge: "專案記錄超過大小限制，上一份快照已保留。請縮小或排除大型檔案後重新開啟記錄。",
+		timeout: "專案記錄耗時逾時，上一份快照已保留。若工作區包含大量暫存/快取或產生檔案，請加入 .gitignore 後重試。",
+		generic: "專案記錄未能完成，請重試或查看錯誤詳情。",
+	},
+	en: {
+		git: "Git is unavailable. Install Git, then enable project recording again.",
+		workspace: "The workspace directory is unavailable. Select the workspace again.",
+		tooMany: "The workspace has too many files to record. Exclude generated directories in .gitignore, then enable recording again.",
+		tooLarge: "Project recording exceeded its size limit. The previous snapshot is retained. Reduce or exclude large files, then enable recording again.",
+		timeout: "Project recording timed out (previous snapshot retained). Exclude large temp, cache, or build directories in .gitignore, then retry.",
+		generic: "Project recording could not finish. Retry or review the error details.",
+	},
+	ja: {
+		git: "Git が見つかりません。Git をインストールしてからプロジェクト記録を有効にしてください。",
+		workspace: "ワークスペースのディレクトリがありません。ワークスペースを選択し直してください。",
+		tooMany: "ワークスペースのファイルが多すぎるため記録を停止しました。.gitignore で生成ディレクトリを除外してから記録を有効にしてください。",
+		tooLarge: "プロジェクト記録がサイズ上限を超えました。前回のスナップショットは保持されています。大きなファイルを減らすか除外してから記録を有効にしてください。",
+		timeout: "プロジェクト記録がタイムアウトしました（前回のスナップショットは保持）。大量の一時ファイル/キャッシュ/ビルド生成物がある場合は .gitignore に追加してから再試行してください。",
+		generic: "プロジェクト記録を完了できませんでした。再試行するかエラーの詳細を確認してください。",
+	},
+	ru: {
+		git: "Git не найден. Установите Git и снова включите запись проекта.",
+		workspace: "Каталог рабочей области недоступен. Выберите рабочую область заново.",
+		tooMany: "В рабочей области слишком много файлов, запись остановлена. Исключите сгенерированные каталоги в .gitignore и включите запись снова.",
+		tooLarge: "Запись проекта превысила лимит размера. Предыдущий снимок сохранён. Уменьшите или исключите крупные файлы и включите запись снова.",
+		timeout: "Запись проекта превысила время ожидания (предыдущий снимок сохранён). Добавьте крупные временные/кэш/сборочные каталоги в .gitignore и повторите.",
+		generic: "Запись проекта не завершилась. Повторите попытку или посмотрите подробности ошибки.",
+	},
+};
+
+function growthFailureMessage(message: string, lang: Lang): string {
+	const table = GROWTH_FAILURES[lang] ?? GROWTH_FAILURES.en;
+	if (/git is not installed/i.test(message)) return table.git;
+	if (/workspace directory not found/i.test(message)) return table.workspace;
+	if (/candidate limit|candidate files|文件过多/i.test(message)) return table.tooMany;
+	if (/exceeds.*(?:byte|limit)|exceeded.*(?:buffer|limit)/i.test(message)) return table.tooLarge;
+	if (/timed out/i.test(message)) return table.timeout;
+	return table.generic;
 }
 
 export function ProjectPanel({

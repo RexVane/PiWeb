@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { BoundaryError } from "@/lib/path-security";
-import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readWorkspaceFile, readWorkspaceImage, saveUploadStream } from "@/lib/files-service";
+import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readUploadFile, readWorkspaceFile, readWorkspaceImage, saveUploadStream } from "@/lib/files-service";
 
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
@@ -20,6 +20,9 @@ export async function GET(req: Request) {
 				"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
 				"Referrer-Policy": "no-referrer",
 			} });
+		}
+		if (url.searchParams.get("upload") === "1") {
+			return NextResponse.json({ success: true, data: await readUploadFile(url.searchParams.get("path")) }, { headers });
 		}
 		if (url.searchParams.get("read") === "1") {
 			return NextResponse.json({ success: true, data: await readWorkspaceFile(url.searchParams.get("cwd"), url.searchParams.get("path")) }, { headers });
