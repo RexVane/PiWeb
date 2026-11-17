@@ -35,3 +35,32 @@ export function zcodeDb(): string {
 export function opencodeDb(): string {
 	return path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
 }
+
+/** Kimi Code：~/.kimi/sessions/<工作区>/<会话>/agents/<agent>/wire.jsonl，state.json 在会话目录里 */
+export function kimiSessionsRoot(): string {
+	return path.join(os.homedir(), ".kimi", "sessions");
+}
+
+/** Kimi Code 的 session_index.jsonl 在 sessions/ 旁边（老会话的 workDir 兜底） */
+export function kimiHome(): string {
+	return path.join(os.homedir(), ".kimi");
+}
+
+/** WorkBuddy / WorkBuddy AI：~/.workbuddy(-ai)/projects/<项目>/<会话>.jsonl，每行带 cwd */
+export function workbuddyRoots(): string[] {
+	const roots: string[] = [];
+	const configured = process.env.WORKBUDDY_CONFIG_DIR;
+	if (configured) roots.push(configured);
+	for (const dir of [".workbuddy", ".workbuddy-ai"]) roots.push(path.join(os.homedir(), dir));
+	return roots;
+}
+
+/** Antigravity（桌面 / IDE）：~/.gemini/antigravity */
+export function antigravityRoot(): string {
+	return path.join(os.homedir(), ".gemini", "antigravity");
+}
+
+/** Antigravity CLI：~/.gemini/antigravity-cli */
+export function antigravityCliRoot(): string {
+	return path.join(os.homedir(), ".gemini", "antigravity-cli");
+}

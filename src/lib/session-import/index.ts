@@ -17,6 +17,9 @@ import { grokSource } from "./grok";
 import { dshSource } from "./dsh";
 import { zcodeSource } from "./zcode";
 import { opencodeSource } from "./opencode";
+import { kimiSource } from "./kimi";
+import { workbuddySource } from "./workbuddy";
+import { antigravitySource, antigravityCliSource } from "./antigravity";
 import { importedKey, listImportedSessions, writeImportedSession } from "./writer";
 import { getArchivedSessions, forgetSession } from "../workspace-store";
 import { readHead } from "./files";
@@ -30,6 +33,10 @@ export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 	zcode: zcodeSource,
 	dsh: dshSource,
 	opencode: opencodeSource,
+	kimi: kimiSource,
+	workbuddy: workbuddySource,
+	antigravity: antigravitySource,
+	"antigravity-cli": antigravityCliSource,
 };
 
 /** 单来源扫描超时：库被别的进程锁死时不让整个面板卡住 */

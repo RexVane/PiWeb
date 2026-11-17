@@ -7,9 +7,9 @@
  */
 
 /** 支持导入的来源 */
-export type ImportSource = "claude" | "codex" | "grok" | "zcode" | "dsh" | "opencode";
+export type ImportSource = "claude" | "codex" | "grok" | "zcode" | "dsh" | "opencode" | "kimi" | "workbuddy" | "antigravity" | "antigravity-cli";
 
-export const IMPORT_SOURCES: ImportSource[] = ["claude", "codex", "grok", "zcode", "dsh", "opencode"];
+export const IMPORT_SOURCES: ImportSource[] = ["claude", "codex", "grok", "zcode", "dsh", "opencode", "kimi", "workbuddy", "antigravity", "antigravity-cli"];
 
 export interface ImportedUsage {
 	input?: number;
