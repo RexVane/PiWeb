@@ -5,7 +5,7 @@
  * 再检查额度行是它的后代——改前这条会失败。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
 vi.mock("@/lib/theme", async (importOriginal) => ({
@@ -70,6 +70,37 @@ describe("provider usage inside the provider card", () => {
 		const usage = screen.getByText(/12\.34/);
 		const card = screen.getByText("DeepSeek").closest(`div[style*="${CARD_BORDER}"]`);
 		expect(card!.contains(usage)).toBe(true);
+	});
+
+	it("auto-refreshes with a real probe every minute and again when the tab becomes visible", async () => {
+		vi.useFakeTimers();
+		try {
+			const fetchMock = setup({ kind: "balance", primary: { amount: "12.34", currency: "USD" }, details: [], probedAt: Date.now() });
+			const usageCalls = () => fetchMock.mock.calls
+				.filter(([url]) => url === "/api/models")
+				.map(([, init]) => JSON.parse(String(init?.body)) as { action?: string; force?: boolean })
+				.filter((body) => body.action === "providerUsage");
+
+			// 首次探测（允许走服务端缓存）
+			for (let i = 0; i < 60 && usageCalls().length === 0; i += 1) await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+			expect(usageCalls()).toHaveLength(1);
+			expect(usageCalls()[0].force).toBe(false);
+
+			// 60 秒后自动刷新必须 force：否则服务端 5 分钟缓存会返回同一份数据，看起来就像没自动刷新
+			await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+			expect(usageCalls().length).toBeGreaterThanOrEqual(2);
+			expect(usageCalls().at(-1)!.force).toBe(true);
+
+			// 45 秒内连续切回页面不重复发探测
+			const before = usageCalls().length;
+			await act(async () => {
+				document.dispatchEvent(new Event("visibilitychange"));
+				await vi.advanceTimersByTimeAsync(0);
+			});
+			expect(usageCalls()).toHaveLength(before);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("adds no second段 for a provider without a usage endpoint", async () => {

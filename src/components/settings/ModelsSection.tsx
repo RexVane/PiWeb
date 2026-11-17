@@ -379,13 +379,15 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		}
 	}, []);
 
-	// 窗口制/余额制配额：各提供商走各自的只读端点（后端 5 分钟缓存，force 跳过）
+	// 窗口制/余额制配额：各提供商走各自的只读端点（后端有 5 分钟缓存，force 跳过）
 	const [providerUsages, setProviderUsages] = useState<Record<string, ProviderUsage | null>>({});
 	const [usageBusyId, setUsageBusyId] = useState<string | null>(null);
 	const [usageFailedIds, setUsageFailedIds] = useState<Record<string, boolean>>({});
+	const usageFetchAt = useRef(new Map<string, number>());
 	const fetchProviderUsage = useCallback(async (providerId: string, force: boolean, silent = false) => {
 		// 静默刷新（定时器 / 切回页面）不闪「探测中」，失败了也不把卡片打成失败，保留上一次的数据
 		if (!silent) setUsageBusyId(providerId);
+		usageFetchAt.current.set(providerId, Date.now());
 		try {
 			const r = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "providerUsage", providerId, force }) });
 			const j = await r.json();
@@ -399,8 +401,11 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		}
 	}, []);
 
-	// 这些端点都是只读探测、不消耗额度：进页面先各取一次，之后每 60 秒静默刷新
-	// （后端还有 5 分钟缓存兜底，不会真的每分钟打提供商）。xAI 那条会发一次可能计费的请求，仍然只手动触发。
+	// 这些端点都是只读探测、不消耗额度：进页面先各取一次；之后每 60 秒自动刷新一次，切回页面时也补一次。
+	// 自动刷新必须带 force：不跳过服务端 5 分钟缓存的话，拿到的永远是同一份旧数据，看起来就像没自动刷新。
+	// 连续切标签页/开关弹窗时 45 秒内不重复探测。xAI 那条会发一次可能计费的请求，仍然只手动触发。
+	const USAGE_AUTO_REFRESH_MS = 60_000;
+	const USAGE_AUTO_REFRESH_MIN_GAP_MS = 45_000;
 	const requestedUsage = useRef(new Set<string>());
 	useEffect(() => {
 		const eligible = providers.filter((p) => p.authReady && !p.authCommand && supportsUsageProbe(p.id) && p.id !== "xai");
@@ -411,9 +416,13 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			void fetchProviderUsage(p.id, false);
 		}
 		const refresh = () => {
-			for (const p of eligible) void fetchProviderUsage(p.id, false, true);
+			const now = Date.now();
+			for (const p of eligible) {
+				if (now - (usageFetchAt.current.get(p.id) ?? 0) < USAGE_AUTO_REFRESH_MIN_GAP_MS) continue;
+				void fetchProviderUsage(p.id, true, true);
+			}
 		};
-		const timer = setInterval(refresh, 60_000);
+		const timer = setInterval(refresh, USAGE_AUTO_REFRESH_MS);
 		const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
 		document.addEventListener("visibilitychange", onVisible);
 		return () => {
