@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	headerEntriesFromConfig, headerEntriesToConfig,
 	isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelInputFor, modelDraftsFromProviderConfig, parseCapacity, serializeModelDraft, serializeProviderDraft, validateModelDrafts,
 } from "../src/lib/model-draft";
 
@@ -150,5 +151,42 @@ describe("模型字段（视觉 / 容量）不替用户猜", () => {
 		expect(serializeProviderDraft({}, { baseUrl: "https://x.invalid", models: [row] }, "anthropic-messages", catalogIds).modelOverrides).toBeUndefined();
 		const edited = serializeProviderDraft({}, { baseUrl: "https://x.invalid", models: [{ ...row, contextWindow: 500_000 }] }, "anthropic-messages", catalogIds);
 		expect(edited.modelOverrides).toEqual({ "claude-x": { contextWindow: 500_000 } });
+	});
+});
+
+describe("custom provider header rows", () => {
+	it("loads string headers from models.json into editable rows", () => {
+		expect(headerEntriesFromConfig({ "User-Agent": "codex_cli_rs/0.50.0", "X-Env": "$GATEWAY_TOKEN" })).toEqual([
+			{ name: "User-Agent", value: "codex_cli_rs/0.50.0" },
+			{ name: "X-Env", value: "$GATEWAY_TOKEN" },
+		]);
+		// 非对象/数组/非字符串值都当没有，编辑表单不能崩
+		expect(headerEntriesFromConfig(undefined)).toEqual([]);
+		expect(headerEntriesFromConfig("User-Agent: x")).toEqual([]);
+		expect(headerEntriesFromConfig(["x"])).toEqual([]);
+		expect(headerEntriesFromConfig({ ok: "v", bad: 3, nested: { x: 1 } })).toEqual([{ name: "ok", value: "v" }]);
+	});
+
+	it("writes trimmed rows back, dropping empty name/value pairs", () => {
+		expect(headerEntriesToConfig([
+			{ name: " User-Agent ", value: " codex_cli_rs/0.50.0 " },
+			{ name: "", value: "orphan" },
+			{ name: "X-Empty", value: "  " },
+			{ name: "X-Ok", value: "1" },
+		])).toEqual({ "User-Agent": "codex_cli_rs/0.50.0", "X-Ok": "1" });
+		// 空对象 = 明确清空；编辑保存时用它删掉原来的 headers
+		expect(headerEntriesToConfig([])).toEqual({});
+	});
+
+	it("round-trips through serializeProviderDraft (edit form save)", () => {
+		const source = { name: "Gateway", baseUrl: "https://x.invalid", api: "openai-responses", headers: { "User-Agent": "old/1" }, models: [] };
+		const next = serializeProviderDraft(source, {
+			name: source.name,
+			baseUrl: source.baseUrl,
+			api: source.api,
+			models: [],
+			headers: headerEntriesToConfig(headerEntriesFromConfig({ "User-Agent": "new/2" })),
+		});
+		expect(next.headers).toEqual({ "User-Agent": "new/2" });
 	});
 });

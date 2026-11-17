@@ -126,6 +126,28 @@ export function validateHeaderEntries(entries: Array<[string, string]>): string 
 	return null;
 }
 
+/** models.json provider 的 `headers`（Record<string,string>）→ 表单行；结构不对时给空列表 */
+export function headerEntriesFromConfig(value: unknown): Array<{ name: string; value: string }> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+	return Object.entries(value as Record<string, unknown>)
+		.filter((entry): entry is [string, string] => typeof entry[1] === "string")
+		.map(([name, value]) => ({ name, value }));
+}
+
+/**
+ * 表单行 → models.json provider 的 `headers`：修剪、丢掉空名/空值的行。
+ * 返回空对象表示"明确清空"，与 `serializeProviderDraft` 里 `undefined = 不表态` 区分开。
+ */
+export function headerEntriesToConfig(entries: ReadonlyArray<{ name: string; value: string }>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const entry of entries) {
+		const name = entry.name.trim();
+		const value = entry.value.trim();
+		if (name && value) out[name] = value;
+	}
+	return out;
+}
+
 export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" } | undefined {
 	const ids = new Set<string>();
 	for (let index = 0; index < models.length; index += 1) {

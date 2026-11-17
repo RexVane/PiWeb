@@ -10,7 +10,7 @@ import { ModelCatalog, ProviderSetupModal, type BuiltinProviderSetup, type Custo
 import { localizeApiError, useI18n } from "@/i18n";
 import type { Lang } from "@/lib/lang";
 import { fmtTokens } from "@/lib/format";
-import { customModelGaps, fillModelFields, formatCapacity, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
+import { customModelGaps, fillModelFields, formatCapacity, headerEntriesFromConfig, headerEntriesToConfig, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type BalanceUsage, type ProviderUsage, type QuotaExtraUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
 import type { ProviderView } from "@/lib/models-service";
@@ -244,6 +244,8 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [cKey, setCKey] = useState("");
 	const [cModels, setCModels] = useState<ModelDraft[]>([]);
 	const [cName, setCName] = useState("");
+	// 自定义 provider 的自定义请求头：点编辑时从 models.json 读回来，保存时整体写回
+	const [cHeaders, setCHeaders] = useState<Array<{ name: string; value: string }>>([]);
 	const [bBaseUrl, setBBaseUrl] = useState("");
 	const [bModels, setBModels] = useState<ModelDraft[]>([]);
 	const [editBusy, setEditBusy] = useState(false);
@@ -837,6 +839,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			setCKey("");
 			setCName(typeof override?.name === "string" ? override.name : "");
 			setCModels((override?.models ?? []).map(modelDraftFromConfig));
+			setCHeaders(headerEntriesFromConfig(override?.headers));
 		} else {
 			// 内置 provider：从 models.json 覆盖层初始化（若有），models[] 定义和 modelOverrides 覆盖都作为行
 			setBBaseUrl(typeof override?.baseUrl === "string" ? override.baseUrl : "");
@@ -867,6 +870,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		if (editBaseRevision.current !== customRevision) { notify(false, t.modelEditStale); return; }
 		const invalid = validateModelDrafts(cModels);
 		if (invalid || !cBaseUrl.trim()) return;
+		const headerEntries = cHeaders.map(({ name, value }) => [name.trim(), value.trim()] as [string, string]);
+		const headerError = validateHeaderEntries(headerEntries.filter(([name, value]) => name || value));
+		if (headerError) {
+			notify(false, headerError);
+			return;
+		}
 		const targetId = cId.trim();
 		if ((editing !== null && targetId !== editing) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(targetId) || ["constructor", "prototype"].includes(targetId)
 			|| (targetId !== editing && providers.some((provider) => provider.id === targetId))) {
@@ -885,6 +894,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 				api: cApi,
 				apiKey: cKey,
 				models: cModels,
+				headers: headerEntriesToConfig(cHeaders),
 			});
 			const j = await saveCustom(next);
 			if (j.success) setEditing(null);
@@ -1110,6 +1120,47 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 													options={customApiOptions([cApi, ...p.apis]).map((api) => ({ value: api, label: api }))}
 													onChange={setCApi}
 												/>
+											</Field>
+											<Field label={t.customHeaders}>
+												<div className="flex flex-col gap-2">
+													{cHeaders.map((entry, index) => (
+														<div key={index} className="flex items-center gap-2">
+															<input
+																value={entry.name}
+																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { ...item, name: e.target.value } : item)))}
+																className={fieldCls}
+																placeholder="User-Agent"
+																style={{ flex: "0 0 38%" }}
+															/>
+															<input
+																value={entry.value}
+																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { ...item, value: e.target.value } : item)))}
+																className={fieldCls}
+																placeholder="opencode/1.0.0"
+															/>
+															<button
+																type="button"
+																className="btn-outline flex-none"
+																style={{ height: 32, padding: "0 10px" }}
+																aria-label={`${t.delete} ${entry.name || index + 1}`}
+																onClick={() => setCHeaders((current) => current.filter((_, at) => at !== index))}
+															>
+																×
+															</button>
+														</div>
+													))}
+													<div className="flex items-center gap-2">
+														<button
+															type="button"
+															className="btn-outline"
+															style={{ height: 30, padding: "0 10px", fontSize: 12 }}
+															onClick={() => setCHeaders((current) => [...current, { name: "", value: "" }])}
+														>
+															{t.customHeaderAdd}
+														</button>
+													</div>
+													<div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.customHeadersHint}</div>
+												</div>
 											</Field>
 											<ModelCatalog
 												models={cModels}
