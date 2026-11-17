@@ -106,6 +106,7 @@ export function ChatInput({
 	onUploadProgress,
 	uploadFailure,
 	pendingUploadCount = 0,
+	onPreviewFile,
 	pendingSend = false,
 	onSendPendingChange,
 	attachmentLayout = "overlay",
@@ -165,6 +166,8 @@ export function ChatInput({
 	onUploadProgress?: (delta: 1 | -1) => void;
 	uploadFailure?: string;
 	pendingUploadCount?: number;
+	/** 点上传附件卡：用页内文件查看器预览（文件可能还没发出去） */
+	onPreviewFile?: (path: string) => void;
 	pendingSend?: boolean;
 	onSendPendingChange?: (pending: boolean) => void;
 	/** Hero 在输入卡上方预留空间；聊天中仍让附件悬浮、不占布局高度 */
@@ -862,6 +865,7 @@ export function ChatInput({
 					disabled={sendBusy}
 					onRemove={(index) => changeDraft((previous) => ({ ...previous, uploads: previous.uploads.filter((_, at) => at !== index) }))}
 					onClear={() => changeDraft((previous) => ({ ...previous, uploads: [] }))}
+					onOpen={onPreviewFile ? (file) => onPreviewFile(file.path) : undefined}
 				/>
 			)}
 

@@ -273,6 +273,21 @@ export function FileViewer({
 				alive = false;
 			};
 		}
+		// 输入框里上传的附件不在工作区内：走只读的 uploads 预览接口
+		if (tab.kind === "upload") {
+			void (async () => {
+				try {
+					const data = await requestJson<FilePreview>(`/api/files?upload=1&path=${encodeURIComponent(tab.path)}`, controller.signal);
+					done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice: null });
+				} catch (error) {
+					if (!alive) return;
+					done({ error: error instanceof Error ? error.message : t.viewerLoadFailed });
+				}
+			})();
+			return () => {
+				alive = false;
+			};
+		}
 		if (!cwd) {
 			setLoaded(null);
 			return;
@@ -740,7 +755,7 @@ export function FileViewer({
 									</button>
 								</>
 							)}
-							{activeTab.staticContent === undefined && (
+							{activeTab.staticContent === undefined && activeTab.kind !== "upload" && (
 								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.panelRefresh} aria-label={t.panelRefresh} onClick={() => {
 									refreshCachedFile(cwd, activeTab.path);
 									setRefreshKey((key) => key + 1);
@@ -753,7 +768,7 @@ export function FileViewer({
 									disabled={!currentLoaded || currentLoaded.binary || currentLoaded.encodingUnsupported || (currentLoaded.content === null && currentLoaded.patch === null)} onClick={() => void copyCurrent()}>
 									<IconCopyOutline16 size={13} />
 								</button>
-								{activeTab.staticContent === undefined && activeTab.sourcePath === undefined && <a className="icon-btn" style={{ width: 24, height: 24 }} download
+								{activeTab.staticContent === undefined && activeTab.sourcePath === undefined && activeTab.kind !== "upload" && <a className="icon-btn" style={{ width: 24, height: 24 }} download
 									title={t.viewerDownloadCurrent} aria-label={t.viewerDownloadCurrent}
 									href={`/api/files/download?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(activeTab.path)}`}>
 									<IconDownloadOutline16 size={13} />

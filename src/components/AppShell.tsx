@@ -1064,6 +1064,8 @@ export function AppShell() {
 	const openFileNode = useCallback((node: TreeNode) => viewer.open(node.path, { from: node.from, lazy: node.lazy, kind: node.kind }), [viewer]);
 	// 正文行内代码里的路径走页内查看器；工具行上那个按钮仍然是本机编辑器（openInEditor）
 	const openPathInViewer = useCallback((filePath: string) => viewer.open(filePath), [viewer.open]);
+	/** 输入框里还没发出去的附件：不在工作区内，走 upload 预览分支 */
+	const previewUploadInViewer = useCallback((filePath: string) => viewer.open(filePath, { kind: "upload" }), [viewer.open]);
 	// 打开面板时落在最新轮:useGrowth 活在 AppShell 里、不随抽屉卸载,state 不会自己回到最新,
 	// 所以每次进入项目入口(或换了工作区)都显式选一次最新轮，并重置目录展开。
 	// 新轮次出现时不再自动跳——用户打开面板后停在哪一轮就是哪一轮。
@@ -1294,6 +1296,7 @@ export function AppShell() {
 								pendingUploadCount={uploadCounts[heroDraftKey] ?? 0}
 								pendingSend={pendingSends[heroDraftKey] ?? false}
 								onSendPendingChange={(pending) => trackSend(heroDraftKey, pending)}
+								onPreviewFile={previewUploadInViewer}
 							commands={slashCommands}
 							onCommand={runSlashCommand}
 							cwd={heroCwd}
@@ -1419,6 +1422,7 @@ export function AppShell() {
 												pendingUploadCount={uploadCounts[draftKey] ?? 0}
 												pendingSend={pendingSends[draftKey] ?? false}
 												onSendPendingChange={sessionSendPending}
+												onPreviewFile={previewUploadInViewer}
 											isStreaming={isStreaming}
 											contextPercent={snapshot?.contextUsage?.percent ?? null}
 											contextTokens={snapshot?.contextUsage?.tokens ?? null}
@@ -1577,6 +1581,7 @@ function Hero({
 	pendingUploadCount,
 	pendingSend,
 	onSendPendingChange,
+	onPreviewFile,
 	commands,
 	onCommand,
 	cwd,
@@ -1607,6 +1612,8 @@ function Hero({
 	pendingUploadCount: number;
 	pendingSend: boolean;
 	onSendPendingChange: (pending: boolean) => void;
+	/** 点输入框里的附件卡：用页内文件查看器预览 */
+	onPreviewFile?: (path: string) => void;
 	commands: Array<{ name: string; desc: string; kind: "builtin" | "skill" | "template" | "extension"; argumentHint?: string }>;
 	onCommand: (name: string, args: string) => void;
 	cwd: string;
@@ -1786,6 +1793,7 @@ function Hero({
 					pendingUploadCount={pendingUploadCount}
 					pendingSend={pendingSend}
 					onSendPendingChange={onSendPendingChange}
+					onPreviewFile={onPreviewFile}
 					// Hero 的附件占位，避免 @ 引用和图片盖住上方工作区选择器
 					attachmentLayout="flow"
 					// 新会话也能 @ 引用：候选来自上面选中的工作区

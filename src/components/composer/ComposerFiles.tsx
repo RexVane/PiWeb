@@ -90,11 +90,14 @@ export function ComposerFiles({
 	disabled,
 	onRemove,
 	onClear,
+	onOpen,
 }: {
 	files: UploadFileItem[];
 	disabled?: boolean;
 	onRemove: (index: number) => void;
 	onClear?: () => void;
+	/** 点文件卡：用页内文件查看器预览（还没发出去的附件也能看） */
+	onOpen?: (file: UploadFileItem) => void;
 }) {
 	const { t } = useI18n();
 	const collapsible = files.length > COLLAPSE_AT;
@@ -126,9 +129,19 @@ export function ComposerFiles({
 		return (
 			<div
 				key={`${f.path}:${i}`}
-				className="pw-ref-chip group/ref pw-file-card pointer-events-auto"
-				title={f.path}
+				className={`pw-ref-chip group/ref pw-file-card pointer-events-auto${onOpen ? " cursor-pointer" : ""}`}
+				title={onOpen ? `${f.path}\n${t.previewInViewer}` : f.path}
 				data-lifted={up || undefined}
+				role={onOpen ? "button" : undefined}
+				tabIndex={onOpen ? 0 : undefined}
+				onClick={() => onOpen?.(f)}
+				onKeyDown={(e) => {
+					if (!onOpen) return;
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						onOpen(f);
+					}
+				}}
 				style={
 					pose
 						? {

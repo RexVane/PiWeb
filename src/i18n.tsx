@@ -440,6 +440,7 @@ const zh = {
 	uploadTooLarge: "单个文件不能超过 100 MB",
 	uploadCountLimit: "一次最多添加 16 个文件",
 	attachmentLine: "附件：{path}（{size}）",
+	previewInViewer: "在文件查看器中打开",
 
 	slashCatalog: "命令与技能",
 	skillType: "技能",
@@ -1459,6 +1460,7 @@ const en: Dict = {
 	uploadTooLarge: "Each file must be 100 MB or smaller",
 	uploadCountLimit: "You can attach up to 16 files",
 	attachmentLine: "Attachment: {path} ({size})",
+	previewInViewer: "Open in file viewer",
 
 	slashCatalog: "Commands and skills",
 	skillType: "Skill",

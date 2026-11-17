@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveUpload, saveUploadStream, sweepUploads } from "../src/lib/files-service";
-import { POST } from "../src/app/api/files/route";
+import { GET, POST } from "../src/app/api/files/route";
 import { recycleFixture } from "./lib/sandbox/fixtures";
 
 /** 拖拽上传的限额与安全（dsh 语义：原样字节保存 + 路径引用） */
@@ -164,4 +164,43 @@ describe("files-service saveUpload", () => {
 		const r = await saveUpload("cap.bin", b64(100 * 1024 * 1024));
 		expect(r.size).toBe(100 * 1024 * 1024);
 	}, 30_000);
+});
+
+/** 输入框附件卡的页内预览：只读 web-uploads，工作区外的路径一律拒绝 */
+describe("files-service readUploadFile", () => {
+	let tempDir = "";
+	let previousAgentDir: string | undefined;
+
+	beforeEach(async () => {
+		previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-upload-read-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+	});
+
+	afterEach(async () => {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		await recycleFixture(tempDir);
+	});
+
+	it("returns a text preview for a saved upload", async () => {
+		const uploads = path.join(tempDir, "web-uploads");
+		await fs.mkdir(uploads, { recursive: true });
+		const file = path.join(uploads, "notes.md");
+		await fs.writeFile(file, "# 笔记\n");
+		const response = await GET(new Request(`http://localhost/api/files?upload=1&path=${encodeURIComponent(file)}`));
+		expect(response.status).toBe(200);
+		const payload = await response.json();
+		expect(payload.data).toMatchObject({ path: file, content: "# 笔记\n", binary: false, truncated: false });
+	});
+
+	it("refuses paths outside web-uploads", async () => {
+		const uploads = path.join(tempDir, "web-uploads");
+		await fs.mkdir(uploads, { recursive: true });
+		const outside = path.join(tempDir, "secret.txt");
+		await fs.writeFile(outside, "secret");
+		const response = await GET(new Request(`http://localhost/api/files?upload=1&path=${encodeURIComponent(outside)}`));
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ success: false });
+	});
 });

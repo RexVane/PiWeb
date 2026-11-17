@@ -16,7 +16,8 @@ export interface ViewerGitSource {
 export interface ViewerOpenOptions {
 	from?: string;
 	lazy?: boolean;
-	kind?: "dir" | "file";
+	/** upload = 输入框里上传、还没发出去的附件（不在工作区内，走只读的 uploads 接口） */
+	kind?: "dir" | "file" | "upload";
 	git?: ViewerGitSource;
 }
 
@@ -27,7 +28,7 @@ export interface ViewerTab {
 	/** 快照之外的文件(node_modules 等):只能看磁盘上的当前内容 */
 	lazy?: boolean;
 	/** dir = 打开的是文件夹:正文区列目录(可逐层进入),不是文件内容 */
-	kind?: "dir" | "file";
+	kind?: "dir" | "file" | "upload";
 	/** 内容由调用方直接提供(如技能文档):不取 diff、不读磁盘 */
 	staticContent?: string;
 	/** 最初打开的已发现来源：后续相对链接沿用它的读取边界。 */
@@ -85,7 +86,7 @@ function restoreState(key: string | null): ViewerState {
 				path: item.path,
 				...(typeof item.from === "string" ? { from: item.from } : {}),
 				...(typeof item.lazy === "boolean" ? { lazy: item.lazy } : {}),
-				...(item.kind === "file" || item.kind === "dir" ? { kind: item.kind } : {}),
+				...(item.kind === "file" || item.kind === "dir" || item.kind === "upload" ? { kind: item.kind } : {}),
 				...(typeof item.sourcePath === "string" ? { sourcePath: item.sourcePath, lazy: true } : {}),
 				...(git ? { git } : {}),
 			});
