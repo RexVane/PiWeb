@@ -28,6 +28,8 @@ const SOURCE_LABEL: Record<ImportSource, string> = {
 	workbuddy: "WorkBuddy",
 	antigravity: "Antigravity",
 	"antigravity-cli": "Antigravity CLI",
+	qwen: "Qwen Code",
+	cursor: "Cursor",
 };
 
 const PROVENANCE_TYPE = "piweb-import";

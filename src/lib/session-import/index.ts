@@ -20,6 +20,8 @@ import { opencodeSource } from "./opencode";
 import { kimiSource } from "./kimi";
 import { workbuddySource } from "./workbuddy";
 import { antigravitySource, antigravityCliSource } from "./antigravity";
+import { qwenSource } from "./qwen";
+import { cursorSource } from "./cursor";
 import { importedKey, listImportedSessions, writeImportedSession } from "./writer";
 import { getArchivedSessions, forgetSession } from "../workspace-store";
 import { readHead } from "./files";
@@ -37,6 +39,8 @@ export const IMPORT_SOURCE_MODULES: Record<ImportSource, ImportSourceModule> = {
 	workbuddy: workbuddySource,
 	antigravity: antigravitySource,
 	"antigravity-cli": antigravityCliSource,
+	qwen: qwenSource,
+	cursor: cursorSource,
 };
 
 /** 单来源扫描超时：库被别的进程锁死时不让整个面板卡住 */

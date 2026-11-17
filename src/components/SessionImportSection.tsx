@@ -90,7 +90,7 @@ export async function readImportResponse(response: Response, onProgress: (done: 
 }
 
 /** 来源中文名/英文名放在 i18n 里，这里只保留稳定的顺序与徽标色 */
-const SOURCE_ORDER = ["claude", "codex", "grok", "zcode", "dsh", "opencode", "kimi", "workbuddy", "antigravity", "antigravity-cli"] as const;
+const SOURCE_ORDER = ["claude", "codex", "grok", "zcode", "dsh", "opencode", "kimi", "workbuddy", "antigravity", "antigravity-cli", "qwen", "cursor"] as const;
 
 function dayOf(ms?: number): string {
 	if (!ms) return "";
@@ -358,6 +358,8 @@ export function SessionImportSection() {
 			workbuddy: t.importSourceWorkbuddy,
 			antigravity: t.importSourceAntigravity,
 			"antigravity-cli": t.importSourceAntigravityCli,
+			qwen: t.importSourceQwen,
+			cursor: t.importSourceCursor,
 		};
 		return labels[source] ?? source;
 	};

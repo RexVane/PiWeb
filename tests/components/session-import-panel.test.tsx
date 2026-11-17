@@ -349,14 +349,14 @@ describe("导入会话面板", () => {
 		expect(screen.queryByText("清空选择")).toBeNull();
 	});
 
-	it("下拉列出全部来源入口及十个来源和条数，空来源可查看，再扫描不重置选择", async () => {
+	it("下拉列出全部来源入口及十二个来源和条数，空来源可查看，再扫描不重置选择", async () => {
 		setup();
 		await openSources();
-		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(11);
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(13);
 		expect(screen.getByTestId("import-source-zcode").textContent).toContain("2 条会话");
 		expect(screen.getByTestId("import-source-codex").textContent).toContain("0 条会话");
 		// 新增来源即使没有会话也要有入口
-		for (const source of ["kimi", "workbuddy", "antigravity", "antigravity-cli"]) {
+		for (const source of ["kimi", "workbuddy", "antigravity", "antigravity-cli", "qwen", "cursor"]) {
 			expect(screen.getByTestId(`import-source-${source}`).textContent).toContain("0 条会话");
 		}
 		expect(screen.getByTestId("import-source-claude").getAttribute("aria-selected")).toBe("true");
@@ -374,7 +374,7 @@ describe("导入会话面板", () => {
 	it("没有会话时仍可查看全部支持来源", async () => {
 		setup({ sessions: [] });
 		await openSources();
-		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(11);
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(13);
 		fireEvent.click(screen.getByTestId("import-source-opencode"));
 		expect(screen.getByTestId("import-group-opencode").textContent).toContain("没有找到可导入的本地会话");
 	});

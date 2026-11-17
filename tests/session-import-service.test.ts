@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const roots = { claude: "", codex: "", grok: "", dsh: "", zcode: "", opencode: "", kimi: "", workbuddy: "", antigravity: "", antigravityCli: "" };
+const roots = { claude: "", codex: "", grok: "", dsh: "", zcode: "", opencode: "", kimi: "", workbuddy: "", antigravity: "", antigravityCli: "", qwenProjects: "", qwenTmp: "", cursor: "" };
 
 vi.mock("../src/lib/session-import/paths", () => ({
 	claudeRoot: () => roots.claude,
@@ -23,6 +23,9 @@ vi.mock("../src/lib/session-import/paths", () => ({
 	workbuddyRoots: () => [roots.workbuddy],
 	antigravityRoot: () => roots.antigravity,
 	antigravityCliRoot: () => roots.antigravityCli,
+	qwenProjectsRoot: () => roots.qwenProjects,
+	qwenLegacyTmpRoot: () => roots.qwenTmp,
+	cursorChatsRoot: () => roots.cursor,
 }));
 
 import { importSessions, scanAllSources } from "../src/lib/session-import";
@@ -53,6 +56,9 @@ beforeEach(async () => {
 	roots.workbuddy = path.join(root, "workbuddy");
 	roots.antigravity = path.join(root, "antigravity");
 	roots.antigravityCli = path.join(root, "antigravity-cli");
+	roots.qwenProjects = path.join(root, "qwen-projects");
+	roots.qwenTmp = path.join(root, "qwen-tmp");
+	roots.cursor = path.join(root, "cursor-chats");
 	await fs.mkdir(agentDir, { recursive: true });
 	await fs.mkdir(project, { recursive: true });
 	await fs.mkdir(otherWorkspace, { recursive: true });

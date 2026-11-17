@@ -64,3 +64,23 @@ export function antigravityRoot(): string {
 export function antigravityCliRoot(): string {
 	return path.join(os.homedir(), ".gemini", "antigravity-cli");
 }
+
+/** Qwen Code：$QWEN_HOME 或 ~/.qwen（新布局 projects/<编码项目>/chats/*.jsonl，老布局 tmp/<项目>/chats/*.json） */
+export function qwenHome(): string {
+	return process.env.QWEN_HOME || path.join(os.homedir(), ".qwen");
+}
+
+/** Qwen Code 新布局：~/.qwen/projects/<编码项目>/chats/ */
+export function qwenProjectsRoot(): string {
+	return path.join(qwenHome(), "projects");
+}
+
+/** Qwen Code 老布局（Gemini CLI fork 早期）：~/.qwen/tmp/<项目>/chats/ */
+export function qwenLegacyTmpRoot(): string {
+	return path.join(qwenHome(), "tmp");
+}
+
+/** Cursor Agent CLI：~/.cursor/chats/<工作区 md5>/<会话 uuid>/store.db */
+export function cursorChatsRoot(): string {
+	return path.join(os.homedir(), ".cursor", "chats");
+}

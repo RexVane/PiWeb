@@ -23,6 +23,9 @@ const roots = {
 	workbuddy: [] as string[],
 	antigravity: "",
 	antigravityCli: "",
+	qwenProjects: "",
+	qwenTmp: "",
+	cursor: "",
 };
 
 vi.mock("../src/lib/session-import/paths", () => ({
@@ -37,6 +40,9 @@ vi.mock("../src/lib/session-import/paths", () => ({
 	workbuddyRoots: () => roots.workbuddy,
 	antigravityRoot: () => roots.antigravity,
 	antigravityCliRoot: () => roots.antigravityCli,
+	qwenProjectsRoot: () => roots.qwenProjects,
+	qwenLegacyTmpRoot: () => roots.qwenTmp,
+	cursorChatsRoot: () => roots.cursor,
 }));
 
 import { claudeSource } from "../src/lib/session-import/claude";
@@ -46,6 +52,8 @@ import { dshSource, decodeCwdDir } from "../src/lib/session-import/dsh";
 import { kimiSource } from "../src/lib/session-import/kimi";
 import { workbuddySource } from "../src/lib/session-import/workbuddy";
 import { antigravitySource, antigravityCliSource } from "../src/lib/session-import/antigravity";
+import { qwenSource } from "../src/lib/session-import/qwen";
+import { cursorSource } from "../src/lib/session-import/cursor";
 import { createOcFamilySource } from "../src/lib/session-import/oc-family";
 import { decodeZstdFrames, readZstdHead } from "../src/lib/session-import/dsh-zstd";
 import type { ImportedEntry, ImportedMessage } from "../src/lib/session-import/types";
@@ -75,6 +83,9 @@ beforeEach(async () => {
 	roots.workbuddy = [path.join(root, "workbuddy")];
 	roots.antigravity = path.join(root, "antigravity");
 	roots.antigravityCli = path.join(root, "antigravity-cli");
+	roots.qwenProjects = path.join(root, "qwen", "projects");
+	roots.qwenTmp = path.join(root, "qwen", "tmp");
+	roots.cursor = path.join(root, "cursor-chats");
 });
 
 afterEach(async () => {
@@ -803,5 +814,102 @@ describe("Antigravity / Antigravity CLI", () => {
 		expect(summaries.map((summary) => summary.source)).toEqual(["antigravity-cli"]);
 		const imported = await antigravityCliSource.read(summaries[0]);
 		expect(messagesOf(imported!.entries).map((message) => message.role)).toEqual(["user", "assistant"]);
+	});
+});
+
+describe("Qwen Code", () => {
+	it("新布局 JSONL：用户/模型消息、思考、functionCall 与 functionResponse 还原成工具结果", async () => {
+		const project = path.join(root, "qwenproj");
+		await fs.mkdir(project, { recursive: true });
+		const encoded = "D--qwenproj";
+		const file = path.join(roots.qwenProjects, encoded, "chats", "s1.jsonl");
+		await write(file, [
+			{ sessionId: "s1", startTime: new Date(TS).toISOString(), lastUpdated: new Date(TS + 10_000).toISOString(), cwd: project },
+			{ type: "user", sessionId: "s1", timestamp: TS, message: { role: "user", parts: [{ text: "看一下这个函数" }] } },
+			{ type: "assistant", sessionId: "s1", timestamp: TS + 1, message: { role: "model", parts: [{ text: "先想一下", thought: true }, { text: "我读一下" }, { functionCall: { name: "read_file", args: { path: "a.ts" } } }] } },
+			{ type: "user", sessionId: "s1", timestamp: TS + 2, message: { role: "user", parts: [{ functionResponse: { name: "read_file", response: { output: "文件内容" } } }] } },
+			{ type: "assistant", sessionId: "s1", timestamp: TS + 3, message: { role: "model", parts: [{ text: "好了" }] } },
+		].map((line) => JSON.stringify(line)).join("\n"));
+
+		const summaries = await qwenSource.scan({ limit: 0 });
+		expect(summaries).toHaveLength(1);
+		expect(summaries[0]).toMatchObject({ source: "qwen", externalId: "s1", projectPath: project, title: "看一下这个函数" });
+
+		const imported = await qwenSource.read(summaries[0]);
+		const messages = messagesOf(imported!.entries);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		const assistant = messages[1];
+		if (assistant.role !== "assistant") throw new Error("expected assistant");
+		expect(assistant.content.map((block) => block.type)).toEqual(["thinking", "text", "toolCall"]);
+		expect(assistant.stopReason).toBe("toolUse");
+		const result = messages[2];
+		if (result.role !== "toolResult") throw new Error("expected tool result");
+		expect(result.toolCallId).toBe("qwen-3-2");
+		expect(result.content).toEqual([{ type: "text", text: "文件内容" }]);
+	});
+
+	it("老布局（Gemini CLI fork）的整包 JSON 也能读", async () => {
+		const project = path.join(root, "qwenold");
+		await fs.mkdir(project, { recursive: true });
+		const file = path.join(roots.qwenTmp, "deadbeef", "chats", "session-1.json");
+		await write(file, JSON.stringify({ sessionId: "session-1", cwd: project, startTime: new Date(TS).toISOString(), lastUpdated: new Date(TS + 1000).toISOString(), messages: [
+			{ type: "user", timestamp: new Date(TS).toISOString(), content: [{ text: "看看这个" }] },
+			{ type: "gemini", timestamp: new Date(TS + 500).toISOString(), content: [{ text: "好的" }] },
+		] }));
+		const summaries = await qwenSource.scan({ limit: 0 });
+		expect(summaries).toHaveLength(1);
+		expect(summaries[0].externalId).toBe("session-1");
+		const imported = await qwenSource.read(summaries[0]);
+		const messages = messagesOf(imported!.entries);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		expect(messages[0].content).toEqual([{ type: "text", text: "看看这个" }]);
+	});
+});
+
+describe("Cursor（Agent CLI）", () => {
+	async function buildStore(dir: string, blobs: Array<Record<string, unknown> | Buffer>, meta: Record<string, unknown>) {
+		const { DatabaseSync } = await import("node:sqlite");
+		await fs.mkdir(dir, { recursive: true });
+		const db = new DatabaseSync(path.join(dir, "store.db"));
+		db.exec("CREATE TABLE blobs (id TEXT, data BLOB); CREATE TABLE meta (key TEXT, value BLOB)");
+		const insert = db.prepare("INSERT INTO blobs (id, data) VALUES (?, ?)");
+		blobs.forEach((blob, index) => {
+			insert.run(`blob-${index}`, Buffer.isBuffer(blob) ? blob : JSON.stringify(blob));
+		});
+		db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").run("0", JSON.stringify(meta));
+		db.close();
+	}
+
+	it("从 store.db 的 JSON blob 还原对话，跳过 protobuf 回合图", async () => {
+		const project = path.join(root, "cursorproj");
+		await fs.mkdir(project, { recursive: true });
+		const sessionDir = path.join(roots.cursor, "0123456789abcdef0123456789abcdef", "3f0e1d2c-1111-4222-8333-444455556666");
+		await buildStore(sessionDir, [
+			{ role: "user", content: "<user_query>看一下这个函数</user_query>", createdAt: TS },
+			{ role: "assistant", content: [{ type: "text", text: "我读一下" }, { type: "tool-call", toolCallId: "call1", toolName: "Read", args: { path: "a.ts" } }], createdAt: TS + 1, providerOptions: { cursor: { modelName: "composer-2.5" } } },
+			{ role: "tool", content: [{ type: "tool-result", toolCallId: "call1", toolName: "Read", result: { type: "text", text: "文件内容" } }], createdAt: TS + 2 },
+			Buffer.from([0x08, 0x96, 0x01, 0x12, 0x04, 0xde, 0xad, 0xbe, 0xef]), // protobuf 回合图：跳过
+			{ role: "assistant", content: [{ type: "text", text: "好了" }], createdAt: TS + 3 },
+		], { workspacePath: project, createdAt: TS, lastUsedModel: "composer-2.5" });
+		await write(path.join(sessionDir, "meta.json"), JSON.stringify({ schemaVersion: 1, title: "整理函数", createdAtMs: TS, updatedAtMs: TS + 10_000, hasConversation: true }));
+
+		const summaries = await cursorSource.scan({ limit: 0 });
+		expect(summaries).toHaveLength(1);
+		expect(summaries[0]).toMatchObject({ source: "cursor", externalId: "3f0e1d2c-1111-4222-8333-444455556666", title: "整理函数", projectPath: project });
+
+		const imported = await cursorSource.read(summaries[0]);
+		const messages = messagesOf(imported!.entries);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+		const user = messages[0];
+		if (user.role !== "user") throw new Error("expected user");
+		expect(user.content).toEqual([{ type: "text", text: "看一下这个函数" }]);
+		const assistant = messages[1];
+		if (assistant.role !== "assistant") throw new Error("expected assistant");
+		expect(assistant.content[1]).toMatchObject({ type: "toolCall", id: "call1", name: "Read" });
+		const result = messages[2];
+		if (result.role !== "toolResult") throw new Error("expected tool result");
+		expect(result.toolCallId).toBe("call1");
+		expect(result.content).toEqual([{ type: "text", text: "文件内容" }]);
+		expect(imported!.summary.model).toBe("composer-2.5");
 	});
 });
