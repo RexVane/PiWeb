@@ -21,10 +21,12 @@ import { createContext, memo, useContext, useLayoutEffect, useMemo, useRef, useS
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import type { PluggableList } from "unified";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
 import { PreviewImage } from "@/components/PreviewImage";
 import { useMarkdownActions } from "@/components/chat/markdown-actions";
 import { looksLikeFilePath, relativeMarkdownPath } from "@/lib/chat/file-path";
+import { createStreamFadeTracker, rehypeStreamFade, type StreamFadeTracker } from "@/lib/chat/stream-fade";
 import { IconCheckOutline14, IconChevronDown14, IconChevronUp14, IconCopyOutline16, IconWrapTextOutline14 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
@@ -298,11 +300,18 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
 	return <code className={className}>{children}</code>;
 }
 
-const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
+const HIGHLIGHT_PLUGIN: [typeof rehypeHighlight, { detect: boolean; ignoreMissing: boolean }] = [rehypeHighlight, { detect: false, ignoreMissing: true }];
+
+/** fade：流式尾巴传入，刚到达的文字带淡入；历史消息和已稳定的块不传。 */
+const MarkdownContent = memo(function MarkdownContent({ text, fade }: { text: string; fade?: StreamFadeTracker }) {
+	const rehypePlugins = useMemo<PluggableList>(
+		() => (fade ? [HIGHLIGHT_PLUGIN, [rehypeStreamFade, { tracker: fade }]] : [HIGHLIGHT_PLUGIN]),
+		[fade],
+	);
 	return (
 		<ReactMarkdown
 			remarkPlugins={[remarkGfm]}
-			rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+			rehypePlugins={rehypePlugins}
 			components={{
 				a: ({ node, ...props }) => <MarkdownLink node={node} {...props} />,
 				img: ({ src, alt, title }) => <SafeImage src={src} alt={alt} title={title} />,
@@ -506,13 +515,16 @@ interface StreamView extends StreamingSplit {
  * 脚注、引用式链接这类跨块语法也就对了）。
  *
  * 文本到达即整段显示，不做逐帧平滑：模型吐字的速度由上游与网络决定，本地再加一层追赶节奏
- * 只会让显示落后于实际到达的内容。切分器仍然保留——它让「已稳定的完整块」按 key 记忆化，
+ * 只会让显示落后于实际到达的内容。尾巴里刚到的文字带一个短淡入（纯视觉，见 stream-fade）。切分器仍然保留——它让「已稳定的完整块」按 key 记忆化，
  * 每次新增只重解析变化的那一块，而不是整篇重扫。
  */
 export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ text, live = true }: { text: string; live?: boolean }) {
 	const scroll = useContext(ChatScrollContext);
 	const splitterRef = useRef<{ update: (text: string) => StreamingSplit } | null>(null);
 	if (!splitterRef.current) splitterRef.current = createStreamingSplitter();
+	const fadeRef = useRef<StreamFadeTracker | null>(null);
+	if (!fadeRef.current) fadeRef.current = createStreamFadeTracker();
+	const fade = fadeRef.current;
 	// 在渲染阶段直接算出当前视图：旧实现先以旧 view 提交一帧、再由 effect 更新，
 	// 每个 token 批次都多一次整块 reconciliation，而且流式正文会慢一帧。
 	// 切分器对同一前缀幂等（重复调用只会检查没有新增的行），所以 useMemo 重算也安全。
@@ -540,14 +552,14 @@ export const StreamingMarkdownBlock = memo(function StreamingMarkdownBlock({ tex
 		const { before, lang, code } = splitOpenFence(tail);
 		tailNode = (
 			<>
-				{before.trim() ? <MarkdownContent text={before} /> : null}
+				{before.trim() ? <MarkdownContent text={before} fade={fade} /> : null}
 				<MarkdownCodeBlock codeText={code} lang={lang ? lang.toLowerCase() : undefined} collapsible={false}>
 					<pre><code className={lang ? `hljs language-${lang}` : undefined}>{code}</code></pre>
 				</MarkdownCodeBlock>
 			</>
 		);
 	} else {
-		tailNode = <MarkdownContent text={tail} />;
+		tailNode = <MarkdownContent text={tail} fade={fade} />;
 	}
 
 	return (

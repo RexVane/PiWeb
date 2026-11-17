@@ -7,7 +7,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * AppShell：三栏网格（对齐 dsh ui-layout 几何）+ 拖拽调宽 + 侧栏窄条 +
  * 头部（对话/轨迹标签 + Session log）+ Hero 新会话页 + 设置弹窗。
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties } from "react";
 import shellStyles from "./AppShell.module.css";
 import { PiMark } from "@/components/PiMark";
 import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
@@ -92,11 +92,27 @@ const RIGHT_DEFAULT = 360;
 /** 稳定的空队列 / 思考档位兜底：流式期间不能每帧给输入区换新数组 */
 const EMPTY_SESSION_QUEUE: { steering: string[]; followUp: string[] } = { steering: [], followUp: [] };
 const DEFAULT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+/** 草稿仓库：AppShell 持有数据，但只有订阅了对应 key 的输入框会随草稿变化渲染。 */
+type DraftStore = {
+	get: (key: string) => ChatDraft;
+	subscribe: (listener: () => void) => () => void;
+};
+const emptyDraftSnapshot = () => EMPTY_CHAT_DRAFT;
+
 /**
  * 输入区渲染边界：AppShell 仍会随流式消息每帧渲染，但 ChatInput 只在草稿、
  * 模型、附件、流式状态等真正相关的 props 变化时渲染。所有回调必须保持稳定引用。
+ * 草稿由这里订阅而不是作为 AppShell 的 state：否则每个字符都会让整个外壳和
+ * ChatWindow 重新渲染，输入跟不上手。
  */
-const MemoChatInput = memo(ChatInput);
+const DraftChatInput = memo(function DraftChatInput({
+	draftStore,
+	draftKey,
+	...props
+}: Omit<ComponentProps<typeof ChatInput>, "draft" | "initialDraft"> & { draftStore: DraftStore; draftKey: string }) {
+	const draft = useSyncExternalStore(draftStore.subscribe, () => draftStore.get(draftKey), emptyDraftSnapshot);
+	return <ChatInput {...props} draft={draft} />;
+});
 function persist(key: string, value: number) {
 	safeLocalStorage.setItem(key, String(value));
 }
@@ -188,8 +204,25 @@ export function AppShell() {
 	const [heroDraftKey, setHeroDraftKey] = useState("__hero__:0");
 	const heroStorage = useRef({ key: "__hero__:0", cwd: "" });
 	const draftStorageWarning = useRef(false);
-	const [draftVersion, setDraftVersion] = useState(0);
-	void draftVersion;
+	const draftListeners = useRef(new Set<() => void>());
+	const draftPersistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const persistDraftsRef = useRef<() => void>(() => {});
+	const draftStore = useMemo<DraftStore>(() => ({
+		get: (key) => composerDrafts.current.get(key) ?? EMPTY_CHAT_DRAFT,
+		subscribe: (listener) => {
+			draftListeners.current.add(listener);
+			return () => { draftListeners.current.delete(listener); };
+		},
+	}), []);
+	/** 草稿内容变了：通知订阅的输入框，并在停手 300ms 后落盘。不触发 AppShell 渲染。 */
+	const draftsChanged = useCallback(() => {
+		for (const listener of [...draftListeners.current]) listener();
+		if (draftPersistTimer.current) clearTimeout(draftPersistTimer.current);
+		draftPersistTimer.current = setTimeout(() => {
+			draftPersistTimer.current = null;
+			persistDraftsRef.current();
+		}, 300);
+	}, []);
 	const sessionDraftPath = currentPath ? canonicalDraftPath(currentPath) : null;
 	const draftKey = sessionDraftPath ? sessionDraftKeys.current.get(sessionDraftPath) ?? sessionDraftPath : heroDraftKey;
 	const [uploadCounts, setUploadCounts] = useState<Record<string, number>>({});
@@ -199,8 +232,8 @@ export function AppShell() {
 		const previous = composerDrafts.current.get(key) ?? EMPTY_CHAT_DRAFT;
 		composerDrafts.current.delete(key);
 		composerDrafts.current.set(key, typeof update === "function" ? update(previous) : update);
-		setDraftVersion((version) => version + 1);
-	}, []);
+		draftsChanged();
+	}, [draftsChanged]);
 	useEffect(() => {
 		try {
 			const raw = sessionStorage.getItem("piweb.drafts") ?? "[]";
@@ -221,9 +254,9 @@ export function AppShell() {
 				if (typeof saved.heroCwd === "string") setHeroCwd(saved.heroCwd);
 				draftSequence.current = Number(saved.heroKey.split(":").pop()) || 0;
 			}
-			setDraftVersion((version) => version + 1);
+			draftsChanged();
 		} catch { /* drafts stay usable without storage */ }
-	}, []);
+	}, [draftsChanged]);
 	const persistDrafts = useCallback(() => {
 		try {
 			const aliases = new Map([...sessionDraftKeys.current].map(([session, key]) => [key, session]));
@@ -248,14 +281,12 @@ export function AppShell() {
 			if (!draftStorageWarning.current) { draftStorageWarning.current = true; setError(t.draftPersistFailed); }
 		}
 	}, [setError, t.draftPersistFailed]);
-	useEffect(() => {
-		const timer = setTimeout(persistDrafts, 300);
-		return () => clearTimeout(timer);
-	}, [draftVersion, persistDrafts]);
+	persistDraftsRef.current = persistDrafts;
 	useEffect(() => {
 		window.addEventListener("pagehide", persistDrafts);
 		return () => { window.removeEventListener("pagehide", persistDrafts); persistDrafts(); };
 	}, [persistDrafts]);
+	useEffect(() => () => { if (draftPersistTimer.current) clearTimeout(draftPersistTimer.current); }, []);
 	const trackUpload = useCallback((key: string, delta: 1 | -1) => {
 		if (delta === 1) setUploadFailures((current) => ({ ...current, [key]: "" }));
 		setUploadCounts((current) => ({ ...current, [key]: Math.max(0, (current[key] ?? 0) + delta) }));
@@ -791,11 +822,11 @@ export function AppShell() {
 			draftSequence.current += 1;
 			composerDrafts.current.set(nextKey, { ...EMPTY_CHAT_DRAFT, text: prefillText });
 			setHeroDraftKey(nextKey);
-			setDraftVersion((v) => v + 1);
+			draftsChanged();
 			setActiveView("chat");
 			setMobileSidebarOpen(false);
 		},
-		[heroCwd, knownCwds, closeSession],
+		[heroCwd, knownCwds, closeSession, draftsChanged],
 	);
 	const exportSessionFile = useCallback((path: string) => {
 		window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank");
@@ -1253,7 +1284,8 @@ export function AppShell() {
 							toolPreset={effectiveHeroToolPreset}
 							onToolPresetChange={handleHeroToolPresetChange}
 							permissionChanging={toolPresetChanging}
-								draft={composerDrafts.current.get(heroDraftKey) ?? EMPTY_CHAT_DRAFT}
+								draftStore={draftStore}
+								draftKey={heroDraftKey}
 								onDraftChange={saveHeroDraft}
 								onUploadError={(message) => failUpload(heroDraftKey, message)}
 								onClearUploadError={clearHeroUploadError}
@@ -1368,7 +1400,7 @@ export function AppShell() {
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
-										<MemoChatInput
+										<DraftChatInput
 											topSlot={askDialog ? <AskUserCard key={askDialog.id} dialog={askDialog} embedded onAnswer={(id, response) => void answerExtensionDialog(id, response)} /> : undefined}
 											toolPreset={state.toolPreset}
 											customActiveTools={snapshot?.customActiveTools}
@@ -1377,7 +1409,8 @@ export function AppShell() {
 											key={draftKey}
 											// 问题卡占着输入框上方：附件预览改成随文档流排在输入框里，免得浮层盖住卡片
 											attachmentLayout={askDialog ? "flow" : undefined}
-												draft={composerDrafts.current.get(draftKey) ?? EMPTY_CHAT_DRAFT}
+												draftStore={draftStore}
+												draftKey={draftKey}
 												onDraftChange={saveSessionDraft}
 												onUploadError={sessionUploadError}
 												onClearUploadError={clearSessionUploadError}
@@ -1534,7 +1567,8 @@ function Hero({
 	toolPreset,
 	onToolPresetChange,
 	permissionChanging,
-	draft,
+	draftStore,
+	draftKey,
 	onDraftChange,
 	onUploadError,
 	onClearUploadError,
@@ -1563,7 +1597,8 @@ function Hero({
 	toolPreset: ToolPreset;
 	onToolPresetChange: (preset: ToolPreset) => Promise<{ success: boolean; error?: string }>;
 	permissionChanging: boolean;
-	draft: ChatDraft;
+	draftStore: DraftStore;
+	draftKey: string;
 	onDraftChange: (update: ChatDraftUpdate) => void;
 	onUploadError: (message: string) => void;
 	onClearUploadError: () => void;
@@ -1737,11 +1772,12 @@ function Hero({
 				</div>
 
 				{/* 输入卡 */}
-				<ChatInput
+				<DraftChatInput
 					toolPreset={toolPreset}
 					onToolPresetChange={onToolPresetChange}
 					permissionChanging={permissionChanging}
-					draft={draft}
+					draftStore={draftStore}
+					draftKey={draftKey}
 					onDraftChange={onDraftChange}
 					onUploadError={onUploadError}
 					onClearUploadError={onClearUploadError}

@@ -26,6 +26,7 @@ import { ErrorToast } from "@/components/ErrorToast";
 import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
 import { ComposerFiles } from "@/components/composer/ComposerFiles";
 import { PermissionSelector, type PermissionChangeResult } from "@/components/composer/PermissionSelector";
+import { SmoothCaret } from "@/components/composer/SmoothCaret";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
@@ -425,18 +426,23 @@ export function ChatInput({
 	};
 
 	// 自动高度：上限 14 行（约 336px）；清空后恢复自然单行高度，避免被弹性容器拉伸后的 scrollHeight 自锁
-	const autoSize = () => {
+	// 每次量高度都要强制浏览器重排一次。按键时 onChange 和下面的 effect 会先后各调一次，
+	// 文字和宽度都没变就不必再量。
+	const sizedFor = useRef({ value: "", width: -1 });
+	const autoSize = (force = false) => {
 		const ta = taRef.current;
 		if (!ta) return;
+		if (!force && sizedFor.current.value === ta.value && sizedFor.current.width === ta.clientWidth) return;
 		if (!ta.value) {
 			ta.style.height = "";
-			return;
+		} else {
+			ta.style.height = "auto";
+			ta.style.height = `${Math.min(ta.scrollHeight, 336)}px`;
 		}
-		ta.style.height = "auto";
-		ta.style.height = `${Math.min(ta.scrollHeight, 336)}px`;
+		sizedFor.current = { value: ta.value, width: ta.clientWidth };
 	};
 	useEffect(() => {
-		const resize = () => autoSize();
+		const resize = () => autoSize(true);
 		window.addEventListener("resize", resize);
 		return () => window.removeEventListener("resize", resize);
 	}, []);
@@ -925,7 +931,8 @@ export function ChatInput({
 						</div>
 					</div>
 				)}
-				<div className="px-4 pt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+				{/* relative：滑行光标以这一层为定位基准 */}
+				<div className="relative px-4 pt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
 					{adopted && (
 						<button
 							type="button"
@@ -1066,6 +1073,7 @@ export function ChatInput({
 							}
 						}}
 					/>
+					<SmoothCaret target={taRef} />
 				</div>
 
 				{/* 权限与模型常驻输入框；图片通过拖放或粘贴添加。 */}
