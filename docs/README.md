@@ -4,7 +4,7 @@
 
 | 文档 | 用途 |
 | --- | --- |
-| [中文说明](../README_zh.md) / [English README](../README.md) | 安装启动、功能和日常使用 |
+| [English](../README.md) / [简体中文](../README_zh.md) / [繁體中文](../README_zh-Hant.md) / [日本語](../README_ja.md) / [Русский](../README_ru.md) | 安装启动、功能和日常使用 |
 | [运维与部署](operations/README.md) | 安装/构建机制、环境变量、数据与隐私、发布回滚 |
 | [工作区隔离](workspace-isolation.md) | 文件操作和命令权限边界、平台差异 |
 | [扩展 Web UI](extension-web-ui.md) | 扩展交互接口、兼容性与示例 |

@@ -3,7 +3,7 @@
 	"version": "0.3.32",
 	"license": "MIT",
 	"type": "module",
-	"description": "Modern web UI for the pi coding agent, driven by the official pi SDK without modifying pi",
+	"description": "Self-hosted web UI for Pi Coding Agent: AI coding in your browser with workspaces, file diffs, MCP, session import and mobile access.",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/RexVane/PiWeb.git"
@@ -13,11 +13,22 @@
 		"url": "https://github.com/RexVane/PiWeb/issues"
 	},
 	"keywords": [
+		"piweb",
 		"pi",
+		"pi-coding-agent",
+		"pi-web-ui",
 		"coding-agent",
-		"agent",
+		"ai-coding-agent",
+		"coding-assistant",
 		"web-ui",
+		"self-hosted",
+		"mcp",
+		"model-context-protocol",
+		"session-management",
+		"automation",
+		"mobile",
 		"nextjs",
+		"typescript",
 		"cli"
 	],
 	"bin": {

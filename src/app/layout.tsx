@@ -6,8 +6,9 @@ import { htmlLangOf, isLang } from "@/lib/lang";
 import { SmoothCaret } from "@/components/SmoothCaret";
 
 export const metadata: Metadata = {
-	title: "pi",
-	description: "Web UI for the pi coding agent",
+	title: "PiWeb | Pi Coding Agent Web UI",
+	description: "Self-hosted web UI for Pi Coding Agent: AI coding in your browser with workspaces, file diffs, MCP, session import and mobile access.",
+	applicationName: "PiWeb",
 };
 
 export const viewport: Viewport = {
