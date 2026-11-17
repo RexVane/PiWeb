@@ -17,7 +17,7 @@
  *   避免流式代码块每帧重新高亮。
  * - 贴底听对话区的（见 chat/chat-scroll）；回答结束后换成整段渲染。
  */
-import { memo, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -137,6 +137,8 @@ function FilePathLabel({ path }: { path: string }) {
 	return <><FileReferenceIcon /><span className="md-file-path-label">{fileName}</span></>;
 }
 
+const InsideMarkdownLinkContext = createContext(false);
+
 function MarkdownLink({ href, children, node, ...props }: { href?: string; children?: React.ReactNode; node?: MarkdownTextNode } & Record<string, unknown>) {
 	const actions = useMarkdownActions();
 	const filePath = href ? relativeMarkdownPath(href, actions.allowDocumentParents) : null;
@@ -172,7 +174,9 @@ function MarkdownLink({ href, children, node, ...props }: { href?: string; child
 				}}
 			>
 				<FileReferenceIcon />
-				<span className="md-file-path-label">{children}</span>
+				<span className="md-file-path-label">
+					<InsideMarkdownLinkContext.Provider value={true}>{children}</InsideMarkdownLinkContext.Provider>
+				</span>
 			</a>
 		);
 	}
@@ -187,10 +191,16 @@ function MarkdownLink({ href, children, node, ...props }: { href?: string; child
 			}
 		}
 	}
-	if (!external) return <a href={href} {...props}>{children}</a>;
+	if (!external) {
+		return (
+			<a href={href} {...props}>
+				<InsideMarkdownLinkContext.Provider value={true}>{children}</InsideMarkdownLinkContext.Provider>
+			</a>
+		);
+	}
 	return (
 		<a href={href} target="_blank" rel="noopener noreferrer" className="md-external" {...props}>
-			{children}
+			<InsideMarkdownLinkContext.Provider value={true}>{children}</InsideMarkdownLinkContext.Provider>
 			<span className="md-external-mark" aria-hidden="true">↗</span>
 		</a>
 	);
@@ -270,8 +280,25 @@ function MarkdownCodeBlock({
 	);
 }
 
-const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
+function MarkdownCode({ className, children }: { className?: string; children?: React.ReactNode }) {
 	const actions = useMarkdownActions();
+	const inLink = useContext(InsideMarkdownLinkContext);
+	const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";
+	const path = raw.trim();
+	// 代码块里的 code 不参与路径识别。只看 className 不够：不写语言的围栏和缩进代码块也没有 className，
+	// 只有一行路径时整个代码块会变成按钮。代码块的文本总以换行结尾，行内代码不会
+	const block = Boolean(className) || raw.endsWith("\n");
+	if (!inLink && actions.openFile && !block && looksLikeFilePath(path)) {
+		return (
+			<button type="button" className="md-file-path" title={path} aria-label={path} onClick={() => actions.openFile!(path)}>
+				<FilePathLabel path={path} />
+			</button>
+		);
+	}
+	return <code className={className}>{children}</code>;
+}
+
+const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }) {
 	return (
 		<ReactMarkdown
 			remarkPlugins={[remarkGfm]}
@@ -293,21 +320,7 @@ const MarkdownContent = memo(function MarkdownContent({ text }: { text: string }
 					);
 				},
 				// 文件引用显示短名称；完整路径留在悬停提示、打开动作与辅助名称中。
-				code: ({ node: _node, className, children }) => {
-					const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";
-					const path = raw.trim();
-					// 代码块里的 code 不参与路径识别。只看 className 不够：不写语言的围栏和缩进代码块也没有 className，
-					// 只有一行路径时整个代码块会变成按钮。代码块的文本总以换行结尾，行内代码不会
-					const block = Boolean(className) || raw.endsWith("\n");
-					if (actions.openFile && !block && looksLikeFilePath(path)) {
-						return (
-							<button type="button" className="md-file-path" title={path} aria-label={path} onClick={() => actions.openFile!(path)}>
-								<FilePathLabel path={path} />
-							</button>
-						);
-					}
-					return <code className={className}>{children}</code>;
-				},
+				code: ({ node: _node, className, children }) => <MarkdownCode className={className}>{children}</MarkdownCode>,
 			}}
 		>
 			{text}

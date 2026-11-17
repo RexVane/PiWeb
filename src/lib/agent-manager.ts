@@ -1881,11 +1881,24 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				await reloadResources(options);
 				await clearSessionModelProviders(ownedRuntime);
 			};
+			// SDK createAgentSession 仅在 messages.length > 0 时恢复分支记录的 model_change / thinking_level_change；
+			// 新会话首轮冷启动前（messages 为空）必须显式透传，否则会被 settings.json 默认模型覆盖。
+			const branch = m.sm.getBranch();
+			const hasMessages = branch.some((entry) => entry.type === "message");
+			const hasModelEntry = branch.some((entry) => entry.type === "model_change");
+			const hasThinkingEntry = branch.some((entry) => entry.type === "thinking_level_change");
+			const recordedContext = !hasMessages && (hasModelEntry || hasThinkingEntry) ? m.sm.buildSessionContext() : undefined;
+			const recordedModelRef = hasModelEntry ? recordedContext?.model ?? undefined : undefined;
+			const preselectedModel = recordedModelRef ? modelRuntime.getModel(recordedModelRef.provider, recordedModelRef.modelId) : undefined;
+			const initialModel = preselectedModel && modelRuntime.hasConfiguredAuth(preselectedModel.provider) ? preselectedModel : undefined;
+			const initialThinkingLevel = !hasMessages ? (m.desiredThinkingLevel ?? (hasThinkingEntry ? recordedContext?.thinkingLevel : undefined)) : undefined;
 			const { session } = await createAgentSession({
 				cwd: m.cwd,
 				agentDir: getAgentDir(),
 				sessionManager: m.sm,
 				modelRuntime,
+				...(initialModel ? { model: initialModel as never } : {}),
+				...(initialThinkingLevel ? { thinkingLevel: initialThinkingLevel as never } : {}),
 				resourceLoader: loader,
 				settingsManager,
 				// 扩展命令换出来的会话：session_start 要带上来由和上一个会话（否则扩展只能看到 "startup"）
@@ -1925,8 +1938,20 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				abortHandler: () => void session.abort().catch(() => undefined),
 			});
 			if (m.disposed) throw new Error("session is disposed");
+			if (!hasMessages && recordedModelRef && !initialModel) {
+				const extensionModel = modelRuntime.getModel(recordedModelRef.provider, recordedModelRef.modelId);
+				if (extensionModel && modelRuntime.hasConfiguredAuth(extensionModel.provider)
+					&& (session.model?.provider !== extensionModel.provider || session.model?.id !== extensionModel.id)) {
+					await session.setModel(extensionModel as never, { persist: false });
+					if (initialThinkingLevel) {
+						session.setThinkingLevel(clampThinkingLevel(extensionModel as any, initialThinkingLevel as any) as never);
+					}
+					reapplyDesiredLevel(m, session);
+				}
+			}
 			applyToolPolicy(m, session);
 			m.resourceVersion = resourceLoaderVersion(m.cwd);
+			publishModelState(m, session);
 			publishEnvironmentTrajectory(m, session);
 			publishTools(m, session);
 			publishResources(m);

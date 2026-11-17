@@ -2,6 +2,13 @@
 
 > 说明（2026-11-15 收尾）：历史条目中的 `.audit-*` 与 `audit_tmp/` 证据目录已随收尾清理移出工作区，归档见 [docs/audit](../audit/README.md)。历史数字与命令保留原样，仅作当时记录。
 
+## 2026-11-17 | 发布 0.3.32：新会话模型冷启动保留、启动产物校验加速与链接双图标修复
+
+- 修复新会话冷启动覆盖所选模型的问题：在 `ensureSession` 读取空消息会话分支上预先保存的 `model_change` 与 `thinking_level_change`，显式透传给 `createAgentSession`（并在扩展注册模型路径下在 `bindExtensions` 后补设），启动收尾广播 `publishModelState` 同步前端模型状态。
+- 优化启动生产构建校验：`scripts/build-output.mjs` 在 `readProductionBuild` / `verifyInventory` 作用域内缓存已校验目录前缀并合并叶子文件 `lstatSync`，在保持同等符号链接防逃逸与全量 SHA-256 校验的同时，将热态 `readProductionBuild(inventory: true)` 耗时从 `1790.5 ms` 降至 `424.4 ms`。
+- 修复 Markdown 链接内含行内代码（如 `` [`agent-manager.ts`](src/lib/agent-manager.ts) ``）时渲染两个文件图标与嵌套按钮的问题：`MarkdownBlock` 通过 `InsideMarkdownLinkContext` 使链接内行内代码保持纯 `<code>` 渲染。
+- 本机 `npm run check`（`tsc --noEmit`、`vitest run` `317 passed | 1 skipped (318)` 文件、`2524 passed | 2 skipped (2526)` 用例、`node scripts/build.mjs` `340 runtime files`）及 `npm run lint`（`0 errors`）均已通过，升版至 `0.3.32`。
+
 ## 2026-11-16 | 发布 0.3.31：权限默认与持久、附件穿透、Windows 打开浏览器及项目记录防膨胀
 
 - 默认权限模式改为 `"full"`（完全权限），并在会话、浏览器偏好与 `web-tool-preferences.json` 间保持持久同步。

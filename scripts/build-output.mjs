@@ -56,31 +56,77 @@ export function resolveBuildOutput(root, value) {
 }
 
 /** Validate every existing component, including a file at the end of the path. */
-export function assertLocalPath(root, relative) {
-	if (typeof relative !== "string" || !relative || relative.includes("\\") || relative.includes(":")) {
-		throw new Error("invalid project-relative path");
-	}
-	const parts = relative.split("/");
-	if (parts.some((part) => !part || part === "." || part === "..")) throw new Error("invalid project-relative path");
+function createLocalPathChecker(root) {
 	const realRoot = fs.realpathSync(root);
-	let current = realRoot;
-	for (const part of parts) {
-		current = path.join(current, part);
-		let stat;
-		try {
-			stat = fs.lstatSync(current);
-		} catch (error) {
-			if (error.code === "ENOENT") break;
-			throw error;
-		}
-		if (stat.isSymbolicLink()) throw new Error(`refusing linked deployment path: ${relative}`);
-		const resolved = fs.realpathSync(current);
+	const verifiedDirs = new Map();
+	const assertInsideRoot = (resolved, relative) => {
 		const inside = path.relative(realRoot, resolved);
 		if (inside === ".." || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) {
 			throw new Error(`deployment path escapes installation: ${relative}`);
 		}
-	}
-	return path.join(realRoot, ...parts);
+	};
+	const inspect = (relative) => {
+		if (typeof relative !== "string" || !relative || relative.includes("\\") || relative.includes(":")) {
+			throw new Error("invalid project-relative path");
+		}
+		const parts = relative.split("/");
+		if (parts.some((part) => !part || part === "." || part === "..")) throw new Error("invalid project-relative path");
+		let current = realRoot;
+		let prefix = "";
+		let missingParent = false;
+		for (let i = 0; i < parts.length - 1; i += 1) {
+			const part = parts[i];
+			prefix = prefix ? `${prefix}/${part}` : part;
+			const cached = verifiedDirs.get(prefix);
+			if (cached) {
+				current = cached;
+				continue;
+			}
+			current = path.join(current, part);
+			let stat;
+			try {
+				stat = fs.lstatSync(current);
+			} catch (error) {
+				if (error.code === "ENOENT") {
+					missingParent = true;
+					current = path.join(current, ...parts.slice(i + 1));
+					break;
+				}
+				throw error;
+			}
+			if (stat.isSymbolicLink()) throw new Error(`refusing linked deployment path: ${relative}`);
+			const resolved = fs.realpathSync(current);
+			assertInsideRoot(resolved, relative);
+			verifiedDirs.set(prefix, resolved);
+			current = resolved;
+		}
+		if (missingParent) return { target: current, stat: null };
+		const target = path.join(current, parts[parts.length - 1]);
+		let stat;
+		try {
+			stat = fs.lstatSync(target);
+		} catch (error) {
+			if (error.code === "ENOENT") return { target, stat: null };
+			throw error;
+		}
+		if (stat.isSymbolicLink()) throw new Error(`refusing linked deployment path: ${relative}`);
+		if (stat.isDirectory()) {
+			const resolved = fs.realpathSync(target);
+			assertInsideRoot(resolved, relative);
+			verifiedDirs.set(relative, resolved);
+		}
+		return { target, stat };
+	};
+	return {
+		inspect,
+		assertPath(relative) {
+			return inspect(relative).target;
+		},
+	};
+}
+
+export function assertLocalPath(root, relative) {
+	return createLocalPathChecker(root).assertPath(relative);
 }
 
 /** Only real PiWeb installations may be changed by the release/update helpers. */
@@ -94,11 +140,15 @@ export function assertInstallation(root) {
 	return realRoot;
 }
 
-function readLocalFile(root, relative, maxBytes = 1024 * 1024) {
-	const file = assertLocalPath(root, relative);
-	const stat = fs.statSync(file);
+function readLocalFile(root, relative, maxBytes = 1024 * 1024, checker = createLocalPathChecker(root)) {
+	const { target, stat } = checker.inspect(relative);
+	if (!stat) {
+		const error = new Error(`ENOENT: no such file or directory, open '${target}'`);
+		error.code = "ENOENT";
+		throw error;
+	}
 	if (!stat.isFile() || stat.size > maxBytes) throw new Error(`invalid deployment file: ${relative}`);
-	return fs.readFileSync(file, "utf8");
+	return fs.readFileSync(target, "utf8");
 }
 
 function runtimeFiles(root, buildDir) {
@@ -130,20 +180,19 @@ export function writeBuildInventory(root, value) {
 	return inventory;
 }
 
-function verifyInventory(root, buildDir, buildId) {
+function verifyInventory(root, buildDir, buildId, checker = createLocalPathChecker(root)) {
 	let raw;
-	try { raw = readLocalFile(root, `${buildDir}/${BUILD_INVENTORY}`, 16 * 1024 * 1024); }
+	try { raw = readLocalFile(root, `${buildDir}/${BUILD_INVENTORY}`, 16 * 1024 * 1024, checker); }
 	catch (error) { if (error.code === "ENOENT") return false; throw error; }
 	const inventory = JSON.parse(raw);
 	if (inventory.schema !== 1 || inventory.buildId !== buildId || !Array.isArray(inventory.files) || !inventory.files.length) throw new Error(`invalid build inventory in ${buildDir}`);
 	for (const file of inventory.files) {
 		if (typeof file.file !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256) || !Number.isSafeInteger(file.bytes)) throw new Error(`invalid build inventory in ${buildDir}`);
-		const target = assertLocalPath(root, `${buildDir}/${file.file}`);
-		try {
-			if (!fs.statSync(target).isFile() || fs.statSync(target).size !== file.bytes || createHash("sha256").update(fs.readFileSync(target)).digest("hex") !== file.sha256) {
-				throw new Error(`changed production build file: ${file.file}`);
-			}
-		} catch (error) { if (error.code === "ENOENT") throw new Error(incompleteBuildMessage(buildDir, file.file)); throw error; }
+		const { target, stat } = checker.inspect(`${buildDir}/${file.file}`);
+		if (!stat) throw new Error(incompleteBuildMessage(buildDir, file.file));
+		if (!stat.isFile() || stat.size !== file.bytes || createHash("sha256").update(fs.readFileSync(target)).digest("hex") !== file.sha256) {
+			throw new Error(`changed production build file: ${file.file}`);
+		}
 	}
 	return true;
 }
@@ -157,9 +206,9 @@ export function incompleteBuildMessage(buildDir, missing = "required-server-file
 		+ "Reinstall with `npm install -g @rexvane/piweb@latest`, or rebuild this installation with `npm rebuild -g @rexvane/piweb`.";
 }
 
-function readRequiredServerFiles(root, buildDir) {
+function readRequiredServerFiles(root, buildDir, checker) {
 	try {
-		return readLocalFile(root, `${buildDir}/required-server-files.json`);
+		return readLocalFile(root, `${buildDir}/required-server-files.json`, 1024 * 1024, checker);
 	} catch (error) {
 		if (error.code === "ENOENT") throw new Error(incompleteBuildMessage(buildDir));
 		throw error;
@@ -168,12 +217,13 @@ function readRequiredServerFiles(root, buildDir) {
 
 /** Verify a finished Next production build, not just a leftover BUILD_ID. */
 export function readProductionBuild(root, value, { inventory = true } = {}) {
+	const checker = createLocalPathChecker(root);
 	const buildDir = resolveBuildOutput(root, value);
 	let buildId;
-	try { buildId = readLocalFile(root, `${buildDir}/BUILD_ID`, 1024).trim(); }
+	try { buildId = readLocalFile(root, `${buildDir}/BUILD_ID`, 1024, checker).trim(); }
 	catch (error) { if (error.code === "ENOENT") throw Object.assign(new Error(incompleteBuildMessage(buildDir, "BUILD_ID")), { code: "ENOENT" }); throw error; }
 	if (!buildId || /\s/.test(buildId)) throw new Error(`invalid BUILD_ID in ${buildDir}`);
-	const required = JSON.parse(readRequiredServerFiles(root, buildDir));
+	const required = JSON.parse(readRequiredServerFiles(root, buildDir, checker));
 	if (required?.version !== 1 || required.config?.distDir?.replaceAll("\\", "/") !== buildDir) {
 		throw new Error(`build output does not match ${buildDir}`);
 	}
@@ -184,26 +234,28 @@ export function readProductionBuild(root, value, { inventory = true } = {}) {
 	}
 	for (const file of files) {
 		if (!file.startsWith(`${buildDir}/`)) throw new Error(`invalid required build file: ${file}`);
-		const target = assertLocalPath(root, file);
-		try { if (!fs.statSync(target).isFile()) throw new Error(`missing required build file: ${file}`); }
-		catch (error) { if (error.code === "ENOENT") throw new Error(incompleteBuildMessage(buildDir, file)); throw error; }
+		const { stat } = checker.inspect(file);
+		if (!stat) throw new Error(incompleteBuildMessage(buildDir, file));
+		if (!stat.isFile()) throw new Error(`missing required build file: ${file}`);
 	}
 	// Legacy builds have no inventory. Still validate every route/chunk explicitly
 	// named in Next's manifests, which required-server-files itself does not include.
-	const appPaths = JSON.parse(readLocalFile(root, `${buildDir}/server/app-paths-manifest.json`));
+	const appPaths = JSON.parse(readLocalFile(root, `${buildDir}/server/app-paths-manifest.json`, 1024 * 1024, checker));
 	for (const route of Object.values(appPaths)) {
 		if (typeof route !== "string") throw new Error(`invalid app paths in ${buildDir}`);
-		try { if (!fs.statSync(assertLocalPath(root, `${buildDir}/server/${route}`)).isFile()) throw new Error(`invalid route ${route}`); }
-		catch (error) { if (error.code === "ENOENT") throw new Error(incompleteBuildMessage(buildDir, route)); throw error; }
+		const { stat } = checker.inspect(`${buildDir}/server/${route}`);
+		if (!stat) throw new Error(incompleteBuildMessage(buildDir, route));
+		if (!stat.isFile()) throw new Error(`invalid route ${route}`);
 	}
-	const buildManifest = JSON.parse(readLocalFile(root, `${buildDir}/build-manifest.json`));
+	const buildManifest = JSON.parse(readLocalFile(root, `${buildDir}/build-manifest.json`, 1024 * 1024, checker));
 	const chunks = [...(buildManifest.rootMainFiles ?? []), ...(buildManifest.polyfillFiles ?? []), ...Object.values(buildManifest.pages ?? {}).flat()];
 	for (const chunk of chunks) {
 		if (typeof chunk !== "string") throw new Error(`invalid chunk in ${buildDir}`);
-		try { if (!fs.statSync(assertLocalPath(root, `${buildDir}/${chunk}`)).isFile()) throw new Error(`invalid chunk ${chunk}`); }
-		catch (error) { if (error.code === "ENOENT") throw new Error(incompleteBuildMessage(buildDir, chunk)); throw error; }
+		const { stat } = checker.inspect(`${buildDir}/${chunk}`);
+		if (!stat) throw new Error(incompleteBuildMessage(buildDir, chunk));
+		if (!stat.isFile()) throw new Error(`invalid chunk ${chunk}`);
 	}
-	if (inventory && !verifyInventory(root, buildDir, buildId) && required.piwebInventory === 1) throw new Error(incompleteBuildMessage(buildDir, BUILD_INVENTORY));
+	if (inventory && !verifyInventory(root, buildDir, buildId, checker) && required.piwebInventory === 1) throw new Error(incompleteBuildMessage(buildDir, BUILD_INVENTORY));
 	return { buildDir, buildId };
 }
 

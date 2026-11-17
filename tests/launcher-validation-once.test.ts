@@ -88,3 +88,18 @@ it("rejects a linked runtime directory before probing a port or reading the outs
 	expect(deps.spawn).not.toHaveBeenCalled(); expect(deps.probePort).not.toHaveBeenCalled();
 	expect(reads.mock.calls.some(([file]) => String(file) === externalRuntime)).toBe(false);
 });
+
+it("still rejects a linked leaf subdirectory after verifying a sibling path in the same parent", async () => {
+	const root = fixture(), outside = fixture(); build(root); build(outside);
+	fs.mkdirSync(path.join(root, ".next/server/shared/linked"), { recursive: true });
+	fs.writeFileSync(path.join(root, ".next/server/shared/ok.js"), "module.exports=1");
+	fs.writeFileSync(path.join(root, ".next/server/shared/linked/evil.js"), "module.exports=1");
+	fs.writeFileSync(path.join(root, ".next/server/app-paths-manifest.json"), JSON.stringify({ "/ok": "shared/ok.js", "/evil": "shared/linked/evil.js" }));
+	writeBuildInventory(root, ".next");
+	fs.renameSync(path.join(root, ".next/server/shared/linked"), path.join(root, ".next/server/shared/linked-original"));
+	fs.mkdirSync(path.join(outside, "ext"), { recursive: true });
+	fs.writeFileSync(path.join(outside, "ext/evil.js"), "module.exports=2");
+	fs.symlinkSync(path.join(outside, "ext"), path.join(root, ".next/server/shared/linked"), process.platform === "win32" ? "junction" : "dir");
+	const { readProductionBuild } = await import("../scripts/build-output.mjs");
+	expect(() => readProductionBuild(root, ".next")).toThrow(/linked/);
+});

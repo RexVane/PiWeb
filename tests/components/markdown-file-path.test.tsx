@@ -67,6 +67,21 @@ describe("file paths in markdown", () => {
 		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["docs/architecture.md", path]);
 	});
 
+	it("renders a single icon without a nested button when inline code appears inside a file link", () => {
+		const { container, openFile } = renderMd("把 [`agent-manager.ts`](src/lib/agent-manager.ts) 和 [`AppShell.tsx`](src/components/AppShell.tsx) 与 `src/lib/pi.ts` 对比");
+		const links = [...container.querySelectorAll("a.md-file-link")];
+		expect(links).toHaveLength(2);
+		for (const link of links) {
+			expect(link.querySelectorAll("svg.md-file-path-icon")).toHaveLength(1);
+			expect(link.querySelector("button.md-file-path")).toBeNull();
+			expect(link.querySelector("code")).not.toBeNull();
+		}
+		expect(container.querySelectorAll("button.md-file-path")).toHaveLength(1);
+		fireEvent.click(links[0]);
+		fireEvent.click(links[1]);
+		expect(openFile.mock.calls.map(([path]) => path)).toEqual(["src/lib/agent-manager.ts", "src/components/AppShell.tsx"]);
+	});
+
 	it("preserves external, anchor, email and application links", () => {
 		const { openFile } = renderMd("[外部](https://example.com/a.md) [锚点](#section) [邮件](mailto:test@example.com) [站内](/login)");
 		for (const name of ["外部", "锚点", "邮件", "站内"]) {

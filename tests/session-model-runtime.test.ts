@@ -198,4 +198,63 @@ describe("session model provider isolation", () => {
 		expect(snapshot.model).toMatchObject({ provider: "stored", id: "probe" });
 		expect(snapshot.thinkingLevel).toBe("off");
 	});
+
+	it("preserves pre-selected model and thinking level across ensureSession cold start even when settings specify another default", async () => {
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		const settingsFile = path.join(agentDir, "settings.json");
+		const originalSettings = await fs.readFile(settingsFile, "utf8");
+		try {
+			await fs.writeFile(path.join(agentDir, "models.json"), JSON.stringify({
+				providers: {
+					"default-provider": {
+						baseUrl: "https://default.invalid/v1",
+						api: "openai-completions",
+						apiKey: "default-key",
+						models: [{ id: "default-model", name: "Default", reasoning: true, input: ["text"], contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
+					},
+					"selected-provider": {
+						baseUrl: "https://selected.invalid/v1",
+						api: "openai-completions",
+						apiKey: "selected-key",
+						models: [
+							{ id: "selected-model", name: "Selected", reasoning: true, input: ["text"], contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+							{ id: "switched-model", name: "Switched", reasoning: true, input: ["text"], contextWindow: 4096, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+						],
+					},
+				},
+			}));
+			await fs.writeFile(settingsFile, JSON.stringify({
+				defaultProjectTrust: "always",
+				compaction: { enabled: false },
+				defaultProvider: "default-provider",
+				defaultModel: "default-model",
+				defaultThinkingLevel: "xhigh",
+			}));
+			await pi.refreshModelRuntime();
+
+			const cwd = path.join(root, "cold-model-preserve");
+			await fs.mkdir(cwd, { recursive: true });
+			const { sessionPath } = await manager.createNewSession(cwd, {
+				provider: "selected-provider",
+				modelId: "selected-model",
+				thinking: "high",
+			});
+			const m = manager.getManaged(sessionPath);
+			managed.push(m);
+			const session = await manager.ensureSession(m);
+			expect(session.model).toMatchObject({ provider: "selected-provider", id: "selected-model" });
+			expect(session.thinkingLevel).toBe("high");
+
+			const coldSwitched = await manager.createNewSession(cwd);
+			const m2 = manager.getManaged(coldSwitched.sessionPath);
+			managed.push(m2);
+			expect(await manager.execute(m2, { cmd: "setModel", provider: "selected-provider", modelId: "switched-model" })).toMatchObject({ ok: true });
+			expect(await manager.execute(m2, { cmd: "setThinkingLevel", level: "medium" })).toMatchObject({ ok: true });
+			const session2 = await manager.ensureSession(m2);
+			expect(session2.model).toMatchObject({ provider: "selected-provider", id: "switched-model" });
+			expect(session2.thinkingLevel).toBe("medium");
+		} finally {
+			await fs.writeFile(settingsFile, originalSettings);
+		}
+	});
 });
