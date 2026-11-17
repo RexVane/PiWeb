@@ -6,6 +6,10 @@ import { safeLocalStorage } from "@/lib/browser-storage";
  * 界面语言：简体中文 / English。偏好存 safeLocalStorage。
  */
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { htmlLangOf, isLang, type Lang } from "@/lib/lang";
+import { ja } from "./i18n-locales/ja";
+import { ru } from "./i18n-locales/ru";
+import { zhHant } from "./i18n-locales/zh-Hant";
 
 const zh = {
 	// 通用
@@ -1029,7 +1033,10 @@ const zh = {
 	apiErrorEtimedout: "操作超时，请重试。",
 } as const;
 
-type Dict = { [K in keyof typeof zh]: string };
+export type Dict = { [K in keyof typeof zh]: string };
+
+export type { Lang } from "@/lib/lang";
+export { LANGUAGES, htmlLangOf, isLang } from "@/lib/lang";
 
 const en: Dict = {
 	confirm: "Confirm",
@@ -1159,7 +1166,7 @@ const en: Dict = {
 	sumRead: "read {n} files",
 	sumRead1: "read {n} file",
 	sumSearched: "searched {n} times",
-	sumSearched1: "searched once",
+	sumSearched1: "searched {n} times",
 	sumWebSearched: "Searched the web",
 	sumWebSearchedN: "searched the web {n} times",
 	sumWebFetched: "Fetched pages",
@@ -2041,7 +2048,9 @@ const en: Dict = {
 	apiErrorEtimedout: "The operation timed out. Try again.",
 };
 
-const dicts: Record<string, Dict> = { zh, en };
+const dicts: Record<Lang, Dict> = { zh, en, ja, ru, "zh-Hant": zhHant };
+/** Exposed for tests: every supported language's dictionary (same keys, translated values). */
+export const TRANSLATIONS: Record<Lang, Dict> = dicts;
 
 /**
  * errorCode → dictionary key. Mirrors `API_ERROR_I18N_KEYS` in
@@ -2066,39 +2075,39 @@ export const API_ERROR_LOCALE_KEYS: Readonly<Record<string, keyof Dict>> = {
  * Unknown codes keep the server message (Chinese fallback) so no error context
  * is lost; a missing message falls back to the localized generic text.
  */
-export function localizeApiError(lang: "zh" | "en", errorCode: string | undefined, fallback?: string): string {
+export function localizeApiError(lang: Lang, errorCode: string | undefined, fallback?: string): string {
 	const key = errorCode ? API_ERROR_LOCALE_KEYS[errorCode] : undefined;
 	if (key) return dicts[lang][key];
 	return fallback?.trim() ? fallback : dicts[lang].apiErrorRequestFailed;
 }
 
 interface I18nCtx {
-	lang: "zh" | "en";
-	setLang: (l: "zh" | "en") => void;
+	lang: Lang;
+	setLang: (l: Lang) => void;
 	t: Dict;
 }
 
 const DEFAULT_CONTEXT: I18nCtx = { lang: "zh", setLang: () => {}, t: zh };
 const Ctx = createContext<I18nCtx>(DEFAULT_CONTEXT);
 
-export function I18nProvider({ children, initialLang }: { children: React.ReactNode; initialLang?: "zh" | "en" }) {
+export function I18nProvider({ children, initialLang }: { children: React.ReactNode; initialLang?: Lang }) {
 	const inherited = useContext(Ctx);
 	const ownsContext = initialLang !== undefined || inherited === DEFAULT_CONTEXT;
 	// The server and first browser render use exactly the same serialized value.
-	const [lang, setLangState] = useState<"zh" | "en">(initialLang ?? inherited.lang);
+	const [lang, setLangState] = useState<Lang>(initialLang ?? inherited.lang);
 	useEffect(() => {
 		if (!ownsContext || initialLang !== undefined) return;
 		const saved = safeLocalStorage.getItem("piweb.lang");
-		if (saved === "en" || saved === "zh") {
+		if (isLang(saved)) {
 			setLangState(saved);
 			document.cookie = `piweb.lang=${saved}; Path=/; Max-Age=31536000; SameSite=Strict`;
 		}
 	}, [ownsContext, initialLang]);
 	useEffect(() => {
 		if (!ownsContext) return;
-		document.documentElement.lang = lang === "en" ? "en" : "zh-CN";
+		document.documentElement.lang = htmlLangOf(lang);
 	}, [lang, ownsContext]);
-	const setLang = useCallback((l: "zh" | "en") => {
+	const setLang = useCallback((l: Lang) => {
 		setLangState(l);
 		safeLocalStorage.setItem("piweb.lang", l);
 		document.cookie = `piweb.lang=${l}; Path=/; Max-Age=31536000; SameSite=Strict`;

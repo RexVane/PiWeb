@@ -8,6 +8,7 @@ import { IconChevronDown14, IconPlusOutline16, IconWarningOutline16 } from "@/co
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { ModelCatalog, ProviderSetupModal, type BuiltinProviderSetup, type CustomProviderSetup } from "@/components/ProviderSetupModal";
 import { localizeApiError, useI18n } from "@/i18n";
+import type { Lang } from "@/lib/lang";
 import { fmtTokens } from "@/lib/format";
 import { customModelGaps, fillModelFields, formatCapacity, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
@@ -193,7 +194,7 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 							</div>
 							<div role="row">
 								<div role="cell" aria-colspan={5} className="px-1 pb-2" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-warn)" }}>
-									{t.modelAuditRemaining.replace("{fields}", gap.missing.map((field) => fieldLabels[field]).join(lang === "zh" ? "、" : ", "))}
+									{t.modelAuditRemaining.replace("{fields}", gap.missing.map((field) => fieldLabels[field]).join(lang === "zh" || lang === "zh-Hant" ? "、" : ", "))}
 								</div>
 							</div>
 						</div>
@@ -1399,9 +1400,9 @@ function titleCase(value: string): string {
 }
 
 /** 界面语言对应的日期区域设置；显式传入，避免跟随操作系统语言。 */
-const DATE_LOCALES: Record<"zh" | "en", string> = { zh: "zh-CN", en: "en-US" };
+const DATE_LOCALES: Record<Lang, string> = { zh: "zh-CN", "zh-Hant": "zh-Hant", en: "en-US", ja: "ja-JP", ru: "ru-RU" };
 
-function fmtQuotaReset(value: string | undefined, lang?: "zh" | "en"): string {
+function fmtQuotaReset(value: string | undefined, lang?: Lang): string {
 	if (!value) return "—";
 	const date = new Date(value);
 	if (Number.isNaN(date.getTime())) return "—";

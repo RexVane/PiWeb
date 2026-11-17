@@ -1,4 +1,5 @@
 import type { AutomationSchedule } from "./types";
+import type { Lang } from "@/lib/lang";
 
 const CRON_ALIASES: Record<string, string> = {
 	"@hourly": "0 * * * *",
@@ -250,24 +251,36 @@ export function computeNextRunAt(schedule: AutomationSchedule, fromMs = Date.now
 	}
 }
 
-const WEEKDAY_LABELS = {
+const WEEKDAY_LABELS: Record<Lang, string[]> = {
 	zh: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
+	"zh-Hant": ["週日", "週一", "週二", "週三", "週四", "週五", "週六"],
 	en: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
-} as const;
+	ja: ["日曜", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜"],
+	ru: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"],
+};
 
 /** Human-readable schedule summary suitable for UI cards and dropdowns. */
-export function describeSchedule(schedule: AutomationSchedule, lang: "zh" | "en"): string {
+export function describeSchedule(schedule: AutomationSchedule, lang: Lang): string {
 	switch (schedule.kind) {
-		case "interval":
-			if (lang === "zh") {
-				return `每 ${schedule.every} ${schedule.unit === "hours" ? "小时" : "分钟"}`;
-			}
+		case "interval": {
+			const hours = schedule.unit === "hours";
+			if (lang === "zh") return `每 ${schedule.every} ${hours ? "小时" : "分钟"}`;
+			if (lang === "zh-Hant") return `每 ${schedule.every} ${hours ? "小時" : "分鐘"}`;
+			if (lang === "ja") return `${schedule.every} ${hours ? "時間" : "分"}ごと`;
+			if (lang === "ru") return `Каждые ${schedule.every} ${hours ? "ч" : "мин"}`;
 			return `Every ${schedule.every} ${schedule.every === 1 ? schedule.unit.slice(0, -1) : schedule.unit}`;
+		}
 		case "daily":
-			return lang === "zh" ? `每天 ${schedule.time}` : `Daily at ${schedule.time}`;
+			if (lang === "zh" || lang === "zh-Hant") return `每天 ${schedule.time}`;
+			if (lang === "ja") return `毎日 ${schedule.time}`;
+			if (lang === "ru") return `Ежедневно в ${schedule.time}`;
+			return `Daily at ${schedule.time}`;
 		case "weekly": {
-			const names = schedule.days.map((d) => WEEKDAY_LABELS[lang][d] ?? String(d)).join(lang === "zh" ? "、" : ", ");
-			return lang === "zh" ? `每${names} ${schedule.time}` : `${names} at ${schedule.time}`;
+			const names = schedule.days.map((d) => WEEKDAY_LABELS[lang][d] ?? String(d)).join(lang === "zh" || lang === "zh-Hant" ? "、" : ", ");
+			if (lang === "zh" || lang === "zh-Hant") return `每${names} ${schedule.time}`;
+			if (lang === "ja") return `毎週 ${names} ${schedule.time}`;
+			if (lang === "ru") return `${names} в ${schedule.time}`;
+			return `${names} at ${schedule.time}`;
 		}
 		case "cron":
 			return `Cron: ${schedule.expr}`;
