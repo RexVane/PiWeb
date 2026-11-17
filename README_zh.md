@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <strong>简体中文</strong>
+  <a href="README.md">English</a> | <strong>简体中文</strong> | <a href="README_zh-Hant.md">繁體中文</a> | <a href="README_ja.md">日本語</a> | <a href="README_ru.md">Русский</a>
 </p>
 
 **PiWeb** 是面向 [Pi Coding Agent（Pi 编程智能体）](https://github.com/earendil-works/pi) 的开源、自托管 Web UI。把 AI 编程助手运行在自己的电脑或服务器上，通过桌面和手机浏览器管理项目工作区、审阅代码差异与工具调用，也能在手机上继续编程任务。

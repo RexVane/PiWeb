@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>English</strong> | <a href="README_zh.md">简体中文</a>
+  <strong>English</strong> | <a href="README_zh.md">简体中文</a> | <a href="README_zh-Hant.md">繁體中文</a> | <a href="README_ja.md">日本語</a> | <a href="README_ru.md">Русский</a>
 </p>
 
 **PiWeb** is an open-source, self-hosted web UI for the [Pi Coding Agent](https://github.com/earendil-works/pi). Run your AI coding assistant on your own computer or server and use it from a desktop or mobile browser. Manage project workspaces, review file diffs and tool calls, and continue coding from your phone.
