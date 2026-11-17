@@ -7,6 +7,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { highlightLine, languageForPath } from "@/lib/highlight";
+import { annotateHighlightedHtml, computeWordDiffLines } from "@/lib/word-diff";
 
 export interface DiffLine {
 	kind: "add" | "del" | "ctx" | "hunk" | "file";
@@ -111,6 +112,15 @@ export function DiffView({ lines, language }: { lines: DiffLine[]; language?: st
 		const current = languages[from + index];
 		return line.kind !== "file" && line.kind !== "hunk" && current ? highlightLine(line.text, current) : null;
 	}), [lines, languages, from, to]);
+	const wordDiff = useMemo(() => {
+		const pad = 32;
+		const winStart = Math.max(0, from - pad);
+		const winEnd = Math.min(lines.length, to + pad);
+		const local = computeWordDiffLines(lines.slice(winStart, winEnd));
+		const mapped = new Map<number, ReturnType<typeof computeWordDiffLines> extends Map<number, infer V> ? V : never>();
+		for (const [k, v] of local) mapped.set(winStart + k, v);
+		return mapped;
+	}, [lines, from, to]);
 	return (
 		<pre ref={viewport} className="hljs whitespace-pre" data-testid="diff-viewport"
 			onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
@@ -121,6 +131,9 @@ export function DiffView({ lines, language }: { lines: DiffLine[]; language?: st
 					const sign = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
 					const changed = line.kind === "add" || line.kind === "del";
 					const color = line.kind === "add" ? "var(--dsw-success)" : line.kind === "del" ? "var(--dsw-danger)" : "var(--dsw-label-caption)";
+					const segs = changed ? wordDiff.get(at) : undefined;
+					const highlighted = html[index];
+					const finalHtml = highlighted && segs ? annotateHighlightedHtml(highlighted, segs, line.kind === "add" ? "add" : "del") : highlighted;
 					return (
 						<div key={at} className="pw-diff-row" data-kind={line.kind}
 							style={{ position: "absolute", top: at * rowHeight, height: rowHeight, minWidth: "100%", width: "max-content", padding: "0 8px",
@@ -129,7 +142,9 @@ export function DiffView({ lines, language }: { lines: DiffLine[]; language?: st
 							{line.kind === "file" ? <strong title={line.text}>{line.text}</strong> : <>
 								<span aria-hidden style={{ color, userSelect: "none" }}>{line.kind === "hunk" ? "" : String(line.kind === "del" ? line.old ?? "" : line.new ?? "").padStart(width)} </span>
 								<span style={{ color, userSelect: "text" }}>{sign}</span>
-								{html[index] ? <span dangerouslySetInnerHTML={{ __html: html[index]! }} /> : line.text}
+								{finalHtml ? <span dangerouslySetInnerHTML={{ __html: finalHtml }} />
+									: segs ? <span>{segs.map((s, si) => s.changed ? <mark key={si} className="pw-diff-word" data-kind={line.kind}>{s.text}</mark> : s.text)}</span>
+										: line.text}
 							</>}
 						</div>
 					);

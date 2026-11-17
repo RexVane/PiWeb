@@ -553,6 +553,9 @@ html[data-pw-background] *::after {
 ::-webkit-scrollbar-track {
 	background: transparent;
 }
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
 
 /* ============================================================
    通用组件样式（Iconsax 组件体系：高对比反转、高斯彩虹光晕、25px 胶囊、弹性微交互）
@@ -1897,6 +1900,20 @@ body[data-ds-dark-theme] {
 }
 .pw-stream > .pw-stream-tail:last-child > :last-child {
 	margin-bottom: 0;
+}
+/* 刚到达的文字淡入：文字已经在 DOM 里，只是不再一批批硬蹦出来。时长与 STREAM_FADE_MS 一致 */
+.pw-stream [data-stream-fresh] {
+	animation: pw-stream-fade 180ms cubic-bezier(0.33, 0, 0.67, 1) both;
+}
+@keyframes pw-stream-fade {
+	from {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.pw-stream [data-stream-fresh] {
+		animation: none;
+	}
 }
 
 /* ---------- 代码高亮（highlight.js）：VS Code 式的分类着色，配色跟 Pi 自己的主题走 ---------- */
@@ -3940,11 +3957,21 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 	gap: 6px;
 	height: 36px;
 	padding: 0 12px;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.pw-viewer-toolbar::-webkit-scrollbar {
+	display: none;
+}
+.pw-viewer-toolbar > button,
+.pw-viewer-toolbar > a {
+	flex: none;
 }
 .pw-crumb {
 	display: flex;
 	align-items: center;
 	flex-wrap: nowrap;
+	min-width: 80px;
 	overflow: hidden;
 	font-size: var(--dsh-ui-font-125);
 	color: var(--dsw-label-tertiary);
@@ -4108,6 +4135,239 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 .pw-fdiff-tick[data-current] {
 	opacity: 1;
 	box-shadow: 0 0 0 1px var(--dsw-label-tertiary);
+}
+
+/* 词级差异高亮（行内与并排视图共用） */
+mark.pw-diff-word {
+	background: transparent;
+	color: inherit;
+	border-radius: 3px;
+	padding: 0 1px;
+}
+mark.pw-diff-word[data-kind="add"] {
+	background: rgba(34, 197, 94, 0.36);
+	box-shadow: inset 0 -1px 0 rgba(34, 197, 94, 0.55);
+}
+mark.pw-diff-word[data-kind="del"] {
+	background: rgba(236, 19, 19, 0.32);
+	box-shadow: inset 0 -1px 0 rgba(236, 19, 19, 0.50);
+}
+
+/* 并排 Diff（左右连续双栏 + 中间 SVG 曲线连接带 + 块级暂存勾选） */
+.pw-sdiff-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	height: 24px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--dsw-label-caption);
+	background: color-mix(in srgb, var(--dsw-hover) 60%, transparent);
+}
+.pw-sdiff-head-side {
+	flex: 1;
+	min-width: 0;
+	padding: 0 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.pw-sdiff-head-bridge {
+	flex: none;
+	height: 100%;
+	border-left: 1px solid var(--dsw-border-l2);
+	border-right: 1px solid var(--dsw-border-l2);
+}
+.pw-sdiff-pane {
+	scrollbar-gutter: stable;
+}
+.pw-sdiff-row {
+	right: auto;
+	min-width: 100%;
+	width: max-content;
+	--pw-sdiff-gutter: var(--dsw-glass-modal);
+}
+.pw-sdiff-row[data-kind="add"] {
+	--pw-sdiff-gutter: color-mix(in srgb, var(--dsw-success) 14%, var(--dsw-glass-modal));
+}
+.pw-sdiff-row[data-kind="del"] {
+	--pw-sdiff-gutter: color-mix(in srgb, var(--dsw-danger) 12%, var(--dsw-glass-modal));
+}
+.pw-sdiff-pane .pw-fdiff-text {
+	flex: 1 0 auto;
+	padding: 0 12px 0 4px;
+}
+.pw-sdiff-sign {
+	padding-left: 8px;
+}
+.pw-sdiff-num {
+	flex: none;
+	display: inline-block;
+	padding: 0 8px;
+	color: var(--dsw-label-caption);
+	user-select: none;
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+	background: var(--pw-sdiff-gutter);
+}
+.pw-sdiff-num-left {
+	position: sticky;
+	right: 0;
+	border-left: 1px solid var(--dsw-border-l2);
+}
+.pw-sdiff-num-right {
+	position: sticky;
+	left: 0;
+	border-right: 1px solid var(--dsw-border-l2);
+}
+.pw-sdiff-bridge {
+	border-left: 1px solid var(--dsw-border-l2);
+	border-right: 1px solid var(--dsw-border-l2);
+	background: color-mix(in srgb, var(--dsw-hover) 45%, transparent);
+}
+.pw-sdiff-svg {
+	display: block;
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+.pw-sdiff-ribbon {
+	stroke-width: 1;
+	vector-effect: non-scaling-stroke;
+}
+.pw-sdiff-ribbon[data-kind="mod"] {
+	fill: color-mix(in srgb, var(--dsw-accent) 20%, transparent);
+	stroke: color-mix(in srgb, var(--dsw-accent) 52%, transparent);
+}
+.pw-sdiff-ribbon[data-kind="add"] {
+	fill: rgba(34, 197, 94, 0.16);
+	stroke: rgba(34, 197, 94, 0.50);
+}
+.pw-sdiff-ribbon[data-kind="del"] {
+	fill: rgba(236, 19, 19, 0.14);
+	stroke: rgba(236, 19, 19, 0.45);
+}
+.pw-sdiff-ribbon[data-current] {
+	stroke-width: 1.6;
+}
+.pw-sdiff-ribbon[data-kind="mod"][data-current] {
+	fill: color-mix(in srgb, var(--dsw-accent) 30%, transparent);
+	stroke: var(--dsw-accent);
+}
+.pw-sdiff-ribbon[data-kind="add"][data-current] {
+	fill: rgba(34, 197, 94, 0.25);
+	stroke: var(--dsw-success);
+}
+.pw-sdiff-ribbon[data-kind="del"][data-current] {
+	fill: rgba(236, 19, 19, 0.22);
+	stroke: var(--dsw-danger);
+}
+.pw-hunk-check {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 18px;
+	height: 18px;
+	border-radius: 5px;
+	border: 1.5px solid color-mix(in srgb, var(--dsw-label-secondary) 52%, transparent);
+	background: var(--dsw-bg-elevated);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+	color: color-mix(in srgb, var(--dsw-label-caption) 65%, transparent);
+	display: inline-grid;
+	place-items: center;
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+	z-index: 2;
+	transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+.pw-hunk-check:empty::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 1.5px;
+	border: 1px solid currentColor;
+	opacity: 0.55;
+}
+.pw-hunk-check:hover:not(:disabled) {
+	border-color: var(--dsw-accent);
+	color: var(--dsw-accent);
+}
+.pw-hunk-check[data-checked] {
+	background: var(--dsw-accent);
+	border-color: var(--dsw-accent);
+	color: #fff;
+}
+.pw-hunk-check[data-checked]:hover:not(:disabled) {
+	color: #fff;
+	filter: brightness(1.08);
+}
+.pw-hunk-check:disabled {
+	opacity: 0.5;
+	cursor: wait;
+}
+.pw-hunk-check-inline {
+	position: sticky;
+	left: auto;
+	right: 16px;
+	transform: none;
+	flex: none;
+	align-self: center;
+	margin-left: auto;
+}
+
+/* Git 抽屉控台（360px 紧凑列表 + 提交框） */
+.pw-git-commit-box {
+	border: 1px solid var(--dsw-border-l2);
+	background: var(--dsw-hover);
+	transition: border-color 160ms ease;
+}
+.pw-git-commit-box:focus-within {
+	border-color: var(--dsw-accent);
+}
+.pw-git-commit-btn {
+	font-size: 12px;
+	background: var(--dsw-accent);
+	color: #fff;
+	cursor: pointer;
+}
+.pw-git-commit-btn:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+.pw-git-row-op {
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	display: inline-grid;
+	place-items: center;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1;
+	color: var(--dsw-label-caption);
+	cursor: pointer;
+	transition: background 140ms ease, color 140ms ease;
+}
+.pw-git-row-op:hover:not(:disabled) {
+	background: var(--dsw-active);
+	color: var(--dsw-label-primary);
+}
+.pw-git-row-op:disabled {
+	opacity: 0.4;
+	cursor: wait;
+}
+.pw-git-file-row,
+.pw-git-commit-item,
+.pw-git-commit-file {
+	transition: background 140ms ease;
+}
+.pw-git-file-row:hover,
+.pw-git-commit-item:hover,
+.pw-git-commit-file:hover {
+	background: var(--dsw-hover);
 }
 
 /* 回合懒渲染的纯文本占位：尽量贴近正式渲染的排版，升级前的过渡形态 */

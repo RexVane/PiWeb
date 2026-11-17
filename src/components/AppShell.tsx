@@ -1149,6 +1149,15 @@ export function AppShell() {
 					onError={setError}
 					onOpenContent={(path, content) => viewer.openStatic(path, content)}
 					onOpenFile={openInEditor}
+					onOpenGitDiff={(target) => viewer.open(target.path, {
+						...(target.from ? { from: target.from } : {}),
+						git: {
+							mode: target.mode,
+							...(target.hash ? { hash: target.hash } : {}),
+							...(target.label ? { label: target.label } : {}),
+						},
+					})}
+					onGitMutated={() => setPanelRefreshKey((k) => k + 1)}
 				/>
 			)}
 		</div>
@@ -1447,6 +1456,7 @@ export function AppShell() {
 					state={viewer.state}
 					growth={growth}
 					cwd={viewerCwd}
+					gitRefreshKey={panelRefreshKey}
 					onClose={viewer.close}
 					onSelectTab={viewer.select}
 					onCloseTab={viewer.closeTab}
@@ -1454,6 +1464,7 @@ export function AppShell() {
 					onOpenContent={viewer.openStatic}
 					onReference={insertIntoComposer}
 					onOpenEditor={openInEditor}
+					onGitMutated={() => setPanelRefreshKey((k) => k + 1)}
 				/>
 			)}
 

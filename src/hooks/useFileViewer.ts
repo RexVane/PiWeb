@@ -7,6 +7,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { safeLocalStorage } from "@/lib/browser-storage";
 
+export interface ViewerGitSource {
+	mode: "worktree" | "staged" | "untracked" | "commit";
+	hash?: string;
+	label?: string;
+}
+
+export interface ViewerOpenOptions {
+	from?: string;
+	lazy?: boolean;
+	kind?: "dir" | "file";
+	git?: ViewerGitSource;
+}
+
 export interface ViewerTab {
 	path: string;
 	/** 重命名前的路径(取 diff 用) */
@@ -19,6 +32,8 @@ export interface ViewerTab {
 	staticContent?: string;
 	/** 最初打开的已发现来源：后续相对链接沿用它的读取边界。 */
 	sourcePath?: string;
+	/** 来自 Git 面板实时工作区/暂存区/提交的差异视图 */
+	git?: ViewerGitSource;
 }
 
 export interface ViewerState {
@@ -44,6 +59,17 @@ function scopeKey(scope?: ViewerScope): string | null {
 	return scope?.cwd ? `piweb.fileViewer.workspace:${normalize(scope.cwd)}` : null;
 }
 
+function parseGitSource(raw: unknown): ViewerGitSource | undefined {
+	if (!raw || typeof raw !== "object") return undefined;
+	const obj = raw as Record<string, unknown>;
+	if (obj.mode !== "worktree" && obj.mode !== "staged" && obj.mode !== "untracked" && obj.mode !== "commit") return undefined;
+	return {
+		mode: obj.mode,
+		...(typeof obj.hash === "string" ? { hash: obj.hash } : {}),
+		...(typeof obj.label === "string" ? { label: obj.label } : {}),
+	};
+}
+
 function restoreState(key: string | null): ViewerState {
 	if (!key) return emptyState();
 	try {
@@ -54,12 +80,14 @@ function restoreState(key: string | null): ViewerState {
 		for (const item of saved.tabs) {
 			if (!item || typeof item.path !== "string" || !item.path.trim() || paths.has(item.path)) continue;
 			paths.add(item.path);
+			const git = parseGitSource(item.git);
 			tabs.push({
 				path: item.path,
 				...(typeof item.from === "string" ? { from: item.from } : {}),
 				...(typeof item.lazy === "boolean" ? { lazy: item.lazy } : {}),
 				...(item.kind === "file" || item.kind === "dir" ? { kind: item.kind } : {}),
 				...(typeof item.sourcePath === "string" ? { sourcePath: item.sourcePath, lazy: true } : {}),
+				...(git ? { git } : {}),
 			});
 		}
 		const active = saved.active === null ? null : tabs.find((tab) => tab.path === saved.active)?.path ?? tabs.at(-1)?.path ?? null;
@@ -96,10 +124,17 @@ export function useFileViewer(scope?: ViewerScope) {
 			return { key, ready: true, value: change(value) };
 		});
 	}, [key]);
-	const open = useCallback((path: string, opts: { from?: string; lazy?: boolean; kind?: "dir" | "file" } = {}) => {
+	const open = useCallback((path: string, opts: ViewerOpenOptions = {}) => {
 		setState((s) => {
+			const nextTab: ViewerTab = {
+				path,
+				...(opts.from ? { from: opts.from } : {}),
+				...(opts.lazy !== undefined ? { lazy: opts.lazy } : {}),
+				...(opts.kind ? { kind: opts.kind } : {}),
+				...(opts.git ? { git: opts.git } : {}),
+			};
 			const exists = s.tabs.some((tab) => tab.path === path);
-			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, ...opts } : tab)) : [...s.tabs, { path, ...opts }];
+			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? nextTab : tab)) : [...s.tabs, nextTab];
 			return { open: true, tabs, active: path };
 		});
 	}, [setState]);
