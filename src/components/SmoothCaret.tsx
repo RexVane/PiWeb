@@ -137,7 +137,8 @@ export function SmoothCaret() {
 				const shrunk = previousValue !== null && value.length < previousValue.length;
 				const bulkInsert = previousValue !== null && value.length - previousValue.length > 1;
 				let jump = !placed || !textChanged || shrunk || bulkInsert;
-				if (!jump) {
+				if (!jump && previousValue !== null && value !== previousValue) {
+					// 落后上限只管「文字真的变了」的情况；纯选区移动（方向键 / Home / End / 点击）照旧滑过去
 					const lag = Math.abs(caret.getBoundingClientRect().left - (x - 0.5));
 					jump = lag > MAX_TYPING_LAG_PX;
 				}
