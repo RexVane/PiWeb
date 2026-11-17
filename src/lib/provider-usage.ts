@@ -13,36 +13,61 @@ export interface QuotaWindow {
 	limitWindowSeconds?: number;
 	remainingPercent: number;
 	resetAt?: string;
-	/** 同类周期的窗口需要互相区分时使用（如 Claude 的 Opus 专用周限、Kimi 的月度代码额度）。 */
+	/** 同类周期的窗口需要互相区分时使用（如 Claude 的 Opus/Sonnet 专用周限、Kimi 的月度代码额度）。 */
 	variant?: string;
-	/** 没有固定周期时的窗口名（如 opencode 的 rolling、Copilot 的额度类别），界面负责翻译。 */
+	/** 没有固定周期或特定用途的窗口名（如 rolling、Copilot 类别、Codex 代码审查、Z.AI MCP 工具）。 */
 	name?: string;
+	/** 服务端明确返回了精确计数（如 Copilot 次数或 Z.AI token/次配额）时才填，不做猜测。 */
+	used?: number;
+	limit?: number;
+	remaining?: number;
+	overagePermitted?: boolean;
 }
 
-/** 窗口制订阅额度（Codex / Claude 订阅）：按窗口给出剩余百分比与重置时刻。 */
+/** 订阅附带的按量超额额度（Claude extra_usage）或附加积分池（Codex credits）。 */
+export interface QuotaExtraUsage {
+	kind: "extra" | "credits";
+	used?: BalanceAmount;
+	limit?: BalanceAmount;
+	balance?: BalanceAmount;
+	remainingPercent?: number;
+	unlimited?: boolean;
+	limitReached?: boolean;
+}
+
+/** 窗口制订阅额度（Codex / Claude / Kimi Code / Copilot / OpenCode Go / Z.AI）：按窗口给出剩余百分比与重置时刻。 */
 export interface QuotaUsage {
 	kind: "quota";
 	planType?: string;
 	/** 账户实际给出的全部窗口，按时长升序。 */
 	windows: QuotaWindow[];
+	limitReached?: boolean;
+	extra?: QuotaExtraUsage;
 	probedAt: number;
 }
 
 /** 余额明细项的语义，标签由界面翻译，服务端只给 key。 */
 export type BalanceDetailKey = "granted" | "toppedUp" | "voucher" | "cash" | "used" | "limit";
+export type BalanceSpendPeriod = "daily" | "weekly" | "monthly";
 
 export interface BalanceAmount {
 	amount: string;
 	currency?: string;
 }
 
-/** 金额制余额（DeepSeek / OpenRouter / Moonshot）：一个主余额加若干明细。 */
+/** 金额制余额（DeepSeek / OpenRouter / Moonshot / Vercel AI Gateway）：一个主余额加若干明细。 */
 export interface BalanceUsage {
 	kind: "balance";
 	/** 主余额的语义；默认按「剩余额度」渲染。 */
 	primaryKey?: "remaining" | BalanceDetailKey;
 	primary?: BalanceAmount;
 	details: Array<{ key: BalanceDetailKey } & BalanceAmount>;
+	/** DeepSeek 等接口明确声明当前额度是否可用；未返回则不显示状态牌。 */
+	available?: boolean;
+	/** OpenRouter 免费层级标识。 */
+	isFreeTier?: boolean;
+	/** OpenRouter 日/周/月实时消耗（服务端有返回时附带）。 */
+	periodSpend?: Array<{ period: BalanceSpendPeriod } & BalanceAmount>;
 	probedAt: number;
 }
 
@@ -84,6 +109,8 @@ export const USAGE_PROBE_PROVIDER_IDS = [
 	"github-copilot",
 	"vercel-ai-gateway",
 	"opencode-go",
+	"zai",
+	"zai-coding-cn",
 ] as const;
 
 export function supportsUsageProbe(providerId: string): boolean {

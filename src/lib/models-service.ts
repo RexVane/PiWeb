@@ -25,10 +25,10 @@ import {
 } from "@earendil-works/pi-ai";
 import { withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 import { replaceFileAtomically } from "./atomic-file";
-import { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, type BalanceAmount, type BalanceUsage, type ProviderUsage, type QuotaUsage, type QuotaWindow, type XaiUsage } from "./provider-usage";
+import { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, type BalanceAmount, type BalanceSpendPeriod, type BalanceUsage, type ProviderUsage, type QuotaExtraUsage, type QuotaUsage, type QuotaWindow, type XaiUsage } from "./provider-usage";
 // 用量的纯类型/纯函数拆在 provider-usage（客户端安全：设置面板按值导入它们）；这里重导出，路由与测试的导入不变。
 export { MONTHLY_WINDOW_SECONDS, WEEKLY_WINDOW_SECONDS, quotaWindowKind, supportsUsageProbe } from "./provider-usage";
-export type { BalanceAmount, BalanceDetailKey, BalanceUsage, ProviderUsage, QuotaUsage, QuotaWindow, QuotaWindowKind, XaiUsage } from "./provider-usage";
+export type { BalanceAmount, BalanceDetailKey, BalanceSpendPeriod, BalanceUsage, ProviderUsage, QuotaExtraUsage, QuotaUsage, QuotaWindow, QuotaWindowKind, XaiUsage } from "./provider-usage";
 export interface ModelView {
 	provider: string;
 	id: string;
@@ -913,6 +913,8 @@ function usageProbeFor(providerId: string): (() => Promise<ProviderUsage | null>
 		case "github-copilot": return probeCopilotUsage;
 		case "vercel-ai-gateway": return probeVercelGatewayBalance;
 		case "opencode-go": return probeOpencodeUsage;
+		case "zai": return () => probeZaiUsage("zai");
+		case "zai-coding-cn": return () => probeZaiUsage("zai-coding-cn");
 		default: return null;
 	}
 }
@@ -983,32 +985,56 @@ export function planTypeFromAccessToken(accessToken: string): string | undefined
  * null）。所以不假设窗口数量与位置，把实际给出的窗口全列出来按时长升序排列，
  * 由界面如实标注每一项的周期。字段缺失即未知，不做猜测。
  */
+function codexWindowFromCandidate(raw: unknown, name?: string): QuotaWindow | null {
+	const candidate = asRecord(raw);
+	if (!candidate) return null;
+	if (typeof candidate.limit_window_seconds !== "number" || candidate.limit_window_seconds <= 0) return null;
+	if (typeof candidate.used_percent !== "number" || !Number.isFinite(candidate.used_percent)) return null;
+	let resetAt: string | undefined;
+	if (Number.isSafeInteger(candidate.reset_at) && candidate.reset_at > 0) {
+		const reset = new Date(candidate.reset_at * 1000);
+		if (Number.isFinite(reset.getTime())) resetAt = reset.toISOString();
+	}
+	return {
+		limitWindowSeconds: candidate.limit_window_seconds,
+		remainingPercent: Math.min(100, Math.max(0, Math.round(100 - candidate.used_percent))),
+		...(resetAt === undefined ? {} : { resetAt }),
+		...(name === undefined ? {} : { name }),
+	};
+}
+
 export function parseCodexUsagePayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
 	const root = asRecord(value);
 	if (!root) return { windows: [] };
 	const rateLimit = asRecord(root.rate_limit);
-	const windows = [rateLimit?.primary_window, rateLimit?.secondary_window]
-		.map(asRecord)
-		.flatMap((candidate): QuotaWindow[] => {
-			if (!candidate) return [];
-			if (typeof candidate.limit_window_seconds !== "number" || candidate.limit_window_seconds <= 0) return [];
-			if (typeof candidate.used_percent !== "number" || !Number.isFinite(candidate.used_percent)) return [];
-			let resetAt: string | undefined;
-			if (Number.isSafeInteger(candidate.reset_at) && candidate.reset_at > 0) {
-				const reset = new Date(candidate.reset_at * 1000);
-				if (Number.isFinite(reset.getTime())) resetAt = reset.toISOString();
-			}
-			return [{
-				limitWindowSeconds: candidate.limit_window_seconds,
-				remainingPercent: Math.min(100, Math.max(0, Math.round(100 - candidate.used_percent))),
-				...(resetAt === undefined ? {} : { resetAt }),
-			}];
-		})
-		.sort(byWindowLength);
+	const codeReview = asRecord(root.code_review_rate_limit);
+	const baseWindows = [rateLimit?.primary_window, rateLimit?.secondary_window]
+		.map((item) => codexWindowFromCandidate(item))
+		.filter((w): w is QuotaWindow => Boolean(w));
+	const reviewWindow = codexWindowFromCandidate(codeReview?.primary_window, "codeReview");
+	const windows = [...baseWindows, ...(reviewWindow ? [reviewWindow] : [])].sort(byWindowLength);
 	const plan = root.plan_type;
+	const credits = asRecord(root.credits);
+	let extra: QuotaExtraUsage | undefined;
+	if (credits?.has_credits === true) {
+		if (credits.unlimited === true) {
+			extra = { kind: "credits", unlimited: true };
+		} else {
+			const balance = amountOrUndefined(credits.balance);
+			if (balance) {
+				extra = {
+					kind: "credits",
+					balance,
+					...(credits.overage_limit_reached === true ? { limitReached: true } : {}),
+				};
+			}
+		}
+	}
 	return {
 		...(typeof plan === "string" && plan.trim() ? { planType: plan.trim() } : {}),
 		windows,
+		...(rateLimit?.limit_reached === true ? { limitReached: true } : {}),
+		...(extra === undefined ? {} : { extra }),
 	};
 }
 
@@ -1058,9 +1084,34 @@ export function parseAnthropicUsagePayload(value: unknown): Omit<QuotaUsage, "ki
 	const windows = [
 		...pick("five_hour", 5 * HOUR_SECONDS),
 		...pick("seven_day", WEEKLY_WINDOW_SECONDS),
+		...pick("seven_day_sonnet", WEEKLY_WINDOW_SECONDS, "sonnet"),
 		...pick("seven_day_opus", WEEKLY_WINDOW_SECONDS, "opus"),
 	].sort(byWindowLength);
-	return { windows };
+	const extraRaw = asRecord(root.extra_usage);
+	let extra: QuotaExtraUsage | undefined;
+	if (extraRaw?.is_enabled === true) {
+		// Anthropic /api/oauth/usage 以美分（minor units）返回月上限与已用额度，需除以 100 换算为 USD
+		const minorUsd = (raw: unknown): BalanceAmount | undefined =>
+			typeof raw === "number" && Number.isFinite(raw) && raw >= 0
+				? { amount: (raw / 100).toFixed(2), currency: "USD" }
+				: undefined;
+		const used = minorUsd(extraRaw.used_credits);
+		const limit = minorUsd(extraRaw.monthly_limit);
+		const remainingPercent = typeof extraRaw.utilization === "number" && Number.isFinite(extraRaw.utilization)
+			? remainingFromUsed(extraRaw.utilization)
+			: typeof extraRaw.used_credits === "number" && typeof extraRaw.monthly_limit === "number" && extraRaw.monthly_limit > 0
+				? remainingFromUsed((extraRaw.used_credits / extraRaw.monthly_limit) * 100)
+				: undefined;
+		if (used || limit || remainingPercent !== undefined) {
+			extra = {
+				kind: "extra",
+				...(used ? { used } : {}),
+				...(limit ? { limit } : {}),
+				...(remainingPercent !== undefined ? { remainingPercent } : {}),
+			};
+		}
+	}
+	return { windows, ...(extra === undefined ? {} : { extra }) };
 }
 
 async function probeAnthropicUsage(): Promise<QuotaUsage | null> {
@@ -1099,7 +1150,11 @@ export function parseDeepSeekBalancePayload(value: unknown): Omit<BalanceUsage, 
 	const toppedUp = amountOrUndefined(info.topped_up_balance, currency);
 	if (toppedUp) details.push({ key: "toppedUp", ...toppedUp });
 	const total = amountOrUndefined(info.total_balance, currency);
-	return { ...(total === undefined ? {} : { primary: total }), details };
+	return {
+		...(total === undefined ? {} : { primary: total }),
+		details,
+		...(typeof root?.is_available === "boolean" ? { available: root.is_available } : {}),
+	};
 }
 
 /** OpenRouter：GET /api/v1/key，额度以美元计；无上限的 key 没有 limit_remaining。 */
@@ -1111,10 +1166,25 @@ export function parseOpenRouterKeyPayload(value: unknown): Omit<BalanceUsage, "k
 	if (limit) details.push({ key: "limit", ...limit });
 	const used = amountOrUndefined(data.usage, "USD");
 	if (used) details.push({ key: "used", ...used });
+	const periodEntries: Array<[BalanceSpendPeriod, unknown]> = [
+		["daily", data.usage_daily],
+		["weekly", data.usage_weekly],
+		["monthly", data.usage_monthly],
+	];
+	const periodSpend = periodEntries
+		.map(([period, raw]) => {
+			const amt = amountOrUndefined(raw, "USD");
+			return amt ? { period, ...amt } : null;
+		})
+		.filter((item): item is { period: BalanceSpendPeriod } & BalanceAmount => Boolean(item));
+	const extra = {
+		...(data.is_free_tier === true ? { isFreeTier: true } : {}),
+		...(periodSpend.length > 0 ? { periodSpend } : {}),
+	};
 	const remaining = amountOrUndefined(data.limit_remaining, "USD");
-	if (remaining) return { primary: remaining, details };
+	if (remaining) return { primary: remaining, details, ...extra };
 	// 无上限时没有剩余额度可显示，退回累计已用
-	return used ? { primaryKey: "used", primary: used, details } : { details };
+	return used ? { primaryKey: "used", primary: used, details, ...extra } : { details, ...extra };
 }
 
 /** Moonshot / Kimi：GET /v1/users/me/balance，国内站记 CNY、海外站记 USD，两者密钥不通用。 */
@@ -1224,16 +1294,85 @@ export function parseCopilotUserPayload(value: unknown): Omit<QuotaUsage, "kind"
 		if (!snapshot) return [];
 		if (snapshot.has_quota === false || snapshot.unlimited === true) return [];
 		if (typeof snapshot.percent_remaining !== "number" || !Number.isFinite(snapshot.percent_remaining)) return [];
+		const limit = typeof snapshot.entitlement === "number" && Number.isFinite(snapshot.entitlement) && snapshot.entitlement > 0
+			? snapshot.entitlement
+			: undefined;
+		const remRaw = typeof snapshot.quota_remaining === "number" && Number.isFinite(snapshot.quota_remaining)
+			? snapshot.quota_remaining
+			: typeof snapshot.remaining === "number" && Number.isFinite(snapshot.remaining)
+				? snapshot.remaining
+				: undefined;
+		const remaining = remRaw !== undefined && remRaw >= 0 ? Math.round(remRaw) : undefined;
+		const used = limit !== undefined && remaining !== undefined ? Math.max(0, limit - remaining) : undefined;
 		return [{
 			remainingPercent: Math.min(100, Math.max(0, Math.round(snapshot.percent_remaining))),
 			...(resetAt === undefined ? {} : { resetAt }),
 			name,
+			...(limit === undefined ? {} : { limit }),
+			...(remaining === undefined ? {} : { remaining }),
+			...(used === undefined ? {} : { used }),
+			...(snapshot.overage_permitted === true ? { overagePermitted: true } : {}),
 		}];
 	});
 	return {
 		...(typeof plan === "string" && plan.trim() ? { planType: plan.trim() } : {}),
 		windows,
 	};
+}
+
+/**
+ * 智谱 / Z.AI Coding Plan：GET /api/monitor/usage/quota/limit。
+ * unit=3 为小时窗（常用 5h），unit=6 为周窗，TIME_LIMIT 为工具/MCP 次数窗；
+ * percentage 为已用百分比，nextResetTime 通常为毫秒时间戳。
+ */
+export function parseZaiQuotaPayload(value: unknown): Omit<QuotaUsage, "kind" | "probedAt"> {
+	const root = asRecord(value);
+	if (!root || root.success === false) return { windows: [] };
+	const data = asRecord(root.data);
+	if (!data) return { windows: [] };
+	const plan = typeof data.level === "string" && data.level.trim() ? data.level.trim() : undefined;
+	const rawLimits = Array.isArray(data.limits) ? data.limits.map(asRecord).filter(Boolean) : [];
+	const windows: QuotaWindow[] = [];
+	for (const entry of rawLimits) {
+		if (!entry) continue;
+		if (typeof entry.percentage !== "number" || !Number.isFinite(entry.percentage)) continue;
+		const type = typeof entry.type === "string" ? entry.type : "";
+		const unit = typeof entry.unit === "number" ? entry.unit : undefined;
+		const count = typeof entry.number === "number" && Number.isFinite(entry.number) && entry.number > 0 ? entry.number : 1;
+		let limitWindowSeconds: number | undefined;
+		let name: string | undefined;
+		if (type === "TIME_LIMIT") {
+			name = "mcp";
+		} else if (unit === 3) {
+			limitWindowSeconds = count * HOUR_SECONDS;
+		} else if (unit === 6) {
+			limitWindowSeconds = count * WEEKLY_WINDOW_SECONDS;
+		} else if (unit === 5) {
+			limitWindowSeconds = count * MONTHLY_WINDOW_SECONDS;
+		} else {
+			continue;
+		}
+		let resetAt: string | undefined;
+		if (typeof entry.nextResetTime === "number" && Number.isFinite(entry.nextResetTime) && entry.nextResetTime > 0) {
+			const ms = entry.nextResetTime > 1_000_000_000_000 ? entry.nextResetTime : entry.nextResetTime * 1000;
+			const dt = new Date(ms);
+			if (Number.isFinite(dt.getTime())) resetAt = dt.toISOString();
+		}
+		const limit = typeof entry.usage === "number" && Number.isFinite(entry.usage) && entry.usage >= 0 ? entry.usage : undefined;
+		const used = typeof entry.currentValue === "number" && Number.isFinite(entry.currentValue) && entry.currentValue >= 0 ? entry.currentValue : undefined;
+		const remaining = typeof entry.remaining === "number" && Number.isFinite(entry.remaining) && entry.remaining >= 0 ? entry.remaining : undefined;
+		windows.push({
+			...(limitWindowSeconds === undefined ? {} : { limitWindowSeconds }),
+			...(name === undefined ? {} : { name }),
+			remainingPercent: remainingFromUsed(entry.percentage),
+			...(resetAt === undefined ? {} : { resetAt }),
+			...(limit === undefined ? {} : { limit }),
+			...(used === undefined ? {} : { used }),
+			...(remaining === undefined ? {} : { remaining }),
+		});
+	}
+	windows.sort(byWindowLength);
+	return { ...(plan === undefined ? {} : { planType: plan }), windows };
 }
 
 /** Vercel AI Gateway：GET /v1/credits，美元字符串形式的余额与累计已用。 */
@@ -1315,6 +1454,34 @@ async function probeOpencodeUsage(): Promise<QuotaUsage | null> {
 	if (payload === undefined) return null;
 	const parsed = parseOpencodeUsagePayload(payload);
 	return parsed.windows.length === 0 ? null : { kind: "quota", ...parsed, probedAt: Date.now() };
+}
+
+const ZAI_DEFAULT_ORIGINS: Record<"zai" | "zai-coding-cn", string> = {
+	zai: "https://api.z.ai",
+	"zai-coding-cn": "https://open.bigmodel.cn",
+};
+
+async function probeZaiUsage(providerId: "zai" | "zai-coding-cn"): Promise<QuotaUsage | null> {
+	const credential = await configuredCredentialFor(providerId);
+	if (!credential) return null;
+	let origin = ZAI_DEFAULT_ORIGINS[providerId];
+	if (credential.baseUrl) {
+		try {
+			const parsed = new URL(credential.baseUrl);
+			if (parsed.protocol === "http:" || parsed.protocol === "https:") origin = parsed.origin;
+		} catch {
+			// 默认官方域名
+		}
+	}
+	const payload = await fetchUsageJson(`${origin}/api/monitor/usage/quota/limit`, {
+		// BigModel / Z.AI monitor 接口接收原始 Coding Plan key
+		headers: { Authorization: credential.key, Accept: "application/json" },
+	});
+	if (payload === undefined) return null;
+	const parsed = parseZaiQuotaPayload(payload);
+	return parsed.windows.length === 0 && parsed.planType === undefined
+		? null
+		: { kind: "quota", ...parsed, probedAt: Date.now() };
 }
 
 async function probeXaiUsage(): Promise<XaiUsage | null> {
