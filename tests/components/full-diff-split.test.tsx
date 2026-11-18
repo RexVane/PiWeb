@@ -65,11 +65,25 @@ describe("FullDiff split & inline modes", () => {
 		expect(onToggle).toHaveBeenCalledWith(1, { oldAnchor: 14, newAnchor: 16, delCount: 0, addCount: 1 });
 	});
 
-	it("supports inline layout with word highlights and imperative next/prev navigation", () => {
+	it("supports inline layout with word highlights, exact hunk anchors, and imperative next/prev navigation", () => {
 		const ref = createRef<FullDiffHandle>();
-		const view = render(<FullDiff lines={makeSampleLines()} folded={false} layout="inline" handle={ref} initialChange />);
+		const onToggle = vi.fn();
+		const view = render(
+			<FullDiff
+				lines={makeSampleLines()}
+				folded={false}
+				layout="inline"
+				handle={ref}
+				initialChange
+				hunkAction={{ label: "暂存此块", checked: false, onToggle }}
+			/>,
+		);
 		expect(view.container.querySelector('[data-layout="inline"]')).toBeTruthy();
 		expect(view.container.querySelectorAll("mark.pw-diff-word").length).toBeGreaterThanOrEqual(2);
+		fireEvent.click(screen.getByRole("button", { name: "暂存此块 #1" }));
+		expect(onToggle).toHaveBeenCalledWith(0, { oldAnchor: 2, newAnchor: 2, delCount: 1, addCount: 2 });
+		fireEvent.click(screen.getByRole("button", { name: "暂存此块 #2" }));
+		expect(onToggle).toHaveBeenCalledWith(1, { oldAnchor: 14, newAnchor: 16, delCount: 0, addCount: 1 });
 		ref.current?.nextChange();
 		ref.current?.prevChange();
 	});

@@ -402,7 +402,7 @@ export function GitPanel({
 				</div>
 			)}
 
-			{!error && actionNotice && (
+			{!view && !statusError && actionNotice && (
 				<div role="status" className="mb-2 rounded-xl px-3 py-1.5" style={{ fontSize: 12, background: "var(--dsw-accent-soft)", color: "var(--dsw-accent)" }}>
 					{actionNotice}
 				</div>
@@ -558,7 +558,7 @@ export function GitPanel({
 							<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.gitNoChanges}</div>
 						) : (
 							areas.map((area) => {
-								const areaPaths = area.entries.map((e) => e.file.path);
+								const areaPaths = area.entries.flatMap((e) => (e.file.from ? [e.file.from, e.file.path] : [e.file.path]));
 								const isStagedArea = area.key === "staged";
 								return (
 									<div key={area.key}>

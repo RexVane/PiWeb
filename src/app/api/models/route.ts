@@ -145,13 +145,13 @@ export async function POST(req: Request) {
 				if (entries.length > 32) return json({ success: false, error: "too many headers" }, { status: 400 });
 				headers = {};
 				for (const [name, value] of entries) {
-					if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(name)) {
+					if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/.test(name) || name === "__proto__") {
 						return json({ success: false, error: `invalid header name: ${name}` }, { status: 400 });
 					}
 					if (typeof value !== "string" || value.length > 4096 || /[\r\n]/.test(value)) {
 						return json({ success: false, error: `invalid header value: ${name}` }, { status: 400 });
 					}
-					if (value) headers[name] = value;
+					if (value) Object.defineProperty(headers, name, { value, enumerable: true, configurable: true, writable: true });
 				}
 			}
 			const models = await discoverModels({ baseUrl: body.baseUrl, api: body.api, apiKey: body.apiKey, providerId: body.providerId, allowPrivate: body.allowPrivate === true, headers });

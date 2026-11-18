@@ -348,4 +348,26 @@ describe("ProviderSetupModal (custom mode): 自动识别", () => {
 		fireEvent.blur(url);
 		expect(pending).toHaveLength(1);
 	});
+
+	it("校验新建自定义提供方的请求头名称，拦截非法字符与 __proto__", async () => {
+		const onSaveCustom = renderCustom();
+		fireEvent.change(screen.getByPlaceholderText("acme-gateway"), { target: { value: "gw" } });
+		fireEvent.change(screen.getByPlaceholderText(URL_PLACEHOLDER), { target: { value: "https://gw.example/v1" } });
+		fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+		fireEvent.change(screen.getByPlaceholderText("模型 ID"), { target: { value: "m1" } });
+
+		fireEvent.click(screen.getByRole("button", { name: "添加请求头" }));
+		const headerName = screen.getByPlaceholderText("名字，如 X-Api-Version");
+		const headerVal = screen.getByPlaceholderText("值，如 $MY_GATEWAY_TOKEN");
+		fireEvent.change(headerName, { target: { value: "Bad Header" } });
+		fireEvent.change(headerVal, { target: { value: "v" } });
+		fireEvent.click(screen.getByRole("button", { name: "创建提供方" }));
+		expect(await screen.findByText(/请求头名字不合法：Bad Header/)).toBeTruthy();
+		expect(onSaveCustom).not.toHaveBeenCalled();
+
+		fireEvent.change(headerName, { target: { value: "__proto__" } });
+		fireEvent.click(screen.getByRole("button", { name: "创建提供方" }));
+		expect(await screen.findByText(/请求头名字不合法：__proto__/)).toBeTruthy();
+		expect(onSaveCustom).not.toHaveBeenCalled();
+	});
 });

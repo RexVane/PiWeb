@@ -16,7 +16,7 @@ import { CustomSelect } from "@/components/CustomSelect";
 import { useI18n } from "@/i18n";
 import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
-import { formatCapacity, modelDraftFromCatalog, parseCapacity, serializeModelDraft, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
+import { formatCapacity, headerEntriesToConfig, modelDraftFromCatalog, parseCapacity, serializeModelDraft, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type ModelDraft } from "@/lib/model-draft";
 import type { ProviderView } from "@/lib/models-service";
 import styles from "./ProviderSetupModal.module.css";
 import { useDialog } from "@/hooks/useDialog";
@@ -131,8 +131,14 @@ export function ProviderSetupModal({
 					result = await onSaveBuiltin({ providerId: selected.id, apiKey: apiKey.trim(), config });
 				}
 			} else {
-				// 表单里非空的头才写下去；一条都没有就不带这个键，免得留个空对象在文件里
-				const headerEntries = (headers ?? []).map(({ name, value }) => [name.trim(), value.trim()] as [string, string]).filter(([name, value]) => name && value);
+				// 表单里填写了任一端的行都要过校验，非法头名/内容直接拦在前端
+				const rawPairs = (headers ?? []).map(({ name, value }) => [name.trim(), value.trim()] as [string, string]);
+				const headerError = validateHeaderEntries(rawPairs.filter(([name, value]) => name || value));
+				if (headerError) {
+					setError(headerError);
+					return;
+				}
+				const configuredHeaders = headerEntriesToConfig(headers ?? []);
 				result = await onSaveCustom({
 					providerId: normalizedId,
 					config: {
@@ -140,7 +146,7 @@ export function ProviderSetupModal({
 						baseUrl: baseUrl.trim(),
 						api,
 						...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-						...(headerEntries.length ? { headers: Object.fromEntries(headerEntries) } : {}),
+						...(Object.keys(configuredHeaders).length ? { headers: configuredHeaders } : {}),
 						models: models.map((model) => serializeModelDraft(model)),
 					},
 				});
@@ -159,9 +165,10 @@ export function ProviderSetupModal({
 	const discoverAvailableModels = async (allowPrivate: boolean): Promise<ModelDraft[]> => {
 		if (!baseUrl.trim()) throw new Error(t.apiAddress);
 		// 自定义头要跟着发现请求一起发：网关要求自定义头时，不带就永远拿不到模型目录
-		const headerEntries = (headers ?? []).map(({ name, value }) => [name.trim(), value.trim()] as [string, string]).filter(([name, value]) => name && value);
-		const headerError = validateHeaderEntries(headerEntries);
+		const rawPairs = (headers ?? []).map(({ name, value }) => [name.trim(), value.trim()] as [string, string]);
+		const headerError = validateHeaderEntries(rawPairs.filter(([name, value]) => name || value));
 		if (headerError) throw new Error(headerError);
+		const configuredHeaders = headerEntriesToConfig(headers ?? []);
 		const response = await fetch("/api/models", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -173,7 +180,7 @@ export function ProviderSetupModal({
 				apiKey: apiKey.trim(),
 				providerId: mode === "builtin" ? selected?.id : undefined,
 				allowPrivate,
-				...(headerEntries.length && mode !== "builtin" ? { headers: Object.fromEntries(headerEntries) } : {}),
+				...(Object.keys(configuredHeaders).length && mode !== "builtin" ? { headers: configuredHeaders } : {}),
 			}),
 		});
 		const result = await response.json();

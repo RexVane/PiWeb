@@ -232,6 +232,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
 	const [customRevision, setCustomRevision] = useState<string | null>(null);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
+	const [secretHeaderKeys, setSecretHeaderKeys] = useState<Record<string, string[]>>({});
 	// 内置 provider → 目录里的模型 ID：编辑时同 ID 的行写 modelOverrides，「获取可用模型」里不再可选
 	const [catalogModelIds, setCatalogModelIds] = useState<Record<string, string[]>>({});
 	const [editing, setEditing] = useState<string | null>(null);
@@ -245,7 +246,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [cModels, setCModels] = useState<ModelDraft[]>([]);
 	const [cName, setCName] = useState("");
 	// 自定义 provider 的自定义请求头：点编辑时从 models.json 读回来，保存时整体写回
-	const [cHeaders, setCHeaders] = useState<Array<{ name: string; value: string }>>([]);
+	const [cHeaders, setCHeaders] = useState<Array<{ name: string; value: string; storedSecret?: boolean }>>([]);
 	const [bBaseUrl, setBBaseUrl] = useState("");
 	const [bModels, setBModels] = useState<ModelDraft[]>([]);
 	const [editBusy, setEditBusy] = useState(false);
@@ -318,6 +319,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			setProviders(j.data.providers);
 			setCatalogModelIds(j.data.catalogModelIds ?? {});
 			setSecretProviderIds(new Set(j.data.customProviders?.secretProviderIds ?? []));
+			setSecretHeaderKeys(j.data.customProviders?.secretHeaderKeys ?? {});
 			setCustom({ ...parsed, providers: parsed.providers ?? {} });
 			setCustomRevision(typeof j.data.customProviders?.revision === "string" ? j.data.customProviders.revision : null);
 		} catch (error) {
@@ -839,7 +841,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			setCKey("");
 			setCName(typeof override?.name === "string" ? override.name : "");
 			setCModels((override?.models ?? []).map(modelDraftFromConfig));
-			setCHeaders(headerEntriesFromConfig(override?.headers));
+			const plainHeaders = headerEntriesFromConfig(override?.headers);
+			const seenHeaderNames = new Set(plainHeaders.map((entry) => entry.name));
+			const secretRows = (secretHeaderKeys[id] ?? [])
+				.filter((name) => !seenHeaderNames.has(name))
+				.map((name) => ({ name, value: "", storedSecret: true }));
+			setCHeaders([...plainHeaders, ...secretRows]);
 		} else {
 			// 内置 provider：从 models.json 覆盖层初始化（若有），models[] 定义和 modelOverrides 覆盖都作为行
 			setBBaseUrl(typeof override?.baseUrl === "string" ? override.baseUrl : "");
@@ -870,8 +877,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		if (editBaseRevision.current !== customRevision) { notify(false, t.modelEditStale); return; }
 		const invalid = validateModelDrafts(cModels);
 		if (invalid || !cBaseUrl.trim()) return;
-		const headerEntries = cHeaders.map(({ name, value }) => [name.trim(), value.trim()] as [string, string]);
-		const headerError = validateHeaderEntries(headerEntries.filter(([name, value]) => name || value));
+		const headerEntries = cHeaders.map(({ name, value, storedSecret }) => [name.trim(), storedSecret && !value.trim() ? "" : value.trim(), Boolean(storedSecret)] as [string, string, boolean]);
+		const headerError = validateHeaderEntries(
+			headerEntries
+				.filter(([name, value, storedSecret]) => name || value || storedSecret)
+				.map(([name, value]) => [name, value] as [string, string]),
+		);
 		if (headerError) {
 			notify(false, headerError);
 			return;
@@ -888,13 +899,25 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			const previousId = editing ?? cId.trim();
 			const previous = next[previousId] ?? {};
 			if (previousId !== cId.trim()) delete next[previousId];
+			const configuredHeaders: Record<string, string | null> = headerEntriesToConfig(cHeaders);
+			const keptSecrets = new Set(
+				cHeaders
+					.filter((row) => row.storedSecret && !row.value.trim() && row.name.trim())
+					.map((row) => row.name.trim()),
+			);
+			for (const secretName of secretHeaderKeys[previousId] ?? []) {
+				if (!Object.prototype.hasOwnProperty.call(configuredHeaders, secretName) && !keptSecrets.has(secretName)) {
+					Object.defineProperty(configuredHeaders, secretName, { value: null, enumerable: true, configurable: true, writable: true });
+				}
+			}
 			next[cId.trim()] = serializeProviderDraft(previous, {
 				name: cName,
 				baseUrl: cBaseUrl,
 				api: cApi,
 				apiKey: cKey,
 				models: cModels,
-				headers: headerEntriesToConfig(cHeaders),
+				headers: configuredHeaders,
+				keepStoredSecretHeaders: keptSecrets.size > 0,
 			});
 			const j = await saveCustom(next);
 			if (j.success) setEditing(null);
@@ -1127,16 +1150,18 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 														<div key={index} className="flex items-center gap-2">
 															<input
 																value={entry.name}
-																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { ...item, name: e.target.value } : item)))}
+																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { name: e.target.value, value: item.value } : item)))}
 																className={fieldCls}
 																placeholder="User-Agent"
 																style={{ flex: "0 0 38%" }}
 															/>
 															<input
+																type="password"
+																autoComplete="off"
 																value={entry.value}
 																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { ...item, value: e.target.value } : item)))}
 																className={fieldCls}
-																placeholder="opencode/1.0.0"
+																placeholder={entry.storedSecret ? t.apiKeyStored : "opencode/1.0.0"}
 															/>
 															<button
 																type="button"
@@ -1167,11 +1192,26 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 												setModels={setCModels}
 												updateModel={(index, patch) => setCModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
 												discover={async (allowPrivate) => {
+													const activeHeaderPairs = cHeaders
+														.filter((row) => !(row.storedSecret && !row.value.trim()))
+														.map(({ name, value }) => [name.trim(), value.trim()] as [string, string])
+														.filter(([name, value]) => name || value);
+													const headerError = validateHeaderEntries(activeHeaderPairs);
+													if (headerError) throw new Error(headerError);
+													const discoverHeaders = headerEntriesToConfig(cHeaders);
 													const response = await fetch("/api/models", {
 														method: "POST",
 														headers: { "Content-Type": "application/json" },
-														// providerId：key 留空（保持不变）时后端回退到已存密钥
-														body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: cBaseUrl.trim(), api: cApi, apiKey: cKey.trim(), allowPrivate }),
+														// providerId：key 留空（保持不变）时后端回退到已存密钥与请求头
+														body: JSON.stringify({
+															action: "discoverModels",
+															providerId: p.id,
+															baseUrl: cBaseUrl.trim(),
+															api: cApi,
+															apiKey: cKey.trim(),
+															allowPrivate,
+															...(Object.keys(discoverHeaders).length ? { headers: discoverHeaders } : {}),
+														}),
 													});
 													const result = await response.json();
 													if (!result.success) throw new Error(result.error || t.toastError);

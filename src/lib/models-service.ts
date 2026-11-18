@@ -600,6 +600,8 @@ interface ConfiguredCredential {
 	accountId?: string;
 	/** 认证结果自带的地址（如 Copilot 企业版），也算这家已配置的地址 */
 	baseUrl?: string;
+	/** SDK 解析出的自定义请求头（如 models.json 的 provider.headers） */
+	headers?: Record<string, string>;
 }
 
 /**
@@ -618,6 +620,12 @@ async function configuredCredentialFor(providerId: string): Promise<ConfiguredCr
 		const key = (resolved?.auth.apiKey ?? bearerToken(resolved?.auth.headers))?.trim();
 		if (!resolved || !key) return undefined;
 		const oauth = (await rt.checkAuth(providerId, { signal: deadline }).catch(() => undefined))?.type === "oauth";
+		const resolvedHeaders: Record<string, string> = {};
+		for (const [name, value] of Object.entries(resolved.auth.headers ?? {})) {
+			if (typeof value !== "string" || !value) continue;
+			if (!resolved.auth.apiKey && name.toLowerCase() === "authorization") continue;
+			Object.defineProperty(resolvedHeaders, name, { value, enumerable: true, configurable: true, writable: true });
+		}
 		// SDK 发 Codex 请求时也是从令牌里取账号 ID
 		const accountId = oauth && providerId === "openai-codex" ? openaiAuthClaims(key)?.chatgpt_account_id : undefined;
 		return {
@@ -625,6 +633,7 @@ async function configuredCredentialFor(providerId: string): Promise<ConfiguredCr
 			oauth,
 			...(typeof accountId === "string" && accountId.trim() ? { accountId: accountId.trim() } : {}),
 			...(resolved.auth.baseUrl ? { baseUrl: resolved.auth.baseUrl } : {}),
+			...(Object.keys(resolvedHeaders).length ? { headers: resolvedHeaders } : {}),
 		};
 	} catch {
 		return undefined;
@@ -784,29 +793,30 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	const endpoint = modelsEndpoint(base);
 	const headers: Record<string, string> = { Accept: "application/json" };
 	// 表单 key 为空时回退到该 provider 已配置的凭证（编辑场景：占位符「留空保持不变」）
+	const storedCredential = input.providerId ? await configuredCredentialFor(input.providerId) : undefined;
 	const credential: ConfiguredCredential | undefined = input.apiKey?.trim()
-		? { key: input.apiKey.trim(), oauth: false }
-		: input.providerId
-			? await configuredCredentialFor(input.providerId)
-			: undefined;
-	if (credential && !input.apiKey?.trim()) {
+		? { key: input.apiKey.trim(), oauth: false, ...(storedCredential?.headers ? { headers: storedCredential.headers } : {}), ...(storedCredential?.baseUrl ? { baseUrl: storedCredential.baseUrl } : {}) }
+		: storedCredential;
+	let trustedStoredEndpoint = false;
+	if (input.providerId && (storedCredential || (input.headers && Object.keys(input.headers).length))) {
 		const rt = await getModelRuntime();
 		const provider = rt.getProviders().find((p) => p.id === input.providerId);
-		const configuredUrls = [provider?.baseUrl, credential.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
-		if (!isTrustedCredentialEndpoint(endpoint, configuredUrls)) {
-			throw new Error("已配置的凭证只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
+		const configuredUrls = [provider?.baseUrl, storedCredential?.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
+		trustedStoredEndpoint = isTrustedCredentialEndpoint(endpoint, configuredUrls);
+	}
+	if (credential && !input.apiKey?.trim() && !trustedStoredEndpoint) {
+		throw new Error("已配置的凭证只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
+	}
+	if (trustedStoredEndpoint && storedCredential?.headers) {
+		for (const [name, value] of Object.entries(storedCredential.headers)) {
+			if (typeof value === "string" && value) headers[name] = value;
 		}
 	}
 	// 自定义请求头可能带密钥，所以与凭证同一条规矩：只发往显式填了密钥的新地址，
 	// 或该 provider 已配置过的地址。否则一个新主机名就能把用户存好的头骗走。
 	if (input.headers && Object.keys(input.headers).length) {
-		if (!input.apiKey?.trim()) {
-			const rt = await getModelRuntime();
-			const provider = rt.getProviders().find((p) => p.id === input.providerId);
-			const configuredUrls = [provider?.baseUrl, credential?.baseUrl, ...(provider ? rt.getModels(provider.id).map((model) => model.baseUrl) : [])];
-			if (!isTrustedCredentialEndpoint(endpoint, configuredUrls)) {
-				throw new Error("自定义请求头只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
-			}
+		if (!input.apiKey?.trim() && !trustedStoredEndpoint) {
+			throw new Error("自定义请求头只能用于该 Provider 已配置的 API 地址；新地址请显式填写密钥");
 		}
 		for (const [name, value] of Object.entries(input.headers)) {
 			if (typeof value === "string" && value) headers[name] = value;
@@ -817,13 +827,14 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	if (!input.apiKey?.trim() && credential?.oauth && input.providerId === "openai-codex") {
 		throw new Error("OpenAI Codex 的模型目录由 SDK 内置，无需获取；如需自定义请手动添加模型 ID");
 	}
-	if (apiKey) {
+	const hasHeader = (target: string) => Object.keys(headers).some((k) => k.toLowerCase() === target.toLowerCase());
+	if (apiKey && !(apiKey === "unused" && (hasHeader("authorization") || hasHeader("x-api-key")))) {
 		if (input.api === "anthropic-messages") {
-			headers["x-api-key"] = apiKey;
+			if (!hasHeader("x-api-key")) headers["x-api-key"] = apiKey;
 			// Anthropic 的 OAuth 令牌必须带 beta 头才被接受（与 SDK 发消息时一致）
 			if (credential?.oauth) headers["anthropic-beta"] = "oauth-2025-04-20";
 		} else {
-			headers.Authorization = `Bearer ${apiKey}`;
+			if (!hasHeader("authorization")) headers.Authorization = `Bearer ${apiKey}`;
 		}
 	}
 	if (input.api === "anthropic-messages") headers["anthropic-version"] = "2023-06-01";
@@ -1460,6 +1471,22 @@ const ZAI_DEFAULT_ORIGINS: Record<"zai" | "zai-coding-cn", string> = {
 	zai: "https://api.z.ai",
 	"zai-coding-cn": "https://open.bigmodel.cn",
 };
+const ZAI_OFFICIAL_ORIGINS = new Set<string>(Object.values(ZAI_DEFAULT_ORIGINS));
+
+async function isSafeUsageOrigin(parsed: URL): Promise<boolean> {
+	if (parsed.protocol !== "https:" || parsed.username || parsed.password) return false;
+	if (ZAI_OFFICIAL_ORIGINS.has(parsed.origin)) return true;
+	if (process.env.PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY === "1") return true;
+	const host = parsed.hostname.replace(/^\[|\]$/g, "");
+	const literalFamily = isIP(host);
+	if (literalFamily) return isPublicModelDiscoveryAddress(host);
+	try {
+		const addresses = await dns.lookup(host, { all: true });
+		return addresses.length > 0 && addresses.every(({ address }) => isPublicModelDiscoveryAddress(address));
+	} catch {
+		return false;
+	}
+}
 
 async function probeZaiUsage(providerId: "zai" | "zai-coding-cn"): Promise<QuotaUsage | null> {
 	const credential = await configuredCredentialFor(providerId);
@@ -1468,14 +1495,16 @@ async function probeZaiUsage(providerId: "zai" | "zai-coding-cn"): Promise<Quota
 	if (credential.baseUrl) {
 		try {
 			const parsed = new URL(credential.baseUrl);
-			if (parsed.protocol === "http:" || parsed.protocol === "https:") origin = parsed.origin;
+			if (!(await isSafeUsageOrigin(parsed))) return null;
+			origin = parsed.origin;
 		} catch {
-			// 默认官方域名
+			return null;
 		}
 	}
 	const payload = await fetchUsageJson(`${origin}/api/monitor/usage/quota/limit`, {
 		// BigModel / Z.AI monitor 接口接收原始 Coding Plan key
 		headers: { Authorization: credential.key, Accept: "application/json" },
+		redirect: "error",
 	});
 	if (payload === undefined) return null;
 	const parsed = parseZaiQuotaPayload(payload);
@@ -1765,7 +1794,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isSecretProviderHeader(name: string, value: unknown): boolean {
 	return /auth|cookie|token|key|secret|credential|password|passwd/i.test(name)
-		|| (typeof value === "string" && value.startsWith("!"));
+		|| (typeof value === "string" && (value.startsWith("!") || /^\s*(?:Bearer|Basic|Digest)\s+\S/i.test(value)));
 }
 
 function modelHeaderOwners(provider: Record<string, unknown>): Map<string, Record<string, unknown>> {
@@ -1783,23 +1812,36 @@ function modelHeaderOwners(provider: Record<string, unknown>): Map<string, Recor
 	return owners;
 }
 
-export function redactCustomProviderSecrets(content: string): { content: string; secretProviderIds: string[] } {
+export function redactCustomProviderSecrets(content: string): { content: string; secretProviderIds: string[]; secretHeaderKeys?: Record<string, string[]> } {
 	const parsed = parseCustomProviders(content);
 	const secretProviderIds: string[] = [];
+	const secretHeaderKeys: Record<string, string[]> = {};
 	for (const [id, provider] of Object.entries(parsed.providers)) {
 		let secret = false;
 		if (Object.prototype.hasOwnProperty.call(provider, "apiKey")) { delete provider.apiKey; secret = true; }
-		for (const owner of modelHeaderOwners(provider).values()) {
+		const providerSecretHeaders: string[] = [];
+		for (const [ownerKey, owner] of modelHeaderOwners(provider)) {
 			if (!isRecord(owner.headers)) continue;
 			const headers = { ...owner.headers };
 			for (const [name, value] of Object.entries(headers)) {
-				if (isSecretProviderHeader(name, value)) { delete headers[name]; secret = true; }
+				if (isSecretProviderHeader(name, value)) {
+					delete headers[name];
+					secret = true;
+					if (ownerKey === "provider") providerSecretHeaders.push(name);
+				}
 			}
 			owner.headers = headers;
 		}
+		if (providerSecretHeaders.length > 0) {
+			Object.defineProperty(secretHeaderKeys, id, { value: providerSecretHeaders, enumerable: true, configurable: true, writable: true });
+		}
 		if (secret) secretProviderIds.push(id);
 	}
-	return { content: JSON.stringify(parsed, null, 2), secretProviderIds };
+	return {
+		content: JSON.stringify(parsed, null, 2),
+		secretProviderIds,
+		...(Object.keys(secretHeaderKeys).length > 0 ? { secretHeaderKeys } : {}),
+	};
 }
 
 function mergeCustomProviderApiKeys(parsed: CustomProvidersFile, previous: CustomProvidersFile): void {
@@ -1809,12 +1851,25 @@ function mergeCustomProviderApiKeys(parsed: CustomProvidersFile, previous: Custo
 		for (const [key, owner] of modelHeaderOwners(provider)) {
 			const previousHeaders = previousOwners.get(key)?.headers;
 			if (owner.headers === null) { delete owner.headers; continue; }
-			if (!isRecord(previousHeaders)) continue;
-			const headers = isRecord(owner.headers) ? owner.headers : {};
-			for (const [name, value] of Object.entries(previousHeaders)) {
-				if (headers[name] === undefined && isSecretProviderHeader(name, value)) headers[name] = value;
+			const rawOwnerHeaders = isRecord(owner.headers) ? owner.headers : undefined;
+			const headers: Record<string, unknown> = {};
+			if (rawOwnerHeaders) {
+				for (const [name, value] of Object.entries(rawOwnerHeaders)) {
+					if (value !== null) {
+						Object.defineProperty(headers, name, { value, enumerable: true, configurable: true, writable: true });
+					}
+				}
 			}
-			owner.headers = headers;
+			if (isRecord(previousHeaders)) {
+				for (const [name, value] of Object.entries(previousHeaders)) {
+					const explicitlymentioned = rawOwnerHeaders !== undefined && Object.prototype.hasOwnProperty.call(rawOwnerHeaders, name);
+					if (!explicitlymentioned && headers[name] === undefined && isSecretProviderHeader(name, value)) {
+						Object.defineProperty(headers, name, { value, enumerable: true, configurable: true, writable: true });
+					}
+				}
+			}
+			if (Object.keys(headers).length > 0) owner.headers = headers;
+			else if (rawOwnerHeaders !== undefined) delete owner.headers;
 		}
 		// 字段缺失（包括 JSON.stringify 省略的 undefined）保留旧密钥；只有显式 null 删除。
 		if (provider.apiKey === null) {
@@ -1853,7 +1908,7 @@ async function readCustomProvidersSnapshot(file: string): Promise<{ content: str
 	}
 }
 
-export async function readCustomProviders(): Promise<{ content: string; exists: boolean; secretProviderIds: string[]; revision: string }> {
+export async function readCustomProviders(): Promise<{ content: string; exists: boolean; secretProviderIds: string[]; secretHeaderKeys?: Record<string, string[]>; revision: string }> {
 	const snapshot = await readCustomProvidersSnapshot(modelsJsonPath());
 	return {
 		...redactCustomProviderSecrets(snapshot.content ?? '{"providers":{}}'),

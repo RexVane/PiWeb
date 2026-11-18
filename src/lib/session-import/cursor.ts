@@ -10,7 +10,7 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { jsonlImportWarnings, readFileBounded, reachedLimit } from "./files";
+import { jsonlImportWarnings, readFileBounded } from "./files";
 import { cursorChatsRoot } from "./paths";
 import { openReadOnly } from "./sqlite";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
@@ -128,10 +128,9 @@ export const cursorSource: ImportSourceModule = {
 		} catch {
 			return [];
 		}
-		const out: ExternalSessionSummary[] = [];
+		const candidates: Array<{ dir: string; dbPath: string; sessionId: string; mtime: number }> = [];
 		for (const workspace of workspaces) {
 			options?.signal?.throwIfAborted();
-			if (reachedLimit(out.length, limit)) break;
 			let sessions: string[] = [];
 			try {
 				sessions = (await fs.readdir(path.join(root, workspace), { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
@@ -140,53 +139,61 @@ export const cursorSource: ImportSourceModule = {
 			}
 			for (const sessionId of sessions) {
 				options?.signal?.throwIfAborted();
-				if (reachedLimit(out.length, limit)) break;
 				const dir = path.join(root, workspace, sessionId);
 				const dbPath = path.join(dir, "store.db");
 				try {
-					await fs.access(dbPath);
+					const st = await fs.stat(dbPath);
+					if (!st.isFile()) continue;
+					candidates.push({ dir, dbPath, sessionId, mtime: st.mtimeMs });
 				} catch {
 					continue;
 				}
-				let meta: Record<string, unknown> = {};
-				try {
-					meta = JSON.parse((await readFileBounded(path.join(dir, "meta.json"), 256 * 1024)).toString("utf8")) as Record<string, unknown>;
-				} catch {
-					meta = {};
-				}
-				if (meta.hasConversation === false) continue;
-				const db = await openReadOnly(dbPath);
-				if (!db) continue;
-				let record: Record<string, unknown> | undefined;
-				try {
-					if (db.hasTable("meta")) record = parseAgentRecord(db.get("SELECT value FROM meta WHERE key = '0'")?.value);
-				} catch {
-					record = undefined;
-				} finally {
-					db.close();
-				}
-				const projectPath = typeof record?.workspacePath === "string" && record.workspacePath.trim() ? record.workspacePath : "";
-				if (!projectPath) continue;
-				let title = cleanTitle(meta.title);
-				if (!title) {
-					try {
-						const prompts = JSON.parse((await readFileBounded(path.join(dir, "prompt_history.json"), 256 * 1024)).toString("utf8")) as unknown;
-						if (Array.isArray(prompts) && typeof prompts[0] === "string") title = cleanTitle(prompts[0]);
-					} catch {
-						// 没有 prompt_history 就靠首条消息
-					}
-				}
-				out.push({
-					source: "cursor",
-					externalId: sessionId,
-					title,
-					projectPath,
-					createdAt: toEpochMs(meta.createdAtMs ?? record?.createdAt),
-					updatedAt: toEpochMs(meta.updatedAtMs ?? record?.updatedAt) ?? toEpochMs(meta.createdAtMs ?? record?.createdAt),
-					...(typeof record?.lastUsedModel === "string" && record.lastUsedModel ? { model: record.lastUsedModel } : {}),
-					location: dbPath,
-				});
 			}
+		}
+		candidates.sort((left, right) => right.mtime - left.mtime);
+		const scanSlice = limit > 0 ? candidates.slice(0, Math.max(500, limit * 20)) : candidates;
+		const out: ExternalSessionSummary[] = [];
+		for (const { dir, dbPath, sessionId, mtime } of scanSlice) {
+			options?.signal?.throwIfAborted();
+			let meta: Record<string, unknown> = {};
+			try {
+				meta = JSON.parse((await readFileBounded(path.join(dir, "meta.json"), 256 * 1024)).toString("utf8")) as Record<string, unknown>;
+			} catch {
+				meta = {};
+			}
+			if (meta.hasConversation === false) continue;
+			const db = await openReadOnly(dbPath);
+			if (!db) continue;
+			let record: Record<string, unknown> | undefined;
+			try {
+				if (db.hasTable("meta")) record = parseAgentRecord(db.get("SELECT value FROM meta WHERE key = '0'")?.value);
+			} catch {
+				record = undefined;
+			} finally {
+				db.close();
+			}
+			const projectPath = typeof record?.workspacePath === "string" && record.workspacePath.trim() ? record.workspacePath : "";
+			if (!projectPath) continue;
+			let title = cleanTitle(meta.title);
+			if (!title) {
+				try {
+					const prompts = JSON.parse((await readFileBounded(path.join(dir, "prompt_history.json"), 256 * 1024)).toString("utf8")) as unknown;
+					if (Array.isArray(prompts) && typeof prompts[0] === "string") title = cleanTitle(prompts[0]);
+				} catch {
+					// 没有 prompt_history 就靠首条消息
+				}
+			}
+			const createdAt = toEpochMs(meta.createdAtMs ?? record?.createdAt);
+			out.push({
+				source: "cursor",
+				externalId: sessionId,
+				title,
+				projectPath,
+				createdAt,
+				updatedAt: toEpochMs(meta.updatedAtMs ?? record?.updatedAt) ?? createdAt ?? mtime,
+				...(typeof record?.lastUsedModel === "string" && record.lastUsedModel ? { model: record.lastUsedModel } : {}),
+				location: dbPath,
+			});
 		}
 		out.sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0));
 		return limit > 0 ? out.slice(0, limit) : out;

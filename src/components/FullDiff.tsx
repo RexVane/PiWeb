@@ -10,6 +10,7 @@
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import type { DiffLine } from "@/components/DiffView";
 import { useI18n } from "@/i18n";
+import { extractDiffBlocks } from "@/lib/git-hunk";
 import { highlightLine } from "@/lib/highlight";
 import { annotateHighlightedHtml, computeWordDiffLines, type DiffSegment } from "@/lib/word-diff";
 
@@ -35,6 +36,8 @@ export interface DiffHunkAction {
 	checked: boolean;
 	/** 正在提交请求中的块下标（禁用连点） */
 	busyBlock?: number | null;
+	/** 整体禁用（如整文件暂存/取消暂存进行中） */
+	disabled?: boolean;
 	onToggle: (blockIndex: number, anchor: DiffHunkAnchor) => void;
 }
 
@@ -86,6 +89,7 @@ function buildInlineRows(lines: DiffLine[], folded: boolean, unfolded: Set<numbe
 	while (i < lines.length) {
 		const l = lines[i];
 		if (l.kind === "hunk" || l.kind === "file") {
+			prevChange = false;
 			i += 1;
 			continue;
 		}
@@ -563,34 +567,9 @@ export const FullDiff = memo(function FullDiff({
 		const { rows, blocks } = inlineModel;
 		const blockByStartRow = new Map<number, { index: number; anchor: DiffHunkAnchor }>();
 		if (hunkAction) {
-			// 提取每块对应的块坐标以便在行内视图也挂出按钮
-			let prevIdx = -1;
-			let curDel = 0;
-			let curAdd = 0;
-			let firstOld = 0;
-			let firstNew = 0;
-			for (let b = 0; b < blocks.length; b += 1) {
-				const rStart = blocks[b];
-				curDel = 0;
-				curAdd = 0;
-				firstOld = 0;
-				firstNew = 0;
-				for (let r = rStart; r < rows.length; r += 1) {
-					const row = rows[r];
-					if (row.kind !== "line" || (row.line.kind !== "add" && row.line.kind !== "del")) break;
-					if (row.line.kind === "del") {
-						curDel += 1;
-						if (!firstOld && row.line.old) firstOld = row.line.old;
-					} else {
-						curAdd += 1;
-						if (!firstNew && row.line.new) firstNew = row.line.new;
-					}
-					prevIdx = row.line.old ?? prevIdx;
-				}
-				blockByStartRow.set(rStart, {
-					index: b,
-					anchor: { oldAnchor: firstOld || prevIdx, newAnchor: firstNew, delCount: curDel, addCount: curAdd },
-				});
+			const extracted = extractDiffBlocks(lines);
+			for (let b = 0; b < blocks.length && b < extracted.length; b += 1) {
+				blockByStartRow.set(blocks[b], { index: b, anchor: extracted[b] });
 			}
 		}
 		const start = Math.max(0, Math.floor(inlineVp.top / ROW_H) - OVERSCAN);
@@ -640,7 +619,7 @@ export const FullDiff = memo(function FullDiff({
 											type="button"
 											className="pw-hunk-check pw-hunk-check-inline"
 											data-checked={hunkAction.checked || undefined}
-											disabled={hunkAction.busyBlock === hunkStart.index}
+											disabled={Boolean(hunkAction.disabled) || (hunkAction.busyBlock !== null && hunkAction.busyBlock !== undefined)}
 											aria-label={`${hunkAction.label} #${hunkStart.index + 1}`}
 											title={hunkAction.label}
 											onClick={() => hunkAction.onToggle(hunkStart.index, hunkStart.anchor)}
@@ -798,7 +777,7 @@ export const FullDiff = memo(function FullDiff({
 								type="button"
 								className="pw-hunk-check"
 								data-checked={hunkAction.checked || undefined}
-								disabled={hunkAction.busyBlock === b.index}
+								disabled={Boolean(hunkAction.disabled) || (hunkAction.busyBlock !== null && hunkAction.busyBlock !== undefined)}
 								style={{ top }}
 								aria-label={`${hunkAction.label} #${b.index + 1}`}
 								title={hunkAction.label}

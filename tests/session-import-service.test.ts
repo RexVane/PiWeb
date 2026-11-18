@@ -378,4 +378,35 @@ describe("幂等与失败报告", () => {
 		);
 		expect(await snapshot()).toEqual(before);
 	});
+
+	it("带连字符来源（antigravity-cli）能正确识别已导入、幂等跳过并从归档恢复", async () => {
+		const { DatabaseSync } = await import("node:sqlite");
+		const { pathToFileURL } = await import("node:url");
+		await fs.mkdir(roots.antigravityCli, { recursive: true });
+		const db = new DatabaseSync(path.join(roots.antigravityCli, "conversation_summaries.db"));
+		db.exec("CREATE TABLE conversation_summaries (conversation_id TEXT, title TEXT, preview TEXT, step_count INTEGER, last_modified_time TEXT, workspace_uris TEXT, parent_conversation_id TEXT, nesting_depth INTEGER)");
+		db.prepare("INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+			"cli-session-1", "CLI 会话", "", 2, "2026-11-14 13:32:00+00:00", JSON.stringify([pathToFileURL(project).href]), "", 0,
+		);
+		db.close();
+		const transcript = path.join(roots.antigravityCli, "brain", "cli-session-1", ".system_generated", "logs", "transcript_full.jsonl");
+		await fs.mkdir(path.dirname(transcript), { recursive: true });
+		await fs.writeFile(transcript, [
+			JSON.stringify({ step_index: 0, source: "USER_EXPLICIT", type: "USER_INPUT", created_at: "2026-11-14T13:30:56Z", content: "你好" }),
+			JSON.stringify({ step_index: 1, source: "MODEL", type: "PLANNER_RESPONSE", created_at: "2026-11-14T13:30:58Z", content: "在的" }),
+		].join("\n") + "\n");
+
+		const selection = { source: "antigravity-cli" as const, externalId: "cli-session-1" };
+		const first = await importSessions([selection], { agentDir });
+		expect(first).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+		expect((await scanAllSources(agentDir)).imported).toContain("antigravity-cli:cli-session-1");
+
+		const second = await importSessions([selection], { agentDir });
+		expect(second).toMatchObject({ imported: 0, skipped: 1, failed: 0 });
+
+		await archiveSession(first.results[0].path!, agentDir);
+		expect((await scanAllSources(agentDir)).archived).toContain("antigravity-cli:cli-session-1");
+		const restored = await importSessions([selection], { agentDir });
+		expect(restored).toMatchObject({ imported: 0, restored: 1, failed: 0 });
+	});
 });

@@ -87,3 +87,56 @@ it("does not automatically probe usage for command-backed credentials", async ()
 	render(<ModelsSection />); await screen.findByRole("button", { name: "编辑" });
 	expect(actions).toEqual([]);
 });
+
+it("masks custom header values with type=password, forwards headers on inline discover, and deletes removed secret headers", async () => {
+	const actions: Array<Record<string, any>> = [];
+	const config = {
+		gateway: {
+			baseUrl: "https://gateway.example/v1",
+			api: "openai-completions",
+			name: "Gateway",
+			headers: {},
+			models: [model],
+		},
+	};
+	vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+		if (url === "/api/models?custom=1") {
+			return response({
+				providers: [{ id: "gateway", name: "Gateway", builtIn: false, authReady: true, authConfigured: true, keyManaged: true, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 1 }],
+				customProviders: { content: JSON.stringify({ providers: config }), revision: "rev-1", secretProviderIds: ["gateway"], secretHeaderKeys: { gateway: ["X-Api-Key"] } },
+			});
+		}
+		const body = JSON.parse(String(init?.body));
+		actions.push(body);
+		if (body.action === "discoverModels") return response({ models: [{ id: "discovered-1" }] });
+		if (body.action === "saveCustomProviders") return response({});
+		throw new Error(`unexpected action ${body.action}`);
+	}));
+
+	render(<ModelsSection />);
+	fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+
+	// Stored secret header row is rendered with password input & stored placeholder
+	expect(screen.getByDisplayValue("X-Api-Key")).toBeTruthy();
+	fireEvent.click(screen.getByRole("button", { name: "添加请求头" }));
+	const nameInputs = screen.getAllByPlaceholderText("User-Agent");
+	const newValueInput = screen.getByPlaceholderText("opencode/1.0.0") as HTMLInputElement;
+	expect(newValueInput.getAttribute("type")).toBe("password");
+
+	fireEvent.change(nameInputs[1], { target: { value: "X-Trace" } });
+	fireEvent.change(newValueInput, { target: { value: "trace-1" } });
+	fireEvent.click(screen.getByRole("button", { name: "获取可用模型" }));
+	await waitFor(() => expect(actions[0]).toMatchObject({
+		action: "discoverModels",
+		providerId: "gateway",
+		headers: { "X-Trace": "trace-1" },
+	}));
+
+	// Delete both header rows and save -> headers becomes null so backend clears stored secret headers
+	fireEvent.click(screen.getByRole("button", { name: "删除 X-Api-Key" }));
+	fireEvent.click(screen.getByRole("button", { name: "删除 X-Trace" }));
+	fireEvent.click(screen.getByRole("button", { name: "保存" }));
+	await waitFor(() => expect(actions.some((a) => a.action === "saveCustomProviders")).toBe(true));
+	const saveCall = actions.find((a) => a.action === "saveCustomProviders")!;
+	expect(JSON.parse(saveCall.content).providers.gateway.headers).toBeNull();
+});

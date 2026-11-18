@@ -22,7 +22,7 @@ import {
 	invalidateModelList, preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
 } from "../src/lib/models-service";
 import { GET, POST } from "../src/app/api/models/route";
-import { customModelGaps, fillModelFields, PI_MODEL_FALLBACKS } from "../src/lib/model-draft";
+import { customModelGaps, fillModelFields, modelDraftFromConfig, PI_MODEL_FALLBACKS, serializeProviderDraft } from "../src/lib/model-draft";
 
 let agentDir: string;
 let file: string;
@@ -348,5 +348,34 @@ describe("configuration revision and route contract", () => {
 		expect(response.status).toBe(500);
 		expect(await response.json()).toMatchObject({ success: false });
 		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
+	});
+
+	it("redacts Bearer/Basic header values regardless of header name and deletes stored secret headers when cleared via serializeProviderDraft", async () => {
+		await writeCustomProviders(JSON.stringify({
+			providers: {
+				gw: {
+					baseUrl: "https://example.com/v1",
+					apiKey: "k",
+					api: "openai-completions",
+					headers: { "X-Api-Key": "s", "CF-Access-Assertion": "Bearer eyJsecret" },
+					models: [{ id: "m1" }],
+				},
+			},
+		}), "missing");
+		const read = await readCustomProviders();
+		expect(read.content).not.toContain("eyJsecret");
+		expect(read.secretHeaderKeys).toEqual({ gw: ["X-Api-Key", "CF-Access-Assertion"] });
+
+		const next = JSON.parse(read.content);
+		next.providers.gw = serializeProviderDraft(next.providers.gw, {
+			baseUrl: "https://example.com/v1",
+			api: "openai-completions",
+			models: next.providers.gw.models.map(modelDraftFromConfig),
+			headers: {},
+		});
+		await writeCustomProviders(JSON.stringify(next), read.revision);
+		const saved = JSON.parse(await fs.readFile(file, "utf8"));
+		expect(saved.providers.gw.headers).toBeUndefined();
+		expect(saved.providers.gw.apiKey).toBe("k");
 	});
 });

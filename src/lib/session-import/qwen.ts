@@ -9,21 +9,10 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { eachJsonLine, jsonlImportWarnings, listFiles, readFileBounded, reachedLimit, sortByRecency } from "./files";
+import { eachJsonLine, jsonlImportWarnings, listFiles, readFileBounded, readHead, reachedLimit, sortByRecency } from "./files";
 import { qwenLegacyTmpRoot, qwenProjectsRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedMessage, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
 import { cleanTitle, compactBlocks, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
-
-/** 编码的项目目录（和 Claude Code 一样用 - 替代分隔符）→ 路径；只用于记录里没有 cwd 的兜底 */
-function decodeEncodedProject(name: string): string | undefined {
-	const trimmed = name.replace(/^--+|-+$/g, "");
-	const match = /^([A-Za-z])--(.*)$/.exec(trimmed);
-	if (!match) return undefined;
-	const rest = match[2].split("--").join("/");
-	if (!rest) return undefined;
-	const guess = `${match[1].toUpperCase()}:/${rest}`;
-	return guess;
-}
 
 async function projectExists(dir: string): Promise<boolean> {
 	try {
@@ -31,6 +20,53 @@ async function projectExists(dir: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * 编码的项目目录（和 Claude Code 一样用 - 替代分隔符）→ 真实存在的本地路径；只用于记录里没有 cwd 的兜底。
+ * 同时支持 Windows 盘符（`D--foo-bar`）与 POSIX 绝对路径（`-Users-alice-my-app`），并容忍目录名自身含连字符 `-`。
+ */
+async function resolveEncodedProject(name: string): Promise<string | undefined> {
+	const winMatch = /^--*([A-Za-z])--(.*)$|^([A-Za-z])--(.*)$/.exec(name.replace(/-+$/g, ""));
+	let rootPrefix: string;
+	let rawRest: string;
+	if (winMatch) {
+		const drive = (winMatch[1] || winMatch[3]).toUpperCase();
+		rawRest = winMatch[2] ?? winMatch[4] ?? "";
+		if (!rawRest) return undefined;
+		const directWin = `${drive}:/${rawRest.split(/--+|-/).filter(Boolean).join("/")}`;
+		if (await projectExists(directWin)) return directWin;
+		const doubleSepWin = `${drive}:/${rawRest.split("--").join("/")}`;
+		if (await projectExists(doubleSepWin)) return doubleSepWin;
+		rootPrefix = `${drive}:/`;
+	} else if (name.startsWith("-")) {
+		rawRest = name.replace(/^-+|-+$/g, "");
+		if (!rawRest) return undefined;
+		const directPosix = `/${rawRest.split("-").filter(Boolean).join("/")}`;
+		if (await projectExists(directPosix)) return directPosix;
+		rootPrefix = "/";
+	} else {
+		return undefined;
+	}
+
+	const tokens = rawRest.split("-").filter(Boolean);
+	if (!tokens.length || tokens.length > 32) return undefined;
+	let budget = 64;
+	const walk = async (cur: string, index: number): Promise<string | undefined> => {
+		if (index >= tokens.length) return cur;
+		for (let end = index; end < tokens.length; end += 1) {
+			if (budget <= 0) return undefined;
+			budget -= 1;
+			const segment = tokens.slice(index, end + 1).join("-");
+			const candidate = cur.endsWith("/") ? `${cur}${segment}` : `${cur}/${segment}`;
+			if (await projectExists(candidate)) {
+				const found = await walk(candidate, end + 1);
+				if (found) return found;
+			}
+		}
+		return undefined;
+	};
+	return walk(rootPrefix, 0);
 }
 
 /** 从会话记录里找 cwd（JSONL 的 message 行/元数据行可能带） */
@@ -115,7 +151,9 @@ export const qwenSource: ImportSourceModule = {
 			if (!candidate) continue;
 			let head: string;
 			try {
-				head = (await readFileBounded(file, 512 * 1024)).toString("utf8");
+				head = candidate.kind === "json"
+					? (await readFileBounded(file)).toString("utf8")
+					: await readHead(file, 512 * 1024);
 			} catch {
 				continue;
 			}
@@ -135,8 +173,7 @@ export const qwenSource: ImportSourceModule = {
 			if (!records.length) continue;
 			let projectPath = cwdOf(records);
 			if (!projectPath && candidate.encoded) {
-				const guess = decodeEncodedProject(candidate.encoded);
-				if (guess && (await projectExists(guess))) projectPath = guess;
+				projectPath = await resolveEncodedProject(candidate.encoded);
 			}
 			if (!projectPath) continue; // 不知道工作区就导不回去
 			const firstUser = records
@@ -168,13 +205,16 @@ export const qwenSource: ImportSourceModule = {
 			return null;
 		}
 		const entries: ImportedEntry[] = [];
-		const skipped: string[] = jsonlImportWarnings(text);
+		const isJsonl = summary.location.endsWith(".jsonl");
+		const skipped: string[] = isJsonl
+			? jsonlImportWarnings(text)
+			: (text.includes("\uFFFD") ? ["源文本包含无法解码的字符，已保留替换标记，请核对原会话"] : []);
 		const toolNames = new Map<string, string>();
 		const pending: string[] = [];
 		let synthetic = 0;
 		let legacy = false;
 		const records: Record<string, unknown>[] = [];
-		if (summary.location.endsWith(".jsonl")) {
+		if (isJsonl) {
 			for (const record of eachJsonLine(text)) records.push(record);
 		} else {
 			legacy = true;
@@ -201,22 +241,49 @@ export const qwenSource: ImportSourceModule = {
 					return typeof block?.text === "string" ? textBlock(block.text) : null;
 				}));
 				const calls = Array.isArray(legacyMessage.toolCalls) ? legacyMessage.toolCalls : [];
-				const callBlocks: Array<ImportedBlock | null> = calls.map((raw, index) => {
+				const validCalls: Array<{ block: Extract<ImportedBlock, { type: "toolCall" }>; hasResult: boolean; result?: unknown; isError?: boolean; name: string }> = [];
+				calls.forEach((raw, index) => {
+					if (!raw || typeof raw !== "object") return;
 					const call = raw as Record<string, unknown>;
 					const name = typeof call.name === "string" ? call.name : "";
-					if (!name) return null;
+					if (!name) return;
 					const id = typeof call.id === "string" && call.id ? call.id : `qwen-legacy-${line}-${index}`;
 					toolNames.set(id, name);
-					pending.push(id);
-					return { type: "toolCall" as const, id, name, arguments: parseArguments(call.args ?? call.arguments ?? {}) };
+					const hasResult = call.result !== undefined || call.output !== undefined || call.response !== undefined || call.resultDisplay !== undefined;
+					if (!hasResult) pending.push(id);
+					const rawResult = call.result ?? call.output ?? call.response ?? call.resultDisplay;
+					const unwrapped = rawResult && typeof rawResult === "object" && !Array.isArray(rawResult) && "output" in (rawResult as Record<string, unknown>)
+						? (rawResult as Record<string, unknown>).output
+						: rawResult;
+					validCalls.push({
+						block: { type: "toolCall" as const, id, name, arguments: parseArguments(call.args ?? call.arguments ?? {}) },
+						hasResult,
+						...(hasResult ? { result: unwrapped, isError: call.status === "error" || call.isError === true } : {}),
+						name,
+					});
 				});
 				if (role === "user") {
 					if (!blocks.length) continue;
 					entries.push({ type: "message", message: { role: "user", content: blocks, timestamp } });
 				} else if (role === "gemini" || role === "assistant" || role === "model") {
+					const callBlocks = validCalls.map((item) => item.block);
 					const content = compactBlocks([...blocks, ...callBlocks]);
 					if (!content.length) continue;
-					entries.push({ type: "message", message: { role: "assistant", content, timestamp, ...(callBlocks.length ? { stopReason: "toolUse" } : {}) } });
+					entries.push({ type: "message", message: { role: "assistant", content, timestamp, ...(callBlocks.length > 0 ? { stopReason: "toolUse" } : {}) } });
+					for (const item of validCalls) {
+						if (!item.hasResult) continue;
+						entries.push({
+							type: "message",
+							message: {
+								role: "toolResult",
+								toolCallId: item.block.id,
+								toolName: item.name,
+								content: outputBlocks(item.result),
+								...(item.isError ? { isError: true } : {}),
+								timestamp,
+							},
+						});
+					}
 				}
 				continue;
 			}

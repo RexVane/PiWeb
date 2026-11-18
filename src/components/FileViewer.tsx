@@ -203,7 +203,7 @@ export function FileViewer({
 	}, [state.active, activeTab?.git?.mode, activeTab?.git?.hash, cwd]);
 	useEffect(() => {
 		if (modeTouched || !activeTab) return;
-		setMode(activeTab.git || (change && !activeTab.lazy) ? "diff" : isMarkdown ? "render" : "content");
+		setMode(activeTab.kind !== "upload" && (activeTab.git || (change && !activeTab.lazy)) ? "diff" : isMarkdown ? "render" : "content");
 	}, [activeTab, change, isMarkdown, modeTouched]);
 
 	/** 目录兜底：文件读取报 400（不存在 / 不是文件）时探一下目录接口，成功就当文件夹显示 */
@@ -286,6 +286,7 @@ export function FileViewer({
 			})();
 			return () => {
 				alive = false;
+				controller.abort();
 			};
 		}
 		if (!cwd) {
@@ -503,7 +504,7 @@ export function FileViewer({
 		}
 	};
 	const toggleGitHunk = useCallback(async (blockIndex: number, anchor: DiffHunkAnchor) => {
-		if (!activeTab?.git || activeTab.git.mode === "commit" || busyHunk !== null) return;
+		if (!activeTab?.git || activeTab.git.mode === "commit" || busyHunk !== null || busyFileAction) return;
 		const action = activeTab.git.mode === "staged" ? "unstageHunk" : "stageHunk";
 		setBusyHunk(blockIndex);
 		setLinkError(null);
@@ -515,10 +516,10 @@ export function FileViewer({
 			});
 			const payload = await response.json();
 			if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
-			const nextEntry = (payload.data?.info?.files as Array<{ path: string; kind: string }> | undefined)?.find((f) => f.path === activeTab.path);
+			const nextEntry = (payload.data?.info?.files as Array<{ path: string; from?: string; kind: string }> | undefined)?.find((f) => f.path === activeTab.path);
 			if (action === "unstageHunk" && nextEntry?.kind === "untracked") {
 				onOpen(activeTab.path, {
-					...(activeTab.from ? { from: activeTab.from } : {}),
+					...(nextEntry.from ? { from: nextEntry.from } : {}),
 					git: { mode: "untracked", label: t.gitUntracked },
 				});
 			}
@@ -530,9 +531,9 @@ export function FileViewer({
 		} finally {
 			setBusyHunk(null);
 		}
-	}, [activeTab, busyHunk, cwd, onGitMutated, onOpen, t.gitUntracked, t.viewerLoadFailed]);
+	}, [activeTab, busyFileAction, busyHunk, cwd, onGitMutated, onOpen, t.gitUntracked, t.viewerLoadFailed]);
 	const mutateActiveGitFile = useCallback(async () => {
-		if (!activeTab?.git || activeTab.git.mode === "commit" || busyFileAction) return;
+		if (!activeTab?.git || activeTab.git.mode === "commit" || busyFileAction || busyHunk !== null) return;
 		const isStaged = activeTab.git.mode === "staged";
 		const action = isStaged ? "unstage" : "stage";
 		setBusyFileAction(true);
@@ -541,15 +542,15 @@ export function FileViewer({
 			const response = await fetch("/api/git", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action, cwd, path: activeTab.path }),
+				body: JSON.stringify({ action, cwd, paths: activeTab.from ? [activeTab.from, activeTab.path] : [activeTab.path] }),
 			});
 			const payload = await response.json();
 			if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
-			const nextEntry = (payload.data?.info?.files as Array<{ path: string; kind: string }> | undefined)?.find((f) => f.path === activeTab.path);
+			const nextEntry = (payload.data?.info?.files as Array<{ path: string; from?: string; kind: string }> | undefined)?.find((f) => f.path === activeTab.path);
 			const nextMode = isStaged ? (nextEntry?.kind === "untracked" ? "untracked" : "worktree") : "staged";
 			const nextLabel = nextMode === "staged" ? t.gitStagedDiff : nextMode === "untracked" ? t.gitUntracked : t.gitWorktreeDiff;
 			onOpen(activeTab.path, {
-				...(activeTab.from ? { from: activeTab.from } : {}),
+				...(nextEntry?.from ? { from: nextEntry.from } : {}),
 				git: { mode: nextMode, label: nextLabel },
 			});
 			setRefreshKey((k) => k + 1);
@@ -559,11 +560,14 @@ export function FileViewer({
 		} finally {
 			setBusyFileAction(false);
 		}
-	}, [activeTab, busyFileAction, cwd, onGitMutated, onOpen, t.gitStagedDiff, t.gitUntracked, t.gitWorktreeDiff, t.viewerLoadFailed]);
+	}, [activeTab, busyFileAction, busyHunk, cwd, onGitMutated, onOpen, t.gitStagedDiff, t.gitUntracked, t.gitWorktreeDiff, t.viewerLoadFailed]);
 
 	if (!state.open) return null;
 
-	const segments = activeTab ? activeTab.path.split("/") : [];
+	const isUpload = activeTab?.kind === "upload";
+	const segments = activeTab
+		? (isUpload ? [activeTab.path.split(/[/\\]/).pop() || activeTab.path] : activeTab.path.split("/"))
+		: [];
 	const goCrumb = (i: number) => {
 		const dir = segments.slice(0, i + 1).join("/");
 		growth.revealPath(dir);
@@ -591,11 +595,12 @@ export function FileViewer({
 					? { left: `${activeTab.git.hash ?? "commit"}^`, right: activeTab.git.hash ?? t.gitCommitMode }
 					: { left: t.viewerDiffStaged, right: t.viewerDiffWorktree }
 		: { left: t.viewerDiffBefore, right: t.viewerDiffAfter };
-	const hunkAction = activeTab?.git && activeTab.git.mode !== "commit" && !currentLoaded?.truncated
+	const hunkAction = activeTab?.git && activeTab.git.mode !== "commit" && !activeTab.from && !currentLoaded?.truncated
 		? {
 			label: activeTab.git.mode === "staged" ? t.gitUnstageHunk : t.gitStageHunk,
 			checked: activeTab.git.mode === "staged",
 			busyBlock: busyHunk,
+			disabled: busyFileAction,
 			onToggle: (blockIndex: number, anchor: DiffHunkAnchor) => void toggleGitHunk(blockIndex, anchor),
 		}
 		: undefined;
@@ -685,7 +690,7 @@ export function FileViewer({
 									</span>
 								))}
 							</div>
-							{stepBadge && (Boolean(activeTab.git) || !activeTab.lazy) && (
+							{stepBadge && !isUpload && (Boolean(activeTab.git) || !activeTab.lazy) && (
 								<span className="flex-none truncate" style={{ fontSize: 11.5, color: "var(--dsw-label-caption)", maxWidth: 220 }}>
 									{stepBadge}
 								</span>
@@ -694,13 +699,13 @@ export function FileViewer({
 								<button
 									type="button"
 									className="pw-chip"
-									disabled={busyFileAction}
+									disabled={busyFileAction || busyHunk !== null}
 									onClick={() => void mutateActiveGitFile()}
 								>
 									{activeTab.git.mode === "staged" ? `− ${t.gitUnstage}` : `+ ${t.gitStage}`}
 								</button>
 							)}
-							{(Boolean(activeTab.git) || !activeTab.lazy) && !isDir && (
+							{(Boolean(activeTab.git) || (!activeTab.lazy && !isUpload)) && !isDir && (
 								<span className="pw-seg" role="radiogroup">
 									{(["diff", "content", ...(isMarkdown ? ["render" as const] : [])] as Mode[]).map((m) => (
 										<button
@@ -719,7 +724,7 @@ export function FileViewer({
 									))}
 								</span>
 							)}
-							{!isDir && activeTab.lazy && !activeTab.git && isMarkdown && (
+							{!isDir && (activeTab.lazy || isUpload) && !activeTab.git && isMarkdown && (
 								<span className="pw-seg" role="radiogroup">
 									{(["content", "render"] as Mode[]).map((m) => (
 										<button key={m} type="button" role="radio" aria-checked={mode === m} data-active={mode === m} onClick={() => { setModeTouched(true); setMode(m); }}>
@@ -774,12 +779,12 @@ export function FileViewer({
 									<IconDownloadOutline16 size={13} />
 								</a>}
 							</>}
-							{onReference && (
+							{onReference && !isUpload && (
 								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.fileReference} onClick={() => onReference(activeTab.path)}>
 									<IconAtOutline16 size={13} />
 								</button>
 							)}
-							{onOpenEditor && (
+							{onOpenEditor && !isUpload && (
 								<button type="button" className="icon-btn" style={{ width: 24, height: 24 }} title={t.fileOpenEditor} onClick={() => onOpenEditor(activeTab.path)}>
 									<IconFileOutline16 size={13} />
 								</button>

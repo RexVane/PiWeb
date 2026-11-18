@@ -177,4 +177,57 @@ describe("Git workbench backend write & full-context diff operations", () => {
 		expect(stageJson.success).toBe(true);
 		expect(stageJson.data.info.files[0].indexStatus).toBe("A");
 	}, 20_000);
+
+	it("blocks dash-prefixed remote/branch option injection in gitPush", async () => {
+		const { dir, git } = await makeTempRepo("piweb-git-push-inj-");
+		await fs.writeFile(path.join(dir, "seed.txt"), "ok\n", "utf8");
+		await gitStage(dir, ["seed.txt"]);
+		await gitCommit(dir, "initial");
+		const branch = git("rev-parse", "--abbrev-ref", "HEAD");
+		execFileSync("git", ["init", "--bare", "-q", path.join(dir, branch)], { windowsHide: true });
+		const marker = path.join(dir, "pwned-marker");
+		git("config", `remote.--receive-pack=touch ${marker}.url`, ".");
+
+		await expect(gitPush(dir)).rejects.toMatchObject({ status: 400 });
+		await expect(fs.stat(marker)).rejects.toThrow();
+	}, 20_000);
+
+	it("preserves exact non-UTF-8 (GBK) bytes during hunk staging and unstaging, handles renamed unstage, and caps large gitFileContent", async () => {
+		const { dir, git } = await makeTempRepo("piweb-git-bytes-");
+		const header = Buffer.from("header\n", "ascii");
+		await fs.writeFile(path.join(dir, "gbk.txt"), header);
+		await fs.writeFile(path.join(dir, "old.ts"), "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 4;\n", "utf8");
+		// 1 MB blob to verify bounded streaming in gitFileContent
+		const bigSize = 1024 * 1024;
+		await fs.writeFile(path.join(dir, "big.txt"), Buffer.alloc(bigSize, 0x41));
+		git("add", "gbk.txt", "old.ts", "big.txt");
+		git("commit", "-q", "-m", "initial");
+
+		// Append GBK bytes ("中文\n": 0xd6 0xd0 0xce 0xc4 0x0a)
+		const gbkTail = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a]);
+		await fs.writeFile(path.join(dir, "gbk.txt"), Buffer.concat([header, gbkTail]));
+		await gitHunkAction(dir, "gbk.txt", "stageHunk", "worktree", 0);
+		const stagedBytes = execFileSync("git", ["-C", dir, "cat-file", "-p", ":0:gbk.txt"], { windowsHide: true });
+		expect(stagedBytes.equals(Buffer.concat([header, gbkTail]))).toBe(true);
+
+		await gitHunkAction(dir, "gbk.txt", "unstageHunk", "staged", 0);
+		const restoredBytes = execFileSync("git", ["-C", dir, "cat-file", "-p", ":0:gbk.txt"], { windowsHide: true });
+		expect(restoredBytes.equals(header)).toBe(true);
+
+		// Renamed file unstage with [from, path] leaves no staged deletion of old.ts
+		git("mv", "old.ts", "new.ts");
+		await fs.writeFile(path.join(dir, "new.ts"), "export const a = 1;\nexport const b = 2;\nexport const c = 3;\nexport const d = 5;\n", "utf8");
+		git("add", "new.ts");
+		let info = await gitInfo(dir);
+		expect(info.files.find((f) => f.path === "new.ts")).toMatchObject({ from: "old.ts", indexStatus: "R" });
+		await gitUnstage(dir, ["old.ts", "new.ts"]);
+		info = await gitInfo(dir);
+		expect(info.files.find((f) => f.path === "old.ts" && f.indexStatus === "D")).toBeUndefined();
+
+		// Large blob preview is truncated without loading full blob or returning 404
+		const preview = await gitFileContent(dir, "big.txt", "HEAD");
+		expect(preview.truncated).toBe(true);
+		expect(preview.size).toBe(bigSize);
+		expect(preview.content.length).toBeLessThanOrEqual(256 * 1024);
+	}, 20_000);
 });

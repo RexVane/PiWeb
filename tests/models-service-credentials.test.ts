@@ -122,4 +122,31 @@ describe("configured credentials follow the SDK's resolution", () => {
 		expect(usage).toMatchObject({ kind: "balance", primary: { amount: "12.50", currency: "CNY" } });
 		expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer env-only-key");
 	});
+
+	it("refuses plaintext http and private-network baseUrl overrides in zai usage probes", async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		register("zai", "http://example.com/v1", {
+			apiKey: { name: "ZAI key", resolve: async () => ({ auth: { apiKey: "secret-key", baseUrl: "http://example.com/v1" } }) },
+		});
+		await expect(providerUsage("zai", true)).resolves.toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+
+		register("zai-coding-cn", "https://127.0.0.1:8443/v1", {
+			apiKey: { name: "ZAI CN key", resolve: async () => ({ auth: { apiKey: "secret-key", baseUrl: "https://127.0.0.1:8443/v1" } }) },
+		});
+		await expect(providerUsage("zai-coding-cn", true)).resolves.toBeNull();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("includes stored provider headers from SDK auth when discovering models on a trusted endpoint", async () => {
+		await withCatalog(200, async (baseUrl, seen) => {
+			register("piweb-cred-headers", baseUrl, {
+				apiKey: { name: "Gateway", resolve: async () => ({ auth: { apiKey: "gw-key", headers: { "X-Gateway-Secret": "stored-secret" } } }) },
+			});
+			await discoverModels({ baseUrl, providerId: "piweb-cred-headers", allowPrivate: true, headers: { "User-Agent": "custom-ua/1" } });
+			expect(seen[0]["x-gateway-secret"]).toBe("stored-secret");
+			expect(seen[0]["user-agent"]).toBe("custom-ua/1");
+		});
+	});
 });

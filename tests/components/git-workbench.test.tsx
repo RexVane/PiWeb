@@ -196,4 +196,128 @@ describe("FileViewer Git side-by-side diff & hunk staging", () => {
 		await waitFor(() => expect(onGitMutated).toHaveBeenCalledTimes(1));
 		await screen.findByText("这一范围内此文件没有变化");
 	});
+
+	it("shows both commit hash confirmation and pushError when commit+push partially fails, and includes from path on batch unstage", async () => {
+		const posts: Array<Record<string, unknown>> = [];
+		const baseInfo = {
+			available: true,
+			isRepo: true,
+			root: "/repo",
+			branch: "main",
+			upstream: "origin/main",
+			ahead: 0,
+			behind: 0,
+			detached: false,
+			files: [{ path: "new.ts", from: "old.ts", kind: "renamed", indexStatus: "R", workStatus: " " }],
+			commits: [],
+		};
+		vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+			if (url.includes("/api/github")) return jsonResponse({ identity: null });
+			if (init?.method === "POST") {
+				const body = JSON.parse(String(init.body));
+				posts.push(body);
+				if (body.action === "unstage") return jsonResponse({ info: baseInfo });
+				if (body.action === "commit") {
+					return jsonResponse({
+						hash: "1a2b3c4",
+						summary: body.message,
+						pushed: false,
+						pushError: "rejected by remote",
+						info: { ...baseInfo, files: [], ahead: 1 },
+					});
+				}
+			}
+			return jsonResponse(baseInfo);
+		}));
+
+		render(<GitPanel cwd="/repo" onClose={vi.fn()} onOpenDiff={vi.fn()} />);
+		await screen.findByTitle("new.ts");
+
+		// Batch unstage on staged area includes both old.ts and new.ts
+		fireEvent.click(screen.getByTitle("全部取消暂存"));
+		await waitFor(() => expect(posts[0]).toMatchObject({ action: "unstage", paths: ["old.ts", "new.ts"] }));
+
+		// Commit & push partial failure displays both commit notice and push error
+		fireEvent.change(screen.getByLabelText("提交"), { target: { value: "feat: rename" } });
+		fireEvent.click(screen.getByRole("button", { name: "提交并推送" }));
+		await waitFor(() => expect(screen.getByText("已提交 1a2b3c4")).toBeTruthy());
+		expect(screen.getByText("rejected by remote")).toBeTruthy();
+	});
+
+	it("enforces mutual exclusion between hunk action and file stage, hides hunk action on renamed files, and isolates upload tabs", async () => {
+		let resolveHunk!: (v: unknown) => void;
+		const postBodies: Array<Record<string, unknown>> = [];
+		let abortedUpload = false;
+		vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+			if (url.includes("upload=1")) {
+				init?.signal?.addEventListener("abort", () => { abortedUpload = true; });
+				return Promise.resolve(jsonResponse({ content: "# Uploaded note\n", binary: false, truncated: false, size: 16 }));
+			}
+			if (init?.method === "POST") {
+				const body = JSON.parse(String(init.body));
+				postBodies.push(body);
+				return new Promise((resolve) => { resolveHunk = resolve; });
+			}
+			return Promise.resolve(jsonResponse({ patch: "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n", binary: false, truncated: false }));
+		}));
+
+		const view = render(
+			<FileViewer
+				state={{ open: true, active: "a.ts", tabs: [{ path: "a.ts", git: { mode: "worktree", label: "工作区差异" } }] }}
+				growth={stubGrowth()}
+				cwd="/repo"
+				onClose={vi.fn()}
+				onSelectTab={vi.fn()}
+				onCloseTab={vi.fn()}
+				onOpen={vi.fn()}
+				onOpenEditor={vi.fn()}
+				onReference={vi.fn()}
+			/>,
+		);
+		const hunkBtn = await screen.findByRole("button", { name: "暂存此块 #1" });
+		fireEvent.click(hunkBtn);
+		// Toolbar "+ 暂存" is disabled and ignored while hunk staging is in flight
+		const stageBtn = screen.getByRole("button", { name: "+ 暂存" }) as HTMLButtonElement;
+		expect(stageBtn.disabled).toBe(true);
+		fireEvent.click(stageBtn);
+		expect(postBodies).toHaveLength(1);
+		resolveHunk(jsonResponse({ info: { files: [] } }));
+		await waitFor(() => expect((screen.getByRole("button", { name: "+ 暂存" }) as HTMLButtonElement).disabled).toBe(false));
+
+		// Renamed file hides hunk checkboxes
+		view.rerender(
+			<FileViewer
+				state={{ open: true, active: "new.ts", tabs: [{ path: "new.ts", from: "old.ts", git: { mode: "staged", label: "暂存区差异" } }] }}
+				growth={stubGrowth()}
+				cwd="/repo"
+				onClose={vi.fn()}
+				onSelectTab={vi.fn()}
+				onCloseTab={vi.fn()}
+				onOpen={vi.fn()}
+			/>,
+		);
+		await screen.findByTestId("split-diff");
+		expect(screen.queryByRole("button", { name: /取消暂存此块/ })).toBeNull();
+
+		// Upload tab hides workspace actions (Diff toggle, Open in editor, @reference) and aborts on unmount
+		view.rerender(
+			<FileViewer
+				state={{ open: true, active: "/tmp/agent/web-uploads/doc.md", tabs: [{ path: "/tmp/agent/web-uploads/doc.md", kind: "upload" }] }}
+				growth={stubGrowth()}
+				cwd="/repo"
+				onClose={vi.fn()}
+				onSelectTab={vi.fn()}
+				onCloseTab={vi.fn()}
+				onOpen={vi.fn()}
+				onOpenEditor={vi.fn()}
+				onReference={vi.fn()}
+			/>,
+		);
+		await screen.findByText("Uploaded note");
+		expect(screen.queryByRole("radio", { name: "变更" })).toBeNull();
+		expect(screen.queryByTitle(/编辑器/)).toBeNull();
+		expect(screen.queryByTitle(/引用/)).toBeNull();
+		view.unmount();
+		expect(abortedUpload).toBe(true);
+	});
 });

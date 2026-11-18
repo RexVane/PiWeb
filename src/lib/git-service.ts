@@ -140,7 +140,7 @@ async function runGit(cwd: string, args: string[], maxBuffer = 4 * 1024 * 1024):
 async function runGitCommand(
 	cwd: string,
 	args: string[],
-	opts: { input?: string; allowHooks?: boolean; timeoutMs?: number } = {},
+	opts: { input?: string | Buffer; allowHooks?: boolean; timeoutMs?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
 	const git = await resolveGitBin();
 	const prefix = opts.allowHooks ? USER_HOOK_GIT_ARGS : SAFE_GIT_ARGS;
@@ -155,22 +155,38 @@ async function runGitCommand(
 		const outChunks: Buffer[] = [];
 		const errChunks: Buffer[] = [];
 		let settled = false;
+		let abortError: Error | undefined;
+		let killEscalation: ReturnType<typeof setTimeout> | undefined;
+		let hardSettleTimer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (error?: Error) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			clearTimeout(killEscalation);
+			clearTimeout(hardSettleTimer);
 			if (error) reject(error);
 			else resolve({ stdout: Buffer.concat(outChunks).toString("utf8"), stderr: Buffer.concat(errChunks).toString("utf8") });
 		};
 		const timer = setTimeout(() => {
-			child.kill();
-			finish(new GitActionError(`git ${args[0]} 超时`, 504));
+			if (abortError || settled) return;
+			abortError = new GitActionError(`git ${args[0]} 超时`, 504);
+			child.kill("SIGTERM");
+			killEscalation = setTimeout(() => {
+				try { child.kill("SIGKILL"); } catch { /* 已退出 */ }
+				child.stdin?.destroy();
+				child.stdout?.destroy();
+				child.stderr?.destroy();
+				hardSettleTimer = setTimeout(() => finish(abortError), 500);
+				hardSettleTimer.unref?.();
+			}, 2_000);
+			killEscalation.unref?.();
 		}, timeoutMs);
 		child.stdout?.on("data", (chunk: Buffer) => outChunks.push(chunk));
 		child.stderr?.on("data", (chunk: Buffer) => errChunks.push(chunk));
-		child.on("error", (err) => finish(err));
+		child.on("error", (err) => finish(abortError ?? err));
 		child.on("close", (code) => {
-			if (code === 0) finish();
+			if (abortError) finish(abortError);
+			else if (code === 0) finish();
 			else {
 				const err = Buffer.concat(errChunks).toString("utf8").trim();
 				const out = Buffer.concat(outChunks).toString("utf8").trim();
@@ -179,7 +195,8 @@ async function runGitCommand(
 		});
 		if (opts.input !== undefined && child.stdin) {
 			child.stdin.on("error", () => undefined);
-			child.stdin.end(opts.input, "utf8");
+			if (Buffer.isBuffer(opts.input)) child.stdin.end(opts.input);
+			else child.stdin.end(opts.input, "utf8");
 		}
 	});
 }
@@ -214,26 +231,44 @@ async function runGitRawStdout(cwd: string, args: string[], maxBytes = 8 * 1024 
 		const child = spawn(git, [...SAFE_GIT_ARGS, ...args], { cwd, windowsHide: true, env: gitEnvironment(cwd, false), stdio: ["ignore", "pipe", "pipe"] });
 		const chunks: Buffer[] = [];
 		let total = 0, stderr = "", settled = false;
+		let abortError: Error | undefined;
+		let killEscalation: ReturnType<typeof setTimeout> | undefined;
+		let hardSettleTimer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (error?: Error) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			clearTimeout(killEscalation);
+			clearTimeout(hardSettleTimer);
 			if (error) reject(error);
 			else resolve(Buffer.concat(chunks, total));
 		};
-		const timer = setTimeout(() => { child.kill(); finish(new Error("git diff timed out")); }, 15_000);
+		const terminate = (err: Error) => {
+			if (abortError || settled) return;
+			abortError = err;
+			child.kill("SIGTERM");
+			killEscalation = setTimeout(() => {
+				try { child.kill("SIGKILL"); } catch { /* 已退出 */ }
+				child.stdout?.destroy();
+				child.stderr?.destroy();
+				hardSettleTimer = setTimeout(() => finish(abortError), 500);
+				hardSettleTimer.unref?.();
+			}, 2_000);
+			killEscalation.unref?.();
+		};
+		const timer = setTimeout(() => terminate(new Error("git diff timed out")), 15_000);
 		child.stdout.on("data", (chunk: Buffer) => {
+			if (abortError) return;
 			total += chunk.length;
 			if (total > maxBytes) {
-				child.kill();
-				finish(new GitActionError("文件差异过大，无法按块暂存，请直接暂存整文件", 413));
+				terminate(new GitActionError("文件差异过大，无法按块暂存，请直接暂存整文件", 413));
 				return;
 			}
 			chunks.push(chunk);
 		});
 		child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-8192); });
-		child.on("error", (err) => finish(err));
-		child.on("close", (code) => finish(code === 0 ? undefined : new Error(stderr.trim() || `git exited with ${code}`)));
+		child.on("error", (err) => finish(abortError ?? err));
+		child.on("close", (code) => finish(abortError ?? (code === 0 ? undefined : new Error(stderr.trim() || `git exited with ${code}`))));
 	});
 }
 
@@ -529,7 +564,8 @@ export async function gitFileContent(cwdValue: unknown, relPath: unknown, revVal
 			? "HEAD"
 			: assertCommitHash(revValue);
 	const git = await resolveGitBin();
-	const bytes = await new Promise<Buffer>((resolve, reject) => {
+	const retainLimit = MAX_CONTENT_BYTES + 4;
+	const { bytes, stoppedAtLimit, streamedTotal } = await new Promise<{ bytes: Buffer; stoppedAtLimit: boolean; streamedTotal: number }>((resolve, reject) => {
 		const child = spawn(git, [...SAFE_GIT_ARGS, "cat-file", "-p", `${rev}:${rel}`], {
 			cwd: root,
 			windowsHide: true,
@@ -537,23 +573,66 @@ export async function gitFileContent(cwdValue: unknown, relPath: unknown, revVal
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		const chunks: Buffer[] = [];
+		let retained = 0;
+		let total = 0;
+		let stopped = false;
+		let timedOut = false;
 		let stderr = "";
 		let settled = false;
+		let killEscalation: ReturnType<typeof setTimeout> | undefined;
+		let hardSettleTimer: ReturnType<typeof setTimeout> | undefined;
 		const finish = (err?: Error) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
+			clearTimeout(killEscalation);
+			clearTimeout(hardSettleTimer);
 			if (err) reject(err);
-			else resolve(Buffer.concat(chunks));
+			else resolve({ bytes: Buffer.concat(chunks, retained), stoppedAtLimit: stopped, streamedTotal: total });
 		};
-		const timer = setTimeout(() => { child.kill(); finish(new Error("git cat-file timed out")); }, 15_000);
-		child.stdout.on("data", (c: Buffer) => chunks.push(c));
+		const killCleanly = () => {
+			child.kill("SIGTERM");
+			killEscalation = setTimeout(() => {
+				try { child.kill("SIGKILL"); } catch { /* 已退出 */ }
+				child.stdout?.destroy();
+				child.stderr?.destroy();
+				hardSettleTimer = setTimeout(() => finish(timedOut ? new Error("git cat-file timed out") : undefined), 500);
+				hardSettleTimer.unref?.();
+			}, 2_000);
+			killEscalation.unref?.();
+		};
+		const timer = setTimeout(() => {
+			if (settled || stopped || timedOut) return;
+			timedOut = true;
+			killCleanly();
+		}, 15_000);
+		child.stdout.on("data", (c: Buffer) => {
+			total += c.length;
+			if (retained < retainLimit) {
+				const slice = c.subarray(0, retainLimit - retained);
+				chunks.push(slice);
+				retained += slice.length;
+			}
+			if (!stopped && retained >= retainLimit) {
+				stopped = true;
+				killCleanly();
+			}
+		});
 		child.stderr.on("data", (c: Buffer) => { stderr = (stderr + c.toString("utf8")).slice(-4096); });
 		child.on("error", finish);
-		child.on("close", (code) => finish(code === 0 ? undefined : new GitActionError(stderr.trim() || "该版本中不存在此文件", 404)));
+		child.on("close", (code) => {
+			if (timedOut) finish(new Error("git cat-file timed out"));
+			else if (stopped || code === 0) finish();
+			else finish(new GitActionError(stderr.trim() || "该版本中不存在此文件", 404));
+		});
 	});
-	const truncated = bytes.length > MAX_CONTENT_BYTES;
-	return { ...decodeFilePreview(bytes, MAX_CONTENT_BYTES, truncated), truncated, size: bytes.length };
+	const truncated = stoppedAtLimit || bytes.length > MAX_CONTENT_BYTES;
+	let size = streamedTotal;
+	if (stoppedAtLimit) {
+		const rawSize = await runGit(root, ["cat-file", "-s", `${rev}:${rel}`]).then((s) => Number(s.trim()), () => NaN);
+		if (Number.isFinite(rawSize) && rawSize >= size) size = rawSize;
+	}
+	return { ...decodeFilePreview(bytes, MAX_CONTENT_BYTES, truncated), truncated, size };
 }
 
 /** 单次提交的内容（含各文件 patch） */
@@ -666,7 +745,7 @@ export async function gitHunkAction(
 			}
 			const scope = action === "unstageHunk" ? ["--cached", "--no-renames"] : ["--ours", "--no-renames"];
 			const rawBuf = await runGitRawStdout(root, ["diff", ...scope, "--no-color", "--no-ext-diff", "--no-textconv", "-U1000000", "--", rel]);
-			const rawPatch = rawBuf.toString("utf8");
+			const rawPatch = rawBuf.toString("latin1");
 			if (!rawPatch.trim()) throw new GitActionError("该差异块已不存在，请刷新后重试", 409);
 
 			const parsed = parseRawPatchBlocks(rawPatch);
@@ -688,7 +767,7 @@ export async function gitHunkAction(
 			const applyArgs = action === "unstageHunk"
 				? ["apply", "--cached", "--reverse", "--unidiff-zero", "-"]
 				: ["apply", "--cached", "--unidiff-zero", "-"];
-			await runGitCommand(root, applyArgs, { input: singlePatch });
+			await runGitCommand(root, applyArgs, { input: Buffer.from(singlePatch, "latin1") });
 		} catch (err) {
 			if (err instanceof GitActionError || err instanceof BoundaryError) throw err;
 			const msg = err instanceof Error ? err.message : String(err);
@@ -702,6 +781,7 @@ export async function gitHunkAction(
 
 async function runPushInternal(root: string): Promise<string> {
 	const infoBranch = await runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"]).then((s) => s.trim(), () => "");
+	if (infoBranch.startsWith("-")) throw new GitActionError("非法的远端或分支名称", 400);
 	const hasUpstream = await runGit(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).then(
 		() => true,
 		() => false,
@@ -712,7 +792,10 @@ async function runPushInternal(root: string): Promise<string> {
 		if (remotes.length === 0) throw new GitActionError("当前仓库尚未配置远程仓库（remote）", 400);
 		const targetRemote = remotes.includes("origin") ? "origin" : remotes.length === 1 ? remotes[0] : "";
 		if (!targetRemote) throw new GitActionError(`当前分支无上游分支且存在多个远端（${remotes.join(", ")}），请先手动设置上游`, 400);
-		const { stdout, stderr } = await runGitCommand(root, ["push", "-u", targetRemote, infoBranch], { allowHooks: true, timeoutMs: 60_000 });
+		if (targetRemote.startsWith("-") || infoBranch.startsWith("-")) {
+			throw new GitActionError("非法的远端或分支名称", 400);
+		}
+		const { stdout, stderr } = await runGitCommand(root, ["push", "-u", "--", targetRemote, infoBranch], { allowHooks: true, timeoutMs: 60_000 });
 		return (stdout || stderr).trim();
 	}
 	const { stdout, stderr } = await runGitCommand(root, ["push"], { allowHooks: true, timeoutMs: 60_000 });

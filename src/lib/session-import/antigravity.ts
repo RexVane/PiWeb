@@ -11,7 +11,7 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { eachJsonLine, jsonlImportWarnings, readFileBounded, reachedLimit, statMtime } from "./files";
+import { eachJsonLine, jsonlImportWarnings, readFileBounded, statMtime } from "./files";
 import { antigravityCliRoot, antigravityRoot } from "./paths";
 import { openReadOnly } from "./sqlite";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSource, ImportSourceModule, ScanOptions } from "./types";
@@ -128,13 +128,12 @@ export function createAntigravitySource(id: ImportSource, root: () => string): I
 			const out: ExternalSessionSummary[] = [];
 			for (const conversationId of conversations) {
 				options?.signal?.throwIfAborted();
-				if (reachedLimit(out.length, limit * 2)) break; // 先多收一些，排序后再截断
 				const row = summaries.get(conversationId);
 				if (!row || row.parent || (row.nested ?? 0) > 0) continue; // 子代理会话
+				if (!row.cwd) continue; // 项目外会话没有可返回的工作区
 				const transcript = path.join(brain, conversationId, ".system_generated", "logs", "transcript_full.jsonl");
 				const mtime = await statMtime(transcript);
 				if (mtime === undefined) continue;
-				if (!row.cwd) continue; // 项目外会话没有可返回的工作区
 				const createdAt = row.last;
 				out.push({
 					source: id,

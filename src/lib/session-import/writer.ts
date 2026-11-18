@@ -14,7 +14,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ImportedBlock, ImportedMessage, ImportedSession, ImportSource } from "./types";
-import { fallbackTitle } from "./types";
+import { fallbackTitle, IMPORT_SOURCES } from "./types";
 
 /** 来源前缀：标题里标出来源，侧栏一眼能看出是导入的 */
 const SOURCE_LABEL: Record<ImportSource, string> = {
@@ -85,6 +85,12 @@ export async function listImportedKeys(agentDir: string): Promise<Set<string>> {
 	return new Set((await listImportedSessions(agentDir)).keys());
 }
 
+const IMPORT_SOURCE_PATTERN = [...IMPORT_SOURCES]
+	.sort((a, b) => b.length - a.length)
+	.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+	.join("|");
+const IMPORTED_FILE_RE = new RegExp(`_import-(${IMPORT_SOURCE_PATTERN})-(.+)\\.jsonl$`);
+
 /** 同时保留文件位置，用于区分已导入与已归档的会话。 */
 export async function listImportedSessions(agentDir: string): Promise<Map<string, string>> {
 	const sessions = new Map<string, string>();
@@ -103,7 +109,7 @@ export async function listImportedSessions(agentDir: string): Promise<Map<string
 			continue;
 		}
 		for (const name of files) {
-			const match = /_import-([A-Za-z0-9]+)-(.+)\.jsonl$/.exec(name);
+			const match = IMPORTED_FILE_RE.exec(name);
 			if (match) sessions.set(`${match[1]}:${match[2]}`, path.join(root, dir, name));
 		}
 	}

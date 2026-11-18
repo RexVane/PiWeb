@@ -848,21 +848,41 @@ describe("Qwen Code", () => {
 		expect(result.content).toEqual([{ type: "text", text: "文件内容" }]);
 	});
 
-	it("老布局（Gemini CLI fork）的整包 JSON 也能读", async () => {
-		const project = path.join(root, "qwenold");
+	it("老布局（Gemini CLI fork）支持超 512KB 多行格式化 JSON、toolCalls 结果与 POSIX 编码目录兜底", async () => {
+		const project = path.join(root, "qwenold-my-app");
 		await fs.mkdir(project, { recursive: true });
-		const file = path.join(roots.qwenTmp, "deadbeef", "chats", "session-1.json");
-		await write(file, JSON.stringify({ sessionId: "session-1", cwd: project, startTime: new Date(TS).toISOString(), lastUpdated: new Date(TS + 1000).toISOString(), messages: [
-			{ type: "user", timestamp: new Date(TS).toISOString(), content: [{ text: "看看这个" }] },
-			{ type: "gemini", timestamp: new Date(TS + 500).toISOString(), content: [{ text: "好的" }] },
-		] }));
+		const posixOrWinEncoded = process.platform === "win32"
+			? project.replace(/^([A-Za-z]):[\\/]/, "$1--").replace(/[\\/]/g, "-")
+			: `-${project.replace(/^\/+/, "").replace(/\//g, "-")}`;
+		const file = path.join(roots.qwenTmp, posixOrWinEncoded, "chats", "session-1.json");
+		const bigText = `看看这个 ${"x".repeat(540 * 1024)}`;
+		await write(file, JSON.stringify({
+			sessionId: "session-1",
+			startTime: new Date(TS).toISOString(),
+			lastUpdated: new Date(TS + 1000).toISOString(),
+			messages: [
+				{ type: "user", timestamp: new Date(TS).toISOString(), content: [{ text: bigText }] },
+				{
+					type: "gemini",
+					timestamp: new Date(TS + 500).toISOString(),
+					content: [{ text: "好的" }],
+					toolCalls: [
+						{ id: "tc-1", name: "run_shell_command", args: { command: "pwd" }, result: { output: "/workspace" } },
+						{},
+					],
+				},
+			],
+		}, null, 2));
 		const summaries = await qwenSource.scan({ limit: 0 });
 		expect(summaries).toHaveLength(1);
 		expect(summaries[0].externalId).toBe("session-1");
+		expect(path.resolve(summaries[0].projectPath!)).toBe(path.resolve(project));
+
 		const imported = await qwenSource.read(summaries[0]);
+		expect(imported!.skipped).toEqual([]);
 		const messages = messagesOf(imported!.entries);
-		expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-		expect(messages[0].content).toEqual([{ type: "text", text: "看看这个" }]);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(messages[2]).toMatchObject({ role: "toolResult", toolCallId: "tc-1", content: [{ type: "text", text: "/workspace" }] });
 	});
 });
 
@@ -880,10 +900,14 @@ describe("Cursor（Agent CLI）", () => {
 		db.close();
 	}
 
-	it("从 store.db 的 JSON blob 还原对话，跳过 protobuf 回合图", async () => {
+	it("从 store.db 的 JSON blob 还原对话，跳过 protobuf 回合图，且按 updatedAt 排序后再应用 limit", async () => {
 		const project = path.join(root, "cursorproj");
 		await fs.mkdir(project, { recursive: true });
-		const sessionDir = path.join(roots.cursor, "0123456789abcdef0123456789abcdef", "3f0e1d2c-1111-4222-8333-444455556666");
+		const oldDir = path.join(roots.cursor, "0000", "old-session");
+		await buildStore(oldDir, [{ role: "user", content: "旧消息", createdAt: 1000 }], { workspacePath: project, createdAt: 1000, updatedAt: 1000 });
+		await write(path.join(oldDir, "meta.json"), JSON.stringify({ schemaVersion: 1, title: "旧会话", createdAtMs: 1000, updatedAtMs: 1000, hasConversation: true }));
+
+		const sessionDir = path.join(roots.cursor, "ffff", "3f0e1d2c-1111-4222-8333-444455556666");
 		await buildStore(sessionDir, [
 			{ role: "user", content: "<user_query>看一下这个函数</user_query>", createdAt: TS },
 			{ role: "assistant", content: [{ type: "text", text: "我读一下" }, { type: "tool-call", toolCallId: "call1", toolName: "Read", args: { path: "a.ts" } }], createdAt: TS + 1, providerOptions: { cursor: { modelName: "composer-2.5" } } },
@@ -893,8 +917,11 @@ describe("Cursor（Agent CLI）", () => {
 		], { workspacePath: project, createdAt: TS, lastUsedModel: "composer-2.5" });
 		await write(path.join(sessionDir, "meta.json"), JSON.stringify({ schemaVersion: 1, title: "整理函数", createdAtMs: TS, updatedAtMs: TS + 10_000, hasConversation: true }));
 
+		const topOne = await cursorSource.scan({ limit: 1 });
+		expect(topOne.map((s) => s.externalId)).toEqual(["3f0e1d2c-1111-4222-8333-444455556666"]);
+
 		const summaries = await cursorSource.scan({ limit: 0 });
-		expect(summaries).toHaveLength(1);
+		expect(summaries).toHaveLength(2);
 		expect(summaries[0]).toMatchObject({ source: "cursor", externalId: "3f0e1d2c-1111-4222-8333-444455556666", title: "整理函数", projectPath: project });
 
 		const imported = await cursorSource.read(summaries[0]);

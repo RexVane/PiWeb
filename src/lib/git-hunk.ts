@@ -192,3 +192,54 @@ export function buildSingleHunkPatch(parsed: ParsedPatchBlocks, blockIndex: numb
 	}
 	return `${out.join("\n")}\n`;
 }
+
+/**
+ * Extract contiguous change-block anchors from parsed UI `DiffLine[]` using the exact same
+ * `firstOld ?? lastOld` / `firstNew ?? lastNew` rules as `parseRawPatchBlocks`.
+ */
+export function extractDiffBlocks(
+	lines: ReadonlyArray<{ kind: string; old?: number; new?: number }>,
+): RawHunkAnchor[] {
+	const blocks: RawHunkAnchor[] = [];
+	let i = 0;
+	let lastOld = 0;
+	let lastNew = 0;
+	while (i < lines.length) {
+		const cur = lines[i];
+		if (cur.kind === "ctx") {
+			if (cur.old !== undefined) lastOld = cur.old;
+			if (cur.new !== undefined) lastNew = cur.new;
+			i += 1;
+			continue;
+		}
+		if (cur.kind !== "del" && cur.kind !== "add") {
+			i += 1;
+			continue;
+		}
+		let delCount = 0;
+		let addCount = 0;
+		let firstOld: number | undefined;
+		let firstNew: number | undefined;
+		while (i < lines.length && (lines[i].kind === "del" || lines[i].kind === "add")) {
+			const e = lines[i];
+			if (e.kind === "del") {
+				delCount += 1;
+				if (firstOld === undefined && e.old !== undefined) firstOld = e.old;
+				if (e.old !== undefined) lastOld = e.old;
+			} else {
+				addCount += 1;
+				if (firstNew === undefined && e.new !== undefined) firstNew = e.new;
+				if (e.new !== undefined) lastNew = e.new;
+			}
+			i += 1;
+		}
+		blocks.push({
+			oldAnchor: firstOld ?? lastOld,
+			newAnchor: firstNew ?? lastNew,
+			delCount,
+			addCount,
+		});
+	}
+	return blocks;
+}
+

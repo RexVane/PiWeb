@@ -120,7 +120,7 @@ export const HEADER_MAX_COUNT = 32;
 export function validateHeaderEntries(entries: Array<[string, string]>): string | null {
 	if (entries.length > HEADER_MAX_COUNT) return `请求头最多 ${HEADER_MAX_COUNT} 条`;
 	for (const [name, value] of entries) {
-		if (!HEADER_NAME_RE.test(name)) return `请求头名字不合法：${name}`;
+		if (!HEADER_NAME_RE.test(name) || name === "__proto__") return `请求头名字不合法：${name}`;
 		if (value.length > 4096 || /[\r\n]/.test(value)) return `请求头内容不合法：${name}`;
 	}
 	return null;
@@ -143,7 +143,9 @@ export function headerEntriesToConfig(entries: ReadonlyArray<{ name: string; val
 	for (const entry of entries) {
 		const name = entry.name.trim();
 		const value = entry.value.trim();
-		if (name && value) out[name] = value;
+		if (name && value) {
+			Object.defineProperty(out, name, { value, enumerable: true, configurable: true, writable: true });
+		}
 	}
 	return out;
 }
@@ -204,8 +206,10 @@ export interface ProviderDraft {
 	api?: string;
 	/** Blank means unchanged. Redacted secrets are restored by the server, never invented here. */
 	apiKey?: string;
-	/** 自定义请求头（models.json 的 `headers`）。undefined = 未加载/不表态，{} = 明确清空 */
-	headers?: Record<string, string>;
+	/** 自定义请求头（models.json 的 `headers`）。undefined = 未加载/不表态，{} = 明确清空，值为 null = 删除单个已脱敏头 */
+	headers?: Record<string, string | null>;
+	/** 表单仍保留了未改动的已脱敏请求头（留空保持不变），清空其余明文头时不能发 headers: null 全删 */
+	keepStoredSecretHeaders?: boolean;
 }
 
 export function serializeProviderDraft(
@@ -224,17 +228,30 @@ export function serializeProviderDraft(
 	}
 	if (draft.apiKey?.trim()) result.apiKey = draft.apiKey.trim();
 	// 请求头：只在表单确实载入过（headers !== undefined）时按整体替换写回。
-	// 空对象 = 用户删光了，要把键去掉；否则保留原文件里没在表单里呈现的头（不认得的字段一律不动）。
+	// 空对象 = 用户删光了，源里有 headers 时置为 null 通知服务端一并清除已脱敏敏感头；否则保留不认得的非字符串字段。
 	if (draft.headers !== undefined) {
-		const cleaned: Record<string, string> = {};
+		const merged: Record<string, unknown> = {};
+		let hasNonNullEntry = false;
 		for (const [name, value] of Object.entries(draft.headers)) {
-			if (typeof value === "string" && value) cleaned[name] = value;
+			if (value === null || (typeof value === "string" && value)) {
+				Object.defineProperty(merged, name, { value, enumerable: true, configurable: true, writable: true });
+				if (value !== null) hasNonNullEntry = true;
+			}
 		}
 		const existing = isRecord(source.headers) ? source.headers : {};
-		const unknown = Object.fromEntries(Object.entries(existing).filter(([, v]) => typeof v !== "string"));
-		const merged = { ...cleaned, ...unknown };
-		if (Object.keys(merged).length) result.headers = merged;
-		else delete result.headers;
+		for (const [name, value] of Object.entries(existing)) {
+			if (typeof value !== "string" && !Object.prototype.hasOwnProperty.call(merged, name)) {
+				Object.defineProperty(merged, name, { value, enumerable: true, configurable: true, writable: true });
+				hasNonNullEntry = true;
+			}
+		}
+		if (hasNonNullEntry || (draft.keepStoredSecretHeaders && Object.keys(merged).length > 0)) {
+			result.headers = merged;
+		} else if (!draft.keepStoredSecretHeaders && Object.prototype.hasOwnProperty.call(source, "headers")) {
+			result.headers = null;
+		} else {
+			delete result.headers;
+		}
 	}
 	const { definitions, overrides } = catalogIds
 		? splitBuiltinModels(draft.models, catalogIds)
