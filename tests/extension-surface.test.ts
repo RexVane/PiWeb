@@ -449,14 +449,15 @@ describe("扩展命令里的会话操作", () => {
 		const other = await newSession();
 		other.appendMessage(user("另一个会话", 3000));
 		other.appendMessage(assistant("在的", 3100));
-		const otherManaged = open(other.getSessionFile()!);
+		const canonicalOther = await fs.realpath(other.getSessionFile()!);
+		const otherManaged = open(canonicalOther);
 		const before = frames(m).length;
 		expect(await commandContext(m).switchSession(other.getSessionFile()!)).toEqual({ cancelled: false });
 		const switched = frames(m).slice(before).find((frame) => frame.type === "session_navigate");
 		// The navigate frame carries the canonical session path; the temp dir may be
 		// spelled with a Windows 8.3 short name when the store was opened.
-		expect(switched).toMatchObject({ reason: "resume", sessionPath: await fs.realpath(other.getSessionFile()!) });
-		expect(manager.getManaged(other.getSessionFile()!)).toBe(otherManaged);
+		expect(switched).toMatchObject({ reason: "resume", sessionPath: canonicalOther });
+		expect(manager.getManaged(canonicalOther)).toBe(otherManaged);
 	}, 90_000);
 
 	it("ctx.navigateTree 换分支后让浏览器重新取快照", async () => {
