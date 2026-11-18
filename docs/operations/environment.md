@@ -115,7 +115,7 @@
 
 ## 操作系统路径约定
 
-PiWeb 还读取 `HOME`、`USERPROFILE`、`TEMP`/`TMP`、`APPDATA`、`LOCALAPPDATA` 等系统变量来定位用户目录与临时目录；其中 `HOME`/`USERPROFILE` 决定会话导入来源（`~/.claude`、`~/.codex`、`~/.grok`、`~/.dsh`、`~/.zcode`、`~/.local/share/opencode`）与全局技能目录 `~/.agents/skills`。做部署隔离时必须一并重定向，见[数据目录、隐私与留存](data-and-privacy.md)。
+PiWeb 还读取 `HOME`、`USERPROFILE`、`TEMP`/`TMP`、`APPDATA`、`LOCALAPPDATA`（以及 WorkBuddy / Qwen 可选的 `WORKBUDDY_CONFIG_DIR`、`QWEN_HOME`）等系统变量来定位用户目录与临时目录；其中 `HOME`/`USERPROFILE` 决定全部 12 项会话导入来源（`~/.claude`、`~/.codex`、`~/.grok`、`~/.dsh`、`~/.zcode`、`~/.local/share/opencode`、`~/.kimi`、`~/.workbuddy*`、`~/.gemini/antigravity*`、`~/.qwen`、`~/.cursor`）与全局技能目录 `~/.agents/skills`。做部署隔离时必须一并重定向，见[数据目录、隐私与留存](data-and-privacy.md)。
 
 ## 核对方式
 
