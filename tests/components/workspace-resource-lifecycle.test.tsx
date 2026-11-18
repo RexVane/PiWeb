@@ -128,7 +128,7 @@ describe("workspace resource requests", () => {
 	});
 });
 
-const task: AutomationTask = { id: "task-1", name: "Task", prompt: "Inspect repo", cwd: "/ws", schedule: { kind: "daily", time: "09:00" }, enabled: true, toolPreset: "readonly", createdAt: 1, updatedAt: 1, nextRunAt: Date.now() + 60_000 };
+const task: AutomationTask = { id: "task-1", name: "Task", prompt: "Inspect repo", cwd: "/ws", schedule: { kind: "daily", time: "09:00" }, enabled: true, createdAt: 1, updatedAt: 1, nextRunAt: Date.now() + 60_000 };
 
 describe("automation form and requests", () => {
 	it("preserves unsaved form edits when the workspace list is repolled", () => {

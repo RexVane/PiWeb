@@ -46,11 +46,6 @@ const ManageAutomationParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Target workspace directory path. Defaults to the current session workspace when creating." })),
 	schedule: Type.Optional(ScheduleSchema),
 	enabled: Type.Optional(Type.Boolean({ description: "Whether scheduled execution is enabled (default true on create)." })),
-	toolPreset: Type.Optional(Type.Union([
-		Type.Literal("readonly"),
-		Type.Literal("workspace"),
-		Type.Literal("full"),
-	], { description: "Permission preset when the task runs automatically (default 'workspace'): readonly has no file or command tools, workspace edits only inside the task workspace, full is unrestricted." })),
 });
 
 const DESCRIPTION = [
@@ -89,7 +84,7 @@ function formatScheduleSummary(schedule: AutomationSchedule): string {
 
 function formatTaskSummary(task: AutomationTask): string {
 	const next = task.nextRunAt ? new Date(task.nextRunAt).toISOString() : "none";
-	return `- ${task.name} (id=${task.id}, enabled=${task.enabled}, cwd=${task.cwd}, schedule=${formatScheduleSummary(task.schedule)}, preset=${task.toolPreset}, nextRunAt=${next})`;
+	return `- ${task.name} (id=${task.id}, enabled=${task.enabled}, cwd=${task.cwd}, schedule=${formatScheduleSummary(task.schedule)}, nextRunAt=${next})`;
 }
 
 /** Factory for PiWeb's built-in automation management custom tool. */
@@ -132,7 +127,6 @@ export function createManageAutomationTool(options: ManageAutomationToolOptions)
 							cwd,
 							schedule,
 							enabled: params.enabled,
-							toolPreset: params.toolPreset,
 						},
 						storePath,
 					);
@@ -157,7 +151,6 @@ export function createManageAutomationTool(options: ManageAutomationToolOptions)
 							...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
 							...(schedule !== undefined ? { schedule } : {}),
 							...(params.enabled !== undefined ? { enabled: params.enabled } : {}),
-							...(params.toolPreset !== undefined ? { toolPreset: params.toolPreset } : {}),
 						},
 						storePath,
 					);

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createNewSession } from "@/lib/agent-manager";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
-import { normalizeToolPreset } from "@/lib/tool-preset";
 import { APP_ROOT } from "@/lib/app-root";
 import { apiError } from "@/lib/api-error";
 
@@ -11,18 +10,11 @@ export async function POST(req: Request) {
 	try {
 		const body = (await req.json()) as {
 			cwd?: unknown;
-			toolPreset?: unknown;
 			provider?: unknown;
 			modelId?: unknown;
 			thinking?: unknown;
 		};
 		if (!body || typeof body !== "object" || Array.isArray(body)) throw new BoundaryError("请提供有效的会话参数。");
-		let toolPreset;
-		if (body.toolPreset !== undefined && body.toolPreset !== null) {
-			if (typeof body.toolPreset !== "string") throw new BoundaryError("请提供有效的权限预设。");
-			toolPreset = normalizeToolPreset(body.toolPreset);
-			if (!toolPreset) throw new BoundaryError("请提供有效的权限预设。");
-		}
 		let provider: string | undefined;
 		let modelId: string | undefined;
 		if (body.provider !== undefined || body.modelId !== undefined) {
@@ -39,10 +31,10 @@ export async function POST(req: Request) {
 			if (trimmed) thinking = trimmed;
 		}
 		const cwd = await resolveWorkspacePath(body.cwd ?? APP_ROOT);
-		const hasSetupOptions = Boolean(toolPreset || (provider && modelId) || thinking);
+		const hasSetupOptions = Boolean((provider && modelId) || thinking);
 		const { sessionPath, setupApplied } = await createNewSession(
 			cwd,
-			hasSetupOptions ? { toolPreset, provider, modelId, thinking } : undefined,
+			hasSetupOptions ? { provider, modelId, thinking } : undefined,
 		);
 		return NextResponse.json(
 			{ success: true, data: { sessionPath, ...(setupApplied ? { setupApplied: true } : {}) } },

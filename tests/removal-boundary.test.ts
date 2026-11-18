@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { removalMounts, withProtectedRemovalSource } from "../src/lib/removal-boundary";
 import { recoverableRemove } from "../src/lib/recoverable-remove";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await recycleFixture(root); });

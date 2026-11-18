@@ -8,7 +8,7 @@ import { REVOCATIONS_FILENAME, SECRET_BYTES, decodeSecret, encodeSecret, loadSes
 import { createSessionCookie, validSessionCookie } from "../src/lib/web-auth";
 import { validCookieValue as validProtocolCookie } from "../scripts/web-auth-protocol.mjs";
 import { issuePairCode, resetPairingState, verifyPairCode } from "../src/lib/remote/pairing";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const ENV_NAMES = ["PI_WEB_SECRET_FILE", "PI_WEB_SECRET", "PI_CODING_AGENT_DIR"] as const;
 const saved = new Map<string, string | undefined>(ENV_NAMES.map((name) => [name, process.env[name]]));

@@ -1,20 +1,10 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { runtimeRequire } from "../../../scripts/runtime-require.mjs";
+import { runtimeRequire } from "../../scripts/runtime-require.mjs";
 
 let synchronousApi: ReturnType<typeof createDirectoryApi> | undefined;
 /** SettingsManager's storage contract is synchronous; never wait on an async lock here. */
 export function windowsDirectoryApiSync() {
 	if (process.platform !== "win32" || process.arch !== "x64") throw new Error("Protected file writes require Windows x64.");
 	return synchronousApi ??= createDirectoryApi(runtimeRequire(import.meta.url)("koffi") as typeof import("koffi"));
-}
-
-async function directoryApi() {
-	if (process.arch !== "x64") throw new Error("This native file-operation backend requires Windows x64.");
-	const module = await import("koffi");
-	const koffi = module.default ?? module;
-	return createDirectoryApi(koffi);
 }
 
 function createDirectoryApi(koffi: Pick<typeof import("koffi"), "load" | "address">) {
@@ -60,49 +50,4 @@ function createDirectoryApi(koffi: Pick<typeof import("koffi"), "load" | "addres
 		},
 		close,
 	};
-}
-
-/**
- * Protect only the path being edited. No inherited ACL grants, workspace traversal,
- * or child executable is needed. A hard-linked dependency elsewhere is unaffected.
- * Every physical ancestor is pinned from the volume root until atomic replacement.
- */
-export async function windowsFileOperation(root: string, target: string, operation: "write" | "mkdir", content?: string, assertActive: () => void = () => {}): Promise<void> {
-	const volume = path.parse(root).root;
-	const relative = path.relative(root, target);
-	if (!/^[a-z]:\\$/i.test(volume) || relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
-		throw new Error("blocked: the write directory is outside the supported local workspace");
-	}
-	const api = await directoryApi().catch(() => {
-		throw new Error("Protected file writes are unavailable. Reinstall PiWeb's optional native dependency (koffi) and retry; no file was changed.");
-	});
-	const handles: unknown[] = [];
-	try {
-		assertActive();
-		let directory = volume;
-		handles.push(api.pin(directory));
-		for (const part of path.relative(volume, root).split(path.sep).filter(Boolean)) {
-			directory = path.join(directory, part);
-			handles.push(api.pin(directory));
-		}
-		const parts = relative.split(path.sep).filter(Boolean);
-		for (const part of operation === "mkdir" ? parts : parts.slice(0, -1)) {
-			directory = path.join(directory, part);
-			assertActive();
-			await fs.mkdir(directory).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error; });
-			handles.push(api.pin(directory));
-		}
-		if (operation === "mkdir") return;
-		const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
-		if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1)) throw new Error("blocked: linked or non-regular write target");
-		const temporary = path.join(directory, `.piweb-write-${randomUUID()}`);
-		try {
-			assertActive();
-			await fs.writeFile(temporary, content ?? "", { flag: "wx", mode: stat ? stat.mode & 0o777 : 0o600 });
-			// Replacing an entry does not follow a final symlink or mutate a hard-link's
-			// other aliases, including one swapped in after the lstat above.
-			assertActive();
-			api.rename(temporary, path.basename(target));
-		} finally { await fs.unlink(temporary).catch(() => undefined); }
-	} finally { for (const handle of handles.reverse()) api.close(handle); }
 }

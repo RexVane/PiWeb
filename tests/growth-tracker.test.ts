@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { isAvailable } from "../src/lib/growth-service";
 import { createGrowthTracker } from "../src/lib/growth-tracker";
 import type { GrowthRound, WebEvent } from "../src/lib/types";

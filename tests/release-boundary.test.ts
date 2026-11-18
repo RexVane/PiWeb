@@ -5,7 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { writeBuildInventory, readProductionBuild, selectProductionBuild, assertReleaseCapacity } from "../scripts/build-output.mjs";
 import { acquireFileLock } from "../scripts/file-lock.mjs";
 import { isolatedCommandEnv, exactRegistryVersion, OFFICIAL_REGISTRY_ARGS } from "../scripts/update-environment.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await recycleFixture(root); });
 async function fixture(buildDir = ".next-releases/ready") {

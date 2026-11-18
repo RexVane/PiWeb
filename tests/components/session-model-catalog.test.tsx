@@ -72,7 +72,7 @@ it("joins the pending selection catalog for snapshots but replaces it for resour
 	act(() => hook.result.current.openSession("/a.jsonl"));
 	await waitFor(() => expect(pending).toHaveLength(2));
 	const stream = EventSourceFixture.instances.at(-1)!;
-	const snapshot = { messages: [], trajectory: [], sessionPath: "/a.jsonl", toolPreset: "workspace", toolPreferenceSaved: true, isStreaming: false };
+	const snapshot = { messages: [], trajectory: [], sessionPath: "/a.jsonl", isStreaming: false };
 	await act(async () => stream.emit({ type: "snapshot", snapshot }));
 	expect(pending).toHaveLength(2);
 	expect(pending[1].signal.aborted).toBe(false);

@@ -6,7 +6,7 @@ import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadSessionRevocations, resetWebSecretCache, REVOCATIONS_FILENAME } from "../src/lib/web-secret";
 import { issuePairCode, refreshPairCode, resetPairingState, verifyPairCode } from "../src/lib/remote/pairing";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const worker = `
 import { registerHooks, stripTypeScriptTypes } from 'node:module';

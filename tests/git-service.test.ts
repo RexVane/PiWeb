@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { gitDiff, gitInfo, gitShow, repoRoot } from "../src/lib/git-service";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { BoundaryError } from "../src/lib/path-security";
 
 describe("Git status failures", () => {

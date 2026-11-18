@@ -1,5 +1,4 @@
 import type { AgentCommand, ImageAttachment } from "./types";
-import { normalizeToolPreset } from "./tool-preset";
 import { MAX_IMAGE_BASE64, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "./chat/image-attachment";
 
 const COMMANDS = new Set<AgentCommand["cmd"]>([
@@ -13,8 +12,6 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"compact",
 	"setModel",
 	"setThinkingLevel",
-	"setToolPreset",
-	"setActiveTools",
 	"rename",
 	"fork",
 	"cycleModel",
@@ -79,12 +76,6 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 			images: parseImages(raw.images),
 		};
 
-		if (raw.preset !== undefined) {
-			// 旧客户端 localStorage 里可能还是 "standard"，归一成 workspace，别再让它流到服务端状态里。
-			const preset = normalizeToolPreset(raw.preset);
-			if (!preset) throw new Error("invalid tool preset");
-			command.preset = preset;
-		}
 		if (raw.behavior !== undefined) {
 			if (typeof raw.behavior !== "string" || !STREAMING_BEHAVIORS.has(raw.behavior)) throw new Error("invalid streaming behavior");
 			command.behavior = raw.behavior as "steer" | "followUp";
@@ -92,13 +83,6 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (raw.direction !== undefined) {
 			if (raw.direction !== "forward" && raw.direction !== "backward") throw new Error("invalid cycle direction");
 			command.direction = raw.direction;
-		}
-		if (raw.names !== undefined) {
-			// setActiveTools 的目标工具名列表：数量与长度上限防滥用（未知名字由 agent-manager 求交集丢弃）
-			if (!Array.isArray(raw.names) || raw.names.length === 0 || raw.names.length > 64 || raw.names.some((n) => typeof n !== "string" || !n || n.length > 100)) {
-				throw new Error("names must be a non-empty array of tool names");
-			}
-			command.names = raw.names as string[];
 		}
 
 		if (raw.requestId !== undefined) command.requestId = optionalText(raw.requestId, "requestId");
@@ -123,8 +107,6 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (command.cmd === "extensionUiResponse" && !command.requestId) throw new Error("requestId is required");
 		if (command.cmd === "setModel" && (!command.provider || !command.modelId)) throw new Error("provider and modelId are required");
 		if (command.cmd === "setThinkingLevel" && !command.level) throw new Error("level is required");
-		if (command.cmd === "setToolPreset" && !command.preset) throw new Error("preset is required");
-		if (command.cmd === "setActiveTools" && !command.names) throw new Error("names are required");
 		if (command.cmd === "navigate" && !command.entryId) throw new Error("entryId is required");
 		if (command.cmd === "setLabel") {
 			if (!command.entryId) throw new Error("entryId is required");

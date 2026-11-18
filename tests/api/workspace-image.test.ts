@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recycleFixture } from "../lib/sandbox/fixtures";
+import { recycleFixture } from "../fixtures/recycle";
 
 const gitPipeFailure = vi.hoisted(() => ({ result: null as { code: number; stderr: string } | null }));
 vi.mock("node:child_process", async (original) => {

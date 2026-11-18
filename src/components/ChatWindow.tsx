@@ -74,7 +74,6 @@ import {
 	type ToolKind,
 } from "@/lib/process-format";
 import { ASK_RESULT_PREFIX, ASK_USER_TOOL } from "@/lib/ask-user";
-import { permissionOutcomeOf, REQUEST_PERMISSION_TOOL } from "@/lib/permission-request";
 
 type Dict = Record<string, string>;
 type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
@@ -501,7 +500,6 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
 	}
 	if (state.name === ASK_USER_TOOL) return askPreview(body, t);
-	if (state.name === REQUEST_PERMISSION_TOOL) return permissionPreview(body, t);
 	switch (kind) {
 		case "read": {
 			const lang = langOfPath(str(a?.path ?? a?.file_path) ?? "");
@@ -529,15 +527,6 @@ function askPreview(body: string[], t: Dict): Preview {
 	if (!first.startsWith(ASK_RESULT_PREFIX.answered)) return body.length ? { lines: body.slice(0, 2), hidden: Math.max(0, body.length - 2) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
 	const lines = body.filter((line) => /^\d+\. /.test(line)).map((line) => line.replace(/\(their own words\) /g, ""));
 	return { lines, hidden: 0 };
-}
-
-/** 升权结果：一句话说清批准/拒绝/没应答（结果文本由 permission-request-tool 生成） */
-function permissionPreview(body: string[], t: Dict): Preview {
-	const outcome = permissionOutcomeOf(body.join("\n"));
-	if (outcome === "approved") return { head: t.permissionApprovedOneshot, lines: [], hidden: 0 };
-	if (outcome === "denied") return { head: t.permissionDeniedOneshot, lines: [], hidden: 0 };
-	if (outcome === "unanswered") return { head: t.permissionUnansweredOneshot, lines: [], hidden: 0 };
-	return body.length ? { lines: body.slice(0, 2), hidden: Math.max(0, body.length - 2) } : { head: t.toolNoOutput, lines: [], hidden: 0 };
 }
 
 const EMPTY_WEB_SOURCES: WebSource[] = [];
@@ -580,7 +569,6 @@ function collectToolWebData(
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
 	if (n === ASK_USER_TOOL) return t.stepAsked;
-	if (n === REQUEST_PERMISSION_TOOL) return t.stepPermissionRequested;
 	if (kind === "cmd") return t.stepRan;
 	if (kind === "read") return t.stepRead;
 	if (kind === "search") return t.stepSearched;
@@ -689,10 +677,9 @@ const ToolStep = memo(function ToolStep({
 	const canExpand = hasOutput && !hasDiff && !running;
 	const duration = state?.startedAt && state?.endedAt ? state.endedAt - state.startedAt : 0;
 	const isAskTool = name.toLowerCase() === ASK_USER_TOOL;
-	const isPermissionTool = name.toLowerCase() === REQUEST_PERMISSION_TOOL;
 	// 单行极简模式：已完成的常规工具默认只展示单行（点击该行展开输出或 Diff）；
-	// 运行中、失败、已中止、用户问答（ask_user_question）或权限申请保留 ⎿ 结果行。
-	const showPreview = (running || failed || cancelled || isAskTool || isPermissionTool) && (Boolean(preview.head) || preview.lines.length > 0);
+	// 运行中、失败、已中止或用户问答（ask_user_question）保留 ⎿ 结果行。
+	const showPreview = (running || failed || cancelled || isAskTool) && (Boolean(preview.head) || preview.lines.length > 0);
 	const lineInteractive = hasDiff || canExpand;
 	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
 	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));

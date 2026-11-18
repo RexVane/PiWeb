@@ -5,7 +5,7 @@ import { afterEach, beforeAll, afterAll, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { createPiWebModelRuntime } from "../src/lib/model-runtime-safe";
 import { InMemoryModelsStore } from "@earendil-works/pi-ai";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { createSessionModelRuntime, releaseSessionModelRuntime } from "../src/lib/session-model-runtime";
 
 const roots: string[] = [];

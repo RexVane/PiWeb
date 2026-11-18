@@ -6,7 +6,7 @@ import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { JsoncSettingsStorage } from "../src/lib/jsonc-settings-storage";
 import { getPiSettings, patchPiSettings } from "../src/lib/pi-settings";
 import { getSettingsManager, reloadSettingsManagers, reloadAllLoaders, resourceLoaderReady, getResourceLoader } from "../src/lib/pi";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { readJsonObject, readJsonObjectSync } from "../src/lib/agent-config";
 import { resourceFingerprint } from "../src/lib/resource-fingerprint";
 

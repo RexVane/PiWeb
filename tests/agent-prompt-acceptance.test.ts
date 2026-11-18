@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -18,8 +18,7 @@ function deferred<T = void>() {
 	return { promise, resolve, reject };
 }
 function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string, unknown> = {}) {
-	// 假会话也要带工具 API：applyToolPolicy 会读 getAllTools / getActiveToolNames 并写回激活集，
-	// 缺了就会抛「session.getAllTools is not a function」或误判「cannot disable all tools」
+	// 假会话也要带工具 API：applySessionTools 会读 getAllTools / getActiveToolNames 并写回激活集
 	const tools = ["read", "bash", "edit"].map((name) => ({ name, execute: vi.fn(async () => ({ content: [] })) }));
 	const session = {
 		agent: { state: { tools } },
@@ -32,11 +31,9 @@ function fixture(prompt: (...args: any[]) => Promise<void>, extra: Record<string
 		...extra,
 	};
 	const m = {
-		session, creating: null, disposed: false, promptSubmitting: false, runActive: false, toolPreset: "workspace",
+		session, creating: null, disposed: false, promptSubmitting: false, runActive: false,
 		resourceReloading: false, resourceReloadPending: false, cwd: "test", sessionPath: "test",
 		seq: 0, buffer: [], subscribers: new Set(), lastActive: 0,
-		// 真实会话在 ensureSession 里一定初始化这几项；applyToolPolicy 会读它们，
-		// 缺了就抛 TypeError，execute 会把「改工具」误报成 ok:false
 		requestedTools: new Set<string>(),
 		ledger: { entries: [] as unknown[], statsVersion: 0, onEvent: () => {}, drainDirty: () => [] },
 		messageIds: new WeakMap(),
@@ -190,34 +187,6 @@ describe("prompt acceptance boundary", () => {
 		running.resolve();
 	});
 
-	it("setToolPreset on a cold session records the choice and catalogs tools without starting the agent", async () => {
-		const { m } = fixture(async () => {});
-		(m as any).session = null;
-		(m as any).toolPreset = "readonly";
-		expect(await execute(m, { cmd: "setToolPreset", preset: "full" })).toEqual({ ok: true });
-		expect((m as any).toolPreset).toBe("full");
-		expect((m as any).session).toBeNull();
-		expect((m as any).creating).toBeNull();
-		const published = m.buffer.map((frame) => JSON.parse(frame.json));
-		const toolsEvent = published.find((event) => event.type === "tools" && event.toolPreset === "full");
-		expect(toolsEvent).toBeTruthy();
-		// 冷会话也要能显示工具：否则设置里的「工具启用情况」整块是空的
-		expect(toolsEvent.all).toEqual(expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]));
-		expect(toolsEvent.active).toEqual(expect.arrayContaining(["read", "bash", "edit", "write", "grep", "find", "ls"]));
-	});
-
-	it("setActiveTools on a cold session saves the allowlist without starting the agent", async () => {
-		const { m } = fixture(async () => {});
-		(m as any).session = null;
-		(m as any).toolPreset = "workspace";
-		expect(await execute(m, { cmd: "setActiveTools", names: ["read", "grep"] })).toMatchObject({ ok: true });
-		expect((m as any).session).toBeNull();
-		expect((m as any).creating).toBeNull();
-		expect((m as any).customActiveTools).toEqual(["read", "grep"]);
-		const published = m.buffer.map((frame) => JSON.parse(frame.json));
-		expect(published).toContainEqual(expect.objectContaining({ type: "tools", active: ["read", "grep"], customActiveTools: ["read", "grep"] }));
-	});
-
 	it("editAndResend rejects a missing entry or empty text without touching the session", async () => {
 		const abort = vi.fn(async () => {});
 		const navigateTree = vi.fn(async () => ({ cancelled: false }));
@@ -247,18 +216,6 @@ describe("prompt acceptance boundary", () => {
 		for (const field of ["promptSubmitting", "resourceReloading"] as const) {
 			m[field] = true;
 			expect(await execute(m, { cmd: "reload" } as any)).toMatchObject({ ok: false });
-			m[field] = false;
-		}
-	});
-
-	it("accepts permission changes while running, accepting a prompt or reloading resources", async () => {
-		// 请求立即受理；真实执行策略和后续请求声明由 SDK 集成用例另行验证。
-		const { m } = fixture(async () => {});
-		for (const field of ["promptSubmitting", "runActive", "resourceReloading"] as const) {
-			m[field] = true;
-			for (const command of [{ cmd: "setActiveTools", names: ["read"] }, { cmd: "setToolPreset", preset: "full" }] as const) {
-				expect(await execute(m, command as any)).toMatchObject({ ok: true });
-			}
 			m[field] = false;
 		}
 	});
@@ -328,7 +285,6 @@ describe("prompt acceptance boundary", () => {
 		const rawEditExec = editTool.execute;
 
 		(m.growth!.prepare as ReturnType<typeof vi.fn>).mockReturnValueOnce(prepareDeferred.promise);
-		await execute(m, { cmd: "setToolPreset", preset: "full" });
 
 		// 1. prompt returns accepted immediately without waiting for stalled growth.prepare
 		const result = await execute(m, { cmd: "prompt", text: "立刻发送" });

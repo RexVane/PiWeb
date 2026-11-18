@@ -23,7 +23,7 @@ vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => ({
 	getWorkspaceName: (cwd: string) => cwd.split("/").pop(), addWorkspaceByPicker: mocks.addWorkspace,
 	sendCommand: noop, newSession: noop, openSession: noop, closeSession: noop, renameWorkspace: noop,
 	patchSessionName: noop, archiveSession: noop, unarchiveSession: noop, resync: noop, setGroupBy: noop,
-	setOrderBy: noop, removeWorkspace: noop, refreshModels: noop, setToolPreset: noop, clearError: noop,
+	setOrderBy: noop, removeWorkspace: noop, refreshModels: noop, clearError: noop,
 	clearCompaction: noop, setError: noop, answerExtensionDialog: noop, dismissExtensionNotice: noop,
 }) }));
 

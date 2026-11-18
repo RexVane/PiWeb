@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recycleFixture } from "../lib/sandbox/fixtures";
+import { recycleFixture } from "../fixtures/recycle";
 
 const state = vi.hoisted(() => ({ sessions: [] as Array<{ path: string; cwd: string }>, warm: vi.fn(), after: [] as Array<() => unknown> }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: (callback: () => unknown) => { state.after.push(callback); } }));

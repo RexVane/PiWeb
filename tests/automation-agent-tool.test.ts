@@ -37,7 +37,6 @@ describe("manage_automation tool", () => {
 				name: "Daily Status Digest",
 				prompt: "Check git status and test summary",
 				schedule: { kind: "daily", time: "09:30" },
-				toolPreset: "readonly",
 			},
 			undefined,
 			undefined,

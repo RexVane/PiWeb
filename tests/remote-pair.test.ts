@@ -8,7 +8,7 @@ import { GET as redeem, HEAD as probe } from "@/app/pair/route";
 import { proxy } from "@/proxy";
 import { pendingPairCount, resetPairingState, verifyPairCode } from "@/lib/remote/pairing";
 import { flushWebDevices, listWebDevices } from "@/lib/web-devices";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const store = vi.hoisted(() => ({ agentDir: "", notBefore: 0, unavailable: false }));
 

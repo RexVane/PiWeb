@@ -28,7 +28,7 @@ it("requires a saved specific model to be available in the task workspace before
 	let resolveCatalog!: (response: ReturnType<typeof catalog>) => void;
 	const pending = new Promise<ReturnType<typeof catalog>>((resolve) => { resolveCatalog = resolve; });
 	vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("/preview") ? Promise.resolve(preview()) : pending));
-	const task: AutomationTask = { id: "task", name: "Check", prompt: "Inspect", cwd: "/b", schedule: { kind: "daily", time: "09:00" }, toolPreset: "readonly", model: { provider: "workspace-a", id: "probe" }, enabled: true, createdAt: 0, updatedAt: 0, nextRunAt: null };
+	const task: AutomationTask = { id: "task", name: "Check", prompt: "Inspect", cwd: "/b", schedule: { kind: "daily", time: "09:00" }, model: { provider: "workspace-a", id: "probe" }, enabled: true, createdAt: 0, updatedAt: 0, nextRunAt: null };
 	render(<AutomationModal open initialTask={task} knownCwds={["/b"]} defaultCwd="/b" getWorkspaceName={(cwd) => cwd} models={[]} onClose={vi.fn()} onSaved={vi.fn()} />);
 	expect((screen.getByRole("button", { name: "确认" }) as HTMLButtonElement).disabled).toBe(true);
 	await act(async () => resolveCatalog(catalog("workspace-b")));

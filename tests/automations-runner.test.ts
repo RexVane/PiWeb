@@ -145,12 +145,12 @@ describe("automations runner", () => {
 		const snapshot = await getAutomationsSnapshot(storePath);
 		expect(snapshot.runs[0]).toMatchObject({ status: "success", summary: "Saved outcome" });
 		expect(snapshot.activeTaskIds).toEqual([]);
-		expect(execute.mock.calls).toHaveLength(3);
+		expect(execute.mock.calls).toHaveLength(2);
 	});
 
 	it("times out stalled setup and prevents it from submitting a prompt after the deadline", async () => {
 		const { storePath, workspaceDir } = await makeWorkspaceAndStore();
-		const task = await createAutomationTask({ name: "Deadline", prompt: "Check", cwd: workspaceDir, schedule: { kind: "interval", every: 1, unit: "hours" } }, storePath);
+		const task = await createAutomationTask({ name: "Deadline", prompt: "Check", cwd: workspaceDir, schedule: { kind: "interval", every: 1, unit: "hours" }, model: { provider: "openai", id: "gpt-5" } }, storePath);
 		let release!: () => void;
 		const setup = new Promise<void>((resolve) => { release = resolve; });
 		const managed = { runActive: false, session: null, sm: { getBranch: () => [] } } as unknown as Managed;
@@ -159,7 +159,7 @@ describe("automations runner", () => {
 		const launched = await launchAutomationTask(task, "manual", { storePath, deps: {
 			createNewSession: async () => ({ sessionPath: path.join(workspaceDir, "deadline.jsonl") }), getManaged: () => managed, disposeSession: dispose, timeoutMs: 100,
 			observeManagedEvents: () => () => {},
-			execute: async (_m, command) => { commands.push(command.cmd); if (command.cmd === "setToolPreset") await setup; return { ok: true }; },
+			execute: async (_m, command) => { commands.push(command.cmd); if (command.cmd === "setModel") await setup; return { ok: true }; },
 		} });
 		const finished = await Promise.race([launched.done, new Promise<undefined>((resolve) => setTimeout(resolve, 600))]);
 		release();
@@ -205,7 +205,7 @@ describe("automations runner", () => {
 			expect(await fs.stat(`${second.storePath}.lock`).then(() => true, () => false)).toBe(false);
 		});
 	});
-	it("creates a new session, sets preset/model, runs prompt, and saves run summary", async () => {
+	it("creates a new session, sets model, runs prompt, and saves run summary", async () => {
 		const { storePath, workspaceDir } = await makeWorkspaceAndStore();
 		const task = await createAutomationTask(
 			{
@@ -213,7 +213,6 @@ describe("automations runner", () => {
 				prompt: "Check repo status",
 				cwd: workspaceDir,
 				schedule: { kind: "interval", every: 10, unit: "minutes" },
-				toolPreset: "readonly",
 				model: { provider: "openai", id: "gpt-5" },
 			},
 			storePath,
@@ -263,9 +262,8 @@ describe("automations runner", () => {
 		expect(finished?.status).toBe("success");
 		expect(finished?.sessionPath).toBe(sessionPath);
 		expect(finished?.summary).toBe("Repo is clean on main.");
-		expect(commands.map((c: any) => c.cmd)).toEqual(["rename", "setToolPreset", "setModel", "prompt"]);
-		expect((commands[1] as any).preset).toBe("readonly");
-		expect((commands[2] as any)).toMatchObject({ cmd: "setModel", provider: "openai", modelId: "gpt-5" });
+		expect(commands.map((c: any) => c.cmd)).toEqual(["rename", "setModel", "prompt"]);
+		expect((commands[1] as any)).toMatchObject({ cmd: "setModel", provider: "openai", modelId: "gpt-5" });
 	});
 
 	it("records assistant errors cleanly and rejects overlapping concurrent manual launches", async () => {

@@ -124,23 +124,20 @@ describe("automations store", () => {
 				prompt: "Summarize git status",
 				cwd: workspaceDir,
 				schedule: { kind: "daily", time: "09:00" },
-				toolPreset: "readonly",
 				model: { provider: "openai", id: "gpt-5" },
 			},
 			storePath,
 			t0,
 		);
 		expect(created.enabled).toBe(true);
-		expect(created.toolPreset).toBe("readonly");
 		expect(created.nextRunAt).toBe(new Date(2026, 4, 10, 9, 0, 0, 0).getTime());
 
 		const paused = await updateAutomationTask(created.id, { enabled: false }, storePath, t0 + 1000);
 		expect(paused.enabled).toBe(false);
 		expect(paused.nextRunAt).toBeNull();
 
-		const resumed = await updateAutomationTask(created.id, { enabled: true, toolPreset: "full", model: null }, storePath, t0 + 2000);
+		const resumed = await updateAutomationTask(created.id, { enabled: true, model: null }, storePath, t0 + 2000);
 		expect(resumed.enabled).toBe(true);
-		expect(resumed.toolPreset).toBe("full");
 		expect(resumed.model).toBeUndefined();
 
 		const run = await recordRunStarted(resumed, "manual", t0 + 3000, storePath);

@@ -1,5 +1,3 @@
-import type { ToolPreset } from "../types";
-
 export type AutomationSchedule =
 	| { kind: "interval"; every: number; unit: "minutes" | "hours" }
 	| { kind: "daily"; time: string }
@@ -26,7 +24,6 @@ export interface AutomationTask {
 	cwd: string;
 	schedule: AutomationSchedule;
 	enabled: boolean;
-	toolPreset: ToolPreset;
 	model?: AutomationModelRef;
 	createdAt: number;
 	updatedAt: number;
@@ -65,7 +62,6 @@ export interface AutomationTaskInput {
 	cwd: string;
 	schedule: AutomationSchedule;
 	enabled?: boolean;
-	toolPreset?: ToolPreset;
 	model?: AutomationModelRef;
 }
 

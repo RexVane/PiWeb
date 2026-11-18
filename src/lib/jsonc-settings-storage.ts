@@ -7,7 +7,7 @@ import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 // pi → jsonc-settings-storage → path-security → pi 的 import 循环。
 import { BoundaryError, samePath } from "./path-boundary";
 import { syncDirectorySync, syncFileSync } from "./atomic-file";
-import { windowsDirectoryApiSync } from "./sandbox/windows-file-operations";
+import { windowsDirectoryApiSync } from "./windows-directory-api";
 
 const MAX_BYTES = 1024 * 1024;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));

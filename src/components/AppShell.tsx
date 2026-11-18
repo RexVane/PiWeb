@@ -69,7 +69,7 @@ import type { NewSessionDefaults } from "@/lib/model-defaults";
 import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import { promptTitleText } from "@/lib/chat/skill-expansion";
-import type { ImageAttachment, ToolPreset, TrajEntry, WebSnapshot } from "@/lib/types";
+import type { ImageAttachment, TrajEntry, WebSnapshot } from "@/lib/types";
 
 function WorkspaceViewLoading() {
 	const { t } = useI18n();
@@ -183,8 +183,6 @@ export function AppShell() {
 		newSession,
 		openSession,
 		closeSession,
-		setToolPreset,
-		toolPresetChanging,
 		clearError,
 		clearCompaction,
 		setError,
@@ -780,26 +778,10 @@ export function AppShell() {
 		},
 		[automationDefaultCwd, rawGetWorkspaceName, t.autoWorkspaceName],
 	);
-	const [heroToolPresetOverride, setHeroToolPresetOverride] = useState<ToolPreset | null>(null);
-	useEffect(() => {
-		if (currentId) setHeroToolPresetOverride(null);
-	}, [currentId]);
-	const effectiveHeroToolPreset = heroToolPresetOverride ?? state.toolPreset;
-	const handleHeroToolPresetChange = useCallback(
-		async (preset: ToolPreset): Promise<{ success: boolean; error?: string }> => {
-			if (heroToolPresetOverride !== null) {
-				setHeroToolPresetOverride(preset);
-				return { success: true };
-			}
-			return setToolPreset(preset);
-		},
-		[heroToolPresetOverride, setToolPreset],
-	);
 	const startNewSessionInCurrentWorkspace = useCallback(() => {
 		// 对齐 dsh startSession：新会话默认落在当前会话的工作区（无则取最近工作区）
 		const cur = currentPath ? sessions.find((s) => samePath(s.path, currentPath))?.cwd : undefined;
 		setHeroCwd(cur || heroCwd || knownCwds[0] || "");
-		setHeroToolPresetOverride(null);
 		closeSession();
 		setActiveView("chat");
 		setMobileSidebarOpen(false);
@@ -807,16 +789,14 @@ export function AppShell() {
 	const startNewSessionInWorkspace = useCallback((cwd: string) => {
 		// dsh 惰性新建：只预选工作区进草稿态，发送第一条消息才真正创建会话
 		setHeroCwd(cwd);
-		setHeroToolPresetOverride(null);
 		closeSession();
 		setActiveView("chat");
 		setMobileSidebarOpen(false);
 	}, [closeSession]);
 	const startNewSessionWithPrompt = useCallback(
-		(cwd: string, prefillText: string, options?: { toolPreset?: ToolPreset }) => {
+		(cwd: string, prefillText: string) => {
 			const targetCwd = cwd || heroCwd || knownCwds[0] || "";
 			if (targetCwd) setHeroCwd(targetCwd);
-			setHeroToolPresetOverride(options?.toolPreset ?? null);
 			closeSession();
 			const nextKey = `__hero__:${draftSequence.current + 1}`;
 			draftSequence.current += 1;
@@ -869,15 +849,12 @@ export function AppShell() {
 			setError(t.blockedComposer);
 			return { success: false };
 		}
-		const presetOverride = heroToolPresetOverride;
 		const p = await newSession(cwd, {
 			provider: heroChoice.provider,
 			modelId: heroChoice.id,
 			thinking: heroThinking || undefined,
-			toolPreset: presetOverride ?? undefined,
 		});
 		if (!p) return { success: false };
-		if (presetOverride !== null) setHeroToolPresetOverride(null);
 		// Bind before the new-session render. In-flight ChatInput callbacks still own
 		// this same key; a failed acceptance keeps the original text and attachments.
 		sessionDraftKeys.current.set(canonicalDraftPath(p), heroDraftKey);
@@ -1283,10 +1260,7 @@ export function AppShell() {
 					<div className="flex min-h-0 flex-1 flex-col">
 						<div className="flex shrink-0 justify-end px-5 pt-3">{drawerToggle}</div>
 						<Hero
-							toolPreset={effectiveHeroToolPreset}
-							onToolPresetChange={handleHeroToolPresetChange}
-							permissionChanging={toolPresetChanging}
-								draftStore={draftStore}
+							draftStore={draftStore}
 								draftKey={heroDraftKey}
 								onDraftChange={saveHeroDraft}
 								onUploadError={(message) => failUpload(heroDraftKey, message)}
@@ -1405,10 +1379,6 @@ export function AppShell() {
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
 										<DraftChatInput
 											topSlot={askDialog ? <AskUserCard key={askDialog.id} dialog={askDialog} embedded onAnswer={(id, response) => void answerExtensionDialog(id, response)} /> : undefined}
-											toolPreset={state.toolPreset}
-											customActiveTools={snapshot?.customActiveTools}
-											onToolPresetChange={setToolPreset}
-											permissionChanging={toolPresetChanging}
 											key={draftKey}
 											// 问题卡占着输入框上方：附件预览改成随文档流排在输入框里，免得浮层盖住卡片
 											attachmentLayout={askDialog ? "flow" : undefined}
@@ -1568,9 +1538,6 @@ function basename(p: string): string {
 }
 
 function Hero({
-	toolPreset,
-	onToolPresetChange,
-	permissionChanging,
 	draftStore,
 	draftKey,
 	onDraftChange,
@@ -1599,9 +1566,6 @@ function Hero({
 	heroEffectiveThinking,
 	onSelectHeroThinking,
 }: {
-	toolPreset: ToolPreset;
-	onToolPresetChange: (preset: ToolPreset) => Promise<{ success: boolean; error?: string }>;
-	permissionChanging: boolean;
 	draftStore: DraftStore;
 	draftKey: string;
 	onDraftChange: (update: ChatDraftUpdate) => void;
@@ -1780,9 +1744,6 @@ function Hero({
 
 				{/* 输入卡 */}
 				<DraftChatInput
-					toolPreset={toolPreset}
-					onToolPresetChange={onToolPresetChange}
-					permissionChanging={permissionChanging}
 					draftStore={draftStore}
 					draftKey={draftKey}
 					onDraftChange={onDraftChange}

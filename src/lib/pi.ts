@@ -575,35 +575,3 @@ export function isSessionId(id: string): boolean {
 export function openSessionManager(sessionPath: string): SessionManager {
 	return SessionManager.open(sessionPath);
 }
-
-/**
- * 工具预设 → pi 工具白名单（ask_user_question 只是问用户、不碰文件，各档都放行）。
- *
- * 这里只是「哪些工具对模型可见」，不是安全边界：路径与 shell 的强制在 lib/permission-gate
- * 与 agent-manager 的执行期闸门里，两道一起才成立。workspace 档刻意不给 manage_automation 与 powershell
- * （能创建更高权限任务或绕过 bash 沙箱）；bash 仅在有 OS 沙箱后端时实际开放。
- */
-export const TOOL_PRESETS: Record<"readonly" | "workspace" | "full", string[]> = {
-	// readonly 也放行 bash：命令在只读沙箱里跑（写全被内核拒），只读检查类命令因此可用。
-	// bash 与 request_permission 都只在有沙箱后端时真正生效，见 agent-manager 的运行时检查。
-	readonly: ["read", "grep", "find", "ls", "bash", "ask_user_question", "request_permission"],
-	workspace: ["read", "grep", "find", "ls", "edit", "write", "bash", "codemode", "tool_search", "ask_user_question", "request_permission"],
-	full: [], // 空 = 不限制（全部可用工具）
-};
-
-const MCP_RESOURCE_TOOLS = new Set(["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"]);
-
-/** 与 SDK isMcpToolName 一致：MCP 服务器工具 `mcp__<server>__<tool>` 与三个资源工具 */
-export function isMcpToolName(name: string): boolean {
-	return name.startsWith("mcp__") || MCP_RESOURCE_TOOLS.has(name);
-}
-
-/**
- * 档位是否放行某个工具（只是上限，开不开由 SDK / 扩展决定）。
- * workspace 另外放行 MCP 工具：服务器是用户自己在 mcp.json 里配的；readonly 不放，MCP 工具能写盘、调外部服务。
- * MCP 里能写盘的那些由执行期闸门再筛一遍（只放 readOnlyHint 的）。
- */
-export function presetAllowsTool(preset: keyof typeof TOOL_PRESETS, name: string): boolean {
-	if (preset === "full") return true;
-	return TOOL_PRESETS[preset].includes(name) || isMcpToolName(name);
-}

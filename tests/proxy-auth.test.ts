@@ -12,7 +12,7 @@ import { currentLaunchToken, resetLaunchTokenState } from "../src/lib/web-launch
 import { flushWebDevices } from "../src/lib/web-devices";
 import { issuePairCode, resetPairingState } from "../src/lib/remote/pairing";
 import { GET as pair } from "../src/app/pair/route";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 // NextRequest 会把 127.0.0.1 归一成 localhost，权威必须按归一后的值断言
 const HOST = "localhost:30141";

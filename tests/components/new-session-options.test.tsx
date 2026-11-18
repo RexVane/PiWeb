@@ -46,43 +46,28 @@ afterEach(() => {
 	sessionStorage.clear();
 });
 
-it("applies explicit creation options once without replacing the saved default", async () => {
-	localStorage.setItem("piweb.toolPreset", "full");
+it("applies explicit creation options in one request when setupApplied is true", async () => {
 	const hook = renderHook(() => usePiWeb());
 	await act(async () => {
 		expect(await hook.result.current.newSession("/work", {
-			toolPreset: "readonly", provider: "test-provider", modelId: "test-model", thinking: "low",
+			provider: "test-provider", modelId: "test-model", thinking: "low",
 		})).toBe(sessionPath);
 	});
-	expect(created).toEqual([{ cwd: "/work", toolPreset: "readonly", provider: "test-provider", modelId: "test-model", thinking: "low" }]);
+	expect(created).toEqual([{ cwd: "/work", provider: "test-provider", modelId: "test-model", thinking: "low" }]);
 	expect(commands).toEqual([]);
-	expect(localStorage.getItem("piweb.toolPreset")).toBe("full");
 	await waitFor(() => expect(hook.result.current.currentPath).toBe(sessionPath));
 });
 
-it.each([
-	[null, "full"], ["standard", "workspace"], ["readonly", "readonly"],
-])("keeps the existing default behavior for stored preset %s", async (stored, expected) => {
-	if (stored) localStorage.setItem("piweb.toolPreset", stored);
-	const hook = renderHook(() => usePiWeb());
-	await act(async () => { await hook.result.current.newSession("/work"); });
-	expect(created).toEqual([{ cwd: "/work", toolPreset: expected }]);
-	expect(commands).toEqual([]);
-});
-
-it("configures an older server with the explicit override before model and thinking", async () => {
+it("configures an older server with model and thinking when setupApplied is missing", async () => {
 	setupApplied = undefined;
-	localStorage.setItem("piweb.toolPreset", "readonly");
 	const hook = renderHook(() => usePiWeb());
 	await act(async () => {
 		await hook.result.current.newSession("/work", {
-			toolPreset: "full", provider: "test-provider", modelId: "test-model", thinking: "low",
+			provider: "test-provider", modelId: "test-model", thinking: "low",
 		});
 	});
 	expect(commands).toEqual([
-		{ cmd: "setToolPreset", preset: "full" },
 		{ cmd: "setModel", provider: "test-provider", modelId: "test-model", fresh: true },
 		{ cmd: "setThinkingLevel", level: "low" },
 	]);
-	expect(localStorage.getItem("piweb.toolPreset")).toBe("readonly");
 });

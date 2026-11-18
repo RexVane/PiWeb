@@ -77,8 +77,6 @@ const baseSnapshot = (extra: Partial<WebSnapshot> = {}): WebSnapshot => ({
 	userTurns: [],
 	growthError: null,
 	thinkingLevels: ["off", "low", "high"],
-	toolPreset: "full",
-	toolPreferenceSaved: true,
 	tools: { active: ["read", "bash", "edit"], all: [{ name: "read" }, { name: "bash" }, { name: "edit" }] },
 	stats: null,
 	contextUsage: null,
@@ -131,23 +129,19 @@ describe("usePiWeb single-RTT newSession and optimistic prompt", () => {
 		sessionStorage.clear();
 	});
 
-	it("preserves explicit full preset on newSession without mutating localStorage and renders optimistic prompt before fetch settles", async () => {
-		localStorage.setItem("piweb.toolPreset", "workspace");
+	it("passes model and thinking on newSession and renders optimistic prompt before fetch settles", async () => {
 		const hook = renderHook(() => usePiWeb());
 
 		await act(async () => {
 			await hook.result.current.newSession("/work", {
-				toolPreset: "full",
 				provider: "p",
 				modelId: "m",
 				thinking: "high",
 			});
 		});
 
-		expect(createdPayloads).toEqual([{ cwd: "/work", toolPreset: "full", provider: "p", modelId: "m", thinking: "high" }]);
+		expect(createdPayloads).toEqual([{ cwd: "/work", provider: "p", modelId: "m", thinking: "high" }]);
 		expect(commandPayloads).toEqual([]);
-		expect(localStorage.getItem("piweb.toolPreset")).toBe("workspace");
-		expect(hook.result.current.state.toolPreset).toBe("full");
 
 		await waitFor(() => expect(EventSourceMock.instances.length).toBe(1));
 		const stream = EventSourceMock.instances[0];

@@ -2,10 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../src/lib/growth-tracker", () => ({ GROWTH_TRACKER_VERSION: 1, createGrowthTracker: () => ({ version: 1, prepare: async () => {}, onEvent: () => {}, dispose: () => {} }) }));
-vi.mock("../src/lib/sandbox/manager", async (original) => ({ ...await original<typeof import("../src/lib/sandbox/manager")>(), probeSandboxSupport: async () => false, sandboxSupported: () => false }));
 
 type Managed = ReturnType<typeof import("../src/lib/agent-manager")["getManaged"]>;
 type Control = { starts: number; shutdowns: number; armed: boolean; entered: boolean; released: boolean; gate: Promise<void> };

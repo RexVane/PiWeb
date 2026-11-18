@@ -14,7 +14,7 @@ import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./
 import { FileSizeLimitError, readFileBounded } from "./read-file-bounded";
 import { PIWEB_EXECUTION_GUIDANCE } from "./execution-guidance";
 import { ASK_USER_TOOL } from "./ask-user";
-import { REQUEST_PERMISSION_TOOL } from "./permission-request";
+import { MANAGE_AUTOMATION_TOOL } from "./automations/agent-tool";
 
 export const MAX_PROMPT_SOURCE_BYTES = 1024 * 1024;
 
@@ -217,7 +217,7 @@ export async function listPromptSources({
 	// 压缩摘要：compact 之后它以摘要形式进入上下文，界面上平时看不到，这里一并列出
 	const compacted = session ? latestCompactionSummary(session) : undefined;
 
-	const piwebToolNames: ReadonlySet<string> = new Set([ASK_USER_TOOL, REQUEST_PERMISSION_TOOL]);
+	const piwebToolNames: ReadonlySet<string> = new Set([ASK_USER_TOOL, MANAGE_AUTOMATION_TOOL]);
 	const tools = session
 		? session.getAllTools().map((tool) => ({
 			name: tool.name,

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { archiveSession, forgetSession, getWorkspaceRegistry } from "../src/lib/workspace-store";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const DAY = 24 * 60 * 60 * 1000;
 let agentDir: string;

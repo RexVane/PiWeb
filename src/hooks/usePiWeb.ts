@@ -12,7 +12,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import { notifySessionsChanged } from "@/lib/session-change-events";
-import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "@/lib/tool-preset";
 import type { AskQuestion } from "@/lib/ask-user";
 import type {
 	GrowthRound,
@@ -23,7 +22,6 @@ import type {
 	WebMessage,
 	WebNestedCall,
 	WebSnapshot,
-	ToolPreset,
 } from "@/lib/types";
 
 export interface ToolCardState {
@@ -81,7 +79,6 @@ export interface PiWebState {
 	snapshot: WebSnapshot | null;
 	messages: WebMessage[];
 	tools: Record<string, ToolCardState>;
-	toolPreset: ToolPreset;
 	connected: boolean;
 	error: string | null;
 	compaction: { phase: "start" | "end"; errorMessage?: string; ts: number } | null;
@@ -351,12 +348,8 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			if (s.snapshot) s.snapshot = { ...s.snapshot, name: evt.name };
 			return s;
 		case "tools":
-			if (evt.toolPreset) s.toolPreset = evt.toolPreset;
 			if (s.snapshot) s.snapshot = {
 				...s.snapshot,
-				toolPreset: evt.toolPreset ?? s.snapshot.toolPreset,
-				customActiveTools: evt.customActiveTools === undefined ? s.snapshot.customActiveTools : evt.customActiveTools,
-				toolPreferenceSaved: evt.toolPreferenceSaved === undefined ? s.snapshot.toolPreferenceSaved : evt.toolPreferenceSaved,
 				tools: { active: evt.active, all: evt.all.map((n) => ({ name: n })) },
 			};
 			return s;
@@ -510,16 +503,6 @@ export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: Ex
 	return [...dialogs.values()];
 }
 
-function storedToolPreset(): ToolPreset | null {
-	if (typeof window === "undefined") return null;
-	// 旧版本存的是 `standard`：归一成 workspace，否则切档时会拿一个不存在的档位去比对
-	return normalizeToolPreset(localStorage.getItem("piweb.toolPreset")) ?? null;
-}
-
-function savedToolPreset(): ToolPreset {
-	return storedToolPreset() ?? DEFAULT_TOOL_PRESET;
-}
-
 function toolsFromMessages(messages: WebMessage[], streaming = false): Record<string, ToolCardState> {
 	const tools: Record<string, ToolCardState> = {};
 	const resolved = new Set<string>();
@@ -572,11 +555,10 @@ function linkNestedCalls(tools: Record<string, ToolCardState>, parentId: string,
 	}
 }
 
-const emptyState = (toolPreset: ToolPreset = DEFAULT_TOOL_PRESET): PiWebState => ({
+const emptyState = (): PiWebState => ({
 	snapshot: null,
 	messages: [],
 	tools: {},
-	toolPreset,
 	connected: false,
 	error: null,
 	compaction: null,
@@ -629,20 +611,11 @@ export function usePiWeb() {
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
-	const [snapshotEpoch, setSnapshotEpoch] = useState(0);
 	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
 	const pendingOptimisticRef = useRef(new Map<string, PendingOptimisticPrompt>());
-	const pendingToolPresetRef = useRef(new Map<string, ToolPreset>());
 	const optimisticSeqRef = useRef(0);
 	const shownReloadsRef = useRef(new Set<string>());
-	const presetRestoreAttemptRef = useRef<string | null>(null);
-	const presetRestorePromiseRef = useRef<Promise<void> | null>(null);
-	const pendingPresetChangesRef = useRef(new Set<string | null>());
-	const lastServerDefaultRef = useRef<ToolPreset | undefined>(undefined);
-	const presetMutationSeqRef = useRef(0);
-	const [, setPresetChangeVersion] = useState(0);
-	const toolPresetChanging = pendingPresetChangesRef.current.has(currentId);
 	const liveStateRef = useRef(state);
 	liveStateRef.current = state;
 	const activeSessionRef = useRef(currentId);
@@ -978,7 +951,6 @@ export function usePiWeb() {
 		const load = async (force: boolean) => {
 			if (!alive || (!force && document.visibilityState !== "visible")) return;
 			controller = new AbortController();
-			const presetSeq = presetMutationSeqRef.current;
 			try {
 				const r = await fetch(`/api/sessions?limit=${Math.min(sessionPageLimit, 500)}${sessionSearch ? `&q=${encodeURIComponent(sessionSearch)}` : ""}`, { signal: controller.signal, headers: lastEtag ? { "If-None-Match": lastEtag } : undefined });
 				if (r.status === 304) {
@@ -1014,15 +986,6 @@ export function usePiWeb() {
 					if (Array.isArray(registry.archivedSessions)) setArchivedSessionPaths(registry.archivedSessions);
 					setArchivedAt(registry.archivedAt ?? {});
 					if (Array.isArray(registry.pinnedSessions)) setPinnedSessionPaths(registry.pinnedSessions);
-				}
-				const serverDefault = normalizeToolPreset(j.data.defaultToolPreset);
-				const serverDefaultSaved = j.data.defaultToolPresetSaved === true;
-				if (serverDefaultSaved && serverDefault && presetSeq === presetMutationSeqRef.current && serverDefault !== lastServerDefaultRef.current) {
-					lastServerDefaultRef.current = serverDefault;
-					try { localStorage.setItem("piweb.toolPreset", serverDefault); } catch { /* ignore */ }
-					if (!activeSessionRef.current && !pendingPresetChangesRef.current.has(null)) {
-						setState((prev) => (prev.toolPreset === serverDefault ? prev : { ...prev, toolPreset: serverDefault }));
-					}
 				}
 				setSessions(
 					page.map((s) => ({ ...s, streaming: running[s.path]?.streaming === true, lastStep: running[s.path]?.lastStep })),
@@ -1123,18 +1086,16 @@ export function usePiWeb() {
 		esRef.current = null;
 		if (!currentId) {
 			subscribedSessionRef.current = null;
-			setState(emptyState(savedToolPreset()));
+			setState(emptyState());
 			return;
 		}
 		const reconnectingCurrentSession = subscribedSessionRef.current === currentId;
 		subscribedSessionRef.current = currentId;
-		const presetOverride = reconnectingCurrentSession ? undefined : pendingToolPresetRef.current.get(currentId);
-		if (presetOverride) pendingToolPresetRef.current.delete(currentId);
 		const pendingOpt = reconnectingCurrentSession ? undefined : pendingOptimisticRef.current.get(currentId);
 		setState((current) => reconnectingCurrentSession
 			? { ...current, connected: false }
 			: {
-				...emptyState(presetOverride ?? savedToolPreset()),
+				...emptyState(),
 				...(pendingOpt ? { messages: [pendingOpt.message] } : {}),
 				connected: false,
 			});
@@ -1210,12 +1171,10 @@ export function usePiWeb() {
 						}
 					}
 					const notice = reloadNotice(snap.externalReload);
-					setSnapshotEpoch((epoch) => epoch + 1);
 					setState((prev) => ({
 						snapshot: snap,
 						messages: nextMessages,
 						tools: toolsFromMessages(nextMessages, snap.isStreaming),
-						toolPreset: snap.toolPreset,
 						connected: true,
 						error: null,
 						compaction: null,
@@ -1384,21 +1343,20 @@ export function usePiWeb() {
 
 	const newSession = useCallback(async (
 		cwd: string,
-		overrides: { provider?: string; modelId?: string; thinking?: string; toolPreset?: ToolPreset } = {},
+		overrides: { provider?: string; modelId?: string; thinking?: string } = {},
 	): Promise<string | null> => {
 		try {
-			const toolPreset = overrides.toolPreset ?? savedToolPreset();
 			const r = await fetch("/api/agent/new", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ cwd, ...overrides, toolPreset }),
+				body: JSON.stringify({ cwd, ...overrides }),
 			});
 			const j = await r.json();
 			if (j.success) {
 				const p = j.data.sessionPath as string;
 				const id = idOf(p);
 				// 新服务在创建时一次应用预设；旧服务没有确认字段时仍走逐条配置。
-				const setup: Record<string, unknown>[] = j.data.setupApplied === true ? [] : [{ cmd: "setToolPreset", preset: toolPreset }];
+				const setup: Record<string, unknown>[] = [];
 				if (j.data.setupApplied !== true && overrides.provider && overrides.modelId) setup.push({ cmd: "setModel", provider: overrides.provider, modelId: overrides.modelId, fresh: true });
 				if (j.data.setupApplied !== true && overrides.thinking) setup.push({ cmd: "setThinkingLevel", level: overrides.thinking });
 				for (const command of setup) {
@@ -1411,7 +1369,6 @@ export function usePiWeb() {
 						return null;
 					}
 				}
-				pendingToolPresetRef.current.set(id, toolPreset);
 				const key = pathKey(p);
 				deletedPathsRef.current.delete(key);
 				sessionCwdByPathRef.current.set(key, cwd);
@@ -1492,54 +1449,7 @@ export function usePiWeb() {
 		return () => window.removeEventListener("popstate", navigate);
 	}, [idOf]);
 
-	const setToolPreset = useCallback(
-		async (preset: ToolPreset): Promise<{ success: boolean; error?: string }> => {
-			if (pendingPresetChangesRef.current.has(currentId)) return { success: false, error: "permission change pending" };
-			pendingPresetChangesRef.current.add(currentId);
-			setPresetChangeVersion((version) => version + 1);
-			const current = () => activeSessionRef.current === currentId;
-			try {
-				await presetRestorePromiseRef.current;
-				if (!current()) return { success: false, error: "session changed" };
-				presetMutationSeqRef.current += 1;
-				if (currentId) {
-					const result = await sendCommand({ cmd: "setToolPreset", preset }, currentId, { shouldReportError: current });
-					if (!current()) return { success: false, error: "session changed" };
-					if (!result?.success) return { success: false, error: result?.error };
-				} else {
-					const response = await fetch("/api/tool-preferences", {
-						method: "PUT",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ toolPreset: preset }),
-					});
-					if (!current()) return { success: false, error: "session changed" };
-					let body: { success?: boolean; error?: string } | null = null;
-					try { body = await response.json(); } catch { body = null; }
-					if (response.status !== 404 && (!response.ok || (body && body.success === false))) {
-						return { success: false, error: body?.error || `request failed (${response.status})` };
-					}
-				}
-				lastServerDefaultRef.current = preset;
-				try { localStorage.setItem("piweb.toolPreset", preset); } catch (error) { if (!currentId) throw error; }
-				setState((s) => ({
-					...s,
-					toolPreset: preset,
-					snapshot: s.snapshot ? { ...s.snapshot, toolPreset: preset, customActiveTools: null, toolPreferenceSaved: true } : null,
-				}));
-				return { success: true };
-			} catch (error) {
-				const message = error instanceof Error ? error.message : "permission change failed";
-				if (current()) setState((s) => ({ ...s, error: message }));
-				return { success: false, error: current() ? message : "session changed" };
-			} finally {
-				pendingPresetChangesRef.current.delete(currentId);
-				setPresetChangeVersion((version) => version + 1);
-			}
-		},
-		[currentId, sendCommand],
-	);
-
-	// ---------- 工具权限由输入框选择，模型与思考级别由 Hero 页显式下发 ----------
+	// ---------- 模型与思考级别由 Hero 页显式下发 ----------
 
 	/** 强制重连 SSE 拿新快照（navigate 等场景） */
 	const resync = useCallback(() => setResyncNonce((n) => n + 1), []);
@@ -1557,32 +1467,6 @@ export function usePiWeb() {
 	const clearError = useCallback(() => setState((s) => ({ ...s, error: null })), []);
 	/** 供 AppShell 直接展示行内提示（如未选工作区就发送） */
 	const setError = useCallback((message: string) => setState((s) => ({ ...s, error: message })), []);
-
-	// 工具权限不写入 Pi JSONL。服务端按会话保存后以服务端为准；
-	// 只有从未保存过的旧用户才用浏览器 localStorage 的档位做一次迁移。运行中延后到空闲。
-	useEffect(() => {
-		if (!currentId || !state.connected || !state.snapshot || state.snapshot.isStreaming) return;
-		if (state.snapshot.customActiveTools != null || state.snapshot.toolPreferenceSaved === true) return;
-		const preset = storedToolPreset();
-		// 没有旧选择时不把界面的默认值迁移成用户偏好；新服务端即使档位相同也要完成保存，
-		// 否则换浏览器后，另一个旧 localStorage 档位仍会覆盖这个会话。
-		if (preset === null) return;
-		if (state.snapshot.toolPreset === preset && state.snapshot.toolPreferenceSaved !== false) return;
-		const attemptKey = `${currentId}:${snapshotEpoch}`;
-		if (presetRestoreAttemptRef.current === attemptKey) return;
-		presetRestoreAttemptRef.current = attemptKey;
-		const sessionId = currentId;
-		const restore = sendCommand({ cmd: "setToolPreset", preset }).then((result) => {
-			if (result?.success && activeSessionRef.current === sessionId && storedToolPreset() === preset) setState((current) => ({
-				...current,
-				toolPreset: preset,
-				snapshot: current.snapshot ? { ...current.snapshot, toolPreset: preset, toolPreferenceSaved: true } : null,
-			}));
-		}).finally(() => {
-			if (presetRestorePromiseRef.current === restore) presetRestorePromiseRef.current = null;
-		});
-		presetRestorePromiseRef.current = restore;
-	}, [currentId, snapshotEpoch, state.connected, state.snapshot, sendCommand]);
 
 	// 会话可见性规则：归档即离开工作区列表——包括当前会话（归档后切到相邻会话或空态），
 	// 归档区显示全部已归档会话。
@@ -1681,8 +1565,6 @@ export function usePiWeb() {
 		newSession,
 		openSession,
 		closeSession,
-		setToolPreset,
-		toolPresetChanging,
 		clearError,
 		clearCompaction,
 		setError,

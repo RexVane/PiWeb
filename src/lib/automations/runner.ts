@@ -381,11 +381,6 @@ export async function launchAutomationTask(
 				text: formatRunSessionTitle(task.name, run.startedAt),
 			}));
 
-			const presetRes = await runStep(controller.signal, () => deps.execute(target, { cmd: "setToolPreset", preset: task.toolPreset }));
-			if (!presetRes.ok) {
-				throw new Error(presetRes.error || `Failed to apply permission preset "${task.toolPreset}"`);
-			}
-
 			if (task.model) {
 				const model = task.model;
 				const modelRes = await runStep(controller.signal, () => deps.execute(target, {

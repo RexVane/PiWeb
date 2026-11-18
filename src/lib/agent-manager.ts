@@ -4,7 +4,6 @@
  */
 import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import type { AgentSession, AgentSessionEvent, CreateAgentSessionOptions, ExtensionCommandContextActions, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import {
@@ -33,8 +32,6 @@ import {
 	resolveProjectTrust,
 	resourceLoaderReady,
 	withResourceLock,
-	TOOL_PRESETS,
-	presetAllowsTool,
 	SessionManager,
 	createAgentSession,
 	getModelRuntime,
@@ -57,27 +54,16 @@ import { redactJsonl, redactSecrets } from "./secret-redaction";
 import { isAbortMessage, isCancellationError } from "./chat/cancellation";
 import { isClaudeTaskNotification } from "./chat/task-notification";
 import { SessionDiskTracker } from "./session-disk-sync";
-import { BoundaryError, resolveSessionPath } from "./path-security";
-import { WRITE_PATH_FIELDS, permissionDenial, resolveModelPath } from "./permission-gate";
-import { permissionActionKey, permissionActionDescription, type PermissionAction } from "./permission-action";
-import { createConfinedFileOperations } from "./confined-file-operations";
-import { readSandboxConfig } from "./sandbox/config";
-import { sandboxSupported, releaseSandbox, probeSandboxSupport } from "./sandbox/manager";
-import { createSandboxBashOperations, type EscalationScope } from "./sandbox/bash-operations";
-import { createPermissionRequestTool } from "./permission-request-tool";
-import { appendPermissionAudit } from "./permission-audit";
+import { BoundaryError, resolveModelPath, resolveSessionPath } from "./path-security";
 import { clampThinkingLevelTo, newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
-import { readDefaultToolPreset, readToolPreference, saveToolPreference, type SaveToolPreferenceOptions, type ToolPreference } from "./tool-preferences";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "./tool-preset";
 import type {
 	AgentCommand,
 	ContextBreakdown,
 	ContextResource,
 	GrowthRound,
 	TrajEntry,
-	ToolPreset,
 	WebEvent,
 	WebMessage,
 	WebNestedCall,
@@ -126,14 +112,6 @@ export interface Managed {
 	epoch: string;
 	ledger: TrajLedger;
 	lastActive: number;
-	toolPreset: ToolPreset;
-	/**
-	 * 用户刚批准的一次性升权（`request_permission` 工具）。
-	 * 对下一条越权操作（bash 命令或 write/edit 写入）生效，用完即清。
-	 */
-	escalation?: { scope: EscalationScope; remaining: number; actionKey: string; action: PermissionAction; expiresAt: number };
-	deniedActions?: Map<string, PermissionAction>;
-	lastDeniedAction?: PermissionAction;
 	stopping?: Promise<boolean>;
 	stopFailed?: boolean;
 	/** 会话还在冷启动时用户就点了停止：这次提交在交给 SDK 之前放弃 */
@@ -141,19 +119,11 @@ export interface Managed {
 	commandRunning?: boolean;
 	/** 后台异步拍生长基线：不在发消息前阻塞，只在改动类工具真正执行前短暂等它收尾。 */
 	growthPrepare?: Promise<void>;
-	/** `tool_call` 已消耗一次性升权并放行的 write/edit toolCallId，供紧随其后的 `guardToolExecution` 放行。 */
-	escalatedCallIds?: Set<string>;
-	/** 显式逐项选择优先于 preset；保留失效名称以便资源重新启用后恢复用户选择。 */
-	customActiveTools?: string[];
 	/**
 	 * SDK / 扩展要求打开的工具（defaultTools 里的 +codemode、MCP 打开的 codemode、tool_search 载入的工具…）。
-	 * 档位过滤会把它们从激活集里拿掉，记在这里，换到放行它们的档位时才能恢复。
+	 * reload 重建会话时保留用户或扩展已激活的 opt-in 工具。
 	 */
 	requestedTools: Set<string>;
-	/** 服务端按会话保存的工具偏好：只加载一次，冷启动与快照都先等它。 */
-	toolPreferenceLoaded?: Promise<void>;
-	/** 是否已经有服务端偏好；前端只在这之后不再用 localStorage 迁移覆盖。 */
-	toolPreferenceSaved?: boolean;
 	resourceVersion: number;
 	resourceReloadPending: boolean;
 	resourceReloading: boolean;
@@ -1161,8 +1131,6 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 		case "agent_settled":
 			m.runActive = false;
 			if (!m.commandRunning && !m.bashActive && m.session?.isIdle) m.stopFailed = false;
-			// 未消耗的一次性升权不能跨轮留到下一次用户消息，本轮收尾时清掉
-			clearEscalation(m);
 			// SDK 1.3 的显示队列按非空文字匹配消费记录，纯图片消息会残留 ""。
 			// 只在实际发送队列已空时清理；中断后仍待发送的消息必须保留供用户取回。
 			if (m.session && !m.session.agent.hasQueuedMessages() && m.session.pendingMessageCount > 0) m.session.clearQueue();
@@ -1378,8 +1346,6 @@ function reopenManaged(m: Managed): Managed {
 	fresh.diskSize = m.diskSize;
 	fresh.diskTracker = m.diskTracker;
 	fresh.diskTracker?.adopt(sm.getEntries().map((entry) => entry.id));
-	fresh.toolPreset = m.toolPreset;
-	fresh.customActiveTools = m.customActiveTools;
 	fresh.desiredThinkingLevel = m.desiredThinkingLevel;
 	fresh.viewerGraceUntil = m.viewerGraceUntil;
 	fresh.externalReload = reload;
@@ -1431,7 +1397,6 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		growth: null,
 		ledger: new TrajLedger(initialTrajectory),
 		lastActive: Date.now(),
-		toolPreset: DEFAULT_TOOL_PRESET,
 		requestedTools: new Set(),
 		resourceVersion: 0,
 		resourceReloadPending: false,
@@ -1449,47 +1414,6 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 	return m;
 }
 
-/** 首次打开某会话时，把服务端保存的 preset / 逐项选择装进 Managed；未单独保存过的旧会话跟随后台全局默认。 */
-function ensureToolPreference(m: Managed): Promise<void> {
-	m.toolPreferenceLoaded ??= readToolPreference(m.sessionPath).then(async (preference) => {
-		if (m.disposed) return;
-		if (preference) {
-			m.toolPreset = preference.toolPreset;
-			m.customActiveTools = preference.customActiveTools;
-			m.toolPreferenceSaved = true;
-			return;
-		}
-		const fallback = await readDefaultToolPreset();
-		if (m.disposed || !fallback.saved) return;
-		m.toolPreset = fallback.toolPreset;
-		m.customActiveTools = undefined;
-		m.toolPreferenceSaved = true;
-	}).catch((error) => {
-		m.toolPreset = "readonly";
-		m.customActiveTools = undefined;
-		m.toolPreferenceSaved = true;
-		publish(m, { type: "error", message: `工具偏好无法读取，本会话暂用仅可查看：${String(error?.message ?? error)}`, ts: Date.now() });
-	});
-	return m.toolPreferenceLoaded;
-}
-
-/**
- * 显式选择先保存候选值，再应用到运行时。保存失败保留原权限。
- */
-async function persistToolPreference(m: Managed, candidate?: ToolPreference, options?: SaveToolPreferenceOptions): Promise<void> {
-	const preference: ToolPreference = candidate ?? {
-		toolPreset: m.toolPreset,
-		...(m.customActiveTools ? { customActiveTools: m.customActiveTools } : {}),
-	};
-	try {
-		await saveToolPreference(m.sessionPath, preference, options);
-		m.toolPreferenceSaved = true;
-	} catch (error) {
-		publish(m, { type: "error", message: candidate ? "权限保存失败，保留原来的选择，请重试。" : "权限已在当前会话生效，但保存失败。重启后可能恢复旧选择，请重试保存。", ts: Date.now() });
-		throw error;
-	}
-}
-
 /** SDK 内置工具定义：直接构造，不启动 agent，也不连接 MCP。 */
 const BUILTIN_TOOL_DEFINITIONS = [
 	createReadToolDefinition,
@@ -1505,76 +1429,15 @@ const BUILTIN_TOOL_DEFINITIONS = [
 /** PiWeb 的 SDK 自定义工具：构造定义不会执行工具或启动会话。冷热路径共用，避免目录漏项。 */
 type CustomTools = NonNullable<CreateAgentSessionOptions["customTools"]>;
 
-/** 取走一次升权：批准只覆盖下一条命令，读完即用完；用到哪条命令也进审计 */
-const ESCALATABLE_TOOLS = new Set(["bash", ...WRITE_PATH_FIELDS.keys()]);
-const MAX_PERMISSION_RECHECKS = 4;
-const UNSTABLE_PERMISSION = "The permission configuration changed repeatedly during this action. Retry after the permission settings stop changing.";
-
-function clearEscalation(m: Managed): void {
-	m.escalation = undefined;
-	m.escalatedCallIds = undefined;
-}
-
-const executionApprovals = new AsyncLocalStorage<{ managed: Managed; scope: EscalationScope; preset: ToolPreset; command?: string; used?: boolean } | undefined>();
-
-function widenPreset(current: ToolPreset, scope: EscalationScope): ToolPreset {
-	if (current === "full" || scope === "full") return "full";
-	return "workspace";
-}
-
-function consumeEscalation(m: Managed, command: string): EscalationScope | null {
-	const approval = executionApprovals.getStore();
-	if (!approval || approval.managed !== m || approval.used || approval.preset !== m.toolPreset || approval.command !== command) return null;
-	approval.used = true;
-	appendPermissionAudit(m.sm, { kind: "used", scope: approval.scope, preset: m.toolPreset, command, at: Date.now() });
-	return approval.scope;
-}
-
 function sessionCustomTools(m: Managed): CustomTools {
-	const settings = getSettingsManager(m.cwd);
-	const commandPrefix = settings.getShellCommandPrefix();
-	const fileOperations = createConfinedFileOperations({ sessionPath: m.sessionPath, cwd: m.cwd, preset: () => {
-		const approval = executionApprovals.getStore();
-		if (approval?.managed === m) {
-			if (approval.preset !== m.toolPreset) throw new Error("blocked: the permission preset changed before the file operation");
-			return widenPreset(m.toolPreset, approval.scope);
-		}
-		return m.toolPreset;
-	} });
 	return [
-		guardCustomToolDefinition(m, createWriteToolDefinition(m.cwd, { operations: fileOperations }) as unknown as CustomTools[number]),
-		guardCustomToolDefinition(m, createEditToolDefinition(m.cwd, { operations: fileOperations }) as unknown as CustomTools[number]),
 		createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" }))),
-		createPermissionRequestTool({
-			ask: (questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" })),
-			deniedAction: (id) => resolveDeniedAction(m, id),
-			grant: (scope, action) => {
-				clearEscalation(m);
-				m.escalation = { scope, remaining: 1, actionKey: permissionActionKey(action), action, expiresAt: Date.now() + 5 * 60_000 };
-			},
-			preset: () => m.toolPreset,
-			record: (event) => appendPermissionAudit(m.sm, event),
-		}),
 		createManageAutomationTool({
 			defaultCwd: m.cwd,
 			onMutated: () => {
 				void import("./automations/runner").then((mod) => mod.ensureAutomationSchedulerStarted());
 			},
 		}),
-		// 同名覆盖 SDK 内置 bash：只换「怎么起进程」，schema / 截断 / 渲染 / 临时脚本仍是 pi 的。
-		// shellPath、commandPrefix 跟着 settings 走，保持与内置定义一致。
-		// 断言是因为 bash 定义的泛型（schema / render state）比 customTools 的擦除类型更具体。
-		guardCustomToolDefinition(m, createBashToolDefinition(m.cwd, {
-			operations: createSandboxBashOperations({
-				sessionPath: m.sessionPath,
-				cwd: m.cwd,
-				preset: () => m.toolPreset,
-				shellPath: settings.getShellPath(),
-				consumeGrant: (command: string) => consumeEscalation(m, command),
-			}),
-			commandPrefix,
-			shellPath: settings.getShellPath(),
-		}) as unknown as CustomTools[number], commandPrefix),
 	];
 }
 
@@ -1647,19 +1510,12 @@ function toolCatalog(m: Managed): CatalogTool[] {
 	return result;
 }
 
-/** 冷会话按与热会话相同的档位 / 逐项策略算出激活集。 */
+/** 冷会话按与热会话相同的 SDK defaultTools / exposure 规则算出激活集。 */
 function coldActiveToolNames(m: Managed, catalog: CatalogTool[]): string[] {
-	// 与热路径的 toolPolicyDenial 一致：受限档的 bash 依赖 OS 沙箱，机器上没有后端就不列出来，
-	// 否则冷快照里有 bash、会话一启动它又消失
-	const noShell = m.toolPreset !== "full" && !sandboxSupported();
-	const allowed = catalog.filter((tool) => (presetAllowsTool(m.toolPreset, tool.name) || tool.readOnly === true)
-		&& !(noShell && tool.name === "bash")
-		&& (!m.customActiveTools || m.customActiveTools.includes(tool.name)));
-	if (m.customActiveTools) return allowed.map((tool) => tool.name);
 	// 热启动把 SDK 初始激活集记入 requestedTools；冷路径直接读取同一份已合并的设置。
-	// 显式点名的 defaultActive:false 工具也要展示为启用，档位与逐项白名单仍优先。
+	// 显式点名的 defaultActive:false 工具也要展示为启用。
 	const requested = new Set(getSettingsManager(m.cwd).getDefaultTools() ?? []);
-	return allowed
+	return catalog
 		.filter((tool) => tool.exposure !== "hidden" && (requested.has(tool.name)
 			|| ((tool.exposure === undefined || tool.exposure === "direct" || tool.exposure === "model-only") && tool.defaultActive !== false)))
 		.map((tool) => tool.name);
@@ -1853,23 +1709,9 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			}
 			else throw new Error("运行中的会话过多，请关闭一个空闲会话后重试。");
 		}
-		// 能力探测要尽早：workspace 档能不能给 bash 取决于它，策略在下面就会算
-		await probeSandboxSupport();
-		// 恢复服务端保存的工具选择必须在创建 session 之前完成，SDK 的初始激活集随后即被策略覆盖
-		await ensureToolPreference(m);
 		await resourceLoaderReady(m.cwd);
 		const settingsManager = getSettingsManager(m.cwd);
-		const loader = await createSessionResourceLoader(m.cwd, undefined, [{
-			name: "piweb-tool-permissions", hidden: true,
-			factory: (api) => {
-				// SDK tool_call covers top-level calls and ctx.executeTool / codemode nested calls.
-				// Read the current choice at execution time, including tools registered later.
-				api.on("tool_call", async (event) => {
-					if (m.session) guardToolExecution(m, m.session);
-					return evaluateToolCallGate(m, event);
-				});
-			},
-		}]);
+		const loader = await createSessionResourceLoader(m.cwd);
 		let created: AgentSession | undefined;
 		let modelRuntime: AgentSession["modelRuntime"] | undefined;
 		try {
@@ -1912,8 +1754,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			m.session = session;
 			// SDK 按 defaultTools 设置算出的初始激活集（含 "+codemode" 这类显式开启）
 			m.requestedTools = new Set(session.getActiveToolNames());
-			installSessionPolicy(m, session);
-			applyToolPolicy(m, session);
+			installSessionHooks(m, session);
+			applySessionTools(m, session);
 			session.subscribe((evt) => {
 				if (m.disposed) return;
 				try { translate(m, evt); }
@@ -1949,7 +1791,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 					reapplyDesiredLevel(m, session);
 				}
 			}
-			applyToolPolicy(m, session);
+			applySessionTools(m, session);
 			m.resourceVersion = resourceLoaderVersion(m.cwd);
 			publishModelState(m, session);
 			publishEnvironmentTrajectory(m, session);
@@ -1981,121 +1823,6 @@ function isManagedBusy(m: Managed): boolean {
 	return m.promptSubmitting || m.resourceReloading || m.runActive || m.commandRunning === true || !!m.stopping || m.stopFailed === true || m.bashActive === true || !!(m.session && !m.session.isIdle);
 }
 
-async function evaluateToolCallGate(
-	m: Managed,
-	event: { toolCallId?: string; toolName: string; input: unknown },
-	recheck = 0,
-): Promise<{ block: true; reason: string } | undefined> {
-	if (recheck >= MAX_PERMISSION_RECHECKS) return { block: true, reason: UNSTABLE_PERMISSION };
-	const presetAtStart = m.toolPreset;
-	const customAtStart = m.customActiveTools;
-	const isWriteTool = WRITE_PATH_FIELDS.has(event.toolName);
-	const needsExtraRoots = isWriteTool && (m.toolPreset === "workspace" || (m.toolPreset === "readonly" && m.escalation?.scope === "workspace"));
-	const additionalWritableRoots = needsExtraRoots ? (await readSandboxConfig()).additionalWritableRoots : undefined;
-	const shellAvailable = sandboxSupported();
-	const readOnlyHint = m.session?.getToolDefinition(event.toolName)?.annotations?.readOnlyHint;
-
-	const basePolicyReason = toolPolicyDenial(m, event.toolName);
-	const gateRequest = {
-		preset: m.toolPreset,
-		cwd: m.cwd,
-		toolName: event.toolName,
-		input: event.input,
-		readOnlyHint,
-		shellAvailable,
-		additionalWritableRoots,
-	};
-	// 档位的第二道锁：白名单只管「哪些工具」，这里管「这次调用到底会碰到哪儿」。
-	// 写入路径要 realpath 后比较（挡 ../、软链接、盘符大小写、UNC），所以是异步的。
-	const baseDenial = basePolicyReason
-		? { block: true as const, reason: basePolicyReason }
-		: await permissionDenial(gateRequest);
-	if (m.toolPreset !== presetAtStart || m.customActiveTools !== customAtStart) return evaluateToolCallGate(m, event, recheck + 1);
-	if (!baseDenial) return undefined;
-	const reject = (denial = baseDenial) => {
-		if (ESCALATABLE_TOOLS.has(event.toolName)) {
-			const action = structuredClone(event);
-			m.lastDeniedAction = action;
-			if (event.toolCallId) {
-				const denied = m.deniedActions ??= new Map();
-				if (denied.size >= 32) denied.delete(denied.keys().next().value!);
-				denied.set(event.toolCallId, action);
-			}
-		}
-		appendPermissionAudit(m.sm, { kind: "blocked", preset: m.toolPreset, toolName: event.toolName, command: permissionActionDescription(event), reason: denial.reason, at: Date.now() });
-		return denial;
-	};
-
-	const grantSnapshot = m.escalation;
-	if (!grantSnapshot || grantSnapshot.remaining <= 0 || grantSnapshot.expiresAt < Date.now() || !ESCALATABLE_TOOLS.has(event.toolName) || grantSnapshot.actionKey !== permissionActionKey(event)) {
-		return reject();
-	}
-	const grantedScope = grantSnapshot.scope;
-	const escalatedPreset = widenPreset(m.toolPreset, grantedScope);
-	if (m.customActiveTools ? !m.customActiveTools.includes(event.toolName) : !presetAllowsTool(escalatedPreset, event.toolName)) {
-		return reject();
-	}
-
-	if (event.toolName === "bash") {
-		// bash 的 m.escalation 由 bash-operations.ts 在 exec() 真正启动前 consumeGrant()
-		if (escalatedPreset === "full" || (escalatedPreset === "workspace" && shellAvailable)) return undefined;
-		return reject();
-	}
-
-	const escalatedDenial = escalatedPreset === "full"
-		? undefined
-		: await permissionDenial({ ...gateRequest, preset: escalatedPreset });
-	if (escalatedDenial) return reject(escalatedDenial);
-
-	// await 之后同步再确认一次授权未被并发调用或切档消耗
-	const currentGrant = m.escalation;
-	if (m.toolPreset !== presetAtStart || m.customActiveTools !== customAtStart) return evaluateToolCallGate(m, event, recheck + 1);
-	if (currentGrant !== grantSnapshot || currentGrant.remaining <= 0) return reject();
-	// Consumption happens in the execution wrapper, after its final argument/policy check.
-	return undefined;
-}
-
-/**
- * Resolve a blocked action for `request_permission`: exact `deniedToolCallId` match first,
- * falling back to the most recent denied action for that tool name if the model passed a tool
- * name (e.g. `"bash"`) instead of the opaque call ID, or `lastDeniedAction` when omitted.
- */
-export function resolveDeniedAction<T extends { toolName: string }>(
-	state: { lastDeniedAction?: T; deniedActions?: ReadonlyMap<string, T> },
-	id?: string,
-): T | undefined {
-	const key = id?.trim();
-	if (!key) return state.lastDeniedAction;
-	const byId = state.deniedActions?.get(key);
-	if (byId) return byId;
-	const values = state.deniedActions ? Array.from(state.deniedActions.values()) : [];
-	for (let i = values.length - 1; i >= 0; i -= 1) {
-		if (values[i].toolName === key) return values[i];
-	}
-	return state.lastDeniedAction?.toolName === key ? state.lastDeniedAction : undefined;
-}
-
-function toolPolicyDenial(m: Managed, name: string, options?: { allowEscalation?: boolean }): string | undefined {
-	if (m.disposed) return "Session is disposed";
-	// workspace / readonly 档的 bash 依赖 OS 级沙箱：机器上没有后端时（非 Windows / koffi 缺失），
-	// 与「这一档没有 shell」保持一致，把工具整个剔出去，而不是留一个必然失败的入口；
-	// 只有用户通过 request_permission 明确批准一次 full 升权时才放行当次 bash。
-	const escalation = options?.allowEscalation ? m.escalation : undefined;
-	if (name === "bash" && (m.toolPreset === "workspace" || m.toolPreset === "readonly") && !sandboxSupported()) {
-		if (escalation?.scope !== "full") {
-			return `Tool "bash" is blocked: ${m.toolPreset} has no OS-level sandbox on this machine, so shell commands are unavailable. Ask the user to switch the preset above the composer to 完全权限 (full).`;
-		}
-	}
-	const effectivePreset = escalation && ESCALATABLE_TOOLS.has(name) ? widenPreset(m.toolPreset, escalation.scope) : m.toolPreset;
-	const presetAllowed = presetAllowsTool(effectivePreset, name) || m.session?.getToolDefinition?.(name)?.annotations?.readOnlyHint === true;
-	const allowed = presetAllowed && (!m.customActiveTools || m.customActiveTools.includes(name));
-	if (!allowed) return `Tool "${name}" is blocked by the current permission level (${m.customActiveTools ? "custom" : m.toolPreset}).`;
-}
-
-function allowedToolNames(m: Managed, session: AgentSession): string[] {
-	return listAllToolNames(session).filter((name) => !toolPolicyDenial(m, name));
-}
-
 /** SDK 注册即激活的规则：direct / model-only 曝光、且没有写 defaultActive: false */
 function activatedOnRegistration(session: AgentSession): Set<string> {
 	return new Set(session.getAllTools()
@@ -2104,79 +1831,26 @@ function activatedOnRegistration(session: AgentSession): Set<string> {
 }
 
 /**
- * 档位只是上限，开哪些仍按 SDK 的规则：注册即激活的，加上 SDK / 扩展明确要求打开的（requestedTools）。
- * codemode、tool_search 是 defaultActive: false，延迟加载的 MCP 工具不直接声明——把放行的全打开，
- * 每次请求要多带几千 token，延迟加载也白做。逐项选择（customActiveTools）是用户点名要的，照单全开。
+ * 开哪些工具按 SDK 的规则：注册即激活的，加上 SDK / 扩展明确要求打开的（requestedTools）。
+ * codemode、tool_search 是 defaultActive: false，延迟加载的 MCP 工具不直接声明。
  */
-function policyToolNames(m: Managed, session: AgentSession): string[] {
-	const allowed = allowedToolNames(m, session);
-	if (m.customActiveTools) return allowed;
+function activeToolNamesForSession(m: Managed, session: AgentSession): string[] {
 	const auto = activatedOnRegistration(session);
-	return allowed.filter((name) => auto.has(name) || m.requestedTools.has(name));
+	return listAllToolNames(session).filter((name) => auto.has(name) || m.requestedTools.has(name));
 }
 
-/** installSessionPolicy 包装前的原始 setActiveToolsByName：PiWeb 自己落策略时不能被记成"扩展要求" */
+/** installSessionHooks 包装前的原始 setActiveToolsByName：PiWeb 自己落工具集时不能被记成"扩展要求" */
 const rawSetActiveTools = new WeakMap<AgentSession, (names: string[]) => void>();
 const guardedTools = new WeakSet<object>();
 
-/**
- * Consume grants at the session-local definition, not only agent.state.tools.
- * The SDK uses its callable registry for codemode / ctx.executeTool and can clone
- * declared tools when preparing a loadout. Both paths retain this execute function.
- */
-function guardCustomToolDefinition(m: Managed, tool: CustomTools[number], commandPrefix?: string): CustomTools[number] {
-	const execute = tool.execute;
-	tool.execute = async (...args) => {
-		const action = { toolCallId: args[0], toolName: tool.name, input: args[1] };
-		let preset: ToolPreset;
-		let custom: string[] | undefined;
-		let rechecks = 0;
-		do {
-			if (rechecks++ >= MAX_PERMISSION_RECHECKS) throw new Error(UNSTABLE_PERMISSION);
-			preset = m.toolPreset;
-			custom = m.customActiveTools;
-			const denial = await evaluateToolCallGate(m, action);
-			if (denial) throw new Error(denial.reason);
-		} while (preset !== m.toolPreset || custom !== m.customActiveTools);
-		if (GROWTH_MUTATING_TOOLS.has(tool.name.toLowerCase())) await awaitGrowthPrepareBriefly(m);
-		const grant = m.escalation;
-		if (grant && grant.expiresAt >= Date.now() && grant.remaining > 0 && grant.actionKey === permissionActionKey(action) && m.toolPreset !== "full") {
-			// No await between matching and taking the grant: concurrent identical
-			// calls cannot both inherit its wider scope.
-			clearEscalation(m);
-			const rawCommand = (args[1] as { command?: unknown })?.command;
-			const command = tool.name === "bash" && typeof rawCommand === "string" ? (commandPrefix ? `${commandPrefix}\n${rawCommand}` : rawCommand) : undefined;
-			if (tool.name !== "bash") appendPermissionAudit(m.sm, { kind: "used", scope: grant.scope, preset: m.toolPreset, command: permissionActionDescription(action), at: Date.now() });
-			return executionApprovals.run({ managed: m, scope: grant.scope, preset: m.toolPreset, command }, () => execute.call(tool, ...args));
-		}
-		// A separate nested action must never inherit another action's file scope.
-		return executionApprovals.run(undefined, () => execute.call(tool, ...args));
-	};
-	return tool;
-}
-
-function guardToolExecution(m: Managed, session: AgentSession): void {
-	// Guard the SDK's per-session execution objects. Extension definitions can be
-	// shared by their factories; modifying those would leak one session's policy.
-	for (const tool of session.agent.state.tools) {
+function guardGrowthTools(m: Managed, session: AgentSession): void {
+	const tools = session.agent?.state?.tools;
+	if (!Array.isArray(tools)) return;
+	for (const tool of tools) {
 		if (guardedTools.has(tool)) continue;
 		const execute = tool.execute;
 		tool.execute = async (...args) => {
-			// Parallel batches may prepare calls before any execute. Check once more at the
-			// actual invocation, so a prepared or nested call cannot retain an old permission.
 			if (m.disposed) throw new Error("Session is disposed");
-			const callId = typeof args[0] === "string" ? args[0] : undefined;
-			const action = { toolCallId: callId, toolName: tool.name, input: args[1] };
-			let currentPreset: ToolPreset;
-			let currentCustom: string[] | undefined;
-			let rechecks = 0;
-			do {
-				if (rechecks++ >= MAX_PERMISSION_RECHECKS) throw new Error(UNSTABLE_PERMISSION);
-				currentPreset = m.toolPreset;
-				currentCustom = m.customActiveTools;
-				const denial = await evaluateToolCallGate(m, action);
-				if (denial) throw new Error(denial.reason);
-			} while (currentPreset !== m.toolPreset || currentCustom !== m.customActiveTools);
 			if (GROWTH_MUTATING_TOOLS.has(tool.name.toLowerCase())) await awaitGrowthPrepareBriefly(m);
 			return execute.call(tool, ...args);
 		};
@@ -2184,10 +1858,10 @@ function guardToolExecution(m: Managed, session: AgentSession): void {
 	}
 }
 
-function applyToolPolicy(m: Managed, session: AgentSession): void {
-	const names = policyToolNames(m, session);
+function applySessionTools(m: Managed, session: AgentSession): void {
+	const names = activeToolNamesForSession(m, session);
 	(rawSetActiveTools.get(session) ?? session.setActiveToolsByName.bind(session))(names);
-	guardToolExecution(m, session);
+	guardGrowthTools(m, session);
 }
 
 /**
@@ -2236,15 +1910,12 @@ function publishTools(m: Managed, session: AgentSession | null): void {
 		type: "tools",
 		active: tools.active,
 		all: tools.all.map((tool) => tool.name),
-		toolPreset: m.toolPreset,
-		customActiveTools: m.customActiveTools ?? null,
-		toolPreferenceSaved: m.toolPreferenceSaved === true,
 		ts: Date.now(),
 	});
 	publishContextBreakdown(m);
 }
 
-/** installSessionPolicy 包装前的原始 reload / 扩展命令专用的重载入口（见 performReload） */
+/** installSessionHooks 包装前的原始 reload / 扩展命令专用的重载入口（见 performReload） */
 const rawReloads = new WeakMap<AgentSession, AgentSession["reload"]>();
 const commandReloads = new WeakMap<AgentSession, () => Promise<void>>();
 const reloadTasks = new WeakMap<Managed, Promise<void>>();
@@ -2301,16 +1972,16 @@ async function performReload(
 				await rawReload({ beforeSessionStart: async () => {
 					// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
 					for (const name of listActiveTools(session)) m.requestedTools.add(name);
-					applyToolPolicy(m, session);
+					applySessionTools(m, session);
 					await options?.beforeSessionStart?.();
-					applyToolPolicy(m, session);
+					applySessionTools(m, session);
 				} });
 			});
 			m.resourceVersion = resourceLoaderVersion(m.cwd);
 		} finally {
 			m.resourceReloading = false;
 			if (reloadTasks.get(m) === task) reloadTasks.delete(m);
-			applyToolPolicy(m, session);
+			applySessionTools(m, session);
 			if (!m.disposed) {
 				publishTools(m, session);
 				publishEnvironmentTrajectory(m, session);
@@ -2322,8 +1993,8 @@ async function performReload(
 	await task;
 }
 
-/** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界收敛到服务端选择。 */
-function installSessionPolicy(m: Managed, session: AgentSession): void {
+/** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界跟踪 requestedTools 并挂上生长等待钩子。 */
+function installSessionHooks(m: Managed, session: AgentSession): void {
 	const setActive = session.setActiveToolsByName.bind(session);
 	rawSetActiveTools.set(session, setActive);
 	session.setActiveToolsByName = (names) => {
@@ -2331,9 +2002,9 @@ function installSessionPolicy(m: Managed, session: AgentSession): void {
 		// 扩展传的是完整列表（多半是 getActiveTools() 加减几项）：原本激活、这次没列的算关掉，其余都算要求打开
 		for (const name of listActiveTools(session)) if (!wanted.includes(name)) m.requestedTools.delete(name);
 		for (const name of wanted) m.requestedTools.add(name);
-		const allowed = allowedToolNames(m, session);
-		setActive(wanted.filter((name) => allowed.includes(name)));
-		guardToolExecution(m, session);
+		const available = new Set(listAllToolNames(session));
+		setActive(wanted.filter((name) => available.has(name)));
+		guardGrowthTools(m, session);
 	};
 	rawReloads.set(session, session.reload.bind(session));
 	commandReloads.set(session, () => performReload(m, session, undefined, true));
@@ -2409,13 +2080,10 @@ async function adoptReplacement(
 	hooks: { setup?: (sm: SessionManager) => unknown; withSession?: (ctx: ReturnType<AgentSession["createReplacedSessionContext"]>) => unknown },
 ): Promise<void> {
 	target.sessionStart = { reason, previousSessionFile: m.sessionPath };
-	// 新建 / 分叉出来的会话：权限档位与思考档位跟着来源会话走，不必让用户再选一次。
+	// 新建 / 分叉出来的会话：思考档位跟着来源会话走，不必让用户再选一次。
 	// 切到已有会话（resume）不动它：那份会话有自己保存过的选择。
 	if (reason !== "resume") {
-		target.toolPreset = m.toolPreset;
-		target.customActiveTools = m.customActiveTools ? [...m.customActiveTools] : undefined;
 		target.desiredThinkingLevel = m.desiredThinkingLevel;
-		await persistToolPreference(target);
 	}
 	const next = await ensureSession(target);
 	if (hooks.setup) {
@@ -2522,7 +2190,6 @@ export function disposeSession(m: Managed): Promise<void> {
 		const created = creating ? await creating.catch(() => null) : null;
 		if (session) await shutdownSession(session);
 		if (created && created !== session) await shutdownSession(created);
-		await releaseSandbox(m.sessionPath);
 	})();
 	disposalTasks.set(m, task);
 	pathDisposals.set(m.sessionPath, task);
@@ -2539,7 +2206,7 @@ export function disposeSession(m: Managed): Promise<void> {
  */
 export async function disposeSessionPath(sessionPath: string): Promise<void> {
 	const m = sessions.get(sessionPath);
-	if (!m) { await pathDisposals.get(sessionPath); await releaseSandbox(sessionPath); return; }
+	if (!m) { await pathDisposals.get(sessionPath); return; }
 	const session = m.session ?? (m.creating ? await m.creating.catch(() => null) : null);
 	if (session && (session.isStreaming || m.runActive || m.commandRunning || m.bashActive)) {
 		// 停不下来（工具不响应中止）也照常回收：删除 / 归档是这种会话唯一的出口，
@@ -2659,9 +2326,9 @@ async function reloadManagedResources(m: Managed): Promise<boolean> {
 		// pi 1.3.0 起 reload 会保留原来的活动工具集：被移除的扩展工具会继续留在活动集里。
 		// 这里按当前注册表重算一次；策略本身出错不能把重载判成失败。
 		try {
-			applyToolPolicy(m, m.session);
+			applySessionTools(m, m.session);
 		} catch {
-			/* 工具策略是附带动作，失败下次重载/切档位会再算 */
+			/* 工具集合是附带动作，失败下次重载会再算 */
 		}
 		swapCurrentModelObject(m.session);
 		return true;
@@ -2754,8 +2421,6 @@ export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 
 export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	touch(m);
-	// 工具偏好先于 active 计算就位：否则服务重启后的首个快照会短暂回到默认档位
-	await ensureToolPreference(m);
 	// 冷路径的 prompt/技能/上下文资源都来自加载器，先等发现完成；
 	// 用户刚在 prompts/skills/extensions 目录新建了文件的话顺手重载一次（只 stat 几个目录）
 	await resourceLoaderReady(m.cwd);
@@ -2914,9 +2579,6 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		routedModel: session ? routedModelOf(session) : null,
 		thinkingLevel,
 		thinkingLevels,
-		toolPreset: m.toolPreset,
-		customActiveTools: m.customActiveTools ?? null,
-		toolPreferenceSaved: m.toolPreferenceSaved === true,
 		extensionUiRequests: m.ui?.getPendingRequests() ?? [],
 		// 扩展 setStatus / setWidget / setTitle 的当前值：重连拿快照时不能丢
 		extensionStatuses: Object.fromEntries(m.ui?.statuses ?? []),
@@ -3019,7 +2681,9 @@ const GROWTH_PREPARE_TOOL_WAIT_MS = 2000;
  * 改动工作区文件的工具执行前再短暂等它收尾。
  */
 function kickoffGrowthPrepare(m: Managed): void {
-	if (m.disposed || m.growthPrepare) return;
+	if (m.disposed) return;
+	if (m.session) guardGrowthTools(m, m.session);
+	if (m.growthPrepare) return;
 	const pending = growthOf(m)
 		.prepare()
 		.catch(() => undefined)
@@ -3394,52 +3058,6 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				publishModelState(m, session);
 				return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
 			}
-			case "setToolPreset": {
-				const preset = cmd.preset as ToolPreset;
-				if (!Object.hasOwn(TOOL_PRESETS, preset)) return { ok: false, error: "invalid tool preset" };
-				await ensureToolPreference(m);
-				// 运行中也能改。SDK 在下一轮更新声明；执行入口读取当前策略，
-				// 本轮尚未开始的调用也立即受限。已经执行的操作不会被撤回。
-				if (!m.session && !m.creating) {
-					// 冷会话只记下选择，等真正启动时（ensureSession → applyToolPolicy）再生效。
-					// 不能为了切个档位就冷启动 agent：打开会话时前端会恢复保存的档位，
-					// 若这里 ensureSession，光是浏览历史会话就会跑一遍扩展的 session_start。
-					await persistToolPreference(m, { toolPreset: preset }, { updateDefault: true });
-					m.toolPreset = preset;
-					m.customActiveTools = undefined;
-					clearEscalation(m);
-					publishTools(m, null);
-					return { ok: true };
-				}
-				const session = await ensureSession(m);
-				if (m.disposed) return { ok: false, error: "session is disposed" };
-				await persistToolPreference(m, { toolPreset: preset }, { updateDefault: true });
-				m.toolPreset = preset;
-				m.customActiveTools = undefined;
-				clearEscalation(m);
-				applyToolPolicy(m, session);
-				publishEnvironmentTrajectory(m, session);
-				publishTools(m, session);
-				return { ok: true };
-			}
-			case "setActiveTools": {
-				// 同上：运行中允许改，下一轮生效。冷会话也能先记下，不必为开关工具启动 agent。
-				await ensureToolPreference(m);
-				const wanted = Array.isArray(cmd.names) ? cmd.names.map(String) : [];
-				const session = m.session ?? (m.creating ? await m.creating : null);
-				const all = session ? listAllToolNames(session) : toolCatalog(m).map((tool) => tool.name);
-				const next = [...new Set(wanted)].filter((name) => all.includes(name));
-				if (next.length === 0) return { ok: false, error: "cannot disable all tools" };
-				await persistToolPreference(m, { toolPreset: m.toolPreset, customActiveTools: next });
-				m.customActiveTools = next;
-				clearEscalation(m);
-				if (session) {
-					applyToolPolicy(m, session);
-					publishEnvironmentTrajectory(m, session);
-				}
-				publishTools(m, session);
-				return { ok: true, data: { active: session ? listActiveTools(session) : coldActiveToolNames(m, toolCatalog(m)) } };
-			}
 			case "cycleModel": {
 				const session = await ensureSession(m);
 				const r = await session.cycleModel(cmd.direction ?? "forward");
@@ -3523,9 +3141,9 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				await session.reload();
 				// 同 reloadManagedResources：pi 1.3.0 保留活动工具集，重载后按当前注册表重算
 				try {
-					applyToolPolicy(m, session);
+					applySessionTools(m, session);
 				} catch {
-					/* 同上：策略失败不影响 /reload 本身 */
+					/* 同上：工具同步失败不影响 /reload 本身 */
 				}
 				swapCurrentModelObject(session);
 				return { ok: true };
@@ -3551,7 +3169,6 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 }
 
 export interface CreateSessionOptions {
-	toolPreset?: ToolPreset;
 	provider?: string;
 	modelId?: string;
 	thinking?: string;
@@ -3562,12 +3179,6 @@ export async function createNewSession(
 	cwd: string,
 	options?: CreateSessionOptions,
 ): Promise<{ sessionPath: string; setupApplied?: boolean }> {
-	let preset: ToolPreset | undefined;
-	if (options?.toolPreset !== undefined) {
-		const normalized = normalizeToolPreset(options.toolPreset);
-		if (!normalized) throw new BoundaryError("invalid tool preset");
-		preset = normalized;
-	}
 	const hasProvider = options?.provider !== undefined;
 	const hasModelId = options?.modelId !== undefined;
 	if (hasProvider !== hasModelId) {
@@ -3593,15 +3204,6 @@ export async function createNewSession(
 	// 文件会走新建分支，cwd 回退 process.cwd()，把会话偷换到服务器进程目录。
 	const m = registerManaged(p, cwd, sm);
 	try {
-		if (preset) {
-			await persistToolPreference(m, { toolPreset: preset });
-			m.toolPreferenceLoaded = Promise.resolve();
-			m.toolPreset = preset;
-			m.customActiveTools = undefined;
-			clearEscalation(m);
-		} else {
-			await ensureToolPreference(m);
-		}
 		if (selectedModel) {
 			m.sm.appendModelChange(selectedModel.provider, selectedModel.id);
 			const settings = getSettingsManager(m.cwd);
@@ -3619,7 +3221,7 @@ export async function createNewSession(
 			m.desiredThinkingLevel = requestedThinking;
 			m.sm.appendThinkingLevelChange("off");
 		}
-		const setupApplied = Boolean(preset || selectedModel || requestedThinking);
+		const setupApplied = Boolean(selectedModel || requestedThinking);
 		return { sessionPath: p, ...(setupApplied ? { setupApplied: true } : {}) };
 	} catch (error) {
 		await disposeSession(m).catch(() => undefined);

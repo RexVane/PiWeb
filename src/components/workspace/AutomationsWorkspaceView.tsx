@@ -17,7 +17,6 @@ import { useI18n } from "@/i18n";
 import { htmlLangOf, type Lang } from "@/lib/lang";
 import { describeSchedule } from "@/lib/automations/schedule";
 import type { AutomationRun, AutomationTask, AutomationsStateSnapshot } from "@/lib/automations/types";
-import type { ToolPreset } from "@/lib/types";
 import { AutomationModal, type ModelChoiceItem } from "./AutomationModal";
 import { WorkspaceViewShell } from "./WorkspaceViewShell";
 
@@ -123,7 +122,7 @@ export function AutomationsWorkspaceView({
 	getWorkspaceName: (cwd: string) => string;
 	models: ModelChoiceItem[];
 	onOpenSession: (sessionPath: string) => void;
-	onCreateInSession?: (cwd: string, prefillText: string, options?: { toolPreset?: ToolPreset }) => void;
+	onCreateInSession?: (cwd: string, prefillText: string) => void;
 	onDefaultCwdChange?: (cwd: string) => void;
 }) {
 	const [automationDefaultCwd, setAutomationDefaultCwd] = useState("");
@@ -227,7 +226,7 @@ export function AutomationsWorkspaceView({
 	const handleCreateInChat = useCallback(() => {
 		const target = automationDefaultCwd || defaultCwd || knownCwds[0] || "";
 		if (onCreateInSession) {
-			onCreateInSession(target, t.autoInChatPrefill, { toolPreset: "full" });
+			onCreateInSession(target, t.autoInChatPrefill);
 		} else {
 			openCreateModal();
 		}
@@ -277,9 +276,6 @@ export function AutomationsWorkspaceView({
 			}),
 		[runs, q, getWorkspaceName],
 	);
-
-	const presetLabel = (preset: ToolPreset) =>
-		preset === "readonly" ? t.permissionReadonly : preset === "full" ? t.permissionFull : t.permissionWorkspace;
 
 	const postAction = async (body: Record<string, unknown>) => {
 		setError(null);
@@ -615,16 +611,6 @@ export function AutomationsWorkspaceView({
 													title={task.cwd}
 												>
 													{getWorkspaceName(task.cwd) || task.cwd}
-												</span>
-												<span
-													className="rounded-full px-2 py-0.5"
-													style={{
-														fontSize: "var(--dsh-ui-font-2xs)",
-														background: "var(--dsw-hover)",
-														color: "var(--dsw-label-tertiary)",
-													}}
-												>
-													{presetLabel(task.toolPreset)}
 												</span>
 												{task.model && (
 													<span

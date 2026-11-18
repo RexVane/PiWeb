@@ -22,10 +22,6 @@ describe("agent command validation", () => {
 		}
 	});
 
-	it("rejects unknown tool presets instead of escalating to all tools", () => {
-		const result = parseAgentCommand({ cmd: "setToolPreset", preset: "typo" });
-		expect(result).toEqual({ ok: false, error: "invalid tool preset" });
-	});
 
 	it("rejects malformed and unsupported images", () => {
 		expect(
@@ -79,12 +75,6 @@ describe("agent command validation", () => {
 		if (!over.ok) expect(over.error).toContain("too large");
 	});
 
-	it("validates setActiveTools names payload", () => {
-		expect(parseAgentCommand({ cmd: "setActiveTools", names: ["read", "bash"] }).ok).toBe(true);
-		expect(parseAgentCommand({ cmd: "setActiveTools" }).ok).toBe(false);
-		expect(parseAgentCommand({ cmd: "setActiveTools", names: [] }).ok).toBe(false);
-		expect(parseAgentCommand({ cmd: "setActiveTools", names: ["ok", 42] }).ok).toBe(false);
-	});
 
 	it("validates the ! command payload", () => {
 		expect(parseAgentCommand({ cmd: "bash", command: "git status", excludeFromContext: true })).toEqual({

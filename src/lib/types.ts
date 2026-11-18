@@ -23,7 +23,7 @@ export interface SessionSummary {
  * custom：扩展注入的消息（pi 转成用户内容发给模型）；bash：用户用 `!` 跑的命令。
  * 两者都不是用户发言，不开新的一轮。
  */
-export type TrajKind = "system" | "context" | "user" | "custom" | "permission" | "bash" | "message" | "tool" | "compacted";
+export type TrajKind = "system" | "context" | "user" | "custom" | "bash" | "message" | "tool" | "compacted";
 
 export interface TrajTokens {
 	input?: number;
@@ -199,7 +199,7 @@ export type WebEvent =
 	/** 发现终端写入后从磁盘重载：这条之后流会关闭，前端立刻重连拿新快照 */
 	| { type: "external_reload"; entries: number; at: number; ts: number }
 	| { type: "name"; name: string; ts: number }
-	| { type: "tools"; active: string[]; all: string[]; toolPreset?: ToolPreset; customActiveTools?: string[] | null; toolPreferenceSaved?: boolean; ts: number }
+	| { type: "tools"; active: string[]; all: string[]; ts: number }
 	/** 上下文分项变了（会话启动、工具 / 资源重载、压缩之后）：替换快照里的 contextBreakdown */
 	| { type: "context_breakdown"; breakdown: ContextBreakdown; ts: number }
 	| {
@@ -409,11 +409,6 @@ export interface WebSnapshot {
 	routedModel?: WebRoutedModel | null;
 	thinkingLevel?: string;
 	thinkingLevels: string[];
-	toolPreset: ToolPreset;
-	/** custom 白名单优先于 preset；null 表示使用 preset，省略兼容旧服务端。 */
-	customActiveTools?: string[] | null;
-	/** 工具选择是否已在服务端按会话持久化；旧服务端省略（前端仍用 localStorage 迁移）。 */
-	toolPreferenceSaved?: boolean;
 	/** 当前待应答的扩展请求；快照是权威集合，不重放已答请求。 */
 	extensionUiRequests?: Extract<WebEvent, { type: "extension_ui" }>[];
 	/** 扩展通过 setStatus 设的页脚状态（key → 文本）；缺省按空处理（兼容旧服务端） */
@@ -509,13 +504,6 @@ export interface WebUiResult {
 
 // ---------- 浏览器 → 服务器 命令 ----------
 
-/**
- * 权限档位。readonly 只读；workspace 只能改工作区内（写入路径 realpath 校验；shell 仅在
- * OS 沙箱可用时以受限令牌运行）；
- * full 不限制。旧值 `standard` 由 lib/tool-preset 的 normalizeToolPreset 归一成 workspace。
- */
-export type ToolPreset = "readonly" | "workspace" | "full";
-
 export interface ImageAttachment {
 	type: "image";
 	data: string;
@@ -534,7 +522,6 @@ export interface AgentCommand {
 		| "compact"
 		| "setModel"
 		| "setThinkingLevel"
-		| "setToolPreset"
 		| "rename"
 		| "fork"
 		| "cycleModel"
@@ -543,7 +530,6 @@ export interface AgentCommand {
 		| "editAndResend"
 		| "clearQueue"
 		| "sendQueueNow"
-		| "setActiveTools"
 		| "extensionUiResponse"
 		| "reload";
 	text?: string;
@@ -557,12 +543,9 @@ export interface AgentCommand {
 	/** setModel：新会话页选的模型，思考档位按新会话的规则定（不沿用会话原来的档位） */
 	fresh?: boolean;
 	level?: string;
-	preset?: ToolPreset;
 	entryId?: string;
 	behavior?: "steer" | "followUp";
 	direction?: "forward" | "backward";
-	/** setActiveTools：目标激活的工具名列表（与可用集求交集） */
-	names?: string[];
 	/** extensionUiResponse：对应 extension_ui 事件的 id 与应答 */
 	requestId?: string;
 	value?: string;

@@ -7,7 +7,7 @@ import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-codin
 import { JsoncSettingsStorage } from "../src/lib/jsonc-settings-storage";
 import { securePackageManager } from "../src/lib/package-manager-safe";
 import { installPackage, removePackage, updatePackages, ResourceRefreshError } from "../src/lib/plugins-service";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const state = vi.hoisted(() => ({ agentDir: "", manager: undefined as DefaultPackageManager | undefined, settings: undefined as SettingsManager | undefined, reload: vi.fn(async () => {}) }));
 vi.mock("../src/lib/pi", () => ({ getAgentDir: () => state.agentDir, getPackageManager: () => state.manager!, getSettingsManager: () => state.settings!, reloadAllLoaders: state.reload }));

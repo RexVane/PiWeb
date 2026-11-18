@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { afterEach, expect, it } from "vitest";
 import { measureGitObjectBytes } from "../src/lib/git-object-size";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const directories: string[] = [];
 afterEach(async () => { for (const directory of directories.splice(0)) await recycleFixture(directory); });

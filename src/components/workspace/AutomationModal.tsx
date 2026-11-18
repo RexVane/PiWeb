@@ -10,8 +10,6 @@ import { useI18n } from "@/i18n";
 import type { Lang } from "@/lib/lang";
 import { validateSchedule } from "@/lib/automations/schedule";
 import type { AutomationModelRef, AutomationSchedule, AutomationSchedulePreview, AutomationTask } from "@/lib/automations/types";
-import { DEFAULT_TOOL_PRESET } from "@/lib/tool-preset";
-import type { ToolPreset } from "@/lib/types";
 
 export interface ModelChoiceItem {
 	provider: string;
@@ -60,7 +58,6 @@ export function AutomationModal({
 	const [time, setTime] = useState("09:00");
 	const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
 	const [cronExpr, setCronExpr] = useState("0 9 * * 1-5");
-	const [toolPreset, setToolPreset] = useState<ToolPreset>(DEFAULT_TOOL_PRESET);
 	const [modelKey, setModelKey] = useState<string>(DEFAULT_MODEL_VALUE);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -88,7 +85,6 @@ export function AutomationModal({
 			setName(initialTask.name);
 			setPrompt(initialTask.prompt);
 			setCwd(initialTask.cwd);
-			setToolPreset(initialTask.toolPreset);
 			setModelKey(initialTask.model ? `${initialTask.model.provider}\0${initialTask.model.id}` : DEFAULT_MODEL_VALUE);
 			setKind(initialTask.schedule.kind);
 			if (initialTask.schedule.kind === "interval") {
@@ -113,7 +109,6 @@ export function AutomationModal({
 		setTime("09:00");
 		setDays([1, 2, 3, 4, 5]);
 		setCronExpr("0 9 * * 1-5");
-		setToolPreset(DEFAULT_TOOL_PRESET);
 		setModelKey(DEFAULT_MODEL_VALUE);
 	}, [open, initialTask, defaultCwd, knownCwds, cwd]);
 
@@ -279,7 +274,6 @@ export function AutomationModal({
 						prompt: prompt.trim(),
 						cwd,
 						schedule: validSchedule,
-						toolPreset,
 						model,
 				  }
 				: {
@@ -288,7 +282,6 @@ export function AutomationModal({
 						prompt: prompt.trim(),
 						cwd,
 						schedule: validSchedule,
-						toolPreset,
 						...(model ? { model } : {}),
 				  };
 			const res = await fetch("/api/automations", {
@@ -390,36 +383,19 @@ export function AutomationModal({
 							/>
 						</div>
 
-						<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-							<div className="space-y-1.5">
-								<div style={labelStyle}>{t.autoWorkspace}</div>
-								{workspaceOptions.length > 0 ? (
-									<SelectOption
-										value={cwd}
-										label={t.autoWorkspace}
-										options={workspaceOptions}
-										onChange={setCwd}
-										width={240}
-									/>
-								) : (
-									<div style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-danger)" }}>{t.autoNeedWorkspace}</div>
-								)}
-							</div>
-
-							<div className="space-y-1.5">
-								<div style={labelStyle}>{t.autoPermission}</div>
+						<div className="space-y-1.5">
+							<div style={labelStyle}>{t.autoWorkspace}</div>
+							{workspaceOptions.length > 0 ? (
 								<SelectOption
-									value={toolPreset}
-									label={t.autoPermission}
-									options={[
-										{ value: "readonly", label: t.permissionReadonly },
-										{ value: "workspace", label: t.permissionWorkspace },
-										{ value: "full", label: t.permissionFull },
-									]}
-									onChange={(v) => setToolPreset(v as ToolPreset)}
-									width={200}
+									value={cwd}
+									label={t.autoWorkspace}
+									options={workspaceOptions}
+									onChange={setCwd}
+									width={240}
 								/>
-							</div>
+							) : (
+								<div style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-danger)" }}>{t.autoNeedWorkspace}</div>
+							)}
 						</div>
 
 						<div className="space-y-1.5">

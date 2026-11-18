@@ -8,8 +8,6 @@ import { getAgentDir } from "../pi";
 import { replaceFileAtomically } from "../atomic-file";
 import { resolveWorkspacePath } from "../path-security";
 import { withExternalSettingsLock, withSettingsWriteLock } from "../settings-write-lock";
-import { DEFAULT_TOOL_PRESET, normalizeToolPreset } from "../tool-preset";
-import type { ToolPreset } from "../types";
 import { computeNextRunAt, validateSchedule } from "./schedule";
 import type { AutomationModelRef, AutomationRun, AutomationRunStatus, AutomationSchedule, AutomationTask, AutomationTaskInput } from "./types";
 
@@ -106,14 +104,6 @@ function normalizeModelRef(raw: unknown): AutomationModelRef | undefined {
 	return { provider, id };
 }
 
-function normalizePreset(raw: unknown, fallback: ToolPreset = DEFAULT_TOOL_PRESET): ToolPreset {
-	if (raw === undefined) return fallback;
-	// 旧任务文件里可能是 `standard`：归一成 workspace（旧中间档现在不再带 shell）
-	const preset = normalizeToolPreset(raw);
-	if (preset) return preset;
-	throw new AutomationValidationError("Invalid tool preset");
-}
-
 function normalizeName(raw: unknown): string {
 	if (typeof raw !== "string") throw new AutomationValidationError("Task name is required");
 	const name = raw.trim();
@@ -139,7 +129,6 @@ function sanitizeTaskRecord(raw: unknown): AutomationTask | null {
 	try {
 		const schedule = validateSchedule(item.schedule);
 		const enabled = item.enabled !== false;
-		const toolPreset = normalizeToolPreset(item.toolPreset) ?? DEFAULT_TOOL_PRESET;
 		const model = normalizeModelRef(item.model);
 		const claim = item.scheduledClaim as AutomationTask["scheduledClaim"];
 		if (claim && (typeof claim.id !== "string" || !Number.isFinite(claim.dueAt) || !Number.isSafeInteger(claim.ownerPid) || claim.ownerPid < 1 || typeof claim.ownerInstance !== "string")) return null;
@@ -150,7 +139,6 @@ function sanitizeTaskRecord(raw: unknown): AutomationTask | null {
 			cwd: item.cwd,
 			schedule,
 			enabled,
-			toolPreset,
 			...(model ? { model } : {}),
 			createdAt: typeof item.createdAt === "number" ? item.createdAt : Date.now(),
 			updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
@@ -310,7 +298,6 @@ export async function createAutomationTask(input: AutomationTaskInput, filePath 
 	} catch (err: any) {
 		throw new AutomationValidationError(String(err?.message ?? "invalid schedule"));
 	}
-	const toolPreset = normalizePreset(input.toolPreset, DEFAULT_TOOL_PRESET);
 	const model = normalizeModelRef(input.model);
 	const enabled = normalizeEnabled(input.enabled, true);
 	const nextRunAt = computeNextRunAt(schedule, now);
@@ -323,7 +310,6 @@ export async function createAutomationTask(input: AutomationTaskInput, filePath 
 		cwd,
 		schedule,
 		enabled,
-		toolPreset,
 		...(model ? { model } : {}),
 		createdAt: now,
 		updatedAt: now,
@@ -343,7 +329,6 @@ export interface AutomationTaskPatch {
 	cwd?: string;
 	schedule?: AutomationSchedule;
 	enabled?: boolean;
-	toolPreset?: ToolPreset;
 	model?: AutomationModelRef | null;
 }
 
@@ -368,7 +353,6 @@ export async function updateAutomationTask(
 			throw new AutomationValidationError(String(err?.message ?? "invalid schedule"));
 		}
 	}
-	const nextPreset = patch.toolPreset !== undefined ? normalizePreset(patch.toolPreset) : undefined;
 	const hasModelPatch = Object.prototype.hasOwnProperty.call(patch, "model");
 	const nextModel = hasModelPatch ? normalizeModelRef(patch.model) : undefined;
 	const enabledPatch = patch.enabled === undefined ? undefined : normalizeEnabled(patch.enabled, true);
@@ -395,7 +379,6 @@ export async function updateAutomationTask(
 			cwd: nextCwd ?? existing.cwd,
 			schedule,
 			enabled,
-			toolPreset: nextPreset ?? existing.toolPreset,
 			updatedAt: now,
 			nextRunAt,
 		};

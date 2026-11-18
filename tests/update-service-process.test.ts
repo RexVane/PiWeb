@@ -11,7 +11,7 @@ vi.mock("node:child_process", async (original) => ({ ...await original<typeof im
 import { runCommand, terminateProcessTree } from "../scripts/process-runner.mjs";
 import { browserLaunchSpec } from "../scripts/launcher.mjs";
 import { npmCliCandidates, npmCommand } from "../scripts/npm-command.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 function fakeChild(pid = 12345) {
 	return Object.assign(new EventEmitter(), {

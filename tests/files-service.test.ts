@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { isSafeWindowsEditorArgument, listWorkspaceDir, listWorkspaceIndex, parseLsFiles, readWorkspaceFile } from "../src/lib/files-service";
 import { utf8Prefix } from "../src/lib/text-sanitize";
 

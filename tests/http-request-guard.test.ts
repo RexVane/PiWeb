@@ -9,7 +9,7 @@ import os from "node:os";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionCookie } from "@/lib/web-auth";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { createRequestGuard } from "../scripts/http-request-guard.mjs";
 import { cookieNameForAuthority, encodeSessionCookie } from "../scripts/web-auth-protocol.mjs";
 import { TLS_KEY, TLS_CERT } from "./fixtures/localhost-tls";

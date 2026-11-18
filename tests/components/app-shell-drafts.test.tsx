@@ -33,7 +33,7 @@ vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 		openSession: setCurrentPath, closeSession: () => setCurrentPath(null),
 		renameWorkspace: noop, patchSessionName: noop, archiveSession: noop, unarchiveSession: noop, resync: noop,
 		setGroupBy: noop, setOrderBy: noop, addWorkspaceByPicker: noop, removeWorkspace: noop, refreshModels: noop,
-		setToolPreset: noop, clearError: noop, clearCompaction: noop, setError: noop, answerExtensionDialog: noop, dismissExtensionNotice: noop,
+		clearError: noop, clearCompaction: noop, setError: noop, answerExtensionDialog: noop, dismissExtensionNotice: noop,
 	};
 } }));
 function deferred<T>() {

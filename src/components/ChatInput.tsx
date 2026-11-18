@@ -24,7 +24,6 @@ import { ContextMeter } from "@/components/ContextMeter";
 import { ErrorToast } from "@/components/ErrorToast";
 import { COLLAPSE_AT, ComposerImages } from "@/components/composer/ComposerImages";
 import { ComposerFiles } from "@/components/composer/ComposerFiles";
-import { PermissionSelector, type PermissionChangeResult } from "@/components/composer/PermissionSelector";
 import { ModelSelector, type ModelChoice } from "@/components/ModelSelector";
 import { useI18n } from "@/i18n";
 import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
@@ -34,7 +33,7 @@ import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/
 import { slashCommandToken } from "@/lib/slash-command-token";
 import { composePrompt } from "@/lib/chat/compose-prompt";
 import { prepareImageAttachment, MAX_IMAGE_BYTES, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "@/lib/chat/image-attachment";
-import type { ImageAttachment, ToolPreset } from "@/lib/types";
+import type { ImageAttachment } from "@/lib/types";
 
 export interface SlashCommand {
 	name: string;
@@ -110,10 +109,6 @@ export function ChatInput({
 	pendingSend = false,
 	onSendPendingChange,
 	attachmentLayout = "overlay",
-	toolPreset,
-	customActiveTools,
-	onToolPresetChange,
-	permissionChanging = false,
 	topSlot,
 }: {
 	disabled?: boolean;
@@ -172,10 +167,6 @@ export function ChatInput({
 	onSendPendingChange?: (pending: boolean) => void;
 	/** Hero 在输入卡上方预留空间；聊天中仍让附件悬浮、不占布局高度 */
 	attachmentLayout?: "overlay" | "flow";
-	toolPreset?: ToolPreset;
-	customActiveTools?: string[] | null;
-	onToolPresetChange?: (preset: ToolPreset) => Promise<PermissionChangeResult>;
-	permissionChanging?: boolean;
 	/** 问题卡等直接融进输入卡顶部的组件（与 .pw-queue 共用外框、描边与圆角） */
 	topSlot?: ReactNode;
 }) {
@@ -359,7 +350,7 @@ export function ChatInput({
 
 	// 行内扩展命令（如 /fast）自己执行：不能为了切换它把周围的草稿、图片或引用一起发出去
 	const runInlineExtension = async (entry: SlashCommand) => {
-		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || permissionChanging || uploadBusy) return;
+		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || uploadBusy) return;
 		const original = text;
 		const remaining = withoutCommandToken();
 		sendingRef.current = true;
@@ -452,7 +443,7 @@ export function ChatInput({
 	}, [adopted, text]);
 
 	const doSend = (override?: "steer" | "followUp", forcedText?: string) => {
-		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || permissionChanging || uploadBusy) return;
+		if (disabled || isBlocked || sendingRef.current || stoppingRef.current || pendingSend || uploadBusy) return;
 		sendingRef.current = true;
 		setSending(true);
 		onSendPendingChange?.(true);
@@ -1085,9 +1076,6 @@ export function ChatInput({
 						containerType: "inline-size",
 					}}
 				>
-					{toolPreset && onToolPresetChange && <PermissionSelector value={toolPreset} custom={customActiveTools != null}
-						disabled={disabled || sendBusy}
-						saving={permissionChanging} onChange={onToolPresetChange} />}
 					{/* 命令菜单通过输入 / 触发（dsh 同款），不再提供 ＋ 启动按钮 */}
 					<div className="flex-1" />
 
@@ -1150,7 +1138,7 @@ export function ChatInput({
 							<button
 								className="btn-primary-circle"
 								title={isStreaming ? (enterBehavior === "steer" ? t.sendSteer : t.sendQueue) : t.send}
-								disabled={!hasDraft || disabled || isBlocked || sendBusy || permissionChanging || uploadBusy}
+								disabled={!hasDraft || disabled || isBlocked || sendBusy || uploadBusy}
 								onClick={() => doSend()}
 							>
 								<IconSendArrowUp14 size={16} />

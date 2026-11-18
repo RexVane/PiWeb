@@ -1,5 +1,7 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { decodeSessionId, getAgentDir, isSessionId } from "./pi";
 import { BoundaryError, isPathInside, samePath } from "./path-boundary";
 
@@ -116,4 +118,26 @@ export async function resolveDiscoveredPath(requested: string, allowed: string[]
 
 	}
 	throw new BoundaryError("resource is not part of the discovered Pi configuration");
+}
+
+/** 与 pi 的 resolveToCwd 对齐：去 `@` 前缀、把各种不间断空格换成普通空格、展开 `~`。 */
+export function resolveModelPath(raw: string, cwd: string, home: string = os.homedir()): string {
+	let cleaned = raw
+		.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+		.trim()
+		.replace(/^@/, "");
+	// Match pi's resolveToCwd on Windows; authorization and the SDK must agree
+	// on Git Bash / MSYS / WSL drive spellings before choosing an execution scope.
+	if (process.platform === "win32" && cleaned.startsWith("/") && !cleaned.startsWith("//") && !cleaned.includes("\\")) {
+		const drive = cleaned.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+		if (drive) cleaned = `${drive[1].toUpperCase()}:\\${drive[2]?.replaceAll("/", "\\") ?? ""}`;
+	}
+	if (/^file:/i.test(cleaned)) return fileURLToPath(cleaned);
+	if (/^[a-z][a-z\d+.-]*:/i.test(cleaned) && !/^[a-z]:[\\/]/i.test(cleaned)) throw new Error("unsupported file path scheme");
+	const expanded = cleaned === "~"
+		? home
+		: cleaned.startsWith("~/") || cleaned.startsWith("~\\")
+			? path.join(home, cleaned.slice(2))
+			: cleaned;
+	return path.resolve(cwd, expanded);
 }

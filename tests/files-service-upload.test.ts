@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveUpload, saveUploadStream, sweepUploads } from "../src/lib/files-service";
 import { GET, POST } from "../src/app/api/files/route";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 /** 拖拽上传的限额与安全（dsh 语义：原样字节保存 + 路径引用） */
 describe("files-service saveUpload", () => {

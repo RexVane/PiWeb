@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../src/lib/growth-service", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../src/lib/growth-service")>();

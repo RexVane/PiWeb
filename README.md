@@ -38,8 +38,7 @@ See [installation details](#install), [remote access](#connect-another-device) a
 - **Session import:** Browse and import local history from Claude Code, Codex, OpenCode, Grok, ZCode and dsh. Search and select across sources, restore archived imports, and leave the original data untouched.
 - **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands and calls nested under script tools (codemode). The file viewer supports content, changes and rendered Markdown, with selection quoting. Each conversation keeps its file tabs in the same browser across switches and refreshes; closing the viewer clears all of its tabs.
 - **Models, MCP and extensions:** Configure model providers in Settings and use the MCP tools and resources from your pi configuration. The sidebar opens an Extensions workspace that manages npm packages for the selected workspace, showing local/package origin separately from personal/project scope. Automations live in their own sidebar workspace. Skills and prompts are loaded from the shared pi resources but have no dedicated entry in the current UI.
-- **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace, model and permission preset, then inspect each run's session. PiWeb must remain running for scheduled work.
-- **Permissions:** Choose Read Only, Workspace Write or Full Access, with one-time approval for a specific blocked action. See the [platform boundaries](docs/workspace-isolation.md).
+- **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace and model, then inspect each run's session. PiWeb must remain running for scheduled work.
 - **Multiple devices:** Remote access prepares automatically. Scan one dynamic QR code from the same Wi-Fi or another network.
 - **Interface languages:** English, Simplified Chinese, Traditional Chinese, Japanese and Russian.
 
@@ -97,7 +96,7 @@ The sidebar workspaces are separate from Settings. The Extensions workspace mana
 
 Adding, updating and removing an npm package prepares a separate directory before switching the active installation and settings. Failed preparation keeps the previous installation; interrupted commits are recovered before resources are loaded. Previous generations and their recovery index are retained. npm lifecycle scripts are disabled, but loaded extensions still execute trusted code in the host process.
 
-Automations store their tasks and run history in `<agent dir>/web-automations.json`. Schedules use the server's time zone shown in the editor. Up to four runs may execute concurrently; each uses a separate session and the saved permission preset. Unattended work cannot approve an interactive permission request. Offline occurrences outside the grace period are recorded as skipped rather than all being replayed after startup.
+Automations store their tasks and run history in `<agent dir>/web-automations.json`. Schedules use the server's time zone shown in the editor. Up to four runs may execute concurrently; each uses a separate session. Offline occurrences outside the grace period are recorded as skipped rather than all being replayed after startup.
 
 ## Usage
 

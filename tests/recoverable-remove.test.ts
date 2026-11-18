@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRecoverableCopy, recoverableRemove } from "@/lib/recoverable-remove";
 import { withSettingsWriteLock } from "@/lib/settings-write-lock";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const temporary: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(temporary.splice(0).map(recycleFixture)); });

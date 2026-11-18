@@ -63,7 +63,7 @@ vi.mock("@/hooks/usePiWeb", () => ({
 		newSession: async () => null, openSession: hooks.openSession, closeSession: hooks.closeSession,
 		renameWorkspace: noop, patchSessionName: hooks.patchSessionName, archiveSession: hooks.archiveSession, deleteSession: hooks.deleteSession, unarchiveSession: hooks.unarchiveSession, resync: hooks.resync,
 		setGroupBy: noop, setOrderBy: noop, addWorkspaceByPicker: noop, removeWorkspace: hooks.removeWorkspace, refreshModels: noop,
-		setToolPreset: noop, clearError: noop, clearCompaction: noop, setError: noop,
+		clearError: noop, clearCompaction: noop, setError: noop,
 		answerExtensionDialog: noop, dismissExtensionNotice: noop,
 	}),
 }));

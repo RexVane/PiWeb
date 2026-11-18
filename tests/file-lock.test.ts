@@ -8,7 +8,7 @@ import { acquireFileLock } from "../scripts/file-lock.mjs";
 import { processIdentity, processIdentityAlive } from "../scripts/process-identity.mjs";
 import { lockChildEnvironment } from "../scripts/lock-child-env.mjs";
 import { runtimeRequire } from "../scripts/runtime-require.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];

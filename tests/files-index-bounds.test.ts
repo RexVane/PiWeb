@@ -30,7 +30,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 import { listWorkspaceIndex } from "../src/lib/files-service";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 let root: string;
 beforeEach(async () => {
 	gitScan.hang = false;

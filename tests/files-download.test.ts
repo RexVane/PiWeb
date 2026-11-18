@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { GET, HEAD } from "@/app/api/files/download/route";
 import * as filesService from "@/lib/files-service";
 import { createSessionCookie, sessionCookieId, SESSION_MAX_AGE_SECONDS } from "@/lib/web-auth";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const credentials = vi.hoisted(() => ({ secret: Buffer.alloc(32, 7), revocations: { notBefore: 0, revoked: new Map<string, number>(), unavailable: false } }));
 vi.mock("@/lib/web-secret", () => ({ loadWebSecret: () => credentials.secret, loadSessionRevocations: () => credentials.revocations }));

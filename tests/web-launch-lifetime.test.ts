@@ -4,7 +4,7 @@ import path from "node:path";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 import { launchIpcProof, validLaunchIpcProof } from "../scripts/web-auth-protocol.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { consumeLaunchToken, currentLaunchToken, invalidateLaunchTokens, LAUNCH_TOKEN_TTL_MS, launchTokenFile, launchTokenSocketPath, publishLaunchToken, resetLaunchTokenState } from "@/lib/web-launch-token";
 let root = "";

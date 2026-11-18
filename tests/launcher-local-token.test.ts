@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import { readCurrentLaunchToken } from "../scripts/launcher.mjs";
 import { launchTokenIpcPath, launchIpcProof, validLaunchIpcProof } from "../scripts/web-auth-protocol.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });

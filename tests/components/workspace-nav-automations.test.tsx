@@ -115,7 +115,6 @@ describe("AutomationsWorkspaceView", () => {
 					cwd: "/ws",
 					schedule: { kind: "daily" as const, time: "09:00" },
 					enabled: true,
-					toolPreset: "readonly" as const,
 					createdAt: 1000,
 					updatedAt: 1000,
 					nextRunAt: Date.now() + 60_000,
@@ -156,7 +155,6 @@ describe("AutomationsWorkspaceView", () => {
 								cwd: body.cwd,
 								schedule: body.schedule,
 								enabled: true,
-								toolPreset: body.toolPreset,
 								createdAt: Date.now(),
 								updatedAt: Date.now(),
 								nextRunAt: Date.now() + 600_000,
@@ -202,9 +200,9 @@ describe("AutomationsWorkspaceView", () => {
 		expect(screen.getByRole("tab", { name: /已结束/ })).toBeTruthy();
 		expect(screen.getByRole("tab", { name: /全部/ })).toBeTruthy();
 
-		// Clicking primary "+ 新建" jumps to in-session Hero creation with independent dir and full permission
+		// Clicking primary "+ 新建" jumps to in-session Hero creation with independent dir
 		fireEvent.click(screen.getByRole("button", { name: "新建" }));
-		expect(onCreateInSession).toHaveBeenCalledWith("/agent/automations", "请根据需求创建一个自动化任务。", { toolPreset: "full" });
+		expect(onCreateInSession).toHaveBeenCalledWith("/agent/automations", "请根据需求创建一个自动化任务。");
 
 		fireEvent.click(screen.getByRole("button", { name: "立即运行" }));
 		await waitFor(() => expect(posts.some((p) => p.action === "runNow" && p.id === "task-1")).toBe(true));

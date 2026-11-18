@@ -22,7 +22,6 @@ const KIND_NAME: Record<TrajEntry["kind"], string> = {
 	context: "CONTEXT",
 	user: "USER",
 	custom: "EXTENSION",
-	permission: "PERMISSION",
 	bash: "SHELL",
 	message: "ASSISTANT",
 	tool: "TOOL",
@@ -65,7 +64,6 @@ function sourceOf(entry: TrajEntry): string {
 		case "context": return `Pi ResourceLoader · ${entry.title || "context"}`;
 		case "user": return "Pi SessionManager · user message";
 		case "custom": return `Pi extension · sendMessage${entry.title ? ` · ${entry.title}` : ""}`;
-		case "permission": return "PiWeb · permission audit (`piweb_permission` custom entry)";
 		case "bash": return "Pi AgentSession · user shell command";
 		case "message": return "Pi AgentSession · model response";
 		case "tool": return `Pi AgentSession · tool execution${entry.toolName ? ` · ${entry.toolName}` : ""}`;
@@ -187,8 +185,7 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 	const visibleRows = useMemo(
 		() => rows.filter((row) => {
 			if (callsCollapsed && row.entry.kind === "tool") return false;
-			// 权限审计行是稀疏的安全事实，折叠回合时也留着，免得用户翻不到
-			if (turnsCollapsed && !INPUT_KINDS.includes(row.entry.kind) && row.entry.kind !== "permission") return false;
+			if (turnsCollapsed && !INPUT_KINDS.includes(row.entry.kind)) return false;
 			return matchesQuery(row, normalizedQuery);
 		}).reverse(),
 		[callsCollapsed, normalizedQuery, rows, turnsCollapsed],

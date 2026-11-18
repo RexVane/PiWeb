@@ -11,7 +11,6 @@ import {
 	repairAutomationStore,
 } from "@/lib/automations/store";
 import type { AutomationModelRef, AutomationSchedule } from "@/lib/automations/types";
-import type { ToolPreset } from "@/lib/types";
 import { apiError } from "@/lib/api-error";
 import { publicDiagnostic } from "@/lib/public-diagnostic";
 
@@ -56,7 +55,6 @@ export async function POST(req: Request) {
 			cwd?: string;
 			schedule?: AutomationSchedule;
 			enabled?: boolean;
-			toolPreset?: ToolPreset;
 			model?: AutomationModelRef | null;
 			mode?: "salvage" | "restore" | "reset";
 			expectedHash?: string;
@@ -78,7 +76,6 @@ export async function POST(req: Request) {
 					cwd: body.cwd ?? "",
 					schedule: body.schedule as AutomationSchedule,
 					enabled: body.enabled,
-					toolPreset: body.toolPreset,
 					model: body.model ?? undefined,
 				});
 				return NextResponse.json({ success: true, data: { task } });
@@ -92,7 +89,6 @@ export async function POST(req: Request) {
 				if (body.cwd !== undefined) patch.cwd = body.cwd;
 				if (body.schedule !== undefined) patch.schedule = body.schedule;
 				if (body.enabled !== undefined) patch.enabled = body.enabled;
-				if (body.toolPreset !== undefined) patch.toolPreset = body.toolPreset;
 				if (Object.prototype.hasOwnProperty.call(body, "model")) patch.model = body.model;
 				const task = await updateAutomationTask(id, patch);
 				return NextResponse.json({ success: true, data: { task } });

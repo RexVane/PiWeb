@@ -25,7 +25,6 @@ beforeEach(() => {
 });
 
 it.each([
-	["invalid toolPreset", { cwd: "/project", toolPreset: "admin" }, "请提供有效的权限预设"],
 	["provider without modelId", { cwd: "/project", provider: "anthropic" }, "请提供完整的模型参数"],
 	["modelId without provider", { cwd: "/project", modelId: "claude-sonnet-4" }, "请提供完整的模型参数"],
 	["non-string thinking", { cwd: "/project", thinking: 123 }, "请提供有效的思考级别"],
@@ -41,14 +40,12 @@ it.each([
 it("forwards validated creation options and returns setupApplied when configured", async () => {
 	const res = await create(post({
 		cwd: "/project",
-		toolPreset: "full",
 		provider: "openai",
 		modelId: "gpt-5",
 		thinking: "high",
 	}));
 	expect(res.status).toBe(200);
 	expect(deps.create).toHaveBeenCalledWith("/project", {
-		toolPreset: "full",
 		provider: "openai",
 		modelId: "gpt-5",
 		thinking: "high",

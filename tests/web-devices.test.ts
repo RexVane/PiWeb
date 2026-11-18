@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionCookie, decodeSessionCookie, sessionCookieId, validSessionCookie } from "@/lib/web-auth";
 import { rememberWebDevice, listWebDevices, flushWebDevices } from "@/lib/web-devices";
 import { loadSessionRevocations, resetWebSecretCache, revokeAllSessions } from "@/lib/web-secret";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { DELETE, GET } from "@/app/api/web-auth/route";
 const secret = Buffer.alloc(32, 9); let root = "";
 beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-devices-")); vi.stubEnv("PI_CODING_AGENT_DIR", root); vi.stubEnv("PI_WEB_AUTH", "1"); vi.stubEnv("PI_WEB_SECRET", secret.toString("base64url")); resetWebSecretCache(); });

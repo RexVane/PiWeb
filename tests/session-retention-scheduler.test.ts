@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 let agentDir: string;
 type Timers = { timer?: ReturnType<typeof setTimeout>; repeat?: ReturnType<typeof setInterval>; running?: Promise<void> };

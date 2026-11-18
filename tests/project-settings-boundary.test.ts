@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { JsoncSettingsStorage } from "@/lib/jsonc-settings-storage";
 import { getPiSettings, patchPiSettings } from "@/lib/pi-settings";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("@/lib/pi", async (original) => ({
 	...await original<typeof import("@/lib/pi")>(),

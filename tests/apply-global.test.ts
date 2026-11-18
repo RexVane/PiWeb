@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { applyGlobalSources } from "../scripts/apply-global.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await recycleFixture(root); });
 function fixture() {

@@ -10,7 +10,7 @@ import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-codin
 import { beginNpmSettingsWrite, npmTransactionPath, recoverNpmPrefix, withNpmInstallTransaction } from "../src/lib/npm-install-transaction";
 import { JsoncSettingsStorage, mutateJsoncSettingsFileSync } from "../src/lib/jsonc-settings-storage";
 import { securePackageManager } from "../src/lib/package-manager-safe";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 let base: string, root: string, settings: string;
 const oldPackages = ["npm:fixture@1.0.0"], newPackages = ["npm:fixture@2.0.0"];
@@ -91,7 +91,7 @@ it("recovers every scope from one entry after a real process exit during group p
 	const script = `import fs from 'node:fs'; import {createJiti} from 'jiti';
 const jiti=createJiti(import.meta.url); const m=await jiti.import(${JSON.stringify(module)});
 const root=process.argv[1]; const rename=fs.renameSync;
-if(process.platform==='win32'){const api=(await jiti.import(${JSON.stringify(path.resolve("src/lib/sandbox/windows-file-operations.ts"))})).windowsDirectoryApiSync();const native=api.rename;api.rename=(a,b)=>{const result=native(a,b);if(String(a)===root&&String(b).includes('npm-previous-'))process.exit(77);return result;};}
+if(process.platform==='win32'){const api=(await jiti.import(${JSON.stringify(path.resolve("src/lib/windows-directory-api.ts"))})).windowsDirectoryApiSync();const native=api.rename;api.rename=(a,b)=>{const result=native(a,b);if(String(a)===root&&String(b).includes('npm-previous-'))process.exit(77);return result;};}
 else fs.renameSync=(a,b)=>{const result=rename(a,b); if(String(a)===root && String(b).includes('npm-previous-')) process.exit(77); return result;};
 await m.withNpmInstallTransaction([{root},{root:process.argv[2],projectRoot:process.argv[3]}],async()=>{for(const target of [root,process.argv[2]])fs.writeFileSync(m.npmTransactionPath(target+'/node_modules/fixture/index.js'),'recovered new implementation');});`;
 	const child = spawn(process.execPath, ["--input-type=module", "-e", script, root, other, project], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true, env: { ...process.env, NODE_OPTIONS: "" } });
@@ -132,7 +132,7 @@ await m.withNpmInstallTransaction([{root,settings:{file,after:{packages:[]}}}],a
 }, 30_000);
 
 it("finishes a decided commit after a recoverable promotion failure in the same process", async () => {
-	const api = process.platform === "win32" ? (await import("../src/lib/sandbox/windows-file-operations")).windowsDirectoryApiSync() : undefined;
+	const api = process.platform === "win32" ? (await import("../src/lib/windows-directory-api")).windowsDirectoryApiSync() : undefined;
 	const original = api ? api.rename.bind(api) : fs.renameSync.bind(fs);
 	const replacement = (source: string, target: string, replace?: boolean) => {
 		if (path.basename(source).startsWith("npm-stage-")) throw Object.assign(new Error("sharing violation"), { code: "EBUSY" });
@@ -233,7 +233,7 @@ it.skipIf(process.platform !== "win32")("pins Windows npm ancestors during both 
 	const close = kernel.func("bool CloseHandle(void *handle)");
 	const handle = open(held, 0x80000000, 0x1, null, 3, 0, null);
 	try {
-		const api = (await import("../src/lib/sandbox/windows-file-operations")).windowsDirectoryApiSync();
+		const api = (await import("../src/lib/windows-directory-api")).windowsDirectoryApiSync();
 		expect(() => api.rename(temporary, path.basename(held))).toThrow(expect.objectContaining({ code: expect.stringMatching(/EACCES|EBUSY/) }));
 		expect(fs.readFileSync(held, "utf8")).toBe("old");
 	} finally { close(handle); }

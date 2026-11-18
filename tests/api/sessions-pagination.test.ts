@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recycleFixture } from "../lib/sandbox/fixtures";
+import { recycleFixture } from "../fixtures/recycle";
 
 /**
  * D4（route 侧）：`/api/sessions` 的可选 `limit`/`offset` 透传给 `session-reader.listSessions`。

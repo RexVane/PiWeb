@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { readSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { SessionDiskTracker } from "../src/lib/session-disk-sync";
 
 vi.mock("node:fs", async (original) => {

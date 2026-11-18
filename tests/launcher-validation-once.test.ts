@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { runLauncher } from "../scripts/launcher.mjs";
 import { writeBuildInventory } from "../scripts/build-output.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await recycleFixture(root); });

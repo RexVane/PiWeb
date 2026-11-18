@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyProxyEnv, browserLaunchSpec, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, nodeSupportsEnvProxy, parseLauncherArgs, probePort, readHttpProxySetting, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../scripts/system-proxy.mjs", () => ({ readSystemProxy: vi.fn(() => null) }));
 

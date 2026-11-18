@@ -32,7 +32,7 @@ import { importSessions, scanAllSources } from "../src/lib/session-import";
 import { claudeSource } from "../src/lib/session-import/claude";
 import { deleteSession, readSession } from "../src/lib/session-reader";
 import { archiveSession, forgetSession, getArchivedSessions, getWorkspaceRegistry, registerCwds, removeWorkspace } from "../src/lib/workspace-store";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 let root: string;
 let agentDir: string;

@@ -15,7 +15,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	AUTOCOMPLETE_SEPARATOR_REGEX, CJK_BREAK_REGEX, atToken, buildCandidates, dirsOfPaths, scoreEntry, suggestPaths,

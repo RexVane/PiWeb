@@ -32,7 +32,7 @@ const BUILTIN_LOCAL_TOOLS = new Set([
 	"find",
 	"ls",
 	"ask_user_question",
-	"request_permission",
+	"manage_automation",
 ]);
 
 const NON_WEB_SEARCH_TOKENS = new Set([

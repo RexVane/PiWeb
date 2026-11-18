@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
 import { PIWEB_EXECUTION_GUIDANCE } from "../src/lib/execution-guidance";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -128,51 +128,28 @@ describe("real SDK session resource isolation", () => {
 		expect(event.all).toContain("read");
 	});
 
-	it.each(["readonly", "workspace", "full"] as const)("includes PiWeb's question tool in a cold %s catalog and accepts selecting it", async (preset) => {
+	it("includes PiWeb's question tool in a cold catalog and activates it on start", async () => {
 		const { sessionPath } = await manager.createNewSession(cwd);
 		const m = manager.getManaged(sessionPath);
 		managed.push(m);
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset })).toMatchObject({ ok: true });
 		const cold = await manager.buildSnapshot(m);
 		expect(m.session).toBeNull();
 		expect(cold.tools.all.map((tool) => tool.name)).toContain("ask_user_question");
 		expect(cold.tools.active).toContain("ask_user_question");
-		expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read", "ask_user_question"] })).toMatchObject({
-			ok: true, data: { active: ["read", "ask_user_question"] },
-		});
-		expect(m.session).toBeNull();
 		const session = await manager.ensureSession(m);
-		expect(session.getActiveToolNames()).toEqual(["read", "ask_user_question"]);
+		expect(session.getActiveToolNames()).toContain("ask_user_question");
 	});
 
-	it("keeps explicit SDK default tools consistent between cold and hot snapshots within the preset", async () => {
+	it("keeps explicit SDK default tools consistent between cold and hot snapshots", async () => {
 		await withDefaultTools(["read", "codemode"], async () => {
-			const { sessionPath } = await manager.createNewSession(cwd, { toolPreset: "readonly" });
+			const { sessionPath } = await manager.createNewSession(cwd);
 			const m = manager.getManaged(sessionPath);
 			managed.push(m);
-			const readonly = await manager.buildSnapshot(m);
-			expect(readonly.tools.active).not.toContain("codemode");
-			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
 			const cold = await manager.buildSnapshot(m);
 			expect(m.session).toBeNull();
 			expect(cold.tools.active).toContain("codemode");
 			const session = await manager.ensureSession(m);
 			expect([...session.getActiveToolNames()].sort()).toEqual([...cold.tools.active].sort());
-		});
-	});
-
-	it("keeps a cold per-tool allowlist above explicit SDK default tools", async () => {
-		await withDefaultTools(["read", "codemode"], async () => {
-			const { sessionPath } = await manager.createNewSession(cwd);
-			const m = manager.getManaged(sessionPath);
-			managed.push(m);
-			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-			expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read"] })).toMatchObject({ ok: true });
-			const cold = await manager.buildSnapshot(m);
-			expect(m.session).toBeNull();
-			expect(cold.tools.active).toEqual(["read"]);
-			const session = await manager.ensureSession(m);
-			expect(session.getActiveToolNames()).toEqual(["read"]);
 		});
 	});
 
@@ -239,204 +216,22 @@ describe("real SDK session resource isolation", () => {
 		}
 	});
 
-	it("reapplies readonly and custom allowlists on direct, command and resource reload", async () => {
-		const { sessionPath } = await manager.createNewSession(cwd, { toolPreset: "readonly" });
-		const m = manager.getManaged(sessionPath);
-		managed.push(m);
-		const session = await manager.ensureSession(m);
-		expect(session.getAllTools().map((tool) => tool.name)).toContain("probe_tool");
-		expect(session.getActiveToolNames()).toContain("probe_tool");
-		await session.reload();
-		// SDK 可调整注册顺序；只读策略要求工具集合精确一致（bash 只在有沙箱后端时出现）
-		const { sandboxSupported } = await import("../src/lib/sandbox/manager");
-		expect([...session.getActiveToolNames()].sort()).toEqual(
-			["read", "grep", "find", "ls", "bash", "ask_user_question", "request_permission", "probe_tool"]
-				.filter((name) => name !== "bash" || sandboxSupported())
-				.sort(),
-		);
-		expect(await manager.execute(m, { cmd: "setActiveTools", names: ["read", "probe_tool"] })).toMatchObject({ ok: true });
-		expect(await manager.execute(m, { cmd: "reload" })).toMatchObject({ ok: true });
-		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
-		await pi.reloadLoader(cwd);
-		await manager.reloadSessionsForCwd(cwd);
-		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
-		expect((await manager.buildSnapshot(m)).customActiveTools).toEqual(["read", "probe_tool"]);
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
-		await manager.reloadSessionsForCwd(cwd);
-		expect(session.getActiveToolNames()).toContain("probe_tool");
-	});
-
-	it("restores every tool choice after the server reopens a disposed session", async () => {
-		const first = await create();
-		expect(await manager.execute(first.m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-		expect(await manager.execute(first.m, { cmd: "setActiveTools", names: ["read", "probe_tool"] })).toMatchObject({ ok: true });
-		expect(first.session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
-		const sessionPath = first.m.sessionPath;
-		// SDK 只在出现真实对话后才创建 JSONL；写一条用户消息，确保重新打开时文件存在
-		first.m.sm.appendMessage({
-			role: "user",
-			content: [{ type: "text", text: "persist me" }],
-			timestamp: Date.now(),
-		});
-		// 模拟服务重启 / 空闲回收后重新打开同一 JSONL：从持久化偏好恢复，不回到默认档位
-		manager.disposeSession(first.m);
-		const reopened = manager.getManaged(sessionPath);
-		managed.push(reopened);
-		const cold = await manager.buildSnapshot(reopened);
-		expect(cold.customActiveTools).toEqual(["read", "probe_tool"]);
-		expect(cold.toolPreferenceSaved).toBe(true);
-		expect(cold.tools.active).toEqual(expect.arrayContaining(["read", "probe_tool"]));
-		const session = await manager.ensureSession(reopened);
-		expect(session.getActiveToolNames()).toEqual(["read", "probe_tool"]);
-	});
-
-	it("revokes prepared parallel calls immediately while retaining read access and other sessions", async () => {
-		const { m, session } = await create();
-		const other = await create();
-		await manager.execute(m, { cmd: "setToolPreset", preset: "full" });
-		await manager.execute(other.m, { cmd: "setToolPreset", preset: "full" });
-		const rt = session.modelRuntime;
-		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
-		session.agent.state.model = model;
-		session.agent.toolExecution = "parallel";
-		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
-		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
-		const declarations: string[][] = [];
-		let calls = 0;
-		session.agent.streamFunction = (_model, context) => {
-			declarations.push(getCurrentTools(context.messages).map((tool) => tool.name));
-			return streams[calls++] as never;
-		};
-		let release!: () => void;
-		const gate = new Promise<void>((resolve) => { release = resolve; });
-		let prepared = false;
-		const extension = session.resourceLoader.getExtensions().extensions[0];
-		extension.handlers.set("tool_call", [async (event: any) => {
-			if (event.toolCallId === "permitted-read") { prepared = true; await gate; }
-		}]);
-		const target = path.join(cwd, "permission-prepared-write.txt");
-		const raw: AssistantMessage = {
-			role: "assistant" as const, api: model.api, provider: model.provider, model: model.id, timestamp: 100,
-			stopReason: "toolUse" as const,
-			content: [
-				{ type: "toolCall" as const, id: "prepared-write", name: "write", arguments: { path: target, content: "must not appear" } },
-				{ type: "toolCall" as const, id: "prepared-probe", name: "probe_tool", arguments: {} },
-				{ type: "toolCall" as const, id: "permitted-read", name: "read", arguments: { path: path.join(cwd, ".pi", "extensions", "probe.js") } },
-			],
-			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-		};
-		try {
-			expect(await manager.execute(m, { cmd: "prompt", text: "offline permission batch" })).toMatchObject({ ok: true });
-			await vi.waitFor(() => expect(calls).toBe(1));
-			expect(declarations[0]).toEqual(expect.arrayContaining(["write", "probe_tool"]));
-			streams[0].push({ type: "done", reason: "toolUse", message: raw });
-			await vi.waitFor(() => expect(prepared).toBe(true));
-			expect((await manager.buildSnapshot(m)).isStreaming).toBe(true);
-			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
-			expect(session.getActiveToolNames()).not.toContain("write");
-			expect(other.session.getActiveToolNames()).toEqual(expect.arrayContaining(["write", "probe_tool"]));
-			const otherProbe = other.session.agent.state.tools.find((tool) => tool.name === "probe_tool")!;
-			expect(await otherProbe.execute("other-session-probe", {})).toMatchObject({ content: [{ type: "text", text: "ok" }] });
-			release();
-			await vi.waitFor(() => expect(calls).toBe(2), { timeout: 15_000 });
-			const results = session.messages.filter((message: any) => message.role === "toolResult") as any[];
-			for (const id of ["prepared-write"]) {
-				expect(results.find((result) => result.toolCallId === id)).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("readonly") }] });
-			}
-			expect(results.find((result) => result.toolCallId === "permitted-read")).toMatchObject({ isError: false });
-			expect(results.find((result) => result.toolCallId === "prepared-probe")).toMatchObject({ isError: false });
-			await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
-			expect(declarations[1]).not.toContain("write");
-			expect(declarations[1]).toContain("probe_tool");
-			// Raising the level restores real SDK tools without reopening or ending the run.
-			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-			expect(session.getActiveToolNames()).toContain("write");
-			expect(session.getActiveToolNames()).toContain("probe_tool");
-			await session.getToolDefinition("write")!.execute("restored-write", { path: target, content: "restored" }, undefined, undefined, undefined as never);
-			expect(await fs.readFile(target, "utf8")).toBe("restored");
-			streams[1].push({ type: "done", reason: "stop", message: { ...raw, stopReason: "stop", content: [{ type: "text", text: "done" }] } });
-			await session.waitForIdle();
-		} finally {
-			release();
-			session.agent.abort();
-			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...raw, stopReason: "aborted", content: [] } });
-			await session.waitForIdle();
-			auth.mockRestore();
-		}
-	});
-
-	it("checks deferred connected-tool calls against the current permission inside an already running extension", async () => {
-		const { m, session } = await create();
-		await manager.execute(m, { cmd: "setToolPreset", preset: "full" });
-		const rt = session.modelRuntime;
-		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
-		session.agent.state.model = model;
-		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
-		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
-		let calls = 0;
-		session.agent.streamFunction = () => streams[calls++] as never;
-		let release!: () => void;
-		const gate = new Promise<void>((resolve) => { release = resolve; });
-		let entered = false;
-		let nested: any;
-		const target = path.join(cwd, "permission-nested-write.txt");
-		const definition = session.getToolDefinition("probe_tool")!;
-		const originalExecute = definition.execute;
-		definition.execute = async (_id, _args, _signal, _update, ctx) => {
-			entered = true;
-			await gate;
-			nested = await ctx.executeTool("mcp__probe__write", { path: target, content: "must not appear" });
-			return nested.result;
-		};
-		const raw: AssistantMessage = {
-			role: "assistant" as const, api: model.api, provider: model.provider, model: model.id, timestamp: 100,
-			stopReason: "toolUse" as const, content: [{ type: "toolCall" as const, id: "running-parent", name: "probe_tool", arguments: {} }],
-			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-		};
-		try {
-			expect(await manager.execute(m, { cmd: "prompt", text: "offline nested permission" })).toMatchObject({ ok: true });
-			streams[0].push({ type: "done", reason: "toolUse", message: raw });
-			await vi.waitFor(() => expect(entered).toBe(true));
-			expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
-			release();
-			await vi.waitFor(() => expect(calls).toBe(2), { timeout: 15_000 });
-			expect(nested).toMatchObject({ isError: true, result: { content: [{ type: "text", text: expect.stringContaining("readonly") }] } });
-			await expect(fs.access(target)).rejects.toMatchObject({ code: "ENOENT" });
-			streams[1].push({ type: "done", reason: "stop", message: { ...raw, stopReason: "stop", content: [{ type: "text", text: "done" }] } });
-			await session.waitForIdle();
-		} finally {
-			release();
-			session.agent.abort();
-			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...raw, stopReason: "aborted", content: [] } });
-			await session.waitForIdle();
-			definition.execute = originalExecute;
-			auth.mockRestore();
-		}
-	});
-
 	it("loads the SDK built-in extensions but leaves their opt-in tools to the SDK", async () => {
 		const { m, session } = await create();
 		expect(session.getAllTools().map((tool) => tool.name)).toEqual(expect.arrayContaining(["codemode", "tool_search"]));
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "full" })).toMatchObject({ ok: true });
-		// codemode / tool_search 是 defaultActive: false：没配 MCP、defaultTools 也没写，档位放行也不该打开
+		// codemode / tool_search 是 defaultActive: false：没配 MCP、defaultTools 也没写，不该自动打开
 		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["read", "bash", "probe_tool"]));
 		expect(session.getActiveToolNames()).not.toContain("codemode");
 		expect(session.getActiveToolNames()).not.toContain("tool_search");
-		// 扩展要求打开（MCP 发现只能经 codemode 调用的工具时就这么做）：readonly 挡住，换到放行它的档位再恢复
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
+		// 扩展要求打开后，reload 也保留
 		session.setActiveToolsByName([...session.getActiveToolNames(), "codemode"]);
-		expect(session.getActiveToolNames()).not.toContain("codemode");
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-		// workspace 档放行 codemode（它的嵌套调用会过闸门）；bash 取决于这台机器有没有 OS 沙箱后端
-		expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["codemode"]));
-		const { sandboxSupported } = await import("../src/lib/sandbox/manager");
-		expect(session.getActiveToolNames().includes("bash")).toBe(sandboxSupported());
+		expect(session.getActiveToolNames()).toContain("codemode");
 		expect(session.getActiveToolNames()).toContain("probe_tool");
 		expect(await manager.execute(m, { cmd: "reload" })).toMatchObject({ ok: true });
 		expect(session.getActiveToolNames()).toContain("codemode");
-		// 扩展把它关掉，之后换档也不再自己冒出来
+		// 扩展把它关掉，reload 后不再自己冒出来
 		session.setActiveToolsByName(session.getActiveToolNames().filter((name) => name !== "codemode"));
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "full" })).toMatchObject({ ok: true });
+		expect(await manager.execute(m, { cmd: "reload" })).toMatchObject({ ok: true });
 		expect(session.getActiveToolNames()).not.toContain("codemode");
 	});
 
@@ -479,9 +274,8 @@ describe("real SDK session resource isolation", () => {
 		manager.unsubscribe(m, send);
 	});
 
-	it("registers pi's question window in every preset and hands the browser's answer back to the model", async () => {
+	it("registers pi's question window and hands the browser's answer back to the model", async () => {
 		const { m, session } = await create();
-		// 新会话默认 readonly：选择窗口只是问用户、不碰文件，也要开着
 		expect(session.getActiveToolNames()).toContain("ask_user_question");
 		const tool = session.getToolDefinition("ask_user_question")!;
 		const questions = [{ question: "Which DB?", header: "DB", options: [{ label: "Postgres (Recommended)", description: "solid" }, { label: "SQLite" }] }];
@@ -495,10 +289,6 @@ describe("real SDK session resource isolation", () => {
 		const result = await run;
 		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("1. Which DB? → SQLite") });
 		expect((await manager.buildSnapshot(m)).extensionUiRequests).toEqual([]);
-		for (const preset of ["workspace", "full"] as const) {
-			expect(await manager.execute(m, { cmd: "setToolPreset", preset })).toMatchObject({ ok: true });
-			expect(session.getActiveToolNames()).toContain("ask_user_question");
-		}
 	});
 
 	it("refreshes trust for every hot session without invalidating the discovery runtime", async () => {
@@ -565,19 +355,15 @@ describe("real SDK session resource isolation", () => {
 		}
 	});
 
-	it("keeps custom choices on snapshot-triggered reload for both same-cwd sessions", async () => {
+	it("reloads new prompts on snapshot-triggered reload for both same-cwd sessions", async () => {
 		const a = await create();
 		const b = await create();
-		await manager.execute(a.m, { cmd: "setActiveTools", names: ["read"] });
-		await manager.execute(b.m, { cmd: "setActiveTools", names: ["grep"] });
 		await fs.mkdir(path.join(cwd, ".pi", "prompts"), { recursive: true });
 		await fs.writeFile(path.join(cwd, ".pi", "prompts", "fresh.md"), "Fresh prompt");
 		await manager.buildSnapshot(a.m);
 		await manager.buildSnapshot(b.m);
 		expect(a.session.promptTemplates.some((prompt) => prompt.name === "fresh")).toBe(true);
 		expect(b.session.promptTemplates.some((prompt) => prompt.name === "fresh")).toBe(true);
-		expect(a.session.getActiveToolNames()).toEqual(["read"]);
-		expect(b.session.getActiveToolNames()).toEqual(["grep"]);
 	});
 
 	it("surfaces SDK preflight rejection without an unhandled promise or stuck submit lock", async () => {
@@ -674,10 +460,6 @@ describe("real SDK session resource isolation", () => {
 			for (const command of [{ cmd: "reload" }] as const) {
 				expect(await manager.execute(m, command as any)).toMatchObject({ ok: false });
 			}
-			// 工具变更在运行中改为接受：SDK 会重建系统提示词，下一轮生效（用户要求立即生效）
-			for (const command of [{ cmd: "setActiveTools", names: ["bash"] }, { cmd: "setToolPreset", preset: "full" }] as const) {
-				expect(await manager.execute(m, command as any)).toMatchObject({ ok: true });
-			}
 			const runtime = session.resourceLoader.getExtensions().runtime;
 			await pi.reloadLoader(cwd);
 			await manager.reloadSessionsForCwd(cwd);
@@ -697,234 +479,13 @@ describe("real SDK session resource isolation", () => {
 			await vi.waitFor(() => expect(m.resourceReloading).toBe(false));
 			// pi 1.3.0 起 reload 明确保留活动工具集（agent-session.d.ts："Tools removed from it stay
 			// active"）：被卸载扩展的工具仍在 SDK 注册表里，所以这里只要求活动集不超出注册表
-			// （PiWeb 的 applyToolPolicy 会按注册表重算）。要让 probe_tool 彻底消失需要重开会话。
+			// （PiWeb 的 applySessionTools 会按注册表重算）。要让 probe_tool 彻底消失需要重开会话。
 			const registered = session.getAllTools().map((tool) => tool.name);
 			expect(session.getActiveToolNames().every((name) => registered.includes(name))).toBe(true);
 			expect((await manager.buildSnapshot(m)).isStreaming).toBe(false);
 		} finally {
 			if (!final) second.push({ type: "error", reason: "aborted", error: { ...raw, stopReason: "aborted" } });
 			auth.mockRestore();
-		}
-	});
-
-	it("blocks workspace-tier writes that resolve outside the workspace, end to end through the SDK", async () => {
-		const { m, session } = await create();
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-		const rt = session.modelRuntime;
-		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
-		session.agent.state.model = model;
-		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
-		const streams = [createAssistantMessageEventStream(), createAssistantMessageEventStream()];
-		let calls = 0;
-		session.agent.streamFunction = () => streams[calls++] as never;
-		const outsideTarget = path.join(root, "escape-attempt.txt");
-		const insideTarget = path.join(cwd, "inside-write.txt");
-		const raw: AssistantMessage = {
-			role: "assistant" as const, api: model.api, provider: model.provider, model: model.id, timestamp: 300,
-			stopReason: "toolUse" as const,
-			content: [
-				{ type: "toolCall" as const, id: "escape-write", name: "write", arguments: { path: "../escape-attempt.txt", content: "must not appear" } },
-				{ type: "toolCall" as const, id: "inside-write", name: "write", arguments: { path: insideTarget, content: "inside" } },
-			],
-			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-		};
-		try {
-			expect(await manager.execute(m, { cmd: "prompt", text: "offline workspace gate" })).toMatchObject({ ok: true });
-			streams[0].push({ type: "done", reason: "toolUse", message: raw });
-			const results = () => (session.messages as any[]).filter((message) => message.role === "toolResult");
-			await vi.waitFor(() => expect(results()).toHaveLength(2), { timeout: 15_000 });
-			// 越界那次在工具执行之前就被闸门挡下，模型拿到的是可读的拒绝理由（能自己纠正）
-			expect(results().find((result) => result.toolCallId === "escape-write")).toMatchObject({
-				isError: true,
-				content: [{ type: "text", text: expect.stringContaining("outside the workspace") }],
-			});
-			await expect(fs.access(outsideTarget)).rejects.toMatchObject({ code: "ENOENT" });
-			// 同一回合里工作区内的写入照常落盘：闸门是按路径判定，不是把 write 整个关掉
-			expect(results().find((result) => result.toolCallId === "inside-write")).toMatchObject({ isError: false });
-			expect(await fs.readFile(insideTarget, "utf8")).toBe("inside");
-			streams[1].push({ type: "done", reason: "stop", message: { ...raw, stopReason: "stop", content: [{ type: "text", text: "done" }] } });
-			await session.waitForIdle();
-		} finally {
-			session.agent.abort();
-			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...raw, stopReason: "aborted", content: [] } });
-			await session.waitForIdle();
-			auth.mockRestore();
-		}
-	});
-
-	it("runs workspace-tier bash through the OS sandbox: inside writes land, outside writes are refused", async (ctx) => {
-		if (process.platform !== "win32") ctx.skip("Windows AppContainer boundary test");
-		const { probeSandboxSupport } = await import("../src/lib/sandbox/manager");
-		if (!(await probeSandboxSupport())) ctx.skip("Windows isolation runtime unavailable; CI skipped-test guard rejects this on Windows");
-
-		const { m, session } = await create();
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-		const bash = session.getToolDefinition("bash");
-		expect(bash).toBeTruthy();
-
-		const outsideTarget = path.join(root, "bash-escape.txt");
-		const insideTarget = path.join(cwd, "bash-inside.txt");
-		// 路径都在临时目录里，没有空格，可以安全地塞进 cmd 命令行
-		await bash!.execute("bash-escape", { command: `echo nope> ${outsideTarget}` }, undefined, undefined, undefined as never).catch(() => undefined);
-		await expect(fs.access(outsideTarget)).rejects.toMatchObject({ code: "ENOENT" });
-
-		const insideResult = await bash!.execute("bash-inside", { command: `echo ok> ${insideTarget}` }, undefined, undefined, undefined as never);
-		expect(await fs.access(insideTarget).then(() => true, () => false), JSON.stringify(insideResult)).toBe(true);
-		expect(await fs.readFile(insideTarget, "utf8")).toContain("ok");
-	});
-
-	it("persists permission decisions into the session JSONL as a custom entry", async () => {
-		const { appendPermissionAudit } = await import("../src/lib/permission-audit");
-		const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-		// 用真实的 SessionManager 落一个会话文件，验证审计条目真的写进 JSONL 且不参与模型上下文
-		const sm = SessionManager.create(cwd, path.join(root, "audit-sessions"));
-		const file = sm.getSessionFile();
-		expect(file).toBeTruthy();
-
-		appendPermissionAudit(sm, {
-			kind: "decision", approved: true, outcome: "approved", scope: "full", preset: "workspace", reason: "需要写 worktree 的 .git", at: 1_700_000_000_000,
-		});
-		appendPermissionAudit(sm, { kind: "used", scope: "full", preset: "workspace", command: "git worktree add", at: 1_700_000_000_001 });
-
-		// 会话文件只在出现第一条 user/assistant 消息时创建；之前的条目留在内存里，随首条消息一起落盘
-		sm.appendMessage({ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1_700_000_000_002 } as never);
-
-		const lines = (await fs.readFile(file!, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-		const entries = lines.filter((entry) => entry.type === "custom" && entry.customType === "piweb_permission");
-		expect(entries).toHaveLength(2);
-		expect(entries[0].data).toMatchObject({ kind: "decision", outcome: "approved", scope: "full", reason: "需要写 worktree 的 .git" });
-		expect(entries[1].data).toMatchObject({ kind: "used", command: "git worktree add" });
-		// 不进模型上下文：custom entry 只被 SessionManager 持有，不参与 buildContextEntries 的消息转换
-		expect(sm.getEntries().filter((entry) => entry.type === "custom")).toHaveLength(2);
-	});
-
-	it("allows workspace-tier writes into additionalWritableRoots and consumes one-shot full escalation only on out-of-workspace writes", async () => {
-		const { writeSandboxConfig } = await import("../src/lib/sandbox/config");
-		const sharedDir = path.join(root, "shared-root");
-		await fs.mkdir(sharedDir, { recursive: true });
-		await writeSandboxConfig({ additionalWritableRoots: [sharedDir] });
-
-		const { m, session } = await create();
-		expect(await manager.execute(m, { cmd: "setToolPreset", preset: "workspace" })).toMatchObject({ ok: true });
-		const rt = session.modelRuntime;
-		const model = rt.getModels().find((candidate) => candidate.provider === "openai")!;
-		session.agent.state.model = model;
-		const auth = vi.spyOn(rt, "hasConfiguredAuth").mockReturnValue(true);
-		m.ui = { askQuestions: async () => ({ status: "answered", answers: [{ selected: ["允许一次（推荐）"] }] }) } as never;
-
-		const baseMsg = {
-			role: "assistant" as const,
-			api: model.api,
-			provider: model.provider,
-			model: model.id,
-			timestamp: 400,
-			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-		};
-		const sharedTarget = path.join(sharedDir, "shared-write.txt");
-		const blockedOutside = path.join(root, "blocked-without-grant.txt");
-		const escalatedOutside = path.join(root, "escalated-write.txt");
-		const secondOutside = path.join(root, "second-outside-blocked.txt");
-		const insideTarget = path.join(cwd, "ws-does-not-burn-grant.txt");
-		const afterSettleOutside = path.join(root, "after-settle-blocked.txt");
-
-		const streams = [
-			createAssistantMessageEventStream(),
-			createAssistantMessageEventStream(),
-			createAssistantMessageEventStream(),
-			createAssistantMessageEventStream(),
-			createAssistantMessageEventStream(),
-			createAssistantMessageEventStream(),
-		];
-		let calls = 0;
-		session.agent.streamFunction = () => streams[calls++] as never;
-		try {
-			// Turn 1: additionalWritableRoots works; outside write still blocked; request_permission grants one-shot full escalation.
-			expect(await manager.execute(m, { cmd: "prompt", text: "test extra roots and escalation" })).toMatchObject({ ok: true });
-			await vi.waitFor(() => expect(calls).toBe(1));
-			streams[0].push({
-				type: "done",
-				reason: "toolUse",
-				message: {
-					...baseMsg,
-					stopReason: "toolUse",
-					content: [
-						{ type: "toolCall", id: "extra-write", name: "write", arguments: { path: sharedTarget, content: "shared-ok" } },
-						{ type: "toolCall", id: "blocked-before-grant", name: "write", arguments: { path: escalatedOutside, content: "escalated-ok" } },
-						{ type: "toolCall", id: "ask-full", name: "request_permission", arguments: { reason: "写共享之外一次", scope: "full" } },
-					],
-				},
-			});
-			await vi.waitFor(() => expect(calls).toBe(2), { timeout: 15_000 });
-
-			// Next tool batch in same turn: in-workspace write must NOT burn the full grant; first outside write succeeds; second outside write is blocked.
-			streams[1].push({
-				type: "done",
-				reason: "toolUse",
-				message: {
-					...baseMsg,
-					timestamp: 401,
-					stopReason: "toolUse",
-					content: [
-						{ type: "toolCall", id: "in-ws-write", name: "write", arguments: { path: insideTarget, content: "inside-ok" } },
-						{ type: "toolCall", id: "outside-escalated", name: "write", arguments: { path: escalatedOutside, content: "escalated-ok" } },
-						{ type: "toolCall", id: "outside-exhausted", name: "write", arguments: { path: secondOutside, content: "should-block" } },
-					],
-				},
-			});
-			await vi.waitFor(() => expect(calls).toBe(3));
-			streams[2].push({ type: "done", reason: "stop", message: { ...baseMsg, timestamp: 402, stopReason: "stop", content: [{ type: "text", text: "done 1" }] } });
-			await session.waitForIdle();
-
-			expect(await fs.readFile(sharedTarget, "utf8")).toBe("shared-ok");
-			await expect(fs.access(blockedOutside)).rejects.toMatchObject({ code: "ENOENT" });
-			expect(await fs.readFile(insideTarget, "utf8")).toBe("inside-ok");
-			expect(await fs.readFile(escalatedOutside, "utf8")).toBe("escalated-ok");
-			await expect(fs.access(secondOutside)).rejects.toMatchObject({ code: "ENOENT" });
-
-			// Turn 2: approve an escalation and finish the turn without spending it; agent_settled must clear the leftover grant.
-			expect(await manager.execute(m, { cmd: "prompt", text: "unused grant cleared on settle" })).toMatchObject({ ok: true });
-			await vi.waitFor(() => expect(calls).toBe(4));
-			streams[3].push({
-				type: "done",
-				reason: "toolUse",
-				message: {
-					...baseMsg,
-					timestamp: 403,
-					stopReason: "toolUse",
-					content: [{ type: "toolCall", id: "ask-unused", name: "request_permission", arguments: { reason: "暂时不用", scope: "full" } }],
-				},
-			});
-			await vi.waitFor(() => expect(calls).toBe(5));
-			streams[4].push({ type: "done", reason: "stop", message: { ...baseMsg, timestamp: 404, stopReason: "stop", content: [{ type: "text", text: "done 2" }] } });
-			await session.waitForIdle();
-
-			// Turn 3: leftover grant from Turn 2 must NOT authorize an outside write.
-			expect(await manager.execute(m, { cmd: "prompt", text: "verify stale grant gone" })).toMatchObject({ ok: true });
-			await vi.waitFor(() => expect(calls).toBe(6));
-			streams[5].push({
-				type: "done",
-				reason: "toolUse",
-				message: {
-					...baseMsg,
-					timestamp: 405,
-					stopReason: "toolUse",
-					content: [{ type: "toolCall", id: "outside-after-settle", name: "write", arguments: { path: afterSettleOutside, content: "must-block" } }],
-				},
-			});
-			const results = () => (session.messages as any[]).filter((message) => message.role === "toolResult");
-			await vi.waitFor(() => expect(results().some((result) => result.toolCallId === "outside-after-settle")).toBe(true));
-			expect(results().find((result) => result.toolCallId === "outside-after-settle")).toMatchObject({
-				isError: true,
-				content: [{ type: "text", text: expect.stringContaining("outside the workspace") }],
-			});
-			await expect(fs.access(afterSettleOutside)).rejects.toMatchObject({ code: "ENOENT" });
-		} finally {
-			m.ui = null;
-			session.agent.abort();
-			for (const stream of streams) stream.push({ type: "error", reason: "aborted", error: { ...baseMsg, stopReason: "aborted", content: [] } });
-			await session.waitForIdle();
-			auth.mockRestore();
-			await writeSandboxConfig({ additionalWritableRoots: [] });
 		}
 	});
 });

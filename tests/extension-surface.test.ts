@@ -412,7 +412,6 @@ describe("扩展命令里的会话操作", () => {
 		const sm = await newSession();
 		sm.appendMessage(user("原会话", 1000));
 		const m = open(sm.getSessionFile()!);
-		m.toolPreset = "workspace";
 		await manager.ensureSession(m);
 		let replaced: unknown;
 		const result = await commandContext(m).newSession({
@@ -425,10 +424,9 @@ describe("扩展命令里的会话操作", () => {
 		expect(navigate.reason).toBe("new");
 		expect(navigate.sessionPath).not.toBe(m.sessionPath);
 		const target = open(navigate.sessionPath);
-		// 目标会话已经热启动，扩展预置的内容在里面，权限档位跟着来源会话
+		// 目标会话已经热启动，扩展预置的内容在里面
 		expect(target.session).toBeTruthy();
 		expect(visible((await manager.buildSnapshot(target)).messages).map(textOf)).toEqual(["扩展预置的第一句"]);
-		expect(target.toolPreset).toBe("workspace");
 		expect(replaced).toBeTruthy();
 	}, 90_000);
 
@@ -451,18 +449,14 @@ describe("扩展命令里的会话操作", () => {
 		const other = await newSession();
 		other.appendMessage(user("另一个会话", 3000));
 		other.appendMessage(assistant("在的", 3100));
-		// 那份会话有自己保存过的权限选择；来源会话是另一个档位
 		const otherManaged = open(other.getSessionFile()!);
-		expect(await manager.execute(otherManaged, { cmd: "setToolPreset", preset: "readonly" })).toMatchObject({ ok: true });
-		m.toolPreset = "full";
 		const before = frames(m).length;
 		expect(await commandContext(m).switchSession(other.getSessionFile()!)).toEqual({ cancelled: false });
 		const switched = frames(m).slice(before).find((frame) => frame.type === "session_navigate");
 		// The navigate frame carries the canonical session path; the temp dir may be
 		// spelled with a Windows 8.3 short name when the store was opened.
 		expect(switched).toMatchObject({ reason: "resume", sessionPath: await fs.realpath(other.getSessionFile()!) });
-		// 切到已有会话不拿来源会话的档位覆盖它（新建 / 分叉才继承）
-		expect(manager.getManaged(other.getSessionFile()!).toolPreset).toBe("readonly");
+		expect(manager.getManaged(other.getSessionFile()!)).toBe(otherManaged);
 	}, 90_000);
 
 	it("ctx.navigateTree 换分支后让浏览器重新取快照", async () => {

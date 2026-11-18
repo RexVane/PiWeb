@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { securePackageManager, validatePackageSource } from "../src/lib/package-manager-safe";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await recycleFixture(root); });

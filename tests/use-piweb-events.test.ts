@@ -203,7 +203,7 @@ describe("PiWeb SSE event folding", () => {
 
 describe("扩展面与 ! 命令的事件折叠", () => {
 	const base = (overrides: Partial<PiWebState> = {}): PiWebState => ({
-		snapshot: null, messages: [], tools: {}, toolPreset: "workspace", connected: true, error: null, compaction: null, retryNotice: null,
+		snapshot: null, messages: [], tools: {}, connected: true, error: null, compaction: null, retryNotice: null,
 		extensionDialogs: [], extensionNotices: [], extensionStatuses: {}, extensionWidgets: {}, extensionTitle: null, editorText: null,
 		workingMessage: null, growth: { rounds: [], error: null },
 		...overrides,

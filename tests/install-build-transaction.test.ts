@@ -8,7 +8,7 @@ vi.mock("node:child_process", async (original) => ({ ...await original<typeof im
 import { ensureInstallBuild, hasProductionBuild } from "../scripts/install-build.mjs";
 import { selectProductionBuild } from "../scripts/build-output.mjs";
 import { runLauncher } from "../scripts/launcher.mjs";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); runner.spawnSync.mockReset(); for (const root of roots.splice(0)) await recycleFixture(root); });
 function writeBuild(root: string, buildDir: string, id: string) {

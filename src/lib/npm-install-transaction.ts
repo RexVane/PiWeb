@@ -8,7 +8,7 @@ import { processIdentity } from "../../scripts/process-identity.mjs";
 import { readJsoncSettingsObjectSync, mutateJsoncSettingsFileSync } from "./jsonc-settings-storage";
 import { syncDirectorySync } from "./atomic-file";
 import { assertNoRemovalMounts } from "./removal-boundary";
-import { windowsDirectoryApiSync } from "./sandbox/windows-file-operations";
+import { windowsDirectoryApiSync } from "./windows-directory-api";
 
 type Fields = { packages?: unknown; disabledPackages?: unknown };
 export interface NpmTransactionPlan {

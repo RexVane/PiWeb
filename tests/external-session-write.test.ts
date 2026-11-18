@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { WebEvent, WebMessage } from "../src/lib/types";
-import { recycleFixture } from "./lib/sandbox/fixtures";
+import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -137,7 +137,6 @@ describe("终端 pi 同时写会话", () => {
 		const file = seed();
 		const m = manager.getManaged(file);
 		await manager.ensureSession(m);
-		m.toolPreset = "full";
 		m.desiredThinkingLevel = "high";
 		const events: WebEvent[] = [];
 		expect(manager.subscribe(m, (_seq, json) => events.push(JSON.parse(json)), m.seq)).toBe(true);
@@ -149,7 +148,6 @@ describe("终端 pi 同时写会话", () => {
 		expect(m.disposed).toBe(true);
 		expect(events.map((event) => (event.type === "status" ? `status:${event.state}` : event.type))).toEqual(["external_reload", "status:disposed"]);
 		expect(events[0]).toMatchObject({ type: "external_reload", entries: 2 });
-		expect(fresh.toolPreset).toBe("full");
 		expect(fresh.desiredThinkingLevel).toBe("high");
 		const snap = await manager.buildSnapshot(fresh);
 		expect(texts(snap.messages)).toEqual(["网页里的问题", "网页里的回答", "终端的问题", "答：终端的回答"]);
