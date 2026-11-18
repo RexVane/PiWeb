@@ -8,9 +8,9 @@
   <a href="README.md">English</a> | <a href="README_zh.md">简体中文</a> | <strong>繁體中文</strong> | <a href="README_ja.md">日本語</a> | <a href="README_ru.md">Русский</a>
 </p>
 
-**PiWeb** 是面向 [Pi Coding Agent（Pi 程式設計智慧體）](https://github.com/earendil-works/pi) 的開源、自架 Web UI。將 AI 程式設計助手執行在自己的電腦或伺服器上，透過桌面和手機瀏覽器管理專案工作區、檢視程式碼差異與工具呼叫，也能在手機上繼續程式設計任務。
+**PiWeb** 是 [Pi Coding Agent](https://github.com/earendil-works/pi) 的開源自架網頁介面。將 Pi 執行在自己的電腦或伺服器上，便能透過桌面與手機瀏覽器追蹤工具呼叫、檢閱程式碼變更，並接續先前的對話。
 
-PiWeb 基於官方 Pi SDK，沿用既有的 pi 設定、模型供應商、擴充功能、技能和 **MCP（Model Context Protocol）伺服器**。支援匯入 **Claude Code、Codex 和 OpenCode** 的對話歷史，並透過內建自動化任務定時執行提示詞。
+PiWeb 採用官方 Pi SDK，可沿用既有的 pi 設定、模型、技能、擴充功能與 MCP（Model Context Protocol）設定。你可以匯入 Claude Code、Codex、OpenCode 等工具的本機對話，或透過內建自動化功能定時執行工作。
 
 [快速開始](#快速開始) · [特色功能](#特色功能) · [介面預覽](#介面預覽) · [安裝與部署](#使用方式) · [文件導覽](docs/README.md)
 
@@ -33,14 +33,14 @@ PiWeb 預設開啟需要驗證的 `http://127.0.0.1:30141` 瀏覽器頁面（連
 
 ## 特色功能
 
-- **對話與導覽**：串流顯示 Markdown、思考過程和工具呼叫；對話大綱支援跳轉，執行時可插話或排隊傳送。輸入框旁的上下文圓環顯示用量及組成。
-- **工作區與對話**：依專案資料夾整理對話，支援重新命名、分支、封存、草稿還原，以及 JSONL / HTML 匯出。
-- **匯入對話**：從 Claude Code、Codex、OpenCode、Grok、ZCode 和 dsh 瀏覽並匯入本機歷史，支援搜尋和跨來源選取；已封存的匯入對話可還原，來源資料保持不變。
-- **檢視變更**：查看工具呼叫軌跡、檔案差異和專案成長樹，包含擴充功能訊息、使用者命令、`[skill]` 讀取步驟及指令碼工具（codemode）內部發起的巢狀呼叫；檔案檢視器支援內容、變更（整合檢視或並排分欄 Diff）和 Markdown 顯示，也可引用選取的內容。同一瀏覽器中，各對話的檔案分頁在切換或重新整理後保留；關閉檢視視窗會清空其中的全部分頁。
-- **模型、MCP、技能與擴充功能**：在設定中配置模型供應商，並使用 pi 設定中的 MCP 工具和資源；側欄提供獨立的技能、擴充功能與自動化工作區，依所選工作區管理共用技能（啟用／停用、檢視 `SKILL.md`、可還原移除非套件技能）與 npm 套件（分別標示個人／專案作用域與本機／套件來源）。右側抽屜的提示詞面板可檢視目前對話／工作區的提示詞來源，並在檔案檢視器中開啟。
-- **自動化任務**：依間隔、每日、每週或 cron 定時執行提示詞，指定工作區和模型，並查看每次執行的對話。排程執行需要 PiWeb 保持執行。
-- **多裝置存取**：自動準備遠端連線，同一 Wi-Fi 或外部網路掃描同一個動態 QR Code。
-- **介面語言**：支援英文、簡體中文、繁體中文、日文和俄文。
+- **對話與上下文** · 串流顯示 Markdown、思考過程和工具呼叫。透過對話大綱跳轉，執行中可補充指示或將訊息加入佇列，也能在上下文圓環查看 token 用量與組成。
+- **工作區與對話** · 依專案資料夾整理對話，支援重新命名、分支、封存、還原草稿，以及匯出成 JSONL 或 HTML。
+- **匯入對話** · 搜尋並匯入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本機歷史。支援跨來源選取與還原已封存的匯入對話。原始檔案會保留在原處。
+- **檔案與變更** · 在專案成長樹中按輪次檢視變更，回看 `SKILL.md` 讀取步驟與 codemode 的巢狀呼叫。檔案檢視器支援原始碼、Markdown 預覽、整合或並排 Diff，也能在對話中引用選取的行。
+- **模型、技能與擴充功能** · 在設定中配置模型供應商，並使用 pi 設定中的 MCP 工具與資源。從側欄啟用或停用技能、開啟 `SKILL.md`，以及管理個人或專案範圍的擴充功能與 pi 套件。
+- **提示詞來源** · 在右側提示詞面板檢視專案指示、技能、範本與工具定義。由 PiWeb 加入的提示詞和工具會標示來源。
+- **自動化任務** · 依間隔、每日、每週或 cron 定時執行提示詞。可指定工作區和模型，也能開啟每次執行的對話。PiWeb 須保持執行才能依排程運作。
+- **手機存取與語言** · 在「設定 → 遠端連線」掃描 QR Code 連接手機。介面支援英文、簡體中文、繁體中文、日文與俄文。
 
 ## 與 pi 的關係
 
@@ -52,20 +52,26 @@ agent 目錄是主要資料儲存位置，但**不是唯一資料根目錄**：�
 
 ## 介面預覽
 
+以下截圖使用英文介面和範例資料。
+
 ### 桌面版
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/readme-chat.jpg" alt="桌面版對話" /><br /><strong>對話工作區</strong><br />集中查看串流對話、工具呼叫與專案對話。</td>
-    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面版專案樹" /><br /><strong>專案檔案</strong><br />在側欄瀏覽專案結構與每輪變更。</td>
+    <td width="50%"><img src="assets/readme-chat.jpg" alt="桌面版對話" /><br /><strong>對話工作區</strong><br />在專案對話旁檢視思考過程與工具呼叫。</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面版專案檔案" /><br /><strong>專案檔案</strong><br />從側欄瀏覽專案樹並開啟檔案。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面版檔案檢視器" /><br /><strong>檔案檢視器</strong><br />查看程式碼、檔案內容和變更。</td>
-    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面版對話匯入" /><br /><strong>匯入對話</strong><br />選取其他程式設計工具的歷史對話。</td>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面版並排 Diff" /><br /><strong>並排 Diff</strong><br />在檔案檢視器中比較變更前後的程式碼。</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面版匯入對話" /><br /><strong>匯入對話</strong><br />跨工具搜尋並選取本機對話。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面版模型供應商選擇" /><br /><strong>模型供應商</strong><br />搜尋並配置模型供應商。</td>
-    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面版上下文用量" /><br /><strong>上下文用量</strong><br />查看上下文視窗與用量組成。</td>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面版模型供應商選擇" /><br /><strong>模型供應商</strong><br />尋找並設定模型供應商。</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面版上下文用量明細" /><br /><strong>上下文用量</strong><br />檢視 token 用量及其組成。</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="桌面版技能工作區" /><br /><strong>技能</strong><br />篩選技能並開啟對應的 SKILL.md。</td>
+    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="桌面版自動化編輯器" /><br /><strong>自動化任務</strong><br />為定時任務選擇排程、工作區與模型。</td>
   </tr>
 </table>
 
@@ -73,24 +79,24 @@ agent 目錄是主要資料儲存位置，但**不是唯一資料根目錄**：�
 
 <table>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile.jpg" alt="手機版對話" /><br /><strong>隨時對話</strong><br />在手機上繼續工作。</td>
-    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="手機版工作區" /><br /><strong>工作區</strong><br />切換專案和對話。</td>
-    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="手機版對話匯入" /><br /><strong>對話匯入</strong><br />選取並匯入既有對話。</td>
+    <td width="33%"><img src="assets/readme-mobile.jpg" alt="手機版對話" /><br /><strong>隨時接續對話</strong><br />在手機上接續先前的對話。</td>
+    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="手機版工作區側欄" /><br /><strong>工作區</strong><br />切換專案與對話。</td>
+    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="手機版匯入對話" /><br /><strong>匯入對話</strong><br />選取要匯入的歷史對話。</td>
   </tr>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="手機版檔案檢視器" /><br /><strong>檔案檢視</strong><br />直接瀏覽專案程式碼。</td>
-    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="手機版模型供應商選擇" /><br /><strong>模型設定</strong><br />搜尋與配置供應商。</td>
-    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="手機版上下文用量" /><br /><strong>上下文用量</strong><br />查看可用空間和用量。</td>
+    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="手機版檔案檢視器" /><br /><strong>檔案檢視器</strong><br />開啟並閱讀專案程式碼。</td>
+    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="手機版模型供應商選擇" /><br /><strong>模型供應商</strong><br />尋找並設定模型供應商。</td>
+    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="手機版上下文用量明細" /><br /><strong>上下文用量</strong><br />查看已用與可用的上下文空間。</td>
   </tr>
 </table>
 
-### 封存與資料
+## 封存與資料
 
 封存對話會一直保留，可從側欄查看、還原或手動刪除。點選封存會立即生效，不再二次確認；手動刪除仍需確認，而且會**永久刪除對話檔案，不保留還原副本**。對話不會自動刪除。刪除對話時會一併清理僅由它引用的上傳附件：先將還原副本保留至 `~/.agents/backups` 並在 `backups/INDEX.md` 記錄，再移除（`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` 可關閉此功能）。沒有對話引用的附件，會在超過 30 天後，由之後的新上傳觸發清理。需要保留的資料請自行備份；全部資料位置見[資料目錄、隱私與保留](docs/operations/data-and-privacy.md)。
 
 專案成長樹預設記錄，無需確認對話方塊。每輪檔案變更儲存為工作區 Git 儲存庫中 `refs/piweb/rounds/…` 下的提交，不改變分支和暫存區；需要時自動初始化本機儲存庫。累計歷史筆數和容量不設上限，可以在專案面板隨時關閉或重新啟用記錄，先前手動關閉的工作區會維持關閉。停止記錄會保留既有歷史；單一檔案、單次快照及預覽的大小保護仍然生效。
 
-### 擴充功能與自動化任務
+## 擴充功能與自動化任務
 
 側欄工作區與設定分開。技能工作區依所選工作區列出個人、全域與專案作用域的技能，支援啟用／停用、在檔案檢視器中開啟 `SKILL.md` 及可還原移除非套件技能。擴充功能工作區依所選工作區管理 npm 套件，分別標示個人／專案作用域與本機／套件來源。個人資源通常位於 `<agent 目錄>/skills` 和 `<agent 目錄>/extensions`；受信任的專案可提供 `.pi/skills`、`.pi/extensions`、`.agents/skills` 及明確設定的資源路徑。目前工作區與對話組裝的提示詞來源可在右側抽屜的提示詞面板中檢視（資源市集頁面已移除）。
 

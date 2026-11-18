@@ -8,9 +8,9 @@
   <strong>English</strong> | <a href="README_zh.md">简体中文</a> | <a href="README_zh-Hant.md">繁體中文</a> | <a href="README_ja.md">日本語</a> | <a href="README_ru.md">Русский</a>
 </p>
 
-**PiWeb** is an open-source, self-hosted web UI for the [Pi Coding Agent](https://github.com/earendil-works/pi). Run your AI coding assistant on your own computer or server and use it from a desktop or mobile browser. Manage project workspaces, review file diffs and tool calls, and continue coding from your phone.
+**PiWeb** is an open-source, self-hosted web interface for the [Pi Coding Agent](https://github.com/earendil-works/pi). Run Pi on your computer or server, then use a desktop or mobile browser to follow tool calls, review changes, and pick up a conversation where you left off.
 
-Built on the official Pi SDK, PiWeb works with your existing pi configuration, model providers, extensions, skills and Model Context Protocol (MCP) servers. Import conversation history from **Claude Code, Codex and OpenCode**, or schedule coding tasks with built-in automations.
+PiWeb uses the official Pi SDK and shares your existing pi settings, models, skills, extensions, and Model Context Protocol (MCP) configuration. Bring over local conversations from Claude Code, Codex, OpenCode, and other coding tools, or run recurring tasks with built-in automations.
 
 [Quick start](#quick-start) · [Features](#features) · [Screenshots](#screenshots) · [Installation and deployment](#usage) · [Documentation](docs/README.md)
 
@@ -33,14 +33,14 @@ See [installation details](#install), [remote access](#connect-another-device) a
 
 ## Features
 
-- **Chat and navigation:** Stream Markdown, reasoning and tool calls; jump through the conversation outline and steer or queue messages while pi is working. The context ring shows usage and its breakdown.
-- **Workspaces and sessions:** Group conversations by project folder; rename, branch, archive, recover drafts and export to JSONL or HTML.
-- **Session import:** Browse and import local history from Claude Code, Codex, OpenCode, Grok, ZCode and dsh. Search and select across sources, restore archived imports, and leave the original data untouched.
-- **Review changes:** Explore tool trajectories, file diffs and the project growth tree, including extension messages, user shell commands, `[skill]` reads and calls nested under script tools (codemode). The file viewer supports content, changes (unified or side-by-side split diff) and rendered Markdown, with selection quoting. Each conversation keeps its file tabs in the same browser across switches and refreshes; closing the viewer clears all of its tabs.
-- **Models, MCP, skills and extensions:** Configure model providers in Settings and use the MCP tools and resources from your pi configuration. The sidebar opens dedicated Skills, Extensions and Automations workspaces per project: manage shared skills (enable/disable, inspect `SKILL.md`, recoverably remove non-package skills) and npm packages (personal/project scope separated from local/package origin). The right drawer also includes a Prompts panel to inspect active prompt sources and open them in the file viewer.
-- **Automations:** Schedule a prompt at an interval, daily, weekly or with cron; choose its workspace and model, then inspect each run's session. PiWeb must remain running for scheduled work.
-- **Multiple devices:** Remote access prepares automatically. Scan one dynamic QR code from the same Wi-Fi or another network.
-- **Interface languages:** English, Simplified Chinese, Traditional Chinese, Japanese and Russian.
+- **Chat and context** — Stream Markdown, reasoning, and tool calls. Jump through the conversation outline, steer or queue messages during a run, and inspect token usage in the context meter.
+- **Workspaces and sessions** — Organize sessions by project folder. Rename, branch, archive, restore drafts, and export sessions as JSONL or HTML.
+- **Session import** — Search and import local history from Claude Code, Codex, OpenCode, Grok, ZCode, dsh, Kimi Code, WorkBuddy, Antigravity, Antigravity CLI, Qwen Code, and Cursor. Choose across sources and restore archived imports. PiWeb reads the original files in place.
+- **Files and changes** — Use the project growth tree to inspect changes by round. Review tool steps, including `SKILL.md` reads and calls inside codemode. Open source, rendered Markdown, and unified or side-by-side diffs in the file viewer, and quote selected lines in chat.
+- **Models, skills, and extensions** — Configure model providers and use MCP tools and resources from pi. In the sidebar, enable or disable skills, open their `SKILL.md`, and manage extensions and pi packages for your account or project.
+- **Prompt sources** — Open the Prompts panel to inspect project instructions, skills, templates, and tool definitions. The panel identifies prompts and tools contributed by PiWeb.
+- **Automations** — Schedule prompts at intervals, daily, weekly, or with cron. Choose a workspace and model, then open the session for each run. PiWeb must stay running to execute tasks on schedule.
+- **Mobile access and languages** — Connect a phone by scanning the QR code in Settings → Remote access. The interface is available in English, Simplified Chinese, Traditional Chinese, Japanese, and Russian.
 
 ## Relationship to pi
 
@@ -52,20 +52,26 @@ Extension dialogs, notifications, status text, text widgets and injected message
 
 ## Screenshots
 
+The screenshots use the English interface and sample data.
+
 ### Desktop
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/readme-chat.jpg" alt="Desktop conversation" /><br /><strong>Conversation workspace</strong><br />Stream responses and review tool calls alongside your sessions.</td>
-    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="Desktop project tree" /><br /><strong>Project files</strong><br />Browse the project and changes for each round.</td>
+    <td width="50%"><img src="assets/readme-chat.jpg" alt="Desktop conversation" /><br /><strong>Conversation workspace</strong><br />Follow reasoning and tool calls next to your project sessions.</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="Desktop project files" /><br /><strong>Project files</strong><br />Browse the project tree and open files from the side panel.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="Desktop file viewer" /><br /><strong>File viewer</strong><br />Inspect code, file contents and changes.</td>
-    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="Desktop session import" /><br /><strong>Session import</strong><br />Choose conversations from other coding tools.</td>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="Desktop split diff" /><br /><strong>Side-by-side diff</strong><br />Compare old and new code in the file viewer.</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="Desktop session import" /><br /><strong>Session import</strong><br />Search and select local conversations across tools.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="Desktop provider selection" /><br /><strong>Model providers</strong><br />Find and configure a provider.</td>
-    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="Desktop context usage" /><br /><strong>Context usage</strong><br />Inspect the context window and its breakdown.</td>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="Desktop model provider picker" /><br /><strong>Model providers</strong><br />Find and configure a model provider.</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="Desktop context usage breakdown" /><br /><strong>Context usage</strong><br />See token usage and its breakdown.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="Desktop skills workspace" /><br /><strong>Skills</strong><br />Filter skills and open their SKILL.md files.</td>
+    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="Desktop automation editor" /><br /><strong>Automations</strong><br />Set a schedule, workspace, and model for a recurring prompt.</td>
   </tr>
 </table>
 
@@ -73,24 +79,24 @@ Extension dialogs, notifications, status text, text widgets and injected message
 
 <table>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile.jpg" alt="Mobile conversation" /><br /><strong>Chat on the go</strong><br />Continue working from your phone.</td>
-    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="Mobile workspaces" /><br /><strong>Workspaces</strong><br />Switch projects and sessions.</td>
-    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="Mobile session import" /><br /><strong>Session import</strong><br />Select and import conversations.</td>
+    <td width="33%"><img src="assets/readme-mobile.jpg" alt="Mobile conversation" /><br /><strong>Chat on the go</strong><br />Continue a conversation on your phone.</td>
+    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="Mobile workspace sidebar" /><br /><strong>Workspaces</strong><br />Switch projects and sessions.</td>
+    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="Mobile session import" /><br /><strong>Session import</strong><br />Select conversations to import.</td>
   </tr>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="Mobile file viewer" /><br /><strong>File viewer</strong><br />Browse project code.</td>
-    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="Mobile provider selection" /><br /><strong>Model setup</strong><br />Find and configure providers.</td>
-    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="Mobile context usage" /><br /><strong>Context usage</strong><br />See usage and available space.</td>
+    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="Mobile file viewer" /><br /><strong>File viewer</strong><br />Open and read project code.</td>
+    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="Mobile model provider picker" /><br /><strong>Model providers</strong><br />Find and configure providers.</td>
+    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="Mobile context usage breakdown" /><br /><strong>Context usage</strong><br />Check usage and available context.</td>
   </tr>
 </table>
 
-### Archives and data
+## Archives and data
 
 Archived sessions remain available in the sidebar until you restore or manually delete them. Archiving takes effect immediately without a confirmation dialog; manual deletion still asks for confirmation and permanently deletes the session file — it keeps **no recovery copy**. Sessions are never deleted automatically. Deleting a session also cleans up the uploads that only that session referenced: those are removed with a recovery copy under `~/.agents/backups` and an entry in `backups/INDEX.md` (`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` disables that cleanup). Uploads no session references are swept after 30 days when a later upload triggers the sweep. Back up data you need to keep; the [data and privacy guide](docs/operations/data-and-privacy.md) lists every store.
 
 The project growth tree records changes by default without a confirmation dialog. Each round is stored as a commit under `refs/piweb/rounds/…` in the workspace's Git repository, without changing branches or the index. PiWeb initializes a local repository automatically when needed. Recording has no cumulative entry or storage limit; the project panel can stop or resume recording, and previously disabled workspaces stay disabled. Existing history is preserved when recording stops. Individual file, snapshot and preview size safeguards still apply.
 
-### Extensions and automations
+## Extensions and automations
 
 The sidebar workspaces are separate from Settings. The Skills workspace lists personal, global and project skills for the selected workspace, letting you toggle enablement, inspect `SKILL.md` in the file viewer and recoverably remove non-package skills. The Extensions workspace manages npm packages for the selected workspace; package scope (personal/project) and origin (local/package) are shown separately. Personal resources normally live in `<agent dir>/skills` and `<agent dir>/extensions`; trusted projects can provide `.pi/skills`, `.pi/extensions`, `.agents/skills` and configured resource paths. Prompt sources assembled for the workspace and active session can be inspected from the Prompts tab in the right drawer (the resource-market page has been removed).
 

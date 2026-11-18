@@ -8,9 +8,9 @@
   <a href="README.md">English</a> | <a href="README_zh.md">简体中文</a> | <a href="README_zh-Hant.md">繁體中文</a> | <strong>日本語</strong> | <a href="README_ru.md">Русский</a>
 </p>
 
-**PiWeb** は、[Pi Coding Agent](https://github.com/earendil-works/pi) 向けのオープンソースでセルフホスト可能な Web UI です。自分の PC やサーバーで AI コーディングアシスタントを実行し、デスクトップやスマートフォンのブラウザーから利用できます。プロジェクトのワークスペースを管理し、ファイル差分やツール呼び出しを確認して、スマートフォンから作業を続けられます。
+**PiWeb** は、[Pi Coding Agent](https://github.com/earendil-works/pi) 向けのオープンソースのセルフホスト型 Web インターフェースです。自分の PC やサーバーで Pi を動かし、デスクトップやスマートフォンのブラウザーからツールの実行を追ったり、コードの変更を確認したり、会話の続きを進めたりできます。
 
-公式 Pi SDK を使用し、既存の pi 設定、モデルプロバイダー、拡張機能、スキル、**Model Context Protocol（MCP）サーバー**を利用します。**Claude Code、Codex、OpenCode** の会話履歴のインポートや、組み込みの自動化機能によるタスクの定期実行にも対応しています。
+公式 Pi SDK を使っているため、既存の pi の設定、モデル、スキル、拡張機能、MCP（Model Context Protocol）をそのまま利用できます。Claude Code、Codex、OpenCode などのローカルの会話を取り込み、組み込みの自動化で繰り返しタスクを実行できます。
 
 [クイックスタート](#クイックスタート) · [機能](#機能) · [スクリーンショット](#スクリーンショット) · [インストールと運用](#使い方) · [ドキュメント](docs/README.md)
 
@@ -33,14 +33,14 @@ piweb
 
 ## 機能
 
-- **チャットとナビゲーション**：Markdown、思考過程、ツール呼び出しをストリーミング表示します。会話のアウトラインから移動でき、実行中の指示変更やメッセージのキュー登録も可能です。コンテキスト表示で使用量とその内訳を確認できます。
-- **ワークスペースとセッション**：プロジェクトフォルダーごとに会話を整理し、名前変更、分岐、アーカイブ、下書きの復元、JSONL / HTML エクスポートを行えます。
-- **会話のインポート**：Claude Code、Codex、OpenCode、Grok、ZCode、dsh のローカル履歴を検索し、複数のソースから選択して取り込めます。インポート済みのアーカイブは復元可能で、元のデータは変更しません。
-- **変更のレビュー**：ツールの実行履歴、ファイル差分、プロジェクトの変更履歴ツリーを確認できます。拡張機能のメッセージ、ユーザーのシェルコマンド、`[skill]` 読み込みステップ、codemode 内のネストした呼び出しも対象です。ファイルビューアーでは内容、変更（統合表示／並列分割 Diff）、Markdown のプレビューを表示でき、選択した内容を引用できます。同じブラウザーでは、セッションを切り替えたりページを再読み込みしたりしても各会話のファイルタブを保持します。ビューアーを閉じると、そのタブはすべて消去されます。
-- **モデル、MCP、スキル、拡張機能**：設定でモデルプロバイダーを管理し、pi に設定済みの MCP ツールとリソースを利用できます。サイドバーにはスキル、拡張機能、自動化の専用ワークスペースがあり、選択中のワークスペースごとに共有スキル（有効／無効の切り替え、`SKILL.md` の閲覧、非パッケージスキルの復元可能削除）と npm パッケージ（個人／プロジェクトの適用範囲とローカル／パッケージのソースを区別）を管理できます。右ドロワーのプロンプトパネルでは、現在のセッション／ワークスペースのプロンプトソースを確認し、ファイルビューアーで開けます。
-- **自動化**：間隔指定、毎日、毎週、cron でプロンプトを定期実行できます。ワークスペースとモデルを指定し、実行ごとのセッションを確認できます。予定した処理には PiWeb の継続稼働が必要です。
-- **複数デバイス**：リモート接続を自動準備します。同じ Wi-Fi からでも外部ネットワークからでも、同じ動的 QR コードを使用できます。
-- **表示言語**：英語、簡体字中国語、繁体字中国語、日本語、ロシア語。
+- **チャットとコンテキスト** · Markdown、思考過程、ツール呼び出しをストリーミング表示します。会話のアウトラインから移動し、実行中に追加の指示を送ったり、メッセージをキューに入れたりできます。コンテキストの使用量と内訳も確認できます。
+- **ワークスペースとセッション** · プロジェクトフォルダーごとに会話を整理します。名前変更、分岐、アーカイブ、下書きの復元、JSONL または HTML へのエクスポートが可能です。
+- **会話のインポート** · Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code、Cursor のローカル履歴を検索して取り込めます。複数のソースから選択でき、アーカイブしたインポート済みの会話も復元できます。元のファイルはそのまま保持されます。
+- **ファイルと変更** · プロジェクトの変更履歴ツリーでターンごとの変更を確認し、`SKILL.md` の読み込みや codemode 内のツール呼び出しを追跡できます。ファイルビューアーではソースコード、Markdown プレビュー、統合または左右並列の差分を表示し、選んだ行を会話に引用できます。
+- **モデル、スキル、拡張機能** · 設定でモデルプロバイダーを指定し、pi の MCP ツールとリソースを利用できます。サイドバーではスキルの有効・無効を切り替え、`SKILL.md` を開き、個人用またはプロジェクト用の拡張機能と pi パッケージを管理できます。
+- **プロンプトのソース** · 右側のプロンプトパネルで、プロジェクトの指示、スキル、テンプレート、ツール定義を確認できます。PiWeb が追加したプロンプトとツールには出所が表示されます。
+- **自動化** · 指定間隔、毎日、毎週、または cron でプロンプトを実行します。ワークスペースとモデルを指定でき、実行ごとのセッションを開けます。スケジュールどおりに実行するには PiWeb を起動したままにしてください。
+- **モバイルと表示言語** · 「設定 → リモートアクセス」の QR コードを読み取ってスマートフォンを接続します。英語、中国語（簡体字・繁体字）、日本語、ロシア語に対応しています。
 
 ## pi との関係
 
@@ -52,20 +52,26 @@ agent ディレクトリは主な保存先ですが、**唯一のデータルー
 
 ## スクリーンショット
 
+スクリーンショットは英語のインターフェースとサンプルデータを使用しています。
+
 ### デスクトップ
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/readme-chat.jpg" alt="デスクトップの会話画面" /><br /><strong>会話ワークスペース</strong><br />会話、ツール呼び出し、プロジェクトのセッションをまとめて確認。</td>
-    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="デスクトップのプロジェクトツリー" /><br /><strong>プロジェクトファイル</strong><br />プロジェクト構成と各ラウンドの変更を表示。</td>
+    <td width="50%"><img src="assets/readme-chat.jpg" alt="デスクトップの会話画面" /><br /><strong>会話ワークスペース</strong><br />プロジェクトのセッションと並べて思考過程やツール呼び出しを確認。</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="デスクトップのプロジェクトファイル" /><br /><strong>プロジェクトファイル</strong><br />サイドパネルでツリーをたどり、ファイルを開く。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="デスクトップのファイルビューアー" /><br /><strong>ファイルビューアー</strong><br />コード、ファイル内容、変更を確認。</td>
-    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="デスクトップの会話インポート" /><br /><strong>会話のインポート</strong><br />他のコーディングツールの履歴を選択。</td>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="デスクトップの左右並列差分" /><br /><strong>左右並列の差分</strong><br />ファイルビューアーで変更前後のコードを比較。</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="デスクトップのインポート画面" /><br /><strong>会話のインポート</strong><br />複数のツールからローカルの会話を検索して選択。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="デスクトップのモデルプロバイダー設定" /><br /><strong>モデルプロバイダー</strong><br />プロバイダーの検索と設定。</td>
-    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="デスクトップのコンテキスト使用量" /><br /><strong>コンテキスト使用量</strong><br />コンテキストウィンドウと使用量の内訳を確認。</td>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="デスクトップのプロバイダー選択" /><br /><strong>モデルプロバイダー</strong><br />モデルプロバイダーを探して設定。</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="デスクトップのコンテキスト内訳" /><br /><strong>コンテキスト使用量</strong><br />トークンの使用量と内訳を確認。</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="デスクトップのスキル画面" /><br /><strong>スキル</strong><br />スキルを絞り込み、対応する SKILL.md を開く。</td>
+    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="デスクトップの自動化編集画面" /><br /><strong>自動化</strong><br />タスクのスケジュール、ワークスペース、モデルを指定。</td>
   </tr>
 </table>
 
@@ -73,24 +79,24 @@ agent ディレクトリは主な保存先ですが、**唯一のデータルー
 
 <table>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile.jpg" alt="モバイルの会話画面" /><br /><strong>外出先でチャット</strong><br />スマートフォンから作業を継続。</td>
-    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="モバイルのワークスペース" /><br /><strong>ワークスペース</strong><br />プロジェクトとセッションを切り替え。</td>
-    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="モバイルの会話インポート" /><br /><strong>会話のインポート</strong><br />既存の会話を選択して取り込み。</td>
+    <td width="33%"><img src="assets/readme-mobile.jpg" alt="モバイルの会話画面" /><br /><strong>外出先でチャット</strong><br />スマートフォンで会話を再開。</td>
+    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="モバイルのサイドバー" /><br /><strong>ワークスペース</strong><br />プロジェクトとセッションを切り替え。</td>
+    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="モバイルのインポート画面" /><br /><strong>会話のインポート</strong><br />取り込む会話を選択。</td>
   </tr>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="モバイルのファイルビューアー" /><br /><strong>ファイルの閲覧</strong><br />プロジェクトのコードを直接表示。</td>
-    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="モバイルのモデル設定" /><br /><strong>モデル設定</strong><br />プロバイダーの検索と設定。</td>
-    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="モバイルのコンテキスト使用量" /><br /><strong>コンテキスト使用量</strong><br />空き容量と使用量を確認。</td>
+    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="モバイルのファイルビューアー" /><br /><strong>ファイルビューアー</strong><br />プロジェクトのコードを開いて閲覧。</td>
+    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="モバイルのプロバイダー選択" /><br /><strong>モデルプロバイダー</strong><br />モデルプロバイダーを探して設定。</td>
+    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="モバイルのコンテキスト内訳" /><br /><strong>コンテキスト使用量</strong><br />使用量と残りのコンテキストを確認。</td>
   </tr>
 </table>
 
-### アーカイブとデータ
+## アーカイブとデータ
 
 アーカイブしたセッションは保持され、サイドバーから表示、復元、手動削除ができます。アーカイブは確認ダイアログなしで即座に反映します。手動削除には確認が必要ですが、セッションファイルは**復元用コピーを残さず完全に削除**します。セッションの自動削除は行いません。削除したセッションだけが参照していたアップロード添付ファイルは、`~/.agents/backups` に復元用コピーを作成し、`backups/INDEX.md` に記録してから除去します。`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` でこの処理を無効にできます。どのセッションからも参照されていない添付ファイルは、30 日経過後、新しいアップロードによるクリーンアップ時に削除します。必要なデータはバックアップしてください。保存先の一覧は[データとプライバシー](docs/operations/data-and-privacy.md)にあります。
 
 プロジェクトの変更履歴は既定で記録し、確認ダイアログは表示しません。各ラウンドをワークスペースの Git リポジトリの `refs/piweb/rounds/…` 以下にコミットし、ブランチとインデックスは変更しません。必要な場合はローカルリポジトリを自動初期化します。累積の履歴件数と保存容量に上限はありません。プロジェクトパネルから記録を停止・再開でき、以前に無効にしたワークスペースは無効のままです。停止しても過去の履歴は保持します。個別のファイル、スナップショット、プレビューのサイズ制限は引き続き適用します。
 
-### 拡張機能と自動化
+## 拡張機能と自動化
 
 サイドバーのワークスペースは設定画面とは別に用意しています。スキルワークスペースでは選択中ワークスペース向けに個人／グローバル／プロジェクト範囲のスキルを一覧でき、有効・無効の切り替え、ファイルビューアーでの `SKILL.md` 閲覧、非パッケージスキルの復元可能な削除が行えます。拡張機能ワークスペースで対象ワークスペースの npm パッケージを管理し、個人／プロジェクトの適用範囲とローカル／パッケージのソースを表示します。個人のリソースは通常 `<agent dir>/skills` と `<agent dir>/extensions` にあります。信頼済みのプロジェクトは `.pi/skills`、`.pi/extensions`、`.agents/skills`、明示的に設定したリソースパスを利用できます。ワークスペースと現在のセッション向けに組み立てられたプロンプトソースは、右ドロワーのプロンプトパネルで確認できます（リソースマーケット画面は削除されています）。
 

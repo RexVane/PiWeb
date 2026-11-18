@@ -8,9 +8,9 @@
   <a href="README.md">English</a> | <strong>简体中文</strong> | <a href="README_zh-Hant.md">繁體中文</a> | <a href="README_ja.md">日本語</a> | <a href="README_ru.md">Русский</a>
 </p>
 
-**PiWeb** 是面向 [Pi Coding Agent（Pi 编程智能体）](https://github.com/earendil-works/pi) 的开源、自托管 Web UI。把 AI 编程助手运行在自己的电脑或服务器上，通过桌面和手机浏览器管理项目工作区、审阅代码差异与工具调用，也能在手机上继续编程任务。
+**PiWeb** 是 [Pi Coding Agent](https://github.com/earendil-works/pi) 的开源、自托管网页界面。把 Pi 运行在自己的电脑或服务器上，就能在桌面和手机浏览器中查看工具调用、审阅代码改动，并接着之前的会话继续工作。
 
-PiWeb 基于官方 Pi SDK，复用已有的 pi 配置、模型提供方、扩展、技能和 **MCP（Model Context Protocol）服务器**。支持导入 **Claude Code、Codex 和 OpenCode** 的会话历史，并通过内置自动化任务定时执行提示词。
+PiWeb 基于官方 Pi SDK，沿用已有的 pi 设置、模型、技能、扩展和 MCP（Model Context Protocol）配置。可以导入 Claude Code、Codex、OpenCode 等工具的本机会话，也可以用内置的自动化功能定时执行任务。
 
 [快速开始](#快速开始) · [特色功能](#特色功能) · [界面一览](#界面一览) · [安装与部署](#使用) · [文档导航](docs/README.md)
 
@@ -33,14 +33,14 @@ PiWeb 默认打开带认证的 `http://127.0.0.1:30141` 浏览器页面（端口
 
 ## 特色功能
 
-- **对话与导航**：流式渲染 Markdown、思考过程和工具调用；对话大纲支持跳转，运行时可插话或排队发送。输入框旁的上下文圆环展示用量及组成。
-- **工作区与会话**：按项目文件夹组织对话，支持重命名、分支、归档、草稿恢复，以及 JSONL / HTML 导出。
-- **导入会话**：从 Claude Code、Codex、OpenCode、Grok、ZCode 和 dsh 浏览并导入本机历史，支持搜索和跨来源选择；已归档的导入会话可恢复，源数据保持不变。
-- **审阅改动**：查看工具调用轨迹、文件差异和项目生长树，包含扩展消息、用户命令、`[skill]` 读取步骤及脚本工具（codemode）内部发起的嵌套调用；文件查看器支持内容、变更（统一视图或并排分栏 Diff）和 Markdown 渲染，也可引用选中的内容。同一浏览器中，各对话的文件标签在切换或刷新后保留；关闭查看窗口会清空其中的全部标签。
-- **模型、MCP、技能与扩展**：在设置中配置模型提供方，并使用 pi 配置中的 MCP 工具和资源；侧栏提供独立的技能、扩展和自动化工作区，按所选工作区管理共享技能（启停、`SKILL.md` 查看、非包技能可恢复删除）与 npm 包（分别标注个人/项目作用域与本地/包来源）。右侧抽屉的提示词面板可查看当前会话/工作区的提示词来源并在文件查看器中打开。
-- **自动化任务**：按间隔、每天、每周或 cron 定时执行提示词，指定工作区和模型，并查看每次运行的会话。计划执行需要 PiWeb 保持运行。
-- **多设备访问**：远程连接自动准备，同一 WiFi 或外网扫描同一个动态二维码。
-- **界面语言**：支持英语、简体中文、繁体中文、日语和俄语。
+- **对话与上下文** · 流式显示 Markdown、思考过程和工具调用。通过对话大纲跳转，运行时可补充指示或排队发送消息，也能在上下文圆环中查看 token 用量和组成。
+- **工作区与会话** · 按项目文件夹组织对话，支持重命名、分支、归档、恢复草稿，以及导出为 JSONL 或 HTML。
+- **会话导入** · 搜索并导入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本机历史。支持跨来源选择和恢复已归档的导入会话。原始文件会保留在原处。
+- **文件与改动** · 在项目生长树中按轮查看改动，回看 `SKILL.md` 读取步骤和 codemode 内的嵌套调用。文件查看器支持源码、Markdown 预览、统一或并排 Diff，以及在对话中引用选中的行。
+- **模型、技能与扩展** · 在设置中配置模型提供方，使用 pi 配置里的 MCP 工具和资源。在侧栏启停技能、打开 `SKILL.md`，并管理个人或项目范围内的扩展与 pi 包。
+- **提示词来源** · 在右侧提示词面板查看项目指令、技能、模板和工具定义。由 PiWeb 注入的提示词和工具会标明来源。
+- **自动化任务** · 按间隔、每天、每周或 cron 定时执行提示词。可以指定工作区和模型，也能打开每次运行的会话。PiWeb 需要保持运行才能按时执行。
+- **手机访问与语言** · 在「设置 → 远程访问」扫码连接手机。界面支持英语、简体中文、繁体中文、日语和俄语。
 
 ## 与 pi 的关系
 
@@ -52,20 +52,26 @@ agent 目录是主要数据存储，但**不是唯一数据根**：会话导入�
 
 ## 界面一览
 
+以下截图使用英文界面和示例数据。
+
 ### 桌面端
 
 <table>
   <tr>
-    <td width="50%"><img src="assets/readme-chat.jpg" alt="桌面端对话" /><br /><strong>对话工作区</strong><br />流式对话、工具调用与项目会话集中查看。</td>
-    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面端项目树" /><br /><strong>项目文件</strong><br />在侧栏浏览项目结构与每轮改动。</td>
+    <td width="50%"><img src="assets/readme-chat.jpg" alt="桌面端对话" /><br /><strong>对话工作区</strong><br />在项目会话旁查看思考过程和工具调用。</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面端项目文件" /><br /><strong>项目文件</strong><br />在侧栏浏览项目树并打开文件。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面端文件查看器" /><br /><strong>文件查看器</strong><br />查看代码、文件内容和变更。</td>
-    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面端会话导入" /><br /><strong>导入会话</strong><br />选择其他编程工具的历史会话。</td>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面端并排 Diff" /><br /><strong>并排 Diff</strong><br />在文件查看器中对照修改前后的代码。</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面端会话导入" /><br /><strong>会话导入</strong><br />跨工具搜索并选择本机会话。</td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面端模型提供方选择" /><br /><strong>模型提供方</strong><br />搜索并配置模型提供方。</td>
-    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面端上下文用量" /><br /><strong>上下文用量</strong><br />查看上下文窗口与用量组成。</td>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面端模型提供方选择" /><br /><strong>模型提供方</strong><br />查找并配置模型提供方。</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面端上下文用量明细" /><br /><strong>上下文用量</strong><br />查看 token 用量及其组成。</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="桌面端技能工作区" /><br /><strong>技能</strong><br />筛选技能并打开对应的 SKILL.md。</td>
+    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="桌面端自动化编辑器" /><br /><strong>自动化任务</strong><br />为定时任务选择执行时间、工作区和模型。</td>
   </tr>
 </table>
 
@@ -73,24 +79,24 @@ agent 目录是主要数据存储，但**不是唯一数据根**：会话导入�
 
 <table>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile.jpg" alt="手机端对话" /><br /><strong>随时对话</strong><br />在手机上继续工作。</td>
-    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="手机端工作区" /><br /><strong>工作区</strong><br />切换项目和会话。</td>
-    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="手机端会话导入" /><br /><strong>会话导入</strong><br />选择并导入已有对话。</td>
+    <td width="33%"><img src="assets/readme-mobile.jpg" alt="手机端对话" /><br /><strong>随时继续对话</strong><br />在手机上接着之前的会话工作。</td>
+    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="手机端工作区侧栏" /><br /><strong>工作区</strong><br />切换项目和会话。</td>
+    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="手机端会话导入" /><br /><strong>会话导入</strong><br />选择要导入的历史会话。</td>
   </tr>
   <tr>
-    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="手机端文件查看器" /><br /><strong>文件查看</strong><br />直接浏览项目代码。</td>
-    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="手机端模型提供方选择" /><br /><strong>模型配置</strong><br />搜索与配置提供方。</td>
-    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="手机端上下文用量" /><br /><strong>上下文用量</strong><br />查看可用空间和用量。</td>
+    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="手机端文件查看器" /><br /><strong>文件查看器</strong><br />打开并阅读项目代码。</td>
+    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="手机端模型提供方选择" /><br /><strong>模型提供方</strong><br />查找并配置模型提供方。</td>
+    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="手机端上下文用量明细" /><br /><strong>上下文用量</strong><br />查看已用和可用的上下文空间。</td>
   </tr>
 </table>
 
-### 归档与数据
+## 归档与数据
 
 归档会话一直保留，可从侧栏查看、恢复或手动删除。点击归档直接生效，不再二次确认；手动删除仍需确认，并且会**永久删除会话文件、不保留恢复副本**。会话不会自动删除。删除会话时会顺带清理仅被它引用的上传附件：先保留恢复副本到 `~/.agents/backups` 并在 `backups/INDEX.md` 记录，再移除（`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` 可关闭这项清理）。没有会话引用的附件会在之后有新的上传触发清扫时、超过 30 天后清理。需要保留的数据请自行备份；全部数据位置见[数据目录、隐私与留存](docs/operations/data-and-privacy.md)。
 
 项目生长树默认记录，无需确认弹窗。每轮文件变更存为工作区 Git 仓库中 `refs/piweb/rounds/…` 下的提交，不改变分支和暂存区；需要时自动初始化本地仓库。累计历史条数和容量不设上限，可以在项目面板随时关闭或重新开启记录，之前手动关闭的工作区继续保持关闭。关闭记录保留已有历史；单文件、单次快照及预览的大小保护仍然生效。
 
-### 扩展与自动化任务
+## 扩展与自动化任务
 
 侧栏工作区与设置分开。技能工作区按所选工作区展示个人、全局与项目作用域的技能，支持启停、在文件查看器中打开 `SKILL.md` 以及可恢复移除非包技能。扩展工作区按所选工作区管理 npm 包，分别标注个人/项目作用域与本地/包来源。个人资源通常在 `<agent 目录>/skills` 和 `<agent 目录>/extensions`；受信任项目可提供 `.pi/skills`、`.pi/extensions`、`.agents/skills` 及显式配置的资源路径。当前工作区与会话组装的提示词来源可在右侧抽屉的提示词面板中查看（资源市场页面已移除）。
 
