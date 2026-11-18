@@ -1,6 +1,6 @@
 {
 	"name": "@rexvane/piweb",
-	"version": "0.3.33",
+	"version": "0.3.34",
 	"license": "MIT",
 	"type": "module",
 	"description": "Self-hosted web UI for Pi Coding Agent: AI coding in your browser with workspaces, file diffs, MCP, session import and mobile access.",
