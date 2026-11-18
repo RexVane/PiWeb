@@ -466,6 +466,7 @@ export const ru: Dict = {
 	promptOriginAgent: "Личный",
 	promptOriginPackage: "Пакет",
 	promptOriginExtension: "Расширение",
+	promptOriginPiweb: "PiWeb",
 	promptKindSystem: "Файл системного промпта",
 	promptKindAppend: "Дополнительный промпт",
 	promptKindAgents: "Память проекта (AGENTS.md)",

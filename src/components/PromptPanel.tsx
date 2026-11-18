@@ -16,7 +16,7 @@ import { IconRefreshOutline14, IconCloseOutline14 } from "@/components/icons";
 export type PromptSourceKind = "system" | "append" | "agents" | "skill" | "template" | "tool" | "assembled";
 
 export interface PromptSourceOrigin {
-	scope: "project" | "agent" | "package" | "extension";
+	scope: "project" | "agent" | "package" | "extension" | "piweb";
 	name?: string;
 }
 
@@ -26,6 +26,8 @@ export interface PromptSource {
 	path?: string;
 	origin: PromptSourceOrigin;
 	bytes?: number;
+	/** 虚拟来源的内容（无文件路径时直接携带） */
+	content?: string;
 }
 
 export interface PromptToolView {
@@ -33,7 +35,7 @@ export interface PromptToolView {
 	description?: string;
 	parameters?: unknown;
 	promptGuidelines?: string[];
-	source: "builtin" | "extension";
+	source: "builtin" | "extension" | "piweb";
 }
 
 export interface PromptSourcesData {
@@ -103,6 +105,7 @@ export function PromptPanel({
 	}, [load, refreshKey]);
 
 	const originLabel = (origin: PromptSourceOrigin): string => {
+		if (origin.scope === "piweb") return t.promptOriginPiweb;
 		if (origin.scope === "project") return t.promptOriginProject;
 		if (origin.scope === "agent") return t.promptOriginAgent;
 		if (origin.scope === "package") return `${t.promptOriginPackage} ${origin.name ?? ""}`.trim();
@@ -121,9 +124,14 @@ export function PromptPanel({
 		}
 	};
 
-	/** 文件类：按需读内容，交给外部查看器 */
+	/** 文件类：按需读内容，交给外部查看器；虚拟来源（如 PiWeb 注入）直接展示携带的内容 */
 	const openFile = async (source: PromptSource) => {
-		if (!source.path || !onOpenContent) return;
+		if (!onOpenContent) return;
+		if (!source.path && source.content) {
+			onOpenContent(`${source.name}.md`, source.content);
+			return;
+		}
+		if (!source.path) return;
 		setOpening(source.path);
 		setError(null);
 		try {
@@ -202,7 +210,7 @@ export function PromptPanel({
 								>
 									<span className="min-w-0 flex-1 truncate font-medium" style={{ color: "var(--dsw-label-primary)" }}>{source.name}</span>
 									<span className="flex-none font-mono" style={{ fontSize: 10.5, color: "var(--dsw-label-tertiary)" }}>{formatBytes(source.bytes)}</span>
-									<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10.5, border: "1px solid var(--dsw-border-l2)", color: "var(--dsw-label-tertiary)", background: "var(--dsw-bg-base)" }}>
+									<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10.5, border: `1px solid ${source.origin.scope === "piweb" ? "#d97706" : "var(--dsw-border-l2)"}`, color: source.origin.scope === "piweb" ? "#d97706" : "var(--dsw-label-tertiary)", background: source.origin.scope === "piweb" ? "rgba(217, 119, 6, 0.08)" : "var(--dsw-bg-base)" }}>
 										{originLabel(source.origin)}
 									</span>
 								</button>
@@ -241,7 +249,7 @@ export function PromptPanel({
 											`tool-${tool.name}.md`,
 											[
 												`# ${tool.name}`,
-												tool.source === "builtin" ? t.promptToolBuiltin : t.promptToolExtension,
+												tool.source === "piweb" ? t.promptOriginPiweb : tool.source === "builtin" ? t.promptToolBuiltin : t.promptToolExtension,
 												tool.description ?? "",
 												...(tool.promptGuidelines?.length ? [t.promptGuidelines, ...tool.promptGuidelines.map((line) => `- ${line}`)] : []),
 												...(tool.parameters ? [t.promptParameters, "```json", JSON.stringify(tool.parameters, null, 2), "```"] : []),
@@ -252,8 +260,8 @@ export function PromptPanel({
 									}
 								>
 									<span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold" style={{ color: "var(--dsw-label-primary)" }}>{tool.name}</span>
-									<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10.5, border: "1px solid var(--dsw-border-l2)", color: "var(--dsw-label-tertiary)", background: "var(--dsw-bg-base)" }}>
-										{tool.source === "builtin" ? t.promptToolBuiltin : t.promptToolExtension}
+									<span className="flex-none rounded-full px-2 py-0.5" style={{ fontSize: 10.5, border: `1px solid ${tool.source === "piweb" ? "#d97706" : "var(--dsw-border-l2)"}`, color: tool.source === "piweb" ? "#d97706" : "var(--dsw-label-tertiary)", background: tool.source === "piweb" ? "rgba(217, 119, 6, 0.08)" : "var(--dsw-bg-base)" }}>
+										{tool.source === "piweb" ? t.promptOriginPiweb : tool.source === "builtin" ? t.promptToolBuiltin : t.promptToolExtension}
 									</span>
 								</button>
 							))}

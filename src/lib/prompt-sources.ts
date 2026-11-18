@@ -12,15 +12,18 @@ import path from "node:path";
 import { getAgentDir, getResourceLoader, refreshResourceLoaderIfStale } from "./pi";
 import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./path-security";
 import { FileSizeLimitError, readFileBounded } from "./read-file-bounded";
+import { PIWEB_EXECUTION_GUIDANCE } from "./execution-guidance";
+import { ASK_USER_TOOL } from "./ask-user";
+import { REQUEST_PERMISSION_TOOL } from "./permission-request";
 
 export const MAX_PROMPT_SOURCE_BYTES = 1024 * 1024;
 
 /** 提示词来源类别：界面按这个分组 */
 export type PromptSourceKind = "system" | "append" | "agents" | "skill" | "template" | "tool" | "assembled";
 
-/** 来源出处：界面据此显示徽标（项目 / 个人 / 某个包 / 某个扩展） */
+/** 来源出处：界面据此显示徽标（项目 / 个人 / 某个包 / 某个扩展 / PiWeb 自有） */
 export interface PromptSourceOrigin {
-	scope: "project" | "agent" | "package" | "extension";
+	scope: "project" | "agent" | "package" | "extension" | "piweb";
 	/** scope 为 package/extension 时的名字 */
 	name?: string;
 }
@@ -29,11 +32,13 @@ export interface PromptSource {
 	kind: PromptSourceKind;
 	/** 展示名：文件名（不含目录）或工具名 */
 	name: string;
-	/** 绝对路径；合成项（assembled）没有路径 */
+	/** 绝对路径；合成项（assembled）和虚拟项（PiWeb 注入）没有路径 */
 	path?: string;
 	origin: PromptSourceOrigin;
-	/** 文件字节数（有路径且能 stat 到时） */
+	/** 文件字节数（有路径且能 stat 到时）或虚拟内容字节数 */
 	bytes?: number;
+	/** 虚拟来源的内容（无文件路径时直接携带） */
+	content?: string;
 }
 
 export interface PromptToolView {
@@ -42,7 +47,7 @@ export interface PromptToolView {
 	/** 参数 JSON schema，原样透出由界面格式化 */
 	parameters?: unknown;
 	promptGuidelines?: string[];
-	source: "builtin" | "extension";
+	source: "builtin" | "extension" | "piweb";
 }
 
 export interface PromptSourcesResult {
@@ -204,16 +209,22 @@ export async function listPromptSources({
 
 	const withSizes = await Promise.all(raw.map(async (entry) => ({ ...entry, bytes: await fileSize(entry.path) })));
 	const sources = buildPromptSources(withSizes);
+
+	// PiWeb 自有追加提示词：不是文件、没有路径，直接作为来源条目插入（标记 origin 为 piweb）
+	const guidanceBytes = Buffer.byteLength(PIWEB_EXECUTION_GUIDANCE, "utf8");
+	sources.push({ kind: "append", name: "PiWeb execution guidance", origin: { scope: "piweb" }, bytes: guidanceBytes, content: PIWEB_EXECUTION_GUIDANCE });
+
 	// 压缩摘要：compact 之后它以摘要形式进入上下文，界面上平时看不到，这里一并列出
 	const compacted = session ? latestCompactionSummary(session) : undefined;
 
+	const piwebToolNames: ReadonlySet<string> = new Set([ASK_USER_TOOL, REQUEST_PERMISSION_TOOL]);
 	const tools = session
 		? session.getAllTools().map((tool) => ({
 			name: tool.name,
 			...(tool.description === undefined ? {} : { description: tool.description }),
 			...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
 			...(tool.promptGuidelines?.length ? { promptGuidelines: tool.promptGuidelines } : {}),
-			source: tool.sourceInfo?.source === "builtin" ? ("builtin" as const) : ("extension" as const),
+			source: piwebToolNames.has(tool.name) ? ("piweb" as const) : tool.sourceInfo?.source === "builtin" ? ("builtin" as const) : ("extension" as const),
 		}))
 		: undefined;
 

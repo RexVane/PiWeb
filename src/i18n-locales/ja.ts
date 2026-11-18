@@ -466,6 +466,7 @@ export const ja: Dict = {
 	promptOriginAgent: "個人",
 	promptOriginPackage: "パッケージ",
 	promptOriginExtension: "拡張",
+	promptOriginPiweb: "PiWeb",
 	promptKindSystem: "システムプロンプトファイル",
 	promptKindAppend: "追加プロンプト",
 	promptKindAgents: "プロジェクトメモリ（AGENTS.md）",

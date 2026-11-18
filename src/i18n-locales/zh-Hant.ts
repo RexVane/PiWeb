@@ -466,6 +466,7 @@ export const zhHant: Dict = {
 	promptOriginAgent: "個人",
 	promptOriginPackage: "套件",
 	promptOriginExtension: "擴充功能",
+	promptOriginPiweb: "PiWeb",
 	promptKindSystem: "系統提示詞檔案",
 	promptKindAppend: "附加提示詞",
 	promptKindAgents: "專案記憶（AGENTS.md）",
