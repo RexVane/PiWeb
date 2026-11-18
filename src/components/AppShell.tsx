@@ -480,11 +480,17 @@ export function AppShell() {
 	// 会话区与 Markdown 分块空闲预取：首屏不下载，等真正打开会话时通常已经就绪。
 	// 两个分块并行取，不阻塞首屏；用户很快点进会话时会由 dynamic() 自己等这同一份请求。
 	useEffect(() => {
+		let cancelled = false;
 		const timer = setTimeout(() => {
-			void import("@/components/ChatWindow");
-			void import("@/components/MarkdownBlock");
+			if (cancelled) return;
+			// 预取失败（离线、版本切换或测试环境卸载）不应产生未捕获 rejection。
+			void import("@/components/ChatWindow").catch(() => {});
+			void import("@/components/MarkdownBlock").catch(() => {});
 		}, 1200);
-		return () => clearTimeout(timer);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
 	}, []);
 
 	// 切换会话时清掉轨迹详情的选中态(最右一列回落到抽屉;抽屉入口保持不变)
