@@ -36,6 +36,9 @@ async function makeTempRepo(prefix: string): Promise<{ dir: string; git: (...arg
 			{ windowsHide: true, encoding: "utf8" },
 		).trim();
 	git("init", "-q");
+	git("config", "core.autocrlf", "false");
+	git("config", "user.name", "Test User");
+	git("config", "user.email", "test@example.com");
 	return { dir, git };
 }
 

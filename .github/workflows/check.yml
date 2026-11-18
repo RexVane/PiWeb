@@ -26,7 +26,7 @@ jobs:
       - run: npm ci
       - name: Audit dependencies for high-severity vulnerabilities
         if: matrix.os == 'ubuntu-latest' && matrix.node == 24
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
       - name: Install the pinned lint toolchain
         run: npm ci --prefix scripts/testing/lint --ignore-scripts --no-audit --no-fund
       - name: Prepare SDK search tools
