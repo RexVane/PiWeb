@@ -917,6 +917,7 @@ export const zhHant: Dict = {
 	viewerDiffStaged: "暫存區",
 	viewerDiffWorktree: "工作區",
 	viewerDiffHead: "HEAD",
+	navSkills: "技能",
 	navPlugins: "擴充功能",
 	navAutomations: "自動化工作",
 	workspaceScope: "目前工作區",

@@ -6,23 +6,10 @@ import { SkillsSection } from "@/components/settings/SkillsSection";
 import { PluginsSection } from "@/components/settings/PluginsSection";
 import { AutomationModal } from "@/components/workspace/AutomationModal";
 import { AutomationsWorkspaceView } from "@/components/workspace/AutomationsWorkspaceView";
-import { PluginsWorkspaceView } from "@/components/workspace/SkillsPluginsViews";
+import { PluginsWorkspaceView, SkillsWorkspaceView } from "@/components/workspace/SkillsPluginsViews";
 import type { AutomationTask } from "@/lib/automations/types";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-
-// SkillsWorkspaceView（无入口死代码）删除后，用 SkillsSection 直接复现其原有的
-// 「切到项目页签 → 选工作区 → 操作发到新工作区」行为，覆盖不降级。
-function SkillsWorkspaceHarness() {
-	const [cwd, setCwd] = useState("/a");
-	return (
-		<SkillsSection
-			cwd={cwd}
-			workspaceOptions={[{ value: "/a", label: "/a" }, { value: "/b", label: "/b" }]}
-			onCwdChange={setCwd}
-		/>
-	);
-}
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -45,7 +32,7 @@ describe("workspace resource requests", () => {
 			return Promise.resolve(response(kind === "skills" ? { skills: [skill("Resource", cwd)] } : { packages: [], extensions: [extension("Resource")] }));
 		}));
 		const props = { knownCwds: ["/a", "/b"], defaultCwd: "/a", getWorkspaceName: (cwd: string) => cwd };
-		render(kind === "skills" ? <SkillsWorkspaceHarness /> : <PluginsWorkspaceView {...props} />);
+		render(kind === "skills" ? <SkillsWorkspaceView {...props} /> : <PluginsWorkspaceView {...props} />);
 		await screen.findByText("Resource");
 		// 技能/扩展页的工作区选择器都在「项目」页签下才出现（个人级不需要选工作区）
 		fireEvent.click(screen.getByRole("tab", { name: /项目/ }));

@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
-import { PIWEB_EXECUTION_GUIDANCE } from "../src/lib/execution-guidance";
 import { recycleFixture } from "./fixtures/recycle";
 
 vi.mock("../src/lib/growth-tracker", () => ({
@@ -75,18 +74,19 @@ async function withDefaultTools(defaultTools: string[], run: () => Promise<void>
 }
 
 describe("real SDK session resource isolation", () => {
-	it("keeps execution guidance and user append instructions in discovery, live sessions and reloads", async () => {
+	it("keeps user append instructions without extra PiWeb guidance in discovery, live sessions and reloads", async () => {
 		const { session } = await create();
 		const discovery = pi.getResourceLoader(cwd);
 		await pi.resourceLoaderReady(cwd);
 		for (const loader of [discovery, session.resourceLoader]) {
 			expect(loader.getAppendSystemPrompt()).toContain("User append instructions must be preserved.");
-			expect(loader.getAppendSystemPrompt().filter((prompt) => prompt === PIWEB_EXECUTION_GUIDANCE)).toHaveLength(1);
+			expect(loader.getAppendSystemPrompt().join("\n")).not.toContain("PiWeb task execution");
 		}
-		expect(session.systemPrompt).toContain(PIWEB_EXECUTION_GUIDANCE);
+		expect(session.systemPrompt).toContain("User append instructions must be preserved.");
+		expect(session.systemPrompt).not.toContain("PiWeb task execution");
 		await session.reload();
 		expect(session.systemPrompt).toContain("User append instructions must be preserved.");
-		expect(session.systemPrompt.split(PIWEB_EXECUTION_GUIDANCE)).toHaveLength(2);
+		expect(session.systemPrompt).not.toContain("PiWeb task execution");
 	});
 	it("isolates same-cwd A/B runtimes and keeps discovery and B alive after disposing A", async () => {
 		const a = await create();

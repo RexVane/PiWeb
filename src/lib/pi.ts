@@ -3,7 +3,6 @@
  * 全部走 @earendil-works/pi-coding-agent 公开导出面，pi 零改动。
  */
 import path from "node:path";
-import { PIWEB_EXECUTION_GUIDANCE } from "./execution-guidance";
 import fs from "node:fs";
 import { JsoncSettingsStorage, readJsoncSettingsObjectSync } from "./jsonc-settings-storage";
 import {
@@ -369,9 +368,7 @@ function loaderKey(cwd: string): string {
 export async function createSessionResourceLoader(cwd: string, settingsOverride?: SettingsManager, sessionExtensions: InlineExtension[] = []): Promise<DefaultResourceLoader> {
 	const settingsManager = settingsOverride ?? getSettingsManager(cwd);
 	settingsManager.setProjectTrusted(resolveProjectTrust(cwd).trusted);
-	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: [...BUILTIN_EXTENSIONS, ...sessionExtensions],
-		appendSystemPromptOverride: (base) => [...base, PIWEB_EXECUTION_GUIDANCE],
-	});
+	const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager, extensionFactories: [...BUILTIN_EXTENSIONS, ...sessionExtensions] });
 	disableImplicitPackageInstall(loader);
 	const reload = loader.reload.bind(loader);
 	loader.reload = async (options) => {
@@ -395,9 +392,7 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 	const key = loaderKey(cwd);
 	let entry = loaderCache.get(key);
 	if (!entry) {
-		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd), extensionFactories: BUILTIN_EXTENSIONS,
-			appendSystemPromptOverride: (base) => [...base, PIWEB_EXECUTION_GUIDANCE],
-		});
+		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd), extensionFactories: BUILTIN_EXTENSIONS });
 		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "", packageRoots: [] };
 		disableImplicitPackageInstall(loader);
 		loaderCache.set(key, entry);

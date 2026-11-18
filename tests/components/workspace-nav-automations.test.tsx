@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("Top-level sidebar nav and Settings slimming", () => {
-	it("orders 扩展, 自动化任务 top-to-bottom between 新会话 and 工作区 without 技能 or 提示词", () => {
+	it("orders 技能, 扩展, 自动化任务 top-to-bottom between 新会话 and 工作区 without 提示词 or 资源市场", () => {
 		const onSelectView = vi.fn();
 		const { container } = render(
 			<SessionSidebar
@@ -56,16 +56,18 @@ describe("Top-level sidebar nav and Settings slimming", () => {
 
 		const text = container.textContent ?? "";
 		const idxNew = text.indexOf("新会话");
+		const idxSkills = text.indexOf("技能");
 		const idxPlugins = text.search(/插件|扩展/);
 		const idxAuto = text.indexOf("自动化任务");
 		const idxWs = text.indexOf("工作区");
 
 		expect(idxNew).toBeGreaterThanOrEqual(0);
-		expect(screen.queryByRole("button", { name: "技能" })).toBeNull();
+		expect(screen.getByRole("button", { name: "技能" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "提示词" })).toBeNull();
 		// 资源市场已从产品里移除
 		expect(screen.queryByRole("button", { name: "资源市场" })).toBeNull();
-		expect(idxPlugins).toBeGreaterThan(idxNew);
+		expect(idxSkills).toBeGreaterThan(idxNew);
+		expect(idxPlugins).toBeGreaterThan(idxSkills);
 		expect(idxAuto).toBeGreaterThan(idxPlugins);
 		expect(idxWs).toBeGreaterThan(idxAuto);
 
@@ -74,8 +76,10 @@ describe("Top-level sidebar nav and Settings slimming", () => {
 		const sessionRow = screen.getByText("Session A").closest('[class*="isx-menu-item"]');
 		expect(sessionRow?.getAttribute("data-active")).toBeNull();
 
+		fireEvent.click(screen.getByRole("button", { name: "技能" }));
+		expect(onSelectView).toHaveBeenNthCalledWith(1, "skills");
 		fireEvent.click(screen.getByRole("button", { name: /^(?:插件|扩展)$/ }));
-		expect(onSelectView).toHaveBeenNthCalledWith(1, "plugins");
+		expect(onSelectView).toHaveBeenNthCalledWith(2, "plugins");
 	});
 
 	it("omits 技能 and 插件 tabs from SettingsPanel", () => {

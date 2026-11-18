@@ -261,4 +261,53 @@ describe("usePiWeb single-RTT newSession and optimistic prompt", () => {
 		});
 		expect(hook.result.current.state.messages).toEqual([]);
 	});
+
+	it("auto-clears fallback and error compaction notices after 5 seconds", async () => {
+		const hook = renderHook(() => usePiWeb());
+		await act(async () => {
+			await hook.result.current.newSession("/work");
+		});
+		await waitFor(() => expect(EventSourceMock.instances.length).toBe(1));
+		const stream = EventSourceMock.instances[0];
+		await act(async () => {
+			stream.emit({ type: "snapshot", snapshot: baseSnapshot() });
+		});
+
+		vi.useFakeTimers();
+		try {
+			await act(async () => {
+				stream.emit({ type: "compaction", phase: "end", ts: 100 });
+				vi.advanceTimersByTime(16);
+			});
+			expect(hook.result.current.state.compaction).toEqual({ phase: "end", errorMessage: undefined, ts: 100 });
+
+			await act(async () => {
+				vi.advanceTimersByTime(4_999);
+			});
+			expect(hook.result.current.state.compaction).not.toBeNull();
+
+			await act(async () => {
+				vi.advanceTimersByTime(1);
+			});
+			expect(hook.result.current.state.compaction).toBeNull();
+
+			await act(async () => {
+				stream.emit({ type: "compaction", phase: "end", errorMessage: "context limit", ts: 200 });
+				vi.advanceTimersByTime(16);
+			});
+			expect(hook.result.current.state.compaction).toEqual({ phase: "end", errorMessage: "context limit", ts: 200 });
+
+			await act(async () => {
+				vi.advanceTimersByTime(4_999);
+			});
+			expect(hook.result.current.state.compaction).not.toBeNull();
+
+			await act(async () => {
+				vi.advanceTimersByTime(1);
+			});
+			expect(hook.result.current.state.compaction).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

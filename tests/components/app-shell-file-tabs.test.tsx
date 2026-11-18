@@ -19,7 +19,7 @@ vi.mock("@/components/ChatWindow", () => ({
 vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: () => null }));
 vi.mock("@/components/DrawerPanel", () => ({ DrawerPanel: ({ onOpenContent }: { onOpenContent?: (path: string, content: string) => void }) => <button onClick={() => onOpenContent?.("/skills/demo/SKILL.md", "global skill document")}>Read global skill</button> }));
 vi.mock("@/components/workspace/SkillsPluginsViews", () => ({
-	PluginsWorkspaceView: () => null, MarketWorkspaceView: () => null,
+	SkillsWorkspaceView: () => null, PluginsWorkspaceView: () => null, MarketWorkspaceView: () => null,
 }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null, ExtensionWidgets: () => null }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({

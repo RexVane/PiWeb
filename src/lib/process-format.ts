@@ -47,6 +47,23 @@ export function basename(p: string): string {
 }
 
 /**
+ * 识别对 `SKILL.md` 的读取调用，按官方 Pi CLI `read` 渲染器约定返回其父目录名（作为技能名）；
+ * 非 `read` 调用、或目标文件名不是精确的 `SKILL.md` 时返回 null。
+ */
+export function skillNameFromRead(name: string, args: unknown): string | null {
+	if (toolKind(name) !== "read") return null;
+	if (!args || typeof args !== "object") return null;
+	const a = args as Record<string, unknown>;
+	const raw = typeof a.path === "string" ? a.path : typeof a.file_path === "string" ? a.file_path : "";
+	if (!raw) return null;
+	const parts = stripTrailingSlash(canonPath(raw)).split("/").filter(Boolean);
+	if (parts.length === 0 || parts[parts.length - 1] !== "SKILL.md") return null;
+	const parent = parts.length >= 2 ? parts[parts.length - 2] : "";
+	if (!parent || parent === "." || parent === ".." || /^[a-zA-Z]:$/.test(parent)) return "SKILL.md";
+	return parent;
+}
+
+/**
  * 命令行摘要：去掉开头“cd <工作区> &&”这类噪音（目标恰为当前工作区时才去），
  * 折叠空白，只取首行；返回总行数供“…N 行”提示。
  */

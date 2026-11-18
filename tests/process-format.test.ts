@@ -14,6 +14,7 @@ import {
 	previewSide,
 	relativizeInText,
 	relativizePath,
+	skillNameFromRead,
 	toolKind,
 	trimNoiseTail,
 } from "../src/lib/process-format";
@@ -237,5 +238,19 @@ describe("上下文分项的消息归类", () => {
 
 	it("没有 bash 字段的历史消息不影响归类", () => {
 		expect(classifyMessageChars([{ role: "bashExecution", content: [] }])).toEqual({ user: 0, agentText: 0, agentThinking: 0, agentToolCall: 0, toolOutput: 0 });
+	});
+});
+
+describe("skillNameFromRead", () => {
+	it("extracts skill folder name from read calls targeting exact SKILL.md", () => {
+		expect(skillNameFromRead("read", { path: "C:\\Users\\u\\.agents\\skills\\plan-mode\\SKILL.md" })).toBe("plan-mode");
+		expect(skillNameFromRead("read", { file_path: "/home/u/.pi/skills/code-review/SKILL.md/" })).toBe("code-review");
+		expect(skillNameFromRead("read", { path: ".pi/skills/local-skill/SKILL.md" })).toBe("local-skill");
+		expect(skillNameFromRead("read", { path: "./SKILL.md" })).toBe("SKILL.md");
+		expect(skillNameFromRead("read", { path: "C:\\SKILL.md" })).toBe("SKILL.md");
+		expect(skillNameFromRead("read", { path: "src/skill.md" })).toBeNull();
+		expect(skillNameFromRead("read", { path: "docs/README.md" })).toBeNull();
+		expect(skillNameFromRead("edit", { path: "/skills/x/SKILL.md" })).toBeNull();
+		expect(skillNameFromRead("bash", { command: "cat SKILL.md" })).toBeNull();
 	});
 });

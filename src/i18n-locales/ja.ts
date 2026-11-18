@@ -917,6 +917,7 @@ export const ja: Dict = {
 	viewerDiffStaged: "ステージング",
 	viewerDiffWorktree: "ワークツリー",
 	viewerDiffHead: "HEAD",
+	navSkills: "スキル",
 	navPlugins: "拡張",
 	navAutomations: "自動化タスク",
 	workspaceScope: "現在のワークスペース",

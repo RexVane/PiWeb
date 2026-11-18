@@ -4160,11 +4160,11 @@ mark.pw-diff-word[data-kind="del"] {
 	border-left: 1px solid var(--dsw-border-l2);
 	border-right: 1px solid var(--dsw-border-l2);
 }
+.pw-sdiff-pane {
+	overscroll-behavior: contain;
+}
 .pw-sdiff-right {
 	scrollbar-gutter: stable;
-}
-.pw-sdiff-left::-webkit-scrollbar:vertical {
-	width: 0;
 }
 .pw-sdiff-sizer {
 	height: 0;

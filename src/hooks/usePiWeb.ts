@@ -166,6 +166,10 @@ function snapshotContainsOptimisticPrompt(messages: WebMessage[], pending: Pendi
 	return messages.some((m) => m.role === "user" && !isOptimisticUserMessage(m));
 }
 
+function clearCompletedCompaction(s: PiWebState): void {
+	if (s.compaction?.phase === "end" && !s.compaction.errorMessage) s.compaction = null;
+}
+
 const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 	const s = { ...state };
 	switch (evt.type) {
@@ -174,6 +178,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			// 只靠 retry_end 不够——SDK 换了事件名、某条路径没发结束事件、旧服务端压根不发，
 			// 界面就会挂着「重试 1/5」而模型其实早在正常输出了（用户已反馈两次）。
 			s.retryNotice = null;
+			clearCompletedCompaction(s);
 			// 新服务端按稳定流 ID 定位；旧协议仍按最近 pending 消息兼容。
 			const msgs = [...s.messages];
 			// 从尾部找：增量几乎总是落在最后一条消息上，长会话里从头扫每个 token 都是一次全表遍历
@@ -207,6 +212,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			return s;
 		}
 		case "toolcall": {
+			clearCompletedCompaction(s);
 			// 参数还在生成：先把这一行立起来（args 是截短过的部分参数，完整参数随 message end 到达）
 			const msgs = [...s.messages];
 			let i = msgs.length - 1;
@@ -236,6 +242,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			return s;
 		}
 		case "message": {
+			if (evt.message.role !== "summary") clearCompletedCompaction(s);
 			const msgs = [...s.messages];
 			const same = msgs.findIndex((message) =>
 				(!!evt.message.id && message.id === evt.message.id) ||
@@ -247,7 +254,6 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				return s;
 			}
 			if (evt.message.role === "user") {
-				if (s.compaction?.phase === "end" && !s.compaction.errorMessage) s.compaction = null;
 				for (let i = msgs.length - 1; i >= 0; i -= 1) {
 					if (isOptimisticUserMessage(msgs[i])) {
 						msgs[i] = evt.message;
@@ -275,6 +281,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			return s;
 		}
 		case "tool": {
+			clearCompletedCompaction(s);
 			const tools = { ...s.tools };
 			const prev = tools[evt.id];
 			tools[evt.id] = {
@@ -321,7 +328,6 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			if (s.snapshot) s.snapshot = { ...s.snapshot, stats: evt.stats, contextUsage: evt.contextUsage };
 			return s;
 		case "compaction":
-			s.compaction = { phase: evt.phase, errorMessage: evt.errorMessage, ts: evt.ts };
 			if (evt.marker) {
 				// 已显示的消息全部保留；分隔卡插到保留下来的第一条前面，和刷新后的快照位置一致
 				const marker = evt.marker;
@@ -333,6 +339,11 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				else msgs.push(marker);
 				s.messages = msgs;
 			}
+			// 已有消息流分隔卡时直接清掉底部状态条，避免与历史分隔卡重复及持续粘在回复末尾；
+			// 仅在压缩中、压缩失败或未带分隔卡降级时保留底部提示
+			s.compaction = evt.phase === "end" && !evt.errorMessage && evt.marker
+				? null
+				: { phase: evt.phase, errorMessage: evt.errorMessage, ts: evt.ts };
 			return s;
 		case "traj": {
 			if (s.snapshot) {
@@ -636,10 +647,10 @@ export function usePiWeb() {
 	const clearCompaction = useCallback(() => setState((current) => ({ ...current, compaction: null })), []);
 	useEffect(() => {
 		const notice = state.compaction;
-		if (!notice || notice.phase !== "end" || !notice.errorMessage) return;
+		if (!notice || notice.phase !== "end") return;
 		const timer = setTimeout(() => {
 			setState((current) => current.compaction?.ts === notice.ts ? { ...current, compaction: null } : current);
-		}, 8_000);
+		}, 5_000);
 		return () => clearTimeout(timer);
 	}, [state.compaction]);
 

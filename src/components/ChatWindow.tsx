@@ -67,6 +67,7 @@ import {
 	previewSide,
 	relativizeInText,
 	relativizePath,
+	skillNameFromRead,
 	splitLines,
 	toolKind,
 	trimNoiseTail,
@@ -629,7 +630,8 @@ const ToolStep = memo(function ToolStep({
 	const output = state?.result ?? state?.partialResult ?? "";
 	const webInfo = useMemo(() => collectToolWebData(name, args, state, nested), [args, name, nested, state]);
 	const webRole = webInfo.role;
-	const stepKind: StepKind = webRole === "search" ? "web_search" : webRole === "fetch" ? "web_fetch" : kind;
+	const readSkillName = useMemo(() => (webRole ? null : skillNameFromRead(name, args)), [args, name, webRole]);
+	const stepKind: StepKind = webRole === "search" ? "web_search" : webRole === "fetch" ? "web_fetch" : readSkillName ? "skill" : kind;
 	const webQuery = useMemo(() => (webRole ? extractWebQuery(name, args, webRole) : ""), [args, name, webRole]);
 	const webTargetHref = useMemo(() => (webRole === "fetch" && webQuery ? normalizeWebUrl(webQuery) : null), [webQuery, webRole]);
 	const webSources = webInfo.sources;
@@ -755,7 +757,14 @@ const ToolStep = memo(function ToolStep({
 	) : (
 		<span className="pw-verb" data-failed={failed || undefined}>{webRole === "fetch" ? t.stepWebFetched : t.stepWebSearched}</span>
 	);
-	const regularSummaryNode = (
+	const regularSummaryNode = readSkillName ? (
+		<>
+			{running ? <span className="pw-shimmer">{t.stepRunning}</span> : failed ? <span className="pw-verb" data-failed>{stepVerb(tt, kind, name)}</span> : null}
+			{badge && <span className="pw-badge">{badge}</span>}
+			<span className="pw-badge">skill</span>
+			<span className="pw-skill-name" title={summary.text || argPath || argsTitle}>{readSkillName}</span>
+		</>
+	) : (
 		<>
 			{running ? <span className="pw-shimmer">{name === ASK_USER_TOOL ? t.stepAskWaiting : t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
 			{badge && <span className="pw-badge">{badge}</span>}
@@ -1213,6 +1222,7 @@ function isCollapsible(it: Item, finalIdx: number): boolean {
 		const s = it.state;
 		if (!s || s.state !== "done" || s.isError) return false;
 		const k = toolKind(it.call.name);
+		if (k === "read" && skillNameFromRead(it.call.name, it.call.arguments)) return false;
 		if (k === "cmd" || k === "read" || k === "search") return true;
 		return classifyWebTool(it.call.name, it.call.arguments, s.result ?? s.partialResult) !== null || nestedHasWebTool(it.nested);
 	}

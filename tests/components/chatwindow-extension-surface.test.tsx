@@ -96,3 +96,54 @@ describe("嵌套调用", () => {
 		expect(container.querySelector(".pw-nested")).toBeNull();
 	});
 });
+
+describe("模型主动读取 SKILL.md 的 [skill] 步骤渲染", () => {
+	it("read SKILL.md 渲染成 skill 样式且不折叠进文件读取汇总，保留原文展开与打开文件能力", () => {
+		const calls: WebMessage = {
+			role: "assistant",
+			id: "a1",
+			content: [
+				{ type: "toolCall", id: "r-skill", name: "read", arguments: { path: "C:\\Users\\demo\\.agents\\skills\\plan-review\\SKILL.md" } },
+				{ type: "toolCall", id: "r-file", name: "read", arguments: { path: "src/app.ts" } },
+			],
+			stopReason: "toolUse",
+			timestamp: 2,
+		};
+		const tools: Record<string, ToolCardState> = {
+			"r-skill": {
+				name: "read",
+				args: { path: "C:\\Users\\demo\\.agents\\skills\\plan-review\\SKILL.md" },
+				state: "done",
+				result: "# Plan Review\nCheck edges.",
+			},
+			"r-file": {
+				name: "read",
+				args: { path: "src/app.ts" },
+				state: "done",
+				result: "export const app = 1;",
+			},
+		};
+		const { container } = render(
+			<ChatWindow
+				messages={[userMessage("u1", "检查一下"), calls, answer("a2", "已检查")]}
+				tools={tools}
+			/>,
+		);
+		const skillStep = container.querySelector('.pw-step[data-kind="skill"]');
+		expect(skillStep).toBeTruthy();
+		expect(skillStep?.querySelector(".pw-badge")?.textContent).toBe("skill");
+		const skillName = skillStep?.querySelector(".pw-skill-name");
+		expect(skillName?.textContent).toBe("plan-review");
+		expect(skillName?.getAttribute("title")).toBe("C:/Users/demo/.agents/skills/plan-review/SKILL.md");
+
+		// 普通 read 被折进汇总，read SKILL.md 保持独立可见
+		expect(container.querySelector(".pw-summary")?.textContent).toContain("读了 1 个文件");
+
+		// 点击可展开 SKILL.md 原始内容
+		const btn = skillStep!.querySelector(".pw-line-interactive")!;
+		expect(btn.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(btn);
+		expect(btn.getAttribute("aria-expanded")).toBe("true");
+		expect(skillStep?.textContent).toContain("# Plan Review");
+	});
+});

@@ -23,6 +23,7 @@ import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
 import { canonicalDraftPath, knownWorkspaceCwds, sameWorkspacePath } from "@/lib/workspace-path";
 
 // 首屏不需要的重组件按需加载（设置面板含供应商配置与代码高亮，轨迹/文件只在打开时才用）
+const SkillsWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.SkillsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
 const PluginsWorkspaceView = dynamic(() => import("@/components/workspace/SkillsPluginsViews").then((m) => m.PluginsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
 const AutomationsWorkspaceView = dynamic(() => import("@/components/workspace/AutomationsWorkspaceView").then((m) => m.AutomationsWorkspaceView), { ssr: false, loading: WorkspaceViewLoading });
 const SettingsPanel = dynamic(() => import("@/components/SettingsPanel").then((m) => m.SettingsPanel), { ssr: false });
@@ -636,7 +637,8 @@ export function AppShell() {
 	latestMessagesRef.current = state.messages;
 	const getComposerMessages = useCallback(() => latestMessagesRef.current, []);
 	const loadFullContext = useCallback(() => sendCommand({ cmd: "prepare" }), [sendCommand]);
-	const compactedRecently = Boolean(state.compaction?.phase === "end" && !state.compaction?.errorMessage);
+	const hasCompactionMarker = state.messages.some((m) => m.role === "summary" && m.summaryKind === "compaction");
+	const compactedRecently = Boolean((state.compaction?.phase === "end" && !state.compaction?.errorMessage) || hasCompactionMarker);
 	const composerContextSource = useMemo(
 		() => ({
 			systemChars: contextSystemChars,
@@ -1238,9 +1240,16 @@ export function AppShell() {
 
 			{/* 三列网格:侧栏 | 会话区 | 最右一列(项目栏已进抽屉,不再有独立的项目列) */}
 
-			{/* 会话区 / 顶部工作区页面（技能 / 插件 / 自动化任务） */}
+			{/* 会话区 / 顶部工作区页面（技能 / 扩展 / 自动化任务） */}
 			<div className="pi-main flex min-h-0 min-w-0 flex-col">
-				{activeView === "plugins" ? (
+				{activeView === "skills" ? (
+					<SkillsWorkspaceView
+						knownCwds={knownCwds}
+						defaultCwd={panelCwd}
+						getWorkspaceName={getWorkspaceName}
+						onOpenFileContent={viewer.openStatic}
+					/>
+				) : activeView === "plugins" ? (
 					<PluginsWorkspaceView
 						knownCwds={knownCwds}
 						defaultCwd={panelCwd}

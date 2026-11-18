@@ -27,7 +27,8 @@ describe("PiWeb SSE event folding", () => {
 
 		const next = foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeId: "u2", ts: 5 });
 		expect(ids(next)).toEqual(["u1", "a1", "c1", "u2", "a2"]);
-		expect(next.compaction).toEqual({ phase: "end", errorMessage: undefined, ts: 5 });
+		// 分隔卡已插入消息流，不再额外留底部状态条重复提示
+		expect(next.compaction).toBeNull();
 		expect(initial.messages).toBe(messages);
 		// 重复收到同一事件（重连补发）不重复插卡
 		expect(ids(foldPiWebEvent(next, { type: "compaction", phase: "end", marker, beforeId: "u2", ts: 6 }))).toEqual(["u1", "a1", "c1", "u2", "a2"]);
@@ -35,9 +36,19 @@ describe("PiWeb SSE event folding", () => {
 		expect(ids(foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeStreamId: "stream-u2", ts: 5 }))).toEqual(["u1", "a1", "c1", "u2", "a2"]);
 		// 找不到保留消息就追加到末尾，不丢卡片
 		expect(ids(foldPiWebEvent(initial, { type: "compaction", phase: "end", marker, beforeId: "missing", ts: 5 }))).toEqual(["u1", "a1", "u2", "a2", "c1"]);
-		// 用户发出下一条消息时再清掉底部的压缩完成提示条（分隔卡本身仍留在消息流里）
-		const nextTurn = foldPiWebEvent(next, { type: "message", phase: "start", message: { role: "user", id: "u3", content: text("q3") }, ts: 7 });
-		expect(nextTurn.compaction).toBeNull();
+	});
+
+	it("keeps fallback completion notice without marker until subsequent user or model activity", () => {
+		const text = (value: string) => [{ type: "text" as const, text: value }];
+		const initial = { messages: [], tools: {}, compaction: null } as unknown as PiWebState;
+		const fallback = foldPiWebEvent(initial, { type: "compaction", phase: "end", ts: 5 });
+		expect(fallback.compaction).toEqual({ phase: "end", errorMessage: undefined, ts: 5 });
+
+		expect(foldPiWebEvent(fallback, { type: "message", phase: "start", message: { role: "user", id: "u3", content: text("q3") }, ts: 6 }).compaction).toBeNull();
+		expect(foldPiWebEvent(fallback, { type: "delta", contentIndex: 0, kind: "text", delta: "hi", ts: 6 }).compaction).toBeNull();
+		expect(foldPiWebEvent(fallback, { type: "toolcall", contentIndex: 0, id: "t1", name: "read", args: {}, ts: 6 }).compaction).toBeNull();
+		expect(foldPiWebEvent(fallback, { type: "tool", id: "t1", name: "read", state: "running", ts: 6 }).compaction).toBeNull();
+		expect(foldPiWebEvent(fallback, { type: "message", phase: "start", message: { role: "assistant", id: "a3", content: text("ok") }, ts: 6 }).compaction).toBeNull();
 	});
 
 	it("updates a final already in the snapshot without duplicating it or losing the delayed end", () => {

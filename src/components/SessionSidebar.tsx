@@ -36,6 +36,7 @@ import {
 	IconSearchOutline16,
 	IconCloseOutline14,
 	IconSettingsOutline16,
+	IconSkillOutline16,
 	IconTrashOutline16,
 	IconTriangleRightFill14,
 } from "@/components/icons";
@@ -71,7 +72,7 @@ function basename(p: string): string {
 
 type GroupBy = "workspace" | "flat";
 type OrderBy = "updated" | "manual";
-export type WorkspaceView = "chat" | "plugins" | "automations";
+export type WorkspaceView = "chat" | "skills" | "plugins" | "automations";
 
 interface WorkspaceGroup {
 	cwd: string;
@@ -502,6 +503,7 @@ function SessionSidebarImpl({
 	};
 
 	const workspaceNavItems: { id: Exclude<WorkspaceView, "chat">; label: string; icon: React.ReactNode }[] = [
+		{ id: "skills", label: t.navSkills, icon: <IconSkillOutline16 size={15} /> },
 		{ id: "plugins", label: t.navPlugins, icon: <IconPluginOutline16 size={15} /> },
 		{ id: "automations", label: t.navAutomations, icon: <IconClockOutline16 size={15} /> },
 	];
@@ -895,7 +897,7 @@ function SessionSidebarImpl({
 				</button>
 			</div>
 
-			{/* 顶部工作区导航：固定顺序 扩展 → 资源市场 → 自动化任务 */}
+			{/* 顶部工作区导航：固定顺序 技能 → 扩展 → 自动化任务 */}
 			{onSelectView && (
 				<nav className="flex flex-col gap-0.5 px-3 pt-2.5">
 					{workspaceNavItems.map((item) => {

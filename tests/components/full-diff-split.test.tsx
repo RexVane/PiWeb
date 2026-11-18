@@ -87,4 +87,43 @@ describe("FullDiff split & inline modes", () => {
 		ref.current?.nextChange();
 		ref.current?.prevChange();
 	});
+
+	it("absorbs async echo scrolls without fighting the active pane, ignores horizontal-only scroll, and reaches bottom on short overflow", () => {
+		const lines: DiffLine[] = [];
+		for (let i = 1; i <= 10; i += 1) lines.push({ kind: "ctx", old: i, new: i, text: `head_${i}` });
+		for (let i = 11; i <= 42; i += 1) lines.push({ kind: "del", old: i, text: `deleted_${i}` });
+		for (let i = 1; i <= 28; i += 1) lines.push({ kind: "ctx", old: 42 + i, new: 10 + i, text: `tail_${i}` });
+		// 左 70 行 = 1400px，右 38 行 = 760px；视口 600px 时右最大仅 160px（小于 clientHeight/3）
+		const view = render(<FullDiff lines={lines} folded={false} layout="split" />);
+		const leftPane = view.container.querySelector(".pw-sdiff-left") as HTMLDivElement;
+		const rightPane = view.container.querySelector(".pw-sdiff-right") as HTMLDivElement;
+
+		Object.defineProperty(leftPane, "clientHeight", { configurable: true, value: 600 });
+		Object.defineProperty(rightPane, "clientHeight", { configurable: true, value: 600 });
+		Object.defineProperty(leftPane, "scrollHeight", { configurable: true, value: 1400 });
+		Object.defineProperty(rightPane, "scrollHeight", { configurable: true, value: 760 });
+
+		// 1) 拖拽/滚轮右侧（短溢出）滑到底部 160px，左侧也必须同步到真实底端 800px
+		fireEvent.pointerDown(rightPane);
+		rightPane.scrollTop = 160;
+		fireEvent.scroll(rightPane);
+		expect(leftPane.scrollTop).toBeCloseTo(800, 1);
+
+		// 2) 模拟延迟到下一帧才触发的对侧回声 scroll（带 0.6px DPI 舍入误差），绝不能反向拖回源侧
+		rightPane.scrollTop = 100;
+		leftPane.scrollTop = 800 - 0.6;
+		fireEvent.scroll(leftPane);
+		expect(rightPane.scrollTop).toBe(100);
+
+		// 3) 仅横向 scrollLeft 变化时，不得触发纵向同步覆盖另一侧位置
+		leftPane.scrollLeft = 240;
+		fireEvent.scroll(leftPane);
+		expect(rightPane.scrollTop).toBe(100);
+
+		// 4) 用户滚轮切回左侧主动滚动，立即接管并带动右侧同步
+		fireEvent.wheel(leftPane);
+		leftPane.scrollTop = 0;
+		fireEvent.scroll(leftPane);
+		expect(rightPane.scrollTop).toBe(0);
+	});
 });

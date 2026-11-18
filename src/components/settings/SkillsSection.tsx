@@ -250,158 +250,170 @@ export function SkillsSection({
 				<div className={hideDesc ? "grid grid-cols-1 gap-3 md:grid-cols-2" : "flex flex-col gap-2.5"}>
 					{filteredSkills.map((s) => {
 						const accent = SCOPE_STYLE[s.scope];
+						const shortPath = shortenSkillPath(s.filePath);
+						const showPackageSource = s.origin === "package" && Boolean(s.sourceLabel) && s.sourceLabel !== shortPath;
 						return (
 							<div
 								key={s.filePath}
-								className="flex flex-col rounded-lg px-4 py-3.5 transition-colors hover:bg-[var(--dsw-hover)]"
+								className="flex flex-col justify-between rounded-lg px-4 py-3.5 transition-colors hover:bg-[var(--dsw-hover)]"
 								style={{
 									border: "0.5px solid var(--dsw-border-l2)",
 									opacity: s.disabled ? 0.68 : 1,
 								}}
 							>
-								<div className="flex items-start gap-3">
-									<div
-										className="flex flex-none items-center justify-center rounded-lg"
-										style={{ width: 38, height: 38, background: accent.bg, color: accent.color }}
-									>
-										<IconSkillOutline16 size={18} />
-									</div>
-
-									<div className="min-w-0 flex-1">
-										<div className="flex items-center justify-between gap-2">
-											<div className="flex min-w-0 flex-wrap items-center gap-1.5">
-												<span className="truncate font-semibold" style={{ fontSize: "var(--dsh-ui-font-md)", color: "var(--dsw-label-primary)" }}>
-													{s.name}
-												</span>
-												<span
-													className="rounded-full px-2 py-0.5"
-													style={{
-														fontSize: "var(--dsh-ui-font-2xs)",
-														background: accent.bg,
-														color: accent.color,
-														fontWeight: 500,
-													}}
-													title={scopeHint(s)}
-												>
-													{scopeLabel(s)}
-												</span>
-												{s.origin === "package" && (
-													<span
-														className="rounded-full px-2 py-0.5"
-														style={{
-															fontSize: "var(--dsh-ui-font-2xs)",
-															background: "rgba(139, 92, 246, 0.12)",
-															color: "#8b5cf6",
-															fontWeight: 500,
-														}}
-														title={t.skillOriginPackageHint}
-													>
-														{t.skillOriginPackage}
-													</span>
-												)}
-												{s.disabled && (
-													<span
-														className="rounded-full px-2 py-0.5"
-														style={{
-															fontSize: "var(--dsh-ui-font-2xs)",
-															background: "var(--dsw-hover)",
-															color: "var(--dsw-label-caption)",
-														}}
-													>
-														{t.skillDisabledBadge}
-													</span>
-												)}
-											</div>
-
-											<button
-												className="liq-sw flex-none"
-												data-on={!s.disabled ? "true" : undefined}
-												role="switch"
-												aria-checked={!s.disabled}
-												aria-label={s.name}
-												disabled={busy}
-												onClick={() => void perform(s, "toggle")}
-											>
-												<span className="liq-thumb" />
-											</button>
+								<div>
+									<div className="flex items-start gap-3">
+										<div
+											className="flex flex-none items-center justify-center rounded-lg"
+											style={{ width: 38, height: 38, background: accent.bg, color: accent.color }}
+										>
+											<IconSkillOutline16 size={18} />
 										</div>
 
-										<p
-											className="mt-1.5 line-clamp-2"
-											style={{ fontSize: "var(--dsh-ui-font-125)", lineHeight: 1.5, color: "var(--dsw-label-secondary)", minHeight: hideDesc ? 38 : undefined }}
-											title={s.description}
-										>
-											{s.description || shortenSkillPath(s.filePath)}
-										</p>
-									</div>
-								</div>
+										<div className="min-w-0 flex-1">
+											<div className="flex items-center justify-between gap-2">
+												<div className="flex min-w-0 flex-wrap items-center gap-1.5">
+													<span className="truncate font-semibold" style={{ fontSize: "var(--dsh-ui-font-md)", color: "var(--dsw-label-primary)" }}>
+														{s.name}
+													</span>
+													<span
+														className="rounded-full px-2 py-0.5"
+														style={{
+															fontSize: "var(--dsh-ui-font-2xs)",
+															background: accent.bg,
+															color: accent.color,
+															fontWeight: 500,
+														}}
+														title={scopeHint(s)}
+													>
+														{scopeLabel(s)}
+													</span>
+													{s.origin === "package" && (
+														<span
+															className="rounded-full px-2 py-0.5"
+															style={{
+																fontSize: "var(--dsh-ui-font-2xs)",
+																background: "rgba(139, 92, 246, 0.12)",
+																color: "#8b5cf6",
+																fontWeight: 500,
+															}}
+															title={t.skillOriginPackageHint}
+														>
+															{t.skillOriginPackage}
+														</span>
+													)}
+													{s.disabled && (
+														<span
+															className="rounded-full px-2 py-0.5"
+															style={{
+																fontSize: "var(--dsh-ui-font-2xs)",
+																background: "var(--dsw-hover)",
+																color: "var(--dsw-label-caption)",
+															}}
+														>
+															{t.skillDisabledBadge}
+														</span>
+													)}
+												</div>
 
-								<div className="hairline-t mt-3 flex flex-wrap items-center justify-between gap-2 pt-2.5">
-									<div className="flex min-w-0 items-center gap-2">
-										<code
-											className="truncate rounded px-1.5 py-0.5"
-											style={{
-												fontSize: "var(--dsh-ui-font-2xs)",
-												fontFamily: "var(--font-mono)",
-												background: "var(--dsw-hover)",
-												color: "var(--dsw-label-tertiary)",
-											}}
-											title={`${t.skillTriggerLabel}: /skill:${s.name}`}
-										>
-											/skill:{s.name}
-										</code>
-										<span
-											className="hidden truncate sm:inline"
-											style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}
-											title={s.filePath}
-										>
-											{shortenSkillPath(s.filePath)}
-										</span>
-										{s.sourceLabel && s.sourceLabel !== shortenSkillPath(s.filePath) && (
-											<span
-												className="truncate rounded px-1.5 py-0.5"
+												<button
+													className="liq-sw flex-none"
+													data-on={!s.disabled ? "true" : undefined}
+													role="switch"
+													aria-checked={!s.disabled}
+													aria-label={s.name}
+													disabled={busy}
+													onClick={() => void perform(s, "toggle")}
+												>
+													<span className="liq-thumb" />
+												</button>
+											</div>
+
+											<p
+												className="mt-1.5 line-clamp-2"
+												style={{ fontSize: "var(--dsh-ui-font-125)", lineHeight: 1.5, color: "var(--dsw-label-secondary)", minHeight: hideDesc ? 38 : undefined }}
+												title={s.description}
+											>
+												{s.description || shortPath}
+											</p>
+										</div>
+									</div>
+
+									{/* 命令与文件路径单独占区，避免和底部操作按钮挤在同一行互相截断 */}
+									<div className="mt-3 flex flex-col gap-1.5 pl-[50px]">
+										<div className="flex min-w-0 flex-wrap items-center gap-1.5">
+											<code
+												className="max-w-full truncate rounded px-1.5 py-0.5"
 												style={{
 													fontSize: "var(--dsh-ui-font-2xs)",
 													fontFamily: "var(--font-mono)",
 													background: "var(--dsw-hover)",
-													color: "var(--dsw-label-caption)",
+													color: "var(--dsw-label-secondary)",
 												}}
-												title={`${t.skillSourceLabel}: ${s.sourceLabel}`}
+												title={`${t.skillTriggerLabel}: /skill:${s.name}`}
 											>
-												{s.sourceLabel}
-											</span>
-										)}
+												/skill:{s.name}
+											</code>
+											{showPackageSource && (
+												<span
+													className="min-w-0 max-w-full truncate rounded px-1.5 py-0.5"
+													style={{
+														fontSize: "var(--dsh-ui-font-2xs)",
+														fontFamily: "var(--font-mono)",
+														background: "var(--dsw-hover)",
+														color: "var(--dsw-label-caption)",
+													}}
+													title={`${t.skillSourceLabel}: ${s.sourceLabel}`}
+												>
+													{s.sourceLabel}
+												</span>
+											)}
+										</div>
+										<div
+											className="truncate"
+											style={{
+												fontSize: "var(--dsh-ui-font-2xs)",
+												fontFamily: "var(--font-mono)",
+												color: "var(--dsw-label-caption)",
+											}}
+											title={s.filePath}
+										>
+											{shortPath}
+										</div>
 									</div>
+								</div>
 
-									<div className="flex flex-none items-center gap-1.5">
+								<div className="hairline-t mt-3 flex items-center justify-between gap-2 pt-2.5">
+									<button
+										type="button"
+										className="btn-outline"
+										style={{
+											height: "max(28px, calc(28px + var(--dsh-content-font-delta)))",
+											fontSize: "var(--dsh-ui-font-xs)",
+											padding: "0 10px",
+										}}
+										disabled={busy}
+										onClick={() => void perform(s, "read")}
+									>
+										<IconFileOutline16 size={13} />
+										<span>{t.viewSkillFile}</span>
+									</button>
+									{s.origin !== "package" ? (
 										<button
 											type="button"
-											className="inline-flex items-center gap-1 rounded-lg transition-colors hover:bg-[var(--dsw-active)]"
-											style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-label-secondary)", background: "var(--dsw-hover)" }}
+											className="rounded-lg transition-colors hover:bg-[var(--dsw-hover)]"
+											style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-danger)" }}
+											title={t.deleteSkillHint}
 											disabled={busy}
-											onClick={() => void perform(s, "read")}
+											onClick={() => void perform(s, "delete")}
 										>
-											<IconFileOutline16 size={13} />
-											<span>{t.viewSkillFile}</span>
+											{t.delete}
 										</button>
-										{s.origin !== "package" && (
-											<button
-												type="button"
-												className="rounded-lg transition-colors hover:bg-[var(--dsw-hover)]"
-												style={{ fontSize: "var(--dsh-ui-font-xs)", padding: "4px 10px", color: "var(--dsw-danger)" }}
-												title={t.deleteSkillHint}
-												disabled={busy}
-												onClick={() => void perform(s, "delete")}
-											>
-												{t.delete}
-											</button>
-										)}
-										{s.origin === "package" && (
-											<span style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }} title={t.skillDeletePackageHint}>
-												{t.skillDeletePackageHint}
-											</span>
-										)}
-									</div>
+									) : (
+										<span className="truncate" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }} title={t.skillDeletePackageHint}>
+											{t.skillDeletePackageHint}
+										</span>
+									)}
 								</div>
 							</div>
 						);

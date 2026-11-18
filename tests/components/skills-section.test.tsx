@@ -81,6 +81,10 @@ describe("SkillsSection", () => {
 		await screen.findByText("git-workflow");
 		expect(screen.getByText("/skill:git-workflow")).toBeTruthy();
 		expect(screen.getByText("/skill:db-migrate")).toBeTruthy();
+		expect(screen.getByText(".agents/skills/git-workflow/SKILL.md")).toBeTruthy();
+		// 本地技能不重复显示冗余目录徽章；安装包技能保留来源包名
+		expect(screen.queryByText("~/.agents/skills")).toBeNull();
+		expect(screen.getByText("npm:pkg")).toBeTruthy();
 		expect(screen.getByText("已关闭")).toBeTruthy();
 
 		// Scope filter pill: only personal / project remain (包 is an origin badge, not a scope)

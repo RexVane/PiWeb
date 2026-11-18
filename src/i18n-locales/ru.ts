@@ -917,6 +917,7 @@ export const ru: Dict = {
 	viewerDiffStaged: "Индекс",
 	viewerDiffWorktree: "Рабочая копия",
 	viewerDiffHead: "HEAD",
+	navSkills: "Навыки",
 	navPlugins: "Расширения",
 	navAutomations: "Автоматизации",
 	workspaceScope: "Текущая рабочая область",

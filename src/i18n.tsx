@@ -941,7 +941,8 @@ const zh = {
 	viewerDiffStaged: "暂存区",
 	viewerDiffWorktree: "工作区",
 	viewerDiffHead: "HEAD",
-	// 侧栏与主工作区视图（扩展 / 自动化任务）
+	// 侧栏与主工作区视图（技能 / 扩展 / 自动化任务）
+	navSkills: "技能",
 	navPlugins: "扩展",
 	navAutomations: "自动化任务",
 	workspaceScope: "当前工作区",
@@ -1945,6 +1946,7 @@ const en: Dict = {
 	viewerDiffStaged: "Staged",
 	viewerDiffWorktree: "Working tree",
 	viewerDiffHead: "HEAD",
+	navSkills: "Skills",
 	navPlugins: "Extensions",
 	navAutomations: "Automations",
 	workspaceScope: "Workspace",

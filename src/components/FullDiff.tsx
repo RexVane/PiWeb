@@ -290,21 +290,28 @@ function widestRowText(rows: readonly Row[]): string {
 	return best;
 }
 
-/** 根据滚动位置平顺选取读取基线：顶对齐 0、中间对齐视口 1/3、底对齐底端 */
+/** 根据滚动位置平顺选取读取基线：顶对齐 0、中间对齐视口 1/3、底对齐底端（短溢出也保证头尾区间不重叠） */
 function syncAnchorOffset(scrollTop: number, maxScroll: number, srcHeight: number, dstHeight = srcHeight): { src: number; dst: number } {
 	if (maxScroll <= 0 || srcHeight <= 0) return { src: 0, dst: 0 };
-	const midOffset = srcHeight / 3;
-	if (scrollTop <= midOffset) return { src: scrollTop, dst: scrollTop };
-	const tailZone = Math.max(1, srcHeight - midOffset);
-	const remaining = maxScroll - scrollTop;
+	const clampedTop = Math.max(0, Math.min(maxScroll, scrollTop));
+	const srcMid = srcHeight / 3;
+	const dstMid = Math.min(dstHeight, srcMid);
+	const headZone = Math.min(srcMid, maxScroll / 3);
+	const tailZone = Math.min(Math.max(1, srcHeight - srcMid), (2 * maxScroll) / 3);
+
+	if (clampedTop <= headZone) {
+		const t = headZone > 0 ? clampedTop / headZone : 0;
+		return { src: t * srcMid, dst: t * dstMid };
+	}
+	const remaining = maxScroll - clampedTop;
 	if (remaining < tailZone) {
 		const t = 1 - remaining / tailZone;
 		return {
-			src: midOffset + t * (srcHeight - midOffset),
-			dst: midOffset + t * Math.max(0, dstHeight - midOffset),
+			src: srcMid + t * (srcHeight - srcMid),
+			dst: dstMid + t * Math.max(0, dstHeight - dstMid),
 		};
 	}
-	return { src: midOffset, dst: midOffset };
+	return { src: srcMid, dst: dstMid };
 }
 
 function renderLineContent(
@@ -359,9 +366,10 @@ export const FullDiff = memo(function FullDiff({
 	const leftScrollRef = useRef<HTMLDivElement>(null);
 	const rightScrollRef = useRef<HTMLDivElement>(null);
 	const bridgeRef = useRef<HTMLDivElement>(null);
-	const syncSourceRef = useRef<"left" | "right" | null>(null);
+	const activeDriverRef = useRef<{ side: "left" | "right"; until: number } | null>(null);
 	const syncTimerRef = useRef<number | null>(null);
-	const expectedEchoRef = useRef<{ left: number | null; right: number | null }>({ left: null, right: null });
+	const expectedEchoRef = useRef<Record<"left" | "right", { top: number; until: number } | null>>({ left: null, right: null });
+	const lastTopRef = useRef<Record<"left" | "right", number>>({ left: 0, right: 0 });
 	const programmaticUntilRef = useRef<number>(0);
 
 	const [inlineVp, setInlineVp] = useState({ top: 0, height: 800 });
@@ -378,7 +386,7 @@ export const FullDiff = memo(function FullDiff({
 	);
 
 	useEffect(() => setUnfolded(new Set()), [lines]);
-	useEffect(() => () => { if (syncTimerRef.current !== null) cancelAnimationFrame(syncTimerRef.current); }, []);
+	useEffect(() => () => { if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current); }, []);
 
 	const wordDiff = useMemo(() => computeWordDiffLines(lines), [lines]);
 	const inlineModel = useMemo(
@@ -427,6 +435,8 @@ export const FullDiff = memo(function FullDiff({
 		const measure = () => {
 			leftEl.style.setProperty("--pw-pane-w", `${leftEl.clientWidth}px`);
 			rightEl.style.setProperty("--pw-pane-w", `${rightEl.clientWidth}px`);
+			lastTopRef.current.left = leftEl.scrollTop;
+			lastTopRef.current.right = rightEl.scrollTop;
 			const { width: vpWidth, height: vpHeight } = getBridgeSize();
 			setSplitVp({
 				leftTop: leftEl.scrollTop,
@@ -443,45 +453,69 @@ export const FullDiff = memo(function FullDiff({
 		return () => ro.disconnect();
 	}, [layout, getBridgeSize]);
 
+	const claimSplitDriver = useCallback((side: "left" | "right", ttlMs = 260) => {
+		const now = performance.now();
+		programmaticUntilRef.current = 0;
+		expectedEchoRef.current[side] = null;
+		activeDriverRef.current = { side, until: now + ttlMs };
+		if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
+		syncTimerRef.current = window.setTimeout(() => {
+			syncTimerRef.current = null;
+			if (activeDriverRef.current?.side === side && performance.now() >= activeDriverRef.current.until) {
+				activeDriverRef.current = null;
+			}
+		}, ttlMs + 20);
+	}, []);
+
 	const handleSplitScroll = useCallback((side: "left" | "right") => {
 		if (!splitModel) return;
 		const leftEl = leftScrollRef.current;
 		const rightEl = rightScrollRef.current;
 		if (!leftEl || !rightEl) return;
-		const { width: vpWidth, height: vpHeight } = getBridgeSize();
 
 		const srcEl = side === "left" ? leftEl : rightEl;
+		const srcTop = srcEl.scrollTop;
+		const prevTop = lastTopRef.current[side];
+		lastTopRef.current[side] = srcTop;
+
+		const now = performance.now();
 		const expected = expectedEchoRef.current[side];
-		if (expected !== null && Math.abs(srcEl.scrollTop - expected) < 2) {
+		if (expected && now <= expected.until && Math.abs(srcTop - expected.top) <= 1.5) {
+			// 消费对侧程序化同步产生的回声 scroll，绝不反向改写源侧的滚轮/惯性动画
 			expectedEchoRef.current[side] = null;
+			const { width: vpWidth, height: vpHeight } = getBridgeSize();
 			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
 			return;
 		}
-		if (performance.now() < programmaticUntilRef.current || (syncSourceRef.current && syncSourceRef.current !== side)) {
+		if (expected && now > expected.until) expectedEchoRef.current[side] = null;
+
+		// 仅横向 scrollLeft 变化时跳过纵向同步，避免无谓写回另一侧 scrollTop
+		if (Math.abs(srcTop - prevTop) < 0.01) return;
+
+		const { width: vpWidth, height: vpHeight } = getBridgeSize();
+		const driver = activeDriverRef.current;
+		if (now < programmaticUntilRef.current || (driver && now < driver.until && driver.side !== side)) {
 			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
 			return;
 		}
-		syncSourceRef.current = side;
-		if (syncTimerRef.current !== null) cancelAnimationFrame(syncTimerRef.current);
-		syncTimerRef.current = requestAnimationFrame(() => {
-			syncSourceRef.current = null;
-			expectedEchoRef.current.left = null;
-			expectedEchoRef.current.right = null;
-		});
+
+		claimSplitDriver(side, 220);
 
 		const dstEl = side === "left" ? rightEl : leftEl;
 		const dstSide: "left" | "right" = side === "left" ? "right" : "left";
 		const maxSrc = Math.max(0, srcEl.scrollHeight - srcEl.clientHeight);
 		const maxDst = Math.max(0, dstEl.scrollHeight - dstEl.clientHeight);
-		const offset = syncAnchorOffset(srcEl.scrollTop, maxSrc, srcEl.clientHeight, dstEl.clientHeight);
-		const mapped = mapAnchorY(splitModel.anchors, srcEl.scrollTop + offset.src, side === "left" ? "LtoR" : "RtoL");
+		const offset = syncAnchorOffset(srcTop, maxSrc, srcEl.clientHeight, dstEl.clientHeight);
+		const mapped = mapAnchorY(splitModel.anchors, srcTop + offset.src, side === "left" ? "LtoR" : "RtoL");
 		const nextDstTop = Math.max(0, Math.min(maxDst, mapped - offset.dst));
 		if (Math.abs(dstEl.scrollTop - nextDstTop) >= 0.5) {
-			expectedEchoRef.current[dstSide] = nextDstTop;
 			dstEl.scrollTop = nextDstTop;
+			const actualDstTop = dstEl.scrollTop;
+			lastTopRef.current[dstSide] = actualDstTop;
+			expectedEchoRef.current[dstSide] = { top: actualDstTop, until: now + 180 };
 		}
 		setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
-	}, [getBridgeSize, splitModel]);
+	}, [claimSplitDriver, getBridgeSize, splitModel]);
 
 	const scrollToBlock = useCallback(
 		(b: number) => {
@@ -501,7 +535,9 @@ export const FullDiff = memo(function FullDiff({
 				setCurrent(b);
 				const anchorY = Math.round(getBridgeSize().height / 3);
 				programmaticUntilRef.current = performance.now() + 650;
-				syncSourceRef.current = null;
+				activeDriverRef.current = null;
+				expectedEchoRef.current.left = null;
+				expectedEchoRef.current.right = null;
 				const leftTarget = Math.max(0, blk.leftStartRow * ROW_H - anchorY);
 				const rightTarget = Math.max(0, blk.rightStartRow * ROW_H - anchorY);
 				scrollSmoothly(leftEl, leftTarget);
@@ -540,12 +576,17 @@ export const FullDiff = memo(function FullDiff({
 			const anchorY = Math.round(vpHeight / 3);
 			const lt = Math.max(0, blk.leftStartRow * ROW_H - anchorY);
 			const rt = Math.max(0, blk.rightStartRow * ROW_H - anchorY);
-			programmaticUntilRef.current = 0;
-			syncSourceRef.current = "left";
+			const until = performance.now() + 180;
+			programmaticUntilRef.current = until;
+			activeDriverRef.current = null;
 			leftEl.scrollTop = lt;
 			rightEl.scrollTop = rt;
+			lastTopRef.current = { left: leftEl.scrollTop, right: rightEl.scrollTop };
+			expectedEchoRef.current = {
+				left: { top: leftEl.scrollTop, until },
+				right: { top: rightEl.scrollTop, until },
+			};
 			setSplitVp({ leftTop: leftEl.scrollTop, rightTop: rightEl.scrollTop, width: vpWidth, height: vpHeight });
-			syncSourceRef.current = null;
 			setCurrent(0);
 		}
 	}, [getBridgeSize, layout, inlineModel, splitModel, blockCount, initialChange]);
@@ -677,7 +718,6 @@ export const FullDiff = memo(function FullDiff({
 		const maxY = Math.max(yL2, yR2);
 		return maxY >= -40 && minY <= splitVp.height + 40;
 	});
-	const cancelProgrammaticLock = () => { programmaticUntilRef.current = 0; };
 
 	return (
 		<div className="pw-fdiff pw-sdiff relative flex min-h-0 flex-1 flex-col" data-layout="split" data-testid="split-diff">
@@ -693,8 +733,10 @@ export const FullDiff = memo(function FullDiff({
 				<div
 					ref={leftScrollRef}
 					className="pw-sdiff-pane pw-sdiff-left min-w-0 flex-1 overflow-auto"
-					onWheel={cancelProgrammaticLock}
-					onPointerDown={cancelProgrammaticLock}
+					onWheel={() => claimSplitDriver("left")}
+					onPointerDown={() => claimSplitDriver("left")}
+					onTouchStart={() => claimSplitDriver("left")}
+					onKeyDown={() => claimSplitDriver("left")}
 					onScroll={() => handleSplitScroll("left")}
 				>
 					<div style={{ height: leftRows.length * ROW_H, position: "relative", minWidth: "100%", width: "max-content" }}>
@@ -793,8 +835,10 @@ export const FullDiff = memo(function FullDiff({
 				<div
 					ref={rightScrollRef}
 					className="pw-sdiff-pane pw-sdiff-right min-w-0 flex-1 overflow-auto"
-					onWheel={cancelProgrammaticLock}
-					onPointerDown={cancelProgrammaticLock}
+					onWheel={() => claimSplitDriver("right")}
+					onPointerDown={() => claimSplitDriver("right")}
+					onTouchStart={() => claimSplitDriver("right")}
+					onKeyDown={() => claimSplitDriver("right")}
 					onScroll={() => handleSplitScroll("right")}
 				>
 					<div style={{ height: rightRows.length * ROW_H, position: "relative", minWidth: "100%", width: "max-content" }}>

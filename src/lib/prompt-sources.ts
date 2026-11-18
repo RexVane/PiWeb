@@ -12,7 +12,6 @@ import path from "node:path";
 import { getAgentDir, getResourceLoader, refreshResourceLoaderIfStale } from "./pi";
 import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./path-security";
 import { FileSizeLimitError, readFileBounded } from "./read-file-bounded";
-import { PIWEB_EXECUTION_GUIDANCE } from "./execution-guidance";
 import { ASK_USER_TOOL } from "./ask-user";
 import { MANAGE_AUTOMATION_TOOL } from "./automations/agent-tool";
 
@@ -209,10 +208,6 @@ export async function listPromptSources({
 
 	const withSizes = await Promise.all(raw.map(async (entry) => ({ ...entry, bytes: await fileSize(entry.path) })));
 	const sources = buildPromptSources(withSizes);
-
-	// PiWeb 自有追加提示词：不是文件、没有路径，直接作为来源条目插入（标记 origin 为 piweb）
-	const guidanceBytes = Buffer.byteLength(PIWEB_EXECUTION_GUIDANCE, "utf8");
-	sources.push({ kind: "append", name: "PiWeb execution guidance", origin: { scope: "piweb" }, bytes: guidanceBytes, content: PIWEB_EXECUTION_GUIDANCE });
 
 	// 压缩摘要：compact 之后它以摘要形式进入上下文，界面上平时看不到，这里一并列出
 	const compacted = session ? latestCompactionSummary(session) : undefined;
