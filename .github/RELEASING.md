@@ -1,6 +1,6 @@
 # Releasing
 
-Maintainer notes, reviewed against the repository on 2026-11-14. Users only need `npm install -g @rexvane/piweb`. [Documentation index](../docs/README.md).
+Maintainer notes, reviewed against the repository on 2026-11-18. Users only need `npm install -g @rexvane/piweb`. [Documentation index](../docs/README.md).
 
 Releases are **manual**. Prepare changes on a reviewed feature branch and update the version in `package.json` and `package-lock.json` in the same commit. Merge the release PR only after its checks pass, then trigger [publish.yml](workflows/publish.yml) on `main`. The workflow does not require a particular source branch name.
 
@@ -16,7 +16,7 @@ The workflow never commits or pushes to main. Pi runtime packages, including Cho
 ```bash
 # on the release feature branch, before the release commit:
 npm version patch --no-git-tag-version
-# update progress.md, commit, push the feature branch, and open/merge the PR
+# commit, push the feature branch, and open/merge the PR
 # after all checks pass on the merged source:
 gh workflow run publish --ref main
 # if the feature branch needs the merged source, preserve its history:

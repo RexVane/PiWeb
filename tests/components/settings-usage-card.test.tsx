@@ -34,13 +34,12 @@ function setup(usagePayload: unknown, providerId = "deepseek", providerName = "D
 			return response({});
 		}
 		if (url === "/api/pi-settings") return response({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 20 }, retry: { enabled: true, maxRetries: 3, baseDelayMs: 50 } });
-		if (url === "/api/security") return response({ defaultProjectTrust: "ask" });
 		if (url === "/api/version") return response({ piWeb: "0.test", piEngine: "0.test" });
 		if (url === "/api/web-auth") return response({ enabled: false });
 		throw new Error(`unexpected URL ${url}`);
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
+	render(<SettingsPanel open onClose={vi.fn()} />);
 	fireEvent.click(screen.getByRole("button", { name: "模型" }));
 	return fetchMock;
 }

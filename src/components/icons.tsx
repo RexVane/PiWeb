@@ -385,31 +385,6 @@ export const IconDatabaseOutline16 = ({ size = 16, ...rest }: P) => (
 	</svg>
 );
 
-/** 资源市场 / 商店（雨棚与门廊轮廓） */
-export const IconMarketOutline16 = ({ size = 16, ...rest }: P) => (
-	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-		<path
-			d="M2.6 2.4H13.4L14.5 5.6Q12.33 8.2 10.17 5.6Q8.0 8.2 5.83 5.6Q3.67 8.2 1.5 5.6L2.6 2.4Z"
-			stroke="currentColor"
-			strokeWidth="1.25"
-			strokeLinejoin="round"
-		/>
-		<path
-			d="M2.7 6.8V12.5C2.7 13.16 3.24 13.7 3.9 13.7H12.1C12.76 13.7 13.3 13.16 13.3 12.5V6.8"
-			stroke="currentColor"
-			strokeWidth="1.25"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		/>
-		<path
-			d="M6.3 13.7V10.1C6.3 9.66 6.66 9.3 7.1 9.3H8.9C9.34 9.3 9.7 9.66 9.7 10.1V13.7"
-			stroke="currentColor"
-			strokeWidth="1.25"
-			strokeLinejoin="round"
-		/>
-	</svg>
-);
-
 /** 文档（折角矩形，文件面板/文件行用；dsh 图标集无此形，自绘同风格轮廓） */
 export const IconFileOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
@@ -420,25 +395,6 @@ export const IconFileOutline16 = ({ size = 16, ...rest }: P) => (
 			strokeLinejoin="round"
 		/>
 		<path d="M9.6875 1.25V4.6875H13.125" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
-	</svg>
-);
-
-/** 提示词（带 >_ 提示符的指令气泡轮廓） */
-export const IconPromptOutline16 = ({ size = 16, ...rest }: P) => (
-	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
-		<path
-			d="M3.8 2.2H12.2C13.19 2.2 14.0 3.01 14.0 4.0V9.8C14.0 10.79 13.19 11.6 12.2 11.6H4.9L2.0 13.6V4.0C2.0 3.01 2.81 2.2 3.8 2.2Z"
-			stroke="currentColor"
-			strokeWidth="1.25"
-			strokeLinejoin="round"
-		/>
-		<path
-			d="M4.8 5.2L6.6 6.9L4.8 8.6M8.1 8.6H11.1"
-			stroke="currentColor"
-			strokeWidth="1.25"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		/>
 	</svg>
 );
 

@@ -24,10 +24,6 @@ export function SettingsPanel({
 	open: boolean;
 	onClose: () => void;
 	onModelsChanged?: () => void | Promise<void>;
-	/** @deprecated Retained only for legacy callers; Skills & Plugins live in top-level views. */
-	cwd?: string;
-	/** @deprecated */
-	onOpenFileContent?: (path: string, content: string) => void;
 }) {
 	const { t, lang, setLang } = useI18n();
 	const [section, setSection] = useState<Section>("general");

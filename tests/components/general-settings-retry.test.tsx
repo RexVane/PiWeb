@@ -32,7 +32,6 @@ function setup(save?: (patch: unknown) => Promise<Response>) {
 		if (url === "/api/proxy") return response({ source: "none", http: null, https: null });
 		if (url === "/api/version") return response({ piWeb: "test", piEngine: "test" });
 		if (url === "/api/web-auth") return response({ enabled: false });
-		if (url === "/api/security") return response({});
 		throw new Error(`Unexpected URL ${url}`);
 	}));
 	render(<GeneralSection lang="zh" setLang={vi.fn()} />);

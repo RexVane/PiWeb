@@ -1,6 +1,5 @@
 /**
  * security-service：pi 真实安全能力的 Web 面。
- * - 工具预设（只读/标准/全部）→ pi 的 tools 白名单（agent-manager 应用）
  * - 项目信任（settings.json 的 defaultProjectTrust：ask/always/never）
  * pi 没有 OS 级沙箱与审批系统——不做假开关。
  */

@@ -1,6 +1,6 @@
 # 发布、降级与回滚
 
-维护日期：2026-11-15。本文是**用户/部署者**的升级、降级与故障回滚手册；维护者发布流程见 [.github/RELEASING.md](../../.github/RELEASING.md)。数据目录与备份约定见[数据目录、隐私与留存](data-and-privacy.md)。
+维护日期：2026-11-18。本文是**用户/部署者**的升级、降级与故障回滚手册；维护者发布流程见 [.github/RELEASING.md](../../.github/RELEASING.md)。数据目录与备份约定见[数据目录、隐私与留存](data-and-privacy.md)。
 
 ## 先记住三件事
 
@@ -26,7 +26,7 @@ npm install -g @rexvane/piweb@latest
 piweb
 ```
 
-- 指定版本：`npm install -g @rexvane/piweb@0.3.30`。
+- 指定版本：`npm install -g @rexvane/piweb@0.3.34`。
 - 应用内更新（设置 → 通用 / 右下角提示条）等价于执行上面的 npm 命令；npm 安装形态会先在后台检查并给出按钮，Windows 上因为运行中的文件被占用，面板会给出“先停 `piweb` 再运行”的命令和复制按钮。
 - 发布包自带已封存的 `.next`，正常升级不需要本机编译；只有安装不完整或跳过生命周期脚本时，首次启动才会现场构建一次（见[安装与构建机制](install-and-build.md)）。
 
@@ -35,7 +35,7 @@ piweb
 ```bash
 # 1) 停掉 piweb
 # 2) 安装明确的历史版本（不要写 @latest）
-npm install -g @rexvane/piweb@0.3.29
+npm install -g @rexvane/piweb@0.3.33
 # 3) 启动并确认版本
 piweb
 ```
@@ -101,13 +101,13 @@ piweb
 - 确认最新版本有问题后，先 **deprecate** 而不是 unpublish（unpublish 会破坏已锁定的用户）：
 
   ```bash
-  npm deprecate @rexvane/piweb@0.3.31 "Regression in 0.3.31; install 0.3.30 instead."
+  npm deprecate @rexvane/piweb@0.3.34 "Regression in 0.3.34; install 0.3.33 instead."
   ```
 
 - 把 `latest` 指回已知可用版本（用户再执行 `@latest` 会拿到正确版本）：
 
   ```bash
-  npm dist-tag add @rexvane/piweb@0.3.30 latest
+  npm dist-tag add @rexvane/piweb@0.3.33 latest
   ```
 
 - 删除/改造 `latest` 标签前先确认旧版本仍可安装；发布流程、版本与 tag 规则见 [.github/RELEASING.md](../../.github/RELEASING.md)，仓库 tag/GitHub Release 的补救按该文件“Retrying”一节处理。

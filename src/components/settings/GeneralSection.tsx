@@ -62,8 +62,7 @@ export function GeneralSection({
 			if (!response.ok || !json.success) throw new Error(json.error || `request failed (${response.status})`);
 			return json.data;
 		};
-		const [sec, ps, health, auth] = await Promise.allSettled([
-			request("/api/security"),
+		const [ps, health, auth] = await Promise.allSettled([
 			request("/api/pi-settings"),
 			request("/api/version"),
 			request("/api/web-auth"),
@@ -80,7 +79,7 @@ export function GeneralSection({
 		else setVersions(null);
 		if (auth.status === "fulfilled" && typeof auth.value?.enabled === "boolean") setWebAuth({ enabled: auth.value.enabled, authenticated: auth.value.authenticated === true });
 		else setWebAuth(null);
-		if ([sec, ps, health].some((item) => item.status === "rejected")) setSettingsError("load");
+		if ([ps, health].some((item) => item.status === "rejected")) setSettingsError("load");
 		setSettingsLoading(false);
 	};
 

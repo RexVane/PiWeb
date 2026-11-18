@@ -1064,7 +1064,7 @@ export function ChatInput({
 					/>
 				</div>
 
-				{/* 权限与模型常驻输入框；图片通过拖放或粘贴添加。 */}
+				{/* 模型控制条常驻输入框；图片通过拖放或粘贴添加。 */}
 				<div
 					className="flex items-center gap-2"
 					style={{

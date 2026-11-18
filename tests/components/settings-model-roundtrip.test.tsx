@@ -62,13 +62,12 @@ function setup({ builtin = false, conflict = false, catalog, extraProviders = []
 			return response({ requiresSessionReopen: false });
 		}
 		if (url === "/api/pi-settings") return response({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 20 }, retry: { enabled: true, maxRetries: 3, baseDelayMs: 50 } });
-		if (url === "/api/security") return response({ defaultProjectTrust: "ask" });
 		if (url === "/api/version") return response({ piWeb: "0.test", piEngine: "0.test" });
 		if (url === "/api/web-auth") return response({ enabled: false });
 		throw new Error(`unexpected URL ${url}`);
 	});
 	vi.stubGlobal("fetch", fetchMock);
-	const panelProps = { cwd: "/test-workspace", onClose: vi.fn(), onModelsChanged };
+	const panelProps = { onClose: vi.fn(), onModelsChanged };
 	const mounted = render(<SettingsPanel open {...panelProps} />);
 	fireEvent.click(screen.getByRole("button", { name: "模型" }));
 	return { writes, keys, fetchMock, mounted, panelProps, saved: () => saved };
@@ -123,7 +122,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
 		expect(saved().providers.gateway.models).toEqual([originalModel, { ...originalModel, id: "undeclared", maxTokens: 16384 }]);
 		cleanup();
-		render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
+		render(<SettingsPanel open onClose={vi.fn()} />);
 		fireEvent.click(screen.getByRole("button", { name: "模型" }));
 		await screen.findByRole("button", { name: "编辑" });
 		expect(screen.queryByTestId("model-audit")).toBeNull();
@@ -168,7 +167,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
 		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: false });
 		cleanup();
-		render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
+		render(<SettingsPanel open onClose={vi.fn()} />);
 		fireEvent.click(screen.getByRole("button", { name: "模型" }));
 		await screen.findByRole("button", { name: "编辑" });
 		expect(screen.queryByTestId("model-audit")).toBeNull();

@@ -20,7 +20,6 @@ beforeEach(() => {
 	vi.stubGlobal("fetch", vi.fn(async (url: string) => {
 		if (url === "/api/models?custom=1") return response({ providers: [], customProviders: { content: JSON.stringify({ providers: {} }), revision: "rev-1", secretProviderIds: [] } });
 		if (url === "/api/pi-settings") return response({ compaction: { enabled: true, reserveTokens: 100, keepRecentTokens: 20 }, retry: { enabled: true, maxRetries: 3, baseDelayMs: 50 } });
-		if (url === "/api/security") return response({ defaultProjectTrust: "ask" });
 		if (url === "/api/version") return response({ piWeb: "0.test", piEngine: "0.test" });
 		if (url === "/api/web-auth") return response({ enabled: false });
 		throw new Error(`unexpected URL ${url}`);
@@ -35,7 +34,7 @@ afterEach(() => {
 });
 
 async function renderSettings() {
-	render(<SettingsPanel open cwd="/test-workspace" onClose={vi.fn()} />);
+	render(<SettingsPanel open onClose={vi.fn()} />);
 	await waitFor(() => expect(screen.getByText("界面字体")).toBeTruthy());
 }
 
