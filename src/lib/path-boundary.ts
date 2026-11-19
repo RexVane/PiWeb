@@ -9,11 +9,17 @@
  */
 import path from "node:path";
 
-/** 路径越界/格式不合法：路由层据此回 4xx，而不是 500。 */
+/**
+ * 路径越界/格式不合法：路由层据此回 4xx，而不是 500。
+ * 可选 code 让客户端区分「越界」和「不存在」这类不同性质的问题（api-error 会原样透传）。
+ */
 export class BoundaryError extends Error {
-	constructor(message: string) {
+	/** 机器可读的错误码（如 OUT_OF_WORKSPACE / NOT_FOUND），缺省 VALIDATION_ERROR */
+	code?: string;
+	constructor(message: string, code?: string) {
 		super(message);
 		this.name = "BoundaryError";
+		if (code) this.code = code;
 	}
 }
 

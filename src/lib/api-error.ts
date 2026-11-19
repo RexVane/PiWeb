@@ -19,6 +19,9 @@ function validationMessage(message: string): string {
 export const API_ERROR_I18N_KEYS: Readonly<Record<string, string>> = {
 	INVALID_JSON: "apiErrorInvalidJson",
 	VALIDATION_ERROR: "apiErrorValidation",
+	OUT_OF_WORKSPACE: "apiErrorOutOfWorkspace",
+	NOT_FOUND: "apiErrorEnoent",
+	NOT_A_FILE: "apiErrorNotAFile",
 	ENOENT: "apiErrorEnoent",
 	EACCES: "apiErrorEacces",
 	EPERM: "apiErrorEperm",
@@ -38,7 +41,9 @@ export function apiErrorI18nKey(errorCode: string | undefined): string | undefin
 export function apiError(error: unknown, fallback = "请求失败，请重试。", validation = false): { error: string; errorCode: string } {
 	if (error instanceof SyntaxError) return { error: "请求内容不是有效的 JSON。", errorCode: "INVALID_JSON" };
 	if (validation || error instanceof BoundaryError) {
-		return { error: validationMessage(error instanceof Error ? error.message : fallback), errorCode: "VALIDATION_ERROR" };
+		// BoundaryError 自带的 code 优先（如 OUT_OF_WORKSPACE / NOT_FOUND），让客户端区分性质
+		const specific = error instanceof BoundaryError && error.code && /^[A-Z][A-Z0-9_]{1,40}$/.test(error.code) ? error.code : undefined;
+		return { error: validationMessage(error instanceof Error ? error.message : fallback), errorCode: specific ?? "VALIDATION_ERROR" };
 	}
 	const rawCode = (error as NodeJS.ErrnoException | undefined)?.code;
 	// SDK storage adapters may wrap an OS failure without copying Error.code.

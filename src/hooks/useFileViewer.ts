@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { safeLocalStorage } from "@/lib/browser-storage";
+import { workspaceTabPath } from "@/lib/workspace-tab-path";
 
 export interface ViewerGitSource {
 	mode: "worktree" | "staged" | "untracked" | "commit";
@@ -71,19 +72,25 @@ function parseGitSource(raw: unknown): ViewerGitSource | undefined {
 	};
 }
 
-function restoreState(key: string | null): ViewerState {
+function restoreState(key: string | null, cwd?: string): ViewerState {
 	if (!key) return emptyState();
 	try {
 		const saved = JSON.parse(safeLocalStorage.getItem(key) ?? "null");
 		if (!saved || saved.version !== 1 || saved.open !== true || !Array.isArray(saved.tabs)) return emptyState();
 		const tabs: ViewerTab[] = [];
 		const paths = new Set<string>();
+		let restoredActive: string | null = null;
 		for (const item of saved.tabs) {
-			if (!item || typeof item.path !== "string" || !item.path.trim() || paths.has(item.path)) continue;
-			paths.add(item.path);
+			if (!item || typeof item.path !== "string" || !item.path.trim()) continue;
+			// 上传/已发现文档保留专用读取边界；普通页签保留工作区内路径，丢弃越界路径。
+			const path = item.kind === "upload" || typeof item.sourcePath === "string" ? item.path : workspaceTabPath(item.path, cwd);
+			if (path === null) continue;
+			if (item.path === saved.active) restoredActive = path;
+			if (paths.has(path)) continue;
+			paths.add(path);
 			const git = parseGitSource(item.git);
 			tabs.push({
-				path: item.path,
+				path,
 				...(typeof item.from === "string" ? { from: item.from } : {}),
 				...(typeof item.lazy === "boolean" ? { lazy: item.lazy } : {}),
 				...(item.kind === "file" || item.kind === "dir" || item.kind === "upload" ? { kind: item.kind } : {}),
@@ -91,7 +98,7 @@ function restoreState(key: string | null): ViewerState {
 				...(git ? { git } : {}),
 			});
 		}
-		const active = saved.active === null ? null : tabs.find((tab) => tab.path === saved.active)?.path ?? tabs.at(-1)?.path ?? null;
+		const active = saved.active === null ? null : restoredActive ?? tabs.at(-1)?.path ?? null;
 		return { open: true, tabs, active };
 	} catch { return emptyState(); }
 }
@@ -99,12 +106,13 @@ function restoreState(key: string | null): ViewerState {
 /** 按对话保存页签与当前文件；仅存路径等元数据，正文在打开时重新读取。 */
 export function useFileViewer(scope?: ViewerScope) {
 	const key = scopeKey(scope);
+	const cwd = scope?.cwd;
 	const currentKey = useRef(key);
 	currentKey.current = key;
 	const [saved, setSaved] = useState(() => ({ key, ready: key === null, value: emptyState() }));
 	useEffect(() => {
-		setSaved((current) => current.key === key && current.ready ? current : { key, ready: true, value: restoreState(key) });
-	}, [key]);
+		setSaved((current) => current.key === key && current.ready ? current : { key, ready: true, value: restoreState(key, cwd) });
+	}, [key, cwd]);
 	useEffect(() => {
 		if (!saved.ready || !saved.key) return;
 		if (!saved.value.open) {
@@ -121,11 +129,12 @@ export function useFileViewer(scope?: ViewerScope) {
 		if (currentKey.current !== key) return;
 		setSaved((current) => {
 			if (currentKey.current !== key) return current;
-			const value = current.key === key && current.ready ? current.value : restoreState(key);
+			const value = current.key === key && current.ready ? current.value : restoreState(key, cwd);
 			return { key, ready: true, value: change(value) };
 		});
-	}, [key]);
-	const open = useCallback((path: string, opts: ViewerOpenOptions = {}) => {
+	}, [key, cwd]);
+	const open = useCallback((rawPath: string, opts: ViewerOpenOptions = {}) => {
+		const path = opts.kind === "upload" ? rawPath : workspaceTabPath(rawPath, cwd) ?? rawPath;
 		setState((s) => {
 			const nextTab: ViewerTab = {
 				path,
@@ -138,7 +147,7 @@ export function useFileViewer(scope?: ViewerScope) {
 			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? nextTab : tab)) : [...s.tabs, nextTab];
 			return { open: true, tabs, active: path };
 		});
-	}, [setState]);
+	}, [setState, cwd]);
 	const openTree = useCallback(() => setState((s) => ({ ...s, open: true, active: null })), [setState]);
 	/** 打开内容已就绪的文件（如技能文档）：无需 cwd / 磁盘读取 */
 	const openStatic = useCallback((path: string, content: string, sourcePath = path) => {

@@ -55,8 +55,9 @@ async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 	const r = await fetch(url, signal ? { signal } : undefined);
 	const j = await r.json();
 	if (!r.ok || !j.success) {
-		const err = new Error(j.error || `request failed (${r.status})`) as Error & { status?: number };
+		const err = new Error(j.error || `request failed (${r.status})`) as Error & { status?: number; code?: string };
 		err.status = r.status;
+		if (typeof j.errorCode === "string") err.code = j.errorCode;
 		throw err;
 	}
 	return j.data as T;
@@ -109,7 +110,7 @@ interface Loaded {
 	binary: boolean;
 	truncated: boolean;
 	encodingUnsupported?: boolean;
-	notice: "deleted" | "historical" | "missing" | "disk" | "nochange" | "metadata" | null;
+	notice: "deleted" | "historical" | "missing" | "outside" | "disk" | "nochange" | "metadata" | null;
 	error: string | null;
 }
 
@@ -299,17 +300,25 @@ export function FileViewer({
 				const data = await requestJson<FilePreview>(`/api/files?read=1&${q}&path=${encodeURIComponent(tab.path)}`, controller.signal);
 				done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
 			} catch (error) {
-				if ((error as { status?: number }).status !== 400) throw error;
-				// 400 有两种：文件不存在 / 路径其实是目录。探一下目录接口，能列出条目就当文件夹打开
-				try {
-					await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`, controller.signal);
-					done({ notice: null });
-					if (alive) setDirFallback(tab.path);
+				const failure = error as Error & { status?: number; code?: string };
+				if (failure.code === "OUT_OF_WORKSPACE") {
+					done({ notice: "outside" });
 					return;
-				} catch {
-					// 目录也列不出来：照旧报「文件不存在」
 				}
-				done({ notice: "missing" });
+				if (failure.code === "NOT_FOUND" || failure.code === "ENOENT") {
+					done({ notice: "missing" });
+					return;
+				}
+				// 兼容旧服务端的明确错误消息；其他校验/权限错误不能伪装成文件不存在。
+				const legacy = failure.status === 400 && (!failure.code || failure.code === "VALIDATION_ERROR");
+				if (legacy && failure.message === "file not found") {
+					done({ notice: "missing" });
+					return;
+				}
+				if (failure.code !== "NOT_A_FILE" && !(legacy && failure.message === "not a file")) throw error;
+				await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`, controller.signal);
+				done({ notice: null });
+				if (alive) setDirFallback(tab.path);
 			}
 		};
 		const snapshotContent = async (tree: string, notice: Loaded["notice"]) => {
@@ -611,7 +620,7 @@ export function FileViewer({
 		if (value === null || value === undefined) return;
 		setCopyStatus({ key: contentKey, ok: await copyText(value) });
 	};
-	const noticeText = currentLoaded?.notice === "deleted" ? t.viewerDeleted : currentLoaded?.notice === "historical" ? t.viewerHistorical : currentLoaded?.notice === "missing" ? t.viewerMissing : currentLoaded?.notice === "disk" ? t.viewerNotInSnapshot : currentLoaded?.notice === "nochange" ? t.viewerNoChanges : currentLoaded?.notice === "metadata" ? t.viewerMetadataChanged : "";
+	const noticeText = currentLoaded?.notice === "deleted" ? t.viewerDeleted : currentLoaded?.notice === "historical" ? t.viewerHistorical : currentLoaded?.notice === "missing" ? t.viewerMissing : currentLoaded?.notice === "outside" ? t.viewerOutside : currentLoaded?.notice === "disk" ? t.viewerNotInSnapshot : currentLoaded?.notice === "nochange" ? t.viewerNoChanges : currentLoaded?.notice === "metadata" ? t.viewerMetadataChanged : "";
 
 	return (
 		<div className="pw-viewer-mask modal-mask fixed inset-0 z-[105] flex items-center justify-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -830,8 +839,8 @@ export function FileViewer({
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
 						) : currentLoaded.error ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{currentLoaded.error}</div>
-						) : currentLoaded.notice === "missing" ? (
-							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.viewerMissing}</div>
+						) : currentLoaded.notice === "missing" || currentLoaded.notice === "outside" ? (
+							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{noticeText}</div>
 						) : currentLoaded.binary ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.fileBinary}</div>
 						) : currentLoaded.encodingUnsupported ? null : currentLoaded.diff ? (

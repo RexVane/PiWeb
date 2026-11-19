@@ -117,3 +117,38 @@ describe("file tabs belong to a conversation until its viewer is closed", () => 
 		expect(second.result.current.state).toEqual({ open: true, tabs: [{ path: "a.txt" }, { path: "b.txt", kind: "file" }], active: "b.txt" });
 	});
 });
+
+describe("恢复页签时丢掉工作区外的绝对路径", () => {
+	it("keeps in-workspace absolute tabs, deduplicates them, and preserves selection", () => {
+		safeLocalStorage.setItem("piweb.fileViewer.session:/session-a", JSON.stringify({ version: 1, open: true,
+			active: "C:/project/src/file.ts", tabs: [{ path: "src/file.ts" }, { path: "C:/project/src/file.ts" }, { path: "C:/other/file.ts" }],
+		}));
+		const hook = renderHook(() => useFileViewer(scope("/session-a", "C:/project")));
+		expect(paths(hook.result.current)).toEqual(["src/file.ts"]);
+		expect(hook.result.current.state.active).toBe("src/file.ts");
+		act(() => hook.result.current.open("c:\\PROJECT\\docs\\guide.md"));
+		expect(hook.result.current.state.active).toBe("docs/guide.md");
+	});
+
+	it("drops outside file/dir tabs but keeps upload tabs and sourcePath documents", () => {
+		// 直接写入存储，模拟旧版本留下的越界页签（工具卡把绝对路径原样打开过）
+		safeLocalStorage.setItem("piweb.fileViewer.session:/session-a", JSON.stringify({
+			version: 1, open: true, active: "C:/Users/me/AppData/clash-verge-aifix.yaml", tabs: [
+				{ path: "keep.txt" },
+				{ path: "C:/Users/me/AppData/clash-verge-aifix.yaml" },
+				{ path: "/etc/passwd" },
+				{ path: "//server/share/remote.log" },
+				{ path: "C:/Users/me/.pi/agent/web-uploads/pic.png", kind: "upload" },
+				{ path: "/skills/demo/references/guide.md", sourcePath: "/skills/demo/SKILL.md", lazy: true },
+			],
+		}));
+		const hook = renderHook(() => useFileViewer(scope("/session-a")));
+		expect(paths(hook.result.current)).toEqual([
+			"keep.txt",
+			"C:/Users/me/.pi/agent/web-uploads/pic.png",
+			"/skills/demo/references/guide.md",
+		]);
+		// active 指向被丢的页签时回退到剩下的最后一个
+		expect(hook.result.current.state.active).toBe("/skills/demo/references/guide.md");
+	});
+});
