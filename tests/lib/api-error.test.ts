@@ -31,6 +31,16 @@ describe("apiError", () => {
 		expect(validation.error).not.toContain("C:\\Users\\me");
 	});
 
+	it("passes a BoundaryError's machine-readable code through so clients can tell越界 from 不存在", () => {
+		expect(apiError(new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE")))
+			.toEqual({ error: "path escapes the workspace", errorCode: "OUT_OF_WORKSPACE" });
+		expect(apiError(new BoundaryError("file not found", "NOT_FOUND")))
+			.toEqual({ error: "file not found", errorCode: "NOT_FOUND" });
+		// 格式不合法的 code 不透传：宁缺勿滥，避免把任意字符串当错误码
+		expect(apiError(new BoundaryError("x", "lower-case")).errorCode).toBe("VALIDATION_ERROR");
+		expect(apiError(new BoundaryError("x", "X".repeat(60))).errorCode).toBe("VALIDATION_ERROR");
+	});
+
 	it("only accepts upper-case error codes with a bounded length", () => {
 		expect(apiError(Object.assign(new Error("x"), { code: "ENOSPC" })).errorCode).toBe("ENOSPC");
 		expect(apiError(Object.assign(new Error("x"), { code: "custom" })).errorCode).toBe("REQUEST_FAILED");
@@ -41,6 +51,13 @@ describe("apiError", () => {
 		const expected: Record<string, string> = {
 			INVALID_JSON: "apiErrorInvalidJson",
 			VALIDATION_ERROR: "apiErrorValidation",
+			OUT_OF_WORKSPACE: "apiErrorOutOfWorkspace",
+			NOT_FOUND: "apiErrorEnoent",
+			NOT_A_FILE: "apiErrorNotAFile",
+			FILE_NOT_FOUND: "apiErrorEnoent",
+			IS_DIRECTORY: "apiErrorNotAFile",
+			QUEUE_CHANGED: "apiErrorQueueChanged",
+			QUEUE_EDIT_UNSUPPORTED: "apiErrorQueueEditUnsupported",
 			ENOENT: "apiErrorEnoent",
 			EACCES: "apiErrorEacces",
 			EPERM: "apiErrorEperm",

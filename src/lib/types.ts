@@ -164,7 +164,7 @@ export type WebEvent =
 			ts: number;
 	  }
 	| { type: "status"; isStreaming: boolean; state: string; ts: number }
-	| { type: "queue"; steering: string[]; followUp: string[]; ts: number }
+	| { type: "queue"; steering: string[]; followUp: string[]; revision?: string; editTokens?: WebQueue["editTokens"]; ts: number }
 	| {
 			type: "model";
 			provider?: string;
@@ -422,7 +422,7 @@ export interface WebSnapshot {
 	tools: { active: string[]; all: { name: string; description?: string }[] };
 	stats: WebStats | null;
 	contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | null;
-	queue: { steering: string[]; followUp: string[] };
+	queue: WebQueue;
 	trajectory: TrajEntry[];
 	isStreaming: boolean;
 	/** 这份会话刚因终端写入从磁盘重载过（at 为重载时间，前端据此只提示一次） */
@@ -506,6 +506,21 @@ export interface WebUiResult {
 
 // ---------- 浏览器 → 服务器 命令 ----------
 
+export interface WebQueue {
+	steering: string[];
+	followUp: string[];
+	/** Optimistic edit token for the current SDK queue, not a message/body copy. */
+	revision?: string;
+	/** Per-message edit tokens stay valid when unrelated pending messages enter/leave the queue. */
+	editTokens?: { steering: string[]; followUp: string[] };
+}
+export interface QueueEditRequest {
+	kind: "steering" | "followUp";
+	index: number;
+	revision: string;
+	text: string;
+}
+
 export interface ImageAttachment {
 	type: "image";
 	data: string;
@@ -531,10 +546,14 @@ export interface AgentCommand {
 		| "setLabel"
 		| "editAndResend"
 		| "clearQueue"
+		| "editQueue"
 		| "sendQueueNow"
 		| "extensionUiResponse"
 		| "reload";
 	text?: string;
+	queueKind?: QueueEditRequest["kind"];
+	queueIndex?: number;
+	queueRevision?: string;
 	images?: ImageAttachment[];
 	/** bash：要执行的命令（`!!` 前缀由前端去掉并置 excludeFromContext） */
 	command?: string;

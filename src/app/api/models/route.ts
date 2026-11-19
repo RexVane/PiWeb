@@ -20,9 +20,12 @@ import {
 	removeApiKey,
 	setApiKey,
 	setModelContextWindow,
+	setModelThinkingLevelMap,
 	startLogin,
+	thinkingProbe,
 	writeCustomProviders,
 } from "@/lib/models-service";
+import { validateThinkingLevelMap } from "@/lib/thinking-probe";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +97,8 @@ export async function POST(req: Request) {
 				| "providerUsage"
 				| "contextWindowInfo"
 				| "setContextWindow"
+				| "thinkingProbe"
+				| "setThinkingLevelMap"
 				| "loginStart"
 				| "loginState"
 				| "loginAnswer"
@@ -101,6 +106,7 @@ export async function POST(req: Request) {
 			providerId?: string;
 			modelId?: string;
 			contextWindow?: number;
+			thinkingLevelMap?: unknown;
 			apiKey?: string;
 			baseUrl?: string;
 			api?: string;
@@ -171,6 +177,20 @@ export async function POST(req: Request) {
 			}
 			if (typeof body.contextWindow !== "number") return json({ success: false, error: "missing contextWindow" }, { status: 400 });
 			return json({ success: true, data: await setModelContextWindow(body.providerId, body.modelId, body.contextWindow) });
+		}
+		if (body.action === "thinkingProbe") {
+			if (typeof body.providerId !== "string" || !body.providerId || typeof body.modelId !== "string" || !body.modelId) {
+				return json({ success: false, error: "missing providerId or modelId" }, { status: 400 });
+			}
+			return json({ success: true, data: { report: await thinkingProbe(body.providerId, body.modelId) } });
+		}
+		if (body.action === "setThinkingLevelMap") {
+			if (typeof body.providerId !== "string" || !body.providerId || typeof body.modelId !== "string" || !body.modelId) {
+				return json({ success: false, error: "missing providerId or modelId" }, { status: 400 });
+			}
+			const map = validateThinkingLevelMap(body.thinkingLevelMap);
+			if (!map) return json({ success: false, error: "invalid thinkingLevelMap" }, { status: 400 });
+			return json({ success: true, data: await setModelThinkingLevelMap(body.providerId, body.modelId, map) });
 		}
 		if (body.action === "loginStart") {
 			if (!body.providerId) return json({ success: false, error: "missing providerId" }, { status: 400 });

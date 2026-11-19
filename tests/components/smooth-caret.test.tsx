@@ -129,4 +129,111 @@ describe("SmoothCaret", () => {
 
 		expect(textarea.style.caretColor).toBe("");
 	});
+
+	it("glides on single-character deletion (including emoji) and jumps on bulk deletion", async () => {
+		stubPointer(true);
+		// 让镜像量出的横坐标随光标索引递增，每次编辑都会移动光标
+		let caretLeft = 0;
+		const makeRect = (left: number) => ({ left, top: 4, right: left, bottom: 22, width: 0, height: 18, x: left, y: 4, toJSON: () => ({}) });
+		vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (this: HTMLElement) {
+			return [makeRect(caretLeft)] as unknown as DOMRectList;
+		});
+		Range.prototype.getClientRects = () => [makeRect(caretLeft)] as unknown as DOMRectList;
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+			if (this.hasAttribute("data-smooth-caret")) {
+				// 模拟自绘光标已贴近上一帧的位置
+				const current = Number(this.style.transform.match(/translate3d\(([-\d.]+)px/)?.[1] ?? 0);
+				return { left: current, top: 4, right: current + 2, bottom: 22, width: 2, height: 18, x: current, y: 4, toJSON: () => ({}) } as DOMRect;
+			}
+			return { left: 0, top: 0, right: 300, bottom: 100, width: 300, height: 100, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+		});
+
+		const { container, getByTestId } = render(<Harness />);
+		const textarea = getByTestId("area") as HTMLTextAreaElement;
+		const caret = container.querySelector<HTMLElement>("[data-smooth-caret]")!;
+		const setAttrSpy = vi.spyOn(caret, "setAttribute");
+
+		textarea.style.border = "0px";
+		caretLeft = 40;
+		textarea.value = "hello";
+		textarea.setSelectionRange(5, 5);
+		act(() => textarea.focus());
+		await nextFrame();
+		setAttrSpy.mockClear();
+
+		// 单字删除：不该触发 data-jump，与单字输入同样走滑行过渡
+		caretLeft = 32;
+		act(() => {
+			textarea.value = "hell";
+			textarea.setSelectionRange(4, 4);
+		});
+		await nextFrame();
+		expect(caret.style.transform).toContain("translate3d(31.50px");
+		expect(setAttrSpy).not.toHaveBeenCalledWith("data-jump", "");
+
+		// 单个 emoji 代理对（UTF-16 长度差 2）删除：同样按单字滑行
+		setAttrSpy.mockClear();
+		caretLeft = 46;
+		act(() => {
+			textarea.value = "hell😀";
+			textarea.setSelectionRange(6, 6);
+		});
+		await nextFrame();
+		expect(setAttrSpy).not.toHaveBeenCalledWith("data-jump", "");
+
+		setAttrSpy.mockClear();
+		caretLeft = 32;
+		act(() => {
+			textarea.value = "hell";
+			textarea.setSelectionRange(4, 4);
+		});
+		await nextFrame();
+		expect(setAttrSpy).not.toHaveBeenCalledWith("data-jump", "");
+
+		// 整段清空：触发 data-jump 直接到位，避免光标悬空在空白处
+		setAttrSpy.mockClear();
+		caretLeft = 0;
+		act(() => {
+			textarea.value = "";
+			textarea.setSelectionRange(0, 0);
+		});
+		await nextFrame();
+		expect(setAttrSpy).toHaveBeenCalledWith("data-jump", "");
+	});
+
+	it("tracks padding-left transitions on focused inputs without waiting for a keystroke", async () => {
+		stubPointer(true);
+		const makeRect = (left: number) => ({ left, top: 4, right: left, bottom: 22, width: 0, height: 18, x: left, y: 4, toJSON: () => ({}) });
+		vi.spyOn(HTMLElement.prototype, "getClientRects").mockImplementation(function (this: HTMLElement) {
+			const mirror = this.parentElement;
+			const pad = mirror ? parseFloat(mirror.style.paddingLeft) || 0 : 0;
+			return [makeRect(pad)] as unknown as DOMRectList;
+		});
+		Range.prototype.getClientRects = () => [makeRect(0)] as unknown as DOMRectList;
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(300);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(36);
+		vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+			left: 0, top: 0, right: 300, bottom: 36, width: 300, height: 36, x: 0, y: 0, toJSON: () => ({}),
+		} as DOMRect);
+
+		const { container, getByTestId } = render(<Harness />);
+		const search = getByTestId("search") as HTMLInputElement;
+		const caret = container.querySelector<HTMLElement>("[data-smooth-caret]")!;
+		search.value = "";
+		search.style.border = "0px";
+		search.style.paddingLeft = "0px";
+
+		act(() => search.focus());
+		await nextFrame();
+		expect(caret.style.transform).toContain("translate3d(-0.50px");
+
+		// 模拟 .isx-search:focus-within 把 padding-left 过渡到 4px，输入框外框 rect 不变
+		act(() => {
+			search.style.paddingLeft = "4px";
+		});
+		await nextFrame();
+		expect(caret.style.transform).toContain("translate3d(3.50px");
+	});
 });

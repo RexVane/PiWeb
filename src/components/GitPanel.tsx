@@ -9,7 +9,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * - 点文件优先交给 FileViewer 居中大窗打开并排曲线 Diff（独立渲染回退到内联 DiffView）；
  * - 最近提交点开就地展开改动文件清单，点文件进 FileViewer 看提交差异。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DiffView, diffStats, parseUnifiedDiff } from "@/components/DiffView";
 import { languageForPath } from "@/lib/highlight";
 import { IconChevronLeft14, IconCloseOutline14, IconCopyOutline16, IconFileOutline16, IconGitOutline16, IconRefreshOutline14 } from "@/components/icons";
@@ -97,6 +97,104 @@ const COMMIT_STATUS_COLOR: Record<GitCommitFile["status"], string> = {
 	C: "var(--dsw-accent)",
 };
 
+type CommitDraftStore = {
+	get: () => string;
+	set: (message: string) => void;
+	subscribe: (listener: () => void) => () => void;
+};
+
+/** Commit 输入区：只订阅草稿，打字不触发文件树与提交历史重渲染，并随多行内容自动增高 */
+const GitCommitBox = memo(function GitCommitBox({
+	draftStore,
+	stagedCount,
+	conflictsCount,
+	detached,
+	busyAction,
+	onCommit,
+}: {
+	draftStore: CommitDraftStore;
+	stagedCount: number;
+	conflictsCount: number;
+	detached: boolean;
+	busyAction: string | null;
+	onCommit: (message: string, andPush: boolean, onClear: () => void) => void;
+}) {
+	const { t } = useI18n();
+	const message = useSyncExternalStore(draftStore.subscribe, draftStore.get, () => "");
+	const setMessage = draftStore.set;
+	const taRef = useRef<HTMLTextAreaElement>(null);
+	const composingRef = useRef(false);
+	const sizedFor = useRef({ value: "", width: -1 });
+	const autoSize = useCallback(() => {
+		const ta = taRef.current;
+		if (!ta) return;
+		if (sizedFor.current.value === ta.value && sizedFor.current.width === ta.clientWidth) return;
+		if (!ta.value) {
+			ta.style.height = "";
+		} else {
+			ta.style.height = "auto";
+			ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
+		}
+		sizedFor.current = { value: ta.value, width: ta.clientWidth };
+	}, []);
+	useLayoutEffect(() => {
+		autoSize();
+	}, [message, autoSize]);
+
+	const canCommit = stagedCount > 0 && message.trim().length > 0 && conflictsCount === 0 && busyAction === null;
+	const submit = (andPush: boolean) => {
+		if (!canCommit) return;
+		onCommit(message, andPush, () => setMessage(""));
+	};
+
+	return (
+		<div className="pw-git-commit-box flex flex-col gap-2 rounded-xl p-2.5">
+			<textarea
+				ref={taRef}
+				rows={2}
+				value={message}
+				onChange={(e) => {
+					setMessage(e.target.value);
+					autoSize();
+				}}
+				onCompositionStart={() => { composingRef.current = true; }}
+				onCompositionEnd={() => { composingRef.current = false; }}
+				onKeyDown={(e) => {
+					if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
+					if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) {
+						e.preventDefault();
+						submit(false);
+					}
+				}}
+				placeholder={t.gitCommitPlaceholder}
+				aria-label={t.gitCommit}
+				className="pw-git-commit-input w-full resize-none bg-transparent outline-none"
+				style={{ fontSize: 12.5, lineHeight: 1.45, color: "var(--dsw-label-primary)" }}
+			/>
+			<div className="flex items-center gap-1.5">
+				<button
+					type="button"
+					className="pw-git-commit-btn flex-1 rounded-lg px-2.5 py-1 text-center font-medium transition-opacity"
+					disabled={!canCommit}
+					title={stagedCount === 0 ? t.gitCommitEmptyHint : t.gitCommit}
+					onClick={() => submit(false)}
+				>
+					{busyAction === "commit" ? "…" : t.gitCommit}
+				</button>
+				<button
+					type="button"
+					className="pw-chip"
+					disabled={!canCommit || detached}
+					title={t.gitCommitAndPush}
+					onClick={() => submit(true)}
+				>
+					{busyAction === "commit-push" ? "…" : t.gitCommitAndPush}
+				</button>
+			</div>
+		</div>
+	);
+});
+
 export function GitPanel({
 	cwd,
 	onClose,
@@ -124,7 +222,23 @@ export function GitPanel({
 	const [actionError, setActionError] = useState("");
 	const [actionNotice, setActionNotice] = useState("");
 	const [busyAction, setBusyAction] = useState<string | null>(null);
-	const [commitMessage, setCommitMessage] = useState("");
+	// 草稿属于面板：输入组件因打开内联差异页而卸载时仍保留；只有输入组件订阅变化。
+	const commitDraftStore = useMemo<CommitDraftStore>(() => {
+		let message = "";
+		const listeners = new Set<() => void>();
+		return {
+			get: () => message,
+			set: (next) => {
+				if (next === message) return;
+				message = next;
+				for (const listener of listeners) listener();
+			},
+			subscribe: (listener) => {
+				listeners.add(listener);
+				return () => { listeners.delete(listener); };
+			},
+		};
+	}, []);
 	const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
 	const [commitFiles, setCommitFiles] = useState<Record<string, GitCommitFile[]>>({});
 	const [commitLoading, setCommitLoading] = useState<string | null>(null);
@@ -345,10 +459,10 @@ export function GitPanel({
 		changeView({ kind: "file", path: f.path, ...(f.from ? { from: f.from } : {}), mode, label });
 	};
 
-	const submitCommit = (andPush: boolean) => {
-		if (!commitMessage.trim() || staged.length === 0 || busyAction !== null) return;
-		void runMutation(andPush ? "commit-push" : "commit", { action: "commit", message: commitMessage, push: andPush }, (data) => {
-			setCommitMessage("");
+	const submitCommit = useCallback((message: string, andPush: boolean, onClear: () => void) => {
+		if (!message.trim() || staged.length === 0 || busyAction !== null) return;
+		void runMutation(andPush ? "commit-push" : "commit", { action: "commit", message, push: andPush }, (data) => {
+			onClear();
 			const hash = typeof data.hash === "string" ? data.hash : "";
 			if (andPush && typeof data.pushError === "string" && data.pushError) {
 				setActionNotice(t.gitCommitSuccess.replace("{hash}", hash));
@@ -359,15 +473,13 @@ export function GitPanel({
 				setActionNotice(t.gitCommitSuccess.replace("{hash}", hash));
 			}
 		});
-	};
+	}, [busyAction, runMutation, staged.length, t.gitCommitSuccess, t.gitPushSuccess]);
 
 	const headerTitle = view
 		? view.kind === "file"
 			? view.path.split("/").pop() ?? view.path
 			: diff?.title?.split("\n")[0] ?? view.hash
 		: t.gitPanel;
-
-	const canCommit = staged.length > 0 && commitMessage.trim().length > 0 && conflicts.length === 0 && busyAction === null;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col p-4" data-testid="git-panel">
@@ -514,44 +626,14 @@ export function GitPanel({
 						</div>
 
 						{/* 紧凑 Commit 提交区 */}
-						<div className="pw-git-commit-box flex flex-col gap-2 rounded-xl p-2.5">
-							<textarea
-								rows={2}
-								value={commitMessage}
-								onChange={(e) => setCommitMessage(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-									if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && canCommit) {
-										e.preventDefault();
-										submitCommit(false);
-									}
-								}}
-								placeholder={t.gitCommitPlaceholder}
-								aria-label={t.gitCommit}
-								className="pw-git-commit-input w-full resize-none bg-transparent outline-none"
-								style={{ fontSize: 12.5, lineHeight: 1.45, color: "var(--dsw-label-primary)" }}
-							/>
-							<div className="flex items-center gap-1.5">
-								<button
-									type="button"
-									className="pw-git-commit-btn flex-1 rounded-lg px-2.5 py-1 text-center font-medium transition-opacity"
-									disabled={!canCommit}
-									title={staged.length === 0 ? t.gitCommitEmptyHint : t.gitCommit}
-									onClick={() => submitCommit(false)}
-								>
-									{busyAction === "commit" ? "…" : t.gitCommit}
-								</button>
-								<button
-									type="button"
-									className="pw-chip"
-									disabled={!canCommit || info.detached}
-									title={t.gitCommitAndPush}
-									onClick={() => submitCommit(true)}
-								>
-									{busyAction === "commit-push" ? "…" : t.gitCommitAndPush}
-								</button>
-							</div>
-						</div>
+						<GitCommitBox
+							draftStore={commitDraftStore}
+							stagedCount={staged.length}
+							conflictsCount={conflicts.length}
+							detached={info.detached}
+							busyAction={busyAction}
+							onCommit={submitCommit}
+						/>
 
 						{/* 变更文件（每组与每文件带 + / - 暂存开关） */}
 						{statusError || info.statusError ? null : info.files.length === 0 ? (

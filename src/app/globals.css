@@ -422,9 +422,11 @@ html[data-pw-background] *::after {
 
 	.popover {
 		max-width: calc(100vw - 16px) !important;
-		max-height: 420px !important;
 		overflow-y: auto !important;
 		-webkit-overflow-scrolling: touch;
+	}
+	.popover:not(.pw-select-popover) {
+		max-height: 420px !important;
 	}
 	.popover.pw-context-popover {
 		max-width: calc(100vw - 96px) !important;
@@ -513,7 +515,7 @@ html[data-pw-background] *::after {
 		textarea {
 			max-height: min(132px, 26dvh) !important;
 		}
-		.popover {
+		.popover:not(.pw-select-popover) {
 			max-height: min(60dvh, 420px) !important;
 		}
 		.settings-dialog {
@@ -1092,6 +1094,12 @@ html[data-pw-background] *::after {
 	font-weight: 500;
 	color: var(--dsw-label-primary);
 }
+.pw-queue-inline-wrap { flex: 1; min-width: 0; }
+.pw-queue-inline { display: flex; align-items: center; gap: 6px; border: 1px solid var(--dsw-label-tertiary); border-radius: 7px; padding: 2px 6px; }
+.pw-queue-inline > svg { flex: none; color: var(--dsw-label-secondary); }
+.pw-queue-inline textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: none; background: transparent; color: var(--dsw-label-primary); font: inherit; line-height: 20px; padding: 4px 0; max-height: 120px; }
+.pw-queue-inline .icon-btn { flex: none; width: 24px; height: 24px; }
+.pw-queue-edit-error { font-size: 11px; color: var(--dsw-label-secondary); margin-top: 4px; }
 .pw-queue-foot {
 	display: flex;
 	align-items: center;

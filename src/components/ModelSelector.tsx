@@ -1,7 +1,7 @@
 "use client";
 
 /** Searchable provider groups; thinking levels remain on their own page. */
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { IconCheckOutline14, IconChevronDown14, IconChevronLeft14, IconChevronRight14, IconSearchOutline16 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { useI18n } from "@/i18n";
@@ -127,7 +127,8 @@ export function ModelSelector({
 		};
 	}, [open]);
 
-	const words = useMemo(() => query.trim().toLowerCase().split(/\s+/).filter(Boolean), [query]);
+	const deferredQuery = useDeferredValue(query);
+	const words = useMemo(() => deferredQuery.trim().toLowerCase().split(/\s+/).filter(Boolean), [deferredQuery]);
 	const groups = useMemo(() => {
 		const byProvider = new Map<string, ModelChoice[]>();
 		for (const entry of models) {

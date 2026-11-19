@@ -95,4 +95,22 @@ describe("user message edit affordance", () => {
 		renderWindow(undefined);
 		expect(screen.queryByRole("button", { name: "编辑这条消息" })).toBeNull();
 	});
+
+	it("ignores Enter and Escape while IME composition is active", () => {
+		const onEdit = vi.fn();
+		renderWindow(onEdit);
+		fireEvent.click(screen.getByRole("button", { name: "编辑这条消息" }));
+		const editor = screen.getByRole("textbox", { name: "编辑这条消息" }) as HTMLTextAreaElement;
+
+		fireEvent.compositionStart(editor);
+		fireEvent.keyDown(editor, { key: "Enter", isComposing: true });
+		fireEvent.keyDown(editor, { key: "Escape", isComposing: true });
+		expect(onEdit).not.toHaveBeenCalled();
+		expect(screen.getByRole("textbox", { name: "编辑这条消息" })).toBeTruthy();
+
+		fireEvent.compositionEnd(editor);
+		fireEvent.keyDown(editor, { key: "Enter" });
+		expect(onEdit).toHaveBeenCalledTimes(1);
+		expect(onEdit).toHaveBeenCalledWith("entry-1", "hello world");
+	});
 });

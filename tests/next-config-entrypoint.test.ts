@@ -10,6 +10,7 @@ it("fails closed for authenticated raw Next entrypoints while allowing build/typ
 	expect(() => config(PHASE_PRODUCTION_SERVER)).toThrow(/npm start/);
 	expect(() => config(PHASE_DEVELOPMENT_SERVER)).toThrow(/npm run dev/);
 	expect(config(PHASE_PRODUCTION_BUILD).experimental?.proxyClientMaxBodySize).toBe("12mb");
+	expect(config(PHASE_PRODUCTION_BUILD).experimental?.useTypeScriptCli).toBe(true);
 	expect(() => config("phase-development-types")).not.toThrow();
 });
 it("allows explicit local deployments with authentication disabled", () => {

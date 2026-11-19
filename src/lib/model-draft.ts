@@ -1,3 +1,5 @@
+import { thinkingRowsFromMap, thinkingRowsToMap, validThinkingRows, type ThinkingLevelRow, type ThinkingLevelMap } from "./thinking-config";
+
 /** Browser-safe form helpers. Keep the source on each row, not indexed by model ID,
  * so renaming/removing a row never revives an old model or drops unexposed options. */
 export interface ModelDraft {
@@ -12,6 +14,8 @@ export interface ModelDraft {
 	 * pi 按 false 处理（`definition.reasoning ?? false`），思考档位会整个消失。
 	 */
 	reasoning?: boolean;
+	/** Undefined uses automatic/official levels; defined rows are a manual thinkingLevelMap. */
+	thinkingRows?: ThinkingLevelRow[];
 	source?: Readonly<Record<string, unknown>>;
 	/** 来自 modelOverrides：只覆盖内置模型的部分字段。缺省 = models[] 里的定义或新加的行 */
 	origin?: "override";
@@ -53,6 +57,7 @@ export function modelDraftFromConfig(value: unknown): ModelDraft {
 		vision: input ? input.includes("image") : undefined,
 		// 同理：没写 reasoning 不是 false，而是「没声明」——pi 会按 false 处理，体检卡片据此提醒
 		reasoning: typeof source.reasoning === "boolean" ? source.reasoning : undefined,
+		...(isRecord(source.thinkingLevelMap) ? { thinkingRows: thinkingRowsFromMap(source.thinkingLevelMap as ThinkingLevelMap) } : {}),
 		source,
 	};
 }
@@ -150,13 +155,14 @@ export function headerEntriesToConfig(entries: ReadonlyArray<{ name: string; val
 	return out;
 }
 
-export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" } | undefined {
+export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" | "thinking" } | undefined {
 	const ids = new Set<string>();
 	for (let index = 0; index < models.length; index += 1) {
 		const model = models[index];
 		const id = model.id.trim();
 		if (!id || ids.has(id)) return { index, reason: "id" };
 		ids.add(id);
+		if (model.thinkingRows !== undefined && !validThinkingRows(model.thinkingRows)) return { index, reason: "thinking" };
 		if ([model.contextWindow, model.maxTokens].some((value) => value !== undefined && (!Number.isSafeInteger(value) || value <= 0))) {
 			return { index, reason: "capacity" };
 		}
@@ -195,6 +201,10 @@ export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: s
 	const reasoning = model.reasoning;
 	if (reasoning !== undefined && !Object.is(reasoning, original?.reasoning)) {
 		result.reasoning = reasoning;
+	}
+	if (JSON.stringify(model.thinkingRows) !== JSON.stringify(original?.thinkingRows)) {
+		if (model.thinkingRows === undefined) delete result.thinkingLevelMap;
+		else result.thinkingLevelMap = thinkingRowsToMap(model.thinkingRows);
 	}
 	return result;
 }
@@ -462,5 +472,34 @@ export function withContextWindow(providers: Readonly<Record<string, unknown>>, 
 	const table = overrides ?? {};
 	config.modelOverrides = table;
 	table[id] = { ...(isRecord(override) ? override : {}), contextWindow };
+	return next;
+}
+
+/**
+ * 改一个模型的 thinkingLevelMap，写入层次与 withContextWindow 相同：
+ * - 已有 modelOverrides.<id>.thinkingLevelMap → 改它；
+ * - 否则 models[] 里定义了这个 ID → 写到那几条；
+ * - 都没有 → 写 modelOverrides.<id>.thinkingLevelMap，同一条覆盖的其它字段保留。
+ * 值必须是 string 或 null（null = 该档不支持）。不改入参。
+ */
+export function withThinkingLevelMap(providers: Readonly<Record<string, unknown>>, provider: string, id: string, map: Record<string, string | null>): Record<string, unknown> {
+	const next = JSON.parse(JSON.stringify(providers)) as Record<string, unknown>;
+	const existing = Object.prototype.hasOwnProperty.call(next, provider) ? next[provider] : undefined;
+	const config: Record<string, unknown> = isRecord(existing) ? existing : {};
+	next[provider] = config;
+	const overrides = isRecord(config.modelOverrides) ? config.modelOverrides : undefined;
+	const override = overrides && Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : undefined;
+	if (isRecord(override) && override.thinkingLevelMap !== undefined) {
+		override.thinkingLevelMap = map;
+		return next;
+	}
+	const defined = Array.isArray(config.models) ? config.models.filter((model) => isRecord(model) && typeof model.id === "string" && model.id.trim() === id) : [];
+	if (defined.length) {
+		for (const model of defined as Record<string, unknown>[]) model.thinkingLevelMap = map;
+		return next;
+	}
+	const table = overrides ?? {};
+	config.modelOverrides = table;
+	table[id] = { ...(isRecord(override) ? override : {}), thinkingLevelMap: map };
 	return next;
 }

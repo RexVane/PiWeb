@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ModelRuntime, type CreateModelRuntimeOptions } from "@earendil-works/pi-coding-agent";
 import type { AuthOperationOptions, Credential } from "@earendil-works/pi-ai";
+import { attachThinkingPolicy } from "./automatic-thinking";
 
 /** The SDK template grammar, without its command execution branch. */
 function resolveCatalogKey(value: string, env?: Record<string, string>): string | undefined {
@@ -47,6 +48,7 @@ export async function createPiWebModelRuntime(options: Omit<CreateModelRuntimeOp
 	};
 	const getAuth = runtime.getAuth.bind(runtime);
 	runtime.getAuth = ((...args: Parameters<ModelRuntime["getAuth"]>) => requests.run(true, () => getAuth(...args))) as ModelRuntime["getAuth"];
+	await attachThinkingPolicy(runtime);
 	if (options.refreshOnCreate !== false) {
 		await runtime.refresh({ allowNetwork: options.allowModelNetwork === true, signal: options.signal });
 	}

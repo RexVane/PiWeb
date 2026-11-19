@@ -7,7 +7,7 @@
  *  2. 条目 parentId 串成单链，首条为 null
  *  3. 每个 toolResult.toolCallId 必须能对上前面某条 assistant 的 toolCall.id，
  *     源里缺调用记录时补一条占位 toolCall（否则压缩/请求阶段会挂）
- *  4. content 永远是数组；message.timestamp 是毫秒数
+ *  4. content 永远是数组；message.timestamp 是毫秒数；assistant.usage 始终完整（未知用量补 0）
  *  5. 文件落在 <agentDir>/sessions/<编码 cwd>/ 下，header.cwd 必须是真实存在的目录
  */
 import fs from "node:fs/promises";
@@ -15,6 +15,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ImportedBlock, ImportedMessage, ImportedSession, ImportSource } from "./types";
 import { fallbackTitle, IMPORT_SOURCES } from "./types";
+import { normalizeImportedUsage } from "./usage";
 
 /** 来源前缀：标题里标出来源，侧栏一眼能看出是导入的 */
 const SOURCE_LABEL: Record<ImportSource, string> = {
@@ -222,7 +223,7 @@ export async function writeImportedSession(session: ImportedSession, options: Wr
 					...(message.api ? { api: message.api } : {}),
 					...(message.provider ? { provider: message.provider } : summary.provider ? { provider: summary.provider } : {}),
 					...(message.model ? { model: message.model } : summary.model ? { model: summary.model } : {}),
-					...(message.usage ? { usage: normalizeUsage(message.usage) } : {}),
+					usage: normalizeImportedUsage(message.usage),
 					...(message.errorMessage ? { errorMessage: message.errorMessage } : {}),
 				},
 			}, at);
@@ -261,21 +262,4 @@ export async function writeImportedSession(session: ImportedSession, options: Wr
 		await fs.link(temporary, target);
 	} finally { await fs.unlink(temporary).catch(() => undefined); }
 	return { path: target, messageCount: messages.messages.length, skipped };
-}
-
-/** pi 的 usage 形状：缺的字段补 0，cost 恒为 0（导入的历史没有真实计费） */
-function normalizeUsage(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; totalTokens?: number }) {
-	const input = usage.input ?? 0;
-	const output = usage.output ?? 0;
-	const cacheRead = usage.cacheRead ?? 0;
-	const cacheWrite = usage.cacheWrite ?? 0;
-	return {
-		input,
-		output,
-		cacheRead,
-		cacheWrite,
-		...(usage.reasoning ? { reasoning: usage.reasoning } : {}),
-		totalTokens: usage.totalTokens ?? input + output + cacheRead + cacheWrite,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
 }

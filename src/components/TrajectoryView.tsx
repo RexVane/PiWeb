@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { IconCloseOutline14, IconSearchOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { fmtTokens } from "@/lib/format";
@@ -104,7 +104,7 @@ function DurationIcon() {
 	);
 }
 
-function TrajectoryTimeline({ rows, actualDuration, matchedSeqs, selected, onSelect }: {
+const TrajectoryTimeline = memo(function TrajectoryTimeline({ rows, actualDuration, matchedSeqs, selected, onSelect }: {
 	rows: DisplayRow[];
 	actualDuration: boolean;
 	matchedSeqs: Set<number> | null;
@@ -164,7 +164,7 @@ function TrajectoryTimeline({ rows, actualDuration, matchedSeqs, selected, onSel
 			</div>
 		</div>
 	);
-}
+});
 
 export function TrajectoryView({ entries, selected, onSelect }: {
 	entries: TrajEntry[];
@@ -176,8 +176,9 @@ export function TrajectoryView({ entries, selected, onSelect }: {
 	const [callsCollapsed, setCallsCollapsed] = useState(false);
 	const [turnsCollapsed, setTurnsCollapsed] = useState(false);
 	const [query, setQuery] = useState("");
+	const deferredQuery = useDeferredValue(query);
 	const rows = useMemo(() => deriveRows(entries), [entries]);
-	const normalizedQuery = query.trim().toLocaleLowerCase();
+	const normalizedQuery = deferredQuery.trim().toLocaleLowerCase();
 	const matchedSeqs = useMemo(
 		() => normalizedQuery ? new Set(rows.filter((row) => matchesQuery(row, normalizedQuery)).map((row) => row.entry.seq)) : null,
 		[normalizedQuery, rows],

@@ -8,7 +8,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * 文件页签：面包屑 + 模式（变更 / 内容 / 渲染）+ 折叠未改动 + 上一处 / 下一处 + 引用 / 编辑器打开。
  * 「变更」= 整文件行内 diff（FullDiff）；「内容」= 所选步的全文（被删文件显示删除前）；「渲染」= Markdown。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { MarkdownBlock } from "@/components/MarkdownBlock";
 import { MarkdownActionsProvider } from "@/components/chat/markdown-actions";
 import { diffStats, parseUnifiedDiff, type DiffLine } from "@/components/DiffView";
@@ -64,7 +64,7 @@ async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 	if (!r.ok || !j.success) {
 		const err = new Error(j.error || `request failed (${r.status})`) as ReadError;
 		err.status = r.status;
-		err.code = j.errorCode;
+		if (typeof j.errorCode === "string") err.code = j.errorCode;
 		throw err;
 	}
 	return j.data as T;
@@ -117,19 +117,24 @@ interface Loaded {
 	binary: boolean;
 	truncated: boolean;
 	encodingUnsupported?: boolean;
-	notice: "deleted" | "historical" | "missing" | "omitted" | "omittedDisk" | "revisionDisk" | "patchUnavailable" | "disk" | "nochange" | "metadata" | null;
+	notice: "deleted" | "historical" | "missing" | "outside" | "omitted" | "omittedDisk" | "revisionDisk" | "patchUnavailable" | "disk" | "nochange" | "metadata" | null;
 	error: string | null;
 }
 
 /** 代码全文：行号栏 + 高亮正文 */
-function CodeBlock({ content, name }: { content: string; name: string }) {
+const CodeBlock = memo(function CodeBlock({ content, name }: { content: string; name: string }) {
 	const html = useMemo(() => highlightCode(content, languageForPath(name)), [content, name]);
-	const lines = content.split("\n").length;
-	const gutterWidth = `${String(lines).length + 1}ch`;
+	const { gutterWidth, lineNumbers } = useMemo(() => {
+		const lines = content.split("\n").length;
+		return {
+			gutterWidth: `${String(lines).length + 1}ch`,
+			lineNumbers: Array.from({ length: lines }, (_, i) => i + 1).join("\n"),
+		};
+	}, [content]);
 	return (
 		<div className="flex min-h-0 flex-1 overflow-auto" style={{ fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: "20px" }}>
 			<pre aria-hidden className="flex-none select-none py-2 pl-3 pr-2 text-right" style={{ width: gutterWidth, minWidth: gutterWidth, color: "var(--dsw-label-caption)", margin: 0, position: "sticky", left: 0, background: "var(--dsw-glass-modal)" }}>
-				{Array.from({ length: lines }, (_, i) => i + 1).join("\n")}
+				{lineNumbers}
 			</pre>
 			{html !== null ? (
 				<pre className="hljs min-w-0 flex-1 py-2 pl-3 pr-4" style={{ margin: 0, background: "transparent", color: "var(--dsw-label-secondary)" }}>
@@ -138,6 +143,115 @@ function CodeBlock({ content, name }: { content: string; name: string }) {
 			) : (
 				<pre className="min-w-0 flex-1 py-2 pl-3 pr-4" style={{ margin: 0, color: "var(--dsw-label-secondary)" }}>{content}</pre>
 			)}
+		</div>
+	);
+});
+
+/** 快速打开弹层：输入状态留在子组件内部，打字不触发外层代码/Diff 重渲染 */
+function QuickOpenDialog({
+	cwd,
+	growthFilePaths,
+	initialQuery = "",
+	onOpen,
+	onClose,
+}: {
+	cwd: string;
+	growthFilePaths: string[];
+	initialQuery?: string;
+	onOpen: (path: string) => void;
+	onClose: () => void;
+}) {
+	const { t } = useI18n();
+	const [quickQuery, setQuickQuery] = useState(initialQuery);
+	const [quickIndex, setQuickIndex] = useState(0);
+	const workspaceFiles = useWorkspaceFiles(cwd, true);
+	const quickDialogRef = useRef<HTMLDivElement>(null);
+	const quickInputRef = useRef<HTMLInputElement>(null);
+	const quickComposingRef = useRef(false);
+	useDialog({ open: true, onClose, ref: quickDialogRef });
+
+	useEffect(() => {
+		const timer = setTimeout(() => quickInputRef.current?.focus(), 0);
+		return () => clearTimeout(timer);
+	}, []);
+
+	const quickMatches = useMemo(() => {
+		const q = quickQuery.trim();
+		// 树只加载已展开的节点；快速打开必须同时搜索完整索引，并保留快照里的历史文件。
+		const paths = new Set([...growthFilePaths, ...workspaceFiles.candidates.filter((candidate) => !candidate.dir).map((candidate) => candidate.path)]);
+		const scored = [...paths]
+			.map((p) => ({ p, s: fuzzyScore(q, p) }))
+			.filter((x) => x.s >= 0)
+			.sort((a, b) => b.s - a.s || a.p.length - b.p.length)
+			.slice(0, 50);
+		return scored.map((x) => x.p);
+	}, [quickQuery, growthFilePaths, workspaceFiles.candidates]);
+	const selectedQuickIndex = Math.max(0, Math.min(quickIndex, quickMatches.length - 1));
+
+	return (
+		<div className="pw-quick" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+			<div ref={quickDialogRef} className="pw-quick-box popover" role="dialog" aria-modal="true" aria-label={t.viewerQuickOpen} tabIndex={-1}>
+				<div className="flex items-center gap-2 px-2" style={{ height: 34 }}>
+					<IconSearchOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
+					<input
+						ref={quickInputRef}
+						value={quickQuery}
+						onChange={(e) => {
+							setQuickQuery(e.target.value);
+							setQuickIndex(0);
+						}}
+						placeholder={t.viewerQuickOpen}
+						className="min-w-0 flex-1 bg-transparent"
+						style={{ fontSize: 13 }}
+						onCompositionStart={() => { quickComposingRef.current = true; }}
+						onCompositionEnd={() => { quickComposingRef.current = false; }}
+						onKeyDown={(e) => {
+							if (quickComposingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
+							if (e.key === "ArrowDown") {
+								e.preventDefault();
+								setQuickIndex(Math.min(Math.max(0, quickMatches.length - 1), selectedQuickIndex + 1));
+							} else if (e.key === "ArrowUp") {
+								e.preventDefault();
+								setQuickIndex(Math.max(0, selectedQuickIndex - 1));
+							} else if (e.key === "Enter") {
+								e.preventDefault();
+								const p = quickMatches[selectedQuickIndex];
+								if (p) {
+									onOpen(p);
+									onClose();
+								}
+							}
+						}}
+					/>
+				</div>
+				<div className="pw-quick-list">
+					{workspaceFiles.status === "loading" || workspaceFiles.status === "idle" ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.panelLoading}</div> : null}
+					{workspaceFiles.error ? <div role="alert" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{workspaceFiles.error}</div> : null}
+					{workspaceFiles.truncated ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.mentionTruncated}</div> : null}
+					{workspaceFiles.warning ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-warn)" }}>{t.mentionGitFallback}</div> : null}
+					{quickMatches.length === 0 && workspaceFiles.status === "ready" ? (
+						<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "8px 10px" }}>{t.viewerQuickOpenEmpty}</div>
+					) : (
+						quickMatches.map((p, i) => (
+							<button
+								key={p}
+								type="button"
+								className="pw-quick-item"
+								data-active={i === selectedQuickIndex}
+								onMouseEnter={() => setQuickIndex(i)}
+								onClick={() => {
+									onOpen(p);
+									onClose();
+								}}
+							>
+								<img className="pw-tree-icon" src={fileIconSrc(p.split("/").pop() ?? p)} alt="" />
+								<span className="truncate">{p.split("/").pop()}</span>
+								<span className="min-w-0 truncate" style={{ color: "var(--dsw-label-caption)", fontSize: 11.5 }}>{p}</span>
+							</button>
+						))
+					)}
+				</div>
+			</div>
 		</div>
 	);
 }
@@ -179,27 +293,21 @@ export function FileViewer({
 	const [busyHunk, setBusyHunk] = useState<number | null>(null);
 	const [busyFileAction, setBusyFileAction] = useState(false);
 	const [quickOpen, setQuickOpen] = useState(false);
-	const [quickQuery, setQuickQuery] = useState("");
-	const [quickIndex, setQuickIndex] = useState(0);
+	const [quickSearch, setQuickSearch] = useState({ query: "", key: 0 });
 	const openQuickSearch = useCallback((query = "") => {
-		setQuickQuery(query);
-		setQuickIndex(0);
+		setQuickSearch((previous) => ({ query, key: previous.key + 1 }));
 		setQuickOpen(true);
 	}, []);
-	const workspaceFiles = useWorkspaceFiles(cwd, state.open && quickOpen);
 	const [linkError, setLinkError] = useState<string | null>(null);
 	const [treeFilter, setTreeFilter] = useState("");
+	const deferredTreeFilter = useDeferredValue(treeFilter);
 	const [reveal, setReveal] = useState<{ path: string; key: number } | null>(null);
 	const [loaded, setLoaded] = useState<Loaded | null>(null);
 	const [copyStatus, setCopyStatus] = useState<{ key: string | null; ok: boolean } | null>(null);
 	const [dirPage, setDirPage] = useState<(DirPage & { key: string; error?: string }) | null>(null);
 	const diffRef = useRef<FullDiffHandle>(null);
 	const rootRef = useRef<HTMLDivElement>(null);
-	const quickDialogRef = useRef<HTMLDivElement>(null);
-	const quickInputRef = useRef<HTMLInputElement>(null);
-	const quickComposingRef = useRef(false);
 	useDialog({ open: state.open, onClose, ref: rootRef });
-	useDialog({ open: state.open && quickOpen, onClose: () => setQuickOpen(false), ref: quickDialogRef });
 
 	const activeTab = state.tabs.find((tab) => tab.path === state.active) ?? null;
 	const change = useMemo(() => (activeTab ? growth.changes.find((c) => c.path === activeTab.path) ?? null : null), [activeTab, growth.changes]);
@@ -313,13 +421,24 @@ export function FileViewer({
 				done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
 			} catch (error) {
 				const failure = error as ReadError;
-				if (failure.code === "IS_DIRECTORY" || (failure.status === 400 && failure.message === "not a file")) {
+				const legacy = failure.status === 400 && (!failure.code || failure.code === "VALIDATION_ERROR");
+				if (failure.code === "OUT_OF_WORKSPACE") {
+					done({ notice: "outside" }); return;
+				}
+				if (failure.code === "IS_DIRECTORY") {
 					if (alive) setDirFallback(tab.path);
-					done({ notice: null });
-				} else if (failure.status === 404 && (!failure.code || failure.code === "FILE_NOT_FOUND" || failure.code === "ENOENT")) {
-					if (snapshotError) throw snapshotError;
-					done({ notice: notice === "omittedDisk" ? "omitted" : "missing" });
-				} else throw error;
+					done({ notice: null }); return;
+				}
+				if (failure.code === "NOT_A_FILE" || (legacy && failure.message === "not a file")) {
+					await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`, controller.signal);
+					if (alive) setDirFallback(tab.path);
+					done({ notice: null }); return;
+				}
+				const missing = failure.code === "NOT_FOUND" || failure.code === "ENOENT" || failure.code === "FILE_NOT_FOUND"
+					|| (legacy && failure.message === "file not found") || (failure.status === 404 && !failure.code);
+				if (!missing) throw error;
+				if (snapshotError) throw snapshotError;
+				done({ notice: notice === "omittedDisk" ? "omitted" : "missing" });
 			}
 		};
 		const readSnapshot = (tree: string) => cachedJson<SnapshotPreview>(
@@ -480,34 +599,16 @@ export function FileViewer({
 	}, [state.open, state.active, mode, onClose, onCloseTab, openQuickSearch]);
 
 	useEffect(() => {
-		if (!quickOpen) return;
-		const timer = setTimeout(() => quickInputRef.current?.focus(), 0);
-		return () => clearTimeout(timer);
-	}, [quickOpen]);
-	useEffect(() => {
 		if (!state.open) setQuickOpen(false);
 	}, [state.open]);
 
-	const quickMatches = useMemo(() => {
-		if (!quickOpen) return [];
-		const q = quickQuery.trim();
-		// 树只加载已展开的节点；快速打开必须同时搜索完整索引，并保留快照里的历史文件。
-		const paths = new Set([...growth.filePaths, ...workspaceFiles.candidates.filter((candidate) => !candidate.dir).map((candidate) => candidate.path)]);
-		const scored = [...paths]
-			.map((p) => ({ p, s: fuzzyScore(q, p) }))
-			.filter((x) => x.s >= 0)
-			.sort((a, b) => b.s - a.s || a.p.length - b.p.length)
-			.slice(0, 50);
-		return scored.map((x) => x.p);
-	}, [quickOpen, quickQuery, growth.filePaths, workspaceFiles.candidates]);
-	const selectedQuickIndex = Math.max(0, Math.min(quickIndex, quickMatches.length - 1));
 	const linkScope = useRef(activeTab);
 	useEffect(() => {
 		linkScope.current = state.open ? activeTab : null;
 		return () => { linkScope.current = null; };
 	}, [activeTab, state.open]);
 
-	const openDocumentLink = async (href: string) => {
+	const openDocumentLink = useCallback(async (href: string) => {
 		if (!activeTab) return;
 		setLinkError(null);
 		try {
@@ -530,7 +631,21 @@ export function FileViewer({
 		} catch (error) {
 			if (linkScope.current === activeTab) setLinkError(error instanceof Error ? error.message : t.viewerLoadFailed);
 		}
-	};
+	}, [activeTab, cwd, onOpen, onOpenContent, t.viewerLoadFailed]);
+	const markdownActions = useMemo(() => {
+		if (!activeTab) return null;
+		const source = activeTab.sourcePath ?? (activeTab.staticContent === undefined ? undefined : activeTab.path);
+		return {
+			workspace: source ? undefined : cwd,
+			allowDocumentParents: true,
+			openFile: (href: string) => { void openDocumentLink(href); },
+			resolveImage: (href: string) => markdownDocumentImageUrl(cwd, activeTab.path, href, source),
+		};
+	}, [activeTab, cwd, openDocumentLink]);
+	const handleOpenTreeFile = useCallback((node: TreeNode) => {
+		onOpen(node.path, { from: node.from, lazy: node.lazy, kind: node.kind });
+	}, [onOpen]);
+	const closeQuickOpen = useCallback(() => setQuickOpen(false), []);
 	const toggleGitHunk = useCallback(async (blockIndex: number, anchor: DiffHunkAnchor) => {
 		if (!activeTab?.git || activeTab.git.mode === "commit" || busyHunk !== null || busyFileAction) return;
 		const action = activeTab.git.mode === "staged" ? "unstageHunk" : "stageHunk";
@@ -641,7 +756,7 @@ export function FileViewer({
 	};
 	const noticeText = currentLoaded?.notice && {
 		omitted: t.viewerOmitted, omittedDisk: t.viewerOmittedDisk, revisionDisk: t.viewerRevisionDisk, patchUnavailable: t.viewerPatchUnavailable,
-		deleted: t.viewerDeleted, historical: t.viewerHistorical, missing: t.viewerMissing, disk: t.viewerNotInSnapshot,
+		deleted: t.viewerDeleted, historical: t.viewerHistorical, missing: t.viewerMissing, outside: t.viewerOutside, disk: t.viewerNotInSnapshot,
 		nochange: t.viewerNoChanges, metadata: t.viewerMetadataChanged,
 	}[currentLoaded.notice];
 
@@ -865,6 +980,8 @@ export function FileViewer({
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.panelLoading}</div>
 						) : currentLoaded.error ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{currentLoaded.error}</div>
+						) : currentLoaded.notice === "missing" || currentLoaded.notice === "outside" ? (
+							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{noticeText}</div>
 						) : currentLoaded.binary ? (
 							<div className="flex min-h-0 flex-1 items-center justify-center" style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.fileBinary}</div>
 						) : currentLoaded.encodingUnsupported ? null : currentLoaded.diff ? (
@@ -879,13 +996,9 @@ export function FileViewer({
 								handle={diffRef}
 								initialChange
 							/>
-						) : mode === "render" && currentLoaded.content !== null ? (
+						) : mode === "render" && currentLoaded.content !== null && markdownActions ? (
 							<div className="min-h-0 flex-1 overflow-auto px-6 py-4" style={{ fontSize: 14 }}>
-								<MarkdownActionsProvider value={{
-									allowDocumentParents: true,
-									openFile: (href) => void openDocumentLink(href),
-									resolveImage: (href) => markdownDocumentImageUrl(cwd, activeTab.path, href, activeTab.sourcePath ?? (activeTab.staticContent === undefined ? undefined : activeTab.path)),
-								}}>
+								<MarkdownActionsProvider value={markdownActions}>
 									<MarkdownBlock text={currentLoaded.content} />
 								</MarkdownActionsProvider>
 							</div>
@@ -913,11 +1026,11 @@ export function FileViewer({
 							tree={growth.tree}
 							expanded={growth.expanded}
 							fresh={growth.fresh}
-							filter={treeFilter}
+							filter={deferredTreeFilter}
 							selectedPath={null}
 							onToggleDir={growth.toggleDir}
 							onExpandLazy={growth.expandLazy}
-							onOpenFile={(node: TreeNode) => onOpen(node.path, { from: node.from, lazy: node.lazy, kind: node.kind })}
+							onOpenFile={handleOpenTreeFile}
 							onReference={onReference}
 							onOpenEditor={onOpenEditor}
 							revealPath={reveal?.path ?? null}
@@ -929,70 +1042,14 @@ export function FileViewer({
 
 				{/* 快速打开 */}
 				{quickOpen && (
-					<div className="pw-quick" onMouseDown={(e) => e.target === e.currentTarget && setQuickOpen(false)}>
-						<div ref={quickDialogRef} className="pw-quick-box popover" role="dialog" aria-modal="true" aria-label={t.viewerQuickOpen} tabIndex={-1}>
-							<div className="flex items-center gap-2 px-2" style={{ height: 34 }}>
-								<IconSearchOutline16 size={14} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
-								<input
-									ref={quickInputRef}
-									value={quickQuery}
-									onChange={(e) => {
-										setQuickQuery(e.target.value);
-										setQuickIndex(0);
-									}}
-									placeholder={t.viewerQuickOpen}
-									className="min-w-0 flex-1 bg-transparent"
-									style={{ fontSize: 13 }}
-									onCompositionStart={() => { quickComposingRef.current = true; }}
-									onCompositionEnd={() => { quickComposingRef.current = false; }}
-									onKeyDown={(e) => {
-										if (quickComposingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
-										if (e.key === "ArrowDown") {
-											e.preventDefault();
-											setQuickIndex(Math.min(Math.max(0, quickMatches.length - 1), selectedQuickIndex + 1));
-										} else if (e.key === "ArrowUp") {
-											e.preventDefault();
-											setQuickIndex(Math.max(0, selectedQuickIndex - 1));
-										} else if (e.key === "Enter") {
-											e.preventDefault();
-											const p = quickMatches[selectedQuickIndex];
-											if (p) {
-												onOpen(p);
-												setQuickOpen(false);
-											}
-										}
-									}}
-								/>
-							</div>
-							<div className="pw-quick-list">
-								{workspaceFiles.status === "loading" || workspaceFiles.status === "idle" ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.panelLoading}</div> : null}
-								{workspaceFiles.error ? <div role="alert" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}>{workspaceFiles.error}</div> : null}
-								{workspaceFiles.truncated ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5 }}>{t.mentionTruncated}</div> : null}
-								{workspaceFiles.warning ? <div role="status" className="px-2.5 py-2" style={{ fontSize: 12.5, color: "var(--dsw-warn)" }}>{t.mentionGitFallback}</div> : null}
-								{quickMatches.length === 0 && workspaceFiles.status === "ready" ? (
-									<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)", padding: "8px 10px" }}>{t.viewerQuickOpenEmpty}</div>
-								) : (
-									quickMatches.map((p, i) => (
-										<button
-											key={p}
-											type="button"
-											className="pw-quick-item"
-											data-active={i === selectedQuickIndex}
-											onMouseEnter={() => setQuickIndex(i)}
-											onClick={() => {
-												onOpen(p);
-												setQuickOpen(false);
-											}}
-										>
-											<img className="pw-tree-icon" src={fileIconSrc(p.split("/").pop() ?? p)} alt="" />
-											<span className="truncate">{p.split("/").pop()}</span>
-											<span className="min-w-0 truncate" style={{ color: "var(--dsw-label-caption)", fontSize: 11.5 }}>{p}</span>
-										</button>
-									))
-								)}
-							</div>
-						</div>
-					</div>
+					<QuickOpenDialog
+						key={quickSearch.key}
+						initialQuery={quickSearch.query}
+						cwd={cwd}
+						growthFilePaths={growth.filePaths}
+						onOpen={onOpen}
+						onClose={closeQuickOpen}
+					/>
 				)}
 			</div>
 		</div>

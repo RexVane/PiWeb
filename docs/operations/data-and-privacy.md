@@ -22,6 +22,20 @@
 - 会话导入只读取来源数据，不写入、不迁移；卸载 PiWeb 不会删除这些来源。
 - 后端文件接口在默认配置下不要求 cwd 是已注册工作区（认证后本机操作者级权限）。需要更严格的边界时使用[严格工作区模式](environment.md#可选限制开关本修复轮新增默认不改变原有行为)。
 
+## 导入会话的续聊兼容
+
+- 所有来源共用的导入写入器都会为助手消息写入完整的 `usage`（包括 `totalTokens` 和 `cost`），源工具未报告的字段补 0。这里的 0 表示**未知**，不是测得的真实用量；SDK 会对没有有效用量的历史按消息内容估算上下文，导入不会伪造计费。
+- 旧导入会话若缺少这些字段，PiWeb 在打开时对内存中的消息做兼容处理，续聊和分支入口共用这一处理。正常消息已记录的完整用量与费用保持原样；原始 JSONL 不会被自动批量重写，正文、ID 和分支关系不变。
+- 不需要删除或重新导入旧会话。源工具额度耗尽时，可以选择 PiWeb 中另一个已配置、可用的模型继续任务；后续请求消耗的是所选模型的额度。
+
+## 自动思考档位与手动配置
+
+- 优先级为：用户/扩展显式配置的 `thinkingLevelMap` → Pi SDK 官方对应模型配置 → 未识别兼容模型的后台探测缓存 → SDK 默认档位。匹配模型 ID、版本和已知网关后缀，不跨代借用其他型号的配置；不会修改模型的 API 地址、协议、价格或上下文上限。
+- 模型卡片中可编辑“档位 → API 参数值”。添加时从 `low → low` 开始，再选择未使用的 `medium`、`high`、`xhigh`、`max` 等标准档位；`off` 默认映射为 `none`。手动表单未列出的档位以 `null` 禁用，保存到与终端 Pi 共享的 `models.json`；选择“使用自动档位”会移除该手动映射。
+- 官方能匹配时不发额外请求。未知 `openai-completions` / `openai-responses` 模型才会进入后台队列：单次最多 9 个简短测试请求，请求输出上限设为 64 tokens，串行执行、请求间隔 3.5 秒；可能消耗所选提供方的额度。仅使用合成测试消息，不发送已有会话。OAuth 和凭证/请求头命令不在后台探测，遇到限速、认证失败或不确定结果保留默认配置。
+- 缓存保存在 `<agent 目录>/web-thinking-cache.json`，最多 256 条记录，以 SDK 版本、模型/端点、兼容参数和配置文件指纹区分。有效结果缓存 7 天，失败或不确定结果退避 1 小时；不含密钥、请求头原文、对话或完整响应，不自动写回 `models.json`。后台结果仅代表端点接受的参数值，不能证明实际思考量或网关上游身份。
+- `PIWEB_AUTO_THINKING_PROBE=0` 可关闭额外探测；`PI_OFFLINE=1`、构建和测试环境也不自动发起探测。界面无需逐个点击“探测”，手动配置始终优先。
+
 ## 部署隔离
 
 容器、CI、多实例或多用户部署要同时隔离**家目录与 agent 目录**：
@@ -61,7 +75,7 @@ $env:APPDATA = 'D:\srv\piweb\appdata'; $env:LOCALAPPDATA = 'D:\srv\piweb\localap
 
 **PiWeb 自身没有第三方埋点**：源码与依赖里没有 Sentry / PostHog / Segment / Umami / GA / Mixpanel / Datadog 之类 SDK；`scripts/install-build.mjs` 与 CI 会设置 `NEXT_TELEMETRY_DISABLED=1`，启动器给第三方 installer 的子进程环境也固定带 `NEXT_TELEMETRY_DISABLED=1`。该结论来自 2026-11-15 审计（原始证据目录与审计报告已移出仓库，可由 git 历史恢复）。
 
-联网行为分为四类：
+联网行为分为五类：
 
 1. **Pi SDK 安装遥测（默认开启）**：pi 设置 `enableInstallTelemetry` 默认为 `true`。开启时，发给 OpenRouter、NVIDIA NIM、OpenCode 的模型请求会带 `pi` 归属元数据（如 `HTTP-Referer`、`X-OpenRouter-Title`、`X-BILLING-INVOKE-ORIGIN`，不含用户文件与路径）；SDK 的安装上报实现位于 pi CLI 交互模式（`https://pi.dev/api/report-install?version=…`），PiWeb 经 SDK 使用，审计未发现 PiWeb 源码触发上报。设置 `PI_OFFLINE` 会跳过上报；要**完全关闭**遥测与归属头：
 
@@ -76,6 +90,8 @@ $env:APPDATA = 'D:\srv\piweb\appdata'; $env:LOCALAPPDATA = 'D:\srv\piweb\localap
 3. **你配置的模型与工具**：对话内容、工具调用结果会发送给你配置的模型提供方；加载的扩展是宿主进程内受信任代码，可自行联网。PiWeb 不代做脱敏。
 
 4. **远程连接**：连接二维码/配对码是一次性凭据（120 秒），`cloudflared` 快速隧道会把手机流量经 Cloudflare 转发；直连局域网 HTTP **不加密**。吊销与设备记录的留存见下节。
+
+5. **自动思考档位探测**：无法匹配官方配置的已认证兼容模型，可能发送上节所述的合成测试请求；会消耗提供方额度，但不发送真实对话、不覆盖手动映射。可通过 `PIWEB_AUTO_THINKING_PROBE=0` 或 `PI_OFFLINE=1` 禁用。
 
 ## 导出与敏感信息
 

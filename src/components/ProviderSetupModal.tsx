@@ -2,7 +2,7 @@
 import { clientFetch as fetch } from "@/lib/client-fetch";
 
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
@@ -13,6 +13,7 @@ import {
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { CustomSelect } from "@/components/CustomSelect";
+import { ThinkingLevelEditor } from "@/components/ThinkingLevelEditor";
 import { useI18n } from "@/i18n";
 import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
@@ -90,10 +91,13 @@ export function ProviderSetupModal({
 	useDialog({ open: true, onClose: () => pickerOpen ? setPickerOpen(false) : onClose(), ref: dialogRef });
 	const selected = providers.find((provider) => provider.id === selectedId);
 	const catalogIds = useMemo(() => new Set(catalogModelIds?.[selectedId] ?? []), [catalogModelIds, selectedId]);
-	const filtered = providers.filter((provider) => {
-		const needle = search.trim().toLocaleLowerCase();
-		return !needle || provider.name.toLocaleLowerCase().includes(needle) || provider.id.toLocaleLowerCase().includes(needle);
-	});
+	const deferredSearch = useDeferredValue(search);
+	const filtered = useMemo(() => {
+		const needle = deferredSearch.trim().toLocaleLowerCase();
+		return providers.filter((provider) => (
+			!needle || provider.name.toLocaleLowerCase().includes(needle) || provider.id.toLocaleLowerCase().includes(needle)
+		));
+	}, [providers, deferredSearch]);
 
 	useEffect(() => {
 		if (!pickerOpen) return;
@@ -687,6 +691,7 @@ export function ModelCatalog({
 												aria-label={t.reasoningLabel}
 											/>
 										</div>
+										{model.reasoning === true && <ThinkingLevelEditor rows={model.thinkingRows} onChange={(thinkingRows) => updateModel(index, { thinkingRows })} />}
 										<span className={styles.capacityHint}>{t.capacityHint}</span>
 									</div>
 								) : null}

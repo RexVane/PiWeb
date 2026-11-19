@@ -314,11 +314,14 @@ describe("导入会话面板", () => {
 	});
 
 	it("来源下拉支持搜索、键盘选择和 Escape 取消", async () => {
-		setup();
+		setup({ sessions: [
+			session({ source: "codex", externalId: "c", title: "Codex 的会话" }),
+			session({ source: "zcode", externalId: "z", title: "ZCode 的会话" }),
+			session({ source: "opencode", externalId: "o", title: "opencode 的会话" }),
+		] });
 		const input = await openSources();
 		fireEvent.change(input, { target: { value: "code" } });
 		expect(within(screen.getByRole("listbox")).getAllByRole("option").map((option) => option.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Codex"), expect.stringContaining("ZCode"), expect.stringContaining("opencode")]));
-		fireEvent.keyDown(input, { key: "ArrowDown" });
 		fireEvent.keyDown(input, { key: "ArrowDown" });
 		fireEvent.keyDown(input, { key: "Enter" });
 		expect(screen.getByTestId("import-group-zcode")).toBeTruthy();
@@ -349,34 +352,68 @@ describe("导入会话面板", () => {
 		expect(screen.queryByText("清空选择")).toBeNull();
 	});
 
-	it("下拉列出全部来源入口及十二个来源和条数，空来源可查看，再扫描不重置选择", async () => {
+	it("下拉只列有会话的来源，保留全部入口和来源条数，再扫描不重置有效选择", async () => {
 		setup();
 		await openSources();
-		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(13);
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(3);
+		expect(screen.getByTestId("import-source-all").textContent).toContain("3 条会话");
 		expect(screen.getByTestId("import-source-zcode").textContent).toContain("2 条会话");
-		expect(screen.getByTestId("import-source-codex").textContent).toContain("0 条会话");
-		// 新增来源即使没有会话也要有入口
-		for (const source of ["kimi", "workbuddy", "antigravity", "antigravity-cli", "qwen", "cursor"]) {
-			expect(screen.getByTestId(`import-source-${source}`).textContent).toContain("0 条会话");
+		for (const source of ["codex", "grok", "dsh", "opencode", "kimi", "workbuddy", "antigravity", "antigravity-cli", "qwen", "cursor"]) {
+			expect(screen.queryByTestId(`import-source-${source}`)).toBeNull();
 		}
 		expect(screen.getByTestId("import-source-claude").getAttribute("aria-selected")).toBe("true");
-		fireEvent.click(screen.getByTestId("import-source-codex"));
-		expect(screen.getByTestId("import-group-codex").textContent).toContain("没有找到可导入的本地会话");
-		expect(screen.queryByText("Claude 的会话")).toBeNull();
+		fireEvent.click(screen.getByTestId("import-source-zcode"));
+		expect(screen.getByTestId("import-group-zcode").textContent).toContain("ZCode 的会话");
 		fireEvent.click(screen.getByTestId("import-rescan"));
 		await waitFor(() => expect((screen.getByTestId("import-rescan") as HTMLButtonElement).disabled).toBe(false));
-		expect(screen.getByTestId("import-group-codex")).toBeTruthy();
+		expect(screen.getByTestId("import-group-zcode")).toBeTruthy();
 		await openSources();
 		fireEvent.mouseDown(document.body);
 		expect(screen.queryByRole("listbox")).toBeNull();
 	});
 
-	it("没有会话时仍可查看全部支持来源", async () => {
+	it("所有来源为空时只保留全部入口和空状态，不列十二个 0 条来源", async () => {
 		setup({ sessions: [] });
 		await openSources();
-		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(13);
-		fireEvent.click(screen.getByTestId("import-source-opencode"));
-		expect(screen.getByTestId("import-group-opencode").textContent).toContain("没有找到可导入的本地会话");
+		expect(within(screen.getByRole("listbox")).getAllByRole("option")).toHaveLength(1);
+		expect(screen.getByTestId("import-source-all")).toBeTruthy();
+		expect(screen.queryByTestId("import-source-qwen")).toBeNull();
+		fireEvent.click(screen.getByTestId("import-source-all"));
+		expect(screen.getByTestId("import-group-all").textContent).toContain("没有找到可导入的本地会话");
+	});
+
+	it("刷新后当前来源变为空时回退到有会话的来源，后来有会话的来源自动出现", async () => {
+		const options = { imported: [], sessions: [
+			session({ source: "claude", externalId: "c", title: "Claude 保留会话" }),
+			session({ source: "qwen", externalId: "q", title: "Qwen 待消失会话" }),
+		] };
+		setup(options);
+		await chooseSource("qwen");
+		expect(screen.getByTestId("import-group-qwen")).toBeTruthy();
+		options.sessions = [session({ source: "claude", externalId: "c", title: "Claude 保留会话" })];
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await screen.findByTestId("import-group-claude");
+		expect(screen.getByTestId("import-source-picker").textContent).toContain("Claude Code");
+		await openSources();
+		expect(screen.queryByTestId("import-source-qwen")).toBeNull();
+		fireEvent.mouseDown(document.body);
+		options.sessions.push(session({ source: "qwen", externalId: "new", title: "Qwen 新会话" }));
+		fireEvent.click(screen.getByTestId("import-rescan"));
+		await openSources();
+		expect(screen.getByTestId("import-source-qwen").textContent).toContain("1 条会话");
+	});
+
+	it("会话搜索无匹配不会隐藏本来有会话的来源，也不能搜索出空来源", async () => {
+		setup();
+		await screen.findByTestId("import-group-claude");
+		fireEvent.change(screen.getByRole("searchbox"), { target: { value: "不存在的标题" } });
+		await screen.findByText("没有匹配的会话");
+		const input = await openSources();
+		expect(screen.getByTestId("import-source-claude")).toBeTruthy();
+		expect(screen.getByTestId("import-source-zcode")).toBeTruthy();
+		fireEvent.change(input, { target: { value: "qwen" } });
+		expect(screen.queryByTestId("import-source-qwen")).toBeNull();
+		expect(screen.getByText("没有匹配的来源")).toBeTruthy();
 	});
 
 	it("切换来源不会丢掉另一个来源上已勾选的行", async () => {

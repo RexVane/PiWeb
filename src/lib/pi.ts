@@ -27,6 +27,7 @@ import { modelFilesFingerprint, reloadStoredCredentials } from "./model-files";
 import { refreshSessionModelRuntimes } from "./session-model-runtime";
 import { createPiWebModelRuntime } from "./model-runtime-safe";
 import { securePackageManager } from "./package-manager-safe";
+import { repairImportedAssistantUsage } from "./session-import/usage";
 
 export { createAgentSession, getAgentDir, loadProjectContextFiles, SessionManager };
 
@@ -567,6 +568,10 @@ export function isSessionId(id: string): boolean {
 }
 
 /** 打开已有会话（不启动 agent，仅读文件树） */
-export function openSessionManager(sessionPath: string): SessionManager {
-	return SessionManager.open(sessionPath);
+export function openSessionManager(sessionPath: string, sessionDir?: string): SessionManager {
+	const manager = SessionManager.open(sessionPath, sessionDir);
+	// Old imports may lack assistant.usage; the SDK's request preflight dereferences
+	// usage.totalTokens. Repair memory only, preserving disk IDs, branches and appended turns.
+	repairImportedAssistantUsage(manager.getEntries());
+	return manager;
 }

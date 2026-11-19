@@ -371,6 +371,7 @@ export function ExtensionDialogHost({
 						value={text}
 						onChange={(e) => setText(e.target.value)}
 						onKeyDown={(e) => {
+							if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 							// Ctrl/Cmd + Enter 提交：多行编辑里单独的 Enter 是换行
 							if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onAnswer(dialog.id, { value: text });
 						}}

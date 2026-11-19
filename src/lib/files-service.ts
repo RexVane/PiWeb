@@ -265,11 +265,11 @@ async function existingWorkspacePath(root: string, requested: string, cwdValue: 
 	if (!isPathInside(root, target)) {
 		// An absolute reference can use another spelling of the workspace, e.g. /var instead of /private/var.
 		const parent = path.isAbsolute(requested) ? await fs.realpath(path.dirname(target)).catch(() => null) : null;
-		if (!parent || !isPathInside(root, parent)) throw new BoundaryError("path escapes the workspace");
+		if (!parent || !isPathInside(root, parent)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
 		target = path.join(parent, path.basename(target));
 	}
 	const real = await fs.realpath(target).catch(rethrowFileLookup);
-	if (!isPathInside(root, real)) throw new BoundaryError("path escapes the workspace");
+	if (!isPathInside(root, real)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
 	return real;
 }
 
@@ -345,13 +345,14 @@ export async function openWorkspaceFile(cwdValue: unknown, relPath: unknown) {
 	const real = await existingWorkspacePath(root, relPath, cwdValue);
 	const stat = await fs.stat(real).catch(rethrowFileLookup);
 	if (stat.isDirectory()) throw new FileLookupError("IS_DIRECTORY", "not a file");
-	if (!stat.isFile()) throw new BoundaryError("not a file");
+	if (!stat.isFile()) throw new BoundaryError("not a file", "NOT_A_FILE");
 	const handle = await fs.open(real, "r").catch(rethrowFileLookup);
 	try {
 		const opened = await handle.stat();
 		const checked = await fs.realpath(real).catch(rethrowFileLookup);
 		const current = await fs.stat(checked).catch(rethrowFileLookup);
-		if (!isPathInside(root, checked) || !opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino
+		if (!isPathInside(root, checked)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
+		if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino
 			|| opened.dev !== current.dev || opened.ino !== current.ino) throw new BoundaryError("file changed while opening");
 		return { handle, size: opened.size, path: toRel(root, real), name: path.basename(real) };
 	} catch (error) { await handle.close(); throw error; }

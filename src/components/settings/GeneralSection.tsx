@@ -293,7 +293,7 @@ export function GeneralSection({
 									disabled={!piSettings || settingsLoading || settingsSaving}
 									onChange={(event) => item.setValue(event.target.value)}
 									onBlur={() => void commitIntegerSetting("compaction", item.key, item.value, item.setValue, item.saved)}
-									onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+									onKeyDown={(event) => { if (!event.nativeEvent.isComposing && event.keyCode !== 229 && event.key === "Enter") event.currentTarget.blur(); }}
 									className="flex-none rounded-lg px-2 py-1 tabular-nums"
 									title={item.label}
 									style={{ width: 110, textAlign: "right", background: "var(--dsw-hover)" }}
@@ -316,7 +316,7 @@ export function GeneralSection({
 						disabled={!piSettings || settingsLoading || settingsSaving}
 						onChange={(event) => setMaxRetriesDraft(event.target.value)}
 						onBlur={() => void commitIntegerSetting("retry", "maxRetries", maxRetriesDraft, setMaxRetriesDraft, piSettings?.retry.maxRetries)}
-						onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+						onKeyDown={(event) => { if (!event.nativeEvent.isComposing && event.keyCode !== 229 && event.key === "Enter") event.currentTarget.blur(); }}
 						className="rounded-lg px-2 py-1"
 						title={t.maxRetries}
 						style={{ width: 90, textAlign: "right", background: "var(--dsw-hover)" }}

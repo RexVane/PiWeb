@@ -5,7 +5,7 @@ import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { writeRememberedHeroModel } from "@/lib/hero-model-memory";
 
-const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn(), initialPath: "/session-a", queue: { steering: [] as string[], followUp: [] as string[] } }));
+const mocks = vi.hoisted(() => ({ sendCommand: vi.fn(), newSession: vi.fn(), initialPath: "/session-a", isStreaming: false, queue: { steering: [] as string[], followUp: [] as string[] } }));
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
 const noop = () => {};
 vi.mock("next/dynamic", () => ({ default: () => (props: any) => props.onReference ? <button onClick={() => props.onReference("@ref.txt")}>Reference file</button> : null }));
@@ -26,7 +26,7 @@ vi.mock("@/hooks/usePiWeb", () => ({ usePiWeb: () => {
 		sessions: ["/session-a", "/session-b", "/created"].map((path) => ({ path, cwd: "/workspace", name: path })),
 		archivedSessions: [], archivedSessionPaths: [], addedWorkspaces: ["/workspace"], removedWorkspaces: [], workspaceAliases: {},
 		currentPath, currentId: currentPath, models: { models: [model], providers: [{ id: "test", name: "Test", authReady: true }] },
-		state: { snapshot: currentPath ? { sessionPath: currentPath, cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: mocks.queue } : null,
+		state: { snapshot: currentPath ? { sessionPath: currentPath, isStreaming: mocks.isStreaming, cwd: "/workspace", model, trajectory: [], messages: [], userTurns: [], queue: mocks.queue } : null,
 			messages: [], tools: {}, growth: { rounds: [], error: null }, extensionStatuses: {}, extensionDialogs: [], extensionNotices: [], connected: true },
 		getWorkspaceName: (cwd: string) => cwd, sendCommand: mocks.sendCommand,
 		newSession: async (...args: unknown[]) => { const path = await mocks.newSession(...args); if (path) setCurrentPath(path); return path; },
@@ -47,7 +47,7 @@ const go = (name: string) => fireEvent.click(screen.getByRole("button", { name }
 // 轨迹页签已移除：用「切到别的会话再切回来」制造同样的重挂载（草稿与待接收状态由父层持有）
 const remount = (returnTo = "Open A") => { go("Open B"); go(returnTo); };
 // 新会话页不再自动选模型：这些用例模拟用户在 /workspace 里选过 test-model（记住的选择），草稿才能发出去
-beforeEach(() => { mocks.initialPath = "/session-a"; mocks.queue = { steering: [], followUp: [] }; localStorage.clear(); sessionStorage.clear(); writeRememberedHeroModel(localStorage, "/workspace", { provider: model.provider, id: model.id }); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
+beforeEach(() => { mocks.initialPath = "/session-a"; mocks.isStreaming = false; mocks.queue = { steering: [], followUp: [] }; localStorage.clear(); sessionStorage.clear(); writeRememberedHeroModel(localStorage, "/workspace", { provider: model.provider, id: model.id }); mocks.sendCommand.mockReset().mockResolvedValue({ success: true }); mocks.newSession.mockReset().mockResolvedValue("/created"); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShell session-owned composer drafts", () => {
@@ -55,15 +55,17 @@ describe("AppShell session-owned composer drafts", () => {
 		const images = Array.from({ length: imageCount }, () => ({ type: "image", data: "YQ==", mimeType: "image/png" }));
 		const recoveredText = "r".repeat(textLength);
 		mocks.queue = { steering: [recoveredText], followUp: [] };
-		mocks.sendCommand.mockImplementation((command: any) => Promise.resolve(command.cmd === "clearQueue"
+		mocks.isStreaming = true;
+		mocks.sendCommand.mockImplementation((command: any) => Promise.resolve(command.cmd === "abort"
 			? { success: true, data: { ...mocks.queue, images } } : { success: true }));
 		vi.stubGlobal("fetch", vi.fn(async () => response({ skills: [], promptTemplates: [], extensionCommands: [] })));
 		const first = render(<AppShell />);
 		fireEvent.change(textarea(), { target: { value: "unsent text" } });
-		fireEvent.click(screen.getByRole("button", { name: "↑ 取回编辑" }));
+		fireEvent.click(screen.getByRole("button", { name: "停止" }));
 		await waitFor(() => expect(textarea().value.length).toBe(textLength + "\n\nunsent text".length));
 		expect(document.querySelectorAll('img[src^="data:image/png"]')).toHaveLength(imageCount);
 		first.unmount();
+		mocks.isStreaming = false;
 		mocks.queue = { steering: [], followUp: [] };
 		render(<AppShell />);
 		await waitFor(() => expect(textarea().value.length).toBe(textLength + "\n\nunsent text".length));

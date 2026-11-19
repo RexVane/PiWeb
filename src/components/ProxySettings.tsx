@@ -52,7 +52,7 @@ export function ProxySettings({ value, disabled, onChange, onCommit }: {
 			<input type="text" aria-label={t.httpProxy} value={draft ?? value} placeholder={address || ""} spellCheck={false} disabled={disabled}
 				onChange={(event) => { setDraft(event.target.value); onChange(event.target.value); }}
 				onBlur={(event) => { if (!(event.relatedTarget instanceof HTMLElement && event.relatedTarget.dataset.proxyTest)) { setDraft(null); onCommit(); } }}
-				onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+				onKeyDown={(event) => { if (!event.nativeEvent.isComposing && event.keyCode !== 229 && event.key === "Enter") event.currentTarget.blur(); }}
 				className="min-w-0 flex-1 rounded-lg px-2 py-1.5" style={{ fontSize: 12, background: "var(--dsw-hover)", fontFamily: "var(--font-mono)" }} />
 			<button type="button" className="pw-chip shrink-0" data-proxy-test="true" disabled={testing || loading || (!value.trim() && !address)} onMouseDown={(event) => event.preventDefault()} onClick={() => void test()}>
 				{testing && <IconRefreshOutline14 size={13} className="animate-spin" />}{testing ? t.proxyTesting : t.proxyTest}

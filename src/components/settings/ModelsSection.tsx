@@ -13,7 +13,7 @@ import { fmtTokens } from "@/lib/format";
 import { customModelGaps, fillModelFields, formatCapacity, headerEntriesFromConfig, headerEntriesToConfig, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type BalanceUsage, type ProviderUsage, type QuotaExtraUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
-import type { ProviderView } from "@/lib/models-service";
+import type { ModelView, ProviderView } from "@/lib/models-service";
 import { Field, fieldCls, SelectOption } from "./SharedControls";
 
 // ---------- Models ----------
@@ -229,6 +229,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const { t, lang } = useI18n();
 	const { confirm, confirmDialog } = useConfirmDialog();
 	const [providers, setProviders] = useState<ProviderView[]>([]);
+	const [catalogModels, setCatalogModels] = useState<ModelView[]>([]);
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
 	const [customRevision, setCustomRevision] = useState<string | null>(null);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
@@ -237,25 +238,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [catalogModelIds, setCatalogModelIds] = useState<Record<string, string[]>>({});
 	const [editing, setEditing] = useState<string | null>(null);
 	const editBaseRevision = useRef<string | null>(null);
-	const [keyDraft, setKeyDraft] = useState("");
 	const [adding, setAdding] = useState<"builtin" | "custom" | null>(null);
-	const [cId, setCId] = useState("");
-	const [cBaseUrl, setCBaseUrl] = useState("");
-	const [cApi, setCApi] = useState("openai-completions");
-	const [cKey, setCKey] = useState("");
-	const [cModels, setCModels] = useState<ModelDraft[]>([]);
-	const [cName, setCName] = useState("");
-	// 自定义 provider 的自定义请求头：点编辑时从 models.json 读回来，保存时整体写回
-	const [cHeaders, setCHeaders] = useState<Array<{ name: string; value: string; storedSecret?: boolean }>>([]);
-	const [bBaseUrl, setBBaseUrl] = useState("");
-	const [bModels, setBModels] = useState<ModelDraft[]>([]);
 	const [editBusy, setEditBusy] = useState(false);
-	const [editAdvanced, setEditAdvanced] = useState(false);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string } | null>(null);
 	const [oauthProvider, setOauthProvider] = useState<string | null>(null);
 	const [oauthPrompt, setOauthPrompt] = useState<{ type: string; message: string; placeholder?: string; options?: Array<{ label: string; value: string }> } | null>(null);
 	const [oauthLog, setOauthLog] = useState<string[]>([]);
-	const [oauthInput, setOauthInput] = useState("");
 	const [oauthDone, setOauthDone] = useState<{ ok: boolean; msg: string } | null>(null);
 	const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
 
@@ -317,6 +305,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			}
 			if (j.data.providers.some((provider: ProviderView) => provider.authError)) setToast({ ok: false, msg: j.data.providers.filter((provider: ProviderView) => provider.authError).map((provider: ProviderView) => `${provider.name}: ${provider.authError}`).join("；") });
 			setProviders(j.data.providers);
+			setCatalogModels(j.data.models ?? []);
 			setCatalogModelIds(j.data.catalogModelIds ?? {});
 			setSecretProviderIds(new Set(j.data.customProviders?.secretProviderIds ?? []));
 			setSecretHeaderKeys(j.data.customProviders?.secretHeaderKeys ?? {});
@@ -329,6 +318,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			setToast({ ok: false, msg: localizeApiError(lang, code, message) });
 		}
 	}, [lang]);
+	const thinkingPending = catalogModels.some((model) => model.thinkingProbePending);
+	useEffect(() => {
+		if (!thinkingPending) return;
+		const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 5000);
+		return () => clearInterval(timer);
+	}, [thinkingPending, load]);
 	const changed = useCallback(async () => {
 		await onChanged?.();
 	}, [onChanged]);
@@ -723,6 +718,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const gaps = useMemo(() => customModelGaps(custom.providers ?? {}), [custom]);
 	const [auditBusy, setAuditBusy] = useState(false);
 
+
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
 		notify(j.success, j.error);
@@ -746,14 +742,15 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		return result;
 	};
 
-	const answerOAuth = async (value: string) => {
-		if (!oauthProvider) return;
+	const answerOAuth = async (value: string): Promise<boolean> => {
+		if (!oauthProvider) return false;
 		try {
 			const response = await request({ action: "loginAnswer", providerId: oauthProvider, text: value });
 			if (!response.success || response.data?.delivered !== true) throw new Error(response.error || t.toastError);
-			setOauthInput("");
+			return true;
 		} catch (error) {
 			notify(false, error instanceof Error ? error.message : t.toastError);
+			return false;
 		}
 	};
 
@@ -824,34 +821,11 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		return provider.resolvedAuthSource || t.authUnavailable;
 	};
 
+
 	const startEdit = (id: string) => {
 		editBaseRevision.current = customRevision;
 		setEditing(editing === id ? null : id);
-		setKeyDraft("");
 		setEditBusy(false);
-		setEditAdvanced(false);
-		const override = custom.providers[id];
-		// 与卡片渲染的 isCustom 同口径：内置 provider 即使有 models.json 覆盖层也走内置编辑分支，
-		// 否则 OAuth 后添加的内置提供商会填错状态、编辑时模型列表显示为空
-		const isCustomEntry = customIds.has(id) && !providers.find((p) => p.id === id)?.builtIn;
-		if (isCustomEntry) {
-			setCId(id);
-			setCBaseUrl(override?.baseUrl ?? "");
-			setCApi(override?.api ?? "openai-completions");
-			setCKey("");
-			setCName(typeof override?.name === "string" ? override.name : "");
-			setCModels((override?.models ?? []).map(modelDraftFromConfig));
-			const plainHeaders = headerEntriesFromConfig(override?.headers);
-			const seenHeaderNames = new Set(plainHeaders.map((entry) => entry.name));
-			const secretRows = (secretHeaderKeys[id] ?? [])
-				.filter((name) => !seenHeaderNames.has(name))
-				.map((name) => ({ name, value: "", storedSecret: true }));
-			setCHeaders([...plainHeaders, ...secretRows]);
-		} else {
-			// 内置 provider：从 models.json 覆盖层初始化（若有），models[] 定义和 modelOverrides 覆盖都作为行
-			setBBaseUrl(typeof override?.baseUrl === "string" ? override.baseUrl : "");
-			setBModels(modelDraftsFromProviderConfig(override));
-		}
 	};
 
 	const catalogIdsOf = (providerId: string): ReadonlySet<string> => new Set(catalogModelIds[providerId] ?? []);
@@ -872,12 +846,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		return next;
 	};
 
-	const saveCustomEdit = async () => {
+	const saveCustomEdit = async (id: string, draft: CustomProviderEditDraft) => {
 		if (editBusy) return;
 		if (editBaseRevision.current !== customRevision) { notify(false, t.modelEditStale); return; }
-		const invalid = validateModelDrafts(cModels);
-		if (invalid || !cBaseUrl.trim()) return;
-		const headerEntries = cHeaders.map(({ name, value, storedSecret }) => [name.trim(), storedSecret && !value.trim() ? "" : value.trim(), Boolean(storedSecret)] as [string, string, boolean]);
+		const invalid = validateModelDrafts(draft.models);
+		if (invalid || !draft.baseUrl.trim()) return;
+		const headerEntries = draft.headers.map(({ name, value, storedSecret }) => [name.trim(), storedSecret && !value.trim() ? "" : value.trim(), Boolean(storedSecret)] as [string, string, boolean]);
 		const headerError = validateHeaderEntries(
 			headerEntries
 				.filter(([name, value, storedSecret]) => name || value || storedSecret)
@@ -887,7 +861,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			notify(false, headerError);
 			return;
 		}
-		const targetId = cId.trim();
+		const targetId = id.trim();
 		if ((editing !== null && targetId !== editing) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(targetId) || ["constructor", "prototype"].includes(targetId)
 			|| (targetId !== editing && providers.some((provider) => provider.id === targetId))) {
 			notify(false, "Provider ID 格式无效或已存在，请使用另一个 ID。");
@@ -896,12 +870,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		setEditBusy(true);
 		try {
 			const next = { ...custom.providers };
-			const previousId = editing ?? cId.trim();
+			const previousId = editing ?? targetId;
 			const previous = next[previousId] ?? {};
-			if (previousId !== cId.trim()) delete next[previousId];
-			const configuredHeaders: Record<string, string | null> = headerEntriesToConfig(cHeaders);
+			if (previousId !== targetId) delete next[previousId];
+			const configuredHeaders: Record<string, string | null> = headerEntriesToConfig(draft.headers);
 			const keptSecrets = new Set(
-				cHeaders
+				draft.headers
 					.filter((row) => row.storedSecret && !row.value.trim() && row.name.trim())
 					.map((row) => row.name.trim()),
 			);
@@ -910,12 +884,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 					Object.defineProperty(configuredHeaders, secretName, { value: null, enumerable: true, configurable: true, writable: true });
 				}
 			}
-			next[cId.trim()] = serializeProviderDraft(previous, {
-				name: cName,
-				baseUrl: cBaseUrl,
-				api: cApi,
-				apiKey: cKey,
-				models: cModels,
+			next[targetId] = serializeProviderDraft(previous, {
+				name: draft.name,
+				baseUrl: draft.baseUrl,
+				api: draft.api,
+				apiKey: draft.apiKey,
+				models: draft.models,
 				headers: configuredHeaders,
 				keepStoredSecretHeaders: keptSecrets.size > 0,
 			});
@@ -927,21 +901,21 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	};
 
 	/** 内置 provider 的编辑保存：写 models.json 覆盖层 + 可选 setKey（多步认证走登录弹窗） */
-	const saveBuiltinEdit = async (provider: { id: string; apis: string[] }) => {
+	const saveBuiltinEdit = async (provider: { id: string; apis: string[] }, draft: BuiltinProviderEditDraft) => {
 		if (editBusy) return;
 		if (editBaseRevision.current !== customRevision) { notify(false, t.modelEditStale); return; }
-		const invalid = validateModelDrafts(bModels);
+		const invalid = validateModelDrafts(draft.models);
 		if (invalid) return;
 		setEditBusy(true);
 		try {
 			const config = serializeProviderDraft(custom.providers[provider.id] ?? {}, {
-				baseUrl: bBaseUrl,
-				models: bModels,
+				baseUrl: draft.baseUrl,
+				models: draft.models,
 			}, provider.apis[0] ?? "openai-completions", catalogIdsOf(provider.id));
 			const next = withBuiltinEntry(provider.id, config);
 			const j = next ? await saveCustom(next) : { success: true };
-			if (j.success && keyDraft.trim()) {
-				const login = await beginLogin(provider.id, keyDraft.trim());
+			if (j.success && draft.apiKey.trim()) {
+				const login = await beginLogin(provider.id, draft.apiKey.trim());
 				if (!login.success) return;
 			}
 			if (j.success) setEditing(null);
@@ -1119,198 +1093,31 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 							</div>
 
 							{editingThis && (
-								<div className="mt-2 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
-									{isCustom ? (
-										<div className="flex flex-col gap-3">
-											<Field label={t.apiKey}>
-												<input
-													type="password"
-													value={cKey}
-													onChange={(e) => setCKey(e.target.value)}
-													className={fieldCls}
-													placeholder={secretProviderIds.has(p.id) ? t.apiKeyStored : t.apiKeyOptional}
-												/>
-											</Field>
-											<Field label={t.displayName}>
-												<input value={cName} onChange={(e) => setCName(e.target.value)} className={fieldCls} placeholder={p.id} />
-											</Field>
-											<Field label={t.baseUrl}>
-												<input value={cBaseUrl} onChange={(e) => setCBaseUrl(e.target.value)} className={fieldCls} placeholder="https://api.example.com/v1" />
-											</Field>
-											<Field label={t.apiType}>
-												<SelectOption
-													value={cApi}
-													options={customApiOptions([cApi, ...p.apis]).map((api) => ({ value: api, label: api }))}
-													onChange={setCApi}
-												/>
-											</Field>
-											<Field label={t.customHeaders}>
-												<div className="flex flex-col gap-2">
-													{cHeaders.map((entry, index) => (
-														<div key={index} className="flex items-center gap-2">
-															<input
-																value={entry.name}
-																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { name: e.target.value, value: item.value } : item)))}
-																className={fieldCls}
-																placeholder="User-Agent"
-																style={{ flex: "0 0 38%" }}
-															/>
-															<input
-																type="password"
-																autoComplete="off"
-																value={entry.value}
-																onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { ...item, value: e.target.value } : item)))}
-																className={fieldCls}
-																placeholder={entry.storedSecret ? t.apiKeyStored : "opencode/1.0.0"}
-															/>
-															<button
-																type="button"
-																className="btn-outline flex-none"
-																style={{ height: 32, padding: "0 10px" }}
-																aria-label={`${t.delete} ${entry.name || index + 1}`}
-																onClick={() => setCHeaders((current) => current.filter((_, at) => at !== index))}
-															>
-																×
-															</button>
-														</div>
-													))}
-													<div className="flex items-center gap-2">
-														<button
-															type="button"
-															className="btn-outline"
-															style={{ height: 30, padding: "0 10px", fontSize: 12 }}
-															onClick={() => setCHeaders((current) => [...current, { name: "", value: "" }])}
-														>
-															{t.customHeaderAdd}
-														</button>
-													</div>
-													<div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.customHeadersHint}</div>
-												</div>
-											</Field>
-											<ModelCatalog
-												models={cModels}
-												setModels={setCModels}
-												updateModel={(index, patch) => setCModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
-												discover={async (allowPrivate) => {
-													const activeHeaderPairs = cHeaders
-														.filter((row) => !(row.storedSecret && !row.value.trim()))
-														.map(({ name, value }) => [name.trim(), value.trim()] as [string, string])
-														.filter(([name, value]) => name || value);
-													const headerError = validateHeaderEntries(activeHeaderPairs);
-													if (headerError) throw new Error(headerError);
-													const discoverHeaders = headerEntriesToConfig(cHeaders);
-													const response = await fetch("/api/models", {
-														method: "POST",
-														headers: { "Content-Type": "application/json" },
-														// providerId：key 留空（保持不变）时后端回退到已存密钥与请求头
-														body: JSON.stringify({
-															action: "discoverModels",
-															providerId: p.id,
-															baseUrl: cBaseUrl.trim(),
-															api: cApi,
-															apiKey: cKey.trim(),
-															allowPrivate,
-															...(Object.keys(discoverHeaders).length ? { headers: discoverHeaders } : {}),
-														}),
-													});
-													const result = await response.json();
-													if (!result.success) throw new Error(result.error || t.toastError);
-													return (result.data.models ?? []).map(modelDraftFromCatalog);
-												}}
-												discoverDisabled={!cBaseUrl.trim()}
-											/>
-											<div className="flex justify-end gap-2">
-												<button className="btn-outline" style={{ height: 32 }} disabled={editBusy} onClick={() => setEditing(null)}>{t.cancel}</button>
-												<button
-													className="btn-primary-white"
-													disabled={editBusy || !cBaseUrl.trim() || !!validateModelDrafts(cModels) || !cModels.some((m) => m.id.trim())}
-													onClick={() => void saveCustomEdit()}
-												>
-													{editBusy ? t.saving : t.save}
-												</button>
-											</div>
-										</div>
-									) : (
-										<div className="flex flex-col gap-3">
-											<Field label={t.apiKey}>
-												<input
-													type="password"
-													value={keyDraft}
-													onChange={(e) => setKeyDraft(e.target.value)}
-													className={fieldCls}
-													placeholder={p.keyManaged ? t.apiKeyStored : (p.apiKeyLabel ?? t.apiKey)}
-												/>
-											</Field>
-											<div>
-												<button
-													className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors"
-													style={{ fontSize: 13, color: "var(--dsw-label-secondary)", background: editAdvanced ? "var(--dsw-hover)" : "transparent" }}
-													onClick={() => setEditAdvanced((v) => !v)}
-												>
-													<span style={{ display: "inline-flex", transform: editAdvanced ? "none" : "rotate(-90deg)", transition: "transform 120ms ease" }}>
-														<IconChevronDown14 size={13} />
-													</span>
-													{t.customSettings}
-												</button>
-												{editAdvanced ? (
-													<div className="flex flex-col gap-3 pl-1 pt-2">
-														<Field label={t.baseUrl}>
-															<input value={bBaseUrl} onChange={(e) => setBBaseUrl(e.target.value)} className={fieldCls} placeholder={p.baseUrl ?? t.providerDefault} />
-														</Field>
-														<ModelCatalog
-															models={bModels}
-															setModels={setBModels}
-															updateModel={(index, patch) => setBModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
-															inheritedCount={p.modelCount}
-															catalogIds={catalogIdsOf(p.id)}
-															discover={async (allowPrivate) => {
-																const response = await fetch("/api/models", {
-																	method: "POST",
-																	headers: { "Content-Type": "application/json" },
-																	// providerId：key 留空（保持不变）时后端回退到已存密钥
-																	body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: (bBaseUrl.trim() || p.baseUrl || ""), api: p.apis[0], apiKey: keyDraft.trim(), allowPrivate }),
-																});
-																const result = await response.json();
-																if (!result.success) throw new Error(result.error || t.toastError);
-																return (result.data.models ?? []).map(modelDraftFromCatalog);
-															}}
-															discoverDisabled={!(bBaseUrl.trim() || p.baseUrl)}
-														/>
-													</div>
-												) : null}
-											</div>
-											<div className="flex items-center justify-end gap-2">
-												{p.keyManaged && (
-													<button
-														style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}
-														disabled={editBusy}
-													onClick={async () => {
-														const isOAuth = p.storedAuthType === "oauth";
-														const ok = await confirm({
-															title: isOAuth ? t.removeOAuth : t.removeKey,
-															message: (isOAuth ? t.confirmRemoveOAuth : t.confirmRemoveKey).replace("{name}", p.name),
-															confirmLabel: isOAuth ? t.removeOAuth : t.removeKey,
-														});
-														if (!ok) return;
-														const j = await call({ action: "removeKey", providerId: p.id });
-															if (j.success) setEditing(null);
-														}}
-													>
-														{p.storedAuthType === "oauth" ? t.removeOAuth : t.removeKey}
-													</button>
-												)}
-												<button className="btn-outline" style={{ height: 32 }} disabled={editBusy} onClick={() => setEditing(null)}>{t.cancel}</button>
-												<button
-													className="btn-primary-white"
-													disabled={editBusy || customRevision === null || !!validateModelDrafts(bModels)}
-													onClick={() => void saveBuiltinEdit({ id: p.id, apis: p.apis })}
-												>
-													{editBusy ? t.saving : t.save}
-												</button>
-											</div>
-										</div>
-									)}
-								</div>
+								<InlineProviderEditor
+									key={p.id}
+									provider={p}
+									isCustom={isCustom}
+									override={custom.providers[p.id]}
+									hasStoredSecret={secretProviderIds.has(p.id)}
+									storedSecretHeaderKeys={secretHeaderKeys[p.id]}
+									catalogIds={catalogIdsOf(p.id)}
+									editBusy={editBusy}
+									canSaveBuiltin={customRevision !== null}
+									onCancel={() => setEditing(null)}
+									onSaveCustom={(draft) => void saveCustomEdit(p.id, draft)}
+									onSaveBuiltin={(draft) => void saveBuiltinEdit({ id: p.id, apis: p.apis }, draft)}
+									onRemoveKey={async () => {
+										const isOAuth = p.storedAuthType === "oauth";
+										const ok = await confirm({
+											title: isOAuth ? t.removeOAuth : t.removeKey,
+											message: (isOAuth ? t.confirmRemoveOAuth : t.confirmRemoveKey).replace("{name}", p.name),
+											confirmLabel: isOAuth ? t.removeOAuth : t.removeKey,
+										});
+										if (!ok) return;
+										const j = await call({ action: "removeKey", providerId: p.id });
+										if (j.success) setEditing(null);
+									}}
+								/>
 							)}
 						</div>
 					);
@@ -1321,6 +1128,13 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			{gaps.length > 0 ? (
 				<ModelFieldAudit gaps={gaps} providerLabel={providerName} busy={auditBusy || customRevision === null} onSave={saveAuditFills} />
 			) : null}
+
+			{/* Server-side matching/probing does not block this page or require per-model buttons. */}
+			{Object.keys(custom.providers).length > 0 && <section className="flex flex-col gap-2 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l3)" }} data-testid="thinking-probe">
+				<div style={{ fontWeight: 600, fontSize: "var(--dsh-ui-font-135)" }}>{t.thinkingProbeTitle}</div>
+				<p style={{ margin: 0, color: "var(--dsw-label-caption)", fontSize: "var(--dsh-ui-font-xs)", lineHeight: 1.6 }}>{t.thinkingProbeDesc}</p>
+				{thinkingPending && <span role="status">{t.thinkingProbeProbing}</span>}
+			</section>}
 
 			{/* 两个添加按钮 */}
 			<div className="flex gap-3">
@@ -1358,6 +1172,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 					onOAuthLogin={oauthSetupLogin}
 				/>
 			) : null}
+
 
 	{/* OAuth 登录弹窗 */}
 	{oauthProvider && (
@@ -1412,56 +1227,41 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 						)}
 						{oauthPrompt.options?.length ? (
 							// select 型提示：点选项即作答（回传 SDK 的原始 value）
-							<div className="flex flex-col gap-1.5">
-								{oauthPrompt.options.map((opt) => (
-									<button
-										key={opt.value}
-										className="btn-outline"
-										style={{ height: 34, justifyContent: "flex-start", textAlign: "left" }}
-										onClick={() => { void answerOAuth(opt.value); }}
-									>
-										{opt.label}
-									</button>
-								))}
-							</div>
+							<>
+								<div className="flex flex-col gap-1.5">
+									{oauthPrompt.options.map((opt) => (
+										<button
+											key={opt.value}
+											className="btn-outline"
+											style={{ height: 34, justifyContent: "flex-start", textAlign: "left" }}
+											onClick={() => { void answerOAuth(opt.value); }}
+										>
+											{opt.label}
+										</button>
+									))}
+								</div>
+								<div className="flex items-center justify-between gap-2">
+									<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.oauthWait}</span>
+									<div className="flex gap-2">
+										<button
+											className="btn-outline"
+											style={{ height: 32 }}
+											onClick={() => { void cancelOAuth(); }}
+										>
+											{t.oauthCancel}
+										</button>
+									</div>
+								</div>
+							</>
 						) : (
-							<input
-								autoFocus
+							<OAuthPromptInput
+								key={`${oauthProvider}:${oauthPrompt.type}:${oauthPrompt.message}`}
 								type={oauthPrompt.type === "secret" ? "password" : "text"}
-								value={oauthInput}
-								onChange={(e) => setOauthInput(e.target.value)}
 								placeholder={oauthPrompt.placeholder ?? ""}
-								className="w-full rounded-xl px-3 py-2"
-								style={{ fontSize: 13, background: "var(--dsw-hover)" }}
-								onKeyDown={(e) => {
-									if (e.key === "Enter" && !e.nativeEvent.isComposing && oauthInput.trim()) {
-										void answerOAuth(oauthInput.trim());
-									}
-								}}
+								onSubmit={answerOAuth}
+								onCancel={() => { void cancelOAuth(); }}
 							/>
 						)}
-						<div className="flex items-center justify-between gap-2">
-							<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.oauthWait}</span>
-							<div className="flex gap-2">
-								<button
-									className="btn-outline"
-									style={{ height: 32 }}
-									onClick={() => { void cancelOAuth(); }}
-								>
-									{t.oauthCancel}
-								</button>
-								{!oauthPrompt.options?.length && (
-									<button
-										className="btn-primary-white"
-										disabled={!oauthInput.trim()}
-										style={{ opacity: oauthInput.trim() ? 1 : 0.5 }}
-										onClick={() => { void answerOAuth(oauthInput.trim()); }}
-									>
-										{t.confirm}
-									</button>
-								)}
-							</div>
-						</div>
 					</>
 				) : (
 					<div style={{ fontSize: 13, color: "var(--dsw-label-tertiary)" }}>{t.oauthWait}</div>
@@ -1477,6 +1277,312 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 
 		{confirmDialog}
 		</div>
+	);
+}
+
+type CustomProviderEditDraft = {
+	apiKey: string;
+	name: string;
+	baseUrl: string;
+	api: string;
+	headers: Array<{ name: string; value: string; storedSecret?: boolean }>;
+	models: ModelDraft[];
+};
+
+type BuiltinProviderEditDraft = {
+	apiKey: string;
+	baseUrl: string;
+	models: ModelDraft[];
+};
+
+/** 单个提供方的内联编辑表单：草稿状态留在子组件内部，打字不触发整页提供方列表与配额卡重渲染 */
+function InlineProviderEditor({
+	provider: p,
+	isCustom,
+	override,
+	hasStoredSecret,
+	storedSecretHeaderKeys,
+	catalogIds,
+	editBusy,
+	canSaveBuiltin,
+	onCancel,
+	onSaveCustom,
+	onSaveBuiltin,
+	onRemoveKey,
+}: {
+	provider: ProviderView;
+	isCustom: boolean;
+	override: Record<string, any> | undefined;
+	hasStoredSecret: boolean;
+	storedSecretHeaderKeys: string[] | undefined;
+	catalogIds: ReadonlySet<string>;
+	editBusy: boolean;
+	canSaveBuiltin: boolean;
+	onCancel: () => void;
+	onSaveCustom: (draft: CustomProviderEditDraft) => void;
+	onSaveBuiltin: (draft: BuiltinProviderEditDraft) => void;
+	onRemoveKey: () => Promise<void>;
+}) {
+	const { t } = useI18n();
+	const [cKey, setCKey] = useState("");
+	const [cName, setCName] = useState(() => (typeof override?.name === "string" ? override.name : ""));
+	const [cBaseUrl, setCBaseUrl] = useState(() => (typeof override?.baseUrl === "string" ? override.baseUrl : ""));
+	const [cApi, setCApi] = useState(() => (typeof override?.api === "string" ? override.api : "openai-completions"));
+	const [cModels, setCModels] = useState<ModelDraft[]>(() => (isCustom ? (override?.models ?? []).map(modelDraftFromConfig) : []));
+	const [cHeaders, setCHeaders] = useState<Array<{ name: string; value: string; storedSecret?: boolean }>>(() => {
+		if (!isCustom) return [];
+		const plainHeaders = headerEntriesFromConfig(override?.headers);
+		const seenHeaderNames = new Set(plainHeaders.map((entry) => entry.name));
+		const secretRows = (storedSecretHeaderKeys ?? [])
+			.filter((name) => !seenHeaderNames.has(name))
+			.map((name) => ({ name, value: "", storedSecret: true }));
+		return [...plainHeaders, ...secretRows];
+	});
+	const [keyDraft, setKeyDraft] = useState("");
+	const [bBaseUrl, setBBaseUrl] = useState(() => (!isCustom && typeof override?.baseUrl === "string" ? override.baseUrl : ""));
+	const [bModels, setBModels] = useState<ModelDraft[]>(() => (!isCustom ? modelDraftsFromProviderConfig(override) : []));
+	const [editAdvanced, setEditAdvanced] = useState(false);
+
+	return (
+		<div className="mt-2 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l2)" }}>
+			{isCustom ? (
+				<div className="flex flex-col gap-3">
+					<Field label={t.apiKey}>
+						<input
+							type="password"
+							value={cKey}
+							onChange={(e) => setCKey(e.target.value)}
+							className={fieldCls}
+							placeholder={hasStoredSecret ? t.apiKeyStored : t.apiKeyOptional}
+						/>
+					</Field>
+					<Field label={t.displayName}>
+						<input value={cName} onChange={(e) => setCName(e.target.value)} className={fieldCls} placeholder={p.id} />
+					</Field>
+					<Field label={t.baseUrl}>
+						<input value={cBaseUrl} onChange={(e) => setCBaseUrl(e.target.value)} className={fieldCls} placeholder="https://api.example.com/v1" />
+					</Field>
+					<Field label={t.apiType}>
+						<SelectOption
+							value={cApi}
+							options={customApiOptions([cApi, ...p.apis]).map((api) => ({ value: api, label: api }))}
+							onChange={setCApi}
+						/>
+					</Field>
+					<Field label={t.customHeaders}>
+						<div className="flex flex-col gap-2">
+							{cHeaders.map((entry, index) => (
+								<div key={index} className="flex items-center gap-2">
+									<input
+										value={entry.name}
+										onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { name: e.target.value, value: item.value } : item)))}
+										className={fieldCls}
+										placeholder="User-Agent"
+										style={{ flex: "0 0 38%" }}
+									/>
+									<input
+										type="password"
+										autoComplete="off"
+										value={entry.value}
+										onChange={(e) => setCHeaders((current) => current.map((item, at) => (at === index ? { ...item, value: e.target.value } : item)))}
+										className={fieldCls}
+										placeholder={entry.storedSecret ? t.apiKeyStored : "opencode/1.0.0"}
+									/>
+									<button
+										type="button"
+										className="btn-outline flex-none"
+										style={{ height: 32, padding: "0 10px" }}
+										aria-label={`${t.delete} ${entry.name || index + 1}`}
+										onClick={() => setCHeaders((current) => current.filter((_, at) => at !== index))}
+									>
+										×
+									</button>
+								</div>
+							))}
+							<div className="flex items-center gap-2">
+								<button
+									type="button"
+									className="btn-outline"
+									style={{ height: 30, padding: "0 10px", fontSize: 12 }}
+									onClick={() => setCHeaders((current) => [...current, { name: "", value: "" }])}
+								>
+									{t.customHeaderAdd}
+								</button>
+							</div>
+							<div style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{t.customHeadersHint}</div>
+						</div>
+					</Field>
+					<ModelCatalog
+						models={cModels}
+						setModels={setCModels}
+						updateModel={(index, patch) => setCModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
+						discover={async (allowPrivate) => {
+							const activeHeaderPairs = cHeaders
+								.filter((row) => !(row.storedSecret && !row.value.trim()))
+								.map(({ name, value }) => [name.trim(), value.trim()] as [string, string])
+								.filter(([name, value]) => name || value);
+							const headerError = validateHeaderEntries(activeHeaderPairs);
+							if (headerError) throw new Error(headerError);
+							const discoverHeaders = headerEntriesToConfig(cHeaders);
+							const response = await fetch("/api/models", {
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								// providerId：key 留空（保持不变）时后端回退到已存密钥与请求头
+								body: JSON.stringify({
+									action: "discoverModels",
+									providerId: p.id,
+									baseUrl: cBaseUrl.trim(),
+									api: cApi,
+									apiKey: cKey.trim(),
+									allowPrivate,
+									...(Object.keys(discoverHeaders).length ? { headers: discoverHeaders } : {}),
+								}),
+							});
+							const result = await response.json();
+							if (!result.success) throw new Error(result.error || t.toastError);
+							return (result.data.models ?? []).map(modelDraftFromCatalog);
+						}}
+						discoverDisabled={!cBaseUrl.trim()}
+					/>
+					<div className="flex justify-end gap-2">
+						<button className="btn-outline" style={{ height: 32 }} disabled={editBusy} onClick={onCancel}>{t.cancel}</button>
+						<button
+							className="btn-primary-white"
+							disabled={editBusy || !cBaseUrl.trim() || !!validateModelDrafts(cModels) || !cModels.some((m) => m.id.trim())}
+							onClick={() => onSaveCustom({ apiKey: cKey, name: cName, baseUrl: cBaseUrl, api: cApi, headers: cHeaders, models: cModels })}
+						>
+							{editBusy ? t.saving : t.save}
+						</button>
+					</div>
+				</div>
+			) : (
+				<div className="flex flex-col gap-3">
+					<Field label={t.apiKey}>
+						<input
+							type="password"
+							value={keyDraft}
+							onChange={(e) => setKeyDraft(e.target.value)}
+							className={fieldCls}
+							placeholder={p.keyManaged ? t.apiKeyStored : (p.apiKeyLabel ?? t.apiKey)}
+						/>
+					</Field>
+					<div>
+						<button
+							className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left transition-colors"
+							style={{ fontSize: 13, color: "var(--dsw-label-secondary)", background: editAdvanced ? "var(--dsw-hover)" : "transparent" }}
+							onClick={() => setEditAdvanced((v) => !v)}
+						>
+							<span style={{ display: "inline-flex", transform: editAdvanced ? "none" : "rotate(-90deg)", transition: "transform 120ms ease" }}>
+								<IconChevronDown14 size={13} />
+							</span>
+							{t.customSettings}
+						</button>
+						{editAdvanced ? (
+							<div className="flex flex-col gap-3 pl-1 pt-2">
+								<Field label={t.baseUrl}>
+									<input value={bBaseUrl} onChange={(e) => setBBaseUrl(e.target.value)} className={fieldCls} placeholder={p.baseUrl ?? t.providerDefault} />
+								</Field>
+								<ModelCatalog
+									models={bModels}
+									setModels={setBModels}
+									updateModel={(index, patch) => setBModels((current) => current.map((model, at) => (at === index ? { ...model, ...patch } : model)))}
+									inheritedCount={p.modelCount}
+									catalogIds={catalogIds}
+									discover={async (allowPrivate) => {
+										const response = await fetch("/api/models", {
+											method: "POST",
+											headers: { "Content-Type": "application/json" },
+											// providerId：key 留空（保持不变）时后端回退到已存密钥
+											body: JSON.stringify({ action: "discoverModels", providerId: p.id, baseUrl: (bBaseUrl.trim() || p.baseUrl || ""), api: p.apis[0], apiKey: keyDraft.trim(), allowPrivate }),
+										});
+										const result = await response.json();
+										if (!result.success) throw new Error(result.error || t.toastError);
+										return (result.data.models ?? []).map(modelDraftFromCatalog);
+									}}
+									discoverDisabled={!(bBaseUrl.trim() || p.baseUrl)}
+								/>
+							</div>
+						) : null}
+					</div>
+					<div className="flex items-center justify-end gap-2">
+						{p.keyManaged && (
+							<button
+								style={{ fontSize: 12.5, color: "var(--dsw-danger)" }}
+								disabled={editBusy}
+								onClick={() => void onRemoveKey()}
+							>
+								{p.storedAuthType === "oauth" ? t.removeOAuth : t.removeKey}
+							</button>
+						)}
+						<button className="btn-outline" style={{ height: 32 }} disabled={editBusy} onClick={onCancel}>{t.cancel}</button>
+						<button
+							className="btn-primary-white"
+							disabled={editBusy || !canSaveBuiltin || !!validateModelDrafts(bModels)}
+							onClick={() => onSaveBuiltin({ apiKey: keyDraft, baseUrl: bBaseUrl, models: bModels })}
+						>
+							{editBusy ? t.saving : t.save}
+						</button>
+					</div>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** OAuth 文本输入行：输入状态留在子组件内部，打字不重渲染模型设置页 */
+function OAuthPromptInput({
+	type,
+	placeholder,
+	onSubmit,
+	onCancel,
+}: {
+	type: "password" | "text";
+	placeholder: string;
+	onSubmit: (value: string) => Promise<boolean>;
+	onCancel: () => void;
+}) {
+	const { t } = useI18n();
+	const [value, setValue] = useState("");
+	const submit = () => {
+		const trimmed = value.trim();
+		if (!trimmed) return;
+		void onSubmit(trimmed).then((delivered) => {
+			if (delivered) setValue("");
+		});
+	};
+	return (
+		<>
+			<input
+				autoFocus
+				type={type}
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				placeholder={placeholder}
+				className="w-full rounded-xl px-3 py-2"
+				style={{ fontSize: 13, background: "var(--dsw-hover)" }}
+				onKeyDown={(e) => {
+					if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+						submit();
+					}
+				}}
+			/>
+			<div className="flex items-center justify-between gap-2">
+				<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.oauthWait}</span>
+				<div className="flex gap-2">
+					<button className="btn-outline" style={{ height: 32 }} onClick={onCancel}>
+						{t.oauthCancel}
+					</button>
+					<button
+						className="btn-primary-white"
+						disabled={!value.trim()}
+						style={{ opacity: value.trim() ? 1 : 0.5 }}
+						onClick={submit}
+					>
+						{t.confirm}
+					</button>
+				</div>
+			</div>
+		</>
 	);
 }
 

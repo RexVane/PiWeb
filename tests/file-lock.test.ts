@@ -26,8 +26,8 @@ it("resolves native dependencies from the installed runtime root even when the b
 	expect(() => load("koffi")).toThrow(/Cannot find module/);
 	expect(runtimeRequire("file:///a-missing-build-machine/scripts/file-lock.mjs", { env: {}, cwd: root })("fixture-native")).toBe("installed-runtime");
 });
-async function childScript(script: string) {
-	const child = spawn(process.execPath, ["--input-type=module", "-e", script], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }); children.push(child);
+async function childScript(script: string, env: NodeJS.ProcessEnv = process.env) {
+	const child = spawn(process.execPath, ["--input-type=module", "-e", script], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env }); children.push(child);
 	let output = "", errors = "";
 	child.stderr!.on("data", (value) => { errors += value; });
 	await new Promise<void>((resolve, reject) => {
@@ -96,4 +96,19 @@ it("prevents an unregistered child from starting its entrypoint after the parent
 	expect(fs.existsSync(marker)).toBe(false);
 	expect(JSON.parse(fs.readFileSync(file, "utf8")).token).toBe(replacement.token);
 	replacement();
+});
+it("tracks only the service root, not a descendant that inherits the lock environment", async () => {
+	const file = fixture(); const release = acquireFileLock(file);
+	expect(lockChildEnvironment({ ...process.env, PIWEB_PROCESS_LOCK_TRACKED: "1" }, file, release.token).PIWEB_PROCESS_LOCK_TRACKED).toBeUndefined();
+	const script = `
+		import { spawn } from "node:child_process";
+		const child = spawn(process.execPath, ["--input-type=module", "-e", "process.exit(0)"], { stdio: "ignore" });
+		await new Promise((resolve) => child.once("exit", resolve));
+		console.log("ready");
+		setInterval(() => {}, 1000);
+	`;
+	const service = await childScript(script, lockChildEnvironment(process.env, file, release.token));
+	const owner = JSON.parse(fs.readFileSync(file, "utf8"));
+	expect(owner.children).toEqual([service.pid]);
+	release();
 });

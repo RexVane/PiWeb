@@ -57,6 +57,8 @@ export default (phase: string): NextConfig => {
 		// node_modules 再加载一份），npm 成品包单独更新 pi 后打包的那份还停在旧版本。
 		serverExternalPackages: ["@earendil-works/pi-coding-agent", "@earendil-works/pi-ai", "@earendil-works/pi-agent-core"],
 		// The launcher admits authenticated, bounded streams before Next clones bodies.
-		experimental: { proxyClientMaxBodySize: "12mb" },
+		// TypeScript 7 is native and no longer exposes the legacy JS compiler API.
+		// Use Next's CLI checker so builds still run the full type check with the locked TS version.
+		experimental: { proxyClientMaxBodySize: "12mb", useTypeScriptCli: true },
 	};
 };

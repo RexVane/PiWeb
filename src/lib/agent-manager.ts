@@ -58,6 +58,8 @@ import { BoundaryError, resolveModelPath, resolveSessionPath } from "./path-secu
 import { clampThinkingLevelTo, newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { onThinkingCapabilitiesChanged } from "./automatic-thinking";
+import { editSessionQueue, sessionQueueState, QueueEditError } from "./session-queue";
 import type {
 	AgentCommand,
 	ContextBreakdown,
@@ -1142,12 +1144,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			if (m.shutdownRequested) queueMicrotask(() => requestExtensionShutdown(m));
 			break;
 		case "queue_update":
-			publish(m, {
-				type: "queue",
-				steering: [...evt.steering],
-				followUp: [...evt.followUp],
-				ts: now,
-			});
+			deferPublish(m, () => [{ type: "queue", ...(m.session ? sessionQueueState(m.session) : { steering: [...evt.steering], followUp: [...evt.followUp] }), ts: now }]);
 			break;
 		case "compaction_start":
 			publish(m, { type: "status", isStreaming: true, state: "compacting", ts: now });
@@ -2066,7 +2063,7 @@ function forkTarget(m: Managed, entryId: string, position: "before" | "at"): Man
 		return registerManaged(created, m.cwd, sm);
 	}
 	if (!existsSync(m.sessionPath)) throw new Error("This session has not been saved yet. Send a message before forking it.");
-	const sm = SessionManager.open(m.sessionPath, m.sm.getSessionDir());
+	const sm = openSessionManager(m.sessionPath, m.sm.getSessionDir());
 	const forked = sm.createBranchedSession(leafId);
 	if (!forked) throw new Error("failed to create forked session");
 	return registerManaged(forked, sm.getCwd() || m.cwd, sm);
@@ -2368,6 +2365,17 @@ export function refreshSessionModels(provider: string, id: string): number {
 	return n;
 }
 
+onThinkingCapabilitiesChanged((provider, id) => {
+	for (const managed of sessions.values()) {
+		const session = managed.session;
+		if (!session || session.model?.provider !== provider || session.model.id !== id) continue;
+		swapCurrentModelObject(session);
+		const level = clampThinkingLevel(session.model as never, (managed.desiredThinkingLevel ?? session.thinkingLevel) as never);
+		if (level !== session.thinkingLevel) session.setThinkingLevel(level);
+		publishModelState(managed, session);
+	}
+});
+
 /**
  * 设置面板改了排队投递方式 / 缓存预热：SDK 只在创建会话时把它们读进 agent，
  * settings.json 重新读盘不会改到已经开着的会话，这里当场给它们换上。
@@ -2525,9 +2533,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	}
 
 	const tools = snapshotTools(m, session);
-	const queue = session
-		? { steering: [...session.getSteeringMessages()], followUp: [...session.getFollowUpMessages()] }
-		: { steering: [], followUp: [] };
+	const queue = session ? sessionQueueState(session) : { steering: [], followUp: [] };
 
 	let name = "";
 	try {
@@ -2670,6 +2676,7 @@ function hasViewers(m: Managed): boolean {
 export interface CommandResult {
 	ok: boolean;
 	error?: string;
+	errorCode?: string;
 	data?: Record<string, unknown>;
 }
 
@@ -2927,6 +2934,12 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					return { ok: true };
 				} finally { m.promptSubmitting = false; }
 			}
+			case "editQueue": {
+				if (m.disposed || !m.session) return { ok: false, errorCode: "QUEUE_CHANGED", error: "待发消息已被处理或队列已改变，请重新编辑。" };
+				const queue = editSessionQueue(m.session, cmd.queueKind!, cmd.queueIndex!, cmd.queueRevision!, cmd.text ?? "");
+				publish(m, { type: "queue", ...queue, ts: Date.now() });
+				return { ok: true, data: { queue } };
+			}
 			case "clearQueue": {
 				if (!m.session) return { ok: true, data: { steering: [], followUp: [] } };
 				const cleared = m.session.clearQueue();
@@ -3154,7 +3167,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					return { ok: false, error: "fork cancelled by an extension" };
 				}
 				const forked = cmd.entryId
-					? SessionManager.open(m.sessionPath).createBranchedSession(cmd.entryId)
+					? openSessionManager(m.sessionPath).createBranchedSession(cmd.entryId)
 					: SessionManager.forkFrom(m.sessionPath, m.cwd).getSessionFile();
 				const newPath = forked ?? "";
 				if (!newPath) return { ok: false, error: "failed to create forked session" };
@@ -3164,7 +3177,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				return { ok: false, error: `unknown cmd` };
 		}
 	} catch (err: any) {
-		return { ok: false, error: String(err?.message ?? err) };
+		return { ok: false, error: String(err?.message ?? err), ...(err instanceof QueueEditError ? { errorCode: err.code } : {}) };
 	}
 }
 

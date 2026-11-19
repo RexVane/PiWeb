@@ -282,6 +282,7 @@ function WindowEditor({ model, value, onSaved }: { model: { provider: string; id
 					value={text}
 					onChange={(e) => setText(e.target.value)}
 					onKeyDown={(e) => {
+						if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 						if (e.key === "Enter") {
 							e.preventDefault();
 							void save();
