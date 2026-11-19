@@ -535,7 +535,6 @@ export function ChatInput({
 		if (!restoreTick) return;
 		autoSize();
 		taRef.current?.focus();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [restoreTick]);
 	const stopAndRestore = async () => {
 		if (stoppingRef.current) return;
@@ -685,7 +684,6 @@ export function ChatInput({
 			document.removeEventListener("drop", onDrop);
 			window.removeEventListener("dragend", reset);
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	const hasDraft = adopted !== null || text.trim().length > 0 || images.length > 0 || uploads.length > 0 || references.length > 0;
