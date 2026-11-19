@@ -30,6 +30,7 @@ export interface TreeFile {
 
 export interface GrowthApi {
 	available: boolean;
+	hasSnapshot?: boolean;
 	loading: boolean;
 	error: string | null;
 	/** 本会话的时间轴（时间正序，不含工作区基线） */
@@ -199,7 +200,7 @@ export function useGrowth({
 			for (const controller of controllers) controller.abort();
 		};
 	}, [requestScope]);
-	const [fetched, setFetched] = useState<{ key: string; rounds: GrowthRound[]; available: boolean; error: string | null }>({ key: "", rounds: [], available: true, error: null });
+	const [fetched, setFetched] = useState<{ key: string; rounds: GrowthRound[]; available: boolean; hasSnapshot?: boolean; error: string | null }>({ key: "", rounds: [], available: true, error: null });
 	const [loading, setLoading] = useState(false);
 	const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
 	const [scope, setScopeState] = useState<GrowthScope>("round");
@@ -269,11 +270,11 @@ export function useGrowth({
 			if (sessionPath) params.set("session", sessionPath);
 			// 两个请求解耦：磁盘目录先到先画，git 慢（探测超时等）不拖住目录树
 			const growthRequest = sessionPath
-				? getJson<{ available: boolean; rounds: GrowthRound[] }>(`/api/growth?${params}`, controller.signal).then(
+				? getJson<{ available: boolean; rounds: GrowthRound[]; hasSnapshot?: boolean }>(`/api/growth?${params}`, controller.signal).then(
 					(value) => ({ status: "fulfilled" as const, value }),
 					(reason: unknown) => ({ status: "rejected" as const, reason }),
 				)
-				: Promise.resolve({ status: "fulfilled" as const, value: { available: true, rounds: [] as GrowthRound[] } });
+				: Promise.resolve({ status: "fulfilled" as const, value: { available: true, rounds: [] as GrowthRound[], hasSnapshot: undefined as boolean | undefined } });
 			// 面板关着时只拉时间轴，不列磁盘
 			const diskRequest = active
 				? listDiskEntries(cwd, "", controller.signal).then(
@@ -290,9 +291,9 @@ export function useGrowth({
 			const growthResult = await growthRequest;
 			if (!isCurrent(controller)) return;
 			if (growthResult.status === "fulfilled") {
-				setFetched({ key, rounds: growthResult.value.rounds ?? [], available: growthResult.value.available !== false, error: null });
+				setFetched({ key, rounds: growthResult.value.rounds ?? [], available: growthResult.value.available !== false, hasSnapshot: growthResult.value.hasSnapshot, error: null });
 			} else {
-				setFetched({ key, rounds: [], available: true, error: growthResult.reason instanceof Error ? growthResult.reason.message : "failed to load" });
+				setFetched((previous) => ({ ...(previous.key === key ? previous : { key, rounds: [], available: true }), error: growthResult.reason instanceof Error ? growthResult.reason.message : "failed to load" }));
 			}
 			const diskResult = await diskRequest;
 			if (!isCurrent(controller)) return;
@@ -594,7 +595,7 @@ export function useGrowth({
 			if (!isCurrent(controller)) return null;
 			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
 			const round = (j.data?.round ?? null) as GrowthRound | null;
-			if (round) setFetched((previous) => isCurrent(controller) && previous.key === key ? { ...previous, rounds: mergeRounds(previous.rounds, [round]) } : previous);
+			setFetched((previous) => isCurrent(controller) && previous.key === key ? { ...previous, error: null, ...(round ? { hasSnapshot: true, rounds: mergeRounds(previous.rounds, [round]) } : {}) } : previous);
 			return round;
 		} finally {
 			requestScope.controllers.delete(controller);
@@ -603,6 +604,7 @@ export function useGrowth({
 
 	return {
 		available: fetched.key === key ? fetched.available : true,
+		hasSnapshot: rounds.length ? true : fetched.key === key ? fetched.hasSnapshot : undefined,
 		loading,
 		error: runtimeError ?? (fetched.key === key ? fetched.error : null) ?? (range && rangeChanges?.key === `${key}|${range.from}..${range.to}` ? rangeChanges.error : null) ?? null,
 		rounds,

@@ -16,7 +16,10 @@ export default defineConfig({
 		// 5s default when the whole suite runs together on a loaded machine.
 		testTimeout: 30_000,
 		hookTimeout: 60_000,
-		include: ["tests/**/*.test.{ts,tsx}"],
+		include: [
+			"tests/**/*.test.{ts,tsx}",
+			...(process.env.PIWEB_LARGE_WORKSPACE_TESTS === "1" ? ["tests/growth-large-workspace.stress.ts"] : []),
+		],
 		// jsdom 缺失的浏览器 API 垫片（node 环境下自动跳过）
 		setupFiles: ["tests/setup-dom.ts"],
 		reporters: process.env.PIWEB_TEST_REPORT ? ["default", "json"] : ["default"],

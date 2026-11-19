@@ -97,6 +97,26 @@ it("limits large file previews to 256 KiB", async () => {
 	}
 });
 
+it("reads literal disk paths without a snapshot and resolves both spellings of a linked workspace", async () => {
+	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-literal-"));
+	try {
+		const root = path.join(dir, "project");
+		const link = path.join(dir, "alias");
+		await fs.mkdir(root);
+		await fs.symlink(root, link, process.platform === "win32" ? "junction" : "dir");
+		const name = process.platform === "win32" ? "..notes [1].txt" : "..notes [1].txt ";
+		await fs.writeFile(path.join(root, name), "disk only");
+		for (const file of [name, path.join(root, name), path.join(link, name)]) {
+			expect(await readWorkspaceFile(link, file)).toMatchObject({ content: "disk only", path: name });
+		}
+		await expect(readWorkspaceFile(root, ".")).rejects.toMatchObject({ code: "IS_DIRECTORY" });
+		await expect(readWorkspaceFile(root, "missing")).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
+		await expect(readWorkspaceFile(root, "../project-other")).rejects.toThrow("escapes");
+	} finally {
+		await recycleFixture(dir);
+	}
+});
+
 it("cuts a truncated preview on a character boundary, not in the middle of a UTF-8 sequence", async () => {
 	// 回归：按字节截断把最后一个汉字切成半个，预览末尾出现 U+FFFD
 	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-files-utf8-"));

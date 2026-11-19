@@ -4,8 +4,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const deps = vi.hoisted(() => ({ info: vi.fn(), diff: vi.fn(), show: vi.fn() }));
+const deps = vi.hoisted(() => ({ info: vi.fn(), diff: vi.fn(), show: vi.fn(), home: vi.fn(), consent: vi.fn() }));
 vi.mock("@/lib/git-service", () => ({ gitInfo: deps.info, gitDiff: deps.diff, gitShow: deps.show }));
+vi.mock("@/lib/workspace-store", () => ({ isHomeWorkspace: deps.home, getGrowthInitConsent: deps.consent }));
 
 import { GET } from "@/app/api/git/route";
 
@@ -50,5 +51,15 @@ describe("/api/git GET cross-site protection", () => {
 		expect(nonBrowser.status).toBe(200);
 		expect(deps.info).toHaveBeenCalledTimes(2);
 		expect(nonBrowser.headers.get("Cache-Control")).toContain("no-store");
+	});
+
+	it("skips automatic Git status for home until recording is explicitly enabled", async () => {
+		deps.home.mockResolvedValue(true);
+		deps.consent.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+		const summary = () => request("/api/git?cwd=%2Fhome%2Fuser&summary=1");
+		expect(await (await GET(summary())).json()).toEqual({ success: true, data: null });
+		expect(deps.info).not.toHaveBeenCalled();
+		expect((await GET(summary())).status).toBe(200);
+		expect(deps.info).toHaveBeenCalledWith("/home/user", true);
 	});
 });

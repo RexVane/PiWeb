@@ -13,14 +13,14 @@ import { GrowthError, commitRound, recordWorkspaceChanges, finishGrowthRun } fro
 import { createGrowthTracker } from "../src/lib/growth-tracker";
 import type { WebEvent } from "../src/lib/types";
 
-it("releases active attribution when recording is declined or a terminal failure disables it", async () => {
+it("releases active attribution when recording is declined or an unavailable Git enters cooldown", async () => {
 	for (const terminal of [false, true]) {
 		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-release-"));
 		const session = path.join(cwd, "session.jsonl");
 		const tracker = createGrowthTracker({ cwd, sessionPath: session, publish: () => {}, entries: () => [], consent: async () => true });
 		try {
 			tracker.onEvent({ type: "agent_start" } as never);
-			if (terminal) { vi.mocked(recordWorkspaceChanges).mockRejectedValueOnce(new GrowthError("too large", "too-large")); await tracker.prepare(); }
+			if (terminal) { vi.mocked(recordWorkspaceChanges).mockRejectedValueOnce(new GrowthError("git unavailable", "unavailable")); await tracker.prepare(); }
 			else await tracker.consentAnswered(false);
 			expect(finishGrowthRun(cwd, session)).toEqual({});
 		} finally { tracker.dispose(); await recycleFixture(cwd); vi.resetAllMocks(); }
@@ -54,53 +54,33 @@ it("keeps real chat round numbers after a previous snapshot failed", async () =>
 	} finally { tracker.dispose(); await recycleFixture(cwd); vi.resetAllMocks(); }
 });
 
-it("reports a terminal size error even after a recent transient failure and stops committing", async () => {
-	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-failure-"));
+it("allows a manual retry after an output failure and clears the diagnosis", async () => {
 	const events: WebEvent[] = [];
-	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => true });
+	const tracker = createGrowthTracker({ cwd: "/workspace", sessionPath: "/sessions/s.jsonl", publish: (event) => events.push(event), entries: () => [], consent: async () => true });
 	try {
-		vi.mocked(recordWorkspaceChanges)
-			.mockRejectedValueOnce(new GrowthError("temporary failure", "failed"))
-			.mockRejectedValueOnce(new GrowthError("workspace too large", "too-large"));
-		await tracker.prepare();
-		await tracker.prepare();
-		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(2);
-		expect(events.filter((event) => event.type === "growth_error").map((event) => event.message)).toEqual([
-			"temporary failure",
-			"workspace too large",
-		]);
+		vi.mocked(recordWorkspaceChanges).mockRejectedValueOnce(new GrowthError("git ls-files stdout exceeded a limit", "too-large")).mockResolvedValue(null);
 		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "too-large" });
-		tracker.onEvent({ type: "agent_start" } as never);
-		tracker.onEvent({ type: "agent_settled" } as never);
+		await expect(tracker.recordNow()).resolves.toBeNull();
+		expect(events.filter((event) => event.type === "growth_error").map((event) => event.message)).toEqual(["git ls-files stdout exceeded a limit", null]);
 		await tracker.prepare();
-		await new Promise((resolve) => setTimeout(resolve, 100));
-		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(2);
-		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
-	} finally {
-		tracker.dispose();
-		await recycleFixture(cwd);
-		vi.clearAllMocks();
-	}
+		expect(recordWorkspaceChanges).toHaveBeenCalledTimes(3);
+	} finally { tracker.dispose(); vi.resetAllMocks(); }
 });
 
-it("disables automatic tracking after a manual record hits a terminal error", async () => {
-	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-growth-manual-failure-"));
-	const events: WebEvent[] = [];
-	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => true });
+it("retries the failed agent turn with its original prompts and ordinal", async () => {
+	const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-retry-turn-"));
+	const entries: Array<{ type: string; id: string; message: { role: string; content: string } }> = [];
+	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "s.jsonl"), publish: () => {}, entries: () => entries, consent: async () => true });
 	try {
-		vi.mocked(recordWorkspaceChanges).mockRejectedValueOnce(new GrowthError("workspace too large", "too-large"));
-		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "too-large" });
-		expect(events.filter((event) => event.type === "growth_error").map((event) => event.message)).toEqual(["workspace too large"]);
+		vi.mocked(commitRound).mockRejectedValueOnce(new GrowthError("git write-tree failed")).mockResolvedValue(null);
 		tracker.onEvent({ type: "agent_start" } as never);
+		entries.push({ type: "message", id: "u1", message: { role: "user", content: "question" } });
 		tracker.onEvent({ type: "agent_settled" } as never);
-		await expect(tracker.recordNow()).rejects.toMatchObject({ code: "too-large" });
-		expect(vi.mocked(recordWorkspaceChanges)).toHaveBeenCalledTimes(1);
-		expect(vi.mocked(commitRound)).not.toHaveBeenCalled();
-	} finally {
-		tracker.dispose();
-		await recycleFixture(cwd);
-		vi.clearAllMocks();
-	}
+		await tracker.recordNow();
+		expect(commitRound).toHaveBeenCalledTimes(2);
+		expect(vi.mocked(commitRound).mock.calls[1][1]).toEqual(vi.mocked(commitRound).mock.calls[0][1]);
+		expect(tracker.getError()).toBeNull();
+	} finally { tracker.dispose(); await recycleFixture(cwd); vi.resetAllMocks(); }
 });
 
 it("records by default without asking when the workspace has no saved choice", async () => {

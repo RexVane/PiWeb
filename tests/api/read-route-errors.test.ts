@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const deps = vi.hoisted(() => ({ list: vi.fn(), index: vi.fn(), read: vi.fn(), image: vi.fn(), open: vi.fn(), upload: vi.fn(), info: vi.fn(), diff: vi.fn(), show: vi.fn(), sessions: vi.fn(), resolve: vi.fn(), cold: vi.fn(), registry: vi.fn(), add: vi.fn(), recovery: vi.fn() }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), after: () => {} }));
-vi.mock("@/lib/files-service", () => ({ listWorkspaceDir: deps.list, listWorkspaceIndex: deps.index, readWorkspaceFile: deps.read, readWorkspaceImage: deps.image, openInEditor: deps.open, saveUploadStream: deps.upload, parseUploadLength: Number }));
+vi.mock("@/lib/files-service", async (original) => ({ ...(await original<typeof import("@/lib/files-service")>()), listWorkspaceDir: deps.list, listWorkspaceIndex: deps.index, readWorkspaceFile: deps.read, readWorkspaceImage: deps.image, openInEditor: deps.open, saveUploadStream: deps.upload, parseUploadLength: Number }));
 vi.mock("@/lib/git-service", () => ({ gitInfo: deps.info, gitDiff: deps.diff, gitShow: deps.show }));
 vi.mock("@/lib/session-reader", () => ({ listSessions: deps.sessions, readSession: deps.cold, deleteSession: vi.fn() }));
 vi.mock("@/lib/agent-manager", () => ({ activeStatus: () => ({}), warmSessionResources: vi.fn(), disposeSessionPath: vi.fn() }));
@@ -37,11 +37,11 @@ it("session list retains private ETag revalidation while cold history is never s
 	expect(repeat.status).toBe(304);
 	expect((await cold(new Request("http://local/api/sessions/x"), { params: Promise.resolve({ id: "x" }) })).headers.get("Cache-Control")).toBe("no-store");
 });
-it.each([["files?read=1", files, deps.read], ["git", git, deps.info], ["sessions", sessions, deps.sessions]] as const)("a failed %s response hides server paths but preserves OS classification", async (path, route, mock) => {
+it.each([["files?read=1", files, deps.read, 403], ["git", git, deps.info, 500], ["sessions", sessions, deps.sessions, 500]] as const)("a failed %s response hides server paths but preserves OS classification", async (path, route, mock, status) => {
 	mock.mockRejectedValue(Object.assign(new Error("EACCES: open C:\\Users\\private\\secrets"), { code: "EACCES" }));
 	const response = await route(new Request("http://local/api/" + path));
 	const result = await response.json();
-	expect(response.status).toBe(500); expect(result.errorCode).toBe("EACCES");
+	expect(response.status).toBe(status); expect(result.errorCode).toBe("EACCES");
 	expect(JSON.stringify(result)).not.toContain("private"); expect(response.headers.get("Cache-Control")).toContain("no-store");
 });
 it("boundary validation preserves its actionable reason and removes server paths", async () => {

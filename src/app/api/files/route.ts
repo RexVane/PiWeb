@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-error";
 import { BoundaryError } from "@/lib/path-security";
-import { listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readUploadFile, readWorkspaceFile, readWorkspaceImage, saveUploadStream } from "@/lib/files-service";
+import { FileLookupError, listWorkspaceDir, listWorkspaceIndex, openInEditor, parseUploadLength, readUploadFile, readWorkspaceFile, readWorkspaceImage, saveUploadStream } from "@/lib/files-service";
 
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
@@ -32,10 +32,12 @@ export async function GET(req: Request) {
 		}
 		return NextResponse.json({ success: true, data: await listWorkspaceDir(url.searchParams.get("cwd"), url.searchParams.get("path"), url.searchParams.get("offset")) }, { headers });
 	} catch (err: any) {
-		return NextResponse.json(
-			{ success: false, ...apiError(err) },
-			{ status: err instanceof BoundaryError ? 400 : 500, headers },
-		);
+		const failure = apiError(err);
+		if (err instanceof FileLookupError) {
+			return NextResponse.json({ success: false, ...failure, errorCode: err.code }, { status: err.code === "FILE_NOT_FOUND" ? 404 : 400, headers });
+		}
+		const status = err instanceof BoundaryError ? 400 : ["EACCES", "EPERM"].includes(failure.errorCode) ? 403 : 500;
+		return NextResponse.json({ success: false, ...failure }, { status, headers });
 	}
 }
 

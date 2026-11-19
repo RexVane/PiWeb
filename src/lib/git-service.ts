@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { parseNumstat, resolveGitBin } from "./growth-service";
 import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
 import { BoundaryError, isPathInside, resolveWorkspacePath } from "./path-security";
+import { gitRecords } from "./git-records";
 import { gitEnv } from "./child-process-env";
 import { buildSingleHunkPatch, parseRawPatchBlocks, type RawHunkAnchor } from "./git-hunk";
 import { utf8Prefix } from "./text-sanitize";
@@ -55,6 +56,14 @@ export interface GitCommitFile {
 	binary: boolean;
 }
 
+export interface GitStatusCounts {
+	total: number;
+	conflicts: number;
+	staged: number;
+	unstaged: number;
+	untracked: number;
+}
+
 export interface GitInfo {
 	/** 机器上找不到 git 命令 */
 	available: boolean;
@@ -67,6 +76,7 @@ export interface GitInfo {
 	behind: number;
 	detached: boolean;
 	files: GitFileEntry[];
+	counts?: GitStatusCounts;
 	/** 状态读取失败时文件变更未知；不能把空 files 解读为工作区干净。 */
 	statusError?: string;
 	commits: GitCommit[];
@@ -296,7 +306,7 @@ export async function repoRoot(cwd: string): Promise<{ available: boolean; root:
 	}
 }
 
-export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
+export async function gitInfo(cwdValue: unknown, summaryOnly = false): Promise<GitInfo> {
 	const cwd = await resolveWorkspacePath(cwdValue);
 	const { available, root } = await repoRoot(cwd);
 	if (!available) return { ...EMPTY, available: false };
@@ -309,12 +319,28 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 	let detached = false;
 	let statusError: string | undefined;
 	const files: GitFileEntry[] = [];
+	const counts: GitStatusCounts = { total: 0, conflicts: 0, staged: 0, unstaged: 0, untracked: 0 };
+	const add = (entry: GitFileEntry) => {
+		counts.total++;
+		if (entry.kind === "conflict") counts.conflicts++;
+		else if (entry.kind === "untracked") counts.untracked++;
+		else {
+			if (entry.indexStatus !== " ") counts.staged++;
+			if (entry.workStatus !== " ") counts.unstaged++;
+		}
+		if (!summaryOnly) files.push(entry);
+	};
+
 	try {
 		// porcelain v2 是结构化输出，不依赖 "No branch" 这类措辞；-z 让含空格/非 ASCII 的路径也稳定
-		const status = await runGit(root, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]);
-		const records = status.split("\0");
-		for (let i = 0; i < records.length; i += 1) {
-			const line = records[i];
+		let rename: GitFileEntry | undefined;
+		const args = [...SAFE_GIT_ARGS, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"];
+		for await (const line of gitRecords(await resolveGitBin(), args, { cwd: root, env: gitEnvironment(root), command: "status" })) {
+			if (rename) {
+				add({ ...rename, from: line });
+				rename = undefined;
+				continue;
+			}
 			if (!line) continue;
 			if (line.startsWith("# branch.head ")) {
 				const head = line.slice("# branch.head ".length);
@@ -337,7 +363,7 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 			if (line.startsWith("# ")) continue;
 			const type = line[0];
 			if (type === "?") {
-				files.push({ path: line.slice(2), indexStatus: " ", workStatus: "?", kind: "untracked" });
+				add({ path: line.slice(2), indexStatus: " ", workStatus: "?", kind: "untracked" });
 				continue;
 			}
 			if (type === "!") continue;
@@ -351,36 +377,37 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 				// u: <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
 				const pathIndex = type === "1" ? 8 : type === "2" ? 9 : 10;
 				const filePath = parts.slice(pathIndex).join(" ");
-				const fromPath = type === "2" ? records[i + 1] : undefined;
-				if (type === "2") i += 1; // 跳过 rename 的原路径记录
 				if (!filePath) continue;
-				files.push({
+				const entry: GitFileEntry = {
 					path: filePath,
-					...(fromPath ? { from: fromPath } : {}),
 					indexStatus: x === "." ? " " : x,
 					workStatus: y === "." ? " " : y,
 					kind: kindOf(x, y),
-				});
+				};
+				if (type === "2") rename = entry;
+				else add(entry);
 			}
 		}
 	} catch (error) {
 		// 分支与提交可继续展示，但文件状态未知，绝不能回退为「工作区干净」。
-		const stderr = (error as { stderr?: unknown })?.stderr;
-		statusError = (typeof stderr === "string" ? stderr.trim() : error instanceof Error ? error.message : String(error)) || "git status failed";
+		files.length = 0;
+		statusError = error instanceof Error ? error.message : String(error);
 	}
 
 	let commits: GitCommit[] = [];
-	try {
-		const log = await runGit(root, ["log", "-10", "--pretty=%h%x1f%s%x1f%an%x1f%cr"]);
-		commits = log
-			.split("\n")
-			.filter(Boolean)
-			.map((line) => {
-				const [hash, subject, author, relative] = line.split("\x1f");
-				return { hash, subject: subject ?? "", author: author ?? "", relative: relative ?? "" };
-			});
-	} catch {
-		// 空仓库没有提交
+	if (!summaryOnly) {
+		try {
+			const log = await runGit(root, ["log", "-10", "--pretty=%h%x1f%s%x1f%an%x1f%cr"]);
+			commits = log
+				.split("\n")
+				.filter(Boolean)
+				.map((line) => {
+					const [hash, subject, author, relative] = line.split("\x1f");
+					return { hash, subject: subject ?? "", author: author ?? "", relative: relative ?? "" };
+				});
+		} catch {
+			// 空仓库没有提交
+		}
 	}
 
 	if (branch === null && !detached) {
@@ -390,7 +417,7 @@ export async function gitInfo(cwdValue: unknown): Promise<GitInfo> {
 			/* keep null */
 		}
 	}
-	return { available: true, isRepo: true, root, branch, upstream, ahead, behind, detached, files, commits, ...(statusError ? { statusError } : {}) };
+	return { available: true, isRepo: true, root, branch, upstream, ahead, behind, detached, files, commits, ...(statusError ? { statusError } : { counts }) };
 }
 
 export interface GitDiffResult {

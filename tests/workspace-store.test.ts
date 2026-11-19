@@ -76,6 +76,16 @@ describe("PiWeb workspace registry", () => {
 		expect(await getGrowthInitConsent(workspace)).toBe(true);
 	});
 
+	it("defaults the home workspace to browse-only even with a .git directory and honors explicit choices", async () => {
+		await fs.mkdir(path.join(tempDir, ".git"));
+		expect(await getGrowthInitConsent(tempDir)).toBe(false);
+		await expect(fs.stat(path.join(tempDir, "web-workspaces.json"))).rejects.toMatchObject({ code: "ENOENT" });
+		await setGrowthInitConsent(tempDir, true);
+		expect(await getGrowthInitConsent(tempDir)).toBe(true);
+		await setGrowthInitConsent(tempDir, false);
+		expect(await getGrowthInitConsent(tempDir)).toBe(false);
+	});
+
 	it("normalizes alias keys case-insensitively on Windows", async () => {
 		const workspace = path.join(tempDir, "CaseDir");
 		await addWorkspace(workspace);

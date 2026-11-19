@@ -12,7 +12,7 @@
  * 时间轴 = 一次 `git log --raw --numstat` 读回（每轮相对上一轮的增删改与行数）；
  * 任意两轮任意文件用 git diff 得行级 patch，cat-file 取任意一轮的全文。
  * 工作区的 .gitignore / info/exclude / 全局 excludesFile 与生成的排除文件都生效；
- * 没有 git、目录不可写或项目过大时本会话停用跟踪。
+ * 失败保留已发布的链头，下一次记录从该版本恢复私有暂存区。
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -23,20 +23,21 @@ import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
 import { utf8Prefix } from "./text-sanitize";
 import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
 import { enableGrowthActivity, resolveGrowthAttribution, completeGrowthRun, type GrowthAttribution } from "./growth-activity";
+import { gitRecords } from "./git-records";
 import { gitEnv } from "./child-process-env";
 import lockfile from "proper-lockfile";
 export { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-activity";
 import type { GrowthChange, GrowthRound, GrowthRoundKind, GrowthRoundStatus } from "./types";
 
-/** 单文件快照上限：超过的不进快照（树里也就看不到它） */
+/** Larger files retain a metadata entry; their contents never enter the object database. */
 export const MAX_FILE_BYTES = 1024 * 1024;
 /** 单次 patch 输出上限 */
 const MAX_PATCH_BYTES = 4 * 1024 * 1024;
 /** 单文件全文预览上限 */
 const MAX_CONTENT_BYTES = 256 * 1024;
-/** 防止意外把依赖/缓存目录完整哈希入库，导致工作区长时间卡住。 */
-const MAX_CANDIDATES = 50_000;
-export const MAX_SNAPSHOT_BYTES = 200 * 1024 * 1024;
+/** Bound the cost of one index update independently of total workspace size. */
+const INDEX_BATCH_PATHS = 512;
+const INDEX_BATCH_BYTES = 32 * 1024 * 1024;
 /** 每轮最多列多少条变更；更多的由前端按 tree 对再取 */
 const MAX_CHANGES_PER_ROUND = 2000;
 /** 每轮 commit 链的专用引用前缀：每个工作区一条 refs/piweb/rounds/<key>，多 worktree 互不覆盖 */
@@ -89,9 +90,6 @@ interface WorkspaceState {
 	loadedHead?: string;
 	emptyTree: string;
 	excludeRules?: string;
-	/** 最近快照树里已追踪文件的字节数缓存（按需从 ls-tree 填充），避免每次快照全盘串行 lstat */
-	trackedSizes?: Map<string, number>;
-	trackedSizesTree?: string;
 	/** 同一工作区的快照串行执行（共用同一个 PiWeb 暂存区） */
 	lock: Promise<unknown>;
 	/** 本进程的成功提交计数；首次提交也检查 Git 的自动整理阈值，不扫描累计历史。 */
@@ -158,7 +156,7 @@ function gitSubcommandLabel(args: readonly string[]): string {
 
 function runGit(
 	args: string[],
-	opts: { cwd?: string; input?: Buffer | string; maxBuffer?: number; maxRecords?: number; retainMaxBytes?: number; timeoutMs?: number; env?: Env } = {},
+	opts: { cwd?: string; input?: Buffer | string; maxBuffer?: number; retainMaxBytes?: number; timeoutMs?: number; env?: Env } = {},
 ): Promise<RunResult> {
 	const maxBuffer = opts.maxBuffer ?? 64 * 1024 * 1024;
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
@@ -177,23 +175,19 @@ function runGit(
 				const err: Buffer[] = [];
 				let size = 0;
 				let retained = 0;
-				let records = 0;
 				let errorSize = 0;
-				let settled = false;
-				const timer = setTimeout(() => fail(new GrowthError(`git ${cmdLabel} timed out`, "failed")), timeoutMs);
+				let failure: Error | undefined;
+				let killTimer: ReturnType<typeof setTimeout> | undefined;
+				const timer = setTimeout(() => fail(new GrowthError(`git ${cmdLabel} timed out after ${timeoutMs} ms in ${opts.cwd}`, "failed")), timeoutMs);
 				const fail = (error: Error) => {
-					if (settled) return;
-					settled = true;
+					if (failure) return;
+					failure = error;
 					clearTimeout(timer);
 					child.kill();
-					reject(error);
+					killTimer = setTimeout(() => child.kill("SIGKILL"), 1000);
 				};
 				child.stdout.on("data", (chunk: Buffer) => {
-					if (settled) return;
-					if (opts.maxRecords !== undefined) {
-						for (const byte of chunk) if (byte === 0) records += 1;
-						if (records > opts.maxRecords) { fail(new GrowthError("snapshot candidate limit exceeded while scanning", "too-large")); return; }
-					}
+					if (failure) return;
 					size += chunk.length;
 					if (opts.retainMaxBytes !== undefined) {
 						if (retained < opts.retainMaxBytes) {
@@ -204,16 +198,15 @@ function runGit(
 						return;
 					}
 					if (size > maxBuffer) {
-						child.kill();
-						fail(new GrowthError("git output exceeded the buffer limit", "too-large"));
+						fail(new GrowthError(`git ${cmdLabel} stdout exceeded ${maxBuffer} bytes in ${opts.cwd}`));
 						return;
 					}
 					out.push(chunk);
 				});
 				child.stderr.on("data", (chunk: Buffer) => {
-					if (settled) return;
+					if (failure) return;
 					errorSize += chunk.length;
-					if (errorSize > maxBuffer) { fail(new GrowthError("git error output exceeded the buffer limit", "too-large")); return; }
+					if (errorSize > maxBuffer) { fail(new GrowthError(`git ${cmdLabel} stderr exceeded ${maxBuffer} bytes in ${opts.cwd}`)); return; }
 					err.push(chunk);
 				});
 				child.stdin.on("error", (error) => fail(new GrowthError(`git input failed: ${error.message}`)));
@@ -222,9 +215,10 @@ function runGit(
 					else fail(error.code === "ENOENT" ? new GrowthError("git is not installed", "unavailable") : error);
 				});
 				child.on("close", (code) => {
-					if (settled) return;
-					settled = true;
+					// A retry may use this index as soon as we return. Wait for Git to release its lock.
 					clearTimeout(timer);
+					clearTimeout(killTimer);
+					if (failure) { reject(failure); return; }
 					const truncated = opts.retainMaxBytes !== undefined ? size > opts.retainMaxBytes : false;
 					resolve({ stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8"), code: code ?? -1, ...(truncated ? { truncated: true } : {}) });
 				});
@@ -239,7 +233,7 @@ function runGit(
  * （Next 把 NODE_ENV 声明成必填）。清洗规则见 child-process-env.ts。
  */
 function gitChildEnv(extra: Env = {}): NodeJS.ProcessEnv {
-	return gitEnv({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", ...extra }) as NodeJS.ProcessEnv;
+	return gitEnv({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C", ...extra }) as NodeJS.ProcessEnv;
 }
 
 /**
@@ -321,7 +315,7 @@ const BASE_CONFIG = [
 async function shadow(
 	ws: WorkspaceState,
 	args: string[],
-	opts: { input?: Buffer | string; maxBuffer?: number; maxRecords?: number; retainMaxBytes?: number; timeoutMs?: number; allowFail?: boolean; env?: Env } = {},
+	opts: { input?: Buffer | string; maxBuffer?: number; retainMaxBytes?: number; timeoutMs?: number; allowFail?: boolean; env?: Env } = {},
 ): Promise<RunResult> {
 	const base = ["--git-dir", ws.gitDir, "--work-tree", ws.cwd, ...BASE_CONFIG];
 	const env: Env = { GIT_INDEX_FILE: ws.indexFile, ...opts.env };
@@ -329,15 +323,21 @@ async function shadow(
 		cwd: ws.cwd,
 		input: opts.input,
 		maxBuffer: opts.maxBuffer,
-		maxRecords: opts.maxRecords,
 		retainMaxBytes: opts.retainMaxBytes,
 		timeoutMs: opts.timeoutMs,
 		env,
 	});
 	if (r.code !== 0 && !opts.allowFail) {
-		throw new GrowthError(`git ${args[0]} failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`);
+		throw new GrowthError(`git ${gitSubcommandLabel(args)} failed in ${ws.cwd}: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`);
 	}
 	return r;
+}
+
+async function* shadowRecords(ws: WorkspaceState, args: string[]): AsyncGenerator<string> {
+	const full = ["--git-dir", ws.gitDir, "--work-tree", ws.cwd, ...BASE_CONFIG, ...args];
+	yield* gitRecords(await resolveGitBin(), full, {
+		cwd: ws.cwd, env: gitChildEnv({ GIT_INDEX_FILE: ws.indexFile }), command: gitSubcommandLabel(args),
+	});
 }
 
 function realpathSafe(p: string): string {
@@ -404,10 +404,11 @@ async function ensureGitDir(cwd: string, allowInit: boolean): Promise<string> {
 }
 
 /** 链头的 commit 与 tree；引用不存在返回 null（for-each-ref 对不存在的引用输出空、退出码 0） */
-async function readHead(ws: WorkspaceState): Promise<{ commit: string; tree: string } | null> {
-	const r = await shadow(ws, ["for-each-ref", "--format=%(objectname) %(tree)", ws.ref]);
-	const [commit = "", tree = ""] = r.stdout.toString("utf8").trim().split(" ");
-	return HASH_RE.test(commit) && HASH_RE.test(tree) ? { commit, tree } : null;
+async function readHead(ws: WorkspaceState): Promise<{ commit: string; tree: string; message: string } | null> {
+	const r = await shadow(ws, ["for-each-ref", "--format=%(objectname) %(tree)%00%(contents)", "--count=1", ws.ref]);
+	const [hashes, message = ""] = r.stdout.toString("utf8").split("\0", 2);
+	const [commit = "", tree = ""] = hashes.split(" ");
+	return HASH_RE.test(commit) && HASH_RE.test(tree) ? { commit, tree, message } : null;
 }
 
 async function createWorkspace(cwd: string, allowInit: boolean): Promise<WorkspaceState> {
@@ -495,7 +496,7 @@ function assertHash(value: unknown, what = "hash"): string {
 
 function assertRelPath(value: unknown): string {
 	if (typeof value !== "string" || !value.trim()) throw new GrowthError("missing path", "not-found");
-	const rel = value.replace(/\\/g, "/").replace(/^\.\//, "");
+	const rel = (process.platform === "win32" ? value.replace(/\\/g, "/") : value).replace(/^\.\//, "");
 	if (rel.startsWith("/") || /^[A-Za-z]:\//.test(rel) || rel.split("/").some((seg) => seg === "..")) {
 		throw new GrowthError("invalid path", "not-found");
 	}
@@ -559,30 +560,20 @@ export function parseNumstat(raw: string): Map<string, { add: number; del: numbe
 export interface TreeFile {
 	path: string;
 	size: number;
+	contentOmitted?: boolean;
 }
 
-/** `ls-tree -r -l -z` 输出 → 文件清单（只取 blob） */
+/** Parse regular files and PiWeb metadata entries from a tree listing. */
+function treeEntry(record: string): TreeFile | undefined {
+	const match = /^(\d+) (\w+) ([0-9a-f]+) +(-|\d+)\t([\s\S]+)$/.exec(record);
+	if (!match) return;
+	if (isOmitted(match[1], match[3])) {
+		return { path: match[5], size: Number.parseInt(match[3].slice(OMITTED_PREFIX.length, OMITTED_PREFIX.length + 14), 16), contentOmitted: true };
+	}
+	if (match[2] === "blob") return { path: match[5], size: match[4] === "-" ? 0 : Number(match[4]) };
+}
 export function parseLsTree(raw: string): TreeFile[] {
-	const out: TreeFile[] = [];
-	for (const entry of raw.split("\0")) {
-		if (!entry) continue;
-		const m = entry.match(/^(\d+) (\w+) ([0-9a-f]+) +(-|\d+)\t([\s\S]+)$/);
-		if (!m || m[2] !== "blob") continue;
-		out.push({ path: m[5], size: m[4] === "-" ? 0 : Number(m[4]) });
-	}
-	return out;
-}
-
-/** 把 numstat 的行数并进 name-status 的变更清单（重命名按新路径对齐），按路径排序 */
-function withStats(changes: GrowthChange[], stats: Map<string, { add: number; del: number; binary: boolean }>): GrowthChange[] {
-	for (const c of changes) {
-		const s = stats.get(c.path);
-		if (!s) continue;
-		c.add = s.add;
-		c.del = s.del;
-		if (s.binary) c.binary = true;
-	}
-	return changes.sort((a, b) => a.path.localeCompare(b.path));
+	return raw.split("\0").flatMap((record) => treeEntry(record) ?? []);
 }
 
 export interface LogCommit {
@@ -602,43 +593,93 @@ export interface LogCommit {
  * --raw 条目（":模式 模式 哈希 哈希 状态" 后跟路径，R/C 跟两个路径）与 --numstat 条目
  * （"增\t删\t路径"；重命名是 "增\t删\t" 后跟旧、新两个路径）。空 commit 没有条目。
  */
-export function parseRoundLog(raw: string): LogCommit[] {
-	const out: LogCommit[] = [];
-	for (const record of raw.split(RECORD_SEP)) {
-		if (!record) continue;
-		const end = record.indexOf(`${FIELD_SEP}\0`);
-		const header = end >= 0 ? record.slice(0, end) : record.replace(/[\x1f\0\n]+$/, "");
-		const fields = header.split(FIELD_SEP);
-		if (fields.length < 5) continue;
-		const [commit, tree, parents, ct] = fields;
-		const names: string[] = [];
-		const nums: string[] = [];
-		const tokens = end >= 0 ? record.slice(end + 2).replace(/^\n/, "").split("\0") : [];
-		for (let i = 0; i < tokens.length; i += 1) {
-			const token = tokens[i];
-			if (!token) continue;
-			if (token.startsWith(":")) {
-				const status = token.slice(token.lastIndexOf(" ") + 1);
-				const span = status[0] === "R" || status[0] === "C" ? 2 : 1;
-				names.push(status, ...tokens.slice(i + 1, i + 1 + span));
-				i += span;
-			} else {
-				const parts = token.split("\t");
-				const span = parts.length === 3 && parts[2] === "" ? 2 : 0;
-				nums.push(token, ...tokens.slice(i + 1, i + 1 + span));
-				i += span;
-			}
-		}
-		out.push({
-			commit,
-			tree,
-			parent: parents.split(" ").filter(Boolean)[0] ?? null,
-			ts: Number(ct) * 1000,
-			message: fields.slice(4).join(FIELD_SEP),
-			changes: withStats(parseNameStatus(`${names.join("\0")}\0`), parseNumstat(`${nums.join("\0")}\0`)),
-		});
+class RawChanges {
+	private entries = new Map<string, GrowthChange>();
+	private status = "";
+	private paths: string[] = [];
+	private numstat?: { add: number; del: number; binary: boolean };
+	private twoPaths = false;
+	private omitted = false;
+	private hasOmittedSide = false;
+	get expectsPath() { return this.status !== "" || Boolean(this.numstat); }
+
+	private applyNumbers(file: string, stats: { add: number; del: number; binary: boolean }) {
+		const entry = this.entries.get(file);
+		if (!entry || entry.contentOmitted || entry.previousContentOmitted) return;
+		entry.add = stats.add;
+		entry.del = stats.del;
+		if (stats.binary) entry.binary = true;
 	}
-	return out;
+
+	accept(value: string) {
+		if (this.expectsPath) {
+			this.paths.push(value);
+			if (this.twoPaths && this.paths.length < 2) return;
+			if (this.numstat) this.applyNumbers(value, this.numstat);
+			else {
+				const status = this.status === "T" ? "M" : this.status === "C" ? "A" : this.status;
+				if (status === "A" || status === "D" || status === "M" || status === "R") {
+					this.entries.set(value, { status, path: value, ...(status === "R" ? { from: this.paths[0] } : {}),
+						...(this.omitted ? { contentOmitted: true } : {}), ...(this.hasOmittedSide ? { previousContentOmitted: true } : {}) });
+				}
+			}
+			this.paths = [];
+			this.status = "";
+			this.numstat = undefined;
+			return;
+		}
+		const token = value.replace(/^\n/, "");
+		if (!token) return;
+		if (token.startsWith(":")) {
+			const [oldMode, newMode, oldId, newId, status] = token.slice(1).split(" ");
+			this.status = status[0];
+			this.twoPaths = this.status === "R" || this.status === "C";
+			this.omitted = isOmitted(newMode, newId);
+			this.hasOmittedSide = isOmitted(oldMode, oldId);
+			return;
+		}
+		const first = token.indexOf("\t"), second = token.indexOf("\t", first + 1);
+		if (first < 0 || second < 0) return;
+		const a = token.slice(0, first), d = token.slice(first + 1, second);
+		const stats = { add: Number(a) || 0, del: Number(d) || 0, binary: a === "-" || d === "-" };
+		const file = token.slice(second + 1);
+		if (file) this.applyNumbers(file, stats);
+		else { this.numstat = stats; this.twoPaths = true; }
+	}
+
+	sorted() { return [...this.entries.values()].sort((a, b) => a.path.localeCompare(b.path)); }
+}
+
+/** Headers occur between NUL records, never in a pending pathname (which may contain control characters). */
+class RoundLogParser {
+	private header?: Omit<LogCommit, "changes">;
+	private changes = new RawChanges();
+
+	accept(token: string): LogCommit | undefined {
+		if (!this.changes.expectsPath && token.startsWith(RECORD_SEP)) {
+			const prior = this.finish();
+			const [commit, tree, parents, seconds, ...message] = token.slice(1, -1).split(FIELD_SEP);
+			this.header = { commit, tree, parent: parents?.split(" ")[0] || null, ts: Number(seconds) * 1000, message: message.join(FIELD_SEP) };
+			return prior;
+		}
+		this.changes.accept(token);
+	}
+
+	finish(): LogCommit | undefined {
+		if (!this.header) return;
+		const commit = { ...this.header, changes: this.changes.sorted() };
+		this.changes = new RawChanges();
+		this.header = undefined;
+		return commit;
+	}
+}
+
+export function parseRoundLog(raw: string): LogCommit[] {
+	const parser = new RoundLogParser();
+	const commits = raw.split("\0").flatMap((token) => parser.accept(token) ?? []);
+	const last = parser.finish();
+	if (last) commits.push(last);
+	return commits;
 }
 
 const ROUND_KINDS: readonly GrowthRoundKind[] = ["round", "user", "baseline"];
@@ -710,150 +751,104 @@ function summarize(changes: GrowthChange[]): GrowthRound["stats"] {
 // ---------- 快照 ----------
 
 async function diffTreesRaw(ws: WorkspaceState, from: string, to: string): Promise<GrowthChange[]> {
-	const [names, nums] = await Promise.all([
-		shadow(ws, ["diff-tree", "-r", "-M", "--name-status", "-z", from, to]),
-		shadow(ws, ["diff-tree", "-r", "-M", "--numstat", "-z", from, to]),
-	]);
-	return withStats(parseNameStatus(names.stdout.toString("utf8")), parseNumstat(nums.stdout.toString("utf8")));
+	const changes = new RawChanges();
+	if (from !== to) {
+		const args = ["diff-tree", "-r", "-M", "--raw", "--numstat", "--no-abbrev", "--ignore-submodules=none", "-z", from, to];
+		for await (const token of shadowRecords(ws, args)) changes.accept(token);
+	}
+	return changes.sorted();
 }
 
-async function ensureTrackedSizes(ws: WorkspaceState): Promise<Map<string, number>> {
-	if (ws.trackedSizes && ws.trackedSizesTree === ws.lastTree) return ws.trackedSizes;
-	const next = new Map<string, number>();
-	if (ws.lastTree && ws.lastTree !== ws.emptyTree) {
-		const r = await shadow(ws, ["ls-tree", "-r", "-l", "-z", ws.lastTree], { timeoutMs: HEAVY_GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 });
-		for (const entry of parseLsTree(r.stdout.toString("utf8"))) {
-			if (typeof entry.size === "number") next.set(entry.path, entry.size);
-		}
-	}
-	ws.trackedSizes = next;
-	ws.trackedSizesTree = ws.lastTree;
-	return next;
+// Regular workspace symlinks and submodules have always been excluded. In the private tree,
+// a tagged gitlink is an opaque metadata ID: Git never opens or copies oversized contents.
+// Include size for listings and mtime for change detection, in either Git object format.
+const OMITTED_PREFIX = "70697765624f";
+function omittedId(size: number, mtimeMs: number, hashLength: number): string {
+	const stamp = createHash("sha256").update(String(mtimeMs)).digest("hex");
+	return (OMITTED_PREFIX + size.toString(16).padStart(14, "0") + stamp).slice(0, hashLength);
+}
+function isOmitted(mode: string, id: string): boolean {
+	return mode === "160000" && id.startsWith(OMITTED_PREFIX);
 }
 
-/** 候选路径 → 更新 PiWeb 专用索引（自动剔除后来被 .gitignore / EXCLUDE 屏蔽的旧条目）；返回本次处理的文件数 */
-async function refreshIndex(ws: WorkspaceState): Promise<number> {
-	// --exclude-standard 让工作区的 .gitignore / info/exclude / 全局 excludesFile 生效；
-	// --exclude-from 叠加 PiWeb 自己的排除文件（用户仓库的 info/exclude 一个字节都不改）
-	const excludeFrom = ws.excludeFile.replace(/\\/g, "/");
-	const [ignoredOut, listed] = await Promise.all([
-		shadow(ws, ["ls-files", "-c", "-i", "-z", "--exclude-standard", `--exclude-from=${excludeFrom}`], { timeoutMs: HEAVY_GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 }),
-		shadow(ws, ["ls-files", "-z", "--others", "--modified", "--deleted", "--exclude-standard", `--exclude-from=${excludeFrom}`], { maxRecords: MAX_CANDIDATES * 2, maxBuffer: 8 * 1024 * 1024, timeoutMs: HEAVY_GIT_TIMEOUT_MS }),
-	]);
-	const ignoredSet = new Set(ignoredOut.stdout.toString("utf8").split("\0").filter(Boolean));
-	const candidates = Array.from(new Set(listed.stdout.toString("utf8").split("\0").filter((p) => p && !p.endsWith("/") && !ignoredSet.has(p))));
-	if (candidates.length > MAX_CANDIDATES) {
-		const counts = new Map<string, number>();
-		for (const candidate of candidates) {
-			const parts = candidate.split("/");
-			const group = parts.length > 1 ? parts.slice(0, 2).join("/") : "(root)";
-			counts.set(group, (counts.get(group) ?? 0) + 1);
-		}
-		const largest = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([dir, count]) => `${dir}: ${count}`).join(", ");
-		throw new GrowthError(`snapshot has ${candidates.length} candidate files (limit ${MAX_CANDIDATES}); largest directories: ${largest}. Exclude generated directories with .gitignore`, "too-large");
-	}
-	const adds: string[] = [];
-	const removals: string[] = [...ignoredSet];
-	const trackedList = (await shadow(ws, ["ls-files", "-z"], { timeoutMs: HEAVY_GIT_TIMEOUT_MS })).stdout.toString("utf8").split("\0").filter(Boolean);
-	const tracked = new Set(trackedList);
-	const knownSizes = await ensureTrackedSizes(ws);
-	const sizeUpdates: Array<[string, number | null]> = [];
-	for (const rel of ignoredSet) sizeUpdates.push([rel, null]);
-	let snapshotBytes = 0;
-	const BATCH = 256;
-	const LSTAT_BATCH = 64;
-	const INDEX_BATCH = 256;
-	const directories = new Map<string, Promise<boolean>>();
-	const regularDirectory = (rel: string): Promise<boolean> => {
-		if (!rel) return Promise.resolve(true);
-		const cached = directories.get(rel);
-		if (cached) return cached;
-		const check = (async () => {
-			const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
-			if (!(await regularDirectory(parent))) return false;
-			const stat = await fs.lstat(path.join(ws.cwd, rel)).catch((error: NodeJS.ErrnoException) => {
-				if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-				throw error;
-			});
-			return Boolean(stat?.isDirectory() && !stat.isSymbolicLink());
-		})();
-		directories.set(rel, check);
-		return check;
-	};
-	// 先分类全部候选，不能在 lstat 批次内穿插 add：冲突路径可能落在后续批次。
-	for (let i = 0; i < candidates.length; i += BATCH) {
-		const classified = await Promise.all(
-			candidates.slice(i, i + BATCH).map(async (rel) => {
-				// Git for Windows 会枚举 junction 内的文件；只查叶子 lstat 无法发现它。
-				const parent = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
-				if (!(await regularDirectory(parent))) return { rel, include: false, size: 0 };
-				const stat = await fs.lstat(path.join(ws.cwd, rel)).catch((error: NodeJS.ErrnoException) => {
-					if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-					throw error;
-				});
-				if (stat?.isFile() && stat.size > MAX_FILE_BYTES && tracked.has(rel)) {
-					throw new GrowthError(`Previously recorded file exceeds the ${MAX_FILE_BYTES} byte limit: ${rel}; snapshot retained without recording a deletion`, "too-large");
-				}
-				const include = Boolean(stat?.isFile() && stat.size <= MAX_FILE_BYTES);
-				const size = include && stat ? stat.size : 0;
-				if (include) snapshotBytes += size;
-				return { rel, include, size };
-			}),
-		);
-		for (const { rel, include, size } of classified) {
-			(include ? adds : removals).push(rel);
-			sizeUpdates.push([rel, include ? size : null]);
-		}
-	}
-	// Unmodified entries remain in the private index and count toward the same budget.
-	// 优先用已提交树缓存的文件大小；仅缓存缺失条目再分批 lstat，避免大仓库每次全盘串行 lstat。
-	const candidateSet = new Set(candidates);
-	const missingSizes: string[] = [];
-	for (const rel of tracked) {
-		if (candidateSet.has(rel) || ignoredSet.has(rel)) continue;
-		const cached = knownSizes.get(rel);
-		if (cached !== undefined) {
-			if (cached <= MAX_FILE_BYTES) snapshotBytes += cached;
-		} else {
-			missingSizes.push(rel);
-		}
-	}
-	for (let i = 0; i < missingSizes.length; i += LSTAT_BATCH) {
-		const stats = await Promise.all(
-			missingSizes.slice(i, i + LSTAT_BATCH).map(async (rel) => {
-				const stat = await fs.lstat(path.join(ws.cwd, rel)).catch(() => undefined);
-				return [rel, stat?.isFile() ? stat.size : null] as const;
-			}),
-		);
-		for (const [rel, size] of stats) {
-			if (size !== null && size <= MAX_FILE_BYTES) {
-				snapshotBytes += size;
-				sizeUpdates.push([rel, size]);
-			}
-		}
-	}
-	if (snapshotBytes > MAX_SNAPSHOT_BYTES) throw new GrowthError(`snapshot exceeds the ${MAX_SNAPSHOT_BYTES} byte budget; previous snapshot was retained`, "too-large");
-	// --remove 只移除磁盘上已消失的路径；符号链接/目录/超大文件仍在，必须 force-remove。
-	// 全体移除先完成，保证 p → p/child 和 p/child → p 都不受候选顺序、批次边界影响。
-	try {
-		for (let i = 0; i < removals.length; i += INDEX_BATCH) {
-			await shadow(ws, ["update-index", "--force-remove", "-z", "--stdin"], { input: `${removals.slice(i, i + INDEX_BATCH).join("\0")}\0`, timeoutMs: HEAVY_GIT_TIMEOUT_MS });
-		}
-		for (let i = 0; i < adds.length; i += INDEX_BATCH) {
-			// Git 的 --replace 只移除与待添加项冲突的索引项，兜底扫描期间的类型转换；
-			// --remove 同时容忍 lstat 后刚被删掉的文件。这些命令始终只操作 PiWeb 专用索引。
-			await shadow(ws, ["update-index", "--add", "--remove", "--replace", "-z", "--stdin"], { input: `${adds.slice(i, i + INDEX_BATCH).join("\0")}\0`, timeoutMs: HEAVY_GIT_TIMEOUT_MS });
-		}
-	} catch (error) {
-		ws.trackedSizes = undefined;
-		ws.trackedSizesTree = undefined;
+async function snapshotStat(file: string) {
+	try { return await fs.lstat(file); }
+	catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ENOTDIR") return null;
 		throw error;
 	}
-	for (const [rel, size] of sizeUpdates) {
-		if (size === null) knownSizes.delete(rel);
-		else knownSizes.set(rel, size);
+}
+
+/** All mutations are in the private index. Drain Git's immutable listing in bounded batches. */
+async function refreshIndex(ws: WorkspaceState): Promise<void> {
+	const exclude = ["--exclude-standard", `--exclude-from=${ws.excludeFile.replace(/\\/g, "/")}`];
+	const update = (args: string[], input: string[]) => shadow(ws, ["update-index", ...args], {
+		input: input.join("\0") + "\0", timeoutMs: HEAVY_GIT_TIMEOUT_MS,
+	});
+	// Remove ignored and disappeared entries first, including file-to-directory transitions.
+	for (const args of [["-c", "-i", ...exclude], ["--deleted"]]) {
+		let batch: string[] = [];
+		for await (const rel of shadowRecords(ws, ["ls-files", "-z", ...args])) {
+			batch.push(rel);
+			if (batch.length === INDEX_BATCH_PATHS) {
+				await update(["--force-remove", "-z", "--stdin"], batch);
+				batch = [];
+			}
+		}
+		if (batch.length) await update(["--force-remove", "-z", "--stdin"], batch);
 	}
-	return candidates.length;
+
+	const processBatch = async (paths: string[]) => {
+		const directories = new Map<string, Promise<boolean>>();
+		const regularDirectory = (rel: string): Promise<boolean> => {
+			if (!rel) return Promise.resolve(true);
+			const known = directories.get(rel);
+			if (known) return known;
+			const check = (async () => {
+				const parent = path.posix.dirname(rel);
+				if (parent !== "." && !(await regularDirectory(parent))) return false;
+				return Boolean((await snapshotStat(path.join(ws.cwd, rel)))?.isDirectory());
+			})();
+			directories.set(rel, check);
+			return check;
+		};
+		const files = await Promise.all(paths.map(async (rel) => {
+			const parent = path.posix.dirname(rel);
+			const stat = parent === "." || await regularDirectory(parent) ? await snapshotStat(path.join(ws.cwd, rel)) : null;
+			return { rel, stat };
+		}));
+		const removals: string[] = [];
+		const omitted: string[] = [];
+		let adds: string[] = [];
+		let bytes = 0;
+		for (const { rel, stat } of files) {
+			if (!stat?.isFile()) { removals.push(rel); continue; }
+			if (stat.size > MAX_FILE_BYTES) {
+				omitted.push(`160000 ${omittedId(stat.size, stat.mtimeMs, ws.emptyTree.length)}\t${rel}`);
+			}
+		}
+		if (removals.length) await update(["--force-remove", "-z", "--stdin"], removals);
+		if (omitted.length) await update(["--replace", "-z", "--index-info"], omitted);
+		for (const { rel, stat } of files) {
+			if (!stat?.isFile() || stat.size > MAX_FILE_BYTES) continue;
+			if (bytes + stat.size > INDEX_BATCH_BYTES) {
+				await update(["--add", "--remove", "--replace", "-z", "--stdin"], adds);
+				adds = [];
+				bytes = 0;
+			}
+			adds.push(rel);
+			bytes += stat.size;
+		}
+		if (adds.length) await update(["--add", "--remove", "--replace", "-z", "--stdin"], adds);
+	};
+	let paths: string[] = [];
+	for await (const rel of shadowRecords(ws, ["ls-files", "-z", "--others", "--modified", ...exclude])) {
+		if (!rel || rel.endsWith("/")) continue;
+		paths.push(rel);
+		if (paths.length === INDEX_BATCH_PATHS) { await processBatch(paths); paths = []; }
+	}
+	if (paths.length) await processBatch(paths);
 }
 
 export interface RoundMeta extends GrowthAttribution {
@@ -909,6 +904,23 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 			await fs.writeFile(ws.excludeFile, EXCLUDE_CONTENT, "utf8");
 			ws.excludeRules = EXCLUDE_CONTENT;
 		}
+		// Recover an interrupted/failed writer (including another process) from the published tree.
+		// A matching index keeps its stat cache, so unchanged files need no content reads.
+		const head = await readHead(ws);
+		ws.lastCommit = head?.commit;
+		ws.lastTree = head?.tree;
+		// Retrying after publication can happen if the process stopped before acknowledging the turn.
+		if (head && meta.kind === "round" && meta.promptIds?.length) {
+			const prior = parseRoundMessage(head.message);
+			const current = parseRoundMessage(roundMessage(meta, "round"));
+			if (prior.kind === "round" && sameSessionName(prior.session, current.session)
+				&& prior.promptIds.length > 0 && prior.promptIds[0] === current.promptIds[0]) return null;
+		}
+		const baseTree = head?.tree ?? ws.emptyTree;
+		const indexTree = await shadow(ws, ["write-tree"], { allowFail: true });
+		if (indexTree.code !== 0 || indexTree.stdout.toString().trim() !== baseTree) {
+			await shadow(ws, ["read-tree", "--reset", baseTree]);
+		}
 		await refreshIndex(ws);
 		const tree = (await shadow(ws, ["write-tree"], { timeoutMs: HEAVY_GIT_TIMEOUT_MS })).stdout.toString("utf8").trim();
 		assertHash(tree, "tree");
@@ -924,17 +936,6 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 			if (kind !== "round" && parent && tree === ws.lastTree) return null;
 			const commit = (await shadow(ws, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-F", "-"], { env, input: roundMessage(meta, kind) })).stdout.toString("utf8").trim();
 			assertHash(commit, "commit");
-			// 带旧值校验：另一个 PiWeb 进程抢先提交时不覆盖它，按新的链头重挂
-			const updated = await shadow(ws, ["update-ref", ws.ref, commit, parent ?? ""], { allowFail: true });
-			if (updated.code !== 0) {
-				const head = await readHead(ws);
-				if (attempt >= 2 || head?.commit === parent) {
-					throw new GrowthError(`git update-ref failed: ${updated.stderr.trim().split("\n")[0] || `exit ${updated.code}`}`);
-				}
-				ws.lastCommit = head?.commit;
-				ws.lastTree = head?.tree;
-				continue;
-			}
 			const parentTree = parent ? ws.lastTree ?? ws.emptyTree : ws.emptyTree;
 			// 链上第一个 commit 没有上一版可比：不把整个工作区算成「新增」
 			const all = parent ? await diffTreesRaw(ws, parentTree, tree) : [];
@@ -951,13 +952,23 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 				initial: parent ? undefined : true,
 				stats: summarize(all),
 			};
+			// 带旧值校验：另一个 PiWeb 进程抢先提交时不覆盖它，按新的链头重挂
+			const updated = await shadow(ws, ["update-ref", ws.ref, commit, parent ?? ""], { allowFail: true });
+			if (updated.code !== 0) {
+				const head = await readHead(ws);
+				if (attempt >= 2 || head?.commit === parent) {
+					throw new GrowthError(`git update-ref failed: ${updated.stderr.trim().split("\n")[0] || `exit ${updated.code}`}`);
+				}
+				ws.lastCommit = head?.commit;
+				ws.lastTree = head?.tree;
+				continue;
+			}
 			if (ws.rounds && ws.loadedHead === parent) {
 				ws.rounds.push(round);
 				ws.loadedHead = commit;
 			}
 			ws.lastCommit = commit;
 			ws.lastTree = tree;
-			if (ws.trackedSizes) ws.trackedSizesTree = tree;
 			// commit-tree 是底层命令，不会像 git commit 那样顺手 gc --auto：快照对象一直是松散文件、只增不减。
 			// 隔一段补一次，没到阈值 git 什么都不做。不带 PiWeb 暂存区：用户自己 index 里的对象照常算可达；
 			// PiWeb 暂存区此刻刚整体提交，里面的对象都已挂在专用引用上
@@ -969,7 +980,7 @@ export async function commitRound(cwdValue: string, meta: RoundMeta, options: Co
 			}
 			return round;
 		}
-	})).finally(() => completeGrowthRun(ws.cwd, meta.runId));
+	})).finally(() => completeGrowthRun(ws.cwd, meta.runId).catch((error) => console.warn("[piweb] Could not finish project recording activity", error)));
 }
 
 /** 发 prompt 前调用：把两轮之间用户自己的修改单独记一笔（工作区还没有任何提交时记成基线），没改动不提交 */
@@ -985,15 +996,15 @@ export async function isAvailable(): Promise<boolean> {
 
 /** 一次 git log 读回链上的 commit（时间正序）；since 给出时只读它之后新增的 */
 async function logRounds(ws: WorkspaceState, head: string, since: string | undefined, knownTrees: Map<string, string>): Promise<GrowthRound[]> {
-	const r = await shadow(ws, [
+	const tokens = shadowRecords(ws, [
 		// 根 commit 不展开成「全部新增」；签名 / relative 等用户配置不能混进输出
 		"-c", "log.showRoot=false", "-c", "log.showSignature=false", "-c", "diff.relative=false",
-		"log", "-z", "--topo-order", "--reverse", "--raw", "--numstat", "-M", "--no-abbrev", "--no-color",
+		"log", "-z", "--topo-order", "--reverse", "--raw", "--numstat", "-M", "--no-abbrev", "--no-color", "--ignore-submodules=none",
 		"--format=%x1e%H%x1f%T%x1f%P%x1f%ct%x1f%B%x1f",
 		head, ...(since ? [`^${since}`] : []), "--",
 	]);
 	const rounds: GrowthRound[] = [];
-	for (const c of parseRoundLog(r.stdout.toString("utf8"))) {
+	const add = (c: LogCommit) => {
 		const changes = c.changes.slice(0, MAX_CHANGES_PER_ROUND);
 		rounds.push({
 			commit: c.commit,
@@ -1008,7 +1019,14 @@ async function logRounds(ws: WorkspaceState, head: string, since: string | undef
 			stats: summarize(c.changes),
 		});
 		knownTrees.set(c.commit, c.tree);
+	};
+	const parser = new RoundLogParser();
+	for await (const token of tokens) {
+		const commit = parser.accept(token);
+		if (commit) add(commit);
 	}
+	const last = parser.finish();
+	if (last) add(last);
 	return rounds;
 }
 
@@ -1024,7 +1042,7 @@ async function loadRounds(ws: WorkspaceState): Promise<GrowthRound[]> {
 	const known = ws.rounds && ws.loadedHead ? ws.rounds : null;
 	const trees = new Map((known ?? []).map((round) => [round.commit, round.tree]));
 	let rounds = await logRounds(ws, head.commit, known ? ws.loadedHead : undefined, trees);
-	if (known && rounds.length && rounds[0].parent !== ws.loadedHead) rounds = await logRounds(ws, head.commit, undefined, new Map());
+	if (known && rounds[0]?.parent !== ws.loadedHead) rounds = await logRounds(ws, head.commit, undefined, new Map());
 	else if (known) rounds = [...known, ...rounds];
 	ws.rounds = rounds;
 	ws.loadedHead = head.commit;
@@ -1035,13 +1053,17 @@ function sameSessionName(a: string, b: string): boolean {
 	return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
+export async function hasRecordedSnapshot(cwd: string): Promise<boolean> {
+	const gitDir = await resolveGitDirFast(cwd);
+	return Boolean(gitDir && await refExistsFast(gitDir, `${GROWTH_REF_PREFIX}/${workspaceKey(cwd)}`));
+}
+
 /** 时间轴：默认只取某个会话的 commit；省略 session 取工作区全部。只读：还没提交过的工作区直接返回空（不创建 .git） */
 export async function readRounds(cwdValue: string, session?: string): Promise<GrowthRound[]> {
 	const cwd = await fs.realpath(path.resolve(cwdValue)).catch(() => path.resolve(cwdValue));
 	const key = workspaceKey(cwd);
 	if (!registry.workspaces.has(key)) {
-		const gitDir = await resolveGitDirFast(cwd);
-		if (!gitDir || !(await refExistsFast(gitDir, `${GROWTH_REF_PREFIX}/${key}`))) return [];
+		if (!(await hasRecordedSnapshot(cwd))) return [];
 	}
 	const ws = await getWorkspace(cwd);
 	const rounds = await loadRounds(ws);
@@ -1055,8 +1077,12 @@ export async function listTree(cwdValue: string, tree: unknown): Promise<TreeFil
 	const ws = await getWorkspace(cwdValue);
 	const hash = assertHash(tree, "tree");
 	if (hash === ws.emptyTree) return [];
-	const r = await shadow(ws, ["ls-tree", "-r", "-l", "-z", hash]);
-	return parseLsTree(r.stdout.toString("utf8"));
+	const files: TreeFile[] = [];
+	for await (const record of shadowRecords(ws, ["ls-tree", "-r", "-l", "-z", hash])) {
+		const entry = treeEntry(record);
+		if (entry) files.push(entry);
+	}
+	return files;
 }
 
 /** 两个 tree 之间的全部变更 */
@@ -1066,24 +1092,34 @@ export async function changesBetween(cwdValue: string, from: unknown, to: unknow
 }
 
 export interface GrowthPatch {
+	contentOmitted?: boolean;
 	patch: string;
 	binary: boolean;
 	truncated: boolean;
+}
+
+async function snapshotEntry(ws: WorkspaceState, tree: string, rel: string): Promise<TreeFile | undefined> {
+	const result = await shadow(ws, ["--literal-pathspecs", "ls-tree", "-l", "-z", tree, "--", rel]);
+	return parseLsTree(result.stdout.toString("utf8")).find((entry) => entry.path === rel);
 }
 
 /** 单文件在两个 tree 之间的 unified diff（整文件上下文，前端自己折叠未改动段） */
 export async function filePatch(cwdValue: string, from: unknown, to: unknown, relPath: unknown, renamedFrom?: unknown): Promise<GrowthPatch> {
 	const ws = await getWorkspace(cwdValue);
 	const rel = assertRelPath(relPath);
-	const paths = [rel];
-	if (typeof renamedFrom === "string" && renamedFrom) paths.push(assertRelPath(renamedFrom));
-	const r = await shadow(ws, ["diff", "-M", "--no-color", "--no-ext-diff", "-U1000000", assertHash(from, "from"), assertHash(to, "to"), "--", ...paths], { retainMaxBytes: MAX_PATCH_BYTES + 4 });
+	const oldRel = typeof renamedFrom === "string" && renamedFrom ? assertRelPath(renamedFrom) : rel;
+	const paths = oldRel === rel ? [rel] : [rel, oldRel];
+	const fromTree = assertHash(from, "from"), toTree = assertHash(to, "to");
+	const [before, after] = await Promise.all([snapshotEntry(ws, fromTree, oldRel), snapshotEntry(ws, toTree, rel)]);
+	if (before?.contentOmitted || after?.contentOmitted) return { patch: "", binary: false, truncated: false, contentOmitted: true };
+	const r = await shadow(ws, ["--literal-pathspecs", "diff", "-M", "--no-color", "--no-ext-diff", "-U1000000", fromTree, toTree, "--", ...paths], { retainMaxBytes: MAX_PATCH_BYTES + 4 });
 	if (/^Binary files .* differ$/m.test(r.stdout.toString("utf8", 0, Math.min(r.stdout.length, 64 * 1024)))) return { patch: "", binary: true, truncated: false };
 	if (!r.truncated && r.stdout.length <= MAX_PATCH_BYTES) return { patch: r.stdout.toString("utf8"), binary: false, truncated: false };
 	return { patch: utf8Prefix(r.stdout, MAX_PATCH_BYTES).toString("utf8"), binary: false, truncated: true };
 }
 
 export interface GrowthContent extends DecodedFilePreview {
+	contentOmitted?: boolean;
 	truncated: boolean;
 	size: number;
 }
@@ -1092,9 +1128,11 @@ export interface GrowthContent extends DecodedFilePreview {
 export async function fileContent(cwdValue: string, tree: unknown, relPath: unknown): Promise<GrowthContent> {
 	const ws = await getWorkspace(cwdValue);
 	const rel = assertRelPath(relPath);
-	const r = await shadow(ws, ["cat-file", "-p", `${assertHash(tree, "tree")}:${rel}`], { allowFail: true });
-	if (r.code !== 0) throw new GrowthError("file not found in this snapshot", "not-found");
-	const buf = r.stdout;
-	const truncated = buf.length > MAX_CONTENT_BYTES;
-	return { ...decodeFilePreview(buf, MAX_CONTENT_BYTES, truncated), truncated, size: buf.length };
+	const hash = assertHash(tree, "tree");
+	const entry = await snapshotEntry(ws, hash, rel);
+	if (!entry) throw new GrowthError("file not found in this snapshot", "not-found");
+	if (entry.contentOmitted) return { content: "", truncated: false, binary: false, size: entry.size, contentOmitted: true };
+	const r = await shadow(ws, ["cat-file", "-p", `${hash}:${rel}`], { retainMaxBytes: MAX_CONTENT_BYTES + 4 });
+	const truncated = entry.size > MAX_CONTENT_BYTES;
+	return { ...decodeFilePreview(r.stdout, MAX_CONTENT_BYTES, truncated), truncated, size: entry.size };
 }

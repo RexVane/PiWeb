@@ -22,6 +22,15 @@ function renderMd(text: string) {
 }
 
 describe("file paths in markdown", () => {
+	it("opens workspace-local absolute links and inline references with line numbers", () => {
+		const openFile = vi.fn();
+		render(<MarkdownActionsProvider value={{ openFile, workspaceCwd: "/work/project" }}>
+			<MarkdownBlock text={"查看 [说明](/work/project/docs/guide.md:15) 和 `/work/project/src/read.ts:12:2`"} />
+		</MarkdownActionsProvider>);
+		fireEvent.click(screen.getByRole("link", { name: "说明" }));
+		fireEvent.click(screen.getByRole("button", { name: "src/read.ts" }));
+		expect(openFile.mock.calls).toEqual([["docs/guide.md"], ["src/read.ts"]]);
+	});
 	it("keeps the full path available and opens the right file when references share a filename", () => {
 		const first = "src/plugins/worktree.ts";
 		const second = "tests/integration/fixtures/worktree.ts";

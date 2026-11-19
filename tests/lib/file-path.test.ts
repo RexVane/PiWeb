@@ -69,6 +69,14 @@ describe("looksLikeFilePath", () => {
 });
 
 describe("Markdown document references", () => {
+	it("opens paths inside the active workspace and strips editor locations from text links", () => {
+		expect(relativeMarkdownPath("/project/src/%E4%B8%AD.ts:42:3#L42", false, "/project")).toBe("src/中.ts");
+		expect(relativeMarkdownPath("src/app.tsx:42")).toBe("src/app.tsx");
+		expect(relativeMarkdownPath("src/app.tsx%3A42")).toBe("src/app.tsx:42");
+		expect(relativeMarkdownPath("C:/Work/src/app.ts:4", false, "c:\\work")).toBe("src/app.ts");
+		expect(relativeMarkdownPath("/project-copy/src/a.ts:42", false, "/project")).toBeNull();
+		expect(relativeMarkdownPath("/project/../elsewhere/file.ts", false, "/project")).toBeNull();
+	});
 	it("decodes explicit relative paths and strips actual query strings/fragments", () => {
 		expect(relativeMarkdownPath("docs/%E4%B8%AD%E6%96%87%20%23file.md?raw=1#L2")).toBe("docs/中文 #file.md");
 		expect(relativeMarkdownPath("asset%2520name.png")).toBe("asset%20name.png");
