@@ -32,7 +32,7 @@ export function comparable(filePath: string): string {
 /** candidate 是否等于 root 或位于其内部（按规范化后的路径比较，不是字符串前缀）。 */
 export function isPathInside(root: string, candidate: string): boolean {
 	const relative = path.relative(comparable(root), comparable(candidate));
-	return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 /** 两个路径是否指向同一个位置（规范化后逐字比较）。 */

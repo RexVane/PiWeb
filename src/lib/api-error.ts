@@ -22,6 +22,8 @@ export const API_ERROR_I18N_KEYS: Readonly<Record<string, string>> = {
 	OUT_OF_WORKSPACE: "apiErrorOutOfWorkspace",
 	NOT_FOUND: "apiErrorEnoent",
 	NOT_A_FILE: "apiErrorNotAFile",
+	FILE_NOT_FOUND: "apiErrorEnoent",
+	IS_DIRECTORY: "apiErrorNotAFile",
 	ENOENT: "apiErrorEnoent",
 	EACCES: "apiErrorEacces",
 	EPERM: "apiErrorEperm",

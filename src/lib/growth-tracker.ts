@@ -7,10 +7,10 @@
  *   没有改动也提交空 commit，轮号与对话一一对应
  * - 生长记录默认开启，工作区还不是仓库根目录时自动初始化本地仓库；手动停用的工作区不记录。
  *   重新开启时（consentAnswered）可立即拍基线。
- * 提交失败不影响 pi，只向浏览器报一次错；项目过大 / 没有 git 时本会话停用。
+ * 提交失败不影响 pi，重复失败时后台记录退避，用户可以立即重试。
  */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import { type CommitOptions, GrowthError, commitRound, recordWorkspaceChanges } from "./growth-service";
+import { type CommitOptions, type RoundMeta, GrowthError, commitRound, recordWorkspaceChanges } from "./growth-service";
 import { promptsFromEntries, userTurnsFromEntries } from "./growth-turns";
 import type { GrowthRound, GrowthRoundStatus, WebEvent } from "./types";
 import { isAbortMessage } from "./chat/cancellation";
@@ -19,7 +19,7 @@ import { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-act
 const ERROR_THROTTLE_MS = 60_000;
 const TRANSIENT_COOLDOWN_MS = 120_000;
 const COOLDOWN_AFTER_FAILURES = 2;
-export const GROWTH_TRACKER_VERSION = 7;
+export const GROWTH_TRACKER_VERSION = 8;
 
 interface SessionEntryLike {
 	type?: string;
@@ -75,6 +75,7 @@ export function createGrowthTracker(opts: {
 	let runStart: number | null = null;
 	/** 每开始一轮加一：prepare 排队期间 pi 已经开工，就不能再把工作区记成「你的修改」 */
 	let runEpoch = 0;
+	let retryRound: RoundMeta | null = null;
 	const inCooldown = () => cooldownUntil > Date.now();
 	const releaseActiveRun = () => {
 		const attribution = finishGrowthRun(cwd, sessionPath);
@@ -82,25 +83,19 @@ export function createGrowthTracker(opts: {
 		void completeGrowthRun(cwd, attribution.runId).catch((error) => console.warn("[piweb] Could not finish project recording activity", error));
 	};
 
-	// 提交失败不打扰用户（项目栏退化成普通文件树 + 查看器）：只在服务端日志记一次，没 git / 项目过大就停用本会话的跟踪
+	// Only an explicit opt-out disables recording. A manual retry bypasses the automatic cooldown.
 	const reportError = (error: unknown) => {
 		const message = error instanceof Error ? error.message : String(error);
-		const terminal = error instanceof GrowthError && (error.code === "unavailable" || error.code === "too-large");
-		if (terminal) {
-			disabled = true;
-			disabledFailure = error;
+		const sameError = lastErrorMessage === message;
+		consecutiveFailures++;
+		if (consecutiveFailures >= COOLDOWN_AFTER_FAILURES || (error instanceof GrowthError && error.code === "unavailable")) {
+			cooldownUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
 			releaseActiveRun();
-		} else {
-			consecutiveFailures += 1;
-			if (consecutiveFailures >= COOLDOWN_AFTER_FAILURES) {
-				cooldownUntil = Date.now() + TRANSIENT_COOLDOWN_MS;
-				releaseActiveRun();
-			}
 		}
 		errorActive = true;
 		lastErrorMessage = message;
 		const now = Date.now();
-		if (!terminal && now - lastErrorAt < ERROR_THROTTLE_MS) return;
+		if (sameError && now - lastErrorAt < ERROR_THROTTLE_MS) return;
 		lastErrorAt = now;
 		console.warn(`[piweb] growth commit failed for ${cwd}: ${message}`);
 		publish({ type: "growth_error", message, ts: now });
@@ -124,6 +119,7 @@ export function createGrowthTracker(opts: {
 	};
 
 	const declined = () => {
+		retryRound = null;
 		disabled = true;
 		disabledFailure = new GrowthError("growth tracking was declined for this workspace", "unavailable");
 		releaseActiveRun();
@@ -149,7 +145,7 @@ export function createGrowthTracker(opts: {
 			if (disabled || disposed || inCooldown()) return chain;
 			const epoch = runEpoch;
 			return enqueue(async () => {
-				if (disabled || disposed || inCooldown()) return;
+				if (disabled || disposed || inCooldown() || retryRound) return;
 				// 5 秒没拍完提问就放行了：pi 开工后再拍的快照会把它的改动记成「你的修改」
 				const round = await recordUserChanges(() => runEpoch !== epoch);
 				if (round !== undefined) published(round);
@@ -159,12 +155,13 @@ export function createGrowthTracker(opts: {
 			if (disposed || disabled) return;
 			switch (evt.type) {
 				case "agent_start":
-					if (inCooldown()) break;
 					// 自动重试会再次 agent_start：一轮只从第一次开始算
 					if (runStart === null) {
+						retryRound = null;
+						runEpoch += 1;
+						if (inCooldown()) break;
 						beginGrowthRun(cwd, sessionPath);
 						runStart = entries().length;
-						runEpoch += 1;
 					}
 					break;
 				case "agent_settled": {
@@ -179,12 +176,19 @@ export function createGrowthTracker(opts: {
 						void completeGrowthRun(cwd, attribution.runId).catch(() => undefined);
 						break;
 					}
+					const meta: RoundMeta = { kind: "round", session: sessionPath, title, promptIds: ids, ...(ordinal > 0 ? { roundNumber: ordinal } : {}), status: roundStatus(run), ...attribution };
+					const epoch = runEpoch;
 					void enqueue(async () => {
 						try {
 							if (disabled || disposed || inCooldown()) return;
-							const round = await commit((options) => commitRound(cwd, { kind: "round", session: sessionPath, title, promptIds: ids, ...(ordinal > 0 ? { roundNumber: ordinal } : {}), status: roundStatus(run), ...attribution }, options));
+							const round = await commit((options) => commitRound(cwd, meta, options));
 							if (round !== undefined) published(round);
-						} finally { await completeGrowthRun(cwd, attribution.runId); }
+						} catch (error) {
+							if (runEpoch === epoch && !disabled) retryRound = meta;
+							throw error;
+						} finally {
+							await completeGrowthRun(cwd, attribution.runId).catch((error) => console.warn("[piweb] Could not finish project recording activity", error));
+						}
 					});
 					break;
 				}
@@ -201,12 +205,16 @@ export function createGrowthTracker(opts: {
 			await enqueue(async () => {
 				try {
 					if (disabled) throw disabledFailure ?? new GrowthError("growth tracking is disabled for this workspace", "unavailable");
-					const round = await recordUserChanges();
+					const pending = retryRound;
+					const round = pending
+						? await commit((options) => commitRound(cwd, pending, options), () => retryRound !== pending)
+						: await recordUserChanges();
 					if (round === undefined) {
 						throw disabled
 							? disabledFailure ?? new GrowthError("growth tracking is disabled for this workspace", "unavailable")
 							: new GrowthError("growth tracking is disabled for this workspace", "unavailable");
 					}
+					if (retryRound === pending) retryRound = null;
 					result = published(round);
 				} catch (error) {
 					failure = error;

@@ -63,45 +63,35 @@ function sumChanges(changes: GrowthChange[]): { files: number; add: number; del:
 	return { files: changes.length, add, del };
 }
 
-const GROWTH_FAILURES: Record<Lang, Record<"git" | "workspace" | "tooMany" | "tooLarge" | "timeout" | "generic", string>> = {
+const GROWTH_FAILURES: Record<Lang, Record<"git" | "workspace" | "timeout" | "generic", string>> = {
 	zh: {
 		git: "未找到 Git。安装 Git 后可重新开启项目记录。",
 		workspace: "工作区目录不存在，请重新选择工作区。",
-		tooMany: "工作区文件过多，已停止记录。请在 .gitignore 中排除生成目录后重新开启记录。",
-		tooLarge: "项目记录超过大小限制，上一份快照已保留。请缩小或排除大文件后重新开启记录。",
-		timeout: "项目记录耗时超时，上一份快照已保留。若工作区包含大量临时/缓存或生成文件，请加入 .gitignore 后重试。",
+		timeout: "项目记录超时，请重试。",
 		generic: "项目记录未能完成，请重试或查看错误详情。",
 	},
 	"zh-Hant": {
 		git: "找不到 Git。安裝 Git 後即可重新開啟專案記錄。",
 		workspace: "工作區目錄不存在，請重新選擇工作區。",
-		tooMany: "工作區檔案過多，已停止記錄。請在 .gitignore 中排除產生目錄後重新開啟記錄。",
-		tooLarge: "專案記錄超過大小限制，上一份快照已保留。請縮小或排除大型檔案後重新開啟記錄。",
-		timeout: "專案記錄耗時逾時，上一份快照已保留。若工作區包含大量暫存/快取或產生檔案，請加入 .gitignore 後重試。",
+		timeout: "專案記錄逾時，請重試。",
 		generic: "專案記錄未能完成，請重試或查看錯誤詳情。",
 	},
 	en: {
 		git: "Git is unavailable. Install Git, then enable project recording again.",
 		workspace: "The workspace directory is unavailable. Select the workspace again.",
-		tooMany: "The workspace has too many files to record. Exclude generated directories in .gitignore, then enable recording again.",
-		tooLarge: "Project recording exceeded its size limit. The previous snapshot is retained. Reduce or exclude large files, then enable recording again.",
-		timeout: "Project recording timed out (previous snapshot retained). Exclude large temp, cache, or build directories in .gitignore, then retry.",
+		timeout: "Project recording timed out. Try again.",
 		generic: "Project recording could not finish. Retry or review the error details.",
 	},
 	ja: {
 		git: "Git が見つかりません。Git をインストールしてからプロジェクト記録を有効にしてください。",
 		workspace: "ワークスペースのディレクトリがありません。ワークスペースを選択し直してください。",
-		tooMany: "ワークスペースのファイルが多すぎるため記録を停止しました。.gitignore で生成ディレクトリを除外してから記録を有効にしてください。",
-		tooLarge: "プロジェクト記録がサイズ上限を超えました。前回のスナップショットは保持されています。大きなファイルを減らすか除外してから記録を有効にしてください。",
-		timeout: "プロジェクト記録がタイムアウトしました（前回のスナップショットは保持）。大量の一時ファイル/キャッシュ/ビルド生成物がある場合は .gitignore に追加してから再試行してください。",
+		timeout: "プロジェクト記録がタイムアウトしました。もう一度お試しください。",
 		generic: "プロジェクト記録を完了できませんでした。再試行するかエラーの詳細を確認してください。",
 	},
 	ru: {
 		git: "Git не найден. Установите Git и снова включите запись проекта.",
 		workspace: "Каталог рабочей области недоступен. Выберите рабочую область заново.",
-		tooMany: "В рабочей области слишком много файлов, запись остановлена. Исключите сгенерированные каталоги в .gitignore и включите запись снова.",
-		tooLarge: "Запись проекта превысила лимит размера. Предыдущий снимок сохранён. Уменьшите или исключите крупные файлы и включите запись снова.",
-		timeout: "Запись проекта превысила время ожидания (предыдущий снимок сохранён). Добавьте крупные временные/кэш/сборочные каталоги в .gitignore и повторите.",
+		timeout: "Время ожидания записи проекта истекло. Повторите попытку.",
 		generic: "Запись проекта не завершилась. Повторите попытку или посмотрите подробности ошибки.",
 	},
 };
@@ -110,8 +100,6 @@ function growthFailureMessage(message: string, lang: Lang): string {
 	const table = GROWTH_FAILURES[lang] ?? GROWTH_FAILURES.en;
 	if (/git is not installed/i.test(message)) return table.git;
 	if (/workspace directory not found/i.test(message)) return table.workspace;
-	if (/candidate limit|candidate files|文件过多/i.test(message)) return table.tooMany;
-	if (/exceeds.*(?:byte|limit)|exceeded.*(?:buffer|limit)/i.test(message)) return table.tooLarge;
 	if (/timed out/i.test(message)) return table.timeout;
 	return table.generic;
 }
@@ -184,7 +172,7 @@ export function ProjectPanel({
 		if (!cwd) return;
 		const controller = new AbortController();
 		const timer = setTimeout(() => {
-			void fetch(`/api/git?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal, cache: "no-store" })
+			void fetch(`/api/git?cwd=${encodeURIComponent(cwd)}&summary=1`, { signal: controller.signal, cache: "no-store" })
 				.then(async (response) => {
 					const result = await response.json();
 					if (!response.ok || !result.success) throw new Error(result.error || `request failed (${response.status})`);
@@ -198,7 +186,7 @@ export function ProjectPanel({
 			clearTimeout(timer);
 			controller.abort();
 		};
-	}, [cwd, gitRefreshKey, latestCommit]);
+	}, [cwd, gitRefreshKey, latestCommit, recordingEnabled]);
 
 	const totals = useMemo(() => {
 		if (selected && growth.scope === "round") {
@@ -254,10 +242,10 @@ export function ProjectPanel({
 		setRoundPickerOpen(false);
 	};
 	const gitFiles = Array.isArray(git?.files) ? git.files : [];
-	const conflicts = gitFiles.filter((file) => file.kind === "conflict").length;
-	const staged = gitFiles.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length;
-	const unstaged = gitFiles.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length;
-	const untracked = gitFiles.filter((file) => file.kind === "untracked").length;
+	const conflicts = git?.counts?.conflicts ?? gitFiles.filter((file) => file.kind === "conflict").length;
+	const staged = git?.counts?.staged ?? gitFiles.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length;
+	const unstaged = git?.counts?.unstaged ?? gitFiles.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length;
+	const untracked = git?.counts?.untracked ?? gitFiles.filter((file) => file.kind === "untracked").length;
 
 	useEffect(() => {
 		if (!notice) return;
@@ -331,7 +319,7 @@ export function ProjectPanel({
 					<span className="max-w-[45%] truncate" style={{ fontWeight: 600, color: "var(--dsw-label-primary)" }} title={git.branch ?? undefined}>{git.detached ? t.gitDetached : git.branch ?? "Git"}</span>
 					{git.ahead > 0 && <span title={t.gitAhead.replace("{n}", String(git.ahead))}>↑{git.ahead}</span>}
 					{git.behind > 0 && <span title={t.gitBehind.replace("{n}", String(git.behind))}>↓{git.behind}</span>}
-					{gitFiles.length ? (
+					{(git.counts?.total ?? gitFiles.length) > 0 ? (
 						<span className="min-w-0 flex-1 truncate" title={`${conflicts ? `${t.gitConflict} ${conflicts} · ` : ""}${t.gitStaged} ${staged} · ${t.gitUnstaged} ${unstaged} · ${t.gitUntracked} ${untracked}`}>
 							{conflicts > 0 && <span style={{ color: "var(--dsw-danger)" }}>{t.gitConflict} {conflicts} </span>}
 							{staged > 0 && <span style={{ color: "var(--dsw-success-text)" }}>{t.gitStaged} {staged} </span>}
@@ -405,7 +393,8 @@ export function ProjectPanel({
 			{growth.error && (
 				<div className="mx-3 mb-1 rounded-lg px-2 py-1 break-words" style={{ fontSize: 11, color: "var(--dsw-danger)", background: "var(--dsw-hover)" }} role="alert">
 					{growthFailureMessage(growth.error, lang)}
-					<details><summary>{lang === "zh" ? "错误详情" : "Error details"}</summary>{growth.error}</details>
+					{growth.hasSnapshot === false && <div>{t.growthNoSnapshotYet}</div>}
+					<details><summary>{lang === "zh" ? "错误详情" : "Error details"}</summary><div>{cwd}</div>{growth.error}</details>
 				</div>
 			)}
 			{selected?.truncated && growth.scope === "round" && (

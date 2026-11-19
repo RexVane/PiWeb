@@ -62,6 +62,13 @@ export async function GET(req: Request) {
 		if (show !== null) {
 			return NextResponse.json({ success: true, data: await gitShow(cwd, show) }, { headers });
 		}
+		if (url.searchParams.get("summary") === "1") {
+			const { getGrowthInitConsent, isHomeWorkspace } = await import("@/lib/workspace-store");
+			if (cwd && await isHomeWorkspace(cwd) && !await getGrowthInitConsent(cwd)) {
+				return NextResponse.json({ success: true, data: null }, { headers });
+			}
+			return NextResponse.json({ success: true, data: await gitInfo(cwd, true) }, { headers });
+		}
 		return NextResponse.json({ success: true, data: await gitInfo(cwd) }, { headers });
 	} catch (err: unknown) {
 		return NextResponse.json(

@@ -297,6 +297,8 @@ export type GrowthRoundKind = "round" | "user" | "baseline";
 export type GrowthRoundStatus = "done" | "aborted" | "error";
 
 export interface GrowthChange {
+	contentOmitted?: boolean;
+	previousContentOmitted?: boolean;
 	status: "A" | "M" | "D" | "R";
 	/** 相对工作区的路径（"/" 分隔） */
 	path: string;

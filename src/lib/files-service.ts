@@ -247,19 +247,38 @@ async function ignoredNames(root: string, dirRel: string, names: string[]): Prom
 	}
 }
 
+export class FileLookupError extends BoundaryError {
+	constructor(public code: "FILE_NOT_FOUND" | "IS_DIRECTORY", message: string) { super(message); }
+}
+
+function rethrowFileLookup(error: NodeJS.ErrnoException): never {
+	if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new FileLookupError("FILE_NOT_FOUND", "file not found");
+	throw error;
+}
+
+/** Both tree entries and absolute paths from chat must resolve against the same workspace. */
+async function existingWorkspacePath(root: string, requested: string, cwdValue: unknown): Promise<string> {
+	let target = path.resolve(root, requested);
+	if (path.isAbsolute(requested) && typeof cwdValue === "string" && isPathInside(cwdValue, requested)) {
+		target = path.resolve(root, path.relative(cwdValue, requested));
+	}
+	if (!isPathInside(root, target)) {
+		// An absolute reference can use another spelling of the workspace, e.g. /var instead of /private/var.
+		const parent = path.isAbsolute(requested) ? await fs.realpath(path.dirname(target)).catch(() => null) : null;
+		if (!parent || !isPathInside(root, parent)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
+		target = path.join(parent, path.basename(target));
+	}
+	const real = await fs.realpath(target).catch(rethrowFileLookup);
+	if (!isPathInside(root, real)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
+	return real;
+}
+
 export async function listWorkspaceDir(cwdValue: unknown, relPath: unknown, offsetValue: unknown = 0): Promise<DirListing> {
 	const root = await resolveWorkspacePath(cwdValue);
 	const offset = offsetValue === null || offsetValue === "" ? 0 : Number(offsetValue);
 	if (!Number.isSafeInteger(offset) || offset < 0) throw new BoundaryError("invalid directory offset");
-	const rel = typeof relPath === "string" && relPath.trim() ? relPath.trim() : "";
-	const target = path.isAbsolute(rel) ? path.resolve(rel) : path.resolve(root, rel);
-	if (!isPathInside(root, target)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
-	const real = await fs.realpath(target).catch((error: NodeJS.ErrnoException) => {
-		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new BoundaryError("directory not found", "NOT_FOUND");
-		throw error;
-	});
-	if (!isPathInside(root, real)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
-	const stat = await fs.stat(real);
+	const real = await existingWorkspacePath(root, typeof relPath === "string" ? relPath : "", cwdValue);
+	const stat = await fs.stat(real).catch(rethrowFileLookup);
 	if (!stat.isDirectory()) throw new BoundaryError("not a directory");
 
 	const raw = await fs.readdir(real, { withFileTypes: true });
@@ -323,20 +342,15 @@ export interface FilePreview extends DecodedFilePreview {
 export async function openWorkspaceFile(cwdValue: unknown, relPath: unknown) {
 	if (typeof relPath !== "string" || !relPath.trim() || relPath.length > 4096 || /[\u0000-\u001f\u007f]/.test(relPath)) throw new BoundaryError("invalid file path");
 	const root = await resolveWorkspacePath(cwdValue);
-	const target = path.resolve(root, relPath.trim());
-	if (!isPathInside(root, target)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
-	const real = await fs.realpath(target).catch((error: NodeJS.ErrnoException) => {
-		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new BoundaryError("file not found", "NOT_FOUND");
-		throw error;
-	});
-	if (!isPathInside(root, real)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
-	const stat = await fs.stat(real);
+	const real = await existingWorkspacePath(root, relPath, cwdValue);
+	const stat = await fs.stat(real).catch(rethrowFileLookup);
+	if (stat.isDirectory()) throw new FileLookupError("IS_DIRECTORY", "not a file");
 	if (!stat.isFile()) throw new BoundaryError("not a file", "NOT_A_FILE");
-	const handle = await fs.open(real, "r");
+	const handle = await fs.open(real, "r").catch(rethrowFileLookup);
 	try {
 		const opened = await handle.stat();
-		const checked = await fs.realpath(real);
-		const current = await fs.stat(checked);
+		const checked = await fs.realpath(real).catch(rethrowFileLookup);
+		const current = await fs.stat(checked).catch(rethrowFileLookup);
 		if (!isPathInside(root, checked)) throw new BoundaryError("path escapes the workspace", "OUT_OF_WORKSPACE");
 		if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino
 			|| opened.dev !== current.dev || opened.ino !== current.ino) throw new BoundaryError("file changed while opening");

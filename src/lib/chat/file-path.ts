@@ -53,12 +53,33 @@ export function looksLikeFilePath(raw: string): boolean {
 	return BARE_EXTENSIONS.has(ext);
 }
 
+/** Strip editor line/column suffixes only on textual references, never on names from directory listings. */
+export function referencePath(value: string): string {
+	return value.replace(/(\.[\w-]+):[1-9]\d*(?::[1-9]\d*)?$/, "$1");
+}
+
+/** Convert an absolute chat reference in the selected workspace to a viewer tab path. */
+export function workspaceRelativeReference(value: string, cwd?: string): string | null {
+	if (!cwd || !value || /[\u0000-\u001f\u007f]/.test(value)) return null;
+	const windows = /^[a-z]:[\\/]/i.test(cwd) || cwd.startsWith("\\\\");
+	const normalize = (s: string) => windows ? s.replaceAll("\\", "/") : s;
+	const root = normalize(cwd).replace(/\/+$/, "") + "/";
+	const candidate = normalize(value);
+	const compare = (s: string) => windows ? s.toLowerCase() : s;
+	if (!compare(candidate).startsWith(compare(root))) return null;
+	const relative = candidate.slice(root.length);
+	if (!relative || relative.split("/").includes("..")) return null;
+	return relative;
+}
+
 /** Explicit Markdown links can name Chinese files, spaces, directories or extensionless files. */
-export function relativeMarkdownPath(href: string, allowDocumentParents = false): string | null {
-	if (!href || /^[#?/~\\]/.test(href) || /^[a-z][a-z\d+.-]*:/i.test(href)) return null;
+export function relativeMarkdownPath(href: string, allowDocumentParents = false, workspace?: string): string | null {
+	if (!href || href.startsWith("//") || /^[#?~]/.test(href)) return null;
 	const rawPath = href.split(/[?#]/, 1)[0];
 	try {
-		const decoded = decodeURIComponent(rawPath);
+		const decoded = decodeURIComponent(referencePath(rawPath));
+		const inWorkspace = workspaceRelativeReference(decoded, workspace);
+		if (inWorkspace !== null) return inWorkspace;
 		if (!decoded || /[\u0000-\u001f\u007f\\]/.test(decoded) || /^[\/~]/.test(decoded) || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return null;
 		if (!allowDocumentParents) {
 			const segments: string[] = [];

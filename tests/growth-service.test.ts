@@ -485,12 +485,48 @@ describe("growth-service rounds (real git)", () => {
 		expect(await readRounds(work, session)).toHaveLength(2002);
 		expect(git(work, ["for-each-ref", "refs/heads/"])).toBe("");
 	}, 30_000);
-	it("retains the prior snapshot when a recorded file grows past the file limit", async () => {
-		await fs.writeFile(path.join(work, "growing.txt"), "small");
+	it("records oversized metadata and other edits, preserving historical contents across shrink and deletion", async () => {
+		const target = path.join(work, "growing.txt");
+		await fs.writeFile(target, "small");
 		const base = await recordWorkspaceChanges(work, "large.jsonl", INIT);
-		await fs.writeFile(path.join(work, "growing.txt"), Buffer.alloc(1024 * 1024 + 1));
-		await expect(commitRound(work, { kind: "round", session: "large.jsonl" }, INIT)).rejects.toMatchObject({ code: "too-large" });
-		expect((await listTree(work, base!.tree)).map((item) => item.path)).toContain("growing.txt");
+		const size = 1024 * 1024 + 1;
+		await fs.writeFile(target, Buffer.alloc(size));
+		await fs.writeFile(path.join(work, "other.txt"), "other");
+		const next = (await commitRound(work, { kind: "round", session: "large.jsonl" }, INIT))!;
+		expect(next.changes).toMatchObject([{ path: "growing.txt", status: "M", contentOmitted: true }, { path: "other.txt", status: "A" }]);
+		expect(await fileContent(work, base!.tree, "growing.txt")).toMatchObject({ content: "small" });
+		expect(await fileContent(work, next.tree, "growing.txt")).toMatchObject({ contentOmitted: true, size });
+		expect(await listTree(work, next.tree)).toContainEqual({ path: "growing.txt", size, contentOmitted: true });
+		expect(await filePatch(work, base!.tree, next.tree, "growing.txt")).toMatchObject({ contentOmitted: true, patch: "" });
+		expect(await recordWorkspaceChanges(work, "large.jsonl", INIT)).toBeNull();
+		await fs.writeFile(target, "short again");
+		const shrunk = (await recordWorkspaceChanges(work, "large.jsonl", INIT))!;
+		expect(shrunk.changes).toMatchObject([{ status: "M", previousContentOmitted: true }]);
+		expect(await fileContent(work, shrunk.tree, "growing.txt")).toMatchObject({ content: "short again" });
+		await fs.writeFile(target, Buffer.alloc(size + 1));
+		await recordWorkspaceChanges(work, "large.jsonl", INIT);
+		await retireFixture(target);
+		expect((await recordWorkspaceChanges(work, "large.jsonl", INIT))?.changes).toMatchObject([{ status: "D", previousContentOmitted: true }]);
+	});
+
+	it("recovers a failed publication and records the retried turn exactly once", async () => {
+		const file = path.join(work, "code.ts");
+		await fs.writeFile(file, "old\n");
+		const base = (await recordWorkspaceChanges(work, "retry.jsonl", INIT))!;
+		const ref = `refs/piweb/rounds/${workspaceKey(work)}`;
+		const lock = path.join(work, ".git", ref + ".lock");
+		await fs.writeFile(file, "new\n");
+		await fs.writeFile(lock, "fixture");
+		const meta = { kind: "round" as const, session: "retry.jsonl", promptIds: ["prompt-1"] };
+		await expect(commitRound(work, meta, INIT)).rejects.toThrow(/update-ref/);
+		expect(git(work, ["rev-parse", ref]).trim()).toBe(base.commit);
+		expect((await fileContent(work, base.tree, "code.ts")).content).toBe("old\n");
+		await retireFixture(lock);
+		const next = (await commitRound(work, meta, INIT))!;
+		expect(next).toMatchObject({ parent: base.commit, changes: [{ path: "code.ts", status: "M", add: 1, del: 1 }] });
+		expect(await commitRound(work, meta, INIT)).toBeNull();
+		expect(await recordWorkspaceChanges(work, "retry.jsonl", INIT)).toBeNull();
+		expect(git(work, ["rev-list", "--count", ref]).trim()).toBe("2");
 	});
 
 	it("prunes tracked paths that become excluded by .gitignore or internal excludes without deleting workspace files", async () => {

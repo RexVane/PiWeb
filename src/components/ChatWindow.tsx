@@ -2299,7 +2299,7 @@ export function ChatWindow({
 	useChatReadingAnchor(rootRef, scrollRef, chatScroll.shouldPin);
 	// 正文里可点击的文件路径（见 chat/markdown-actions）：只认当前工作区内的相对路径，
 	// 点开走页内文件查看器（不离开页面，路径不存在时查看器自己会报「文件不存在」）。
-	const markdownActions = useMemo<MarkdownActions>(() => ({ openFile: onOpenPath ?? onOpenFile }), [onOpenPath, onOpenFile]);
+	const markdownActions = useMemo<MarkdownActions>(() => ({ openFile: onOpenPath ?? onOpenFile, workspaceCwd: cwd }), [onOpenPath, onOpenFile, cwd]);
 	const { t } = useI18n();
 	useEffect(() => {
 		const root = rootRef.current;

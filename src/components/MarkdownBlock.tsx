@@ -24,7 +24,7 @@ import remarkGfm from "remark-gfm";
 import { ChatScrollContext } from "@/components/chat/chat-scroll";
 import { PreviewImage } from "@/components/PreviewImage";
 import { useMarkdownActions } from "@/components/chat/markdown-actions";
-import { looksLikeFilePath, relativeMarkdownPath } from "@/lib/chat/file-path";
+import { looksLikeFilePath, referencePath, relativeMarkdownPath, workspaceRelativeReference } from "@/lib/chat/file-path";
 import { IconCheckOutline14, IconChevronDown14, IconChevronUp14, IconCopyOutline16, IconWrapTextOutline14 } from "@/components/icons";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/i18n";
@@ -141,7 +141,7 @@ const InsideMarkdownLinkContext = createContext(false);
 
 function MarkdownLink({ href, children, node, ...props }: { href?: string; children?: React.ReactNode; node?: MarkdownTextNode } & Record<string, unknown>) {
 	const actions = useMarkdownActions();
-	const filePath = href ? relativeMarkdownPath(href, actions.allowDocumentParents) : null;
+	const filePath = href ? relativeMarkdownPath(href, actions.allowDocumentParents, actions.workspaceCwd) : null;
 	if (filePath !== null && actions.openFile) {
 		const labelText = markdownNodeText(node) || (typeof children === "string" ? children : "");
 		const pathLabel = labelText === filePath || labelText === href;
@@ -284,11 +284,13 @@ function MarkdownCode({ className, children }: { className?: string; children?: 
 	const actions = useMarkdownActions();
 	const inLink = useContext(InsideMarkdownLinkContext);
 	const raw = typeof children === "string" ? children : Array.isArray(children) ? children.join("") : "";
-	const path = raw.trim();
+	const ref = referencePath(raw.trim());
+	const workspacePath = workspaceRelativeReference(ref, actions.workspaceCwd);
+	const path = workspacePath ?? ref;
 	// 代码块里的 code 不参与路径识别。只看 className 不够：不写语言的围栏和缩进代码块也没有 className，
 	// 只有一行路径时整个代码块会变成按钮。代码块的文本总以换行结尾，行内代码不会
 	const block = Boolean(className) || raw.endsWith("\n");
-	if (!inLink && actions.openFile && !block && looksLikeFilePath(path)) {
+	if (!inLink && actions.openFile && !block && (workspacePath !== null || looksLikeFilePath(path))) {
 		return (
 			<button type="button" className="md-file-path" title={path} aria-label={path} onClick={() => actions.openFile!(path)}>
 				<FilePathLabel path={path} />

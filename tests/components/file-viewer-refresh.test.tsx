@@ -7,6 +7,7 @@ import type { ViewerState } from "@/hooks/useFileViewer";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const body = (data: unknown) => ({ ok: true, status: 200, json: async () => ({ success: true, data }) });
+const failure = (status: number, errorCode: string, error: string) => ({ ok: false, status, json: async () => ({ success: false, errorCode, error }) });
 function growth(overrides: Partial<GrowthApi> = {}): GrowthApi {
 	return {
 		tree: { path: "", name: "", kind: "dir", children: [], counts: { added: 0, modified: 0, deleted: 0, renamed: 0, pending: 0 } },
@@ -46,6 +47,52 @@ it("directory refresh replaces the previous page", async () => {
 	fireEvent.click(screen.getByRole("button", { name: "刷新" }));
 	await screen.findByText("new.txt");
 	expect(screen.queryByText("old.txt")).toBeNull();
+});
+
+it.each([
+	["missing-snapshot", failure(404, "GROWTH_NOT_FOUND", "file not found in this snapshot"), "正在显示磁盘上的当前内容。"],
+	["failed-snapshot", failure(500, "GROWTH_FAILED", "history unavailable"), "所选版本的内容不可用，下面显示磁盘上的当前内容。"],
+	["metadata-only", body({ contentOmitted: true }), "本轮仅记录了文件信息，下面显示磁盘上的当前内容。"],
+] as const)("shows the live disk file and its source for %s", async (caseName, snapshot, notice) => {
+	vi.stubGlobal("fetch", vi.fn(async (url: string) => url.startsWith("/api/growth")
+		? snapshot : body({ content: "current contents", binary: false, truncated: false })));
+	const { container } = render(<FileViewer growth={growth({ range: { from: "before", to: "after" } })} cwd={"/viewer-" + caseName} state={state("present.txt", false)} {...callbacks()} />);
+	await screen.findByText(notice);
+	expect(container.querySelector("pre:not([aria-hidden])")?.textContent).toBe("current contents");
+});
+
+it("reads a current file missing from the selected Git revision when Content is selected", async () => {
+	vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+		if (url.includes("&cat=")) return failure(404, "VALIDATION_ERROR", "missing Git object");
+		if (url.includes("&diff=")) return body({ patch: "", binary: false, truncated: false });
+		return body({ content: "new disk version", binary: false, truncated: false });
+	}));
+	const open: ViewerState = { open: true, active: "new.txt", tabs: [{ path: "new.txt", git: { mode: "staged" } }] };
+	const { container } = render(<FileViewer growth={growth()} cwd="/viewer-missing-index" state={open} {...callbacks()} />);
+	fireEvent.click(screen.getByRole("radio", { name: "内容" }));
+	await screen.findByText("所选版本的内容不可用，下面显示磁盘上的当前内容。");
+	expect(container.querySelector("pre:not([aria-hidden])")?.textContent).toBe("new disk version");
+});
+
+it("reports the disk read error without probing a directory or declaring the file missing", async () => {
+	const fetchMock = vi.fn(async (_url: string) => failure(403, "EACCES", "没有权限访问请求的资源。"));
+	vi.stubGlobal("fetch", fetchMock);
+	render(<FileViewer growth={growth()} cwd="/viewer-access" state={state("private.txt")} {...callbacks()} />);
+	await screen.findByText("没有权限访问请求的资源。");
+	expect(screen.queryByText("此路径在当前工作区中不存在")).toBeNull();
+	expect(fetchMock.mock.calls.every(([url]) => url.includes("read=1"))).toBe(true);
+});
+
+it("offers filename search after a genuine miss and opens the chosen full path", async () => {
+	vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("index=1")
+		? body({ files: ["src/ui/notes.txt", "tests/notes.txt"], source: "git", truncated: false })
+		: failure(404, "FILE_NOT_FOUND", "file not found")));
+	const actions = callbacks();
+	render(<FileViewer growth={growth()} cwd="/viewer-find-by-name" state={state("notes.txt")} {...actions} />);
+	fireEvent.click(await screen.findByRole("button", { name: "按文件名查找" }));
+	expect((screen.getByPlaceholderText("输入文件名打开…") as HTMLInputElement).value).toBe("notes.txt");
+	fireEvent.click(await screen.findByRole("button", { name: /src\/ui\/notes.txt/ }));
+	expect(actions.onOpen).toHaveBeenCalledWith("src/ui/notes.txt");
 });
 
 it("a previous workspace response cannot display under the same path in another workspace", async () => {

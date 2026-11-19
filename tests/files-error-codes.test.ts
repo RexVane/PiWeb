@@ -25,8 +25,8 @@ it("/api/files distinguishes outside, missing and directory paths, retaining rea
 			expect(await response.json()).toMatchObject({ success: false, errorCode: "OUT_OF_WORKSPACE" });
 		}
 		expect(await fs.readFile(path.join(outside, "exists.txt"), "utf8")).toBe("still exists");
-		expect(await (await read("missing.txt")).json()).toMatchObject({ errorCode: "NOT_FOUND" });
-		expect(await (await read(".")).json()).toMatchObject({ errorCode: "NOT_A_FILE" });
+		expect(await (await read("missing.txt")).json()).toMatchObject({ errorCode: "FILE_NOT_FOUND" });
+		expect(await (await read(".")).json()).toMatchObject({ errorCode: "IS_DIRECTORY" });
 		expect(await (await read(path.join(root, "inside.txt"))).json()).toMatchObject({ success: true, data: { content: "content" } });
 	} finally {
 		await recycleFixture(dir);

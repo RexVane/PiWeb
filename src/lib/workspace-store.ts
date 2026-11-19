@@ -300,9 +300,14 @@ export async function setAlias(dir: string, name: string): Promise<Record<string
 	});
 }
 
-/** 生长记录默认开启；读取默认值不写入注册表，已有停用选择继续生效。 */
+export async function isHomeWorkspace(dir: string): Promise<boolean> {
+	const [root, home] = await Promise.all([canonicalWorkspacePath(dir), canonicalWorkspacePath(os.homedir())]);
+	return pathKey(root) === pathKey(home);
+}
+
+/** A saved choice takes precedence. Home is browse-only until recording is explicitly enabled. */
 export async function getGrowthInitConsent(dir: string): Promise<boolean> {
-	return (await read()).growthInit?.[pathKey(await canonicalWorkspacePath(dir))] ?? true;
+	return (await read()).growthInit?.[pathKey(await canonicalWorkspacePath(dir))] ?? !(await isHomeWorkspace(dir));
 }
 
 export async function setGrowthInitConsent(dir: string, allow: boolean): Promise<void> {

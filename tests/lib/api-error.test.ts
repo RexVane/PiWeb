@@ -54,6 +54,8 @@ describe("apiError", () => {
 			OUT_OF_WORKSPACE: "apiErrorOutOfWorkspace",
 			NOT_FOUND: "apiErrorEnoent",
 			NOT_A_FILE: "apiErrorNotAFile",
+			FILE_NOT_FOUND: "apiErrorEnoent",
+			IS_DIRECTORY: "apiErrorNotAFile",
 			ENOENT: "apiErrorEnoent",
 			EACCES: "apiErrorEacces",
 			EPERM: "apiErrorEperm",

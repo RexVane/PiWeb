@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { FileViewer } from "@/components/FileViewer";
 import type { GrowthApi } from "@/hooks/useGrowth";
+import { TRANSLATIONS } from "@/i18n";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -25,19 +26,19 @@ function expectOnlyFileReads(fetchMock: ReturnType<typeof showFile>) {
 it("shows outside-workspace rather than missing for an existing inaccessible file", async () => {
 	const fetchMock = showFile("OUT_OF_WORKSPACE", "path escapes the workspace");
 	expect((await screen.findAllByText("此文件在工作区之外，无法预览")).length).toBeGreaterThan(0);
-	expect(screen.queryByText("此文件已不在当前快照或磁盘中")).toBeNull();
+	expect(screen.queryByText(TRANSLATIONS.zh.viewerMissing)).toBeNull();
 	expectOnlyFileReads(fetchMock);
 });
 
 it("shows missing only for an actual NOT_FOUND response", async () => {
 	const fetchMock = showFile("NOT_FOUND", "file not found");
-	expect((await screen.findAllByText("此文件已不在当前快照或磁盘中")).length).toBeGreaterThan(0);
+	expect((await screen.findAllByText(TRANSLATIONS.zh.viewerMissing)).length).toBeGreaterThan(0);
 	expectOnlyFileReads(fetchMock);
 });
 
 it.each([["VALIDATION_ERROR", "invalid file path", 400], ["EACCES", "permission denied", 500]])("does not disguise %s as a missing file", async (code, message, status) => {
 	const fetchMock = showFile(code, message, status);
 	expect(await screen.findByText(message)).toBeTruthy();
-	expect(screen.queryByText("此文件已不在当前快照或磁盘中")).toBeNull();
+	expect(screen.queryByText(TRANSLATIONS.zh.viewerMissing)).toBeNull();
 	expectOnlyFileReads(fetchMock);
 });

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getManaged, growthConsent, growthRecord, updateRecordingForWorkspace } from "@/lib/agent-manager";
-import { GrowthError, changesBetween, fileContent, filePatch, isAvailable, listTree, readRounds } from "@/lib/growth-service";
+import { GrowthError, changesBetween, hasRecordedSnapshot, fileContent, filePatch, isAvailable, listTree, readRounds } from "@/lib/growth-service";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 import { getGrowthInitConsent, setGrowthInitConsent } from "@/lib/workspace-store";
 import { apiError } from "@/lib/api-error";
@@ -16,7 +16,7 @@ function status(err: unknown): number {
 function growthFailure(error: unknown) {
 	const fallback = error instanceof GrowthError && error.code === "unavailable"
 		? "Git 暂时不可用，请确认已安装 Git 且工作区可写后重试。"
-		: "工作区历史操作失败，请检查 Git 和文件权限后重试；现有历史已保留。";
+		: "工作区历史操作失败，请查看错误详情后重试。";
 	const result = apiError(error, fallback, error instanceof GrowthError && status(error) < 500);
 	return error instanceof GrowthError ? { ...result, errorCode: `GROWTH_${error.code.replace(/-/g, "_").toUpperCase()}` } : result;
 }
@@ -41,7 +41,8 @@ export async function GET(req: Request) {
 		if (q("path") !== null) return NextResponse.json({ success: true, data: await filePatch(cwd, q("from"), q("to"), q("path"), q("renamedFrom") ?? undefined) });
 		const available = await isAvailable();
 		if (!available) return NextResponse.json({ success: true, data: { available: false, rounds: [] } });
-		return NextResponse.json({ success: true, data: { available: true, rounds: await readRounds(cwd, q("session") ?? undefined) } });
+		const rounds = await readRounds(cwd, q("session") ?? undefined);
+		return NextResponse.json({ success: true, data: { available: true, rounds, hasSnapshot: rounds.length > 0 || await hasRecordedSnapshot(cwd) } });
 	} catch (err: unknown) {
 		return NextResponse.json({ success: false, ...growthFailure(err) }, { status: status(err) });
 	}

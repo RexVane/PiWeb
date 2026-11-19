@@ -30,6 +30,13 @@ import { IconCopyOutline16, IconDownloadOutline16 } from "@/components/icons";
 import type { FilePreview } from "@/lib/files-service";
 
 type Mode = "diff" | "content" | "render";
+type SnapshotPreview = FilePreview & { contentOmitted?: boolean };
+type ReadError = Error & { status?: number; code?: string };
+
+function canTryAnotherSource(error: unknown): boolean {
+	const status = (error as ReadError).status;
+	return status === undefined || status === 404 || status >= 500;
+}
 
 interface CacheEntry { promise: Promise<unknown>; bytes: number; expires: number }
 const fetchCache = new Map<string, CacheEntry>();
@@ -55,7 +62,7 @@ async function requestJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 	const r = await fetch(url, signal ? { signal } : undefined);
 	const j = await r.json();
 	if (!r.ok || !j.success) {
-		const err = new Error(j.error || `request failed (${r.status})`) as Error & { status?: number; code?: string };
+		const err = new Error(j.error || `request failed (${r.status})`) as ReadError;
 		err.status = r.status;
 		if (typeof j.errorCode === "string") err.code = j.errorCode;
 		throw err;
@@ -110,7 +117,7 @@ interface Loaded {
 	binary: boolean;
 	truncated: boolean;
 	encodingUnsupported?: boolean;
-	notice: "deleted" | "historical" | "missing" | "outside" | "disk" | "nochange" | "metadata" | null;
+	notice: "deleted" | "historical" | "missing" | "outside" | "omitted" | "omittedDisk" | "revisionDisk" | "patchUnavailable" | "disk" | "nochange" | "metadata" | null;
 	error: string | null;
 }
 
@@ -144,16 +151,18 @@ const CodeBlock = memo(function CodeBlock({ content, name }: { content: string; 
 function QuickOpenDialog({
 	cwd,
 	growthFilePaths,
+	initialQuery = "",
 	onOpen,
 	onClose,
 }: {
 	cwd: string;
 	growthFilePaths: string[];
+	initialQuery?: string;
 	onOpen: (path: string) => void;
 	onClose: () => void;
 }) {
 	const { t } = useI18n();
-	const [quickQuery, setQuickQuery] = useState("");
+	const [quickQuery, setQuickQuery] = useState(initialQuery);
 	const [quickIndex, setQuickIndex] = useState(0);
 	const workspaceFiles = useWorkspaceFiles(cwd, true);
 	const quickDialogRef = useRef<HTMLDivElement>(null);
@@ -284,6 +293,11 @@ export function FileViewer({
 	const [busyHunk, setBusyHunk] = useState<number | null>(null);
 	const [busyFileAction, setBusyFileAction] = useState(false);
 	const [quickOpen, setQuickOpen] = useState(false);
+	const [quickSearch, setQuickSearch] = useState({ query: "", key: 0 });
+	const openQuickSearch = useCallback((query = "") => {
+		setQuickSearch((previous) => ({ query, key: previous.key + 1 }));
+		setQuickOpen(true);
+	}, []);
 	const [linkError, setLinkError] = useState<string | null>(null);
 	const [treeFilter, setTreeFilter] = useState("");
 	const deferredTreeFilter = useDeferredValue(treeFilter);
@@ -313,7 +327,7 @@ export function FileViewer({
 		setMode(activeTab.kind !== "upload" && (activeTab.git || (change && !activeTab.lazy)) ? "diff" : isMarkdown ? "render" : "content");
 	}, [activeTab, change, isMarkdown, modeTouched]);
 
-	/** 目录兜底：文件读取报 400（不存在 / 不是文件）时探一下目录接口，成功就当文件夹显示 */
+	/** A file link may point at a directory. List it only when the file API identifies it as one. */
 	const [dirFallback, setDirFallback] = useState<string | null>(null);
 	const dirPath = activeTab?.kind === "dir" ? activeTab.path : dirFallback;
 	const isDir = Boolean(dirPath);
@@ -401,59 +415,74 @@ export function FileViewer({
 			return;
 		}
 		const q = `cwd=${encodeURIComponent(cwd)}`;
-		const diskContent = async (notice: Loaded["notice"]) => {
+		const diskContent = async (notice: Loaded["notice"], snapshotError?: unknown) => {
 			try {
 				const data = await requestJson<FilePreview>(`/api/files?read=1&${q}&path=${encodeURIComponent(tab.path)}`, controller.signal);
 				done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
 			} catch (error) {
-				const failure = error as Error & { status?: number; code?: string };
-				if (failure.code === "OUT_OF_WORKSPACE") {
-					done({ notice: "outside" });
-					return;
-				}
-				if (failure.code === "NOT_FOUND" || failure.code === "ENOENT") {
-					done({ notice: "missing" });
-					return;
-				}
-				// 兼容旧服务端的明确错误消息；其他校验/权限错误不能伪装成文件不存在。
+				const failure = error as ReadError;
 				const legacy = failure.status === 400 && (!failure.code || failure.code === "VALIDATION_ERROR");
-				if (legacy && failure.message === "file not found") {
-					done({ notice: "missing" });
-					return;
+				if (failure.code === "OUT_OF_WORKSPACE") {
+					done({ notice: "outside" }); return;
 				}
-				if (failure.code !== "NOT_A_FILE" && !(legacy && failure.message === "not a file")) throw error;
-				await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`, controller.signal);
-				done({ notice: null });
-				if (alive) setDirFallback(tab.path);
+				if (failure.code === "IS_DIRECTORY") {
+					if (alive) setDirFallback(tab.path);
+					done({ notice: null }); return;
+				}
+				if (failure.code === "NOT_A_FILE" || (legacy && failure.message === "not a file")) {
+					await requestJson<DirPage>(`/api/files?${q}&path=${encodeURIComponent(tab.path)}&offset=0`, controller.signal);
+					if (alive) setDirFallback(tab.path);
+					done({ notice: null }); return;
+				}
+				const missing = failure.code === "NOT_FOUND" || failure.code === "ENOENT" || failure.code === "FILE_NOT_FOUND"
+					|| (legacy && failure.message === "file not found") || (failure.status === 404 && !failure.code);
+				if (!missing) throw error;
+				if (snapshotError) throw snapshotError;
+				done({ notice: notice === "omittedDisk" ? "omitted" : "missing" });
 			}
 		};
+		const readSnapshot = (tree: string) => cachedJson<SnapshotPreview>(
+			`/api/growth?${q}&tree=${encodeURIComponent(tree)}&path=${encodeURIComponent(tab.path)}&content=1`,
+		);
 		const snapshotContent = async (tree: string, notice: Loaded["notice"]) => {
+			let data: SnapshotPreview;
 			try {
-				const data = await cachedJson<FilePreview>(`/api/growth?${q}&tree=${tree}&path=${encodeURIComponent(tab.path)}&content=1`);
+				data = await readSnapshot(tree);
+			} catch (error) {
+				if (!alive) return;
+				if (!canTryAnotherSource(error)) throw error;
+				if ((error as ReadError).status !== 404) return diskContent("revisionDisk", error);
+				// A deleted or renamed file may still have a readable version in an earlier round.
+				const upto = growth.selected ? growth.rounds.findIndex((round) => round.commit === growth.selected!.commit) : growth.rounds.length - 1;
+				const prior = growth.rounds.slice(0, upto + 1).reverse().find((round) =>
+					round.changes.some((item) => item.path === tab.path || item.from === tab.path),
+				);
+				const priorTree = prior?.changes.some((item) => (item.status === "D" && item.path === tab.path) || (item.status === "R" && item.from === tab.path))
+					? prior.parentTree : prior?.tree;
+				if (!priorTree || priorTree === tree) return diskContent("disk");
+				try {
+					data = await readSnapshot(priorTree);
+					notice = "historical";
+				} catch (priorError) {
+					if (!alive) return;
+					if (!canTryAnotherSource(priorError)) throw priorError;
+					return (priorError as ReadError).status === 404 ? diskContent("disk") : diskContent("revisionDisk", priorError);
+				}
+			}
+			if (!alive) return;
+			if (data.contentOmitted) return diskContent("omittedDisk");
+			done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
+		};
+		const gitContent = async (notice: Loaded["notice"]) => {
+			if (tab.git?.mode !== "commit" && tab.git?.mode !== "staged") return diskContent(notice);
+			const rev = tab.git.mode === "commit" ? (tab.git.hash ?? "HEAD") : "INDEX";
+			try {
+				const data = await requestJson<FilePreview>(`/api/git?${q}&cat=${encodeURIComponent(tab.path)}&rev=${encodeURIComponent(rev)}`, controller.signal);
 				done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice });
 			} catch (error) {
-				if ((error as { status?: number }).status === 404) {
-					// 跟随中的文件可能在本轮后续工具里被删掉；从最近一次涉及它的快照取回最后内容。
-					const upto = growth.selected ? growth.rounds.findIndex((round) => round.commit === growth.selected!.commit) : growth.rounds.length - 1;
-					const prior = growth.rounds.slice(0, upto + 1).reverse().find((round) =>
-						round.changes.some((item) => item.path === tab.path || item.from === tab.path),
-					);
-					const priorTree = prior?.changes.some((item) => (item.status === "D" && item.path === tab.path) || (item.status === "R" && item.from === tab.path))
-						? prior.parentTree
-						: prior?.tree;
-					if (priorTree && priorTree !== tree) {
-						try {
-							const data = await cachedJson<FilePreview>(`/api/growth?${q}&tree=${priorTree}&path=${encodeURIComponent(tab.path)}&content=1`);
-							done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice: "historical" });
-							return;
-						} catch (priorError) {
-							if ((priorError as { status?: number }).status !== 404) throw priorError;
-						}
-					}
-					await diskContent("disk");
-					return;
-				}
-				throw error;
+				if (!alive) return;
+				if (!canTryAnotherSource(error)) throw error;
+				return diskContent("revisionDisk", (error as ReadError).status === 404 ? undefined : error);
 			}
 		};
 		void (async () => {
@@ -471,7 +500,15 @@ export function FileViewer({
 				if (tab.git) {
 					if (mode === "diff") {
 						const gitUrl = `/api/git?${q}&diff=${encodeURIComponent(tab.path)}&mode=${encodeURIComponent(tab.git.mode)}&full=1${tab.git.hash ? `&hash=${encodeURIComponent(tab.git.hash)}` : ""}${tab.from ? `&from=${encodeURIComponent(tab.from)}` : ""}`;
-						const data = await requestJson<{ patch: string; binary: boolean; truncated: boolean }>(gitUrl, controller.signal);
+						let data: { patch: string; binary: boolean; truncated: boolean };
+						try {
+							data = await requestJson(gitUrl, controller.signal);
+						} catch (error) {
+							if (!alive) return;
+							if (!canTryAnotherSource(error)) throw error;
+							await gitContent("patchUnavailable");
+							return;
+						}
 						if (data.binary) {
 							done({ binary: true });
 							return;
@@ -484,19 +521,7 @@ export function FileViewer({
 						done({ diff: lines, patch: data.patch, truncated: data.truncated, notice: null });
 						return;
 					}
-					if (tab.git.mode === "commit" || tab.git.mode === "staged") {
-						const rev = tab.git.mode === "commit" ? (tab.git.hash ?? "HEAD") : "INDEX";
-						try {
-							const data = await requestJson<FilePreview>(`/api/git?${q}&cat=${encodeURIComponent(tab.path)}&rev=${encodeURIComponent(rev)}`, controller.signal);
-							done({ content: data.content, binary: data.binary, truncated: data.truncated, encodingUnsupported: data.encodingUnsupported, notice: null });
-							return;
-						} catch (err) {
-							if ((err as { status?: number }).status !== 404) throw err;
-							done({ notice: "missing" });
-							return;
-						}
-					}
-					await diskContent(null);
+					await gitContent(null);
 					return;
 				}
 				if (tab.lazy || !range) {
@@ -509,9 +534,18 @@ export function FileViewer({
 						await snapshotContent(range.to, "nochange");
 						return;
 					}
-					const data = await cachedJson<{ patch: string; binary: boolean; truncated: boolean }>(
-						`/api/growth?${q}&from=${range.from}&to=${range.to}&path=${encodeURIComponent(tab.path)}${tab.from ?? change.from ? `&renamedFrom=${encodeURIComponent(tab.from ?? change.from ?? "")}` : ""}`,
-					);
+					let data: { patch: string; binary: boolean; truncated: boolean; contentOmitted?: boolean };
+					try {
+						data = await cachedJson(`/api/growth?${q}&from=${range.from}&to=${range.to}&path=${encodeURIComponent(tab.path)}${tab.from ?? change.from ? `&renamedFrom=${encodeURIComponent(tab.from ?? change.from ?? "")}` : ""}`);
+					} catch (error) {
+						if (!canTryAnotherSource(error)) throw error;
+						await snapshotContent(change.status === "D" ? range.from : range.to, "patchUnavailable");
+						return;
+					}
+					if (data.contentOmitted) {
+						await snapshotContent(change.status === "D" ? range.from : range.to, "omitted");
+						return;
+					}
 					if (data.binary) {
 						done({ binary: true });
 						return;
@@ -524,7 +558,7 @@ export function FileViewer({
 					done({ diff: lines, patch: data.patch, truncated: data.truncated, notice: change.status === "D" ? "deleted" : null });
 					return;
 				}
-				await snapshotContent(range.to, null);
+				await snapshotContent(change?.status === "D" ? range.from : range.to, change?.status === "D" ? "historical" : null);
 			} catch (error) {
 				done({ error: error instanceof Error ? error.message : t.viewerLoadFailed });
 			}
@@ -552,7 +586,7 @@ export function FileViewer({
 			}
 			if (mod && e.key.toLowerCase() === "p") {
 				e.preventDefault();
-				setQuickOpen(true);
+				openQuickSearch();
 				return;
 			}
 			if (!typing && !mod && mode === "diff") {
@@ -562,7 +596,7 @@ export function FileViewer({
 		};
 		document.addEventListener("keydown", h);
 		return () => document.removeEventListener("keydown", h);
-	}, [state.open, state.active, quickOpen, mode, onClose, onCloseTab]);
+	}, [state.open, state.active, mode, onClose, onCloseTab, openQuickSearch]);
 
 	useEffect(() => {
 		if (!state.open) setQuickOpen(false);
@@ -602,6 +636,7 @@ export function FileViewer({
 		if (!activeTab) return null;
 		const source = activeTab.sourcePath ?? (activeTab.staticContent === undefined ? undefined : activeTab.path);
 		return {
+			workspace: source ? undefined : cwd,
 			allowDocumentParents: true,
 			openFile: (href: string) => { void openDocumentLink(href); },
 			resolveImage: (href: string) => markdownDocumentImageUrl(cwd, activeTab.path, href, source),
@@ -719,7 +754,11 @@ export function FileViewer({
 		if (value === null || value === undefined) return;
 		setCopyStatus({ key: contentKey, ok: await copyText(value) });
 	};
-	const noticeText = currentLoaded?.notice === "deleted" ? t.viewerDeleted : currentLoaded?.notice === "historical" ? t.viewerHistorical : currentLoaded?.notice === "missing" ? t.viewerMissing : currentLoaded?.notice === "outside" ? t.viewerOutside : currentLoaded?.notice === "disk" ? t.viewerNotInSnapshot : currentLoaded?.notice === "nochange" ? t.viewerNoChanges : currentLoaded?.notice === "metadata" ? t.viewerMetadataChanged : "";
+	const noticeText = currentLoaded?.notice && {
+		omitted: t.viewerOmitted, omittedDisk: t.viewerOmittedDisk, revisionDisk: t.viewerRevisionDisk, patchUnavailable: t.viewerPatchUnavailable,
+		deleted: t.viewerDeleted, historical: t.viewerHistorical, missing: t.viewerMissing, outside: t.viewerOutside, disk: t.viewerNotInSnapshot,
+		nochange: t.viewerNoChanges, metadata: t.viewerMetadataChanged,
+	}[currentLoaded.notice];
 
 	return (
 		<div className="pw-viewer-mask modal-mask fixed inset-0 z-[105] flex items-center justify-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -764,7 +803,7 @@ export function FileViewer({
 							</div>
 						))}
 					</div>
-					<button type="button" className="icon-btn" style={{ width: 26, height: 26 }} title={`${t.viewerQuickOpen} (Ctrl/⌘+P)`} onClick={() => setQuickOpen(true)}>
+					<button type="button" className="icon-btn" style={{ width: 26, height: 26 }} title={`${t.viewerQuickOpen} (Ctrl/⌘+P)`} onClick={() => openQuickSearch()}>
 						<IconPlusOutline16 size={13} />
 					</button>
 					<div className="flex-1" />
@@ -905,9 +944,12 @@ export function FileViewer({
 						{noticeText && (
 							<div className="pw-viewer-notice" data-kind={currentLoaded?.notice}>
 								{noticeText}
+								{currentLoaded?.notice === "missing" && activeTab && (
+									<button type="button" className="pw-chip ml-2" onClick={() => openQuickSearch(activeTab.path.split("/").at(-1))}>{t.viewerFindByName}</button>
+								)}
 							</div>
 						)}
-						{currentLoaded?.truncated && <div className="pw-viewer-notice" data-kind="warn">{mode === "diff" ? t.viewerPatchTruncated : t.filePreviewTruncated}</div>}
+						{currentLoaded?.truncated && <div className="pw-viewer-notice" data-kind="warn">{currentLoaded.patch ? t.viewerPatchTruncated : t.filePreviewTruncated}</div>}
 						{currentLoaded?.encodingUnsupported && <div role="status" className="pw-viewer-notice" data-kind="warn">{t.viewerEncodingUnsupported}</div>}
 						{isDir ? (
 							<div className="min-h-0 flex-1 overflow-auto" data-testid="viewer-dir">
@@ -1001,6 +1043,8 @@ export function FileViewer({
 				{/* 快速打开 */}
 				{quickOpen && (
 					<QuickOpenDialog
+						key={quickSearch.key}
+						initialQuery={quickSearch.query}
 						cwd={cwd}
 						growthFilePaths={growth.filePaths}
 						onOpen={onOpen}
