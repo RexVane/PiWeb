@@ -18,7 +18,8 @@ import { modelFilesFingerprint } from "./model-files";
 import { createSessionModelRuntime, releaseSessionModelRuntime } from "./session-model-runtime";
 import { getEnabledModelPatterns } from "./pi-settings";
 import { refreshSessionModels, reloadSessionsForCwd } from "./agent-manager";
-import { withContextWindow } from "./model-draft";
+import { withContextWindow, withThinkingLevelMap } from "./model-draft";
+import { probeThinkingLevels, validateThinkingLevelMap, type ThinkingProbeReport } from "./thinking-probe";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -2054,4 +2055,62 @@ export async function setModelContextWindow(providerId: string, modelId: string,
 	invalidateModelList();
 	refreshSessionModels(providerId, modelId);
 	return contextWindowOf(providerId, modelId);
+}
+
+export interface ThinkingLevelMapInfo {
+	providerId: string;
+	modelId: string;
+	thinkingLevelMap: Record<string, string | null>;
+	/** 写入后 pi 实际支持的档位（getSupportedThinkingLevels 对合并后模型的输出） */
+	thinkingLevels: string[];
+}
+
+/**
+ * 思考档位探测：对该 provider 已配置的端点逐档发最小请求（接受性枚举 + 行为采样 + 多上游指纹），
+ * 只出报告和建议，写入由 setModelThinkingLevelMap 单独走。只支持 openai-completions：
+ * 其他协议（responses / anthropic / google…）的档位参数形状不同，探测结论没有意义。
+ */
+export async function thinkingProbe(providerId: string, modelId: string): Promise<ThinkingProbeReport> {
+	await refreshModelRuntimeIfFilesChanged();
+	const rt = await getModelRuntime();
+	const provider = rt.getProvider(providerId);
+	if (!provider) throw new CustomProvidersValidationError(`未知 provider：${providerId}`);
+	const model = rt.getModel(providerId, modelId) as { id?: string; api?: string; baseUrl?: string } | undefined;
+	if (!model) throw new CustomProvidersValidationError(`未知模型：${providerId}/${modelId}`);
+	if (String(model.api ?? "") !== "openai-completions") throw new CustomProvidersValidationError("档位探测目前只支持 OpenAI 兼容（openai-completions）端点");
+	const credential = await configuredCredentialFor(providerId);
+	if (!credential) throw new CustomProvidersValidationError("该 provider 还没有可用凭证；先保存 API key 再探测");
+	const baseUrl = String((typeof model.baseUrl === "string" && model.baseUrl.trim() ? model.baseUrl : provider.baseUrl) ?? "").trim();
+	if (!/^https?:\/\//.test(baseUrl)) throw new CustomProvidersValidationError("该 provider 没有 API 地址，无法探测");
+	// 与 discoverModels 同一条凭证规则：Bearer 密钥（"unused" + 自带头时除外）+ 凭证附带的请求头
+	const headers: Record<string, string> = { ...(credential.headers ?? {}) };
+	const hasHeader = (target: string) => Object.keys(headers).some((name) => name.toLowerCase() === target);
+	if (credential.key && !(credential.key === "unused" && (hasHeader("authorization") || hasHeader("x-api-key"))) && !hasHeader("authorization")) {
+		headers.Authorization = `Bearer ${credential.key}`;
+	}
+	return probeThinkingLevels({ baseUrl, modelId: String(model.id ?? modelId), headers });
+}
+
+/**
+ * 只改一个模型的 thinkingLevelMap（与 setModelContextWindow 同一条写入路径：原子替换 + revision 冲突检测）。
+ * 值已在 route 层用 validateThinkingLevelMap 校验过；这里再校一次，防止其他调用方绕过。
+ */
+export async function setModelThinkingLevelMap(providerId: string, modelId: string, map: Record<string, string | null>): Promise<ThinkingLevelMapInfo> {
+	const normalized = validateThinkingLevelMap(map);
+	if (!normalized) throw new CustomProvidersValidationError("thinkingLevelMap 的键必须是 pi 档位，值必须是非空字符串或 null");
+	await refreshModelRuntimeIfFilesChanged();
+	const rt = await getModelRuntime();
+	if (!rt.getModel(providerId, modelId)) throw new CustomProvidersValidationError(`未知模型：${providerId}/${modelId}`);
+	const file = modelsJsonPath();
+	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
+		const previous = await readCustomProvidersSnapshot(file);
+		const parsed = parseCustomProviders(previous.content ?? '{"providers":{}}');
+		const providers = withThinkingLevelMap(parsed.providers, providerId, modelId, normalized) as CustomProvidersFile["providers"];
+		await replaceCustomProvidersFile(file, previous, { ...parsed, providers });
+	}));
+	await refreshModelRuntime();
+	invalidateModelList();
+	refreshSessionModels(providerId, modelId);
+	const after = (await getModelRuntime()).getModel(providerId, modelId);
+	return { providerId, modelId, thinkingLevelMap: normalized, thinkingLevels: [...getSupportedThinkingLevels(after as any)] };
 }
