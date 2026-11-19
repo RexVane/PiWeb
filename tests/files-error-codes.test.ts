@@ -33,17 +33,27 @@ it("/api/files distinguishes outside, missing and directory paths, retaining rea
 	}
 });
 
-it("directory permission errors are not converted into NOT_FOUND", async () => {
+it.each([false, true])("directory permission errors are not converted into NOT_FOUND (workspace alias=%s)", async (useAlias) => {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-file-permission-codes-"));
 	vi.stubEnv("PIWEB_FS_STRICT_WORKSPACES", "0");
 	try {
+		const root = path.join(dir, "workspace");
+		await fs.mkdir(root);
+		await fs.mkdir(path.join(root, "denied"));
+		const alias = path.join(dir, "alias");
+		if (useAlias) await fs.symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+		// resolveWorkspacePath canonicalizes both Windows short names and symlink/junction aliases.
+		// Inject the permission error at the actual boundary target, not the caller's spelling.
+		const denied = path.join(await fs.realpath(root), "denied");
 		const realpath = fs.realpath.bind(fs);
+		const permissionFailure = vi.fn(() => { throw Object.assign(new Error("private path"), { code: "EACCES" }); });
 		vi.spyOn(fs, "realpath").mockImplementation(async (target, ...args) => {
-			if (String(target) === path.join(dir, "denied")) throw Object.assign(new Error("private path"), { code: "EACCES" });
+			if (String(target) === denied) return permissionFailure();
 			return realpath(target, ...args);
 		});
-		const response = await GET(new Request(`http://localhost/api/files?${new URLSearchParams({ cwd: dir, path: "denied" })}`));
+		const response = await GET(new Request(`http://localhost/api/files?${new URLSearchParams({ cwd: useAlias ? alias : root, path: "denied" })}`));
 		expect(await response.json()).toMatchObject({ success: false, errorCode: "EACCES" });
+		expect(permissionFailure).toHaveBeenCalledTimes(1);
 	} finally {
 		vi.restoreAllMocks();
 		await recycleFixture(dir);
