@@ -13,8 +13,7 @@ import { fmtTokens } from "@/lib/format";
 import { customModelGaps, fillModelFields, formatCapacity, headerEntriesFromConfig, headerEntriesToConfig, isInertProviderConfig, modelDraftFromCatalog, modelDraftFromConfig, modelDraftsFromProviderConfig, parseCapacity, PI_MODEL_FALLBACKS, serializeProviderDraft, validateHeaderEntries, validateModelDrafts, type CustomModelGap, type ModelDraft, type ModelFieldFill } from "@/lib/model-draft";
 import { customApiOptions } from "@/lib/provider-display";
 import { quotaWindowKind, supportsUsageProbe, type BalanceAmount, type BalanceDetailKey, type BalanceUsage, type ProviderUsage, type QuotaExtraUsage, type QuotaWindow, type XaiUsage } from "@/lib/provider-usage";
-import type { ProviderView } from "@/lib/models-service";
-import { supportedThinkingLevelsOf, type ThinkingProbeReport } from "@/lib/thinking-probe";
+import type { ModelView, ProviderView } from "@/lib/models-service";
 import { Field, fieldCls, SelectOption } from "./SharedControls";
 
 // ---------- Models ----------
@@ -230,6 +229,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const { t, lang } = useI18n();
 	const { confirm, confirmDialog } = useConfirmDialog();
 	const [providers, setProviders] = useState<ProviderView[]>([]);
+	const [catalogModels, setCatalogModels] = useState<ModelView[]>([]);
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
 	const [customRevision, setCustomRevision] = useState<string | null>(null);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
@@ -246,12 +246,6 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [oauthLog, setOauthLog] = useState<string[]>([]);
 	const [oauthDone, setOauthDone] = useState<{ ok: boolean; msg: string } | null>(null);
 	const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
-	// 思考档位探测：目标模型、进行中状态、报告与写入中状态
-	const [probeTarget, setProbeTarget] = useState<{ providerId: string; modelId: string } | null>(null);
-	const [probeBusy, setProbeBusy] = useState(false);
-	const [probeReport, setProbeReport] = useState<ThinkingProbeReport | null>(null);
-	const [probeError, setProbeError] = useState<string | null>(null);
-	const [probeWriting, setProbeWriting] = useState(false);
 
 	// 设备码/授权链接流程（xAI/Codex/Copilot/Kimi 发 device_code；Anthropic/OpenRouter 发 auth_url）：
 	// SDK 经 notify 发 JSON 事件，解析出授权链接（设备码流程附用户码）
@@ -311,6 +305,7 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			}
 			if (j.data.providers.some((provider: ProviderView) => provider.authError)) setToast({ ok: false, msg: j.data.providers.filter((provider: ProviderView) => provider.authError).map((provider: ProviderView) => `${provider.name}: ${provider.authError}`).join("；") });
 			setProviders(j.data.providers);
+			setCatalogModels(j.data.models ?? []);
 			setCatalogModelIds(j.data.catalogModelIds ?? {});
 			setSecretProviderIds(new Set(j.data.customProviders?.secretProviderIds ?? []));
 			setSecretHeaderKeys(j.data.customProviders?.secretHeaderKeys ?? {});
@@ -323,6 +318,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			setToast({ ok: false, msg: localizeApiError(lang, code, message) });
 		}
 	}, [lang]);
+	const thinkingPending = catalogModels.some((model) => model.thinkingProbePending);
+	useEffect(() => {
+		if (!thinkingPending) return;
+		const timer = setInterval(() => { if (document.visibilityState === "visible") void load(); }, 5000);
+		return () => clearInterval(timer);
+	}, [thinkingPending, load]);
 	const changed = useCallback(async () => {
 		await onChanged?.();
 	}, [onChanged]);
@@ -717,33 +718,6 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const gaps = useMemo(() => customModelGaps(custom.providers ?? {}), [custom]);
 	const [auditBusy, setAuditBusy] = useState(false);
 
-	// 思考档位探测的候选：models.json 里声明了 reasoning、且 provider 用 openai-completions 的模型。
-	// 只有这些模型存在档位映射问题（内置目录的模型由 SDK 逐个维护，不需要探测）。
-	const probeCandidates = useMemo(() => {
-		const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
-		const rows: Array<{ providerId: string; modelId: string; map: Record<string, string | null> | undefined }> = [];
-		for (const [providerId, config] of Object.entries(custom.providers ?? {})) {
-			if (!isRecord(config)) continue;
-			const api = typeof config.api === "string" ? config.api : "openai-completions";
-			if (api !== "openai-completions") continue;
-			const seen = new Map<string, { reasoning?: unknown; map?: Record<string, string | null> }>();
-			for (const model of Array.isArray(config.models) ? config.models : []) {
-				if (!isRecord(model) || typeof model.id !== "string" || !model.id.trim()) continue;
-				seen.set(model.id, { reasoning: model.reasoning, ...(isRecord(model.thinkingLevelMap) ? { map: model.thinkingLevelMap as Record<string, string | null> } : {}) });
-			}
-			for (const [id, override] of Object.entries(isRecord(config.modelOverrides) ? config.modelOverrides : {})) {
-				const declared = seen.get(id) ?? {};
-				seen.set(id, isRecord(override)
-					? { ...declared, reasoning: override.reasoning !== undefined ? override.reasoning : declared.reasoning, ...(isRecord(override.thinkingLevelMap) ? { map: override.thinkingLevelMap as Record<string, string | null> } : declared) }
-					: declared);
-			}
-			for (const [modelId, info] of seen) {
-				if (info.reasoning !== true) continue;
-				rows.push({ providerId, modelId, map: info.map });
-			}
-		}
-		return rows.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.modelId.localeCompare(b.modelId));
-	}, [custom]);
 
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
@@ -847,39 +821,6 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 		return provider.resolvedAuthSource || t.authUnavailable;
 	};
 
-	const runThinkingProbe = async (providerId: string, modelId: string) => {
-		if (probeBusy) return;
-		setProbeTarget({ providerId, modelId });
-		setProbeReport(null);
-		setProbeError(null);
-		setProbeBusy(true);
-		try {
-			const result = await request({ action: "thinkingProbe", providerId, modelId });
-			if (!result.success) throw new Error(result.error || t.toastError);
-			setProbeReport(result.data?.report ?? null);
-			if (!result.data?.report) throw new Error(t.toastError);
-		} catch (error) {
-			setProbeError(error instanceof Error ? error.message : t.toastError);
-		} finally {
-			setProbeBusy(false);
-		}
-	};
-
-	const writeThinkingLevelMap = async () => {
-		if (!probeTarget || !probeReport?.suggestedMap || probeWriting) return;
-		setProbeWriting(true);
-		try {
-			const result = await request({ action: "setThinkingLevelMap", providerId: probeTarget.providerId, modelId: probeTarget.modelId, thinkingLevelMap: probeReport.suggestedMap });
-			notify(result.success, result.error);
-			if (result.success) {
-				setProbeTarget(null);
-			setProbeReport(null);
-				await load();
-			}
-		} finally {
-			setProbeWriting(false);
-		}
-	};
 
 	const startEdit = (id: string) => {
 		editBaseRevision.current = customRevision;
@@ -1188,40 +1129,12 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 				<ModelFieldAudit gaps={gaps} providerLabel={providerName} busy={auditBusy || customRevision === null} onSave={saveAuditFills} />
 			) : null}
 
-			{/* 思考档位探测：对中转/自定义端点逐档发最小请求，确认后写入 thinkingLevelMap */}
-			{probeCandidates.length > 0 ? (
-				<section className="flex flex-col gap-3 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l3)", background: "var(--dsw-hover)" }} data-testid="thinking-probe">
-					<div className="flex items-start gap-2.5">
-						<IconWarningOutline16 size={16} style={{ flex: "none", marginTop: 1, color: "var(--dsw-label-caption)" }} />
-						<div className="min-w-0 flex-1">
-							<div style={{ fontSize: "var(--dsh-ui-font-135)", fontWeight: 600 }}>{t.thinkingProbeTitle}</div>
-							<div className="mt-1" style={{ fontSize: "var(--dsh-ui-font-xs)", color: "var(--dsw-label-caption)", lineHeight: 1.65 }}>{t.thinkingProbeDesc}</div>
-						</div>
-					</div>
-					<div className="overflow-x-auto">
-						<div role="table" aria-label={t.thinkingProbeTitle} style={{ fontSize: "var(--dsh-ui-font-125)", minWidth: 480 }}>
-							<div role="row" className="grid grid-cols-[minmax(0,1fr)_88px_96px] gap-x-2 px-1 pb-1.5" style={{ fontSize: "var(--dsh-ui-font-2xs)", color: "var(--dsw-label-caption)" }}>
-								<span role="columnheader">{t.thinkingProbeColProvider} / {t.thinkingProbeColModel}</span>
-								<span role="columnheader">{t.thinkingProbeColLevels}</span>
-								<span role="columnheader" />
-							</div>
-							{probeCandidates.map((row) => (
-								<div key={`${row.providerId}/${row.modelId}`} role="row" className="grid grid-cols-[minmax(0,1fr)_88px_96px] items-center gap-x-2 px-1 py-2" style={{ borderTop: "0.5px solid var(--dsw-border-l1)" }}>
-									<div role="cell" className="min-w-0" title={`${row.providerId} / ${row.modelId}`}>
-										<div className="truncate" style={{ fontWeight: 500 }}>{row.modelId}</div>
-										<div className="truncate" style={{ fontSize: "var(--dsh-ui-font-2xs)", fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>{providerName(row.providerId)} / {row.modelId}</div>
-									</div>
-									<span role="cell" style={{ color: "var(--dsw-label-secondary)" }}>{supportedThinkingLevelsOf(true, row.map).length}</span>
-									<div role="cell" className="text-right">
-										<button className="btn-outline" style={{ height: 28, padding: "0 11px", fontSize: 12.5 }} disabled={probeBusy}
-											onClick={() => void runThinkingProbe(row.providerId, row.modelId)}>{t.thinkingProbeRun}</button>
-									</div>
-								</div>
-							))}
-						</div>
-					</div>
-				</section>
-			) : null}
+			{/* Server-side matching/probing does not block this page or require per-model buttons. */}
+			{Object.keys(custom.providers).length > 0 && <section className="flex flex-col gap-2 rounded-2xl p-4" style={{ border: "0.5px solid var(--dsw-border-l3)" }} data-testid="thinking-probe">
+				<div style={{ fontWeight: 600, fontSize: "var(--dsh-ui-font-135)" }}>{t.thinkingProbeTitle}</div>
+				<p style={{ margin: 0, color: "var(--dsw-label-caption)", fontSize: "var(--dsh-ui-font-xs)", lineHeight: 1.6 }}>{t.thinkingProbeDesc}</p>
+				{thinkingPending && <span role="status">{t.thinkingProbeProbing}</span>}
+			</section>}
 
 			{/* 两个添加按钮 */}
 			<div className="flex gap-3">
@@ -1260,96 +1173,6 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 				/>
 			) : null}
 
-			{/* 思考档位探测报告：接受性 / 样本 / 后端指纹 / 结论，确认后才写入 */}
-			{probeTarget ? (
-				<div className="modal-mask fixed inset-0 z-[120] flex items-center justify-center" onMouseDown={(e) => { if (e.target === e.currentTarget && !probeBusy) { setProbeTarget(null); setProbeReport(null); setProbeError(null); } }}>
-					<div className="glass-modal flex max-h-[86vh] w-[640px] max-w-[94vw] flex-col gap-4 overflow-y-auto p-6" style={{ borderRadius: 24, boxShadow: "var(--dsw-elevation-prominent)" }}>
-						<div className="flex items-baseline justify-between gap-3">
-							<div className="min-w-0 truncate" style={{ fontSize: 15, fontWeight: 600 }}>{t.thinkingProbeTitle}</div>
-							<div className="min-w-0 flex-1 truncate text-right" style={{ fontSize: "var(--dsh-ui-font-2xs)", fontFamily: "var(--font-mono)", color: "var(--dsw-label-caption)" }}>{probeTarget.providerId} / {probeTarget.modelId}</div>
-						</div>
-						{probeBusy ? (
-							<div style={{ fontSize: 13, color: "var(--dsw-label-secondary)" }}>{t.thinkingProbeProbing}</div>
-						) : probeError ? (
-							<div role="alert" style={{ fontSize: 13, color: "var(--dsw-danger)" }}>{probeError}</div>
-						) : probeReport ? (
-							<>
-								{/* 接受性：每个档位值一枚胶囊，绿接受红拒绝 */}
-								<div className="flex flex-wrap gap-1.5">
-									{Object.entries(probeReport.accepted).map(([level, ok]) => (
-										<span key={level} className="rounded-full px-2 py-0.5" style={{ fontSize: 11.5, fontFamily: "var(--font-mono)", color: ok ? "var(--dsw-success-text)" : "var(--dsw-danger)", background: ok ? "color-mix(in srgb, var(--dsw-success) 16%, transparent)" : "color-mix(in srgb, var(--dsw-danger) 12%, transparent)" }}>
-											{level} · {ok ? t.thinkingProbeAccepted : t.thinkingProbeRejected}
-										</span>
-									))}
-								</div>
-								{/* 行为样本：只看 behavior 相（枚举相的 max_tokens=16 没有比较价值） */}
-								{(() => {
-									const behavior = probeReport.attempts.filter((attempt) => attempt.phase === "behavior");
-									if (!behavior.length) return null;
-									const byLevel = new Map<string, Array<number | null>>();
-									for (const attempt of behavior) {
-											const samples = byLevel.get(attempt.level) ?? [];
-											samples.push(attempt.reasoningTokens);
-											byLevel.set(attempt.level, samples);
-										}
-									const rows = ["absent", ...["low", "medium", "high"].filter((level) => byLevel.has(level))];
-									return (
-										<table className="w-full" style={{ fontSize: 12.5, borderCollapse: "collapse" }}>
-											<thead>
-												<tr style={{ color: "var(--dsw-label-caption)", fontSize: 11 }}>
-													<th className="text-left font-normal" style={{ paddingBottom: 4 }}>{t.thinkingProbeColLevels}</th>
-													<th className="text-left font-normal" style={{ paddingBottom: 4 }}>{t.thinkingProbeTokensCol}</th>
-													<th className="text-left font-normal" style={{ paddingBottom: 4 }}>{t.thinkingProbeBackendCol}</th>
-												</tr>
-											</thead>
-											<tbody>
-												{rows.map((level) => {
-													const samples = byLevel.get(level)!;
-													const backends = [...new Set(behavior.filter((attempt) => attempt.level === level).map((attempt) => attempt.backend).filter(Boolean))];
-													return (
-														<tr key={level} style={{ borderTop: "0.5px solid var(--dsw-border-l1)" }}>
-															<td style={{ padding: "5px 0", fontFamily: "var(--font-mono)", color: "var(--dsw-label-secondary)" }}>{level}</td>
-															<td style={{ padding: "5px 0", fontVariantNumeric: "tabular-nums" }}>{samples.map((value) => value === null ? "?" : String(value)).join(" / ")}</td>
-															<td style={{ padding: "5px 0", fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{backends.join(" · ") || "—"}</td>
-													</tr>
-													);
-												})}
-											</tbody>
-										</table>
-									);
-								})()}
-								{/* 结论：颜色按 verdict 区分（拒绝/不稳定红，生效绿，不确定黄） */}
-								<div className="flex flex-col gap-1">
-									<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.thinkingProbeVerdict}</span>
-									<span style={{ fontSize: 13, fontWeight: 600, color: probeReport.verdict === "effective" ? "var(--dsw-success-text)" : probeReport.verdict === "inconclusive" ? "var(--dsw-warn-text)" : "var(--dsw-danger)" }}>
-										{probeReport.verdict === "effective" ? t.thinkingProbeVerdictEffective : probeReport.verdict === "unstable" ? t.thinkingProbeVerdictUnstable : probeReport.verdict === "rejected" ? t.thinkingProbeVerdictRejected : t.thinkingProbeVerdictInconclusive}
-									</span>
-									{probeReport.notes.map((note, index) => (
-										<span key={index} style={{ fontSize: 12, lineHeight: 1.6, color: "var(--dsw-label-secondary)" }}>{note}</span>
-									))}
-								</div>
-								{/* 建议写入的映射；null = 不建议写入 */}
-								{probeReport.suggestedMap ? (
-									<div className="flex flex-col gap-1.5">
-										<span style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.thinkingProbeSuggestion}</span>
-										<pre className="overflow-x-auto rounded-lg px-2.5 py-2" style={{ margin: 0, fontSize: 11.5, fontFamily: "var(--font-mono)", background: "var(--dsw-hover)", color: "var(--dsw-label-secondary)" }}>
-										{JSON.stringify(probeReport.suggestedMap, null, 1)}
-										</pre>
-									</div>
-								) : (
-									<div style={{ fontSize: 12.5, color: "var(--dsw-label-caption)" }}>{t.thinkingProbeNoMap}</div>
-								)}
-								<div className="flex justify-end gap-2 pt-1">
-									<button className="btn-outline" style={{ height: 32 }} disabled={probeWriting} onClick={() => { setProbeTarget(null); setProbeReport(null); setProbeError(null); }}>{t.close}</button>
-									{probeReport.suggestedMap ? (
-										<button className="btn-primary-white" style={{ height: 32 }} disabled={probeWriting} onClick={() => void writeThinkingLevelMap()}>{probeWriting ? t.saving : t.thinkingProbeWrite}</button>
-									) : null}
-								</div>
-							</>
-						) : null}
-					</div>
-				</div>
-			) : null}
 
 	{/* OAuth 登录弹窗 */}
 	{oauthProvider && (

@@ -13,6 +13,7 @@ import {
 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
 import { CustomSelect } from "@/components/CustomSelect";
+import { ThinkingLevelEditor } from "@/components/ThinkingLevelEditor";
 import { useI18n } from "@/i18n";
 import { looksPrivateEndpoint } from "@/lib/model-endpoint";
 import { CUSTOM_PROVIDER_ID_PATTERN, customApiOptions } from "@/lib/provider-display";
@@ -690,6 +691,7 @@ export function ModelCatalog({
 												aria-label={t.reasoningLabel}
 											/>
 										</div>
+										{model.reasoning === true && <ThinkingLevelEditor rows={model.thinkingRows} onChange={(thinkingRows) => updateModel(index, { thinkingRows })} />}
 										<span className={styles.capacityHint}>{t.capacityHint}</span>
 									</div>
 								) : null}

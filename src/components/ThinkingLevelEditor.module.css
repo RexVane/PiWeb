@@ -1,0 +1,10 @@
+.editor { grid-column: 1 / -1; flex-basis: 100%; width: 100%; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.hint { margin: 0; color: var(--dsw-label-caption); font-size: var(--dsh-ui-font-xs); line-height: 1.6; }
+.row, .labels { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(100px, 1fr) 28px; align-items: center; gap: 8px; }
+.row :global(.select-chip) { width: 100%; justify-content: space-between; }
+.labels { color: var(--dsw-label-caption); font-size: var(--dsh-ui-font-xs); }
+.input { min-width: 0; width: 100%; padding: 7px 9px; border: 0.5px solid var(--dsw-border-l3); border-radius: 8px; background: var(--dsw-hover); color: var(--dsw-label-primary); font: inherit; font-size: var(--dsh-ui-font-sm); }
+.input[aria-invalid="true"] { border-color: var(--dsw-danger); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions button { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; font-size: var(--dsh-ui-font-xs); }
+.error { margin: 0; color: var(--dsw-danger); font-size: var(--dsh-ui-font-xs); }

@@ -1,3 +1,5 @@
+import { thinkingRowsFromMap, thinkingRowsToMap, validThinkingRows, type ThinkingLevelRow, type ThinkingLevelMap } from "./thinking-config";
+
 /** Browser-safe form helpers. Keep the source on each row, not indexed by model ID,
  * so renaming/removing a row never revives an old model or drops unexposed options. */
 export interface ModelDraft {
@@ -12,6 +14,8 @@ export interface ModelDraft {
 	 * pi 按 false 处理（`definition.reasoning ?? false`），思考档位会整个消失。
 	 */
 	reasoning?: boolean;
+	/** Undefined uses automatic/official levels; defined rows are a manual thinkingLevelMap. */
+	thinkingRows?: ThinkingLevelRow[];
 	source?: Readonly<Record<string, unknown>>;
 	/** 来自 modelOverrides：只覆盖内置模型的部分字段。缺省 = models[] 里的定义或新加的行 */
 	origin?: "override";
@@ -53,6 +57,7 @@ export function modelDraftFromConfig(value: unknown): ModelDraft {
 		vision: input ? input.includes("image") : undefined,
 		// 同理：没写 reasoning 不是 false，而是「没声明」——pi 会按 false 处理，体检卡片据此提醒
 		reasoning: typeof source.reasoning === "boolean" ? source.reasoning : undefined,
+		...(isRecord(source.thinkingLevelMap) ? { thinkingRows: thinkingRowsFromMap(source.thinkingLevelMap as ThinkingLevelMap) } : {}),
 		source,
 	};
 }
@@ -150,13 +155,14 @@ export function headerEntriesToConfig(entries: ReadonlyArray<{ name: string; val
 	return out;
 }
 
-export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" } | undefined {
+export function validateModelDrafts(models: ModelDraft[]): { index: number; reason: "id" | "capacity" | "thinking" } | undefined {
 	const ids = new Set<string>();
 	for (let index = 0; index < models.length; index += 1) {
 		const model = models[index];
 		const id = model.id.trim();
 		if (!id || ids.has(id)) return { index, reason: "id" };
 		ids.add(id);
+		if (model.thinkingRows !== undefined && !validThinkingRows(model.thinkingRows)) return { index, reason: "thinking" };
 		if ([model.contextWindow, model.maxTokens].some((value) => value !== undefined && (!Number.isSafeInteger(value) || value <= 0))) {
 			return { index, reason: "capacity" };
 		}
@@ -195,6 +201,10 @@ export function serializeModelDraft(model: Omit<ModelDraft, "name"> & { name?: s
 	const reasoning = model.reasoning;
 	if (reasoning !== undefined && !Object.is(reasoning, original?.reasoning)) {
 		result.reasoning = reasoning;
+	}
+	if (JSON.stringify(model.thinkingRows) !== JSON.stringify(original?.thinkingRows)) {
+		if (model.thinkingRows === undefined) delete result.thinkingLevelMap;
+		else result.thinkingLevelMap = thinkingRowsToMap(model.thinkingRows);
 	}
 	return result;
 }

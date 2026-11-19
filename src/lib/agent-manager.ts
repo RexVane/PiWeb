@@ -58,6 +58,7 @@ import { BoundaryError, resolveModelPath, resolveSessionPath } from "./path-secu
 import { clampThinkingLevelTo, newSessionThinkingLevel } from "./thinking-level";
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { onThinkingCapabilitiesChanged } from "./automatic-thinking";
 import type {
 	AgentCommand,
 	ContextBreakdown,
@@ -2367,6 +2368,17 @@ export function refreshSessionModels(provider: string, id: string): number {
 	}
 	return n;
 }
+
+onThinkingCapabilitiesChanged((provider, id) => {
+	for (const managed of sessions.values()) {
+		const session = managed.session;
+		if (!session || session.model?.provider !== provider || session.model.id !== id) continue;
+		swapCurrentModelObject(session);
+		const level = clampThinkingLevel(session.model as never, (managed.desiredThinkingLevel ?? session.thinkingLevel) as never);
+		if (level !== session.thinkingLevel) session.setThinkingLevel(level);
+		publishModelState(managed, session);
+	}
+});
 
 /**
  * 设置面板改了排队投递方式 / 缓存预热：SDK 只在创建会话时把它们读进 agent，

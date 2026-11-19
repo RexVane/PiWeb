@@ -20,6 +20,7 @@ import { getEnabledModelPatterns } from "./pi-settings";
 import { refreshSessionModels, reloadSessionsForCwd } from "./agent-manager";
 import { withContextWindow, withThinkingLevelMap } from "./model-draft";
 import { probeThinkingLevels, validateThinkingLevelMap, type ThinkingProbeReport } from "./thinking-probe";
+import { modelThinkingMetadata, onThinkingCapabilitiesChanged, type ThinkingMetadata } from "./automatic-thinking";
 import {
 	getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore,
 	type AuthInteraction, type AuthPrompt, type AuthType,
@@ -38,6 +39,8 @@ export interface ModelView {
 	baseUrl?: string;
 	reasoning: boolean;
 	thinkingLevels: string[];
+	thinkingSource?: ThinkingMetadata["source"];
+	thinkingProbePending?: boolean;
 	contextWindow: number;
 	input: string[];
 	cost: { input: number; output: number } | null;
@@ -254,6 +257,8 @@ export function invalidateModelList(): void {
 	// 凭证/自定义 provider 变了，auth.json 的读盘缓存也要作废（按文件名作废：这里不该去解析 agent 目录）
 	invalidateJsonFilesNamed("auth.json");
 }
+
+onThinkingCapabilitiesChanged(() => { listCache = null; workspaceCatalogEpoch += 1; workspaceCatalogs.clear(); workspaceCatalogBytes = 0; });
 
 /**
  * 模型或凭据配置落盘后：作废目录缓存、就地刷新共享/会话私有 ModelRuntime，并让活动会话重加载。
@@ -554,6 +559,7 @@ async function listModelsUncached(sessionRuntime?: ModelRuntime): Promise<{
 			modelCount: list.length,
 		});
 		for (const mm of list) {
+			const thinking = modelThinkingMetadata(mm);
 			models.push({
 				provider: pid,
 				id: String(mm.id),
@@ -562,6 +568,7 @@ async function listModelsUncached(sessionRuntime?: ModelRuntime): Promise<{
 				baseUrl: typeof mm.baseUrl === "string" ? mm.baseUrl : undefined,
 				reasoning: mm.reasoning === true,
 				thinkingLevels: [...getSupportedThinkingLevels(mm)],
+				...(thinking ? { thinkingSource: thinking.source, thinkingProbePending: thinking.status === "queued" || thinking.status === "probing" } : {}),
 				contextWindow: Number(mm.contextWindow ?? 0),
 				input: Array.isArray(mm.input) ? mm.input.map(String) : ["text"],
 				cost: mm.cost ? { input: mm.cost.input, output: mm.cost.output } : null,
