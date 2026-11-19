@@ -9,7 +9,10 @@ export default defineConfig({
 	test: {
 		// 默认 node；组件测试在文件头加 // @vitest-environment jsdom
 		environment: "node",
-		env: { NODE_ENV: "test" },
+		// 在 PiWeb 自己的终端里跑测试时，启动器注入的 PIWEB_HTTP_GUARD/PI_WEB_AUTH/PORT
+		// 会被 worker 子进程继承：guard 在测试文件导入前就已安装，stubEnv 已太晚。
+		// 显式覆盖为禁用值，让入口测试在「无守卫」基线上断言。
+		env: { NODE_ENV: "test", PIWEB_HTTP_GUARD: "0" },
 		// SDK, Git and large-upload fixtures each allocate their own process and storage.
 		maxWorkers: 4,
 		// Heavy fixtures (real Git repositories, SDK module loading, uploads) can exceed the

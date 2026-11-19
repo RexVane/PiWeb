@@ -66,6 +66,10 @@ npm run build
 npm run verify:package
 ```
 
+源码检出若从 PiWeb 子进程或其他生产环境运行安装命令（继承了 `NODE_ENV=production`），请使用 `npm ci --include=dev`，否则 npm 默认跳过测试工具等开发依赖。
+
+根包锁定 TypeScript 7，`next.config.ts` 显式启用 `experimental.useTypeScriptCli`：Next 构建仍执行完整类型检查，但调用原生编译器 CLI，不依赖 TypeScript 6 的旧 JavaScript 编译器 API。
+
 `npm run lint` 使用 `scripts/testing/lint/` 下独立锁定的 ESLint 工具链（根包的 TypeScript 7 与 typescript-eslint 尚不兼容）：第一次运行会自行安装该工具链，CI 里先执行 `npm ci --prefix scripts/testing/lint` 并设 `PIWEB_LINT_SKIP_INSTALL=1`，让 lint 步骤本身无法联网安装。CI 还会在 ubuntu/Node 24 上跑 `npm audit --audit-level=high`、检查意外跳过、并用 `PIWEB_COVERAGE=1` 开启覆盖率；macOS 只跑平台敏感子集。真实公网隧道使用单独的 `PIWEB_TEST_TUNNEL=1` 显式开关。完整发布流程见 [.github/RELEASING.md](../../.github/RELEASING.md)。
 
 ## 全量安装后的目录
