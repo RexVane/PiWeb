@@ -229,12 +229,12 @@ export function SessionImportSection() {
 		const sources = SOURCE_ORDER.map((source) => {
 			const rows = [...(bySource.get(source) ?? [])].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0));
 			return { source, rows, imported: rows.filter((row) => importedKeys.has(key(row))).length };
-		});
+		}).filter((group) => group.rows.length > 0);
 		return [{ source: "all", rows: [...summaries].sort((left, right) => (right.updatedAt ?? right.createdAt ?? 0) - (left.updatedAt ?? left.createdAt ?? 0)), imported: summaries.filter((row) => importedKeys.has(key(row))).length }, ...sources];
 	}, [summaries, importedKeys]);
 
 	/**
-	 * 默认落在第一个有会话的来源上，也可跨来源查找；重新扫描保留用户当前的来源。
+	 * 默认落在第一个有会话的来源上，也可跨来源查找；重新扫描保留仍有会话的当前来源。
 	 */
 	const [activeSource, setActiveSource] = useState("");
 	useEffect(() => {
