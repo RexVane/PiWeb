@@ -1,6 +1,12 @@
 # PiWeb — Pi Coding Agent 網頁介面與 AI 程式設計助手
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@rexvane/piweb"><img src="https://img.shields.io/npm/v/@rexvane/piweb.svg" alt="npm 版本" /></a>
+  <a href="https://github.com/RexVane/PiWeb/actions/workflows/check.yml"><img src="https://github.com/RexVane/PiWeb/actions/workflows/check.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT 授權" /></a>
+</p>
+
+<p align="center">
   <strong>可自行部署的 AI 程式設計智慧體 Web 介面，支援桌面與手機瀏覽器。</strong>
 </p>
 
@@ -8,220 +14,257 @@
   <a href="README.md">English</a> | <a href="README_zh.md">简体中文</a> | <strong>繁體中文</strong> | <a href="README_ja.md">日本語</a> | <a href="README_ru.md">Русский</a>
 </p>
 
-**PiWeb** 是 [Pi Coding Agent](https://github.com/earendil-works/pi) 的開源自架網頁介面。將 Pi 執行在自己的電腦或伺服器上，便能透過桌面與手機瀏覽器追蹤工具呼叫、檢閱程式碼變更，並接續先前的對話。
+**PiWeb** 是 [Pi Coding Agent](https://github.com/earendil-works/pi) 的開源、自架網頁介面。用 npm 安裝，在自己的電腦或伺服器上執行，就能在桌面或手機瀏覽器中追蹤工具呼叫、審閱程式碼變更，並接著之前的會話繼續工作。
 
-PiWeb 採用官方 Pi SDK，可沿用既有的 pi 設定、模型、技能、擴充功能與 MCP（Model Context Protocol）設定。你可以匯入 Claude Code、Codex、OpenCode 等工具的本機對話，或透過內建自動化功能定時執行工作。
-
-[快速開始](#快速開始) · [特色功能](#特色功能) · [介面預覽](#介面預覽) · [安裝與部署](#使用方式) · [文件導覽](docs/README.md)
+它內建官方 `@earendil-works/pi-*` SDK，沿用已有的 pi 設定、模型、技能、擴充功能和 MCP（Model Context Protocol）配置。
 
 <p align="center">
-  <img src="assets/readme-chat.jpg" alt="PiWeb：可自行部署的 Pi Coding Agent 網頁介面，顯示專案工作區、AI 對話和工具呼叫" width="840" />
+  <img src="assets/readme-chat.jpg" alt="PiWeb：可自架的 Pi Coding Agent 網頁介面，展示專案工作區、AI 對話和工具呼叫" width="840" />
 </p>
 
-## 快速開始
+## 目錄
 
-需要 **Node.js ≥ 22.19.0**，建議使用 Node 24。安裝並啟動：
-
-```bash
-npm install -g @rexvane/piweb
-piweb
-```
-
-PiWeb 預設開啟需要驗證的 `http://127.0.0.1:30141` 瀏覽器頁面（連接埠被占用時自動遞增）。在設定中配置模型供應商，或沿用既有的 pi 設定。使用手機版 Web 介面時，在 **設定 → 遠端連線** 中掃描連線 QR Code。
-
-環境需求和部署行為詳見[安裝說明](#安裝)、[連接其他裝置](#連接其他裝置)及[資料與隱私說明](docs/operations/data-and-privacy.md)。
+- [特色功能](#特色功能)
+- [快速開始](#快速開始)
+- [使用與遠端連線](#使用與遠端連線)
+- [配置](#配置)
+- [工作原理](#工作原理)
+- [說明文件](#說明文件)
+- [貢獻](#貢獻)
+- [致謝](#致謝)
+- [授權條款](#授權條款)
 
 ## 特色功能
 
-- **對話與上下文** · 串流顯示 Markdown、思考過程和工具呼叫。透過對話大綱跳轉，執行中可補充指示或將訊息加入佇列，也能在上下文圓環查看 token 用量與組成。
-- **工作區與對話** · 依專案資料夾整理對話，支援重新命名、分支、封存、還原草稿，以及匯出成 JSONL 或 HTML。
-- **匯入對話** · 搜尋並匯入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本機歷史。支援跨來源選取與還原已封存的匯入對話。原始檔案會保留在原處。
-- **檔案與變更** · 在專案成長樹中按輪次檢視變更，回看 `SKILL.md` 讀取步驟與 codemode 的巢狀呼叫。檔案檢視器支援原始碼、Markdown 預覽、整合或並排 Diff，也能在對話中引用選取的行。
-- **模型、技能與擴充功能** · 在設定中配置模型供應商，並使用 pi 設定中的 MCP 工具與資源。從側欄啟用或停用技能、開啟 `SKILL.md`，以及管理個人或專案範圍的擴充功能與 pi 套件。
-- **提示詞來源** · 在右側提示詞面板檢視專案指示、技能、範本與工具定義。由 PiWeb 加入的提示詞和工具會標示來源。
-- **自動化任務** · 依間隔、每日、每週或 cron 定時執行提示詞。可指定工作區和模型，也能開啟每次執行的對話。PiWeb 須保持執行才能依排程運作。
-- **手機存取與語言** · 在「設定 → 遠端連線」掃描 QR Code 連接手機。介面支援英文、簡體中文、繁體中文、日文與俄文。
+- **對話與上下文** — 流式顯示 Markdown、思考過程和工具呼叫。透過對話大綱跳轉，執行時可補充指示或排隊傳送訊息，也能在上下文用量指示中檢視 token 用量。
+- **工作區與會話** — 按專案資料夾組織會話。支援重新命名、分支、封存、恢復草稿，以及匯出為 JSONL 或 HTML。
+- **會話匯入** — 搜尋並匯入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本機歷史。PiWeb 就地讀取原始檔案。
+- **檔案與改動** — 在專案生長樹中按輪檢視改動，包括 `SKILL.md` 讀取步驟和 codemode 內的呼叫。支援原始碼、Markdown 預覽、統一或並排 Diff，以及在對話中引用選取的行。
+- **模型、技能與擴充功能** — 配置模型供應商，使用 pi 中的 MCP 工具和資源。啟停技能、開啟 `SKILL.md`，並管理擴充功能與 pi 包。擴充功能可透過 [JSON UI 橋](docs/extension-web-ui.md) 提供可互動面板。
+- **提示詞來源** — 檢視專案指令、技能、模板和工具定義。由 PiWeb 提供的提示詞和工具會標明來源。
+- **自動化任務** — 按間隔、每天、每週或 cron 定時執行提示詞。最多可同時執行 4 個任務；PiWeb 需要保持執行才能按時觸發。
+- **手機訪問與語言** — 在「設定 → 遠端連線」掃碼連線。介面支援英語、簡體中文、繁體中文、日語和俄語。
 
-## 與 pi 的關係
-
-PiWeb 是內建官方 pi SDK 的網頁介面，不更動另外安裝的 pi CLI。兩者**共用同一個 agent 目錄**（預設 `~/.pi/agent`，可用 `PI_CODING_AGENT_DIR` 指定），其中儲存設定、模型與憑證、對話、技能和套件。內建 pi 核心隨 PiWeb 發行版本升級。啟動時只自動檢查 PiWeb 更新；設定中保留 pi 版本和手動更新入口。
-
-agent 目錄是主要資料儲存位置，但**不是唯一資料根目錄**：對話匯入會讀取家目錄下其他工具的對話歷史，全域技能可能位於 `~/.agents/skills`。完整資料清單與部署隔離方式見[資料目錄、隱私與保留](docs/operations/data-and-privacy.md)。
-
-擴充功能的對話方塊、通知、狀態文字、文字顯示區和插入訊息會顯示在網頁上；擴充功能命令也能新增、分支和切換對話。擴充功能可透過 [JSON UI 橋接](docs/extension-web-ui.md) 提供可互動的網頁面板。相容的終端元件會退回唯讀文字顯示；不重現終端鍵盤互動及自訂頁首、頁尾、編輯器。
-
-## 介面預覽
+<details>
+<summary>更多截圖（桌面端與手機端）</summary>
 
 以下截圖使用英文介面和範例資料。
 
-### 桌面版
-
 <table>
   <tr>
-    <td width="50%"><img src="assets/readme-chat.jpg" alt="桌面版對話" /><br /><strong>對話工作區</strong><br />在專案對話旁檢視思考過程與工具呼叫。</td>
-    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面版專案檔案" /><br /><strong>專案檔案</strong><br />從側欄瀏覽專案樹並開啟檔案。</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="桌面端專案檔案" /><br /><strong>專案檔案</strong></td>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面端並排 Diff" /><br /><strong>並排 Diff</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="桌面版並排 Diff" /><br /><strong>並排 Diff</strong><br />在檔案檢視器中比較變更前後的程式碼。</td>
-    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面版匯入對話" /><br /><strong>匯入對話</strong><br />跨工具搜尋並選取本機對話。</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="桌面端會話匯入" /><br /><strong>會話匯入</strong></td>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面端模型供應商選擇" /><br /><strong>模型供應商</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="桌面版模型供應商選擇" /><br /><strong>模型供應商</strong><br />尋找並設定模型供應商。</td>
-    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面版上下文用量明細" /><br /><strong>上下文用量</strong><br />檢視 token 用量及其組成。</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="桌面端上下文用量明細" /><br /><strong>上下文用量</strong></td>
+    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="桌面端技能工作區" /><br /><strong>技能</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="桌面版技能工作區" /><br /><strong>技能</strong><br />篩選技能並開啟對應的 SKILL.md。</td>
-    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="桌面版自動化編輯器" /><br /><strong>自動化任務</strong><br />為定時任務選擇排程、工作區與模型。</td>
+    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="桌面端自動化編輯器" /><br /><strong>自動化任務</strong></td>
+    <td width="50%"><img src="assets/readme-mobile.jpg" alt="手機端對話" /><br /><strong>手機端對話</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-mobile-workspaces.jpg" alt="手機端工作區側欄" /><br /><strong>工作區</strong></td>
+    <td width="50%"><img src="assets/readme-mobile-import.jpg" alt="手機端會話匯入" /><br /><strong>手機端匯入</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-mobile-files.jpg" alt="手機端檔案檢視器" /><br /><strong>檔案檢視器</strong></td>
+    <td width="50%"><img src="assets/readme-mobile-models.jpg" alt="手機端模型供應商選擇" /><br /><strong>模型供應商</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-mobile-context.jpg" alt="手機端上下文用量明細" /><br /><strong>上下文用量</strong></td>
+    <td></td>
   </tr>
 </table>
 
-### 手機版
+</details>
 
-<table>
-  <tr>
-    <td width="33%"><img src="assets/readme-mobile.jpg" alt="手機版對話" /><br /><strong>隨時接續對話</strong><br />在手機上接續先前的對話。</td>
-    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="手機版工作區側欄" /><br /><strong>工作區</strong><br />切換專案與對話。</td>
-    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="手機版匯入對話" /><br /><strong>匯入對話</strong><br />選取要匯入的歷史對話。</td>
-  </tr>
-  <tr>
-    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="手機版檔案檢視器" /><br /><strong>檔案檢視器</strong><br />開啟並閱讀專案程式碼。</td>
-    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="手機版模型供應商選擇" /><br /><strong>模型供應商</strong><br />尋找並設定模型供應商。</td>
-    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="手機版上下文用量明細" /><br /><strong>上下文用量</strong><br />查看已用與可用的上下文空間。</td>
-  </tr>
-</table>
+## 快速開始
 
-## 封存與資料
-
-封存對話會一直保留，可從側欄查看、還原或手動刪除。點選封存會立即生效，不再二次確認；手動刪除仍需確認，而且會**永久刪除對話檔案，不保留還原副本**。對話不會自動刪除。刪除對話時會一併清理僅由它引用的上傳附件：先將還原副本保留至 `~/.agents/backups` 並在 `backups/INDEX.md` 記錄，再移除（`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` 可關閉此功能）。沒有對話引用的附件，會在超過 30 天後，由之後的新上傳觸發清理。需要保留的資料請自行備份；全部資料位置見[資料目錄、隱私與保留](docs/operations/data-and-privacy.md)。
-
-專案成長樹預設記錄，無需確認對話方塊。每輪檔案變更儲存為工作區 Git 儲存庫中 `refs/piweb/rounds/…` 下的提交，不改變分支和暫存區；需要時自動初始化本機儲存庫。累計歷史筆數和容量不設上限，可以在專案面板隨時關閉或重新啟用記錄，先前手動關閉的工作區會維持關閉。停止記錄會保留既有歷史；單一檔案、單次快照及預覽的大小保護仍然生效。
-
-## 擴充功能與自動化任務
-
-側欄工作區與設定分開。技能工作區依所選工作區列出個人、全域與專案作用域的技能，支援啟用／停用、在檔案檢視器中開啟 `SKILL.md` 及可還原移除非套件技能。擴充功能工作區依所選工作區管理 npm 套件，分別標示個人／專案作用域與本機／套件來源。個人資源通常位於 `<agent 目錄>/skills` 和 `<agent 目錄>/extensions`；受信任的專案可提供 `.pi/skills`、`.pi/extensions`、`.agents/skills` 及明確設定的資源路徑。目前工作區與對話組裝的提示詞來源可在右側抽屜的提示詞面板中檢視（資源市集頁面已移除）。
-
-npm 套件的安裝、更新和移除會先在獨立目錄準備，再切換正式安裝與設定。準備失敗會保留原安裝，提交中斷會在載入資源前還原；舊安裝版本及還原索引會保留。不執行 npm 生命週期指令碼，但載入後的擴充功能本身仍是執行在宿主處理程序中的受信任程式碼。
-
-自動化任務和執行記錄儲存在 `<agent 目錄>/web-automations.json`。排程使用編輯器顯示的伺服器時區，最多同時執行四項任務；每次使用獨立對話。停機期間超過寬限期的排程會記為略過，不會在啟動後集中補跑。
-
-## 使用方式
-
-### 安裝
+需要 **Node.js ≥ 22.19.0**（`package.json` 中的 `engines`），推薦 Node 24。專案生長曆史功能需要 Git。
 
 ```bash
 npm install -g @rexvane/piweb
 piweb
 ```
 
-套件只註冊 `piweb` 一個命令，與官方 `pi` CLI 互不衝突。需要 Node.js **≥ 22.19.0**（`engines` 下限）；CI 涵蓋 22.19.0、22.22.2 與 24，建議使用 Node 24。自動代理需要 Node 24 或 22.21 以上（較舊版本只能讓外部工具繼承代理變數，模型請求仍直接連線，見[代理](#代理)）。成長樹功能需要安裝 Git。
+PiWeb 預設開啟帶認證的 `http://127.0.0.1:30141` 頁面（連接埠被佔用時自動遞增）。在設定中配置模型供應商，或沿用既有的 pi 設定。發布套件只註冊 `piweb` 命令，不會與官方 `pi` CLI 衝突。包內已包含封存的生產構建；如果安裝時跳過了生命週期腳本，第一次啟動會先構建一次再提供服務。詳見[安裝與建置](docs/operations/install-and-build.md)。
 
-發行套件內含已封存的正式環境建置，一般全域安裝不需要在本機編譯。`postinstall` 只會為**僅安裝正式環境依賴的安裝方式**準備建置，在原始碼檢出目錄中不會執行任何動作；若安裝時略過生命週期指令碼，第一次啟動 `piweb` 會在獨立暫存目錄建置一次再提供服務（一次性操作，目前硬體約需 6–15 分鐘）。建置／修復細節和逾時設定見[安裝與建置機制](docs/operations/install-and-build.md)。
-
-### 更新
+## 使用與遠端連線
 
 ```bash
-npm install -g @rexvane/piweb@latest
+piweb                    # http://127.0.0.1:30141
+piweb -p 30143 --no-open # 指定連接埠，不自動開啟瀏覽器
+piweb -H 0.0.0.0         # 同時把主服務綁到區域網（認證仍然開啟）
 ```
 
-npm 會就地替換已安裝的版本，不用先移除。`latest` 是 npm 的預設標籤，因此直接使用 `npm install -g @rexvane/piweb` 效果相同。如果使用的鏡像站同步有延遲，可加上 `--registry=https://registry.npmjs.org` 直接取得新版本。安裝後重新啟動 `piweb` 即可。
-
-安裝指定版本時，將 `latest` 換成對應版本號。若某個版本有問題，[發行、降版與還原](docs/operations/release-and-rollback.md)提供精確降版、處理 `latest` 標籤及還原資料的步驟。
-
-**從介面更新**：每次啟動 PiWeb 都會在背景檢查 PiWeb 是否有新版本，有的話會在終端輸出一行 `[更新] 有新版本：…`，並在頁面右下角顯示提示（每次啟動只提示一次）。點選提示或設定 → 一般中的「更新」即可就地安裝；完成後依提示重新啟動 `piweb`，處理程序不會自行重新啟動。
-
-- PiWeb 發行版本包含經過驗證的 pi 核心。pi 不再自動顯示更新通知，設定中仍可手動檢查。
-- Windows 上正在執行的 npm 安裝無法替換自身（檔案被鎖定），PiWeb 更新入口會提供命令和複製按鈕：先停止 `piweb`，再執行上述命令。
-- 不想連線檢查時，在啟動前設定 `PI_WEB_UPDATE_CHECK=0`；仍可在設定中手動點選「檢查更新」。
-
-### 移除
-
-```bash
-npm uninstall -g @rexvane/piweb
-```
-
-這只會移除 PiWeb 本身。pi 資料位於 agent 目錄（預設 `~/.pi/agent/`，或由 `PI_CODING_AGENT_DIR` 指定），會保持不變。PiWeb 從家目錄匯入的其他工具對話歷史也不會被修改，見[資料目錄、隱私與保留](docs/operations/data-and-privacy.md)。
-
-### 啟動
-
-```bash
-piweb                    # http://127.0.0.1:30141（連接埠占用時自動遞增）
-piweb -p 30143 --no-open # 自訂連接埠，不自動開啟瀏覽器
-piweb -H 0.0.0.0         # 主伺服器也綁定區域網路位址（仍保持驗證）
-```
-
-| 參數 | 說明 |
+| 選項 | 說明 |
 | --- | --- |
 | `-p, --port <port>` | 監聽連接埠（預設 30141，環境變數 `PORT`） |
-| `-H, --hostname <host>` | 綁定位址（預設 127.0.0.1，環境變數 `PI_WEB_HOSTNAME`） |
-| `--dev` | 開發模式 |
+| `-H, --hostname <host>` | 繫結地址（預設 127.0.0.1，環境變數 `PI_WEB_HOSTNAME`） |
+| `--public-url <url>` | 公開地址，用於登入連結，並自動加入 Host 白名單（環境變數 `PI_WEB_PUBLIC_URL`） |
+| `--dev` | 開發模式（僅迴環） |
 | `--no-open` | 不自動開啟瀏覽器 |
-| `--public-url <url>` | 對外位址，用來產生登入連結並自動加入 Host 允許清單（環境變數 `PI_WEB_PUBLIC_URL`） |
+| `-h, --help` | 顯示用法 |
 
-所有啟動方式都預設啟用驗證（`PI_WEB_AUTH=1`）。在執行 PiWeb 的電腦上，啟動器會帶私有登入憑證開啟瀏覽器，終端不會輸出憑證。再次執行 `piweb` 可重新開啟既有執行個體並登入；其他裝置掃描自動更新的連線 QR Code。兩種方式都會將憑證換成有效期 30 天、經簽署的 HttpOnly Cookie。「登出所有裝置」會使既有 Cookie 和配對碼失效。`PI_WEB_PASSWORD` 已移除，設定它會使啟動器拒絕啟動。
+在本機上，啟動器會用私有登入憑據開啟瀏覽器，並且不會把該憑據列印出來。再次執行 `piweb` 會重新開啟已有例項並登入。
 
-已取得授權啟動憑證的指令碼，先透過 `GET /?token=…` 換取工作階段 Cookie，之後每個 API 請求都攜帶該 Cookie。API URL 和 `Authorization` 標頭不接受啟動令牌，也沒有 Basic Auth 備援方式。
+更新：`npm install -g @rexvane/piweb@latest`，然後重啟 `piweb`。解除安裝：`npm uninstall -g @rexvane/piweb` —— agent 資料和已匯入的工具歷史不會被改動。降級見[發布、降級與回滾](docs/operations/release-and-rollback.md)。
 
-### 代理
+連線手機或其他裝置時，開啟 **設定 → 遠端連線**，掃描 QR Code（或複製連結）。同一張碼在同一 Wi-Fi 和區域網外都可以用，客戶端無需額外軟體。這是一個 256 位一次性憑據，有效期 120 秒。生產啟動會準備 `0.0.0.0:30142` 上的手機排版代理，以及 Cloudflare 快速隧道（`cloudflared`）。QR Code使用隧道的 HTTPS 地址，只有該地址可達後才會出現。本機的 `127.0.0.1:30141` 提供桌面頁面。開發模式保持本機訪問。
 
-PiWeb 自動使用 `HTTP_PROXY` / `HTTPS_PROXY`；未設定時會讀取目前使用者啟用的 Windows HTTP(S) 系統代理。設定 → 一般 → 網路代理（或 agent 目錄中 `settings.json` 的 `httpProxy`）可覆寫這兩種來源，留空則恢復自動偵測；未設定代理時直接連線。本機位址預設直接連線（可透過 `NO_PROXY` 覆寫）；也會繼承 Windows 的精確主機名稱與網域後綴例外。不解析 PAC/WPAD 指令碼或 `<local>`、`192.168.*` 等 Windows 專用模式，這些情況請改用代理 URL 或 `NO_PROXY`。變更後重新啟動 PiWeb。需要 Node.js 24 或 22.21 以上；較舊版本會忽略此選項，啟動器也會明確提示（`bash` 工具中的 curl / git 仍會繼承代理變數）。
+直連區域網的 HTTP 不加密。QR Code地址的 TLS 在 Cloudflare 終止。重啟後隧道地址可能變化。
 
-### 連接其他裝置
+### 安全說明
 
-開啟 **設定 → 遠端連線**，掃描唯一的連線 QR Code。同一 Wi-Fi 與外部網路都使用同一個碼，無需手動啟用連線或選擇網路，其他裝置也不需要額外軟體。QR Code 和可複製連結使用同一份 256 位元隨機憑證，有效期 120 秒，僅可使用一次。面板會在過期或使用後自動更新；重新開啟面板會沿用仍有效的碼。
+- 在 `piweb` 啟動器接受的所有啟動方式中，認證預設開啟（`PI_WEB_AUTH=1`）。
+- `PI_WEB_AUTH=0` 只允許繫結迴環，且不能設定 `--public-url` / `PI_WEB_PUBLIC_URL`。其他組合會被啟動器拒絕。關閉認證時，不會準備內建區域網代理和 Cloudflare 隧道。
+- 開發模式（`--dev` / `PI_WEB_DEV=1`）只允許迴環繫結，因為 Next.js 開發端點不受啟動令牌保護。
+- 啟動令牌透過 `GET /?token=…` 兌換一張經 HMAC 簽名的 HttpOnly 會話 Cookie（有效期 30 天；在 HTTPS 下設定 `Secure`）。它不能用在 API 路徑或 `Authorization` 頭中。沒有密碼登入；設定 `PI_WEB_PASSWORD` 會使啟動器拒絕啟動。
+- 「讓所有裝置重新登入」會使現有 Cookie 和配對碼失效。
+- 自建反向代理或隧道時，將代理指向 `127.0.0.1:30142`（手機排版）或 `127.0.0.1:30141`（桌面），保持認證開啟，並把外部主機名加入白名單（`PI_WEB_TRUSTED_HOSTS=<your-domain>` 或 `--public-url`）。否則請求會返回 403 `untrusted host`。`PIWEB_REMOTE_LAN=0` 會關閉內建代理和快速隧道的自動準備。
 
-正式環境啟動時，會自動準備本機代理（`0.0.0.0:30142`）與 Cloudflare 快速通道（`cloudflared`）。QR Code 使用通道的 HTTPS 位址，確認可連線後才顯示，不會悄悄切換為僅限區域網路的位址。短暫中斷會保留原位址，持續無法連線時自動重建通道；開發模式保持在本機執行。
+## 配置
 
-本機代理提供手機版面配置，主機上的 `127.0.0.1:30141` 仍提供桌面版。通道有以下限制：
+取值來自程序環境。命令列引數會覆蓋對應的環境變數。含作業系統路徑約定的維護文件見[環境變數參考](docs/operations/environment.md)。
 
-- 重新啟動或重建通道後，位址可能改變；DNS 與連線檢查完成後 QR Code 才會就緒。
-- QR Code 位址使用 HTTPS，TLS 在 Cloudflare 端終止。直接使用區域網路 HTTP 仍未加密；在同一 Wi-Fi 掃描此碼也需要公網通道可連線。
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `PORT` | `30141` | 主監聽連接埠。`piweb -p` 優先；連接埠被佔用時啟動器會按 `+1` 重試。 |
+| `PI_WEB_HOSTNAME` | `127.0.0.1` | 主繫結地址（等同 `-H`）。非迴環繫結仍會保持認證開啟。 |
+| `PI_WEB_AUTH` | `1` | 認證開關。`0` 僅在繫結迴環且沒有公開地址時被接受。 |
+| `PI_WEB_PUBLIC_URL` | 未設定 | 公開地址（等同 `--public-url`）。其主機名會加入 Host 白名單。 |
+| `PI_WEB_TRUSTED_HOSTS` | 空 | 自建反代或命名隧道的 Host 白名單，逗號分隔。 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目錄。它不是唯一資料根，見[資料與隱私](docs/operations/data-and-privacy.md)。 |
+| `PIWEB_REMOTE_LAN` | 啟用 | `0` / `false` / `off` / `no` 關閉區域網代理和 Cloudflare 快速隧道的自動準備。 |
+| `PIWEB_REMOTE_LAN_PORT` | `30142` | 內建區域網 / 手機代理的監聽連接埠。 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 未設定 | 模型請求使用的代理。設定 → 通用 → 網路代理（`httpProxy`）會覆蓋它。 |
+| `PI_WEB_UPDATE_CHECK` | `1` | 設為 `0` 時跳過啟動時的更新檢查。設定 → 檢查更新仍可用。 |
+| `PI_OFFLINE` | 未設定 | `1` / `true` / `yes` 跳過 PiWeb / SDK 的聯網動作，例如更新檢查。 |
 
-內建區域網路代理預設監聽 `0.0.0.0:30142`。部署覆寫選項：`PIWEB_REMOTE_LAN=0` 關閉代理與通道的自動準備，`PIWEB_REMOTE_LAN_PORT` 變更代理連接埠，`PIWEB_REMOTE_LAN_BIND` 變更綁定位址（例如只綁定一張網路卡），`-H 0.0.0.0` 則讓主伺服器也監聽區域網路。HTML 插入有上限：超過 `PIWEB_MOBILE_PROXY_MAX_HTML_BYTES`（預設 16 MiB）或 `PIWEB_MOBILE_PROXY_TIMEOUT_MS`（預設 30 秒）後，頁面會改為不插入內容的串流傳遞；解碼後超過 `PIWEB_MOBILE_PROXY_MAX_DECODED_BYTES`（預設 64 MiB）的內容則會被拒絕。完整清單見[環境變數參考](docs/operations/environment.md)。
+<details>
+<summary>全部環境變數</summary>
 
-`cloudflared` 的尋找順序為：`PIWEB_CLOUDFLARED` → `<agent 目錄>/web-bin/cloudflared{,.exe}`（由 PiWeb 管理）→ `PATH`。找不到時，面板會明確提示。
+下表列出了在 `src/`、`scripts/` 和 `bin/` 中找到的全部 PiWeb 專用變數。內部程序變數在部署中不要設定。
 
-> 遠端連線需要驗證，且驗證預設啟用。PiWeb 會在通道就緒後將其主機名稱加入 Host 允許清單，通道停止後移除。API 路徑和 `Authorization` 標頭一律不接受啟動令牌。
+#### 服務與網路
 
-### 自訂反向代理或通道
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `PORT` | `30141` | 主監聽連接埠。`piweb -p` 優先；連接埠被佔用時啟動器會按 `+1` 重試。 |
+| `PI_WEB_HOSTNAME` | `127.0.0.1` | 主繫結地址（等同 `-H` / `--hostname`）。非迴環繫結仍會保持認證開啟。 |
+| `PI_WEB_PUBLIC_URL` | 未設定 | 公開地址（等同 `--public-url`）。其主機名會加入 Host 白名單，並用於開啟登入頁。 |
+| `PI_WEB_TRUSTED_HOSTS` | 空 | 逗號分隔的 Host 白名單。自建反代或命名隧道必須列入，否則返回 403 `untrusted host`。 |
+| `PI_WEB_ALLOWED_HOSTS` | 空 | 上游 `agegr/pi-web` 的舊變數名，與 `PI_WEB_TRUSTED_HOSTS` 合併生效。 |
+| `PI_WEB_AUTH` | `1` | 認證開關。`0` 僅在繫結迴環且沒有公開地址時被接受；關閉認證時不會準備區域網/隧道入口。 |
+| `PI_WEB_UPDATE_CHECK` | `1` | 設為 `0` 時跳過啟動時的一次性更新檢查。**設定 → 檢查更新** 仍可用。 |
+| `PI_WEB_NO_OPEN` | 未設定 | `1` 表示啟動後不自動開啟瀏覽器（等同 `--no-open`）。 |
+| `PI_WEB_DEV` | 未設定 | `1` 以開發模式啟動（等同 `--dev`）。開發模式只允許迴環繫結。 |
+| `PI_WEB_ROOT` | 安裝根目錄 / `cwd` | 應用根目錄覆蓋，供啟動器和發布腳本使用。普通部署不要改。 |
+| `PIWEB_REMOTE_LAN` | 啟用 | `0` / `false` / `off` / `no` 關閉內建區域網代理和 Cloudflare 快速隧道的自動準備。 |
+| `PIWEB_REMOTE_LAN_PORT` | `30142` | 內建區域網 / 手機代理的監聽連接埠。 |
+| `PIWEB_REMOTE_LAN_BIND` | `0.0.0.0` | 內建區域網 / 手機代理的繫結地址，例如只綁某塊網絡卡。 |
+| `PIWEB_CLOUDFLARED` | 未設定 | `cloudflared` 可執行檔案路徑。查詢順序：本變數 → `<agent 目錄>/web-bin/cloudflared{,.exe}` → `PATH`。 |
+| `PIWEB_SKIP_WARMUP` | 未設定 | `1` 跳過生產首屏預熱（僅排障用，首次開啟會變慢）。 |
 
-也可以自行設定入口（Caddy、nginx、Cloudflare 具名通道或 VPN）。此時請注意：
+#### 代理
 
-- 將代理指向 **`127.0.0.1:30142`**（區域網路入口）以取得手機版面；只需要桌面版時則指向 `127.0.0.1:30141`。
-- 維持預設啟用的驗證。`PI_WEB_AUTH=0` 會停用自動遠端存取，而且僅允許綁定回環位址且未設定公開 URL 的情況。
-- 反向代理會將外部主機名稱原樣傳給後端，因此必須加入允許清單，否則會回傳 403 `untrusted host`：
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `HTTP_PROXY` / `HTTPS_PROXY`（及小寫形式） | 未設定 | 模型請求使用的代理。未設定時，若當前使用者啟用了 Windows 系統代理則使用它。 |
+| `NO_PROXY` / `no_proxy` | 本機地址繞過 | 代理繞過列表。Windows 的精確主機和域名字尾例外會繼承；PAC/WPAD 以及 `<local>`、`192.168.*` 等 Windows 專用規則不會被執行。 |
+| `NODE_USE_ENV_PROXY` | 在支援時由啟動器設為 `1` | 讓 Node 的 `fetch` / `http` 認代理環境變數。支援 Node 24+ 或 22.21+；使用者顯式設定的值會被保留。 |
 
-  ```bash
-  PI_WEB_TRUSTED_HOSTS=<your-domain> piweb
-  ```
+設定 → 通用 → 網路代理中的值（`settings.json` 的 `httpProxy`）優先於環境變數和系統代理；留空則回到自動檢測。修改後請重啟 `piweb`。
 
-- 使用 `--public-url https://your-address/` 告知 PiWeb 對外位址；主機名稱會自動加入允許清單，啟動器開啟登入頁時也會使用此位址。日誌不會輸出登入憑證。
+#### 認證與金鑰
 
-> 自行管理網路入口時，可設定 `PIWEB_REMOTE_LAN=0` 停用內建區域網路代理與快速通道的自動準備。這是部署設定，不是連線面板中的網路切換選項。
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `PI_WEB_SECRET_FILE` | `<agent 目錄>/web-secret` | 用於 Cookie 和配對碼 HMAC 簽名的金鑰檔案。 |
+| `PI_WEB_SECRET` | 未設定（讀金鑰檔案） | 簽名金鑰，格式為 **32 位元組的 base64url 編碼**。設定後不再讀檔案。非法值會報錯，而不是靜默輪換金鑰。 |
+| `PI_WEB_PASSWORD` | 已移除 | 密碼登入已刪除。若設定此變數，啟動器會**拒絕啟動**。 |
 
-## 開發與驗證
+#### 資料、工具與留存
 
-請在獨立檢出或暫存目錄中驗證；`npm run build` 會寫入 `.next`，不要對正在提供服務的執行個體目錄執行。先用 `npm ci` 安裝開發依賴，再執行：
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目錄：設定、模型與憑據、會話、上傳、自動化。它不是唯一資料根，見[資料與隱私](docs/operations/data-and-privacy.md)。 |
+| `PI_WEB_EDITOR` | `code` | 「在編輯器中開啟」使用的本機編輯器命令，僅對本機操作者有意義。 |
+| `PI_WEB_UPLOAD_RETENTION` | `30`（天） | `web-uploads` 中未被引用檔案的後臺清掃閾值。`0` 關閉該清掃。清掃會先複製到 `~/.agents/backups/`，並記入 `INDEX.md`。 |
+| `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 啟用 | 刪除會話時，一併清理僅被該會話引用的上傳檔案（先備份再刪除）。`0` 保留這些上傳。 |
+| `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY` | 關閉 | `1` 允許模型發現探測私網地址（本地推理常用）。預設關閉，以限制 SSRF。 |
+| `PI_OFFLINE` | 未設定 | `1` / `true` / `yes` 跳過 PiWeb / SDK 的聯網動作，例如更新檢查、gh 身份查詢和安裝遙測。這不是作業系統級斷網。 |
+| `PI_TELEMETRY` | 未設定 | Pi SDK 的安裝遙測開關（`1` / `true` / `yes` 開啟，`0` / `false` / `no` 關閉）。未設定時由 SDK 的 `enableInstallTelemetry`（預設開啟）決定。PiWeb 原始碼本身不讀取該變數，由捆綁的 SDK 消費。 |
 
-```bash
-npm run typecheck
-npm run lint
-npm run test
-npm run build
-npm run verify:package
-```
+#### 建置與發布
 
-`verify:package` 會封裝正式建置、安裝至空目錄，再使用臨時資料啟動安裝後的副本。CI 也會執行鎖定的 lint 工具鏈、在 Linux/Node 24 上稽核高風險依賴、準備 SDK 搜尋工具、檢查非預期略過項目，並透過 `PIWEB_COVERAGE=1` 啟用覆蓋率；真實公網通道另以明確的測試開關啟用。正式建置在稽核機器上實測約需 6–7 分鐘（`next build --webpack` 在並行負載下為 370 秒），建議建置逾時至少 15 分鐘，完整 `check` 工作至少預留 30–45 分鐘。`npm run check` 會分別回報原始碼測試、安裝套件與瀏覽器檢查。更多文件見[文件導覽](docs/README.md)，建置細節與逾時基準見[安裝與建置機制](docs/operations/install-and-build.md)。
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `PIWEB_BUILD_DIR` | 由 `.next-releases/active.json` 決定 | 只接受 `.next` 或 `.next-releases/<安全 id>`。與當前作用中的發布衝突時拒絕啟動。 |
+| `PIWEB_MAX_RETAINED_RELEASES` | `10`（範圍 2–100） | 保留的成功發布構建數量上限。達到上限時拒絕新構建，不會自動刪除舊構建。 |
+| `PIWEB_MAX_FAILED_RELEASES` | `3`（範圍 1–100） | 未完成或失敗的發布目錄上限，同樣會拒絕新構建。 |
+| `PIWEB_SKIP_INSTALL_BUILD` | 未設定 | `1` 跳過生產安裝的首次自愈構建。只給已經自帶封存構建的部署使用。 |
+| `PIWEB_BUILD_VERBOSE` | 未設定 | `1` / `true` / `yes` 列印完整構建輸出。 |
 
-## 維運與部署
+#### 可選限制
 
-- [安裝與建置機制](docs/operations/install-and-build.md)：安裝配置、`postinstall`、首次啟動的自動修復建置、建置時間及逾時。
-- [環境變數參考](docs/operations/environment.md)：部署變數、2026-11-15 強化作業新增的選用限制開關，以及內部處理程序變數。
-- [資料目錄、隱私與保留](docs/operations/data-and-privacy.md)：全部資料根目錄、部署隔離、遙測開關、刪除與還原副本行為。
-- [發行、降版與還原](docs/operations/release-and-rollback.md)：精確版本降版、應用程式內更新失敗處理、`.next-releases` 回退及資料相容性。
+這些開關預設關閉或上限較寬鬆，不設定時不會改變既有行為。
+
+| 變數 | 預設值 | 含義 |
+| --- | --- | --- |
+| `PIWEB_FS_STRICT_WORKSPACES` | 關閉 | `1` / `true` / `yes` 將已認證的檔案介面限制在已註冊工作區或 `PIWEB_FS_ALLOWED_ROOTS` 之內。 |
+| `PIWEB_FS_ALLOWED_ROOTS` | 空 | 嚴格模式額外允許的根目錄，Windows 用 `;` 分隔，POSIX 用 `:`。 |
+| `PIWEB_MAX_SESSION_SUBSCRIBERS` | 不限制 | 每個會話的 SSE 訂閱者上限（正整數）；超出後新訂閱改為快照模式。 |
+| `PIWEB_SSE_MAX_BUFFERED_BYTES` | `4MiB` | 單條 SSE 連線的未讀緩衝上限；慢客戶端會被斷開，隨後應重連並走快照。 |
+| `PIWEB_SHUTDOWN_TIMEOUT_MS` | `8000` | 收到 SIGINT / SIGTERM / SIGHUP 後等待停機鉤子的預算。第二次訊號會立即退出。 |
+| `PIWEB_GRACEFUL_STOP_TIMEOUT_MS` | `10000` | 啟動器等待自己拉起的子行程退出的時間，超時後結束行程樹。 |
+| `PIWEB_AGENT_MAX_STEPS` | 不限制 | 單回合最多模型步數。 |
+| `PIWEB_AGENT_MAX_DURATION_MS` | 不限制 | 單回合最長執行時間（毫秒）。 |
+| `PIWEB_AGENT_TOKEN_BUDGET` | 不限制 | 單回合累計 token 上限（input + output + cache）。 |
+| `PIWEB_MOBILE_PROXY_MAX_HTML_BYTES` | `16MiB` | 手機代理 HTML 注入緩衝上限；超過則改為不注入、直接流式透傳。 |
+| `PIWEB_MOBILE_PROXY_MAX_DECODED_BYTES` | `64MiB` | 手機代理解壓輸出上限；更大的響應返回 502。 |
+| `PIWEB_MOBILE_PROXY_TIMEOUT_MS` | `30000` | 手機代理等待上游 HTML 響應的時間，超時後改為不注入、直接流式透傳。 |
+| `PIWEB_AGENT_CONFIG_CACHE_MAX` | `512` | agent 配置快取條目上限。 |
+| `PIWEB_AGENT_CONFIG_CACHE_TTL_MS` | `1800000`（30 分鐘） | 上述快取中失敗或缺失條目的 TTL。 |
+| `PIWEB_PI_CACHE_MAX` | `512` | SettingsManager / 資源載入器 / 包管理器的快取條目上限。 |
+
+#### 測試、CI 與內部變數
+
+不要在部署中使用這些變數。`CI`、`PIWEB_COVERAGE`、`PIWEB_COVERAGE_REPORT_DIR`、`PIWEB_TEST_REPORT`、`PIWEB_TEST_TUNNEL` 和 `PIWEB_LINT_SKIP_INSTALL` 僅用於測試和 CI。
+
+啟動器、鎖和測試還會注入：`PI_WEB_LAUNCH_TOKEN`（一次性本機登入令牌，每次啟動重新生成）、`PIWEB_PORT`（寫入子行程的實際連接埠）、`PIWEB_HTTP_GUARD`、`PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`、`PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`、`PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_DEV_ASSET_ID`、`PIWEB_DISABLE_GRACEFUL_SHUTDOWN`、`PIWEB_DEBUG_PROMPT`，以及 `PIWEB_BROWSER_URL`（在 Windows 上開啟本機瀏覽器時的臨時地址）。`PYTHONUTF8` / `PYTHONIOENCODING`、`NODE_OPTIONS`、`NEXT_PHASE`、`NEXT_RUNTIME` 和 `NEXT_TELEMETRY_DISABLED` 屬於程序或 Next.js 約定（建置腳本會關閉 Next 遙測）。
+
+PiWeb 還會讀取 `HOME`、`USERPROFILE`、`TEMP` / `TMP`、`APPDATA`、`LOCALAPPDATA` 等作業系統路徑變數，以及可選的 `WORKBUDDY_CONFIG_DIR` 和 `QWEN_HOME`（用於對應的會話匯入來源）。
+
+</details>
+
+## 工作原理
+
+PiWeb 是基於 Next.js 16 + React 19 的 TypeScript 應用，封裝了官方 `@earendil-works/pi-*` SDK。`piweb` 命令（`bin/piweb.js` → `scripts/launcher.mjs`）會選擇空閒連接埠、生成一次性啟動令牌、拉起 Next.js 服務，並開啟本機登入地址。服務將令牌兌換為經 HMAC 簽名的會話 Cookie；在生產模式且認證開啟時，還會準備區域網入口和 Cloudflare 快速隧道。
+
+PiWeb 不會取代單獨安裝的 `pi` CLI。兩者**共用同一個 agent 目錄**（預設 `~/.pi/agent`，或由 `PI_CODING_AGENT_DIR` 指定）。該目錄是主要儲存，但不是唯一資料根——會話匯入會讀取家目錄下其他工具的歷史，全域性技能可能位於 `~/.agents/skills`。詳見[資料、隱私與留存](docs/operations/data-and-privacy.md)。
+
+## 說明文件
+
+- [安裝與建置](docs/operations/install-and-build.md)
+- [環境變數參考](docs/operations/environment.md)
+- [資料、隱私與留存](docs/operations/data-and-privacy.md)
+- [發布、降級與回滾](docs/operations/release-and-rollback.md)
+- [擴充功能 Web UI](docs/extension-web-ui.md) 與[擴充功能範例](examples/piweb-extensions/README.md)
+- 文件導覽：[docs/README.md](docs/README.md)
+
+## 貢獻
+
+歡迎在 [github.com/RexVane/PiWeb](https://github.com/RexVane/PiWeb) 提交 issue 和 pull request。開發環境、專案結構、提交前檢查和問題反饋方式見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 致謝
 
-感謝 [@webkubor](https://github.com/webkubor) 提供 Ripple 與 Dawn 配色。
+天青、粉霞配色感謝 [@webkubor](https://github.com/webkubor)。上游專案與參考來源見 [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md)。依賴許可證見 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ## 授權條款
 

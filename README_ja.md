@@ -1,6 +1,12 @@
 # PiWeb — Pi Coding Agent の Web UI
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/@rexvane/piweb"><img src="https://img.shields.io/npm/v/@rexvane/piweb.svg" alt="npm バージョン" /></a>
+  <a href="https://github.com/RexVane/PiWeb/actions/workflows/check.yml"><img src="https://github.com/RexVane/PiWeb/actions/workflows/check.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT ライセンス" /></a>
+</p>
+
+<p align="center">
   <strong>デスクトップとモバイルで使える、セルフホスト型 AI コーディングエージェントの Web UI。</strong>
 </p>
 
@@ -8,220 +14,257 @@
   <a href="README.md">English</a> | <a href="README_zh.md">简体中文</a> | <a href="README_zh-Hant.md">繁體中文</a> | <strong>日本語</strong> | <a href="README_ru.md">Русский</a>
 </p>
 
-**PiWeb** は、[Pi Coding Agent](https://github.com/earendil-works/pi) 向けのオープンソースのセルフホスト型 Web インターフェースです。自分の PC やサーバーで Pi を動かし、デスクトップやスマートフォンのブラウザーからツールの実行を追ったり、コードの変更を確認したり、会話の続きを進めたりできます。
+**PiWeb** は、[Pi Coding Agent](https://github.com/earendil-works/pi) 向けのオープンソースのセルフホスト型 Web インターフェースです。npm でインストールし、自分の PC やサーバーで実行すれば、デスクトップやスマートフォンのブラウザーからツールの呼び出しを追ったり、差分を確認したり、会話の続きを進めたりできます。
 
-公式 Pi SDK を使っているため、既存の pi の設定、モデル、スキル、拡張機能、MCP（Model Context Protocol）をそのまま利用できます。Claude Code、Codex、OpenCode などのローカルの会話を取り込み、組み込みの自動化で繰り返しタスクを実行できます。
-
-[クイックスタート](#クイックスタート) · [機能](#機能) · [スクリーンショット](#スクリーンショット) · [インストールと運用](#使い方) · [ドキュメント](docs/README.md)
+公式の `@earendil-works/pi-*` SDK を同梱しており、既存の pi の設定、モデル、スキル、拡張機能、MCP（Model Context Protocol）をそのまま利用できます。
 
 <p align="center">
   <img src="assets/readme-chat.jpg" alt="PiWeb：プロジェクトのワークスペース、AI チャット、ツール呼び出しを表示する Pi Coding Agent の Web UI" width="840" />
 </p>
 
-## クイックスタート
+## 目次
 
-**Node.js ≥ 22.19.0** が必要です。Node 24 を推奨します。インストールして起動します。
-
-```bash
-npm install -g @rexvane/piweb
-piweb
-```
-
-既定では認証付きのブラウザーページが `http://127.0.0.1:30141` で開きます。ポートが使用中の場合は番号が自動的に増えます。設定画面でモデルプロバイダーを登録するか、既存の pi 設定を利用してください。モバイル版は **設定 → リモートアクセス** の接続 QR コードから開けます。
-
-環境要件とデプロイ時の動作については、[インストール](#インストール)、[別のデバイスから接続](#別のデバイスから接続)、[データとプライバシー](docs/operations/data-and-privacy.md)を参照してください。
+- [機能](#機能)
+- [クイックスタート](#クイックスタート)
+- [使い方とリモートアクセス](#使い方とリモートアクセス)
+- [設定](#設定)
+- [仕組み](#仕組み)
+- [ドキュメント](#ドキュメント)
+- [貢献](#貢献)
+- [謝辞](#謝辞)
+- [ライセンス](#ライセンス)
 
 ## 機能
 
-- **チャットとコンテキスト** · Markdown、思考過程、ツール呼び出しをストリーミング表示します。会話のアウトラインから移動し、実行中に追加の指示を送ったり、メッセージをキューに入れたりできます。コンテキストの使用量と内訳も確認できます。
-- **ワークスペースとセッション** · プロジェクトフォルダーごとに会話を整理します。名前変更、分岐、アーカイブ、下書きの復元、JSONL または HTML へのエクスポートが可能です。
-- **会話のインポート** · Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code、Cursor のローカル履歴を検索して取り込めます。複数のソースから選択でき、アーカイブしたインポート済みの会話も復元できます。元のファイルはそのまま保持されます。
-- **ファイルと変更** · プロジェクトの変更履歴ツリーでターンごとの変更を確認し、`SKILL.md` の読み込みや codemode 内のツール呼び出しを追跡できます。ファイルビューアーではソースコード、Markdown プレビュー、統合または左右並列の差分を表示し、選んだ行を会話に引用できます。
-- **モデル、スキル、拡張機能** · 設定でモデルプロバイダーを指定し、pi の MCP ツールとリソースを利用できます。サイドバーではスキルの有効・無効を切り替え、`SKILL.md` を開き、個人用またはプロジェクト用の拡張機能と pi パッケージを管理できます。
-- **プロンプトのソース** · 右側のプロンプトパネルで、プロジェクトの指示、スキル、テンプレート、ツール定義を確認できます。PiWeb が追加したプロンプトとツールには出所が表示されます。
-- **自動化** · 指定間隔、毎日、毎週、または cron でプロンプトを実行します。ワークスペースとモデルを指定でき、実行ごとのセッションを開けます。スケジュールどおりに実行するには PiWeb を起動したままにしてください。
-- **モバイルと表示言語** · 「設定 → リモートアクセス」の QR コードを読み取ってスマートフォンを接続します。英語、中国語（簡体字・繁体字）、日本語、ロシア語に対応しています。
+- **チャットとコンテキスト** — Markdown、思考過程、ツール呼び出しをストリーミング表示します。会話のアウトラインから移動し、実行中に追加の指示を送ったり、メッセージをキューに入れたりできます。コンテキスト使用量も確認できます。
+- **ワークスペースとセッション** — プロジェクトフォルダーごとに会話を整理します。名前変更、分岐、アーカイブ、下書きの復元、JSONL または HTML へのエクスポートが可能です。
+- **会話のインポート** — Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code、Cursor のローカル履歴を検索して取り込みます。元のファイルはその場所のまま読み取ります。
+- **ファイルと変更** — プロジェクトの変更履歴ツリーでターンごとの変更を確認し、`SKILL.md` の読み込みや codemode 内の呼び出しを追跡できます。ソース、Markdown プレビュー、統合または左右並列の差分を開き、選んだ行を会話に引用できます。
+- **モデル、スキル、拡張機能** — モデルプロバイダーを設定し、pi の MCP ツールとリソースを利用できます。スキルの有効・無効を切り替え、`SKILL.md` を開き、拡張機能と pi パッケージを管理できます。拡張機能は [JSON UI ブリッジ](docs/extension-web-ui.md) で対話的なパネルを提供できます。
+- **プロンプトのソース** — プロジェクトの指示、スキル、テンプレート、ツール定義を確認できます。PiWeb が追加したプロンプトとツールには出所が表示されます。
+- **自動化** — 指定間隔、毎日、毎週、または cron でプロンプトを実行します。同時実行は最大 4 件です。スケジュールどおりに実行するには PiWeb を起動したままにしてください。
+- **モバイルと表示言語** — 「設定 → リモートアクセス」の QR コードを読み取ります。英語、簡体字中国語、繁体字中国語、日本語、ロシア語に対応しています。
 
-## pi との関係
-
-PiWeb は公式 pi SDK を同梱する Web フロントエンドで、別途インストールした pi CLI は変更しません。両者は**同じ agent ディレクトリ**を共有します。既定は `~/.pi/agent` で、`PI_CODING_AGENT_DIR` で変更できます。設定、モデルと認証情報、セッション、スキル、パッケージが保存されます。同梱エンジンは PiWeb のリリースに合わせて更新します。起動時に自動確認するのは PiWeb の更新のみで、pi のバージョン表示と手動更新は設定画面に残ります。
-
-agent ディレクトリは主な保存先ですが、**唯一のデータルートではありません**。セッションのインポートではホームディレクトリにある他ツールの履歴を読み取り、グローバルスキルは `~/.agents/skills` に置かれる場合があります。保存先の一覧とデプロイの分離については、[データ、プライバシー、保持期間](docs/operations/data-and-privacy.md)を参照してください。
-
-拡張機能のダイアログ、通知、ステータステキスト、テキストウィジェット、挿入メッセージをページに表示します。拡張コマンドからセッションの作成、分岐、切り替えも可能です。[JSON UI ブリッジ](docs/extension-web-ui.md)を使えば、対話型のブラウザーパネルを提供できます。互換性のあるターミナルコンポーネントは読み取り専用テキストとして表示します。ターミナルのキーボード操作や、カスタムのヘッダー、フッター、エディターは再現しません。
-
-## スクリーンショット
+<details>
+<summary>スクリーンショットをさらに見る（デスクトップとモバイル）</summary>
 
 スクリーンショットは英語のインターフェースとサンプルデータを使用しています。
 
-### デスクトップ
-
 <table>
   <tr>
-    <td width="50%"><img src="assets/readme-chat.jpg" alt="デスクトップの会話画面" /><br /><strong>会話ワークスペース</strong><br />プロジェクトのセッションと並べて思考過程やツール呼び出しを確認。</td>
-    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="デスクトップのプロジェクトファイル" /><br /><strong>プロジェクトファイル</strong><br />サイドパネルでツリーをたどり、ファイルを開く。</td>
+    <td width="50%"><img src="assets/readme-desktop-project.jpg" alt="デスクトップのプロジェクトファイル" /><br /><strong>プロジェクトファイル</strong></td>
+    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="デスクトップの左右並列差分" /><br /><strong>左右並列の差分</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-files.jpg" alt="デスクトップの左右並列差分" /><br /><strong>左右並列の差分</strong><br />ファイルビューアーで変更前後のコードを比較。</td>
-    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="デスクトップのインポート画面" /><br /><strong>会話のインポート</strong><br />複数のツールからローカルの会話を検索して選択。</td>
+    <td width="50%"><img src="assets/readme-desktop-import.jpg" alt="デスクトップの会話インポート" /><br /><strong>会話のインポート</strong></td>
+    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="デスクトップのモデルプロバイダー選択" /><br /><strong>モデルプロバイダー</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-models.jpg" alt="デスクトップのプロバイダー選択" /><br /><strong>モデルプロバイダー</strong><br />モデルプロバイダーを探して設定。</td>
-    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="デスクトップのコンテキスト内訳" /><br /><strong>コンテキスト使用量</strong><br />トークンの使用量と内訳を確認。</td>
+    <td width="50%"><img src="assets/readme-desktop-context.jpg" alt="デスクトップのコンテキスト使用量" /><br /><strong>コンテキスト使用量</strong></td>
+    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="デスクトップのスキル" /><br /><strong>スキル</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="デスクトップのスキル画面" /><br /><strong>スキル</strong><br />スキルを絞り込み、対応する SKILL.md を開く。</td>
-    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="デスクトップの自動化編集画面" /><br /><strong>自動化</strong><br />タスクのスケジュール、ワークスペース、モデルを指定。</td>
+    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="デスクトップの自動化エディター" /><br /><strong>自動化</strong></td>
+    <td width="50%"><img src="assets/readme-mobile.jpg" alt="モバイルの会話" /><br /><strong>モバイルのチャット</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-mobile-workspaces.jpg" alt="モバイルのワークスペース" /><br /><strong>ワークスペース</strong></td>
+    <td width="50%"><img src="assets/readme-mobile-import.jpg" alt="モバイルの会話インポート" /><br /><strong>モバイルのインポート</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-mobile-files.jpg" alt="モバイルのファイルビューアー" /><br /><strong>ファイルビューアー</strong></td>
+    <td width="50%"><img src="assets/readme-mobile-models.jpg" alt="モバイルのモデルプロバイダー選択" /><br /><strong>プロバイダー</strong></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/readme-mobile-context.jpg" alt="モバイルのコンテキスト使用量" /><br /><strong>コンテキスト使用量</strong></td>
+    <td></td>
   </tr>
 </table>
 
-### モバイル
+</details>
 
-<table>
-  <tr>
-    <td width="33%"><img src="assets/readme-mobile.jpg" alt="モバイルの会話画面" /><br /><strong>外出先でチャット</strong><br />スマートフォンで会話を再開。</td>
-    <td width="33%"><img src="assets/readme-mobile-workspaces.jpg" alt="モバイルのサイドバー" /><br /><strong>ワークスペース</strong><br />プロジェクトとセッションを切り替え。</td>
-    <td width="33%"><img src="assets/readme-mobile-import.jpg" alt="モバイルのインポート画面" /><br /><strong>会話のインポート</strong><br />取り込む会話を選択。</td>
-  </tr>
-  <tr>
-    <td width="33%"><img src="assets/readme-mobile-files.jpg" alt="モバイルのファイルビューアー" /><br /><strong>ファイルビューアー</strong><br />プロジェクトのコードを開いて閲覧。</td>
-    <td width="33%"><img src="assets/readme-mobile-models.jpg" alt="モバイルのプロバイダー選択" /><br /><strong>モデルプロバイダー</strong><br />モデルプロバイダーを探して設定。</td>
-    <td width="33%"><img src="assets/readme-mobile-context.jpg" alt="モバイルのコンテキスト内訳" /><br /><strong>コンテキスト使用量</strong><br />使用量と残りのコンテキストを確認。</td>
-  </tr>
-</table>
+## クイックスタート
 
-## アーカイブとデータ
-
-アーカイブしたセッションは保持され、サイドバーから表示、復元、手動削除ができます。アーカイブは確認ダイアログなしで即座に反映します。手動削除には確認が必要ですが、セッションファイルは**復元用コピーを残さず完全に削除**します。セッションの自動削除は行いません。削除したセッションだけが参照していたアップロード添付ファイルは、`~/.agents/backups` に復元用コピーを作成し、`backups/INDEX.md` に記録してから除去します。`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` でこの処理を無効にできます。どのセッションからも参照されていない添付ファイルは、30 日経過後、新しいアップロードによるクリーンアップ時に削除します。必要なデータはバックアップしてください。保存先の一覧は[データとプライバシー](docs/operations/data-and-privacy.md)にあります。
-
-プロジェクトの変更履歴は既定で記録し、確認ダイアログは表示しません。各ラウンドをワークスペースの Git リポジトリの `refs/piweb/rounds/…` 以下にコミットし、ブランチとインデックスは変更しません。必要な場合はローカルリポジトリを自動初期化します。累積の履歴件数と保存容量に上限はありません。プロジェクトパネルから記録を停止・再開でき、以前に無効にしたワークスペースは無効のままです。停止しても過去の履歴は保持します。個別のファイル、スナップショット、プレビューのサイズ制限は引き続き適用します。
-
-## 拡張機能と自動化
-
-サイドバーのワークスペースは設定画面とは別に用意しています。スキルワークスペースでは選択中ワークスペース向けに個人／グローバル／プロジェクト範囲のスキルを一覧でき、有効・無効の切り替え、ファイルビューアーでの `SKILL.md` 閲覧、非パッケージスキルの復元可能な削除が行えます。拡張機能ワークスペースで対象ワークスペースの npm パッケージを管理し、個人／プロジェクトの適用範囲とローカル／パッケージのソースを表示します。個人のリソースは通常 `<agent dir>/skills` と `<agent dir>/extensions` にあります。信頼済みのプロジェクトは `.pi/skills`、`.pi/extensions`、`.agents/skills`、明示的に設定したリソースパスを利用できます。ワークスペースと現在のセッション向けに組み立てられたプロンプトソースは、右ドロワーのプロンプトパネルで確認できます（リソースマーケット画面は削除されています）。
-
-npm パッケージの追加、更新、削除は別ディレクトリで準備した後、有効なインストールと設定を切り替えます。準備に失敗した場合は元のインストールを保持し、コミット中に中断した場合はリソースの読み込み前に復旧します。以前のインストール世代と復旧インデックスは保持します。npm のライフサイクルスクリプトは無効ですが、読み込まれた拡張機能自体はホストプロセス内で信頼済みコードとして実行されます。
-
-自動化のタスクと実行履歴は `<agent dir>/web-automations.json` に保存します。スケジュールはエディターに表示するサーバーのタイムゾーンを使用します。同時実行は最大 4 件で、それぞれ独立したセッションを使用します。停止中に猶予期間を過ぎた予定はスキップとして記録し、起動後にまとめて再実行しません。
-
-## 使い方
-
-### インストール
+**Node.js ≥ 22.19.0** が必要です（`package.json` の `engines`）。Node 24 を推奨します。プロジェクトの変更履歴機能には Git が必要です。
 
 ```bash
 npm install -g @rexvane/piweb
 piweb
 ```
 
-登録するコマンドは `piweb` のみで、公式の `pi` CLI と競合しません。Node.js **≥ 22.19.0** が必要です。CI は 22.19.0、22.22.2、24 を対象とし、Node 24 を推奨します。自動プロキシには Node 24 または 22.21 以上が必要です。古いバージョンでは外部ツールにのみプロキシ変数を引き継ぎます。[プロキシ](#プロキシ)も参照してください。変更履歴の機能には Git が必要です。
+既定では認証付きのページが `http://127.0.0.1:30141` で開きます。ポートが使用中の場合は番号が自動的に増えます。設定でモデルプロバイダーを登録するか、既存の pi 設定を利用してください。公開パッケージが登録するのは `piweb` コマンドだけなので、公式の `pi` CLI と衝突しません。封入済みの本番ビルドが同梱されます。インストール時にライフサイクルスクリプトをスキップした場合、初回起動時に一度だけビルドしてから提供します。詳細は[インストールとビルド](docs/operations/install-and-build.md)を参照してください。
 
-公開パッケージには封印済みの本番ビルドが含まれ、通常のグローバルインストールでコンパイルは不要です。`postinstall` がビルドを準備するのは**本番用依存のみをインストールする場合**です。ソースのチェックアウト内では何も行いません。ライフサイクルスクリプトを省略した場合、最初の `piweb` 起動時に別のステージングディレクトリで一度ビルドしてからサービスを開始します。現在のハードウェアでは約 6–15 分です。詳細とタイムアウトは[インストールとビルド](docs/operations/install-and-build.md)を参照してください。
-
-### 更新
+## 使い方とリモートアクセス
 
 ```bash
-npm install -g @rexvane/piweb@latest
-```
-
-npm は既存バージョンをその場で置き換えます。事前のアンインストールは不要です。既定のタグは `latest` なので、`npm install -g @rexvane/piweb` でも同じ結果になります。ミラーの同期が遅れている場合は `--registry=https://registry.npmjs.org` を追加できます。完了後に `piweb` を再起動してください。
-
-特定のバージョンを入れる場合は `latest` をバージョン番号に置き換えます。不具合時のバージョン指定によるダウングレード、古い `latest` タグへの対処、データの復旧は[リリースとロールバック](docs/operations/release-and-rollback.md)を参照してください。
-
-**UI からの更新**：起動するたびに PiWeb 自身の更新をバックグラウンドで確認します。新しいバージョンがある場合はターミナルに `[更新] 有新版本：…` と表示し、ページ右下にも通知します。通知は起動ごとに 1 回です。通知または設定 → 一般の「更新」からその場でインストールできます。案内に従って `piweb` を再起動してください。プロセスは自動再起動しません。
-
-- PiWeb のリリースには検証済みの pi エンジンを同梱します。pi の自動更新通知は表示せず、設定から手動確認できます。
-- Windows では実行中の npm インストール先を置き換えられないため、コピー可能なコマンドを表示します。`piweb` を停止してから上記コマンドを実行してください。
-- 起動時のネットワーク確認は `PI_WEB_UPDATE_CHECK=0` で省略できます。設定からの手動確認は利用可能です。
-
-### アンインストール
-
-```bash
-npm uninstall -g @rexvane/piweb
-```
-
-削除するのは PiWeb 本体のみです。pi のデータは agent ディレクトリ（既定は `~/.pi/agent/`、または `PI_CODING_AGENT_DIR`）に保持します。ホームディレクトリからインポートした他ツールの履歴も変更しません。[データとプライバシー](docs/operations/data-and-privacy.md)を参照してください。
-
-### 起動
-
-```bash
-piweb                    # http://127.0.0.1:30141（使用中ならポートを自動変更）
-piweb -p 30143 --no-open # ポート指定、ブラウザーを自動で開かない
-piweb -H 0.0.0.0         # メインサーバーも LAN に公開（認証は有効）
+piweb                    # http://127.0.0.1:30141
+piweb -p 30143 --no-open # ポートを指定し、ブラウザーを自動で開かない
+piweb -H 0.0.0.0         # メインサーバーも LAN にバインドする（認証は有効のまま）
 ```
 
 | オプション | 説明 |
 | --- | --- |
-| `-p, --port <port>` | 待受ポート。既定は 30141、環境変数は `PORT` |
-| `-H, --hostname <host>` | バインド先。既定は 127.0.0.1、環境変数は `PI_WEB_HOSTNAME` |
-| `--dev` | 開発モード |
+| `-p, --port <port>` | 待ち受けポート（既定 30141、環境変数 `PORT`） |
+| `-H, --hostname <host>` | バインドアドレス（既定 127.0.0.1、環境変数 `PI_WEB_HOSTNAME`） |
+| `--public-url <url>` | ログインリンク用の公開アドレス。Host 許可リストにも追加されます（環境変数 `PI_WEB_PUBLIC_URL`） |
+| `--dev` | 開発モード（ループバックのみ） |
 | `--no-open` | ブラウザーを自動で開かない |
-| `--public-url <url>` | ログインリンク用の外部アドレス。Host 許可リストにも自動追加。環境変数は `PI_WEB_PUBLIC_URL` |
+| `-h, --help` | 使い方を表示 |
 
-すべての起動方法で認証が既定で有効です（`PI_WEB_AUTH=1`）。ホスト上では、ランチャーが非公開のログイン認証情報を使ってブラウザーを開きます。認証情報はターミナルに出力しません。再度 `piweb` を実行すると既存のインスタンスを開いてログインできます。別のデバイスでは更新される接続 QR コードを使います。いずれも認証情報を、有効期間 30 日の署名付き HttpOnly Cookie に交換します。全デバイスからログアウトすると、既存の Cookie とペアリングコードが無効になります。`PI_WEB_PASSWORD` は廃止されており、設定すると起動を拒否します。
+ホスト上では、ランチャーが非公開のログイン資格情報でブラウザーを開き、その値を端末に出力しません。もう一度 `piweb` を実行すると、既存のインスタンスを開いてサインインします。
 
-有効な起動認証情報を持つスクリプトは、`GET /?token=…` で Cookie に交換し、その Cookie を API リクエストに送信します。API の URL や `Authorization` ヘッダーに起動トークンを指定する方法は利用できず、Basic Auth へのフォールバックもありません。
+更新は `npm install -g @rexvane/piweb@latest` のあと、`piweb` を再起動してください。アンインストールは `npm uninstall -g @rexvane/piweb` です。agent のデータと取り込んだツールの履歴はそのまま残ります。ダウングレードは[リリースとロールバック](docs/operations/release-and-rollback.md)を参照してください。
 
-### プロキシ
+スマートフォンや別のデバイスから接続するには、**設定 → リモートアクセス** を開き、QR コードを読み取るかリンクをコピーします。同じコードは同一 Wi-Fi でも、ローカルネットワークの外からでも使えます。クライアント側に追加のソフトは不要です。コードは 256 ビットのワンタイム資格情報で、有効期限は 120 秒です。本番起動では `0.0.0.0:30142` のモバイルレイアウト用プロキシと、Cloudflare のクイックトンネル（`cloudflared`）を準備します。QR コードはトンネルの HTTPS アドレスを使い、そのアドレスに到達できるようになってから表示されます。ホストの `127.0.0.1:30141` はデスクトップページを提供します。開発モードはローカルのままです。
 
-`HTTP_PROXY` / `HTTPS_PROXY` を自動で利用します。未設定なら、現在のユーザーの Windows HTTP(S) システムプロキシを読み取ります。設定 → 一般 → ネットワークプロキシ、または agent ディレクトリの `settings.json` の `httpProxy` で上書きできます。空にすると自動検出へ戻り、プロキシ未設定なら直接接続します。ローカルアドレスは既定で迂回し、`NO_PROXY` で変更できます。Windows のホスト名完全一致とドメイン接尾辞の例外も引き継ぎます。PAC/WPAD スクリプトや、`<local>`、`192.168.*` などの Windows 専用パターンは評価しません。プロキシ URL または `NO_PROXY` を使用してください。変更後は再起動してください。Node.js 24 または 22.21 以上が必要で、古いバージョンではこの設定を無視し、ランチャーに理由を表示します。`bash` 内の curl / git はプロキシ変数を引き継ぎます。
+LAN への直接 HTTP は暗号化されません。QR アドレスの TLS は Cloudflare で終端されます。再起動後はトンネルアドレスが変わることがあります。
 
-### 別のデバイスから接続
+### セキュリティに関する注意
 
-**設定 → リモートアクセス** を開き、接続 QR コードをスキャンします。同じ Wi-Fi でも外部ネットワークでも同じコードを利用します。接続の手動切り替えやネットワーク選択は不要で、接続先デバイスへの追加ソフトウェアも必要ありません。QR コードとコピー用リンクは共通の 256 ビット乱数の認証情報を使い、有効期間は 120 秒、利用は 1 回限りです。期限切れまたは使用後に自動更新し、パネルを開き直しても有効なコードは再利用します。
+- `piweb` ランチャーが受け入れるどの起動方法でも、認証は既定で有効です（`PI_WEB_AUTH=1`）。
+- `PI_WEB_AUTH=0` は、ループバックへのバインドで、かつ `--public-url` / `PI_WEB_PUBLIC_URL` がない場合にだけ許可されます。それ以外はランチャーが起動を拒否します。認証を切ると、組み込みの LAN プロキシと Cloudflare トンネルは準備されません。
+- 開発モード（`--dev` / `PI_WEB_DEV=1`）はループバックのみです。Next.js の開発用エンドポイントは起動トークンでは保護されません。
+- 起動トークンは `GET /?token=…` で HMAC 署名付きの HttpOnly セッション Cookie（30 日、HTTPS では `Secure`）に交換されます。API パスや `Authorization` ヘッダーでは受け付けられません。パスワードログインはありません。`PI_WEB_PASSWORD` を設定するとランチャーは起動を拒否します。
+- すべてのデバイスからサインアウトすると、既存の Cookie とペアリングコードは無効になります。
+- 独自のリバースプロキシやトンネルを使う場合は、`127.0.0.1:30142`（モバイルレイアウト）または `127.0.0.1:30141`（デスクトップ）を向き先にし、認証を有効のまま、外部ホスト名を許可リストに追加してください（`PI_WEB_TRUSTED_HOSTS=<your-domain>` または `--public-url`）。追加しないと 403 `untrusted host` が返ります。`PIWEB_REMOTE_LAN=0` は、組み込みプロキシとクイックトンネルの自動準備を無効にします。
 
-本番起動時はローカルプロキシ（`0.0.0.0:30142`）と Cloudflare Quick Tunnel（`cloudflared`）を自動準備します。QR コードはトンネルの HTTPS アドレスを使い、疎通を確認してから表示します。LAN 専用アドレスへ自動で切り替えることはありません。短い中断では同じアドレスを維持し、接続不能が続く場合はトンネルを再作成します。開発モードはローカルのみです。
+## 設定
 
-ローカルプロキシがモバイルレイアウトを提供し、ホストの `127.0.0.1:30141` はデスクトップ画面を提供します。トンネルには次の制約があります。
+値はプロセスの環境変数から読みます。CLI のフラグは対応する変数より優先されます。OS のパス規約を含む保守用の一覧は[環境変数リファレンス](docs/operations/environment.md)にあります。
 
-- 再起動や再作成でアドレスが変わる場合があります。DNS と疎通の確認が終わるまで QR コードは表示しません。
-- QR アドレスは HTTPS を使用し、TLS は Cloudflare で終端します。LAN 内の HTTP 直接接続は暗号化されません。同じ Wi-Fi でコードを使う場合も公開トンネルへの接続が必要です。
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `PORT` | `30141` | メインの待ち受けポート。`piweb -p` が優先され、使用中ならランチャーが `+1` して再試行します。 |
+| `PI_WEB_HOSTNAME` | `127.0.0.1` | メインのバインドアドレス（`-H` と同じ）。ループバック以外でも認証は有効のままです。 |
+| `PI_WEB_AUTH` | `1` | 認証スイッチ。`0` はループバックバインドかつ公開 URL がない場合にだけ受け付けられます。 |
+| `PI_WEB_PUBLIC_URL` | 未設定 | 公開 URL（`--public-url` と同じ）。ホスト名は Host 許可リストに追加されます。 |
+| `PI_WEB_TRUSTED_HOSTS` | 空 | 独自のリバースプロキシやネームドトンネル用の Host 許可リスト（カンマ区切り）。 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb が共有する agent ディレクトリ。唯一のデータルートではありません。[データとプライバシー](docs/operations/data-and-privacy.md) を参照してください。 |
+| `PIWEB_REMOTE_LAN` | 有効 | `0` / `false` / `off` / `no` で、LAN プロキシと Cloudflare クイックトンネルの自動準備を無効にします。 |
+| `PIWEB_REMOTE_LAN_PORT` | `30142` | 組み込み LAN / モバイルプロキシの待ち受けポート。 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 未設定 | モデルリクエスト用のプロキシ。設定 → 一般 → ネットワークプロキシ（`httpProxy`）がこれを上書きします。 |
+| `PI_WEB_UPDATE_CHECK` | `1` | `0` で起動時の更新確認をスキップします。設定の「更新を確認」は引き続き使えます。 |
+| `PI_OFFLINE` | 未設定 | `1` / `true` / `yes` で、更新確認など PiWeb / SDK のネットワーク動作をスキップします。 |
 
-組み込み LAN プロキシの既定の待受先は `0.0.0.0:30142` です。`PIWEB_REMOTE_LAN=0` で LAN プロキシとトンネルの自動準備を停止できます。`PIWEB_REMOTE_LAN_PORT` はポート、`PIWEB_REMOTE_LAN_BIND` はバインド先を変更します。`-H 0.0.0.0` はメインサーバーも LAN で待ち受けます。HTML への挿入には上限があり、`PIWEB_MOBILE_PROXY_MAX_HTML_BYTES`（既定 16 MiB）または `PIWEB_MOBILE_PROXY_TIMEOUT_MS`（30 秒）を超えると挿入せずに転送します。デコード後に `PIWEB_MOBILE_PROXY_MAX_DECODED_BYTES`（64 MiB）を超えるレスポンスは拒否します。詳細は[環境変数一覧](docs/operations/environment.md)を参照してください。
+<details>
+<summary>すべての環境変数</summary>
 
-`cloudflared` は `PIWEB_CLOUDFLARED` → `<agent dir>/web-bin/cloudflared{,.exe}`（PiWeb が管理）→ `PATH` の順で探します。見つからない場合はパネルに表示します。
+以下は `src/`、`scripts/`、`bin/` で見つかった PiWeb 固有の変数です。内部用のプロセス変数はデプロイで設定しないでください。
 
-> リモートアクセスには認証が必要で、既定で有効です。トンネルのホスト名は稼働後に Host 許可リストへ追加し、停止時に削除します。API パスと `Authorization` ヘッダーでは起動トークンを受け付けません。
+#### サービスとネットワーク
 
-### 独自のリバースプロキシやトンネル
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `PORT` | `30141` | メインの待ち受けポート。`piweb -p` が優先され、使用中ならランチャーが `+1` して再試行します。 |
+| `PI_WEB_HOSTNAME` | `127.0.0.1` | メインのバインドアドレス（`-H` / `--hostname` と同じ）。ループバック以外でも認証は有効のままです。 |
+| `PI_WEB_PUBLIC_URL` | 未設定 | 公開 URL（`--public-url` と同じ）。ホスト名は Host 許可リストに追加され、ログインページを開くときにも使われます。 |
+| `PI_WEB_TRUSTED_HOSTS` | 空 | カンマ区切りの Host 許可リスト。独自のリバースプロキシやネームドトンネルは必ず列挙してください。でないと 403 `untrusted host` が返ります。 |
+| `PI_WEB_ALLOWED_HOSTS` | 空 | 上流の `agegr/pi-web` の旧変数名。`PI_WEB_TRUSTED_HOSTS` と結合されます。 |
+| `PI_WEB_AUTH` | `1` | 認証スイッチ。`0` はループバックバインドかつ公開 URL がない場合にだけ受け付けられます。認証を切ると LAN / トンネル入口は準備されません。 |
+| `PI_WEB_UPDATE_CHECK` | `1` | `0` で起動時の一回限りの更新確認をスキップします。**設定 → 更新を確認** は引き続き使えます。 |
+| `PI_WEB_NO_OPEN` | 未設定 | `1` でブラウザーを自動で開きません（`--no-open` と同じ）。 |
+| `PI_WEB_DEV` | 未設定 | `1` で開発モードで起動します（`--dev` と同じ）。開発モードはループバックのみです。 |
+| `PI_WEB_ROOT` | インストールルート / `cwd` | ランチャーとリリーススクリプトが使うアプリケーションルートの上書き。通常のデプロイでは変更しないでください。 |
+| `PIWEB_REMOTE_LAN` | 有効 | `0` / `false` / `off` / `no` で、組み込み LAN プロキシと Cloudflare クイックトンネルの自動準備を無効にします。 |
+| `PIWEB_REMOTE_LAN_PORT` | `30142` | 組み込み LAN / モバイルプロキシの待ち受けポート。 |
+| `PIWEB_REMOTE_LAN_BIND` | `0.0.0.0` | 組み込み LAN / モバイルプロキシのバインドアドレス。特定の NIC だけに縛る場合など。 |
+| `PIWEB_CLOUDFLARED` | 未設定 | `cloudflared` 実行ファイルのパス。検索順：この変数 → `<agent ディレクトリ>/web-bin/cloudflared{,.exe}` → `PATH`。 |
+| `PIWEB_SKIP_WARMUP` | 未設定 | `1` で本番の初回ページウォームアップをスキップします（障害切り分け用。初回表示は遅くなります）。 |
 
-Caddy、nginx、名前付き Cloudflare Tunnel、VPN なども利用できます。
+#### プロキシ
 
-- モバイルレイアウトを使う場合は **`127.0.0.1:30142`** に転送してください。デスクトップのみなら `127.0.0.1:30141` を利用できます。
-- 既定の認証を有効にしてください。`PI_WEB_AUTH=0` は自動リモートアクセスを無効にし、ループバックのみにバインドし、公開 URL を設定していない場合に限り許可します。
-- 外部のホスト名がそのままバックエンドへ届くため、許可リストへの追加が必要です。未登録の場合は 403 `untrusted host` を返します。
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `HTTP_PROXY` / `HTTPS_PROXY`（小文字も可） | 未設定 | モデルリクエスト用のプロキシ。未設定なら、有効になっているユーザー単位の Windows システムプロキシを使います。 |
+| `NO_PROXY` / `no_proxy` | ローカルアドレスは迂回 | プロキシの迂回リスト。Windows の完全一致ホストとドメインサフィックス例外は継承されます。PAC/WPAD や `<local>`、`192.168.*` などの Windows 固有パターンは評価されません。 |
+| `NODE_USE_ENV_PROXY` | 対応していればランチャーが `1` を設定 | Node の `fetch` / `http` にプロキシ変数を認識させます。Node 24+ または 22.21+ で対応。ユーザーが明示した値は保持されます。 |
 
-  ```bash
-  PI_WEB_TRUSTED_HOSTS=<your-domain> piweb
-  ```
+設定 → 一般 → ネットワークプロキシの値（`settings.json` の `httpProxy`）は環境変数とシステムプロキシより優先されます。空にすると自動検出に戻ります。変更後は `piweb` を再起動してください。
 
-- `--public-url https://your-address/` で外部アドレスを指定できます。そのホスト名を許可リストへ自動追加し、ランチャーのログインページにも利用します。ログイン認証情報はログに出力しません。
+#### 認証とシークレット
 
-> 独自のネットワーク入口を管理する場合は、`PIWEB_REMOTE_LAN=0` で組み込み LAN プロキシと Quick Tunnel の自動準備を停止できます。これはデプロイ設定で、接続パネルのネットワーク切り替えではありません。
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `PI_WEB_SECRET_FILE` | `<agent ディレクトリ>/web-secret` | Cookie とペアリングコードの HMAC 署名鍵ファイル。 |
+| `PI_WEB_SECRET` | 未設定（鍵ファイルを読む） | 署名鍵（**32 バイトの base64url エンコード**）。設定するとファイルは読みません。不正な値はエラーになり、黙って鍵を回すことはありません。 |
+| `PI_WEB_PASSWORD` | 削除済み | パスワードログインは廃止されました。この変数が設定されていると、ランチャーは**起動を拒否**します。 |
 
-## 開発と検証
+#### データ、ツール、保持期間
 
-検証には別のチェックアウトかステージングディレクトリを使用してください。`npm run build` は `.next` に書き込むため、稼働中のインスタンスのディレクトリでは実行しないでください。`npm ci` で開発依存を入れてから実行します。
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb が共有する agent ディレクトリ：設定、モデルと認証情報、セッション、アップロード、自動化。唯一のデータルートではありません。[データとプライバシー](docs/operations/data-and-privacy.md) を参照してください。 |
+| `PI_WEB_EDITOR` | `code` | 「エディターで開く」に使うローカルのエディターコマンド。ホスト上の操作者にだけ意味があります。 |
+| `PI_WEB_UPLOAD_RETENTION` | `30`（日） | `web-uploads` 内の未参照ファイルを掃除する閾値。`0` で掃除を無効にします。掃除の前に `~/.agents/backups/` へコピーし、`INDEX.md` に記録します。 |
+| `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 有効 | セッション削除時に、そのセッションだけが参照するアップロードも掃除します（先にバックアップしてから削除）。`0` で残します。 |
+| `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY` | オフ | `1` でモデル検出がプライベートネットワークアドレスを調べることを許可します（ローカル推論向け）。既定はオフで、SSRF を抑えます。 |
+| `PI_OFFLINE` | 未設定 | `1` / `true` / `yes` で、更新確認、gh の識別情報照会、インストールテレメトリなど PiWeb / SDK のネットワーク動作をスキップします。OS レベルのオフラインモードではありません。 |
+| `PI_TELEMETRY` | 未設定 | Pi SDK のインストールテレメトリ（`1` / `true` / `yes` でオン、`0` / `false` / `no` でオフ）。未設定時は SDK の `enableInstallTelemetry`（既定はオン）に従います。PiWeb のソース自体はこの変数を読まず、同梱 SDK が消費します。 |
 
-```bash
-npm run typecheck
-npm run lint
-npm run test
-npm run build
-npm run verify:package
-```
+#### ビルドとリリース
 
-`verify:package` は本番ビルドをパッケージ化し、空のインストール先に展開して、一時データで起動します。CI は固定された lint ツールチェーン、Linux/Node 24 での重大度 high 以上の依存脆弱性監査、SDK の検索ツール準備、想定外のスキップ確認、`PIWEB_COVERAGE=1` によるカバレッジ測定も行います。公開トンネルの実測は別途明示的に有効にします。本番ビルドは検証マシンで約 6–7 分、並行負荷時の `next build --webpack` は 370 秒でした。ビルドのタイムアウトには少なくとも 15 分、完全な `check` には 30–45 分を確保してください。`npm run check` はソーステスト、インストール済みパッケージ、ブラウザーの検証を分けて報告します。[ドキュメント一覧](docs/README.md)と[インストールとビルド](docs/operations/install-and-build.md)も参照してください。
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `PIWEB_BUILD_DIR` | `.next-releases/active.json` から決定 | `.next` または `.next-releases/<安全な id>` のみ受け付けます。現在のアクティブなリリースと衝突すると起動しません。 |
+| `PIWEB_MAX_RETAINED_RELEASES` | `10`（範囲 2–100） | 成功したリリースビルドの保持上限。上限に達すると新しいビルドを拒否し、古いビルドは自動削除しません。 |
+| `PIWEB_MAX_FAILED_RELEASES` | `3`（範囲 1–100） | 未完了または失敗したリリースディレクトリの上限。同様に新しいビルドを拒否します。 |
+| `PIWEB_SKIP_INSTALL_BUILD` | 未設定 | `1` で本番インストール時の初回自己修復ビルドをスキップします。封入済みビルドを既に用意しているデプロイ向けです。 |
+| `PIWEB_BUILD_VERBOSE` | 未設定 | `1` / `true` / `yes` でビルド出力をすべて表示します。 |
 
-## 運用とデプロイ
+#### 任意の制限
 
-- [インストールとビルド](docs/operations/install-and-build.md)：インストール構成、`postinstall`、初回起動時の修復ビルド、ビルド時間、タイムアウト。
-- [環境変数一覧](docs/operations/environment.md)：デプロイ設定、2026-11-15 の強化作業で追加した制限スイッチ、内部プロセス変数。
-- [データ、プライバシー、保持期間](docs/operations/data-and-privacy.md)：すべてのデータルート、デプロイの分離、テレメトリー、削除と復元コピーの扱い。
-- [リリースとロールバック](docs/operations/release-and-rollback.md)：特定バージョンへのダウングレード、UI 更新失敗時の対応、`.next-releases` の復旧、データの互換性。
+既定ではオフ、または緩い上限です。設定するまで従来の動作は変わりません。
+
+| 変数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `PIWEB_FS_STRICT_WORKSPACES` | オフ | `1` / `true` / `yes` で、認証済みファイル API を登録済みワークスペースまたは `PIWEB_FS_ALLOWED_ROOTS` に制限します。 |
+| `PIWEB_FS_ALLOWED_ROOTS` | 空 | 厳格モードで追加許可するルート。Windows は `;`、POSIX は `:` で区切ります。 |
+| `PIWEB_MAX_SESSION_SUBSCRIBERS` | 無制限 | セッションあたりの SSE 購読者の上限（正の整数）。超過分はスナップショットモードになります。 |
+| `PIWEB_SSE_MAX_BUFFERED_BYTES` | `4MiB` | SSE 接続ごとの未読バッファ上限。遅いクライアントは切断され、再接続してスナップショットを取る想定です。 |
+| `PIWEB_SHUTDOWN_TIMEOUT_MS` | `8000` | SIGINT / SIGTERM / SIGHUP 後にシャットダウンフックを待つ予算。2 回目のシグナルですぐ終了します。 |
+| `PIWEB_GRACEFUL_STOP_TIMEOUT_MS` | `10000` | ランチャーが起動した子プロセスの終了を待つ時間。タイムアウト後にプロセスツリーを終了します。 |
+| `PIWEB_AGENT_MAX_STEPS` | 無制限 | 1 ターンあたりの最大モデルステップ数。 |
+| `PIWEB_AGENT_MAX_DURATION_MS` | 無制限 | 1 ターンの最大実行時間（ミリ秒）。 |
+| `PIWEB_AGENT_TOKEN_BUDGET` | 無制限 | 1 ターンの累計トークン上限（input + output + cache）。 |
+| `PIWEB_MOBILE_PROXY_MAX_HTML_BYTES` | `16MiB` | モバイルプロキシの HTML 注入バッファ上限。超えると注入せずストリーム転送します。 |
+| `PIWEB_MOBILE_PROXY_MAX_DECODED_BYTES` | `64MiB` | モバイルプロキシの展開後ボディ上限。これを超えると 502 を返します。 |
+| `PIWEB_MOBILE_PROXY_TIMEOUT_MS` | `30000` | モバイルプロキシが上流の HTML 応答を待つ時間。タイムアウトすると注入せずストリーム転送します。 |
+| `PIWEB_AGENT_CONFIG_CACHE_MAX` | `512` | agent 設定キャッシュの件数上限。 |
+| `PIWEB_AGENT_CONFIG_CACHE_TTL_MS` | `1800000`（30 分） | 失敗または欠落したキャッシュ項目の TTL。 |
+| `PIWEB_PI_CACHE_MAX` | `512` | SettingsManager / リソースローダー / パッケージマネージャーのキャッシュ件数上限。 |
+
+#### テスト、CI、内部変数
+
+デプロイでは使わないでください。`CI`、`PIWEB_COVERAGE`、`PIWEB_COVERAGE_REPORT_DIR`、`PIWEB_TEST_REPORT`、`PIWEB_TEST_TUNNEL`、`PIWEB_LINT_SKIP_INSTALL` はテストと CI 専用です。
+
+ランチャー、ロック、テストは次も注入します：`PI_WEB_LAUNCH_TOKEN`（起動のたびに作り直す、本機用ワンタイムログイントークン）、`PIWEB_PORT`（子プロセスに渡す実際のポート）、`PIWEB_HTTP_GUARD`、`PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`、`PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`、`PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_DEV_ASSET_ID`、`PIWEB_DISABLE_GRACEFUL_SHUTDOWN`、`PIWEB_DEBUG_PROMPT`、`PIWEB_BROWSER_URL`（Windows でホストのブラウザーを開くときの一時 URL）。`PYTHONUTF8` / `PYTHONIOENCODING`、`NODE_OPTIONS`、`NEXT_PHASE`、`NEXT_RUNTIME`、`NEXT_TELEMETRY_DISABLED` はプロセスまたは Next.js の規約です（ビルドスクリプトは Next のテレメトリを無効にします）。
+
+PiWeb は `HOME`、`USERPROFILE`、`TEMP` / `TMP`、`APPDATA`、`LOCALAPPDATA` などの OS パス変数と、該当するインポート元のための任意の `WORKBUDDY_CONFIG_DIR` と `QWEN_HOME` も読みます。
+
+</details>
+
+## 仕組み
+
+PiWeb は、公式の `@earendil-works/pi-*` SDK を包む Next.js 16 + React 19 の TypeScript アプリです。`piweb` コマンド（`bin/piweb.js` → `scripts/launcher.mjs`）は空きポートを選び、ワンタイムの起動トークンを生成し、Next.js サーバーを起動して、ローカルのログイン URL を開きます。サーバーはそのトークンを HMAC 署名付きセッション Cookie に交換し、本番（認証がオンのとき）では LAN 入口と Cloudflare クイックトンネルを準備します。
+
+PiWeb は、別途インストールした `pi` CLI を置き換えません。両者は**同じ agent ディレクトリ**（既定は `~/.pi/agent`、または `PI_CODING_AGENT_DIR`）を共有します。このディレクトリが主な保存先ですが、唯一のデータルートではありません。セッションのインポートはホームディレクトリにある他ツールの履歴を読み、グローバルスキルは `~/.agents/skills` に置かれる場合があります。詳細は[データ、プライバシー、保持期間](docs/operations/data-and-privacy.md)を参照してください。
+
+## ドキュメント
+
+- [インストールとビルド](docs/operations/install-and-build.md)
+- [環境変数リファレンス](docs/operations/environment.md)
+- [データ、プライバシー、保持期間](docs/operations/data-and-privacy.md)
+- [リリース、ダウングレード、ロールバック](docs/operations/release-and-rollback.md)
+- [拡張機能の Web UI](docs/extension-web-ui.md) と[拡張機能の例](examples/piweb-extensions/README.md)
+- ドキュメント案内：[docs/README.md](docs/README.md)
+
+## 貢献
+
+Issue とプルリクエストは [github.com/RexVane/PiWeb](https://github.com/RexVane/PiWeb) で受け付けています。開発環境、プロジェクト構成、PR 前の確認、不具合の報告方法は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ## 謝辞
 
-Ripple と Dawn の配色を提供してくださった [@webkubor](https://github.com/webkubor) に感謝します。
+Ripple と Dawn の配色を提供してくださった [@webkubor](https://github.com/webkubor) に感謝します。上流プロジェクトと参照元は [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) にまとめています。依存関係のライセンスは [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) を参照してください。
 
 ## ライセンス
 
