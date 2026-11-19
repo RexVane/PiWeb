@@ -422,9 +422,11 @@ html[data-pw-background] *::after {
 
 	.popover {
 		max-width: calc(100vw - 16px) !important;
-		max-height: 420px !important;
 		overflow-y: auto !important;
 		-webkit-overflow-scrolling: touch;
+	}
+	.popover:not(.pw-select-popover) {
+		max-height: 420px !important;
 	}
 	.popover.pw-context-popover {
 		max-width: calc(100vw - 96px) !important;
@@ -513,7 +515,7 @@ html[data-pw-background] *::after {
 		textarea {
 			max-height: min(132px, 26dvh) !important;
 		}
-		.popover {
+		.popover:not(.pw-select-popover) {
 			max-height: min(60dvh, 420px) !important;
 		}
 		.settings-dialog {

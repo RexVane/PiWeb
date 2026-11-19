@@ -1,9 +1,19 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IconChevronDown14, IconCheckOutline14 } from "@/components/icons";
 import { useSelectKeyboard } from "@/hooks/useSelectKeyboard";
+
+const SELECT_OPEN_EVENT = "piweb:settings-select-open";
+interface SelectPosition {
+	left: number;
+	top?: number;
+	bottom?: number;
+	maxHeight: number;
+	minWidth: number;
+	maxWidth: number;
+}
 
 /** 通用下选芯片：自定义深色圆角浮层，替代原生 select */
 export function SelectOption({
@@ -22,38 +32,84 @@ export function SelectOption({
 	disabled?: boolean;
 }) {
 	const [open, setOpen] = useState(false);
-	const [rect, setRect] = useState<{ left: number; top: number; bottom: number } | null>(null);
+	const [position, setPosition] = useState<SelectPosition | null>(null);
 	const anchorRef = useRef<HTMLButtonElement>(null);
 	const popRef = useRef<HTMLDivElement>(null);
 	const listId = useId();
-	const keyboard = useSelectKeyboard({ value, options, open, setOpen, disabled, onChange, triggerRef: anchorRef });
+	// 点击和键盘共用同一条打开路径；关闭旧菜单不抢回焦点。
+	const setMenuOpen = useCallback<typeof setOpen>((next) => {
+		if (next === true) document.dispatchEvent(new CustomEvent(SELECT_OPEN_EVENT, { detail: listId }));
+		setOpen(next);
+	}, [listId]);
+	const keyboard = useSelectKeyboard({ value, options, open, setOpen: setMenuOpen, disabled, onChange, triggerRef: anchorRef });
 	useEffect(() => {
-		if (!open) return;
-		// 弹层挂在 body（fixed 定位）：设置对话框 overflow-hidden 会裁掉 absolute 弹层
-		const anchor = anchorRef.current?.getBoundingClientRect();
-		if (anchor) setRect({ left: anchor.left, top: anchor.bottom + 6, bottom: anchor.top - 6 });
-		const h = (e: MouseEvent) => {
-			if (!anchorRef.current?.contains(e.target as Node) && !popRef.current?.contains(e.target as Node)) setOpen(false);
+		const closeOther = (event: Event) => {
+			if ((event as CustomEvent<string>).detail !== listId) setOpen(false);
 		};
-		document.addEventListener("mousedown", h);
-		return () => document.removeEventListener("mousedown", h);
-	}, [open]);
+		document.addEventListener(SELECT_OPEN_EVENT, closeOther);
+		return () => document.removeEventListener(SELECT_OPEN_EVENT, closeOther);
+	}, [listId]);
+
+	const measure = useCallback(() => {
+		const anchor = anchorRef.current?.getBoundingClientRect();
+		if (!anchor) return;
+		const viewport = window.visualViewport;
+		const margin = 8;
+		const viewportTop = (viewport?.offsetTop ?? 0) + margin;
+		const viewportBottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight) - margin;
+		const viewportLeft = (viewport?.offsetLeft ?? 0) + margin;
+		const viewportRight = (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth) - margin;
+		const maxWidth = Math.max(0, viewportRight - viewportLeft);
+		const minWidth = Math.min(width ?? 140, maxWidth);
+		// offsetWidth 不受入场动画 scale 影响；初次渲染后、内容尺寸改变时再测真实宽度。
+		const menuWidth = Math.min(popRef.current?.offsetWidth || minWidth, maxWidth);
+		const wanted = Math.min(280, popRef.current?.scrollHeight || options.length * 37 + 14);
+		const top = Math.max(viewportTop, Math.min(anchor.bottom + 6, viewportBottom));
+		const aboveEnd = Math.max(viewportTop, Math.min(anchor.top - 6, viewportBottom));
+		const below = Math.max(0, viewportBottom - top);
+		const above = Math.max(0, aboveEnd - viewportTop);
+		const placement = below < wanted && above > below
+			? { bottom: window.innerHeight - aboveEnd, maxHeight: Math.min(280, above) }
+			: { top, maxHeight: Math.min(280, below) };
+		const next = { left: Math.max(viewportLeft, Math.min(anchor.left, viewportRight - menuWidth)), ...placement, minWidth, maxWidth };
+		setPosition((current) => current && current.left === next.left && current.top === next.top && current.bottom === next.bottom
+			&& current.maxHeight === next.maxHeight && current.minWidth === minWidth && current.maxWidth === maxWidth ? current : next);
+	}, [options.length, width]);
+	// 浮层挂 body，不能用 absolute；初次挂载后补测实际宽度，避免长选项越出右侧。
+	useLayoutEffect(() => { if (open) measure(); });
+	const positioned = position !== null;
+	useLayoutEffect(() => {
+		if (!open) return;
+		const outside = (event: Event) => {
+			if (!anchorRef.current?.contains(event.target as Node) && !popRef.current?.contains(event.target as Node)) setOpen(false);
+		};
+		const scroll = (event: Event) => {
+			if (event.target instanceof Node && popRef.current?.contains(event.target)) return;
+			measure();
+		};
+		document.addEventListener("pointerdown", outside);
+		document.addEventListener("mousedown", outside);
+		window.addEventListener("scroll", scroll, true); // 捕获设置面板的非冒泡 scroll
+		window.addEventListener("resize", measure);
+		window.visualViewport?.addEventListener("resize", measure);
+		window.visualViewport?.addEventListener("scroll", measure);
+		const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+		if (anchorRef.current) observer?.observe(anchorRef.current);
+		if (popRef.current) observer?.observe(popRef.current);
+		return () => {
+			document.removeEventListener("pointerdown", outside);
+			document.removeEventListener("mousedown", outside);
+			window.removeEventListener("scroll", scroll, true);
+			window.removeEventListener("resize", measure);
+			window.visualViewport?.removeEventListener("resize", measure);
+			window.visualViewport?.removeEventListener("scroll", measure);
+			observer?.disconnect();
+		};
+	}, [open, measure, positioned]);
 	useEffect(() => {
 		if (disabled) setOpen(false);
 	}, [disabled]);
 	const current = options.find((o) => o.value === value);
-	// 下方放不下（按每项约 37px 估高，封顶 280）且上方更宽裕时向上翻转，并把高度限制在可用空间内。
-	// 以前只把 top 钳到窗口底部上方 40px，靠近底部时只露出第一项，其余落到屏幕外
-	const placement = (() => {
-		if (!rect || typeof window === "undefined") return null;
-		const margin = 8;
-		const wanted = Math.min(280, options.length * 37 + 12);
-		const below = window.innerHeight - rect.top - margin;
-		const above = rect.bottom - margin;
-		return below < wanted && above > below
-			? { bottom: window.innerHeight - rect.bottom, maxHeight: Math.min(280, above) }
-			: { top: rect.top, maxHeight: Math.min(280, Math.max(below, 80)) };
-	})();
 	return (
 		<div className="relative" onKeyDown={keyboard.onKeyDown}>
 			<button ref={anchorRef} type="button" className="select-chip" data-open={open} disabled={disabled} aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => open ? keyboard.closeMenu() : keyboard.openMenu()}>
@@ -65,16 +121,15 @@ export function SelectOption({
 					<IconChevronDown14 size={14} />
 				</span>
 			</button>
-			{open && !disabled && rect && placement && createPortal(
+			{open && !disabled && position && createPortal(
 				<div
 					id={listId}
 					ref={popRef}
 					role="listbox"
 					data-dialog-owner={anchorRef.current?.closest<HTMLElement>("[data-dialog-root]")?.dataset.dialogRoot}
-					className="popover fixed z-[130] p-1.5 shadow-xl"
-					data-placement={"bottom" in placement ? "top" : "bottom"}
-					// 左右都对齐 chip 左缘
-					style={{ left: rect.left, ...placement, minWidth: width ?? 140, width: "max-content", overflowY: "auto" }}
+					className="popover pw-select-popover fixed z-[130] p-1.5 shadow-xl"
+					data-placement={position.bottom !== undefined ? "top" : "bottom"}
+					style={{ ...position, width: "max-content", boxSizing: "border-box", overflowY: "auto" }}
 				>
 					{options.map((o, index) => {
 						const selected = o.value === value;
