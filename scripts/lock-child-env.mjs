@@ -7,5 +7,9 @@ export function lockChildEnvironment(env, file = env.PIWEB_PROCESS_LOCK_FILE ?? 
 	// name the build machine's source. The launcher supplies the installed root.
 	const preload = `--import=${pathToFileURL(path.resolve(env.PI_WEB_ROOT ?? process.cwd(), "scripts", "lock-child.mjs")).href}`;
 	const options = env.NODE_OPTIONS ?? "";
-	return { ...env, PIWEB_PROCESS_LOCK_FILE: file, PIWEB_PROCESS_LOCK_TOKEN: token, NODE_OPTIONS: options.includes(preload) ? options : [options, preload].filter(Boolean).join(" ") };
+	const child = { ...env, PIWEB_PROCESS_LOCK_FILE: file, PIWEB_PROCESS_LOCK_TOKEN: token, NODE_OPTIONS: options.includes(preload) ? options : [options, preload].filter(Boolean).join(" ") };
+	// A child spawned deliberately by a tracked process is a new tracking root, not
+	// an inheriting descendant: remove the marker so its preload registers it.
+	delete child.PIWEB_PROCESS_LOCK_TRACKED;
+	return child;
 }
