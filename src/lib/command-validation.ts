@@ -19,6 +19,7 @@ const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"setLabel",
 	"editAndResend",
 	"clearQueue",
+	"editQueue",
 	"sendQueueNow",
 	"extensionUiResponse",
 	"reload",
@@ -103,6 +104,15 @@ export function parseAgentCommand(value: unknown): CommandParseResult {
 		if (raw.cancelled !== undefined) {
 			if (typeof raw.cancelled !== "boolean") throw new Error("cancelled must be a boolean");
 			command.cancelled = raw.cancelled;
+		}
+		if (command.cmd === "editQueue") {
+			if (raw.queueKind !== "steering" && raw.queueKind !== "followUp") throw new Error("invalid queue kind");
+			if (!Number.isSafeInteger(raw.queueIndex) || Number(raw.queueIndex) < 0) throw new Error("invalid queue index");
+			if (typeof raw.queueRevision !== "string" || !/^[a-f0-9]{64}$/.test(raw.queueRevision)) throw new Error("invalid queue revision");
+			if (!command.text?.trim()) throw new Error("text is required");
+			command.queueKind = raw.queueKind;
+			command.queueIndex = raw.queueIndex as number;
+			command.queueRevision = raw.queueRevision;
 		}
 		if (command.cmd === "extensionUiResponse" && !command.requestId) throw new Error("requestId is required");
 		if (command.cmd === "setModel" && (!command.provider || !command.modelId)) throw new Error("provider and modelId are required");

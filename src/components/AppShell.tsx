@@ -70,7 +70,7 @@ import type { NewSessionDefaults } from "@/lib/model-defaults";
 import { readRememberedHeroModel, writeRememberedHeroModel } from "@/lib/hero-model-memory";
 import { newSessionThinkingLevel } from "@/lib/thinking-level";
 import { promptTitleText } from "@/lib/chat/skill-expansion";
-import type { ImageAttachment, TrajEntry, WebSnapshot } from "@/lib/types";
+import type { ImageAttachment, QueueEditRequest, TrajEntry, WebSnapshot } from "@/lib/types";
 
 function WorkspaceViewLoading() {
 	const { t } = useI18n();
@@ -878,6 +878,7 @@ export function AppShell() {
 	const followUpPrompt = useCallback((text: string, images: ImageAttachment[]) => { requestAttentionPermissionOnce(); return sendCommand({ cmd: "prompt", text, images, behavior: "followUp" }); }, [sendCommand]);
 	const abortPrompt = useCallback(() => sendCommand({ cmd: "abort" }), [sendCommand]);
 	const clearQueuePrompt = useCallback(() => sendCommand({ cmd: "clearQueue" }), [sendCommand]);
+	const editQueuePrompt = useCallback((request: QueueEditRequest) => sendCommand({ cmd: "editQueue", queueKind: request.kind, queueIndex: request.index, queueRevision: request.revision, text: request.text }, undefined, { shouldReportError: () => false }), [sendCommand]);
 	const sendQueueNowPrompt = useCallback(() => sendCommand({ cmd: "sendQueueNow" }), [sendCommand]);
 	const selectSessionModel = useCallback((provider: string, id: string) => void sendCommand({ cmd: "setModel", provider, modelId: id }), [sendCommand]);
 	const selectSessionLevel = useCallback(
@@ -1433,6 +1434,7 @@ export function AppShell() {
 											onSelectModel={selectSessionModel}
 											onSelectLevel={selectSessionLevel}
 											onClearQueue={clearQueuePrompt}
+											onEditQueue={editQueuePrompt}
 											onSendQueueNow={sendQueueNowPrompt}
 										/>
 										<SessionStatsBar stats={snapshot?.stats ?? null} />

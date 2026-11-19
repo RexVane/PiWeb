@@ -6,7 +6,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * 输入卡（对齐 dsh ui-conversation InputBar 结构）：
  * 22px 圆角胶囊 + elevation-soft；按钮行 = ＋命令 ｜ 模型 ｜ 圆环 ｜ 停止/发送圆钮。
  * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
- * 排队中的消息列在输入卡上方，↑（空输入框时）取回编辑。Enter 发送 / Shift+Enter 换行。
+ * 排队中的消息列在输入卡上方，行内 ✓/× 确认/取消；空输入框 ↑ 编辑最后一条待发消息。Enter 发送 / Shift+Enter 换行。
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -33,7 +33,8 @@ import { atToken, candidateText, suggestPaths, type PathCandidate } from "@/lib/
 import { slashCommandToken } from "@/lib/slash-command-token";
 import { composePrompt } from "@/lib/chat/compose-prompt";
 import { prepareImageAttachment, MAX_IMAGE_BYTES, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "@/lib/chat/image-attachment";
-import type { ImageAttachment } from "@/lib/types";
+import { QueueMessageEditor } from "@/components/QueueMessageEditor";
+import type { ImageAttachment, WebQueue, QueueEditRequest } from "@/lib/types";
 
 export interface SlashCommand {
 	name: string;
@@ -60,7 +61,7 @@ export interface ChatDraft {
 export type ChatDraftUpdate = ChatDraft | ((previous: ChatDraft) => ChatDraft);
 export const EMPTY_CHAT_DRAFT: ChatDraft = { text: "", images: [], uploads: [], references: [] };
 
-type SendResult = { success: boolean; error?: string };
+export type SendResult = { success: boolean; error?: string };
 const MAX_UPLOAD_FILES = 16;
 /** 服务端同一时刻只收一个上传（多出来的直接 503）：一次选了多个文件就排队逐个发；切会话重挂载也共用这一条队 */
 let uploadQueue: Promise<void> = Promise.resolve();
@@ -96,6 +97,7 @@ export function ChatInput({
 	onSelectModel,
 	onSelectLevel,
 	onClearQueue,
+	onEditQueue,
 	onSendQueueNow,
 	draft,
 	initialDraft,
@@ -138,7 +140,7 @@ export function ChatInput({
 	models: ModelChoice[];
 	providerNames: Record<string, string>;
 	authByProvider: Record<string, boolean>;
-	queue: { steering: string[]; followUp: string[] };
+	queue: WebQueue;
 	commands?: SlashCommand[];
 	onCommand?: (name: string, args: string) => void;
 	onSend: (text: string, images: ImageAttachment[]) => Promise<SendResult> | SendResult;
@@ -148,8 +150,9 @@ export function ChatInput({
 	onAbort: () => Promise<QueueResult | void> | void;
 	onSelectModel: (provider: string, id: string) => void;
 	onSelectLevel: (level: string) => void;
-	/** 清空队列并返回被清掉的文本（取回编辑 / 丢弃都走它） */
+	/** 清空队列并返回被丢弃的文本；编辑走单条消息的 onEditQueue，不清空队列。 */
 	onClearQueue?: () => Promise<QueueResult | void> | void;
+	onEditQueue?: (request: QueueEditRequest) => Promise<SendResult | void> | SendResult | void;
 	/** 打断当前回复并立即发送队列里的待发消息 */
 	onSendQueueNow?: () => Promise<QueueResult | void> | void;
 	/** Parent-owned, session-scoped draft. Async work always updates this same target. */
@@ -194,6 +197,7 @@ export function ChatInput({
 	const [stopping, setStopping] = useState(false);
 	const [sending, setSending] = useState(false);
 	const [queueSending, setQueueSending] = useState(false);
+	const [queueEditing, setQueueEditing] = useState<(QueueEditRequest & { key: string }) | null>(null);
 	const [attachmentError, setAttachmentError] = useState("");
 	const [uploadCount, setUploadCount] = useState(0);
 	const uploadBusy = uploadCount > 0 || pendingUploadCount > 0;
@@ -218,6 +222,22 @@ export function ChatInput({
 	const isBlocked = !model?.id;
 	const enterBehavior = useEnterBehavior();
 	const queuedCount = queue.steering.length + queue.followUp.length;
+	const queuedRows = (["steering", "followUp"] as const).flatMap((kind) => queue[kind].map((text, index) => {
+		const revision = queue.editTokens?.[kind][index] ?? "";
+		return { kind, index, text, revision, key: revision || `${kind}:${index}` };
+	}));
+	if (queueEditing && !queuedRows.some((row) => row.key === queueEditing.key)) queuedRows.push(queueEditing);
+	const startQueueEdit = (row: (typeof queuedRows)[number]) => {
+		if (!onEditQueue || !row.revision || queueSending || queueEditing) return;
+		setQueueEditing(row);
+	};
+	const closeQueueEdit = () => { setQueueEditing(null); taRef.current?.focus(); };
+	const saveQueueEdit = async (text: string) => {
+		if (!queueEditing || !onEditQueue) return { success: false, error: t.apiErrorQueueEditUnsupported };
+		const result = await onEditQueue({ kind: queueEditing.kind, index: queueEditing.index, revision: queueEditing.revision, text });
+		if (result?.success !== false) closeQueueEdit();
+		return result;
+	};
 	const [restoreTick, setRestoreTick] = useState(0);
 
 	const clearAttachmentError = useCallback(() => {
@@ -547,10 +567,7 @@ export function ChatInput({
 		} catch (error) { setAttachmentError(error instanceof Error ? error.message : String(error)); }
 		finally { stoppingRef.current = false; if (mountedRef.current) setStopping(false); }
 	};
-	const pullQueue = async () => {
-		try { const result = await onClearQueue?.(); restoreQueued(result); if (result?.success === false && result.error) setAttachmentError(result.error); }
-		catch (error) { setAttachmentError(error instanceof Error ? error.message : String(error)); }
-	};
+	const editLatestQueued = () => { const row = queuedRows[queuedRows.length - 1]; if (row) startQueueEdit(row); };
 	const sendQueueNow = async () => {
 		if (!onSendQueueNow || queueSendingRef.current) return;
 		queueSendingRef.current = true;
@@ -864,39 +881,22 @@ export function ChatInput({
 			<div className="isx-composer relative w-full" data-streaming={isStreaming ? "true" : undefined}>
 				{topSlot}
 				{/* 排队 / 插话消息：贴合输入卡顶部的一体式轻量状态条，避免独立悬空盒与多层套框 */}
-				{queuedCount > 0 && (
-					<div className="pw-queue" role="status" aria-live="polite" data-testid="composer-queue">
+				{(queuedCount > 0 || queueEditing) && (
+					<div className="pw-queue" role="status" aria-live={queueEditing ? "off" : "polite"} data-testid="composer-queue">
 						<div className="pw-queue-list">
-							{queue.steering.map((q, i) => (
-								<div key={`s${i}`} className="pw-queue-row" title={q}>
-									<span className="pw-queue-tag pw-queue-tag-steer">
-										<span className="pw-queue-dot" />
-										{t.modeSteer}
-									</span>
-									<span className="pw-queue-text">{q}</span>
-								</div>
-							))}
-							{queue.followUp.map((q, i) => (
-								<div key={`f${i}`} className="pw-queue-row" title={q}>
-									<span className="pw-queue-tag pw-queue-tag-queue">
-										<span className="pw-queue-dot" />
-										{t.modeQueue}
-									</span>
-									<span className="pw-queue-text">{q}</span>
+							{queuedRows.map((row) => (
+								<div key={row.key} className="pw-queue-row" title={row.text}>
+									{queueEditing?.key === row.key ? <QueueMessageEditor initialText={queueEditing.text}
+										stale={!queue.editTokens?.[queueEditing.kind].includes(queueEditing.revision)} onSave={saveQueueEdit} onCancel={closeQueueEdit} /> : <>
+										<span className={`pw-queue-tag ${row.kind === "steering" ? "pw-queue-tag-steer" : "pw-queue-tag-queue"}`}><span className="pw-queue-dot" />{row.kind === "steering" ? t.modeSteer : t.modeQueue}</span>
+										<span className="pw-queue-text">{row.text}</span>
+										<button type="button" className="pw-queue-btn pw-queue-btn-pull" disabled={queueSending || !!queueEditing || !onEditQueue || !row.revision}
+											onClick={() => startQueueEdit(row)} title={row.revision ? t.queueEdit : t.apiErrorQueueEditUnsupported} aria-label={t.queueEdit}><IconEditOutline16 size={14} aria-hidden="true" /></button>
+									</>}
 								</div>
 							))}
 						</div>
-						<div className="pw-queue-foot">
-							<button
-								type="button"
-								className="pw-queue-btn pw-queue-btn-pull"
-								disabled={queueSending}
-								onClick={() => void pullQueue()}
-								title={t.queueEdit}
-								aria-label={t.queueEdit}
-							>
-								<IconEditOutline16 size={14} aria-hidden="true" />
-							</button>
+						{!queueEditing && <div className="pw-queue-foot">
 							<button
 								type="button"
 								className="pw-queue-btn pw-queue-btn-drop"
@@ -919,7 +919,7 @@ export function ChatInput({
 									<IconSendArrowUp14 size={14} aria-hidden="true" />
 								</button>
 							)}
-						</div>
+						</div>}
 					</div>
 				)}
 				<div className="px-4 pt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
@@ -1046,7 +1046,7 @@ export function ChatInput({
 							}
 							if (e.key === "ArrowUp" && text === "" && queuedCount > 0) {
 								e.preventDefault();
-								void pullQueue();
+								editLatestQueued();
 								return;
 							}
 							if (e.key === "Escape" && isStreaming && !e.nativeEvent.isComposing) {

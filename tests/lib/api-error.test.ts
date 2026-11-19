@@ -56,6 +56,8 @@ describe("apiError", () => {
 			NOT_A_FILE: "apiErrorNotAFile",
 			FILE_NOT_FOUND: "apiErrorEnoent",
 			IS_DIRECTORY: "apiErrorNotAFile",
+			QUEUE_CHANGED: "apiErrorQueueChanged",
+			QUEUE_EDIT_UNSUPPORTED: "apiErrorQueueEditUnsupported",
 			ENOENT: "apiErrorEnoent",
 			EACCES: "apiErrorEacces",
 			EPERM: "apiErrorEperm",

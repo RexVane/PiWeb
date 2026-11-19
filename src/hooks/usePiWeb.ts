@@ -309,7 +309,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 		}
 		case "queue":
 			if (s.snapshot)
-				s.snapshot = { ...s.snapshot, queue: { steering: evt.steering, followUp: evt.followUp } };
+				s.snapshot = { ...s.snapshot, queue: { steering: evt.steering, followUp: evt.followUp, ...(evt.revision ? { revision: evt.revision } : {}), ...(evt.editTokens ? { editTokens: evt.editTokens } : {}) } };
 			return s;
 		case "model": {
 			if (s.snapshot) {

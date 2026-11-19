@@ -24,6 +24,8 @@ export const API_ERROR_I18N_KEYS: Readonly<Record<string, string>> = {
 	NOT_A_FILE: "apiErrorNotAFile",
 	FILE_NOT_FOUND: "apiErrorEnoent",
 	IS_DIRECTORY: "apiErrorNotAFile",
+	QUEUE_CHANGED: "apiErrorQueueChanged",
+	QUEUE_EDIT_UNSUPPORTED: "apiErrorQueueEditUnsupported",
 	ENOENT: "apiErrorEnoent",
 	EACCES: "apiErrorEacces",
 	EPERM: "apiErrorEperm",

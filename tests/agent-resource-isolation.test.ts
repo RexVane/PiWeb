@@ -177,7 +177,7 @@ describe("real SDK session resource isolation", () => {
 			streams[1].push({ type: "done", reason: "stop", message: { ...message, timestamp: 200 } });
 			await session.waitForIdle();
 			expect(session.agent.hasQueuedMessages()).toBe(false);
-			expect((await manager.buildSnapshot(m)).queue).toEqual({ steering: [], followUp: [] });
+			expect((await manager.buildSnapshot(m)).queue).toMatchObject({ steering: [], followUp: [] });
 			const events = m.buffer.map((frame) => JSON.parse(frame.json));
 			expect(events.filter((event) => event.type === "queue").at(-1)).toMatchObject({ steering: [], followUp: [] });
 			expect(events.filter((event) => event.type === "status").at(-1)).toMatchObject({ isStreaming: false });
@@ -208,7 +208,7 @@ describe("real SDK session resource isolation", () => {
 			await aborting;
 			await session.waitForIdle();
 			expect(session.agent.hasQueuedMessages()).toBe(true);
-			expect((await manager.buildSnapshot(m)).queue).toEqual({ steering: [], followUp: ["keep my message"] });
+			expect((await manager.buildSnapshot(m)).queue).toMatchObject({ steering: [], followUp: ["keep my message"] });
 			expect((await manager.execute(m, { cmd: "clearQueue" })).data).toEqual({ steering: [], followUp: ["keep my message"] });
 		} finally {
 			stream.push({ type: "error", reason: "aborted", error: message });

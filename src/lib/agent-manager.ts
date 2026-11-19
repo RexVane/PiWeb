@@ -59,6 +59,7 @@ import { clampThinkingLevelTo, newSessionThinkingLevel } from "./thinking-level"
 import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } from "./workspace-store";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { onThinkingCapabilitiesChanged } from "./automatic-thinking";
+import { editSessionQueue, sessionQueueState, QueueEditError } from "./session-queue";
 import type {
 	AgentCommand,
 	ContextBreakdown,
@@ -1143,12 +1144,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			if (m.shutdownRequested) queueMicrotask(() => requestExtensionShutdown(m));
 			break;
 		case "queue_update":
-			publish(m, {
-				type: "queue",
-				steering: [...evt.steering],
-				followUp: [...evt.followUp],
-				ts: now,
-			});
+			deferPublish(m, () => [{ type: "queue", ...(m.session ? sessionQueueState(m.session) : { steering: [...evt.steering], followUp: [...evt.followUp] }), ts: now }]);
 			break;
 		case "compaction_start":
 			publish(m, { type: "status", isStreaming: true, state: "compacting", ts: now });
@@ -2537,9 +2533,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 	}
 
 	const tools = snapshotTools(m, session);
-	const queue = session
-		? { steering: [...session.getSteeringMessages()], followUp: [...session.getFollowUpMessages()] }
-		: { steering: [], followUp: [] };
+	const queue = session ? sessionQueueState(session) : { steering: [], followUp: [] };
 
 	let name = "";
 	try {
@@ -2682,6 +2676,7 @@ function hasViewers(m: Managed): boolean {
 export interface CommandResult {
 	ok: boolean;
 	error?: string;
+	errorCode?: string;
 	data?: Record<string, unknown>;
 }
 
@@ -2939,6 +2934,12 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					return { ok: true };
 				} finally { m.promptSubmitting = false; }
 			}
+			case "editQueue": {
+				if (m.disposed || !m.session) return { ok: false, errorCode: "QUEUE_CHANGED", error: "待发消息已被处理或队列已改变，请重新编辑。" };
+				const queue = editSessionQueue(m.session, cmd.queueKind!, cmd.queueIndex!, cmd.queueRevision!, cmd.text ?? "");
+				publish(m, { type: "queue", ...queue, ts: Date.now() });
+				return { ok: true, data: { queue } };
+			}
 			case "clearQueue": {
 				if (!m.session) return { ok: true, data: { steering: [], followUp: [] } };
 				const cleared = m.session.clearQueue();
@@ -3176,7 +3177,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				return { ok: false, error: `unknown cmd` };
 		}
 	} catch (err: any) {
-		return { ok: false, error: String(err?.message ?? err) };
+		return { ok: false, error: String(err?.message ?? err), ...(err instanceof QueueEditError ? { errorCode: err.code } : {}) };
 	}
 }
 

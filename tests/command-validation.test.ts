@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { parseAgentCommand } from "../src/lib/command-validation";
 
 describe("agent command validation", () => {
+	it("validates targeted queued-message editing", () => {
+		const command = { cmd: "editQueue", queueKind: "followUp", queueIndex: 1, queueRevision: "a".repeat(64), text: "changed" };
+		expect(parseAgentCommand(command)).toMatchObject({ ok: true, command });
+		for (const patch of [{ queueKind: "other" }, { queueIndex: -1 }, { queueIndex: 0.5 }, { queueRevision: "old" }, { text: " " }, { text: undefined }]) {
+			expect(parseAgentCommand({ ...command, ...patch }).ok).toBe(false);
+		}
+	});
 	it("accepts the read-only trajectory preparation command", () => {
 		const result = parseAgentCommand({ cmd: "prepare" });
 		expect(result.ok).toBe(true);
