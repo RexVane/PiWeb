@@ -4,7 +4,7 @@
  * 依据 #064 调研里与用户确认的方案：只改名归并，不加 git 写操作。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { GitPanel } from "@/components/GitPanel";
 
 vi.mock("@/lib/highlight", () => ({ languageForPath: () => undefined, highlightLine: () => null }));
@@ -27,6 +27,24 @@ function stubFetch(identity: unknown) {
 }
 
 describe("GitPanel 三个区", () => {
+	it("keeps the commit draft when opening an inline diff and returning", async () => {
+		const patch = "diff --git a/staged.ts b/staged.ts\n--- a/staged.ts\n+++ b/staged.ts\n@@ -1 +1 @@\n-old\n+new\n";
+		vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+			ok: true,
+			json: async () => url.includes("/api/github")
+				? { success: true, data: { identity: null } }
+				: { success: true, data: url.includes("diff=") ? { patch, binary: false, truncated: false } : info },
+		})));
+		render(<GitPanel cwd="/repo" onClose={vi.fn()} />);
+		const editor = await screen.findByRole("textbox", { name: "提交" });
+		fireEvent.change(editor, { target: { value: "unsent commit draft" } });
+		fireEvent.click(screen.getByTitle("staged.ts"));
+		await screen.findByText("new");
+		expect(screen.queryByRole("textbox", { name: "提交" })).toBeNull();
+		fireEvent.click(screen.getByTitle("返回"));
+		expect((screen.getByRole("textbox", { name: "提交" }) as HTMLTextAreaElement).value).toBe("unsent commit draft");
+	});
+
 	it("暂存区与工作区分别成组，并给出各自的数量", async () => {
 		stubFetch(null);
 		render(<GitPanel cwd="/repo" onClose={vi.fn()} />);

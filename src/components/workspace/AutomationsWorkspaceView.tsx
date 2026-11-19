@@ -2,7 +2,7 @@
 import { clientFetch as fetch } from "@/lib/client-fetch";
 
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import {
 	IconChatBubbleOutline16,
@@ -245,7 +245,8 @@ export function AutomationsWorkspaceView({
 		return { active, paused, ended, all: tasks.length };
 	}, [tasks]);
 
-	const q = query.trim().toLowerCase();
+	const deferredQuery = useDeferredValue(query);
+	const q = deferredQuery.trim().toLowerCase();
 	const filteredTasks = useMemo(
 		() =>
 			tasks.filter((task) => {

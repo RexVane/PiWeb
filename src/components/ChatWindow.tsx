@@ -1545,6 +1545,25 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 	const images = message.content.filter((content) => content.type === "image");
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(text);
+	const editRef = useRef<HTMLTextAreaElement>(null);
+	const composingRef = useRef(false);
+	const sizedFor = useRef({ value: "", width: -1 });
+	const autoSize = useCallback(() => {
+		const ta = editRef.current;
+		if (!ta) return;
+		if (sizedFor.current.value === ta.value && sizedFor.current.width === ta.clientWidth) return;
+		ta.style.height = "auto";
+		ta.style.height = `${Math.min(Math.max(ta.scrollHeight, 68), 336)}px`;
+		sizedFor.current = { value: ta.value, width: ta.clientWidth };
+	}, []);
+	useLayoutEffect(() => {
+		if (!editing) {
+			composingRef.current = false;
+			sizedFor.current = { value: "", width: -1 };
+			return;
+		}
+		autoSize();
+	}, [editing, draft, autoSize]);
 	const canEdit = Boolean(onEditMessage && message.id && text);
 	if (editing) {
 		return (
@@ -1553,13 +1572,20 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 				<UserImages images={images} />
 				<div className="msg-user-bubble w-full">
 					<textarea
+						ref={editRef}
 						className="w-full resize-none bg-transparent outline-none"
-						style={{ minHeight: 68, font: "inherit", color: "inherit" }}
+						style={{ minHeight: 68, maxHeight: 336, font: "inherit", color: "inherit" }}
 						value={draft}
 						aria-label={t.editMessage}
 						autoFocus
-						onChange={(e) => setDraft(e.target.value)}
+						onChange={(e) => {
+							setDraft(e.target.value);
+							autoSize();
+						}}
+						onCompositionStart={() => { composingRef.current = true; }}
+						onCompositionEnd={() => { composingRef.current = false; }}
 						onKeyDown={(e) => {
+							if (composingRef.current || e.nativeEvent.isComposing || e.keyCode === 229) return;
 							if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
 							if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
 						}}

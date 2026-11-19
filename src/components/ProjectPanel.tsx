@@ -8,7 +8,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * 工具行：范围（本轮 / 本会话累计）、只看改动、筛选；中间：项目树（GrowthTree）；
  * 底部：时间轴每轮一根柱（高度 = 改动行数，灰色细柱 = 你在两轮之间自己的修改），默认不再跟随,底部计数可点开轮数列表跳到任意一轮。
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { GrowthTree } from "@/components/GrowthTree";
 import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
@@ -150,6 +150,7 @@ export function ProjectPanel({
 	const { t, lang } = useI18n();
 	const tt = t as unknown as Record<string, string>;
 	const [filter, setFilter] = useState("");
+	const deferredFilter = useDeferredValue(filter);
 	const [onlyChanges, setOnlyChanges] = useState(true);
 	const [recording, setRecording] = useState(false);
 	const [notice, setNotice] = useState("");
@@ -391,6 +392,7 @@ export function ProjectPanel({
 					className="min-w-0 flex-1 bg-transparent"
 					style={{ fontSize: 12 }}
 					onKeyDown={(e) => {
+						if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 						if (e.key === "Escape") setFilter("");
 					}}
 				/>
@@ -421,7 +423,7 @@ export function ProjectPanel({
 				tree={growth.tree}
 				expanded={growth.expanded}
 				fresh={growth.fresh}
-				filter={filter}
+				filter={deferredFilter}
 				onlyChanges={onlyChanges && growth.changes.length > 0}
 				onToggleDir={growth.toggleDir}
 				onExpandLazy={growth.expandLazy}
@@ -506,6 +508,7 @@ export function ProjectPanel({
 												style={{ fontSize: 12.5, background: "var(--dsw-hover)" }}
 												onChange={(e) => setJumpValue(e.target.value)}
 												onKeyDown={(e) => {
+													if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 													if (e.key === "Enter") {
 														e.preventDefault();
 														jumpToRound(jumpValue);

@@ -2,7 +2,7 @@
 import { clientFetch as fetch } from "@/lib/client-fetch";
 
 
-import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useCallback, useDeferredValue, useEffect, useId, useRef, useState } from "react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { FloatingToast } from "@/components/FloatingToast";
 import {
@@ -179,25 +179,19 @@ function PluginRow({
 function AddPluginModal({
 	open,
 	cwd,
-	source,
-	setSource,
-	local,
-	setLocal,
 	busy,
 	onClose,
 	onSubmit,
 }: {
 	open: boolean;
 	cwd: string;
-	source: string;
-	setSource: (v: string) => void;
-	local: boolean;
-	setLocal: (v: boolean) => void;
 	busy: boolean;
 	onClose: () => void;
-	onSubmit: () => void;
+	onSubmit: (source: string, local: boolean) => Promise<boolean>;
 }) {
 	const { t } = useI18n();
+	const [source, setSource] = useState("");
+	const [local, setLocal] = useState(false);
 	const dialogRef = useRef<HTMLDivElement>(null);
 	const titleId = useId();
 	useDialog({ open, onClose: () => { if (!busy) onClose(); }, ref: dialogRef });
@@ -235,7 +229,11 @@ function AddPluginModal({
 					className="flex flex-col gap-4 p-5"
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (source.trim() && !busy) onSubmit();
+						const installSource = source.trim();
+						if (!installSource || busy) return;
+						void onSubmit(installSource, local).then((installed) => {
+							if (installed) setSource("");
+						});
 					}}
 				>
 					<div className="flex flex-col gap-1.5">
@@ -321,8 +319,6 @@ export function PluginsSection({
 	const [q, setQ] = useState("");
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [internalInstallOpen, setInternalInstallOpen] = useState(false);
-	const [source, setSource] = useState("");
-	const [local, setLocal] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [busyKey, setBusyKey] = useState<string | null>(null);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string; loading?: boolean } | null>(null);
@@ -533,7 +529,8 @@ export function PluginsSection({
 		};
 	};
 
-	const query = q.trim().toLowerCase();
+	const deferredQ = useDeferredValue(q);
+	const query = deferredQ.trim().toLowerCase();
 	// 包带入的扩展不单独列（由所属 pi 包那一行代表），内置单列，其余都算本地扩展
 	const builtinExtensions = extensions.filter((e) => placementOf(e).origin === "builtin");
 	const localExtensions = extensions.filter((e) => placementOf(e).origin === "top-level");
@@ -1000,23 +997,17 @@ export function PluginsSection({
 			<AddPluginModal
 				open={modalOpen}
 				cwd={cwd}
-				source={source}
-				setSource={setSource}
-				local={local}
-				setLocal={setLocal}
 				busy={busy}
 				onClose={() => setModalOpen(false)}
-				onSubmit={() => {
-					const installSource = source.trim();
-					const projectScope = local;
+				onSubmit={async (installSource, projectScope) => {
 					const workspaceSeq = workspaceSeqRef.current;
-					void (async () => {
-						if (!(await confirm({ title: t.install, message: t.pluginInstallConfirm.replace("{source}", installSource), confirmLabel: t.install }))) return;
-						if (workspaceSeq !== workspaceSeqRef.current) return;
-						if (await act("install", { source: installSource, local: projectScope }, undefined, t.installing, t.installSuccess)) {
-							setSource(""); setModalOpen(false);
-						}
-					})();
+					if (!(await confirm({ title: t.install, message: t.pluginInstallConfirm.replace("{source}", installSource), confirmLabel: t.install }))) return false;
+					if (workspaceSeq !== workspaceSeqRef.current) return false;
+					if (await act("install", { source: installSource, local: projectScope }, undefined, t.installing, t.installSuccess)) {
+						setModalOpen(false);
+						return true;
+					}
+					return false;
 				}}
 			/>
 

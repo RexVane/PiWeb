@@ -8,7 +8,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * 默认一条都不勾，支持按来源浏览、搜索与跨来源选择，
  * 已导入的会话禁止重复选择，已归档的会话可恢复。会话只导回在本机仍存在的原项目目录，不做工作区兜底。
  */
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n";
 import { IconRefreshOutline14, IconDownloadOutline16, IconSearchOutline16, IconFolderOpenOutline16, IconCheckOutline14, IconCloseOutline14, IconChevronDown14 } from "@/components/icons";
 import { ProviderBrand } from "@/components/ProviderBrand";
@@ -258,7 +258,8 @@ export function SessionImportSection() {
 		if (pickerOpen) document.getElementById(`${pickerId}-${highlightedSource}`)?.scrollIntoView?.({ block: "nearest" });
 	}, [highlightedSource, pickerId, pickerOpen]);
 	const activeGroup = groups.find((group) => group.source === activeSource);
-	const search = query.trim().toLocaleLowerCase();
+	const deferredQuery = useDeferredValue(query);
+	const search = deferredQuery.trim().toLocaleLowerCase();
 	const projects = useMemo(() => {
 		const byProject = new Map<string, { value: string; path: string; count: number }>();
 		for (const row of activeGroup?.rows ?? []) {
@@ -272,10 +273,13 @@ export function SessionImportSection() {
 	useEffect(() => {
 		if (!scanning && projectFilter && !projects.some((project) => project.value === projectFilter)) setProjectFilter("");
 	}, [scanning, projectFilter, projects]);
-	const visibleRows = (activeGroup?.rows ?? []).filter((row) =>
-		(!search || [row.title, row.projectPath, row.provider, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search))) &&
-		(!projectFilter || projectKey(row.projectPath) === projectFilter) &&
-		(!selectedOnly || selected.has(key(row))),
+	const visibleRows = useMemo(
+		() => (activeGroup?.rows ?? []).filter((row) =>
+			(!search || [row.title, row.projectPath, row.provider, row.model, row.externalId].some((value) => value?.toLocaleLowerCase().includes(search))) &&
+			(!projectFilter || projectKey(row.projectPath) === projectFilter) &&
+			(!selectedOnly || selected.has(key(row))),
+		),
+		[activeGroup, search, projectFilter, selectedOnly, selected],
 	);
 	const availableRows = visibleRows.filter((row) => !isImported(row) && canSelect(row));
 	const selectedArchived = [...selected].filter((key) => archivedKeys.has(key)).length;
@@ -453,6 +457,7 @@ export function SessionImportSection() {
 							</button>
 							{pickerOpen && <div className={styles.sourceMenu}>
 								<div className={styles.sourceSearch}><IconSearchOutline16 size={15} /><input autoFocus role="combobox" aria-label={t.importSourceSearch} aria-autocomplete="list" aria-expanded="true" aria-controls={pickerId} aria-activedescendant={highlighted ? `${pickerId}-${highlighted.source}` : undefined} placeholder={t.importSourceSearch} value={sourceQuery} onChange={(event) => { setSourceQuery(event.target.value); setHighlightedSource(""); }} onKeyDown={(event) => {
+									if (event.nativeEvent.isComposing || event.keyCode === 229) return;
 									if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 										event.preventDefault();
 										const index = highlighted ? filteredSources.indexOf(highlighted) : -1;

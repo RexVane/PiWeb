@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { IconCheckOutline14, IconChevronDown14, IconFolderOpenOutline16, IconSearchOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import styles from "./ImportProjectPicker.module.css";
@@ -39,8 +39,11 @@ export function ImportProjectPicker({ value, onChange, projects, disabled = fals
 		})),
 	], [projects, t.importProjectAll, t.importNoProject]);
 	const selected = options.find((option) => option.value === value) ?? options[0];
-	const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-	const filtered = options.filter((option) => words.every((word) => `${option.name} ${option.path}`.toLocaleLowerCase().includes(word)));
+	const deferredQuery = useDeferredValue(query);
+	const filtered = useMemo(() => {
+		const words = deferredQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+		return options.filter((option) => words.every((word) => `${option.name} ${option.path}`.toLocaleLowerCase().includes(word)));
+	}, [options, deferredQuery]);
 	const active = filtered.find((option) => option.value === highlighted) ?? filtered[0];
 	const activeIndex = active ? filtered.indexOf(active) : -1;
 	const optionId = (index: number) => `${id}-option-${index}`;

@@ -2,7 +2,7 @@
 import { clientFetch as fetch } from "@/lib/client-fetch";
 
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { IconFileOutline16, IconSearchOutline16, IconSkillOutline16 } from "@/components/icons";
 import { useI18n } from "@/i18n";
@@ -141,7 +141,8 @@ export function SkillsSection({
 		return { all: skills.length, user, project, temporary };
 	}, [skills]);
 
-	const q = query.trim().toLowerCase();
+	const deferredQuery = useDeferredValue(query);
+	const q = deferredQuery.trim().toLowerCase();
 	const filteredSkills = useMemo(
 		() =>
 			skills.filter((s) => {

@@ -12,7 +12,7 @@ import { htmlLangOf, type Lang } from "@/lib/lang";
  * 搜索模式（输入框替身标题行，空查询=工作区平铺，输入=会话平铺），
  * 滑杆菜单（分组方式：按工作区/单列表；排序方式：手动排序/最近更新）。
  */
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { BrandPi, PiMark } from "@/components/PiMark";
 import {
@@ -173,6 +173,7 @@ function SessionSidebarImpl({
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
+	const deferredQ = useDeferredValue(q);
 	const [searchOpen, setSearchOpen] = useState(false);
 	const [viewMenu, setViewMenu] = useState(false);
 	const [rowMenu, setRowMenu] = useState<string | null>(null); // 展开工作区行菜单的 cwd
@@ -194,19 +195,11 @@ function SessionSidebarImpl({
 	}, [onSearchQuery, searchOpen, q]);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const sessionMenuRef = useRef<HTMLDivElement>(null);
-	const renameInputRef = useRef<HTMLInputElement>(null);
-	const renameDialogRef = useRef<HTMLDivElement>(null);
 	const deleteSessionDialogRef = useRef<HTMLDivElement>(null);
 	const deleteWorkspaceDialogRef = useRef<HTMLDivElement>(null);
-	const renameComposingRef = useRef(false);
 
 	// 自定义弹窗状态（重命名与删除工作区）
-	const [renameTarget, setRenameTarget] = useState<
-		{ type: "session"; path: string; name: string } | { type: "workspace"; cwd: string; name: string } | null
-	>(null);
-	const [renameValue, setRenameValue] = useState("");
-	const [renamePending, setRenamePending] = useState(false);
-	const [renameError, setRenameError] = useState<string | null>(null);
+	const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
 	const [deleteWorkspaceTarget, setDeleteWorkspaceTarget] = useState<{ cwd: string; name: string } | null>(null);
 	const [deleteWorkspacePending, setDeleteWorkspacePending] = useState(false);
 	const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
@@ -217,62 +210,14 @@ function SessionSidebarImpl({
 	const [archivePending, setArchivePending] = useState(false);
 	const [archiveError, setArchiveError] = useState<string | null>(null);
 	const archiveInFlight = useRef(false);
-	const renameWorkspaceConflict = renameTarget?.type === "workspace"
-		&& renameValue.trim().length > 0
-		&& addedWorkspaces.some((cwd) => (
-			normPath(cwd) !== normPath(renameTarget.cwd)
-			&& (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) === renameValue.trim()
-		));
 
 	useEffect(() => {
 		setMounted(true);
 	}, []);
 
-	useEffect(() => {
-		renameComposingRef.current = false;
-		if (renameTarget) {
-			setRenameValue(renameTarget.name);
-			setRenamePending(false);
-			setRenameError(null);
-			const timer = setTimeout(() => {
-				renameInputRef.current?.focus();
-				renameInputRef.current?.select();
-			}, 30);
-			return () => clearTimeout(timer);
-		}
-	}, [renameTarget]);
-
-	const handleConfirmRename = async () => {
-		if (!renameTarget || renamePending) return;
-		const val = renameValue.trim();
-		if (!val || (renameTarget.type === "workspace" && (val === renameTarget.name || renameWorkspaceConflict))) {
-			if (renameWorkspaceConflict) {
-				setRenameError(t.workspaceNameConflict.replace("{name}", val));
-			}
-			return;
-		}
-		setRenamePending(true);
-		setRenameError(null);
-		try {
-			if (renameTarget.type === "session") {
-				await onRename(renameTarget.path, val);
-			} else {
-				await onRenameWorkspace?.(renameTarget.cwd, val);
-			}
-			setRenameTarget(null);
-		} catch (error) {
-			setRenameError(error instanceof Error ? error.message : String(error));
-		} finally {
-			setRenamePending(false);
-		}
-	};
-
-	const closeRename = () => {
-		if (renamePending) return;
+	const closeRename = useCallback(() => {
 		setRenameTarget(null);
-		setRenameError(null);
-	};
-	useDialog({ open: mounted && renameTarget !== null, onClose: closeRename, ref: renameDialogRef });
+	}, []);
 	useDialog({ open: mounted && deleteSessionTarget !== null, onClose: () => {
 		if (!deleteSessionPending) setDeleteSessionTarget(null);
 	}, ref: deleteSessionDialogRef });
@@ -488,10 +433,10 @@ function SessionSidebarImpl({
 	const searchSessions = useMemo(() => {
 		if (onSearchQuery) return flatSessions;
 		const unique = new Map([...flatSessions, ...sortedArchivedSessions].map((session) => [normPath(session.path), session]));
-		const query = q.trim().toLowerCase();
+		const query = deferredQ.trim().toLowerCase();
 		return [...unique.values()].filter((session) => session.name?.toLowerCase().includes(query)
 			|| session.firstMessage.toLowerCase().includes(query) || session.cwd.toLowerCase().includes(query));
-	}, [flatSessions, sortedArchivedSessions, q, onSearchQuery]);
+	}, [flatSessions, sortedArchivedSessions, deferredQ, onSearchQuery]);
 
 	const toggleOpen = (cwd: string) => {
 		setOpenSet((prev) => {
@@ -1010,7 +955,7 @@ function SessionSidebarImpl({
 						<button type="button" className="mt-1 underline" onClick={onRetrySessionList}>{t.retry}</button>
 					</div>
 				)}
-				{searchOpen && q.trim() ? (
+				{searchOpen && deferredQ.trim() ? (
 					// 搜索结果：会话平铺
 					searchSessions.length === 0 ? (
 						<div className="px-2 py-6 text-center" style={{ fontSize: "var(--dsh-ui-font-125)", color: "var(--dsw-label-caption)" }}>
@@ -1142,97 +1087,17 @@ function SessionSidebarImpl({
 				</button>
 			</div>
 
-			{/* 重命名弹窗（通过 createPortal 挂载到 document.body 确保浏览器正居中） */}
-			{mounted && renameTarget && createPortal(
-				<div
-					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
-					onClick={closeRename}
-				>
-					<div
-						ref={renameDialogRef}
-						className="glass-modal relative w-full max-w-[420px] p-6"
-						style={{ boxShadow: "var(--pw-shadow-modal)", color: "var(--dsw-label-primary)" }}
-						onClick={(e) => e.stopPropagation()}
-						role="dialog"
-						aria-modal="true"
-						aria-labelledby="rename-dialog-title"
-					>
-						{/* 关闭按钮 */}
-						<button
-							type="button"
-							onClick={closeRename}
-							disabled={renamePending}
-							className="icon-btn absolute right-5 top-5"
-							style={{ width: 28, height: 28 }}
-							aria-label={t.close}
-						>
-							<IconCloseOutline14 size={16} />
-						</button>
-
-						{/* 标题 */}
-						<h3 id="rename-dialog-title" className="pr-8 text-lg font-medium" style={{ color: "var(--dsw-label-primary)" }}>
-							{renameTarget.type === "session"
-								? (t.renameSession || "重命名会话")
-								: (t.renameWorkspace || "重命名工作区")}
-						</h3>
-
-						{/* 输入框 */}
-						<div className="mt-5 mb-6">
-							<input
-								ref={renameInputRef}
-								type="text"
-								value={renameValue}
-								disabled={renamePending}
-								onChange={(e) => {
-									setRenameValue(e.target.value);
-									setRenameError(null);
-								}}
-								onKeyDown={(e) => {
-									if (renameComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
-										e.stopPropagation();
-										return;
-									}
-									if (e.key === "Enter") {
-										e.preventDefault();
-										void handleConfirmRename();
-									}
-								}}
-								onCompositionStart={() => { renameComposingRef.current = true; }}
-								onCompositionEnd={() => { renameComposingRef.current = false; }}
-								className="pw-modal-input w-full rounded-full px-4 py-2.5 text-[14.5px] outline-none transition"
-								style={{
-									background: "var(--dsw-bg-elevated)",
-									border: "1px solid var(--dsw-border-l2)",
-									color: "var(--dsw-label-primary)",
-								}}
-							/>
-						</div>
-						{renameError && (
-							<p className="-mt-3 mb-5 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{renameError}</p>
-						)}
-
-						{/* 按钮区 */}
-						<div className="flex items-center justify-end gap-2.5">
-							<button
-								type="button"
-								onClick={closeRename}
-								disabled={renamePending}
-								className="btn-outline"
-							>
-								{t.cancel}
-							</button>
-							<button
-								type="button"
-								onClick={() => void handleConfirmRename()}
-								disabled={renamePending || !renameValue.trim() || (renameTarget.type === "workspace" && (renameValue.trim() === renameTarget.name || renameWorkspaceConflict))}
-								className="btn-primary-white"
-							>
-								{t.rename}
-							</button>
-						</div>
-					</div>
-				</div>,
-				document.body
+			{/* 重命名弹窗（输入状态留在子组件内部，打字不触发整棵侧栏重渲染） */}
+			{mounted && renameTarget && (
+				<RenameDialog
+					key={renameTarget.type === "session" ? `session:${renameTarget.path}` : `workspace:${renameTarget.cwd}`}
+					target={renameTarget}
+					addedWorkspaces={addedWorkspaces}
+					getWorkspaceName={getWorkspaceName}
+					onRename={onRename}
+					onRenameWorkspace={onRenameWorkspace}
+					onClose={closeRename}
+				/>
 			)}
 
 			{/* 删除会话确认弹窗（样式同删除工作区；直接删除不备份） */}
@@ -1373,6 +1238,171 @@ function SessionSidebarImpl({
  * （会话列表、回调）在此期间全部不变，几百行会话树的 reconciliation 是纯浪费。
  */
 export const SessionSidebar = memo(SessionSidebarImpl);
+
+type RenameTarget = { type: "session"; path: string; name: string } | { type: "workspace"; cwd: string; name: string };
+
+/** 重命名弹窗：输入状态留在子组件内部，打字不触发整棵侧栏重渲染 */
+function RenameDialog({
+	target,
+	addedWorkspaces,
+	getWorkspaceName,
+	onRename,
+	onRenameWorkspace,
+	onClose,
+}: {
+	target: RenameTarget;
+	addedWorkspaces: string[];
+	getWorkspaceName?: (cwd: string) => string;
+	onRename: (path: string, newName: string) => Promise<void>;
+	onRenameWorkspace?: (cwd: string, newName: string) => Promise<void>;
+	onClose: () => void;
+}) {
+	const { t } = useI18n();
+	const [value, setValue] = useState(target.name);
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const inputRef = useRef<HTMLInputElement>(null);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const composingRef = useRef(false);
+
+	const workspaceConflict = target.type === "workspace"
+		&& value.trim().length > 0
+		&& addedWorkspaces.some((cwd) => (
+			normPath(cwd) !== normPath(target.cwd)
+			&& (getWorkspaceName ? getWorkspaceName(cwd) : basename(cwd)) === value.trim()
+		));
+
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			inputRef.current?.focus();
+			inputRef.current?.select();
+		}, 30);
+		return () => clearTimeout(timer);
+	}, []);
+
+	const close = () => {
+		if (pending) return;
+		onClose();
+	};
+	useDialog({ open: true, onClose: close, ref: dialogRef });
+
+	const confirm = async () => {
+		if (pending) return;
+		const val = value.trim();
+		if (!val || (target.type === "workspace" && (val === target.name || workspaceConflict))) {
+			if (workspaceConflict) {
+				setError(t.workspaceNameConflict.replace("{name}", val));
+			}
+			return;
+		}
+		setPending(true);
+		setError(null);
+		try {
+			if (target.type === "session") {
+				await onRename(target.path, val);
+			} else {
+				await onRenameWorkspace?.(target.cwd, val);
+			}
+			onClose();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setPending(false);
+		}
+	};
+
+	return createPortal(
+		<div
+			className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"
+			onClick={close}
+		>
+			<div
+				ref={dialogRef}
+				className="glass-modal relative w-full max-w-[420px] p-6"
+				style={{ boxShadow: "var(--pw-shadow-modal)", color: "var(--dsw-label-primary)" }}
+				onClick={(e) => e.stopPropagation()}
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="rename-dialog-title"
+			>
+				{/* 关闭按钮 */}
+				<button
+					type="button"
+					onClick={close}
+					disabled={pending}
+					className="icon-btn absolute right-5 top-5"
+					style={{ width: 28, height: 28 }}
+					aria-label={t.close}
+				>
+					<IconCloseOutline14 size={16} />
+				</button>
+
+				{/* 标题 */}
+				<h3 id="rename-dialog-title" className="pr-8 text-lg font-medium" style={{ color: "var(--dsw-label-primary)" }}>
+					{target.type === "session"
+						? (t.renameSession || "重命名会话")
+						: (t.renameWorkspace || "重命名工作区")}
+				</h3>
+
+				{/* 输入框 */}
+				<div className="mt-5 mb-6">
+					<input
+						ref={inputRef}
+						type="text"
+						value={value}
+						disabled={pending}
+						onChange={(e) => {
+							setValue(e.target.value);
+							setError(null);
+						}}
+						onKeyDown={(e) => {
+							if (composingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
+								e.stopPropagation();
+								return;
+							}
+							if (e.key === "Enter") {
+								e.preventDefault();
+								void confirm();
+							}
+						}}
+						onCompositionStart={() => { composingRef.current = true; }}
+						onCompositionEnd={() => { composingRef.current = false; }}
+						className="pw-modal-input w-full rounded-full px-4 py-2.5 text-[14.5px] outline-none transition"
+						style={{
+							background: "var(--dsw-bg-elevated)",
+							border: "1px solid var(--dsw-border-l2)",
+							color: "var(--dsw-label-primary)",
+						}}
+					/>
+				</div>
+				{error && (
+					<p className="-mt-3 mb-5 text-sm" style={{ color: "var(--dsw-danger)" }} role="alert">{error}</p>
+				)}
+
+				{/* 按钮区 */}
+				<div className="flex items-center justify-end gap-2.5">
+					<button
+						type="button"
+						onClick={close}
+						disabled={pending}
+						className="btn-outline"
+					>
+						{t.cancel}
+					</button>
+					<button
+						type="button"
+						onClick={() => void confirm()}
+						disabled={pending || !value.trim() || (target.type === "workspace" && (value.trim() === target.name || workspaceConflict))}
+						className="btn-primary-white"
+					>
+						{t.rename}
+					</button>
+				</div>
+			</div>
+		</div>,
+		document.body
+	);
+}
 
 function MenuItem({
 	icon,
