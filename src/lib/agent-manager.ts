@@ -2066,7 +2066,7 @@ function forkTarget(m: Managed, entryId: string, position: "before" | "at"): Man
 		return registerManaged(created, m.cwd, sm);
 	}
 	if (!existsSync(m.sessionPath)) throw new Error("This session has not been saved yet. Send a message before forking it.");
-	const sm = SessionManager.open(m.sessionPath, m.sm.getSessionDir());
+	const sm = openSessionManager(m.sessionPath, m.sm.getSessionDir());
 	const forked = sm.createBranchedSession(leafId);
 	if (!forked) throw new Error("failed to create forked session");
 	return registerManaged(forked, sm.getCwd() || m.cwd, sm);
@@ -3154,7 +3154,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					return { ok: false, error: "fork cancelled by an extension" };
 				}
 				const forked = cmd.entryId
-					? SessionManager.open(m.sessionPath).createBranchedSession(cmd.entryId)
+					? openSessionManager(m.sessionPath).createBranchedSession(cmd.entryId)
 					: SessionManager.forkFrom(m.sessionPath, m.cwd).getSessionFile();
 				const newPath = forked ?? "";
 				if (!newPath) return { ok: false, error: "failed to create forked session" };
