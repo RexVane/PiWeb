@@ -23,7 +23,10 @@ function state(cwd: string): WorkspaceActivity {
 
 async function writeMarker(workspace: WorkspaceActivity, run: Activity): Promise<void> {
 	if (!workspace.root) return;
-	await fs.mkdir(workspace.root, { recursive: true });
+	// An active turn can outlive the repository. Only the marker directory can be created here.
+	await fs.mkdir(workspace.root, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+		if (error.code !== "EEXIST") throw error;
+	});
 	const file = path.join(workspace.root, `${run.id}.json`); const temporary = `${file}.${randomUUID()}.tmp`;
 	await withSettingsWriteLock(file, () => withExternalSettingsLock(file, async () => {
 		try {
@@ -31,7 +34,7 @@ async function writeMarker(workspace: WorkspaceActivity, run: Activity): Promise
 				finishedAt: run.finishedAt, participants: [...run.participants], heartbeatAt: Date.now() }), { flag: "wx", mode: 0o600 });
 			await replaceFileAtomically(temporary, file);
 		} finally { await fs.unlink(temporary).catch(() => undefined); }
-	}));
+	}, { createParent: false }));
 }
 
 function startMarker(workspace: WorkspaceActivity, run: Activity): void {
@@ -108,6 +111,6 @@ export async function completeGrowthRun(cwd: string, runId?: string): Promise<vo
 		// the same per-marker lock so an old stat cannot delete a fresh heartbeat.
 		await withSettingsWriteLock(location, () => withExternalSettingsLock(location, async () => {
 			if (await fs.stat(location).then((stat) => Date.now() - stat.mtimeMs > LEASE_MS, () => false)) await fs.unlink(location).catch(() => undefined);
-		})).catch(() => undefined);
+		}, { createParent: false })).catch(() => undefined);
 	}
 }

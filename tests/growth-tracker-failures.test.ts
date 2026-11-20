@@ -89,11 +89,11 @@ it("records by default without asking when the workspace has no saved choice", a
 	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => null });
 	try {
 		vi.mocked(recordWorkspaceChanges).mockImplementation(async (_cwd, _session, options) => {
-			expect(options).toMatchObject({ allowInit: true, allowRecording: true });
+			expect(options).toMatchObject({ allowRecording: true });
 			return null;
 		});
 		vi.mocked(commitRound).mockImplementation(async (_cwd, _meta, options) => {
-			expect(options).toMatchObject({ allowInit: true, allowRecording: true });
+			expect(options).toMatchObject({ allowRecording: true });
 			return null;
 		});
 		await tracker.prepare();
@@ -138,7 +138,7 @@ it("stops tracking quietly when the workspace owner declined", async () => {
 	const events: WebEvent[] = [];
 	const tracker = createGrowthTracker({ cwd, sessionPath: path.join(cwd, "session.jsonl"), publish: (event) => events.push(event), entries: () => [], consent: async () => false });
 	try {
-		vi.mocked(recordWorkspaceChanges).mockRejectedValue(new GrowthError("needs consent", "needs-consent", { reason: "not-git" }));
+		vi.mocked(recordWorkspaceChanges).mockRejectedValue(new GrowthError("needs consent", "needs-consent"));
 		await tracker.prepare();
 		tracker.onEvent({ type: "agent_start" } as never);
 		tracker.onEvent({ type: "agent_settled" } as never);

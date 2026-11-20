@@ -8,18 +8,19 @@
 
 | 位置 | 内容 | 代码位置 |
 | --- | --- | --- |
-| `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-automations.json`、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
+| `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-automations.json`、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
 | `$HOME` / `%USERPROFILE%` 下的导入来源 | 会话导入只读取、不修改：`~/.claude/projects`、`~/.codex/sessions`、`~/.grok/sessions`、`~/.dsh/sessions`、`~/.zcode/cli/db/db.sqlite`、`~/.local/share/opencode/opencode.db`、`~/.kimi`、`~/.workbuddy` / `~/.workbuddy-ai`（支持 `WORKBUDDY_CONFIG_DIR`）、`~/.gemini/antigravity`、`~/.gemini/antigravity-cli`、`~/.qwen`（支持 `QWEN_HOME`）、`~/.cursor/chats` | `src/lib/session-import/paths.ts` |
 | `~/.agents/skills` | 全局技能目录（个人技能来源之一） | `src/lib/skills-service.ts` |
 | `~/.agents/backups` + `INDEX.md` | 可恢复移除（技能、附件、上传清理）保留的恢复副本与索引 | `src/lib/recoverable-remove.ts` |
 | 安装目录 | `.next`、`.next-releases/`、依赖与锁文件 | `scripts/build-output.mjs` |
-| 工作区（用户项目目录） | 项目文件；生长树记录写在该工作区 Git 仓库的 `refs/piweb/rounds/…` | `src/lib/growth-service.ts` |
+| 工作区（用户项目目录） | 项目文件，已有 Git 仓库的生长树记录可存放在 `refs/piweb/rounds/…` | `src/lib/growth-service.ts` |
 | 临时目录 | 构建 staging、npm 缓存、SDK 工具下载等 | `scripts/install-build.mjs` 等 |
 
 因此：
 
 - **看住 agent 目录不等于看住全部数据**：`~/.agents/skills`、导入来源和 `~/.agents/backups` 仍在 `HOME`/`USERPROFILE` 下。
 - 会话导入只读取来源数据，不写入、不迁移；卸载 PiWeb 不会删除这些来源。
+- 普通目录首次记录时，在 `<agent 目录>/web-growth/` 建立快照库，项目里不会生成 `.git`。同一目录之后即使自行初始化 Git，也会继续使用原有的快照库。
 - 后端文件接口在默认配置下不要求 cwd 是已注册工作区（认证后本机操作者级权限）。需要更严格的边界时使用[严格工作区模式](environment.md#可选限制开关本修复轮新增默认不改变原有行为)。
 
 ## 导入会话的续聊兼容

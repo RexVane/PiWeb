@@ -1,9 +1,8 @@
 /**
- * growth-service：项目生长 = 每轮一个 git commit（工作区自带 git，无影子仓库、无旁路账本）。
+ * growth-service：项目生长 = 每轮一个 git commit。
  *
- * commit 直接落在工作区自己的 git 仓库里：工作区已是仓库根目录就直接用；
- * 非 git 目录、或只是别的仓库的子目录，默认记录开启时在工作区根 `git init`
- * （子目录则嵌套 init），保证记录范围恰好等于工作区；只读操作不会初始化仓库。
+ * 已有仓库可保存记录，普通目录首次记录时在 PiWeb 数据目录创建独立仓库。
+ * 快照范围等于工作区，读取路径不初始化仓库。
  * 每轮结束 = 往 PiWeb 独立暂存区 <gitdir>/piweb/index（GIT_INDEX_FILE 传入）add 全部改动，
  * write-tree + commit-tree，挂到专用引用 refs/piweb/rounds/<key>：不碰 HEAD、不碰用户暂存区、不占分支。
  * 排除规则 <gitdir>/piweb/exclude 只叠加、绝不改写用户的 info/exclude。
@@ -19,13 +18,15 @@ import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import lockfile from "proper-lockfile";
 import { GROWTH_EXCLUDE_DIRS } from "./growth-tree";
 import { utf8Prefix } from "./text-sanitize";
 import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
 import { enableGrowthActivity, resolveGrowthAttribution, completeGrowthRun, type GrowthAttribution } from "./growth-activity";
 import { gitRecords } from "./git-records";
 import { gitEnv } from "./child-process-env";
-import lockfile from "proper-lockfile";
+import { comparable, isPathInside, samePath } from "./path-boundary";
 export { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-activity";
 import type { GrowthChange, GrowthRound, GrowthRoundKind, GrowthRoundStatus } from "./types";
 
@@ -54,17 +55,10 @@ const EXCLUDE_FILES = [
 ];
 const EXCLUDE_CONTENT = `# PiWeb growth snapshot exclusions (generated, do not edit)\n${[...EXCLUDE_DIRS.map((d) => `${d}/`), ...EXCLUDE_FILES].join("\n")}\n`;
 
-/** 工作区还不是仓库根目录：not-git = 不在任何仓库里；nested = 是 parent 仓库的子目录 */
-export interface GrowthInitTarget {
-	reason: "not-git" | "nested";
-	parent?: string;
-}
-
 export class GrowthError extends Error {
 	constructor(
 		message: string,
 		public code: "unavailable" | "too-large" | "not-found" | "failed" | "needs-consent" = "failed",
-		public target?: GrowthInitTarget,
 	) {
 		super(message);
 		this.name = "GrowthError";
@@ -74,7 +68,7 @@ export class GrowthError extends Error {
 interface WorkspaceState {
 	key: string;
 	cwd: string;
-	/** 工作区自己的 git-dir（rev-parse --absolute-git-dir 解析，兼容 worktree 的 gitfile） */
+	/** 工作区自身或 PiWeb 数据目录下的 git-dir */
 	gitDir: string;
 	/** PiWeb 专用暂存区（GIT_INDEX_FILE 传入）：用户自己的 index 永不触碰 */
 	indexFile: string;
@@ -351,7 +345,7 @@ function realpathSafe(p: string): string {
 /**
  * 不启动 git 进程解析工作区的 git-dir（只读快速路径）：
  * `.git` 是目录直接用，是文件则按 worktree/submodule 的 gitfile 解析。
- * 记录只可能写在「工作区自身仓库」里，父级仓库不在考虑范围。
+ * 仅查工作区自身的 .git（含 worktree/submodule 的 gitfile）。
  */
 async function resolveGitDirFast(cwd: string): Promise<string | null> {
 	const dotgit = path.join(cwd, ".git");
@@ -365,42 +359,44 @@ async function resolveGitDirFast(cwd: string): Promise<string | null> {
 	return null;
 }
 
-/**
- * 不启动 git 进程判断专用引用是否存在：refs/ 之下的引用存在共享目录（linked worktree 的 commondir），
- * 可能是松散文件，也可能已被 git gc 打包进 packed-refs。
- */
-async function refExistsFast(gitDir: string, ref: string): Promise<boolean> {
-	const commondir = (await fs.readFile(path.join(gitDir, "commondir"), "utf8").catch(() => "")).trim();
-	const common = commondir ? path.resolve(gitDir, commondir) : gitDir;
-	if (await fs.stat(path.join(common, ...ref.split("/"))).then((s) => s.isFile(), () => false)) return true;
-	const packed = await fs.readFile(path.join(common, "packed-refs"), "utf8").catch(() => "");
-	return packed.split("\n").some((line) => line.endsWith(` ${ref}`));
+function growthDataRoot(): string {
+	return path.resolve(getAgentDir(), "web-growth");
 }
 
-/**
- * 解析工作区可用的 git-dir：工作区已是某仓库的工作树根就直接复用；
- * 否则（非 git 目录、或只是别的仓库的子目录）只有 allowInit（用户同意过）才在工作区根 `git init`，
- * 不然抛 needs-consent 并带上原因，由界面去问。
- * init 失败（目录不可写等）按终态处理，本会话停用生长跟踪。
- */
-async function ensureGitDir(cwd: string, allowInit: boolean): Promise<string> {
-	const probe = async (): Promise<{ gitDir: string } | GrowthInitTarget> => {
-		const r = await runGit(["rev-parse", "--absolute-git-dir", "--show-toplevel", "--is-bare-repository"], { cwd });
-		if (r.code !== 0) return { reason: "not-git" };
-		const [gitDir = "", top = "", bare = ""] = r.stdout.toString("utf8").split("\n").map((s) => s.trim());
-		if (!gitDir || bare === "true" || !top) return { reason: "not-git" };
-		// 快照范围必须恰好等于工作区：落在别的仓库的子目录里时，宁可嵌套 init 自己的仓库
-		if (comparablePath(realpathSafe(top)) !== comparablePath(realpathSafe(cwd))) return { reason: "nested", parent: path.resolve(top) };
-		return { gitDir };
-	};
-	const existing = await probe();
-	if ("gitDir" in existing) return existing.gitDir;
-	if (!allowInit) throw new GrowthError("growth tracking needs consent to create a git repository here", "needs-consent", existing);
-	const r = await runGit(["init", "-q"], { cwd });
-	if (r.code !== 0) throw new GrowthError(`git init failed: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`, "unavailable");
-	const created = await probe();
-	if (!("gitDir" in created)) throw new GrowthError("workspace cannot be used as a git repository", "unavailable");
-	return created.gitDir;
+function privateGitDir(cwd: string): string {
+	return path.join(growthDataRoot(), createHash("sha256").update(comparable(cwd)).digest("hex"));
+}
+
+async function findSnapshotGitDir(cwd: string): Promise<string | null> {
+	const privateDir = privateGitDir(cwd);
+	// Keep writing to the same store if the user later initializes a project repository.
+	// The private piweb directory is created after Git initialization succeeds.
+	if ((await snapshotStat(path.join(privateDir, "piweb")))?.isDirectory()) return privateDir;
+	const gitDir = await resolveGitDirFast(cwd);
+	if (gitDir && (await snapshotStat(path.join(gitDir, "HEAD")))?.isFile()) return gitDir;
+	return null;
+}
+
+async function initializePrivateGitDir(cwd: string): Promise<string> {
+	const root = growthDataRoot();
+	const gitDir = privateGitDir(cwd);
+	await fs.mkdir(root, { recursive: true, mode: 0o700 });
+	const release = await lockfile.lock(gitDir, {
+		realpath: false, stale: 60_000, retries: { retries: 40, minTimeout: 50, maxTimeout: 1000 },
+	});
+	try {
+		const existing = await findSnapshotGitDir(cwd);
+		if (existing) return existing;
+		await fs.mkdir(gitDir, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+			if (error.code !== "EEXIST") throw error;
+		});
+		const r = await runGit(["init", "--bare", "--quiet", "--template=", gitDir], { cwd: root });
+		if (r.code !== 0) throw new GrowthError(`could not initialize PiWeb snapshot storage: ${r.stderr.trim().split("\n")[0] || `exit ${r.code}`}`);
+		await fs.mkdir(path.join(gitDir, "piweb"), { mode: 0o700 });
+		return gitDir;
+	} finally {
+		await release();
+	}
 }
 
 /** 链头的 commit 与 tree；引用不存在返回 null（for-each-ref 对不存在的引用输出空、退出码 0） */
@@ -411,10 +407,7 @@ async function readHead(ws: WorkspaceState): Promise<{ commit: string; tree: str
 	return HASH_RE.test(commit) && HASH_RE.test(tree) ? { commit, tree, message } : null;
 }
 
-async function createWorkspace(cwd: string, allowInit: boolean): Promise<WorkspaceState> {
-	if (!(await gitOk())) throw new GrowthError("git is not installed", "unavailable");
-	const key = workspaceKey(cwd);
-	workspaceLastUse.set(key, Date.now());
+async function createWorkspace(cwd: string, gitDir: string, key: string): Promise<WorkspaceState> {
 	if (registry.workspaces.size >= MAX_CACHED_WORKSPACES) {
 		const candidates = [...registry.workspaces.keys()].filter((candidate) => candidate !== key && !activeWorkspaceOperations.get(candidate))
 			.sort((left, right) => (workspaceLastUse.get(left) ?? 0) - (workspaceLastUse.get(right) ?? 0));
@@ -423,51 +416,61 @@ async function createWorkspace(cwd: string, allowInit: boolean): Promise<Workspa
 			registry.workspaces.delete(candidate); workspaceLastUse.delete(candidate);
 		}
 	}
-	const gitDir = await ensureGitDir(cwd, allowInit);
+	if (!samePath(gitDir, privateGitDir(cwd))) {
+		// Verify repository ownership and the worktree root before using an explicit --git-dir.
+		const r = await runGit(["rev-parse", "--show-toplevel"], { cwd });
+		const root = r.stdout.toString("utf8").replace(/\r?\n$/, "");
+		if (r.code !== 0 || !root || !samePath(realpathSafe(root), cwd)) {
+			throw new GrowthError(`could not open the workspace's Git repository: ${r.stderr.trim().split("\n")[0] || "unexpected worktree root"}`);
+		}
+	}
 	const piwebDir = path.join(gitDir, "piweb");
-	await fs.mkdir(piwebDir, { recursive: true });
 	const ws: WorkspaceState = {
 		key,
 		cwd,
 		gitDir,
 		indexFile: path.join(piwebDir, "index"),
 		excludeFile: path.join(piwebDir, "exclude"),
-		ref: `${GROWTH_REF_PREFIX}/${key}`,
+		ref: `${GROWTH_REF_PREFIX}/${workspaceKey(cwd)}`,
 		rounds: null,
 		emptyTree: "",
 		lock: Promise.resolve(),
 	};
-	await fs.writeFile(ws.excludeFile, EXCLUDE_CONTENT, "utf8");
-	const head = await readHead(ws);
-	ws.lastCommit = head?.commit;
-	ws.lastTree = head?.tree;
 	const empty = await shadow(ws, ["hash-object", "-t", "tree", "--stdin"], { input: "" });
 	ws.emptyTree = empty.stdout.toString("utf8").trim();
 	return ws;
 }
 
-/** allowInit：工作区还不是仓库根目录时是否允许 `git init`（记录开启的提交路径传 true；读取一律不建仓库） */
-async function getWorkspace(cwdValue: string, allowInit = false): Promise<WorkspaceState> {
-	const cwd = await fs.realpath(path.resolve(cwdValue)).catch(() => path.resolve(cwdValue));
-	const key = workspaceKey(cwd);
+async function workspaceState(cwd: string, gitDir: string): Promise<WorkspaceState> {
+	const dir = await fs.stat(gitDir);
+	// A repository may be moved away and recreated between requests.
+	const key = `${comparable(cwd)}\0${comparable(gitDir)}\0${dir.dev}:${dir.ino}:${dir.birthtimeMs}`;
 	workspaceLastUse.set(key, Date.now());
-	let pending = registry.workspaces.get(key);
-	if (pending) {
-		// 工作区的 .git 可能在运行期间被用户删掉重建：缓存里的状态就指向不存在的 git-dir，
-		// 之后每次提交都报 not a git repository。发现 HEAD 不在就丢掉缓存重建（链头从新仓库重新读）
-		const ws = await pending.catch(() => null);
-		const alive = ws ? await fs.stat(path.join(ws.gitDir, "HEAD")).then(() => true, () => false) : false;
-		if (!alive) {
+	const pending = registry.workspaces.get(key);
+	if (pending) return pending;
+	const created = createWorkspace(cwd, gitDir, key);
+	registry.workspaces.set(key, created);
+	void created.catch(() => {
+		if (registry.workspaces.get(key) === created) {
 			registry.workspaces.delete(key);
-			pending = undefined;
+			workspaceLastUse.delete(key);
 		}
-	}
-	if (!pending) {
-		pending = createWorkspace(cwd, allowInit);
-		registry.workspaces.set(key, pending);
-		pending.catch(() => registry.workspaces.delete(key));
-	}
-	return pending;
+	});
+	return created;
+}
+
+async function getWorkspace(cwdValue: string, record = false): Promise<WorkspaceState> {
+	const cwd = await fs.realpath(path.resolve(cwdValue)).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new GrowthError("workspace directory not found", record ? "failed" : "not-found");
+		throw error;
+	});
+	if (!(await fs.stat(cwd)).isDirectory()) throw new GrowthError("workspace directory not found", record ? "failed" : "not-found");
+	if (isPathInside(realpathSafe(growthDataRoot()), cwd)) throw new GrowthError("PiWeb snapshot storage cannot be recorded as a workspace");
+	if (record && !(await gitOk())) throw new GrowthError("git is not installed", "unavailable");
+	const existing = await findSnapshotGitDir(cwd);
+	if (existing) return workspaceState(cwd, existing);
+	if (!record) throw new GrowthError("no project snapshots have been recorded", "not-found");
+	return workspaceState(cwd, await initializePrivateGitDir(cwd));
 }
 
 function withLock<T>(ws: WorkspaceState, fn: () => Promise<T>): Promise<T> {
@@ -780,9 +783,21 @@ async function snapshotStat(file: string) {
 	}
 }
 
+/** Keep local PiWeb data out of snapshots even when the data directory is inside the workspace. */
+function localDataExcludes(cwd: string): string[] {
+	const agentDir = realpathSafe(path.resolve(getAgentDir()));
+	const dataRoot = realpathSafe(growthDataRoot());
+	return [...new Set([agentDir, dataRoot])]
+		.filter((dir) => isPathInside(cwd, dir) && !samePath(cwd, dir))
+		.map((dir) => {
+			const relative = path.relative(cwd, dir).split(path.sep).join("/");
+			return `--exclude=/${relative.replace(/[\\*?[\]]/g, "\\$&")}/`;
+		});
+}
+
 /** All mutations are in the private index. Drain Git's immutable listing in bounded batches. */
 async function refreshIndex(ws: WorkspaceState): Promise<void> {
-	const exclude = ["--exclude-standard", `--exclude-from=${ws.excludeFile.replace(/\\/g, "/")}`];
+	const exclude = ["--exclude-standard", `--exclude-from=${ws.excludeFile.replace(/\\/g, "/")}`, ...localDataExcludes(ws.cwd)];
 	const update = (args: string[], input: string[]) => shadow(ws, ["update-index", ...args], {
 		input: input.join("\0") + "\0", timeoutMs: HEAVY_GIT_TIMEOUT_MS,
 	});
@@ -866,8 +881,6 @@ export interface RoundMeta extends GrowthAttribution {
 export interface CommitOptions {
 	/** 记录开关由调用方读取；明确开启后才能写快照。 */
 	allowRecording?: boolean;
-	/** 记录开启时允许在工作区根目录执行 `git init`。 */
-	allowInit?: boolean;
 	/** 拍完快照、提交之前再问一次：返回 true 就放弃这次提交（返回 null） */
 	abortIf?: () => boolean;
 }
@@ -895,7 +908,10 @@ async function gcInBackground(ws: WorkspaceState): Promise<void> {
  */
 export async function commitRound(cwdValue: string, meta: RoundMeta, options: CommitOptions = {}): Promise<GrowthRound | null> {
 	if (options.allowRecording !== true) throw new GrowthError("growth tracking requires workspace consent", "needs-consent");
-	const ws = await getWorkspace(cwdValue, options.allowInit === true);
+	const ws = await getWorkspace(cwdValue, true);
+	await fs.mkdir(path.dirname(ws.indexFile), { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+		if (error.code !== "EEXIST") throw error;
+	});
 	enableGrowthActivity(ws.cwd, ws.gitDir);
 	return withLock(ws, () => withSnapshotLock(ws, async () => {
 		meta = { ...meta, ...await resolveGrowthAttribution(ws.cwd, meta, meta.session) };
@@ -1053,19 +1069,21 @@ function sameSessionName(a: string, b: string): boolean {
 	return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
-export async function hasRecordedSnapshot(cwd: string): Promise<boolean> {
-	const gitDir = await resolveGitDirFast(cwd);
-	return Boolean(gitDir && await refExistsFast(gitDir, `${GROWTH_REF_PREFIX}/${workspaceKey(cwd)}`));
+export async function hasRecordedSnapshot(cwdValue: string): Promise<boolean> {
+	const cwd = realpathSafe(path.resolve(cwdValue));
+	const gitDir = await findSnapshotGitDir(cwd);
+	if (!gitDir) return false;
+	const ws = await workspaceState(cwd, gitDir);
+	const r = await shadow(ws, ["for-each-ref", "--format=%(refname)", "--count=1", ws.ref]);
+	return r.stdout.toString("utf8").trim() === ws.ref;
 }
 
-/** 时间轴：默认只取某个会话的 commit；省略 session 取工作区全部。只读：还没提交过的工作区直接返回空（不创建 .git） */
+/** 时间轴：默认只取某个会话的 commit；省略 session 取工作区全部。无快照时返回空。 */
 export async function readRounds(cwdValue: string, session?: string): Promise<GrowthRound[]> {
-	const cwd = await fs.realpath(path.resolve(cwdValue)).catch(() => path.resolve(cwdValue));
-	const key = workspaceKey(cwd);
-	if (!registry.workspaces.has(key)) {
-		if (!(await hasRecordedSnapshot(cwd))) return [];
-	}
-	const ws = await getWorkspace(cwd);
+	const cwd = realpathSafe(path.resolve(cwdValue));
+	const gitDir = await findSnapshotGitDir(cwd);
+	if (!gitDir) return [];
+	const ws = await workspaceState(cwd, gitDir);
 	const rounds = await loadRounds(ws);
 	if (!session) return [...rounds];
 	const name = sessionName(session);

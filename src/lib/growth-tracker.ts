@@ -5,8 +5,7 @@
  *   （工作区还没有任何提交时记成基线）
  * - agent_start → agent_settled 是一轮：结束时提交本轮，提问首行做标题、用户消息 entryId 写进 trailers；
  *   没有改动也提交空 commit，轮号与对话一一对应
- * - 生长记录默认开启，工作区还不是仓库根目录时自动初始化本地仓库；手动停用的工作区不记录。
- *   重新开启时（consentAnswered）可立即拍基线。
+ * - 生长记录默认开启。普通目录使用 PiWeb 数据目录下的独立快照库。
  * 提交失败不影响 pi，重复失败时后台记录退避，用户可以立即重试。
  */
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -19,7 +18,7 @@ import { beginGrowthRun, finishGrowthRun, completeGrowthRun } from "./growth-act
 const ERROR_THROTTLE_MS = 60_000;
 const TRANSIENT_COOLDOWN_MS = 120_000;
 const COOLDOWN_AFTER_FAILURES = 2;
-export const GROWTH_TRACKER_VERSION = 8;
+export const GROWTH_TRACKER_VERSION = 9;
 
 interface SessionEntryLike {
 	type?: string;
@@ -132,7 +131,7 @@ export function createGrowthTracker(opts: {
 			declined();
 			return undefined;
 		}
-		return run({ allowInit: true, allowRecording: true, abortIf });
+		return run({ allowRecording: true, abortIf });
 	};
 
 	const recordUserChanges = (abortIf?: () => boolean) =>

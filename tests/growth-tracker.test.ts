@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recycleFixture } from "./fixtures/recycle";
-import { isAvailable } from "../src/lib/growth-service";
+import { filePatch, isAvailable } from "../src/lib/growth-service";
 import { createGrowthTracker } from "../src/lib/growth-tracker";
 import type { GrowthRound, WebEvent } from "../src/lib/types";
 
@@ -21,9 +21,11 @@ describe("growth-tracker (real git)", () => {
 	let tempDir = "";
 	beforeEach(async (ctx) => {
 		tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-tracker-"));
+		vi.stubEnv("PI_CODING_AGENT_DIR", path.join(tempDir, "agent"));
 		if (!(await isAvailable())) ctx.skip("Git unavailable; no growth-tracker assertions executed");
 	});
 	afterEach(async () => {
+		vi.unstubAllEnvs();
 		await recycleFixture(tempDir);
 	});
 
@@ -106,7 +108,7 @@ describe("growth-tracker (real git)", () => {
 		}
 	}, 20_000);
 
-	it("automatically initializes and records an unset workspace without a dialog event", async () => {
+	it("records a plain workspace by default and serves its round diff without a .git directory", async () => {
 		const cwd = path.join(tempDir, "default-work");
 		await fs.mkdir(cwd);
 		await fs.writeFile(path.join(cwd, "a.txt"), "before\n");
@@ -121,7 +123,10 @@ describe("growth-tracker (real git)", () => {
 			await fs.writeFile(path.join(cwd, "a.txt"), "after\n");
 			tracker.onEvent({ type: "agent_settled" } as never);
 			await waitFor(() => roundsOf(events).length === 2);
-			expect(roundsOf(events)[1]).toMatchObject({ kind: "round", roundNumber: 1, changes: [{ status: "M", path: "a.txt", add: 1, del: 1 }] });
+			const round = roundsOf(events)[1];
+			expect(round).toMatchObject({ kind: "round", roundNumber: 1, changes: [{ status: "M", path: "a.txt", add: 1, del: 1 }] });
+			expect((await filePatch(cwd, round.parentTree, round.tree, "a.txt")).patch).toContain("-before\n+after");
+			expect(await fs.readdir(cwd)).toEqual(["a.txt"]);
 			expect(events.every((event) => event.type === "growth")).toBe(true);
 		} finally { tracker.dispose(); }
 	}, 20_000);

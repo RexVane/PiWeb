@@ -2,20 +2,27 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { gitInfo } from "../src/lib/git-service";
 import { commitRound, fileContent, listTree, recordWorkspaceChanges } from "../src/lib/growth-service";
 import { recycleFixture } from "./fixtures/recycle";
 
 // PIWEB_LARGE_WORKSPACE_TESTS=1 npm test -- tests/growth-large-workspace.stress.ts
 describe("large project recording", () => {
+	let root: string;
 	let work: string;
-	const options = { allowRecording: true, allowInit: true };
-	beforeEach(async () => { work = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-scale-")); });
+	const options = { allowRecording: true };
+	beforeEach(async () => {
+		root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-scale-"));
+		work = path.join(root, "workspace");
+		await fs.mkdir(work);
+		vi.stubEnv("PI_CODING_AGENT_DIR", path.join(root, "agent"));
+	});
 	afterEach(async () => {
+		vi.unstubAllEnvs();
 		if (process.platform === "darwin") {
-			execFileSync("osascript", ["-e", "on run argv\ntell application \"Finder\" to delete (POSIX file (item 1 of argv) as alias)\nend run", work]);
-		} else await recycleFixture(work);
+			execFileSync("osascript", ["-e", "on run argv\ntell application \"Finder\" to delete (POSIX file (item 1 of argv) as alias)\nend run", root]);
+		} else await recycleFixture(root);
 	});
 
 	it("records every path when 24,000 small files produce more than 8 MiB of pathnames", async () => {
@@ -34,6 +41,8 @@ describe("large project recording", () => {
 		expect(pathBytes).toBeGreaterThan(8 * 1024 * 1024);
 		const baseline = (await recordWorkspaceChanges(work, "paths.jsonl", options))!;
 		expect(await listTree(work, baseline.tree)).toHaveLength(24_000);
+		await expect(fs.stat(path.join(work, ".git"))).rejects.toMatchObject({ code: "ENOENT" });
+		execFileSync("git", ["init", "--quiet", work]);
 		const summary = await gitInfo(work, true);
 		expect(summary).toMatchObject({ counts: { total: 24_000, untracked: 24_000 }, files: [], commits: [] });
 		expect(summary.statusError).toBeUndefined();

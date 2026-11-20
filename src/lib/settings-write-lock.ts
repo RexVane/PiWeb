@@ -93,8 +93,10 @@ async function acquireExternalLock(file: string): Promise<() => Promise<void>> {
 }
 
 /** Match the SDK's settings.json.lock protocol for PiWeb's manual JSON writes. */
-export async function withExternalSettingsLock<T>(file: string, operation: () => Promise<T>): Promise<T> {
-	await fs.mkdir(path.dirname(file), { recursive: true });
+export async function withExternalSettingsLock<T>(
+	file: string, operation: () => Promise<T>, options: { createParent?: boolean } = {},
+): Promise<T> {
+	if (options.createParent !== false) await fs.mkdir(path.dirname(file), { recursive: true });
 	const release = await acquireExternalLock(file);
 	try {
 		return await operation();
