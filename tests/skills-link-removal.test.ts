@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { recycleFixture } from "./fixtures/recycle";
+import { recycleGeneratedFixture as recycleFixture } from "./fixtures/system-trash";
 
 const state = vi.hoisted(() => ({ agentDir: "", skills: [] as Array<{ name: string; filePath: string; baseDir: string }> }));
 vi.mock("@/lib/pi", () => ({
@@ -11,9 +11,9 @@ vi.mock("@/lib/pi", () => ({
 	resourceLoaderReady: async () => undefined, reloadAllLoaders: async () => [],
 }));
 vi.mock("@/lib/agent-manager", () => ({ reloadSessionsForCwd: async () => 0 }));
-vi.mock("@/lib/recoverable-remove", () => ({ recoverableRemove: async (removed: string) => {
-	const backup = `${removed}.recovered`;
-	await fs.rename(removed, backup); return { removed, backup };
+vi.mock("@/lib/recycle-bin", () => ({ moveToTrash: async (removed: string) => {
+	const destination = `${removed}.test-trash`;
+	await fs.rename(removed, destination); return { removed };
 } }));
 import { deleteSkill, previewDeleteSkill, readSkillFile } from "@/lib/skills-service";
 
@@ -53,7 +53,7 @@ describe("skill deletion follows declarations rather than link targets", () => {
 		expect(await previewDeleteSkill(skill, dir)).toEqual({ removed: link, link: true });
 		await deleteSkill(skill, dir, link);
 		expect(await fs.readFile(path.join(external, "keep.txt"), "utf8")).toBe("external data");
-		expect((await fs.lstat(`${link}.recovered`)).isSymbolicLink()).toBe(true);
+		expect((await fs.lstat(`${link}.test-trash`)).isSymbolicLink()).toBe(true);
 	});
 	it("rejects external standalone files instead of deleting their parents", async () => {
 		const { dir, external } = await setup(); const skill = path.join(external, "SKILL.md"); discover(skill);

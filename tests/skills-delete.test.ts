@@ -1,220 +1,132 @@
-/**
- * deleteSkill 的核心约束：路径鉴权（必须来自发现列表）、package 技能拒绝删除。
- * listSkills 依赖 SDK 加载器与真实 agent 目录，不适合单测；这里只测纯删除分支，
- * 用 vi.mock 把 listSkills 换成受控列表。
- */
-import { afterEach, describe, expect, it, vi } from "vitest";
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 
-const fakeSkills = new Map<string, { name: string; filePath: string; description?: string; disableModelInvocation?: boolean; baseDir?: string }>();
-/** agent 目录的"配置写法"可被单个用例改写（见下面的 junction 回归用例） */
-const mockState = vi.hoisted(() => ({ agentDir: "" }));
-
-/**
- * 建路径一律从**展开后**的临时目录起步：CI 的 Windows runner 上 os.tmpdir() 是 8.3 短名
- * （`C:\Users\RUNNER~1\...`），而 deleteSkill 返回的是它自己 realpath 之后的路径，两边不统一断言就对不上。
- *
- * 注意必须用**异步** realpath：Windows 上 fs.realpathSync 不展开 8.3 短名
- * （本机实测 realpathSync("C:\PROGRA~1") 原样返回，而 fs.promises.realpath 给出 "C:\Program Files"），
- * 产品代码用的是异步版，测试跟着用同一个 API 才不会假红。
- */
-function realTmp(): Promise<string> {
-	return fs.promises.realpath(os.tmpdir());
-}
-
-/** 产品返回的是 realpath 之后的位置；断言前用同一个 API 取一份期望值 */
-function expanded(target: string): Promise<string> {
-	return fs.promises.realpath(target);
-}
-
-/** 删目录链接：Windows 的 junction 是目录（rmdir），POSIX 的 symlink 要 unlink */
-function removeDirLink(link: string): void {
-	try {
-		fs.unlinkSync(link);
-	} catch {
-		try {
-			fs.rmdirSync(link);
-		} catch {
-			/* 已经不存在 */
-		}
-	}
-}
-
-vi.mock("@/lib/pi", () => ({
-	// 真实 listSkills 走 resourceLoader.getSkills()；这里用受控技能列表替换加载器
-	// 故意返回"配置原样"的路径（不做展开）：产品侧的 toComparablePath 负责展开
-	getAgentDir: () => mockState.agentDir || path.join(os.tmpdir(), "piweb-test-agent"),
-	getResourceLoader: () => ({ getSkills: () => ({ skills: [...fakeSkills.values()] }) }),
-	reloadAllLoaders: vi.fn(async () => undefined),
-	resourceLoaderReady: vi.fn(async () => undefined),
+const state = vi.hoisted(() => ({
+	agentDir: "", skills: [] as Array<{ name: string; filePath: string; baseDir: string }>,
+	trash: vi.fn(async (_removed: string, _options: unknown) => ({ removed: _removed })),
+	reload: vi.fn(async () => []), sessions: vi.fn(async () => 0),
 }));
-vi.mock("@/lib/agent-manager", () => ({ reloadSessionsForCwd: vi.fn(async () => undefined) }));
-vi.mock("@/lib/recoverable-remove", () => ({ recoverableRemove: async (removed: string) => {
-	const backup = `${removed}.backup`;
-	await fs.promises.rename(removed, backup);
-	return { removed, backup };
-} }));
+vi.mock("@/lib/pi", () => ({
+	getAgentDir: () => state.agentDir,
+	getResourceLoader: () => ({ getSkills: () => ({ skills: state.skills }) }),
+	reloadAllLoaders: state.reload, resourceLoaderReady: async () => {},
+}));
+vi.mock("@/lib/agent-manager", () => ({ reloadSessionsForCwd: state.sessions }));
+vi.mock("@/lib/recycle-bin", () => ({ moveToTrash: state.trash }));
+import { deleteSkill, previewDeleteSkill } from "@/lib/skills-service";
 
-import { deleteSkill } from "@/lib/skills-service";
-
-function makeSkillDir(scope: "project" | "package"): string {
-	const base = mkdtempSync(path.join(os.tmpdir(), `piweb-skill-${scope}-`));
-	const dir = path.join(base, "my-skill");
-	mkdirSync(dir);
-	writeFileSync(path.join(dir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
-	return path.join(dir, "SKILL.md");
+let group: string, directory: string, cwd: string, trash: string;
+beforeAll(async () => { group = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-skill-trash-tests-"))); });
+afterAll(async () => { await recycleGeneratedFixture(group); });
+beforeEach(async () => {
+	directory = await fs.mkdtemp(path.join(group, "case-"));
+	state.agentDir = path.join(directory, "agent"); cwd = path.join(directory, "project"); trash = path.join(directory, "test-system-trash");
+	for (const root of [path.join(state.agentDir, "skills"), cwd, trash]) await fs.mkdir(root, { recursive: true });
+	state.skills = []; state.reload.mockClear(); state.sessions.mockClear();
+	state.trash.mockReset().mockImplementation(async (removed) => {
+		await fs.rename(removed, path.join(trash, `${randomUUID()}-${path.basename(removed)}`));
+		return { removed };
+	});
+});
+const discover = (filePath: string, name = "my-skill") => state.skills.push({ name, filePath, baseDir: path.dirname(filePath) });
+async function skill(root: string, name = "my-skill"): Promise<string> {
+	const file = path.join(root, name, "SKILL.md"); await fs.mkdir(path.dirname(file), { recursive: true });
+	await fs.writeFile(file, `---\nname: ${name}\n---\nbody\n`); discover(file, name); return file;
+}
+async function createLink(target: string, alias: string): Promise<boolean> {
+	try { await fs.symlink(target, alias, process.platform === "win32" ? "junction" : "dir"); return true; }
+	catch (error) { if (["EPERM", "EACCES", "ENOTSUP"].includes((error as NodeJS.ErrnoException).code || "")) return false; throw error; }
 }
 
-afterEach(() => {
-	fakeSkills.clear();
-	mockState.agentDir = "";
-});
-
-describe("deleteSkill", () => {
-	it("removes the skill directory for a global skill (under the agent dir)", async () => {
-		// classifyScope 只认 ~/.pi/agent 等真实目录；测试里模拟 agent 目录在其下建技能
-		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
-		const dir = path.join(agentDir, "skills", "my-skill");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(path.join(dir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
-		const filePath = path.join(dir, "SKILL.md");
-		fakeSkills.set("my-skill", { name: "my-skill", filePath });
-		try {
-			const expected = await expanded(dir); // 删之前先取展开形式，产品返回的就是这个
-			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
-			expect(fs.existsSync(dir)).toBe(false);
-		} finally {
-			rmSync(agentDir, { recursive: true, force: true });
-		}
+describe("confirmed skill deletion uses only the system Trash", () => {
+	it("recycles a global skill's own directory and does not create a backup", async () => {
+		const file = await skill(path.join(state.agentDir, "skills"));
+		const expected = await fs.realpath(path.dirname(file));
+		await expect(deleteSkill(file)).resolves.toEqual({ removed: expected });
+		expect(state.trash).toHaveBeenCalledWith(expected, expect.objectContaining({ expectedCanonical: expected, expectedLink: false }));
+		await expect(fs.stat(path.dirname(file))).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(fs.stat(path.join(state.agentDir, "backups"))).rejects.toMatchObject({ code: "ENOENT" });
+		const recycled = (await fs.readdir(trash))[0];
+		expect(await fs.readFile(path.join(trash, recycled, "SKILL.md"), "utf8")).toContain("body");
 	});
 
-	/**
-	 * 回归：SDK 认技能根下直接放的平铺 foo.md。它的 dirname 就是技能根，
-	 * 旧实现按目录删，会把整个全局技能目录（连同别的技能）一起删掉。
-	 */
-	it("平铺技能（技能根下的 foo.md）只删这个文件，不动技能根和别的技能", async () => {
-		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
-		const root = path.join(agentDir, "skills");
-		const sibling = path.join(root, "other-skill");
-		mkdirSync(sibling, { recursive: true });
-		writeFileSync(path.join(sibling, "SKILL.md"), "---\nname: other-skill\n---\nbody\n");
-		const flat = path.join(root, "flat.md");
-		writeFileSync(flat, "---\nname: flat\n---\nbody\n");
-		fakeSkills.set("flat", { name: "flat", filePath: flat });
-		fakeSkills.set("other-skill", { name: "other-skill", filePath: path.join(sibling, "SKILL.md") });
-		try {
-			const expected = await expanded(flat);
-			await expect(deleteSkill(flat, undefined)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
-			expect(fs.existsSync(flat)).toBe(false);
-			expect(fs.existsSync(path.join(sibling, "SKILL.md"))).toBe(true);
-		} finally {
-			rmSync(agentDir, { recursive: true, force: true });
-		}
+	it("recycles a flat Markdown skill but retains its root and siblings", async () => {
+		const root = path.join(state.agentDir, "skills"); const other = await skill(root, "other");
+		const flat = path.join(root, "flat.md"); await fs.writeFile(flat, "---\nname: flat\n---\nbody"); discover(flat, "flat");
+		await expect(deleteSkill(flat)).resolves.toEqual({ removed: await fs.realpath(root).then((real) => path.join(real, "flat.md")) });
+		expect(await fs.readFile(other, "utf8")).toContain("other");
 	});
 
-	it("SKILL.md 直接放在技能根里时只删文件，技能根保留", async () => {
-		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
-		const root = path.join(agentDir, "skills");
-		mkdirSync(root, { recursive: true });
-		const file = path.join(root, "SKILL.md");
-		writeFileSync(file, "---\nname: root-skill\n---\nbody\n");
-		writeFileSync(path.join(root, "notes.txt"), "keep me");
-		fakeSkills.set("root-skill", { name: "root-skill", filePath: file });
-		try {
-			await deleteSkill(file, undefined);
-			expect(fs.existsSync(file)).toBe(false);
-			expect(fs.existsSync(path.join(root, "notes.txt"))).toBe(true);
-		} finally {
-			rmSync(agentDir, { recursive: true, force: true });
-		}
+	it("only recycles SKILL.md when it is directly in a protected skill root", async () => {
+		const root = path.join(state.agentDir, "skills"), file = path.join(root, "SKILL.md");
+		await fs.writeFile(file, "root skill"); await fs.writeFile(path.join(root, "notes.txt"), "keep me"); discover(file);
+		await deleteSkill(file);
+		expect(state.trash).toHaveBeenCalledWith(file, expect.any(Object));
+		expect(await fs.readFile(path.join(root, "notes.txt"), "utf8")).toBe("keep me");
 	});
 
-	it("技能目录里还有别的已发现技能时只删 SKILL.md", async () => {
-		const agentDir = path.join(os.tmpdir(), "piweb-test-agent");
-		const outer = path.join(agentDir, "skills", "outer");
-		const inner = path.join(outer, "inner");
-		mkdirSync(inner, { recursive: true });
-		writeFileSync(path.join(outer, "SKILL.md"), "---\nname: outer\n---\nbody\n");
-		writeFileSync(path.join(inner, "SKILL.md"), "---\nname: inner\n---\nbody\n");
-		fakeSkills.set("outer", { name: "outer", filePath: path.join(outer, "SKILL.md") });
-		fakeSkills.set("inner", { name: "inner", filePath: path.join(inner, "SKILL.md") });
-		try {
-			await deleteSkill(path.join(outer, "SKILL.md"), undefined);
-			expect(fs.existsSync(path.join(outer, "SKILL.md"))).toBe(false);
-			expect(fs.existsSync(path.join(inner, "SKILL.md"))).toBe(true);
-		} finally {
-			rmSync(agentDir, { recursive: true, force: true });
-		}
+	it("retains the shared directory when another discovered skill is nested inside", async () => {
+		const outer = await skill(path.join(state.agentDir, "skills"), "outer");
+		const inner = await skill(path.dirname(outer), "inner");
+		await deleteSkill(outer);
+		expect(state.trash).toHaveBeenCalledWith(outer, expect.any(Object));
+		expect(await fs.readFile(inner, "utf8")).toContain("inner");
 	});
 
-	it("removes the skill directory for a project skill", async () => {
-		const cwd = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-cwd-"));
-		const filePath = makeSkillDir("project");
-		// classifyScope: 不在 agent 目录下的绝对路径 + cwd 前缀不匹配时落 package；放进 cwd 下即 project
-		const dir = path.join(cwd, ".pi", "skills", "my-skill");
-		rmSync(path.dirname(filePath), { recursive: true, force: true });
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(path.join(dir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
-		const projectFile = path.join(dir, "SKILL.md");
-		fakeSkills.set("my-skill", { name: "my-skill", filePath: projectFile });
-		const expected = await expanded(dir);
-		await expect(deleteSkill(projectFile, cwd)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
-		expect(fs.existsSync(dir)).toBe(false);
-		rmSync(cwd, { recursive: true, force: true });
+	it("recycles only the selected project skill and refreshes that workspace", async () => {
+		const file = await skill(path.join(cwd, ".pi", "skills"));
+		const expected = await fs.realpath(path.dirname(file));
+		await expect(deleteSkill(file, cwd, expected)).resolves.toEqual({ removed: expected });
+		expect(state.sessions).toHaveBeenCalledWith(cwd);
 	});
 
-	it("refuses to delete a package skill (node_modules)", async () => {
-		const base = mkdtempSync(path.join(os.tmpdir(), "piweb-skill-pkg-"));
-		const dir = path.join(base, "node_modules", "some-pkg", "my-skill");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(path.join(dir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
-		const filePath = path.join(dir, "SKILL.md");
-		fakeSkills.set("my-skill", { name: "my-skill", filePath });
-		await expect(deleteSkill(filePath, undefined)).rejects.toThrow(/package-managed skill/);
-		expect(fs.existsSync(filePath)).toBe(true);
-		rmSync(base, { recursive: true, force: true });
+	it("refuses package-managed skills without touching any package files", async () => {
+		const file = await skill(path.join(directory, "node_modules", "package", "skills"));
+		await expect(deleteSkill(file, cwd)).rejects.toThrow("package-managed skill");
+		expect(await fs.readFile(file, "utf8")).toContain("body");
+		expect(state.trash).not.toHaveBeenCalled();
 	});
 
-	it("rejects paths outside the discovered skill list", async () => {
-		const filePath = makeSkillDir("project");
-		await expect(deleteSkill(filePath, undefined)).rejects.toThrow();
-		rmSync(path.dirname(path.dirname(filePath)), { recursive: true, force: true });
+	it("rejects a file outside the discovered list", async () => {
+		const file = path.join(directory, "private.md"); await fs.writeFile(file, "keep");
+		await expect(deleteSkill(file, cwd)).rejects.toThrow();
+		expect(await fs.readFile(file, "utf8")).toBe("keep");
+		expect(state.trash).not.toHaveBeenCalled();
 	});
 
-	/**
-	 * 回归：配置里的 agent 目录与"发现到的技能路径"是同一个目录的两种写法时，不能被判成 package 技能。
-	 *
-	 * 删技能时 resolveDiscoveredPath 交出的是 realpath 形式，而 agentDir 是配置里的原样字符串，
-	 * 两边直接比字符串就会漏掉。CI 的 Windows runner 上 os.tmpdir() 是 8.3 短名
-	 * （C:\Users\RUNNER~1\...，展开后是 C:\Users\runneradmin\...）就是这么红的；真实用户路径里
-	 * 带短名或 junction 时同样会中招。
-	 *
-	 * 这里用 junction 复现同一类差异——**只有 realpath 能识破 junction，path.resolve 不能**，
-	 * 所以这条用例同时挡住了"用归一化代替展开"这种假修复。
-	 */
-	it("agent 目录是同目录的另一种写法（junction / 8.3 短名）时，全局技能仍然可以删", async () => {
-		const tmp = await realTmp();
-		const realDir = path.join(tmp, "piweb-agent-real");
-		const linkDir = path.join(tmp, "piweb-agent-link");
-		const skillDir = path.join(realDir, "skills", "my-skill");
-		fs.rmSync(realDir, { recursive: true, force: true });
-		removeDirLink(linkDir); // 上一次留下的链接（若有）
-		mkdirSync(skillDir, { recursive: true });
-		writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: my-skill\n---\nbody\n");
-		fs.symlinkSync(realDir, linkDir, "junction");
-		const filePath = path.join(skillDir, "SKILL.md");
-		fakeSkills.set("my-skill", { name: "my-skill", filePath });
-		mockState.agentDir = linkDir;
-		try {
-			const expected = await expanded(skillDir);
-			await expect(deleteSkill(filePath, undefined)).resolves.toEqual({ removed: expected, backup: `${expected}.backup` });
-			expect(fs.existsSync(skillDir)).toBe(false);
-		} finally {
-			removeDirLink(linkDir); // 只删链接本身，不动目标
-			fs.rmSync(realDir, { recursive: true, force: true });
-		}
+	it("accepts a canonical skill path when the agent directory uses a junction or another spelling", async () => {
+		const actual = state.agentDir, alias = path.join(directory, "agent-alias");
+		const file = await skill(path.join(actual, "skills"));
+		if (!await createLink(actual, alias)) return;
+		state.agentDir = alias;
+		const expected = await fs.realpath(path.dirname(file));
+		await expect(deleteSkill(file)).resolves.toEqual({ removed: expected });
+	});
+
+	it("does not recycle a changed removal preview", async () => {
+		const file = await skill(path.join(state.agentDir, "skills"));
+		const plan = await previewDeleteSkill(file);
+		await expect(deleteSkill(file, undefined, `${plan.removed}-other`)).rejects.toThrow("path changed");
+		expect(state.trash).not.toHaveBeenCalled();
+	});
+
+	it("retains the skill and does not refresh when system Trash is unavailable", async () => {
+		const file = await skill(path.join(state.agentDir, "skills"));
+		state.trash.mockRejectedValueOnce(Object.assign(new Error("no system Trash"), { code: "TRASH_UNAVAILABLE" }));
+		await expect(deleteSkill(file)).rejects.toMatchObject({ code: "TRASH_UNAVAILABLE" });
+		expect(await fs.readFile(file, "utf8")).toContain("body");
+		expect(state.reload).not.toHaveBeenCalled(); expect(state.sessions).not.toHaveBeenCalled();
+	});
+
+	it("reports a refresh warning after recycling without inventing a backup path", async () => {
+		const file = await skill(path.join(state.agentDir, "skills"));
+		state.reload.mockRejectedValueOnce(new Error("reload failed"));
+		const result = await deleteSkill(file);
+		expect(result).toMatchObject({ removed: path.dirname(file), warning: expect.stringContaining("系统回收站") });
+		expect(result).not.toHaveProperty("backup");
 	});
 });

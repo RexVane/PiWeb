@@ -9,12 +9,15 @@ import { readJsoncSettingsObjectSync, mutateJsoncSettingsFileSync } from "./json
 import { syncDirectorySync } from "./atomic-file";
 import { assertNoRemovalMounts } from "./removal-boundary";
 import { windowsDirectoryApiSync } from "./windows-directory-api";
+import { moveToTrash } from "./recycle-bin";
 
 type Fields = { packages?: unknown; disabledPackages?: unknown };
 export interface NpmTransactionPlan {
 	root: string;
 	projectRoot?: string;
 	settings?: { file: string; projectRoot?: string; after: Fields };
+	/** Confirmed uninstall: recycle the previous generation instead of indexing a backup. */
+	recyclePrevious?: boolean;
 }
 interface Journal {
 	version: 1; id: string; pid: number; birth?: string | null;
@@ -22,11 +25,13 @@ interface Journal {
 	hadOriginal: boolean; originalStamp?: string;
 	settings?: { before: Fields; after: Fields };
 	settingsStarted?: boolean;
+	recyclePrevious?: boolean;
 	project?: boolean;
 	group?: { id: string; file: string };
 }
 interface GroupDecision { version: 1; id: string; decision: "working" | "commit" | "completed" | "rollback"; roots: string[]; members: Record<string, string> }
 export class NpmTransactionCommittedError extends Error { readonly applied = true; }
+export class NpmUninstallTrashPendingError extends NpmTransactionCommittedError { readonly trashPending = true; }
 export class NpmTransactionPendingCommitError extends Error { readonly pending = true; }
 interface Transaction {
 	root: string; stage: string; previous: string; file: string;
@@ -37,6 +42,7 @@ interface Transaction {
 const context = new AsyncLocalStorage<Map<string, Transaction>>();
 const active = new Set<string>();
 const recoveringGroups = new Set<string>();
+const trashCleanups = new Map<string, Promise<void>>();
 const MARKER = ".piweb-npm-generation.json";
 const JOURNAL = "piweb-npm-transaction.json";
 const keyOf = (file: string) => process.platform === "win32" ? path.resolve(file).toLowerCase() : path.resolve(file);
@@ -145,7 +151,8 @@ function readJournal(root: string): Journal | undefined {
 	const value = JSON.parse(fs.readFileSync(file, "utf8")) as Journal;
 	if (value.version !== 1 || !/^[a-f0-9-]{36}$/.test(value.id) || !Number.isSafeInteger(value.pid)
 		|| !["working", "rolling-back", "committing", "committed"].includes(value.phase) || typeof value.hadOriginal !== "boolean"
-		|| (value.settings && (!value.settings.before || !value.settings.after))) throw new Error("Plugin installation recovery record is invalid; the existing installation was retained.");
+		|| (value.settings && (!value.settings.before || !value.settings.after))
+		|| (value.recyclePrevious !== undefined && typeof value.recyclePrevious !== "boolean")) throw new Error("Plugin installation recovery record is invalid; the existing installation was retained.");
 	return value;
 }
 function groupDecision(journal: Journal, allowed?: Set<string>): GroupDecision | undefined {
@@ -300,12 +307,63 @@ export function recoverNpmPrefix(root: string, projectRoot?: string, allowedScop
 			restoreSettings(root, current, projectRoot);
 		}
 		else finishPromotion(tx);
-		writeRecoveryIndex(tx, !commit ? "Interrupted plugin operation; original installation retained" : "Previous plugin installation retained after recovered commit");
+		// Native Trash is asynchronous. Keep the committed journal until the
+		// resolver's async cleanup completes; a crash never loses the old tree.
+		if (commit && current.recyclePrevious && stat(tx.previous)) return;
+		if (!commit || !current.recyclePrevious) writeRecoveryIndex(tx, !commit ? "Interrupted plugin operation; original installation retained" : "Previous plugin installation retained after recovered commit");
 		fs.unlinkSync(tx.file);
 		clearGroupIfComplete(current, decision);
 		});
 		return true;
 	} finally { release?.(); unpin(); }
+}
+
+async function recyclePreviousGeneration(tx: Pick<Transaction, "root" | "previous" | "journal">): Promise<void> {
+	const previous = stat(tx.previous);
+	if (!previous) return;
+	safeDirectory(tx.previous);
+	if (stamp(tx.previous) !== tx.journal.originalStamp || marker(tx.root) !== tx.journal.id) throw new Error("Previous plugin installation changed; its files were retained.");
+	await moveToTrash(tx.previous, { managedRoot: path.dirname(tx.root), expectedCanonical: tx.previous, expectedLink: false, expectedKind: "directory", expectedIdentity: { dev: previous.dev, ino: previous.ino } });
+}
+
+/** Complete a confirmed uninstall's interrupted Trash step under its install mutex. */
+export async function finishNpmTrashCleanup(plans: Array<Pick<NpmTransactionPlan, "root" | "projectRoot">>): Promise<void> {
+	for (const plan of plans) {
+		const parent = path.dirname(path.resolve(plan.root));
+		if (!stat(parent)) continue;
+		if (plan.projectRoot) {
+			const expected = path.join(fs.realpathSync(plan.projectRoot), ".pi");
+			if (!stat(parent)?.isDirectory() || stat(parent)?.isSymbolicLink() || keyOf(fs.realpathSync(parent)) !== keyOf(expected)) throw new Error("Project plugin directory must not be linked.");
+		}
+		const root = path.join(fs.realpathSync(parent), "npm");
+		if (active.has(keyOf(root))) continue;
+		const pending = trashCleanups.get(keyOf(root));
+		if (pending) { await pending; continue; }
+		const initial = readJournal(root);
+		if (!initial?.recyclePrevious || initial.phase !== "committed") continue;
+		const cleanup = (async () => {
+			const unpin = pinParent(root);
+			let release: (() => void) | undefined;
+			try {
+				release = acquireTransactionLock(root);
+				const journal = readJournal(root);
+				if (!journal || journal.id !== initial.id || journal.phase !== "committed") return;
+				const tx = { ...paths(root, journal.id), journal };
+				const allowed = new Set(plans.map((entry) => {
+					const directory = path.dirname(path.resolve(entry.root));
+					return keyOf(stat(directory) ? path.join(fs.realpathSync(directory), "npm") : entry.root);
+				}));
+				const decision = groupDecision(journal, allowed);
+				if (decision && !["commit", "completed"].includes(decision.decision)) throw new Error("Plugin uninstall recovery is not committed; original files were retained.");
+				await recyclePreviousGeneration(tx);
+				fs.unlinkSync(tx.file);
+				clearGroupIfComplete(journal, decision);
+			} finally { release?.(); unpin(); }
+		})();
+		trashCleanups.set(keyOf(root), cleanup);
+		try { await cleanup; }
+		finally { if (trashCleanups.get(keyOf(root)) === cleanup) trashCleanups.delete(keyOf(root)); }
+	}
 }
 
 /** An operation-local mapping; unrelated loaders continue to see the old live tree. */
@@ -394,6 +452,7 @@ export async function withNpmInstallTransaction<T>(plans: NpmTransactionPlan[], 
 	const releases: Array<() => void> = [];
 	let group: { file: string; value: GroupDecision } | undefined;
 	let completed = false;
+	let promoted = false;
 	let commitDecided = false;
 	try {
 		for (const plan of [...plans].sort((a, b) => keyOf(a.root).localeCompare(keyOf(b.root)))) {
@@ -403,9 +462,10 @@ export async function withNpmInstallTransaction<T>(plans: NpmTransactionPlan[], 
 			releases.push(prepared.release);
 			if (plan.projectRoot) readJsoncSettingsObjectSync(path.join(path.dirname(root), "settings.json"), { projectRoot: path.dirname(path.dirname(root)) });
 			recoverNpmPrefix(root, plan.projectRoot ? path.dirname(path.dirname(root)) : undefined, plans);
+			await finishNpmTrashCleanup(plans);
 			releases.push(acquireTransactionLock(root));
 			const id = randomUUID();
-			const journal: Journal = { version: 1, id, pid: process.pid, birth: processIdentity(process.pid).birth, phase: "working", hadOriginal: !!stat(root), originalStamp: stamp(root), ...(plan.projectRoot ? { project: true } : {}) };
+			const journal: Journal = { version: 1, id, pid: process.pid, birth: processIdentity(process.pid).birth, phase: "working", hadOriginal: !!stat(root), originalStamp: stamp(root), ...(plan.projectRoot ? { project: true } : {}), ...(plan.recyclePrevious ? { recyclePrevious: true } : {}) };
 			if (!group) {
 				const groupId = randomUUID();
 				group = { file: path.join(path.dirname(root), `piweb-npm-group-${groupId}.json`), value: { version: 1, id: groupId, decision: "working", roots: [], members: {} } };
@@ -443,8 +503,10 @@ export async function withNpmInstallTransaction<T>(plans: NpmTransactionPlan[], 
 				finishPromotion(tx);
 			});
 		}
+		promoted = true;
 		for (const tx of transactions) {
-			writeRecoveryIndex(tx, "Previous plugin installation retained after successful commit");
+			if (tx.journal.recyclePrevious) await recyclePreviousGeneration(tx);
+			else writeRecoveryIndex(tx, "Previous plugin installation retained after successful commit");
 		}
 		if (group) { group.value.decision = "completed"; atomicJson(group.file, group.value); }
 		completed = true;
@@ -453,6 +515,7 @@ export async function withNpmInstallTransaction<T>(plans: NpmTransactionPlan[], 
 		return result;
 	} catch (error) {
 		if (completed) throw new NpmTransactionCommittedError("插件更改已生效，但恢复记录尚未清理完成；刷新列表时会继续处理。", { cause: error });
+		if (promoted && transactions.some((tx) => tx.journal.recyclePrevious)) throw new NpmUninstallTrashPendingError("插件卸载已生效，但旧安装未能全部移到系统回收站；旧文件已保留，刷新列表时会重试回收。", { cause: error });
 		if (commitDecided) throw new NpmTransactionPendingCommitError("插件已经准备好，但提交尚未完成。请刷新插件列表继续恢复；旧安装仍保留。", { cause: error });
 		const recoveryErrors: unknown[] = [];
 		if (group) {

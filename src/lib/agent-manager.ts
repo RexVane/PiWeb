@@ -5,7 +5,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { AgentSession, AgentSessionEvent, CreateAgentSessionOptions, ExtensionCommandContextActions, SessionEntry, SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, ExtensionCommandContextActions, SessionEntry, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import {
 ExtensionRunner,
 ModelRegistry,
@@ -40,8 +40,6 @@ import {
 	encodeSessionId,
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
-import { createAskUserTool } from "./ask-user-tool";
-import { createManageAutomationTool } from "./automations/agent-tool";
 import { createSessionModelRuntime, clearSessionModelProviders, releaseSessionModelRuntime } from "./session-model-runtime";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
@@ -1460,21 +1458,6 @@ const BUILTIN_TOOL_DEFINITIONS = [
 	createPowerShellToolDefinition,
 ];
 
-/** PiWeb 的 SDK 自定义工具：构造定义不会执行工具或启动会话。冷热路径共用，避免目录漏项。 */
-type CustomTools = NonNullable<CreateAgentSessionOptions["customTools"]>;
-
-function sessionCustomTools(m: Managed): CustomTools {
-	return [
-		createAskUserTool((questions, signal) => (m.ui ? m.ui.askQuestions(questions, signal) : Promise.resolve({ status: "unavailable" }))),
-		createManageAutomationTool({
-			defaultCwd: m.cwd,
-			onMutated: () => {
-				void import("./automations/runner").then((mod) => mod.ensureAutomationSchedulerStarted());
-			},
-		}),
-	];
-}
-
 interface CatalogTool {
 	name: string;
 	description?: string;
@@ -1529,15 +1512,6 @@ function toolCatalog(m: Managed): CatalogTool[] {
 		}
 	} catch {
 		/* 扩展发现失败：至少保留内置工具，工具页不会整块空白 */
-	}
-	// SDK 在扩展注册工具后应用 customTools，同名定义以 PiWeb 注入的工具为准。
-	for (const definition of sessionCustomTools(m)) {
-		catalog.set(definition.name, {
-			name: definition.name,
-			description: definition.description,
-			exposure: definition.exposure,
-			defaultActive: definition.defaultActive,
-		});
 	}
 	const result = [...catalog.values()];
 	coldToolCatalogCache.set(m, { version, settings, catalog: result });
@@ -1779,8 +1753,6 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				settingsManager,
 				// 扩展命令换出来的会话：session_start 要带上来由和上一个会话（否则扩展只能看到 "startup"）
 				...(m.sessionStart ? { sessionStartEvent: { type: "session_start" as const, ...m.sessionStart } } : {}),
-				// 内置的选择窗口：问题经扩展界面桥推给浏览器（m.ui 在下面 bindExtensions 前建好，调用时再取）
-				customTools: sessionCustomTools(m),
 			});
 			m.sessionStart = undefined;
 			created = session;
@@ -1795,7 +1767,20 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				try { translate(m, evt); }
 				catch (error) { console.warn("[piweb] Session event failed", error); publish(m, { type: "error", message: "An event could not be displayed; reconnect to refresh the session.", ts: Date.now() }); }
 			});
-			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true });
+			const ui = createExtensionUiBridge({
+				publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true,
+				resources: {
+					async resolve(resourceId, viewId) {
+						const { resourceViews } = await import("./resources/discovery");
+						const candidates = (await resourceViews(m.cwd)).filter((view) => view.resourceId === resourceId && view.id.endsWith(`:${viewId}`));
+						return candidates.length === 1 ? candidates[0] : undefined;
+					},
+					async invoke(resourceId, action, args) {
+						const { invokeResourceAction } = await import("./resources/host");
+						return invokeResourceAction(resourceId, action, args, { cwd: m.cwd, sessionPath: m.sessionPath });
+					},
+				},
+			});
 			m.ui = ui;
 			await session.bindExtensions({
 				mode: "rpc",
@@ -1813,6 +1798,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				},
 				abortHandler: () => void session.abort().catch(() => undefined),
 			});
+			await (await import("./resources/host")).startResourceWorkspace(m.cwd);
 			if (m.disposed) throw new Error("session is disposed");
 			if (!hasMessages && recordedModelRef && !initialModel) {
 				const extensionModel = modelRuntime.getModel(recordedModelRef.provider, recordedModelRef.modelId);
@@ -2694,7 +2680,7 @@ export function subscribe(
 	const pending = new Set(m.ui?.getPendingRequests().map((request) => request.id));
 	if (replay.some((frame) => {
 		const event = JSON.parse(frame.json) as WebEvent;
-		return event.type === "extension_ui" && ["select", "confirm", "input", "editor"].includes(event.method) && !pending.has(event.id);
+		return event.type === "extension_ui" && ["select", "confirm", "input", "editor", "web", "resource"].includes(event.method) && !pending.has(event.id);
 	})) return false;
 	m.subscribers.add(send);
 	for (const b of replay) send(b.seq, b.json);

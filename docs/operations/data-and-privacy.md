@@ -1,6 +1,6 @@
 # 数据目录、隐私与留存
 
-维护日期：2026-11-18。本文说明 PiWeb 实际读写哪些位置、如何做部署隔离、会联网做什么、删除与恢复的真实行为。历史审查记录属于工程档案，只保留在本机。
+维护日期：2026-11-20。本文说明 PiWeb 实际读写哪些位置、如何做部署隔离、会联网做什么、删除与恢复的真实行为。历史审查记录属于工程档案，只保留在本机。
 
 ## 数据根不止 agent 目录
 
@@ -11,7 +11,8 @@
 | `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-automations.json`、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
 | `$HOME` / `%USERPROFILE%` 下的导入来源 | 会话导入只读取、不修改：`~/.claude/projects`、`~/.codex/sessions`、`~/.grok/sessions`、`~/.dsh/sessions`、`~/.zcode/cli/db/db.sqlite`、`~/.local/share/opencode/opencode.db`、`~/.kimi`、`~/.workbuddy` / `~/.workbuddy-ai`（支持 `WORKBUDDY_CONFIG_DIR`）、`~/.gemini/antigravity`、`~/.gemini/antigravity-cli`、`~/.qwen`（支持 `QWEN_HOME`）、`~/.cursor/chats` | `src/lib/session-import/paths.ts` |
 | `~/.agents/skills` | 全局技能目录（个人技能来源之一） | `src/lib/skills-service.ts` |
-| `~/.agents/backups` + `INDEX.md` | 可恢复移除（技能、附件、上传清理）保留的恢复副本与索引 | `src/lib/recoverable-remove.ts` |
+| `~/.agents/backups` + `INDEX.md` | 后台过期附件清理、损坏配置修复及旧版本删除留下的恢复副本与索引；手动确认的文件删除不再另存副本 | `src/lib/recoverable-remove.ts` |
+| 运行 PiWeb 的用户的系统回收站 | 手动确认删除的会话、独占附件、技能、提示词模板和受管包安装文件 | `src/lib/recycle-bin.ts` |
 | 安装目录 | `.next`、`.next-releases/`、依赖与锁文件 | `scripts/build-output.mjs` |
 | 工作区（用户项目目录） | 项目文件，已有 Git 仓库的生长树记录可存放在 `refs/piweb/rounds/…` | `src/lib/growth-service.ts` |
 | 临时目录 | 构建 staging、npm 缓存、SDK 工具下载等 | `scripts/install-build.mjs` 等 |
@@ -103,26 +104,37 @@ $env:APPDATA = 'D:\srv\piweb\appdata'; $env:LOCALAPPDATA = 'D:\srv\piweb\localap
 
 ## 删除、归档与恢复副本
 
+**手动确认删除实际文件时统一进入系统回收站，不另建恢复副本或 `INDEX.md`，也不降级为永久删除。** 回收站位于运行 PiWeb 的电脑或服务器上，不是访问页面的手机上。移除工作区入口、模型或凭据只修改对应配置条目，不能因此删除整个目录或配置文件。
+
 | 操作 | 实际行为 |
 | --- | --- |
-| **手动删除会话** | 直接永久删除该会话 JSONL，**不留恢复副本**（界面确认框明确写“永久删除，无法恢复”）。删除前会先找出该会话独占引用的上传附件，删除后确认没有其他会话仍引用它们时，按“先备份再移除”清理（恢复副本在 `~/.agents/backups`，位置追加到 `INDEX.md`）；证据不足（目录读不全、超预算、读取失败）则保留附件。可用 `PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` 关闭这项定向附件清理。 |
-| **归档会话** | 归档只改归档标记，不删除文件；**当前版本不会自动删除归档会话**（2026-11-15 工作区移除了原有的 30 天自动清理模块），归档会话保留到手动恢复或删除。恢复/删除仍需用户在界面操作。 |
-| **上传附件** | 保存在 `<agent 目录>/web-uploads/`。后台清扫只在**之后发生新的上传时**触发，且每进程每天最多一次；只处理 30 天前的候选、且确认没有会话 JSONL 再引用才清理。清理同样保留恢复副本。`PI_WEB_UPLOAD_RETENTION=0` 关闭该清扫。删除会话时另有上面的定向清理。 |
-| **技能删除** | 通过可恢复移除：先复制并核验恢复副本、追加 `INDEX.md`，再移除原入口；链接只移动本身、不触碰目标。 |
-| **退出所有设备 / 吊销** | 写入吊销代次 `web-revocations.json`，已有 Cookie 与配对码立即失效；设备记录 `web-devices.json` 按过期时间清理并截断到 200 条。 |
-| **恢复副本的根** | 恢复副本默认放在 `~/.agents/backups/`（家目录内按原路径镜像）；目标位于某个工作区时放在 `<工作区>/backups/`。`INDEX.md` 只追加、记录时间、原路径、存放位置与原因；`backups/` 只由用户手动清理。 |
+| **手动删除会话** | 停止该会话后，将 JSONL 移到系统回收站。仅由该会话引用的上传附件，在确认没有其他会话引用后同样移到回收站；证据不足则保留附件。主文件回收失败会报错并保留记录；主文件已回收但附件清理或列表更新失败时，返回明确的部分完成提示。`PI_WEB_DELETE_ATTACHMENT_CLEANUP=0` 关闭定向附件清理。导入来源的原始会话不受影响。 |
+| **技能删除** | 确认实际路径后，将独占技能目录、单个平铺文件或链接移到系统回收站。技能根、共享目录及链接的真实目标保留；包技能只能停用。 |
+| **提示词模板删除** | 只回收确认的单个模板文件或链接，不回收其目录；包内模板和外部来源通过停用管理。 |
+| **扩展包卸载** | Git 包的受管检出目录直接进入回收站，不调用 SDK 的递归删除。npm 包仍在独立 staging 中用官方包管理器卸载，再提交新安装树；旧安装树整体进入回收站，其他包及共享依赖在新树中保持可用。回收失败时旧安装树及事务记录保留，明确报告卸载已生效但回收待完成，后续读取列表时重试。未落盘的包只移除声明；本地源包不会删除来源文件。 |
+| **工作区入口、模型、凭据** | 工作区仅从注册表移除，项目目录及会话保留；模型提供方及凭据仅移除相应配置项，不回收整份 `models.json` 或 `auth.json`，也不额外保存一份密钥。 |
+| **归档会话** | 归档只改标记，不删除文件；当前版本不会自动删除归档会话。归档会话一直保留到手动恢复或删除。 |
+| **后台过期上传清理** | 保存在 `<agent 目录>/web-uploads/`。之后发生新的上传时才触发，每进程每天最多一次；只处理 30 天前且确认没有会话引用的候选。此操作没有手动删除确认，仍保留恢复副本；`PI_WEB_UPLOAD_RETENTION=0` 关闭该清扫。 |
+| **退出所有设备 / 吊销** | 写入吊销代次 `web-revocations.json`，已有 Cookie 与配对码立即失效；这是授权状态变更，不是文件删除。 |
+| **已有恢复副本** | 旧副本、后台清理和损坏配置修复的副本仍保留。家目录内通常在 `~/.agents/backups/`，工作区内在 `<工作区>/backups/`，其他位置按原文件旁的 `backups/` 存放。`INDEX.md` 只追加；这些目录不会因为新删除策略自动清理。 |
 
-**恢复步骤**（适用于技能/附件等有恢复副本的对象）：
+### 系统回收站适配
+
+- **macOS**：通过 `NSFileManager.trashItemAtURL` 操作确切的文件 URL。不能把待删链接强转为 Finder alias：该转换会跟随链接，可能误回收其目标。
+- **Windows**：使用 `IFileOperation` 的显式回收选项。禁用回收站、网络卷或不支持回收的环境会失败，不使用 `Remove-Item` 或永久删除作为兜底。
+- **Linux**：使用 Freedesktop 规范的 `$XDG_DATA_HOME/Trash`（默认 `~/.local/share/Trash`），记录 `.trashinfo` 以供恢复，并在同一文件系统中原子移动。回收站必须是当前用户拥有的私有物理目录；跨文件系统或不安全目录会报错并保留源文件。
+
+### 恢复
 
 1. 停掉 `piweb`；
-2. 在 `~/.agents/backups/INDEX.md`（或对应 `<工作区>/backups/INDEX.md`）里按原路径找到对应副本；
-3. 把副本复制回原路径（会话 JSONL 没有恢复副本，只能从 agent 目录备份恢复）；
-4. 重新启动 `piweb`。
+2. 对本版手动删除的会话、技能、模板或附件，在运行 PiWeb 的电脑的系统回收站中恢复到原位置。npm 旧安装树包含整个上一代 prefix，不要直接覆盖当前安装树；通常应重新安装并重新配置该包，需要找回本地改动时从回收站取回对应文件；
+3. 对旧副本或后台清理的对象，根据对应 `backups/INDEX.md` 找到副本，确认原位置没有文件后复制回去；
+4. 重新启动 `piweb` 或重载资源。清空系统回收站后无法再靠本策略恢复。
 
 **整体数据备份**：停掉 `piweb` 后复制整个 agent 目录和（如存在）`~/.agents/skills`、`~/.agents/backups` 即可；如果用过工作区内的可恢复删除，也备份对应 `<工作区>/backups`。升级/降级都不会自动迁移或删除这些数据，但**降级前必须备份**，旧版本可能不识别新版本写入的字段。
 
 ## 核对证据
 
-- 数据路径源码：`src/lib/session-import/paths.ts`、`src/lib/skills-service.ts`、`src/lib/recoverable-remove.ts`、`src/lib/files-service.ts`、`src/lib/session-reader.ts`。
+- 数据路径源码：`src/lib/session-import/paths.ts`、`src/lib/skills-service.ts`、`src/lib/prompt-templates-service.ts`、`src/lib/recycle-bin.ts`、`src/lib/recoverable-remove.ts`、`src/lib/files-service.ts`、`src/lib/session-reader.ts`。
 - 审计证据：原始报告目录与审计归档已随 2026-11-15 收尾清理移出仓库（可由 git 历史恢复）。
 - 修复轮验证：随同批审计归档移出仓库（可由 git 历史恢复）。

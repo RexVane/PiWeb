@@ -12,7 +12,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import { notifySessionsChanged } from "@/lib/session-change-events";
-import type { AskQuestion } from "@/lib/ask-user";
+import { useI18n } from "@/i18n";
+import type { JsonValue, WebResourceView } from "@/lib/resources/protocol";
 import type {
 	GrowthRound,
 	SessionSummary,
@@ -48,21 +49,22 @@ export interface ToolCardState {
 
 /**
  * 需要浏览器应答的对话框：扩展发来的 select/confirm/input/editor（对应 pi RPC 的 extension_ui_request），
- * 以及内置 ask_user_question 的选择窗口（questions，显示在输入框上方）
+ * and resource views from independently installed packages.
  */
 export interface ExtensionDialog {
 	id: string;
-	method: "select" | "confirm" | "input" | "editor" | "questions" | "web";
+	method: "select" | "confirm" | "input" | "editor" | "web" | "resource";
 	title: string;
 	message?: string;
 	options?: string[];
-	questions?: AskQuestion[];
 	placeholder?: string;
 	/** editor：编辑框的初始内容 */
 	prefill?: string;
 	/** web：扩展给的界面树；webText 是终端组件的纯文本兜底 */
 	tree?: WebUiNode;
 	webText?: string;
+	resourceView?: WebResourceView;
+	resourceData?: JsonValue;
 	timeout?: number;
 	ts: number;
 }
@@ -406,7 +408,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				if (s.extensionDialogs.some((dialog) => dialog.id === evt.id)) return s;
 				s.extensionDialogs = [
 					...s.extensionDialogs,
-					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, questions: evt.questions, placeholder: evt.placeholder, prefill: evt.prefill, tree: evt.tree, webText: evt.webText, timeout: evt.timeout, ts: evt.ts },
+					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, placeholder: evt.placeholder, prefill: evt.prefill, tree: evt.tree, webText: evt.webText, resourceView: evt.resourceView, resourceData: evt.resourceData, timeout: evt.timeout, ts: evt.ts },
 				];
 			} else if (evt.method === "notify") {
 				s.extensionNotices = [...s.extensionNotices.slice(-4), { id: evt.id, message: evt.message ?? "", type: evt.notifyType ?? "info", ts: evt.ts }];
@@ -522,7 +524,7 @@ export function foldPiWebEvents(state: PiWebState, events: readonly WebEvent[]):
 }
 
 function isDialogMethod(method: Extract<WebEvent, { type: "extension_ui" }>["method"]): method is ExtensionDialog["method"] {
-	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "questions" || method === "web";
+	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "web" || method === "resource";
 }
 
 export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: ExtensionDialog[] = []): ExtensionDialog[] {
@@ -617,9 +619,12 @@ function pathKey(value: string): string {
 }
 
 export function usePiWeb() {
+	const { t } = useI18n();
 	const [sessions, setSessions] = useState<SessionListItem[]>([]);
 	const [sessionListError, setSessionListError] = useState<string | null>(null);
 	const [workspaceRegistryWarning, setWorkspaceRegistryWarning] = useState<string | null>(null);
+	/** Unlike chat errors, a partially completed deletion survives changing sessions. */
+	const [sessionDeletionWarning, setSessionDeletionWarning] = useState<{ message: string; code?: string } | null>(null);
 	const [sessionListRetryNonce, setSessionListRetryNonce] = useState(0);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const [sessionPageLimit, setSessionPageLimit] = useState(200);
@@ -838,12 +843,14 @@ export function usePiWeb() {
 		}
 	}, []);
 
-	/** 物理删除会话文件（服务端先让会话收工再删文件并清掉归档记录），成功后立刻从列表里拿掉，不等轮询 */
+	/** Recycle the session file after stopping it; remove it from the list only on success. */
 	const deleteSession = useCallback(async (sessionPath: string) => {
+		setSessionDeletionWarning(null);
 		try {
 			const r = await fetch(`/api/sessions/${idOf(sessionPath)}`, { method: "DELETE" });
 			const j = await r.json();
-			if (!r.ok || !j.success) throw new Error(j.error || `request failed (${r.status})`);
+			if (!r.ok || !j.success) throw new Error(j.errorCode === "TRASH_UNAVAILABLE" ? t.apiErrorTrashUnavailable : j.error || `request failed (${r.status})`);
+			if (typeof j.data?.warning === "string") setSessionDeletionWarning({ message: j.data.warning, ...(typeof j.data.warningCode === "string" ? { code: j.data.warningCode } : {}) });
 			const key = pathKey(sessionPath);
 			sessionCwdByPathRef.current.delete(key);
 			deletedPathsRef.current.add(key);
@@ -858,7 +865,7 @@ export function usePiWeb() {
 			setState((current) => ({ ...current, error: message }));
 			throw error;
 		}
-	}, [idOf]);
+	}, [idOf, t.apiErrorTrashUnavailable]);
 
 	const getWorkspaceName = useCallback(
 		(dir: string): string => {
@@ -1562,7 +1569,10 @@ export function usePiWeb() {
 		hasMoreSessions,
 		sessionsLoadingMore,
 		sessionListError,
-		workspaceRegistryWarning,
+		workspaceRegistryWarning: [
+			workspaceRegistryWarning,
+			sessionDeletionWarning && (sessionDeletionWarning.code === "SESSION_DELETE_PARTIAL" ? t.deleteSessionPartialWarning : sessionDeletionWarning.message),
+		].filter(Boolean).join("\n") || null,
 		retrySessionList,
 		archivedSessions,
 		/** 原始归档路径列表（含被豁免的当前会话，供菜单显示真实归档态） */

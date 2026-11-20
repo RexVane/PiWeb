@@ -1,136 +1,125 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 
-/**
- * I3：删除会话时同步清理“只被这个会话引用”的上传附件。
- * 清理必须可恢复（recoverableRemove：先写副本 + INDEX，再移走原件），
- * 证据不足（其它会话读不全、会话目录异常）时一个附件都不许删。
- */
-let tempDir = "";
-let agentDir = "";
-let uploads = "";
-let sessionA = "";
-let sessionB = "";
+/** Real route, session boundaries and upload reference scans; only the OS Trash is simulated. */
+const state = vi.hoisted(() => ({
+	trash: "", failPath: "", moved: [] as Array<{ original: string; destination: string }>,
+	dispose: vi.fn(async (_path: string) => {}),
+}));
+vi.mock("@/lib/agent-manager", () => ({ disposeSessionPath: state.dispose, getManaged: vi.fn(), getSessionHistory: vi.fn(), syncSessionsFromDisk: vi.fn() }));
+vi.mock("@/lib/recycle-bin", () => ({ moveToTrash: async (removed: string) => {
+	if (removed === state.failPath) throw Object.assign(new Error("native recycler unavailable"), { code: "TRASH_UNAVAILABLE" });
+	const destination = path.join(state.trash, `${randomUUID()}-${path.basename(removed)}`);
+	await fs.rename(removed, destination); state.moved.push({ original: removed, destination }); return { removed };
+} }));
+
+let group: string, directory: string, agentDir: string, uploads: string, sessionA: string, sessionB: string;
 let DELETE: typeof import("../../src/app/api/sessions/[id]/route")["DELETE"];
 let encodeSessionId: typeof import("../../src/lib/pi")["encodeSessionId"];
-const previous = { agentDir: process.env.PI_CODING_AGENT_DIR };
-
 const line = (entry: unknown) => `${JSON.stringify(entry)}\n`;
-
-/** 会话内容里引用附件的写法与真实 JSONL 一致：绝对路径被 JSON 转义（Windows 是双反斜杠） */
-function sessionLine(file: string, text: string) {
-	return line({
-		type: "message",
-		id: "u1",
-		parentId: null,
-		timestamp: "2026-01-01T00:00:01.000Z",
-		message: { role: "user", content: [{ type: "text", text }], timestamp: 1767225601000 },
-	});
-}
-
-function sessionHeader() {
-	return line({ type: "session", version: 3, id: "s", timestamp: "2026-01-01T00:00:00.000Z", cwd: "D:\\Proj" });
-}
-
+const header = () => line({ type: "session", version: 3, id: "s", timestamp: "2026-01-01T00:00:00.000Z", cwd: "D:\\Proj" });
+const message = (text: string) => line({ type: "message", id: "u1", parentId: null, timestamp: "2026-01-01T00:00:01.000Z", message: { role: "user", content: [{ type: "text", text }], timestamp: 1767225601000 } });
 async function putUpload(name: string, body: string): Promise<string> {
-	const file = path.join(uploads, name);
-	await fs.writeFile(file, body);
-	return file;
+	const file = path.join(uploads, name); await fs.writeFile(file, body); return file;
 }
-
-async function deleteSessionThroughRoute(file: string): Promise<Response> {
+const recycledPath = (file: string) => state.moved.find((entry) => entry.original === file)!.destination;
+async function remove(file: string): Promise<Response> {
 	const id = encodeSessionId(file);
-	return DELETE(new Request(`http://127.0.0.1:30141/api/sessions/${id}`, { method: "DELETE" }), { params: Promise.resolve({ id }) });
+	return DELETE(new Request(`http://localhost/api/sessions/${id}`, { method: "DELETE" }), { params: Promise.resolve({ id }) });
 }
-
 beforeAll(async () => {
-	tempDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-delete-attachments-")));
-	agentDir = path.join(tempDir, "agent");
-	uploads = path.join(agentDir, "web-uploads");
-	process.env.PI_CODING_AGENT_DIR = agentDir;
-	process.env.PI_OFFLINE = "1";
-	process.env.PI_WEB_UPDATE_CHECK = "0";
-	// 恢复副本必须落进临时 HOME，不能碰用户真实 ~/.agents/backups
-	vi.spyOn(os, "homedir").mockReturnValue(tempDir);
+	group = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-delete-trash-fixtures-")));
+	vi.stubEnv("PI_CODING_AGENT_DIR", path.join(group, "initial-agent")); vi.stubEnv("HOME", group); vi.stubEnv("USERPROFILE", group);
 	({ DELETE } = await import("../../src/app/api/sessions/[id]/route"));
 	({ encodeSessionId } = await import("../../src/lib/pi"));
-}, 120_000);
-
-afterAll(async () => {
-	vi.restoreAllMocks();
-	if (previous.agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-	else process.env.PI_CODING_AGENT_DIR = previous.agentDir;
-	await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
 });
-
 beforeEach(async () => {
-	await fs.rm(path.join(agentDir, "sessions"), { recursive: true, force: true });
-	await fs.rm(uploads, { recursive: true, force: true });
-	await fs.rm(path.join(tempDir, ".agents"), { recursive: true, force: true });
-	await fs.mkdir(path.join(agentDir, "sessions", "workspace"), { recursive: true });
-	await fs.mkdir(uploads, { recursive: true });
-	sessionA = path.join(agentDir, "sessions", "workspace", "delete-me.jsonl");
-	sessionB = path.join(agentDir, "sessions", "workspace", "keep-me.jsonl");
+	directory = await fs.mkdtemp(path.join(group, "case-")); agentDir = path.join(directory, "agent"); uploads = path.join(agentDir, "web-uploads");
+	vi.stubEnv("PI_CODING_AGENT_DIR", agentDir); vi.stubEnv("HOME", directory); vi.stubEnv("USERPROFILE", directory);
+	vi.stubEnv("PI_OFFLINE", "1"); vi.stubEnv("PI_WEB_UPDATE_CHECK", "0");
+	state.trash = path.join(directory, "test-system-trash"); state.failPath = ""; state.moved = []; state.dispose.mockClear();
+	for (const root of [path.join(agentDir, "sessions", "workspace"), uploads, state.trash]) await fs.mkdir(root, { recursive: true });
+	sessionA = path.join(agentDir, "sessions", "workspace", "delete-me.jsonl"); sessionB = path.join(agentDir, "sessions", "workspace", "keep-me.jsonl");
 });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterAll(async () => { vi.unstubAllEnvs(); await recycleGeneratedFixture(group); });
 
-afterEach(() => {
-	vi.unstubAllEnvs();
-});
-
-describe("deleting a session cleans up its orphaned upload attachments (I3)", () => {
-	it("removes attachments only referenced by the deleted session, keeping a recoverable copy", async () => {
+describe("confirmed session deletion and its orphaned uploads use the system Trash", () => {
+	it("recycles the record and its exclusive attachments, keeping shared and unrelated uploads", async () => {
 		const shared = await putUpload("shared-report.txt", "SHARED-BODY");
 		const orphan = await putUpload("orphan-only-here.txt", "ORPHAN-BODY");
 		const unrelated = await putUpload("another-sessions-upload.txt", "UNRELATED-BODY");
-		await fs.writeFile(sessionA, sessionHeader() + sessionLine(sessionA, `附件 ${orphan} 和 ${shared}`));
-		await fs.writeFile(sessionB, sessionHeader() + sessionLine(sessionB, `继续用 ${shared}`));
-
-		const response = await deleteSessionThroughRoute(sessionA);
-		expect(response.status).toBe(200);
-		expect(await fs.stat(sessionA).then(() => true, () => false)).toBe(false);
-		// 只被删掉的会话引用的附件：移走（不是硬删）；仍被别的会话引用的、以及本该由 30 天 sweep 处理的，都不动
-		expect(await fs.stat(orphan).then(() => true, () => false)).toBe(false);
-		expect(await fs.readFile(shared, "utf8")).toBe("SHARED-BODY");
-		expect(await fs.readFile(unrelated, "utf8")).toBe("UNRELATED-BODY");
-		// 恢复语义：副本 + INDEX 都在临时 HOME 下
-		const backups = path.join(tempDir, ".agents", "backups");
-		const index = await fs.readFile(path.join(backups, "INDEX.md"), "utf8");
-		const lineForOrphan = index.split("\n").find((entry) => entry.includes("orphan-only-here.txt"));
-		expect(lineForOrphan).toBeTruthy();
-		const backupPath = lineForOrphan!.split(" | ")[2];
-		expect(await fs.readFile(backupPath, "utf8")).toBe("ORPHAN-BODY");
-		expect(index).toContain("清理无会话引用的上传附件");
+		const original = header() + message(`附件 ${orphan} 和 ${shared}`);
+		await fs.writeFile(sessionA, original); await fs.writeFile(sessionB, header() + message(`继续用 ${shared}`));
+		const response = await remove(sessionA);
+		expect(response.status).toBe(200); expect(await response.json()).toEqual({ success: true });
+		expect(await fs.readFile(recycledPath(sessionA), "utf8")).toBe(original);
+		expect(await fs.readFile(recycledPath(orphan), "utf8")).toBe("ORPHAN-BODY");
+		await expect(fs.stat(sessionA)).rejects.toMatchObject({ code: "ENOENT" });
+		await expect(fs.stat(orphan)).rejects.toMatchObject({ code: "ENOENT" });
+		expect(await fs.readFile(shared, "utf8")).toBe("SHARED-BODY"); expect(await fs.readFile(unrelated, "utf8")).toBe("UNRELATED-BODY");
+		await expect(fs.stat(path.join(directory, ".agents", "backups"))).rejects.toMatchObject({ code: "ENOENT" });
+		expect(state.dispose).toHaveBeenCalledWith(sessionA);
 	});
 
-	it("cleans a freshly uploaded attachment too (no 30-day grace for a deleted session's own references)", async () => {
-		const fresh = await putUpload(`fresh-${Date.now()}.bin`, "FRESH");
-		await fs.writeFile(sessionA, sessionHeader() + sessionLine(sessionA, `看图 ${fresh}`));
-		expect((await deleteSessionThroughRoute(sessionA)).status).toBe(200);
-		expect(await fs.stat(fresh).then(() => true, () => false)).toBe(false);
+	it("recycles a freshly uploaded exclusive attachment without the retention grace period", async () => {
+		const fresh = await putUpload("fresh.bin", "FRESH"); await fs.writeFile(sessionA, header() + message(`看图 ${fresh}`));
+		expect((await remove(sessionA)).status).toBe(200); expect(await fs.readFile(recycledPath(fresh), "utf8")).toBe("FRESH");
 	});
 
-	it("keeps attachments when the cleanup is disabled with PI_WEB_DELETE_ATTACHMENT_CLEANUP=0", async () => {
-		const orphan = await putUpload("keep-because-disabled.txt", "KEEP");
-		await fs.writeFile(sessionA, sessionHeader() + sessionLine(sessionA, `附件 ${orphan}`));
+	it("keeps attachments when PI_WEB_DELETE_ATTACHMENT_CLEANUP=0", async () => {
+		const orphan = await putUpload("keep.txt", "KEEP"); await fs.writeFile(sessionA, header() + message(`附件 ${orphan}`));
 		vi.stubEnv("PI_WEB_DELETE_ATTACHMENT_CLEANUP", "0");
-		expect((await deleteSessionThroughRoute(sessionA)).status).toBe(200);
-		expect(await fs.readFile(orphan, "utf8")).toBe("KEEP");
+		expect((await remove(sessionA)).status).toBe(200); expect(await fs.readFile(orphan, "utf8")).toBe("KEEP");
+		expect(state.moved.map((entry) => entry.original)).toEqual([sessionA]);
 	});
 
-	it("keeps attachments when the other session references cannot be read completely", async () => {
-		const orphan = await putUpload("must-not-be-deleted.txt", "SAFE");
-		await fs.writeFile(sessionA, sessionHeader() + sessionLine(sessionA, `附件 ${orphan}`));
-		// 一个叫 *.jsonl 的目录让“其它会话是否还引用它”无法证明：宁可不删
-		await fs.mkdir(path.join(agentDir, "sessions", "workspace", "broken.jsonl"), { recursive: true });
-		expect((await deleteSessionThroughRoute(sessionA)).status).toBe(200);
-		expect(await fs.readFile(orphan, "utf8")).toBe("SAFE");
+	it("keeps attachments when other session references cannot be inventoried completely", async () => {
+		const orphan = await putUpload("must-stay.txt", "SAFE"); await fs.writeFile(sessionA, header() + message(`附件 ${orphan}`));
+		await fs.mkdir(path.join(agentDir, "sessions", "workspace", "broken.jsonl"));
+		expect((await remove(sessionA)).status).toBe(200); expect(await fs.readFile(orphan, "utf8")).toBe("SAFE");
+		expect(state.moved.map((entry) => entry.original)).toEqual([sessionA]);
 	});
 
-	it("still deletes the session when there are no uploads at all", async () => {
-		await fs.writeFile(sessionA, sessionHeader() + sessionLine(sessionA, "纯文本会话"));
-		expect((await deleteSessionThroughRoute(sessionA)).status).toBe(200);
-		expect(await fs.stat(sessionA).then(() => true, () => false)).toBe(false);
+	it("recycles a plain-text session with no uploads", async () => {
+		await fs.writeFile(sessionA, header() + message("纯文本会话"));
+		expect((await remove(sessionA)).status).toBe(200); expect(state.moved.map((entry) => entry.original)).toEqual([sessionA]);
+	});
+
+	it("retains the session, uploads and archive metadata when the system Trash is unavailable", async () => {
+		const orphan = await putUpload("exclusive.txt", "EXCLUSIVE"); const original = header() + message(orphan);
+		await fs.writeFile(sessionA, original);
+		const registry = path.join(agentDir, "web-workspaces.json"), stored = JSON.stringify({ workspaces: [], archivedSessions: [sessionA] });
+		await fs.writeFile(registry, stored); state.failPath = sessionA;
+		const response = await remove(sessionA);
+		expect(response.status).toBe(500); expect(await response.json()).toMatchObject({ success: false, errorCode: "TRASH_UNAVAILABLE" });
+		expect(await fs.readFile(sessionA, "utf8")).toBe(original); expect(await fs.readFile(orphan, "utf8")).toBe("EXCLUSIVE");
+		expect(await fs.readFile(registry, "utf8")).toBe(stored); expect(state.moved).toEqual([]);
+	});
+
+	it("reports partial cleanup instead of claiming that a recycled record is still in place", async () => {
+		const orphan = await putUpload("retained-upload.txt", "RETAIN"); await fs.writeFile(sessionA, header() + message(orphan));
+		state.failPath = orphan;
+		const response = await remove(sessionA);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ success: true, data: { warningCode: "SESSION_DELETE_PARTIAL", warning: expect.stringContaining("会话已移到系统回收站") } });
+		expect(await fs.readFile(orphan, "utf8")).toBe("RETAIN"); expect(state.moved.map((entry) => entry.original)).toEqual([sessionA]);
+	});
+
+	it("reports a saved deletion if archive bookkeeping cannot be updated", async () => {
+		await fs.writeFile(sessionA, header() + message("archive update failure"));
+		const workspace = await import("../../src/lib/workspace-store");
+		vi.spyOn(workspace, "forgetSession").mockRejectedValueOnce(new Error("registry unavailable"));
+		const response = await remove(sessionA);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ success: true, data: { warningCode: "SESSION_DELETE_PARTIAL", warning: expect.stringContaining("列表状态") } });
+	});
+
+	it("does not call the recycler for a missing pending file", async () => {
+		expect((await remove(sessionA)).status).toBe(200); expect(state.moved).toEqual([]);
 	});
 });

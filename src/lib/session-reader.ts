@@ -13,6 +13,7 @@ import { BoundaryError, isPathInside } from "./path-security";
 import { promptTitleText } from "./chat/skill-expansion";
 import { canonicalWorkspacePath } from "./workspace-store";
 import { listUploadsReferencedBySession, removeUnreferencedUploads } from "./files-service";
+import { moveToTrash } from "./recycle-bin";
 
 function toSummary(info: {
 	path: string;
@@ -379,7 +380,7 @@ export async function listSessions(query?: string, options: SessionListOptions =
 	return list.slice(start, start + limit);
 }
 
-export async function deleteSession(sessionPath: string): Promise<void> {
+export async function deleteSession(sessionPath: string): Promise<void | { warning: string }> {
 	const root = path.join(getAgentDir(), "sessions");
 	const realRoot = await fs.realpath(root).catch(() => path.resolve(root));
 	const target = path.resolve(sessionPath);
@@ -391,16 +392,23 @@ export async function deleteSession(sessionPath: string): Promise<void> {
 		throw error;
 	});
 	if (realTarget !== target && !isPathInside(realRoot, realTarget)) throw new BoundaryError("session path escapes the Pi session store");
-	// I3：删除会话时把它独占引用的上传附件也清掉。先读要删的会话找出候选附件，再删文件，
-	// 最后确认没有别的会话还引用它们；任何一步证据不足都保留附件（宁可不删也不误删）。
+	// Collect upload references before recycling the record. Incomplete evidence
+	// never authorizes deleting an attachment still used by another conversation.
 	const uploads = await listUploadsReferencedBySession(target).catch(() => []);
-	try {
-		await fs.unlink(target);
-	} catch (error) {
-		// 未落盘的惰性会话（还没发过消息）本来就没有文件，删除视为成功
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	});
+	// Pending sessions have no file. Do not confuse a missing recycler executable
+	// with a missing pending record by catching ENOENT around the native operation.
+	if (!stat) return;
+	const removed = path.join(await fs.realpath(path.dirname(target)), path.basename(target));
+	if (!isPathInside(realRoot, removed)) throw new BoundaryError("session path escapes the Pi session store");
+	await moveToTrash(removed, { managedRoot: realRoot, expectedLink: stat.isSymbolicLink(), expectedKind: "file", expectedCanonical: stat.isSymbolicLink() ? undefined : realTarget, expectedIdentity: { dev: stat.dev, ino: stat.ino } });
+	if (uploads.length) {
+		try { await removeUnreferencedUploads(uploads); }
+		catch { return { warning: "会话已移到系统回收站，但部分附件未能回收，已保留原文件。" }; }
 	}
-	if (uploads.length) await removeUnreferencedUploads(uploads).catch(() => undefined);
 }
 
 /** 冷读取：还原消息（含被压缩掉的历史）+ 会话名（不启动 agent） */

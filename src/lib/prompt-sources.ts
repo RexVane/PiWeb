@@ -9,11 +9,9 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getAgentDir, getResourceLoader, refreshResourceLoaderIfStale } from "./pi";
+import { getAgentDir, getPackageManager, getResourceLoader, refreshResourceLoaderIfStale } from "./pi";
 import { BoundaryError, isPathInside, resolveDiscoveredPath, samePath } from "./path-security";
 import { FileSizeLimitError, readFileBounded } from "./read-file-bounded";
-import { ASK_USER_TOOL } from "./ask-user";
-import { MANAGE_AUTOMATION_TOOL } from "./automations/agent-tool";
 
 export const MAX_PROMPT_SOURCE_BYTES = 1024 * 1024;
 
@@ -215,14 +213,13 @@ export async function listPromptSources({
 
 	const compacted = latestCompactionSummary(session, sessionManager);
 
-	const piwebToolNames: ReadonlySet<string> = new Set([ASK_USER_TOOL, MANAGE_AUTOMATION_TOOL]);
 	const tools = session
 		? session.getAllTools().map((tool) => ({
 			name: tool.name,
 			...(tool.description === undefined ? {} : { description: tool.description }),
 			...(tool.parameters === undefined ? {} : { parameters: tool.parameters }),
 			...(tool.promptGuidelines?.length ? { promptGuidelines: tool.promptGuidelines } : {}),
-			source: piwebToolNames.has(tool.name) ? ("piweb" as const) : tool.sourceInfo?.source === "builtin" ? ("builtin" as const) : ("extension" as const),
+			source: tool.sourceInfo?.source === "builtin" ? ("builtin" as const) : ("extension" as const),
 		}))
 		: undefined;
 
@@ -239,6 +236,14 @@ export async function listPromptSources({
 export async function resolvePromptSourcePath(filePath: string, cwd: string, sourcePath?: string): Promise<string> {
 	const { sources } = await listPromptSources({ cwd });
 	const allowed = sources.map((source) => source.path).filter((value): value is string => typeof value === "string");
+	const requestedSource = sourcePath ?? filePath;
+	if (typeof requestedSource === "string" && path.isAbsolute(requestedSource) && requestedSource.length <= 4096
+		&& !allowed.some((candidate) => samePath(candidate, requestedSource))) {
+		// A template opened from its management page may be disabled. It remains
+		// an explicitly discovered file, not a license to read its parent directory.
+		const { prompts } = await getPackageManager(cwd).resolve(async () => "skip");
+		allowed.push(...prompts.map((resource) => resource.path));
+	}
 	if (sourcePath === undefined) {
 		return resolveDiscoveredPath(filePath, allowed);
 	}

@@ -19,7 +19,7 @@ import { toggleSkillFrontmatterDisabled } from "./skill-frontmatter";
 import { randomUUID } from "node:crypto";
 import { replaceFileAtomically } from "./atomic-file";
 import { withSettingsWriteLock, withExternalSettingsLock } from "./settings-write-lock";
-import { recoverableRemove } from "./recoverable-remove";
+import { moveToTrash } from "./recycle-bin";
 import { assertNoRemovalMounts } from "./removal-boundary";
 
 export const MAX_SKILL_BYTES = 1024 * 1024;
@@ -243,7 +243,7 @@ async function protectedDirs(context: ScopeContext): Promise<Set<string>> {
  */
 export interface SkillDeletePreview { removed: string; link: boolean }
 
-async function skillDeletionPlan(filePath: string, cwd?: string): Promise<SkillDeletePreview & { scope: SkillScope; expectedCanonical?: string; managedRoot?: string }> {
+async function skillDeletionPlan(filePath: string, cwd?: string): Promise<SkillDeletePreview & { scope: SkillScope; expectedCanonical?: string; managedRoot: string }> {
 	const skills = await listSkills(cwd);
 	const authorized = await resolveDiscoveredPath(filePath, skills.map((skill) => skill.filePath));
 	const context = await scopeContext(cwd ?? APP_ROOT);
@@ -308,13 +308,13 @@ export async function previewDeleteSkill(filePath: string, cwd?: string): Promis
 	return { removed, link };
 }
 
-export async function deleteSkill(filePath: string, cwd?: string, expectedPath?: string): Promise<{ removed: string; backup: string; warning?: string }> {
+export async function deleteSkill(filePath: string, cwd?: string, expectedPath?: string): Promise<{ removed: string; warning?: string }> {
 	const plan = await skillDeletionPlan(filePath, cwd);
 	if (expectedPath && path.resolve(expectedPath) !== path.resolve(plan.removed)) throw new Error("Skill removal path changed; review it again");
-	const result = await recoverableRemove(plan.removed, { cwd, reason: plan.link ? "移除技能链接，保留真实目标" : "移除技能", expectedCanonical: plan.expectedCanonical, expectedLink: plan.link, managedRoot: plan.managedRoot });
+	const result = await moveToTrash(plan.removed, { expectedCanonical: plan.expectedCanonical, expectedLink: plan.link, managedRoot: plan.managedRoot });
 	try {
 		await reloadAllLoaders();
 		await reloadSessionsForCwd(plan.scope === "project" ? cwd ?? APP_ROOT : undefined);
-	} catch { return { removed: result.removed, backup: result.backup, warning: "技能已移除且保留备份，资源刷新失败，请重载会话。" }; }
-	return { removed: result.removed, backup: result.backup };
+	} catch { return { removed: result.removed, warning: "技能已移到系统回收站，资源刷新失败，请重载会话。" }; }
+	return { removed: result.removed };
 }

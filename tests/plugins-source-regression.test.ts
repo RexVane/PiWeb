@@ -10,6 +10,7 @@ const runtime = vi.hoisted(() => ({
 }));
 vi.mock("../src/lib/pi", () => ({ ...runtime, getAgentDir: () => process.env.PI_CODING_AGENT_DIR }));
 vi.mock("../src/lib/agent-manager", () => ({ reloadSessionsForCwd: runtime.reloadSessionsForCwd }));
+vi.mock("../src/lib/resources/host", () => ({ reconcileResourceHosts: async () => {} }));
 
 import { listLoadedExtensions, listPackages, toggleExtension, togglePackage } from "../src/lib/plugins-service";
 import { POST } from "../src/app/api/plugins/route";

@@ -34,6 +34,8 @@ export interface ViewerTab {
 	staticContent?: string;
 	/** 最初打开的已发现来源：后续相对链接沿用它的读取边界。 */
 	sourcePath?: string;
+	/** Resources can be opened from a workspace other than the current chat. */
+	sourceCwd?: string;
 	/** 来自 Git 面板实时工作区/暂存区/提交的差异视图 */
 	git?: ViewerGitSource;
 }
@@ -94,7 +96,10 @@ function restoreState(key: string | null, cwd?: string): ViewerState {
 				...(typeof item.from === "string" ? { from: item.from } : {}),
 				...(typeof item.lazy === "boolean" ? { lazy: item.lazy } : {}),
 				...(item.kind === "file" || item.kind === "dir" || item.kind === "upload" ? { kind: item.kind } : {}),
-				...(typeof item.sourcePath === "string" ? { sourcePath: item.sourcePath, lazy: true } : {}),
+				...(typeof item.sourcePath === "string" ? {
+					sourcePath: item.sourcePath, lazy: true,
+					...(typeof item.sourceCwd === "string" && item.sourceCwd.length <= 4096 ? { sourceCwd: item.sourceCwd } : {}),
+				} : {}),
 				...(git ? { git } : {}),
 			});
 		}
@@ -150,10 +155,11 @@ export function useFileViewer(scope?: ViewerScope) {
 	}, [setState, cwd]);
 	const openTree = useCallback(() => setState((s) => ({ ...s, open: true, active: null })), [setState]);
 	/** 打开内容已就绪的文件（如技能文档）：无需 cwd / 磁盘读取 */
-	const openStatic = useCallback((path: string, content: string, sourcePath = path) => {
+	const openStatic = useCallback((path: string, content: string, sourcePath = path, sourceCwd?: string) => {
 		setState((s) => {
 			const exists = s.tabs.some((tab) => tab.path === path);
-			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? { ...tab, staticContent: content, sourcePath, lazy: true } : tab)) : [...s.tabs, { path, staticContent: content, sourcePath, lazy: true }];
+			const documentTab = { path, staticContent: content, sourcePath, ...(sourceCwd ? { sourceCwd } : {}), lazy: true };
+			const tabs = exists ? s.tabs.map((tab) => (tab.path === path ? documentTab : tab)) : [...s.tabs, documentTab];
 			return { open: true, tabs, active: path };
 		});
 	}, [setState]);

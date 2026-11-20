@@ -23,6 +23,7 @@ import {
 	IconDownloadOutline16,
 	IconEditOutline16,
 	IconEllipsisOutline16,
+	IconFileOutline16,
 	IconFolderClose16,
 	IconFolderOpenOutline16,
 	IconNewChatOutline16,
@@ -72,7 +73,7 @@ function basename(p: string): string {
 
 type GroupBy = "workspace" | "flat";
 type OrderBy = "updated" | "manual";
-export type WorkspaceView = "chat" | "skills" | "plugins" | "automations";
+export type WorkspaceView = "chat" | "skills" | "plugins" | "prompts";
 
 interface WorkspaceGroup {
 	cwd: string;
@@ -156,7 +157,7 @@ function SessionSidebarImpl({
 	onUnarchive?: (path: string) => void;
 	onPin?: (path: string) => void | Promise<void>;
 	onUnpin?: (path: string) => void | Promise<void>;
-	/** 直接删除会话文件；失败时抛出，确认框里显示错误 */
+	/** 确认后把会话文件移到系统回收站；失败时抛出，确认框里显示错误 */
 	onDelete?: (path: string) => Promise<void>;
 	/** 下载会话日志（JSONL 导出，经 AppShell 统一编码会话 id） */
 	onExport?: (path: string) => void;
@@ -450,7 +451,7 @@ function SessionSidebarImpl({
 	const workspaceNavItems: { id: Exclude<WorkspaceView, "chat">; label: string; icon: React.ReactNode }[] = [
 		{ id: "skills", label: t.navSkills, icon: <IconSkillOutline16 size={15} /> },
 		{ id: "plugins", label: t.navPlugins, icon: <IconPluginOutline16 size={15} /> },
-		{ id: "automations", label: t.navAutomations, icon: <IconClockOutline16 size={15} /> },
+		{ id: "prompts", label: t.navPromptTemplates, icon: <IconFileOutline16 size={15} /> },
 	];
 
 	if (collapsed) {
@@ -842,7 +843,7 @@ function SessionSidebarImpl({
 				</button>
 			</div>
 
-			{/* 顶部工作区导航：固定顺序 技能 → 扩展 → 自动化任务 */}
+			{/* 顶部工作区导航：技能 → 扩展 → 提示词模板 */}
 			{onSelectView && (
 				<nav className="flex flex-col gap-0.5 px-3 pt-2.5">
 					{workspaceNavItems.map((item) => {
@@ -1100,7 +1101,7 @@ function SessionSidebarImpl({
 				/>
 			)}
 
-			{/* 删除会话确认弹窗（样式同删除工作区；直接删除不备份） */}
+			{/* 删除会话确认弹窗：文件直接进入运行 PiWeb 的电脑的系统回收站 */}
 			{mounted && deleteSessionTarget && createPortal(
 				<div
 					className="modal-mask fixed inset-0 z-[9999] flex items-center justify-center p-4 animate-in fade-in duration-150"

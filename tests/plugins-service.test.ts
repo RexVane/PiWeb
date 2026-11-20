@@ -17,6 +17,7 @@ vi.mock("../src/lib/pi", () => ({
 	reloadAllLoaders: mocks.reloadAllLoaders,
 }));
 vi.mock("../src/lib/agent-manager", () => ({ reloadSessionsForCwd: mocks.reloadSessionsForCwd }));
+vi.mock("../src/lib/resources/host", () => ({ reconcileResourceHosts: async () => {} }));
 
 import { installPackage, removePackage, toggleExtension, togglePackage } from "../src/lib/plugins-service";
 import { POST } from "../src/app/api/plugins/route";

@@ -6,8 +6,8 @@
  * 没有页面在看时（无订阅者）select/input/editor 返回 undefined、confirm 返回 false，与 pi 的 noOp 行为一致。
  */
 import { randomUUID } from "node:crypto";
-import { ASK_USER_TIMEOUT_MS, parseAnswers, type AskOutcome, type AskQuestion } from "./ask-user";
 import type { WebEvent, WebExtensionWidget, WebUiNode, WebUiResult, WebUiTone } from "./types";
+import type { JsonValue, ResourceUiApi, ResourceUiOutcome, WebResourceView } from "./resources/protocol";
 
 type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
 type UiEvent = Extract<WebEvent, { type: "extension_ui" }>;
@@ -29,11 +29,6 @@ export interface ExtensionUiBridge {
 	/** 会话销毁：把挂起的对话框全部按取消结束 */
 	dispose(): void;
 	cancelPending(): void;
-	/**
-	 * ask_user_question 的选择窗口。与扩展对话框不同：没有页面在看也挂着等（用户回来打开页面就能答），
-	 * 最多 30 分钟；超时 / 中止 → timeout，用户跳过或会话销毁 → skipped。
-	 */
-	askQuestions(questions: AskQuestion[], signal?: AbortSignal): Promise<AskOutcome>;
 	/** 扩展通过 setStatus 设的状态文本（页脚展示） */
 	statuses: Map<string, string>;
 	/** 扩展通过 setWidget 设的文字块（输入框上方 / 下方） */
@@ -216,6 +211,10 @@ async function terminalComponentLines(component: unknown, width = 80): Promise<s
 export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void;
 	hasViewers: () => boolean;
 	isHeadless?: () => boolean;
+	resources?: {
+		resolve(resourceId: string, viewId: string): Promise<WebResourceView | undefined>;
+		invoke(resourceId: string, action: string, args: JsonValue): Promise<JsonValue>;
+	};
 }): ExtensionUiBridge {
 	const pending = new Map<string, PendingUi>();
 	const statuses = new Map<string, string>();
@@ -229,7 +228,7 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		fallback: T,
 		parse: (r: { value?: string; confirmed?: boolean; cancelled?: boolean }) => T,
 	): Promise<T> => {
-		// 没有浏览器在看：不能永远挂着扩展，按 pi 的 noOp 语义立即返回默认值（选择窗口例外，见 askQuestions）
+		// No viewer: basic Pi calls keep their fallback semantics; explicitly viewer-waiting requests are retained.
 		if (opts.isHeadless?.()) { opts.publish({ type: "interaction_unavailable", method: request.method, reason: "headless", ts: Date.now() }); return Promise.resolve(fallback); }
 		if (disposed || dialogOpts?.signal?.aborted || (!opts.hasViewers() && !dialogOpts?.waitForViewer)) return Promise.resolve(fallback);
 		const id = randomUUID();
@@ -290,9 +289,41 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		);
 	};
 
+	const resourceUi: ResourceUiApi = {
+		apiVersion: 1,
+		async request(resourceId, viewId, data, options) {
+			if (disposed || options?.signal?.aborted || !opts.resources) return { status: "unavailable" };
+			if (opts.isHeadless?.()) {
+				opts.publish({ type: "interaction_unavailable", method: "resource", reason: "headless", ts: Date.now() });
+				return { status: "unavailable" };
+			}
+			let safeData: JsonValue;
+			try {
+				const json = JSON.stringify(data ?? null);
+				if (json.length > 128 * 1024) return { status: "unavailable" };
+				safeData = JSON.parse(json);
+			} catch { return { status: "unavailable" }; }
+			const view = await opts.resources.resolve(resourceId, viewId);
+			if (!view || disposed || options?.signal?.aborted) return { status: "unavailable" };
+			const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+			if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 24 * 60 * 60_000) throw new Error("Invalid resource dialog timeout");
+			const outcome = await ask<ResourceUiOutcome>({ method: "resource", title: options?.title?.slice(0, 200) || view.title, resourceView: view, resourceData: safeData },
+				{ ...options, timeout, waitForViewer: true }, { status: "timeout" }, (response) => {
+					if (response.cancelled || typeof response.value !== "string" || response.value.length > 128 * 1024) return { status: "cancelled" };
+					try { return { status: "answered", value: JSON.parse(response.value) as JsonValue }; } catch { return { status: "cancelled" }; }
+				});
+			return outcome.status === "timeout" && options?.signal?.aborted ? { status: "cancelled" } : outcome;
+		},
+		async invoke(resourceId, action, args) {
+			if (disposed || !opts.resources) throw new Error("Resource API unavailable");
+			return opts.resources.invoke(resourceId, action, args ?? null);
+		},
+	};
+
 	const uiContext: Record<string, unknown> = {
+		resources: resourceUi,
 		select: (title: string, options: string[], o?: { signal?: AbortSignal; timeout?: number }) =>
-			ask<string | undefined>({ method: "select", title, options }, { ...o, waitForViewer: true }, undefined, (r) => (r.cancelled ? undefined : r.value)),
+			ask<string | undefined>({ method: "select", title, options }, { ...o, waitForViewer: true }, undefined, (r) => (r.cancelled || !options.includes(r.value ?? "") ? undefined : r.value)),
 		confirm: (title: string, message: string, o?: { signal?: AbortSignal; timeout?: number }) =>
 			ask<boolean>({ method: "confirm", title, message }, o, false, (r) => (r.cancelled ? false : r.confirmed === true)),
 		input: (title: string, placeholder?: string, o?: { signal?: AbortSignal; timeout?: number }) =>
@@ -378,34 +409,10 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		statuses,
 		widgets,
 		getTitle: () => title,
-		askQuestions: async (questions, signal) => {
-			if (disposed) return { status: "unavailable" };
-			if (opts.isHeadless?.()) {
-				opts.publish({ type: "interaction_unavailable", method: "questions", reason: "headless", ts: Date.now() });
-				opts.publish({ type: "extension_ui", id: randomUUID(), method: "notify", message: "自动化需要人工输入，本次询问未得到答复，未批准任何操作。", notifyType: "warning", ts: Date.now() });
-				return { status: "unavailable" };
-			}
-			const outcome = await ask<AskOutcome>(
-				{ method: "questions", title: "", questions },
-				{ signal, timeout: ASK_USER_TIMEOUT_MS, waitForViewer: true },
-				{ status: "timeout" },
-				(r) => {
-					if (r.cancelled) return { status: "skipped" };
-					const answers = parseAnswers(questions, r.value);
-					return answers ? { status: "answered", answers } : { status: "skipped" };
-				},
-			);
-			// 用户按了停止（signal 中止）不是超时
-			return outcome.status === "timeout" && signal?.aborted ? { status: "skipped" } : outcome;
-		},
-		getPendingRequests: () => [...pending.values()].map(({ request }) => ({
-			...request,
-			options: request.options ? [...request.options] : undefined,
-			...(request.questions ? { questions: structuredClone(request.questions) } : {}),
-		})),
+		getPendingRequests: () => [...pending.values()].map(({ request }) => structuredClone(request)),
 		respond(requestId, response) {
 			const entry = pending.get(requestId);
-			if (!entry) return false;
+			if (!entry || typeof response.value === "string" && response.value.length > 128 * 1024) return false;
 			entry.resolve(response);
 			return true;
 		},

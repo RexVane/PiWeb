@@ -13,7 +13,7 @@ function pageHasAttention(): boolean {
 }
 
 function dialogText(dialog: ExtensionDialog): string {
-	const text = dialog.method === "questions" ? dialog.questions?.[0]?.question : dialog.title || dialog.message;
+	const text = dialog.title || dialog.message;
 	return (text ?? "").trim();
 }
 

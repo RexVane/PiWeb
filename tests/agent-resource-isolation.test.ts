@@ -128,16 +128,16 @@ describe("real SDK session resource isolation", () => {
 		expect(event.all).toContain("read");
 	});
 
-	it("includes PiWeb's question tool in a cold catalog and activates it on start", async () => {
+	it("does not inject PiWeb's optional question tool into cold or hot sessions", async () => {
 		const { sessionPath } = await manager.createNewSession(cwd);
 		const m = manager.getManaged(sessionPath);
 		managed.push(m);
 		const cold = await manager.buildSnapshot(m);
 		expect(m.session).toBeNull();
-		expect(cold.tools.all.map((tool) => tool.name)).toContain("ask_user_question");
-		expect(cold.tools.active).toContain("ask_user_question");
+		expect(cold.tools.all.map((tool) => tool.name)).not.toContain("ask_user_question");
+		expect(cold.tools.active).not.toContain("ask_user_question");
 		const session = await manager.ensureSession(m);
-		expect(session.getActiveToolNames()).toContain("ask_user_question");
+		expect(session.getActiveToolNames()).not.toContain("ask_user_question");
 	});
 
 	it("keeps explicit SDK default tools consistent between cold and hot snapshots", async () => {
@@ -274,20 +274,16 @@ describe("real SDK session resource isolation", () => {
 		manager.unsubscribe(m, send);
 	});
 
-	it("registers pi's question window and hands the browser's answer back to the model", async () => {
-		const { m, session } = await create();
-		expect(session.getActiveToolNames()).toContain("ask_user_question");
-		const tool = session.getToolDefinition("ask_user_question")!;
-		const questions = [{ question: "Which DB?", header: "DB", options: [{ label: "Postgres (Recommended)", description: "solid" }, { label: "SQLite" }] }];
-		// 没有页面订阅也挂着等：用户回来打开页面再答
-		const run = tool.execute("call-ask", { questions }, undefined, undefined, undefined as never);
+	it("hands a standard Pi select answer back through the generic browser bridge", async () => {
+		const { m } = await create();
+		const select = m.ui!.uiContext.select as (title: string, options: string[]) => Promise<string | undefined>;
+		const options = ["Postgres", "SQLite"];
+		const run = select("Which DB?", options);
 		await vi.waitFor(() => expect(m.ui?.getPendingRequests()).toHaveLength(1));
 		const request = (await manager.buildSnapshot(m)).extensionUiRequests![0];
-		expect(request).toMatchObject({ method: "questions", questions });
-		const value = JSON.stringify({ answers: [{ selected: ["SQLite"] }] });
-		expect(await manager.execute(m, { cmd: "extensionUiResponse", requestId: request.id, value })).toMatchObject({ ok: true });
-		const result = await run;
-		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("1. Which DB? → SQLite") });
+		expect(request).toMatchObject({ method: "select", options });
+		expect(await manager.execute(m, { cmd: "extensionUiResponse", requestId: request.id, value: "SQLite" })).toMatchObject({ ok: true });
+		expect(await run).toBe("SQLite");
 		expect((await manager.buildSnapshot(m)).extensionUiRequests).toEqual([]);
 	});
 

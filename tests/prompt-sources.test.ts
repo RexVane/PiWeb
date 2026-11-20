@@ -70,6 +70,18 @@ describe("buildPromptSources（纯函数）", () => {
 });
 
 describe("listPromptSources / readPromptSource（真实资源加载器）", () => {
+	it("restores disabled template tabs without authorizing their sibling files", async () => {
+		const template = path.join(agentDir, "prompts", "personal.md");
+		await write(path.join(agentDir, "settings.json"), JSON.stringify({ prompts: ["-prompts/personal.md"] }));
+		const { reloadAllLoaders } = await import("../src/lib/pi");
+		await reloadAllLoaders();
+		expect((await listPromptSources({ cwd: ws })).sources.some((source) => source.path === template)).toBe(false);
+		await expect(readPromptSource(template, ws, template)).resolves.toContain("个人模板正文");
+		const sibling = path.join(agentDir, "private.txt");
+		await write(sibling, "private file");
+		await expect(readPromptSource(sibling, ws, template)).rejects.toThrow(/escapes/);
+	});
+
 	it("bounds both discovered prompt bodies and linked documents to 1 MiB", async () => {
 		const body = path.join(ws, "AGENTS.md");
 		await write(body, "x".repeat(MAX_PROMPT_SOURCE_BYTES + 1));

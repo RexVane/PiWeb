@@ -10,7 +10,7 @@ import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-codin
 import { beginNpmSettingsWrite, npmTransactionPath, recoverNpmPrefix, withNpmInstallTransaction } from "../src/lib/npm-install-transaction";
 import { JsoncSettingsStorage, mutateJsoncSettingsFileSync } from "../src/lib/jsonc-settings-storage";
 import { securePackageManager } from "../src/lib/package-manager-safe";
-import { recycleFixture } from "./fixtures/recycle";
+import { recycleGeneratedFixture as recycleFixture } from "./fixtures/system-trash";
 
 let base: string, root: string, settings: string;
 const oldPackages = ["npm:fixture@1.0.0"], newPackages = ["npm:fixture@2.0.0"];

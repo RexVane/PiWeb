@@ -140,14 +140,13 @@ describe("PiWeb SSE event folding", () => {
 		expect(state.extensionDialogs).toEqual([]);
 	});
 
-	it("keeps pi's question window from events and snapshots, questions included", () => {
-		// 选择窗口和扩展对话框走同一条桥：实时事件和刷新后的快照都要带出题目
-		const questions = [{ question: "Which DB?", header: "DB", options: [{ label: "Postgres", description: "solid" }, { label: "SQLite" }] }];
-		const request = { type: "extension_ui", id: "q1", method: "questions", title: "", questions, ts: 1 } as const;
+	it("keeps independent resource data from events and snapshots", () => {
+		const resourceData = { questions: [{ question: "Which DB?", options: [{ label: "SQLite" }] }] };
+		const request = { type: "extension_ui", id: "q1", method: "resource", title: "Independent question", resourceData, ts: 1 } as const;
 		let state = { extensionDialogs: [] } as unknown as PiWebState;
 		state = foldPiWebEvent(state, request);
-		expect(state.extensionDialogs).toEqual([expect.objectContaining({ id: "q1", method: "questions", questions })]);
-		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [request] } as unknown as WebSnapshot)).toEqual([expect.objectContaining({ id: "q1", method: "questions", questions })]);
+		expect(state.extensionDialogs).toEqual([expect.objectContaining({ id: "q1", method: "resource", resourceData })]);
+		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [request] } as unknown as WebSnapshot)).toEqual([expect.objectContaining({ id: "q1", method: "resource", resourceData })]);
 		state = foldPiWebEvent(state, { type: "extension_ui_resolved", id: "q1", ts: 2 });
 		expect(state.extensionDialogs).toEqual([]);
 	});

@@ -52,7 +52,7 @@
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi/PiWeb 共用的 agent 目录：设置、模型与凭据、会话、上传附件、自动化任务等。**它不是全部数据根**（会话导入来源与全局技能仍按 `HOME`/`USERPROFILE` 定位），部署隔离方式见[数据目录、隐私与留存](data-and-privacy.md)。 |
 | `PI_WEB_EDITOR` | `code` | “在编辑器中打开”使用的本机编辑器命令。仅对本机操作者有意义。 |
 | `PI_WEB_UPLOAD_RETENTION` | `30`（天） | `web-uploads` 中过期附件的后台清扫阈值。`0` 关闭该清扫。清扫走“先备份再移除”，恢复副本在 `~/.agents/backups/` 且记入 `INDEX.md`。 |
-| `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 启用 | 删除会话时定向清理该会话独占引用的上传附件（同样先备份再移除）；`0` 关闭这项清理，附件保留。 |
+| `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 启用 | 确认删除会话后，将仅由该会话引用的上传附件移到系统回收站，不另存副本；`0` 关闭这项清理，附件保留。 |
 | `PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY` | 关闭 | `1` 允许模型发现探测私网地址（本地推理服务常用）。默认禁止，避免 SSRF 面扩大。 |
 | `PIWEB_AUTO_THINKING_PROBE` | 启用 | `0`/`false`/`off`/`no` 关闭额外的后台思考档位请求。手动配置与 Pi 官方目录匹配仍然生效；未知兼容模型才会探测，每次使用简短测试消息，不包含真实会话。缓存与手动配置说明见[自动思考档位](data-and-privacy.md#自动思考档位与手动配置)。 |
 | `PI_OFFLINE` | 未启用 | `1`/`true`/`yes` 关闭 SDK/身份相关的联网动作（gh 身份查询、更新检查、安装遥测上报）。只管理 PiWeb/Pi 自己的网络动作，**不是**操作系统级断网。 |

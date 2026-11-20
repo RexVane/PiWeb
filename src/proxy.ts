@@ -4,6 +4,7 @@ import { authEnabled, clearSessionCookie, clearedCookieOptions, cookieNameForAut
 import { rememberWebDevice } from "@/lib/web-devices";
 import { TOKEN_QUERY, consumeLaunchToken } from "@/lib/web-launch-token";
 import { loadSessionRevocations, loadWebSecret } from "@/lib/web-secret";
+import { resourceAssetPathToken, resourceAssetTicketView } from "@/lib/resources/asset-ticket";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 /** 未认证也可达：登录页自身、认证接口，以及手机扫码用的配对入口（短码自己就是凭据） */
@@ -35,6 +36,14 @@ export function proxy(request: NextRequest) {
 	const secret = loadWebSecret();
 	const revocations = loadSessionRevocations();
 	if (revocations.unavailable) return NextResponse.json({ success: false, error: "session authentication is temporarily unavailable" }, { status: 503, headers: { "Cache-Control": "no-store" } });
+
+	// Opaque-origin resource frames cannot send SameSite cookies for their script/font requests.
+	// This capability accepts GET/HEAD for one static view namespace only, inherits cookie revocation,
+	// and never grants access to resource actions, session data or other API routes.
+	if (request.method === "GET" || request.method === "HEAD") {
+		const ticket = resourceAssetPathToken(pathname);
+		if (ticket && resourceAssetTicketView(ticket, requestAuthority(request), secret, revocations)) return NextResponse.next();
+	}
 
 	// 启动令牌换 Cookie：只认根路径、只认一个 token 参数、只认 GET。
 	// 令牌不接受出现在 API 路径上，也不接受走 Authorization 头。

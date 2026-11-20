@@ -4,7 +4,7 @@ import { registerNode } from "@/instrumentation-node";
 const mocks = vi.hoisted(() => ({ publish: vi.fn(), connect: vi.fn(), scheduler: vi.fn() }));
 vi.mock("@/lib/web-launch-token", () => ({ publishLaunchToken: mocks.publish }));
 vi.mock("@/lib/update/startup-check", () => ({ ensureStartupCheck: async () => {} }));
-vi.mock("@/lib/automations/runner", () => ({ startAutomationScheduler: mocks.scheduler }));
+vi.mock("@/lib/resources/host", () => ({ startResourceHost: mocks.scheduler }));
 vi.mock("@/lib/remote/supervisor", () => ({
 	remoteLanEnabled: () => process.env.PIWEB_REMOTE_LAN !== "0",
 	remoteBlocked: () => process.env.PI_WEB_AUTH === "0" ? "auth" : process.env.NODE_ENV === "development" ? "dev" : null,

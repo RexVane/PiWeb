@@ -1,6 +1,9 @@
 import type { DefaultPackageManager } from "@earendil-works/pi-coding-agent";
+import fs from "node:fs/promises";
 import path from "node:path";
-import { beginNpmSettingsWrite, npmTransactionPath, recoverNpmPrefix } from "./npm-install-transaction";
+import { beginNpmSettingsWrite, finishNpmTrashCleanup, npmTransactionPath, recoverNpmPrefix } from "./npm-install-transaction";
+import { BoundaryError, isPathInside, samePath } from "./path-boundary";
+import { moveToTrash } from "./recycle-bin";
 
 export class PackageSourceValidationError extends Error {}
 
@@ -29,11 +32,14 @@ export function securePackageManager(manager: DefaultPackageManager): DefaultPac
 		runNpmCommand(args: string[], options?: { cwd?: string }): Promise<void>;
 		getNpmInstallRoot(scope: string, temporary: boolean): string;
 		getManagedNpmInstallPath(source: unknown, scope: string): string;
+		getGitInstallRoot(scope: string): string | undefined;
+		getGitInstallPath(source: unknown, scope: string): string;
+		removeGit(source: unknown, scope: string): Promise<void>;
 		addSourceToSettings(source: string, options?: { local?: boolean }): boolean;
 		removeSourceFromSettings(source: string, options?: { local?: boolean }): boolean;
 		settingsManager: { reload(): Promise<void> };
 	};
-	if ([internal.parseSource, internal.runNpmCommand, internal.getNpmInstallRoot, internal.getManagedNpmInstallPath, internal.addSourceToSettings, internal.removeSourceFromSettings, manager.resolve, manager.resolveExtensionSources, internal.settingsManager?.reload].some((method) => typeof method !== "function")) {
+	if ([internal.parseSource, internal.runNpmCommand, internal.getNpmInstallRoot, internal.getManagedNpmInstallPath, internal.getGitInstallRoot, internal.getGitInstallPath, internal.removeGit, internal.addSourceToSettings, internal.removeSourceFromSettings, manager.resolve, manager.resolveExtensionSources, internal.settingsManager?.reload].some((method) => typeof method !== "function")) {
 		throw new Error("This pi SDK package manager is unsupported; PiWeb cannot safely manage plugin installations.");
 	}
 	const parseSource = internal.parseSource.bind(manager);
@@ -47,6 +53,7 @@ export function securePackageManager(manager: DefaultPackageManager): DefaultPac
 	const recoverBeforeResolution = async () => {
 		let recovered = false;
 		for (const scope of scopes) recovered = recoverNpmPrefix(scope.root, scope.projectRoot, scopes) || recovered;
+		await finishNpmTrashCleanup(scopes);
 		if (recovered) await internal.settingsManager.reload();
 	};
 	// A crashed remove can leave packages:[]; no installed-path lookup would run.
@@ -72,6 +79,25 @@ export function securePackageManager(manager: DefaultPackageManager): DefaultPac
 			return original(source, options);
 		};
 	}
+	// SDK removeGit uses recursive rm. Recycle only its managed checkout, never a
+	// local source, cache-directory alias, or another repository reached by a link.
+	internal.removeGit = async (source, scope) => {
+		const rawRoot = internal.getGitInstallRoot(scope);
+		if (!rawRoot) throw new BoundaryError("Temporary packages cannot be uninstalled here.");
+		const rawTarget = internal.getGitInstallPath(source, scope);
+		const stat = await fs.lstat(rawTarget).catch((error: NodeJS.ErrnoException) => {
+			if (error.code === "ENOENT") return undefined;
+			throw error;
+		});
+		if (!stat) return;
+		if ((await fs.lstat(rawRoot)).isSymbolicLink()) throw new BoundaryError("Git installation directory must not be a link.");
+		const root = await fs.realpath(rawRoot);
+		const relative = path.relative(rawRoot, rawTarget);
+		const parent = await fs.realpath(path.dirname(rawTarget));
+		if (!relative || !isPathInside(rawRoot, rawTarget) || !samePath(parent, path.join(root, path.dirname(relative)))) throw new BoundaryError("Git removal path changed; original files were retained.");
+		const target = path.join(parent, path.basename(rawTarget));
+		await moveToTrash(target, { managedRoot: root, expectedLink: stat.isSymbolicLink(), expectedCanonical: stat.isSymbolicLink() ? undefined : target, expectedKind: "directory", expectedIdentity: { dev: stat.dev, ino: stat.ino } });
+	};
 	internal.parseSource = (source) => { validatePackageSource(source); return parseSource(source); };
 	internal.runNpmCommand = (args, options) => {
 		const mutating = /^(?:install|uninstall|update|add|remove)$/.test(args[0] ?? "");

@@ -26,9 +26,11 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 	try {
 		const sessionPath = await resolveSessionPath(id, { allowPending: true });
 		await disposeSessionPath(sessionPath);
-		await deleteSession(sessionPath);
-		await forgetSession(sessionPath);
-		return NextResponse.json({ success: true }, { headers: { "Cache-Control": "no-store" } });
+		const recycled = await deleteSession(sessionPath);
+		let warning = recycled?.warning;
+		try { await forgetSession(sessionPath); }
+		catch { warning = "会话已移到系统回收站，但会话列表状态未能全部更新，请刷新列表。"; }
+		return NextResponse.json({ success: true, ...(warning ? { data: { warning, warningCode: "SESSION_DELETE_PARTIAL" } } : {}) }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json(
 			{ success: false, ...apiError(error, "会话删除失败，原会话已保留。") },

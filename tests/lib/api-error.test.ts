@@ -41,6 +41,11 @@ describe("apiError", () => {
 		expect(apiError(new BoundaryError("x", "X".repeat(60))).errorCode).toBe("VALIDATION_ERROR");
 	});
 
+	it("explains Trash failure without revealing commands or inventing a permanent-delete fallback", () => {
+		const failure = apiError(Object.assign(new Error("osascript failed /Users/private/secret.md"), { code: "TRASH_UNAVAILABLE" }));
+		expect(failure).toEqual({ errorCode: "TRASH_UNAVAILABLE", error: "无法移到系统回收站，未执行永久删除。请检查回收站、磁盘和系统权限后重试。" });
+	});
+
 	it("only accepts upper-case error codes with a bounded length", () => {
 		expect(apiError(Object.assign(new Error("x"), { code: "ENOSPC" })).errorCode).toBe("ENOSPC");
 		expect(apiError(Object.assign(new Error("x"), { code: "custom" })).errorCode).toBe("REQUEST_FAILED");
@@ -66,6 +71,7 @@ describe("apiError", () => {
 			ENOSPC: "apiErrorEnospc",
 			ETIMEDOUT: "apiErrorEtimedout",
 			REQUEST_FAILED: "apiErrorRequestFailed",
+			TRASH_UNAVAILABLE: "apiErrorTrashUnavailable",
 		};
 		expect(API_ERROR_I18N_KEYS).toEqual(expected);
 		for (const [code, key] of Object.entries(expected)) {

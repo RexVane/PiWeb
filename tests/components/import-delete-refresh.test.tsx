@@ -85,6 +85,21 @@ it("retains the imported state when deletion fails", async () => {
 	expect(hook.result.current.state.error).toBe("delete failed");
 });
 
+it("keeps an imported record when the system Trash is unavailable and localizes the reason", async () => {
+	const hook = await open();
+	deleteResponse = async () => new Response(JSON.stringify({ success: false, errorCode: "TRASH_UNAVAILABLE", error: "native failure" }), { status: 500 });
+	await act(async () => { await expect(hook.result.current.deleteSession("/imported.jsonl")).rejects.toThrow("未执行永久删除"); });
+	expect(checkbox().disabled).toBe(true); expect(scanRequests).toHaveLength(1);
+});
+
+it("keeps a partial recycling warning outside chat state when the deleted session is closed", async () => {
+	const hook = await open();
+	deleteResponse = async () => response({ warning: "retained uploads", warningCode: "SESSION_DELETE_PARTIAL" });
+	await act(async () => { await hook.result.current.deleteSession("/imported.jsonl"); hook.result.current.closeSession(); });
+	expect(hook.result.current.workspaceRegistryWarning).toContain("未回收的文件已保留");
+	await waitFor(() => expect(checkbox().disabled).toBe(false));
+});
+
 it("queues a refresh behind an older scan and keeps the expanded range", async () => {
 	const hook = await open();
 	const stale = response(scanData());

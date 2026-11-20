@@ -116,7 +116,7 @@ export function SkillsSection({
 			});
 			const j = await r.json();
 			if (workspaceSeq !== workspaceSeqRef.current) return;
-			if (!j.success) setError(j.error || t.toastError);
+			if (!j.success) setError(j.errorCode === "TRASH_UNAVAILABLE" ? t.apiErrorTrashUnavailable : j.error || t.toastError);
 			else if (action === "read") onOpenFileContent?.(s.filePath, j.data.content);
 			else { await load(); if (j.data?.warning) setError(j.data.warning); }
 		} catch (err: unknown) {

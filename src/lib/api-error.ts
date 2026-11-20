@@ -34,6 +34,7 @@ export const API_ERROR_I18N_KEYS: Readonly<Record<string, string>> = {
 	ENOSPC: "apiErrorEnospc",
 	ETIMEDOUT: "apiErrorEtimedout",
 	REQUEST_FAILED: "apiErrorRequestFailed",
+	TRASH_UNAVAILABLE: "apiErrorTrashUnavailable",
 };
 
 /** Dictionary key for an errorCode, or undefined when the client has no translation. */
@@ -57,6 +58,7 @@ export function apiError(error: unknown, fallback = "请求失败，请重试。
 		ENOENT: "请求的资源不存在。", EACCES: "没有权限访问请求的资源。", EPERM: "没有权限完成这次操作。",
 		ELOCKED: "资源正在被其他操作使用，请稍后重试。", EBUSY: "资源正在使用，请稍后重试。",
 		ENOSPC: "磁盘空间不足，无法完成操作。", ETIMEDOUT: "操作超时，请重试。",
+		TRASH_UNAVAILABLE: "无法移到系统回收站，未执行永久删除。请检查回收站、磁盘和系统权限后重试。",
 	};
 	return { error: known[code] ?? fallback, errorCode: code };
 }

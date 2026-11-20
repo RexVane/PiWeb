@@ -40,15 +40,15 @@ It bundles the official `@earendil-works/pi-*` SDK and shares your existing pi s
 - **Workspaces and sessions** — Organize sessions by project folder. Rename, branch, archive, restore drafts, and export sessions as JSONL or HTML.
 - **Session import** — Search and import local history from Claude Code, Codex, OpenCode, Grok, ZCode, dsh, Kimi Code, WorkBuddy, Antigravity, Antigravity CLI, Qwen Code, and Cursor. PiWeb reads the original files in place.
 - **Files and changes** — Inspect changes by round in the project growth tree, including `SKILL.md` reads and calls inside codemode. Open source, rendered Markdown, and unified or side-by-side diffs, and quote selected lines in chat.
-- **Models, skills, and extensions** — Configure model providers and use MCP tools and resources from pi. Enable or disable skills, open their `SKILL.md`, and manage extensions and pi packages. Extensions can present interactive panels through the [JSON UI bridge](docs/extension-web-ui.md).
-- **Prompt sources** — Inspect project instructions, skills, templates, and tool definitions. Prompts and tools contributed by PiWeb are labeled.
-- **Automations** — Schedule prompts at intervals, daily, weekly, or with cron. Up to four runs may execute at once; PiWeb must stay running to fire on schedule.
+- **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Add existing resources or design your own](docs/resources.md); optional views use JSON UI or independent browser assets without rebuilding PiWeb.
+- **Prompt sources** — Inspect project instructions, skills, templates, and tool definitions with their resource origin.
+- **Optional question and automation resources** — Install them separately from [piweb-resources](https://github.com/RexVane/piweb-resources). The resource API v1 in this source tree replaces the previously bundled tools; it is not enabled by refreshing an older npm installation.
 - **Mobile access and languages** — Scan the QR code in Settings → Remote access. The UI is available in English, Simplified Chinese, Traditional Chinese, Japanese, and Russian.
 
 <details>
 <summary>More screenshots (desktop and mobile)</summary>
 
-The screenshots use the English interface and sample data.
+The screenshots use the English interface and sample data from an earlier version. Question and automation functionality is now provided by optional resources.
 
 <table>
   <tr>

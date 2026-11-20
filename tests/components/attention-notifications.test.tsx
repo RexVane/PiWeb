@@ -21,8 +21,8 @@ let visibility: DocumentVisibilityState = "hidden";
 let focused = false;
 
 const ask = (id: string, question = "要覆盖 README 吗？"): ExtensionDialog => ({
-	id, method: "questions", title: "", ts: 1,
-	questions: [{ question, header: "覆盖", options: [{ label: "是", description: "" }, { label: "否", description: "" }] }],
+	id, method: "select", title: question, ts: 1,
+	options: ["是", "否"],
 });
 type Turn = { streaming?: boolean; sessionPath?: string; messages?: WebMessage[] };
 type Props = { dialogs: ExtensionDialog[]; title: string; turn?: Turn };

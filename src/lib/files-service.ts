@@ -11,6 +11,7 @@ import { resolveGitBin } from "./growth-service";
 import { decodeFilePreview, type DecodedFilePreview } from "./file-preview";
 import { StringDecoder } from "node:string_decoder";
 import { recoverableRemove } from "./recoverable-remove";
+import { moveToTrash } from "./recycle-bin";
 import { childProcessEnv } from "./child-process-env";
 
 export interface FileEntry {
@@ -578,6 +579,7 @@ const MAX_SESSION_DEPTH = 32;
 const MAX_SESSION_DIRS = 10_000;
 
 interface UploadStamp {
+	dev: number;
 	ino: number;
 	size: number;
 	mtimeMs: number;
@@ -585,8 +587,8 @@ interface UploadStamp {
 
 type UploadFileStats = Awaited<ReturnType<typeof fs.stat>>;
 
-function sameUploadStamp(a: { ino: number; size: number; mtimeMs: number }, b: { ino: number; size: number; mtimeMs: number }): boolean {
-	return a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+function sameUploadStamp(a: UploadStamp, b: UploadStamp): boolean {
+	return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 }
 
 function normalizeSweepLimits(limits: UploadSweepLimits): { scanByteLimit: number; sessionLimit: number; timeoutMs: number } | null {
@@ -714,18 +716,23 @@ async function dropReferencedUploads(
 	}
 }
 
-/** 按“不真删”约定清理候选：先备份并记 INDEX（recoverableRemove 负责），确认删除前端文件没被改过。 */
-async function removeUploadCandidates(dir: string, candidates: Map<string, string[]>, uploadStamps: Map<string, UploadStamp>): Promise<string[]> {
+/** Retention keeps recovery copies; a confirmed session deletion uses only system Trash. */
+async function removeUploadCandidates(dir: string, candidates: Map<string, string[]>, uploadStamps: Map<string, UploadStamp>, mode: "retention" | "trash" = "retention"): Promise<string[]> {
 	const removed: string[] = [];
+	let failed = false;
 	for (const file of candidates.keys()) {
 		try {
 			const target = path.join(dir, file);
 			const stamp = uploadStamps.get(file);
-			if (!stamp || !sameUploadStamp(stamp, await fs.stat(target))) continue;
-			await recoverableRemove(target, { reason: "清理无会话引用的上传附件，保留恢复副本" });
+			const stat = await fs.lstat(target);
+			if (!stat.isFile() || !stamp || !sameUploadStamp(stamp, stat)) continue;
+			if (mode === "trash") {
+				await moveToTrash(target, { managedRoot: dir, expectedLink: false, expectedCanonical: target, expectedKind: "file", expectedIdentity: { dev: stamp.dev, ino: stamp.ino, size: stamp.size, mtimeMs: stamp.mtimeMs } });
+			} else await recoverableRemove(target, { reason: "清理无会话引用的上传附件，保留恢复副本" });
 			removed.push(file);
-		} catch { /* Keep the upload when backup or removal cannot be completed. */ }
+		} catch { failed = true; /* Retain the upload if recycling or backup cannot complete. */ }
 	}
+	if (mode === "trash" && failed) throw new Error("Some upload files could not be recycled; their originals were retained.");
 	return removed;
 }
 
@@ -790,9 +797,8 @@ export async function listUploadsReferencedBySession(sessionPath: string, limits
 }
 
 /**
- * 删除会话后调用：这些附件如果已经没有任何会话引用，就按仓库“不真删”约定清理
- * （recoverableRemove 先写恢复副本 + INDEX，再把原件移走/放进回收站）。
- * 返回实际清理的文件名；证据不足时返回空数组且不删任何文件。
+ * 删除会话后调用：没有其他会话引用的附件直接移到系统回收站，不另建备份。
+ * 证据不足时保留全部附件；回收失败时向调用方报告，让界面显示部分完成提示。
  * 可用 PI_WEB_DELETE_ATTACHMENT_CLEANUP=0 单独关掉这项定向清理（与 sweepUploads 的留存开关互不影响）。
  */
 export async function removeUnreferencedUploads(names: readonly string[], limits: UploadSweepLimits = {}): Promise<string[]> {
@@ -800,7 +806,13 @@ export async function removeUnreferencedUploads(names: readonly string[], limits
 	const normalized = normalizeSweepLimits(limits);
 	if (!normalized || !Array.isArray(names) || !names.length) return [];
 	const agentDir = getAgentDir();
-	const dir = path.join(agentDir, "web-uploads");
+	// Pin the discovery directory's spelling before the reference scan; never
+	// re-authorize a new directory alias immediately before removal.
+	const dir = await fs.realpath(path.join(agentDir, "web-uploads")).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	});
+	if (!dir) return [];
 	const candidates = new Map<string, string[]>();
 	const uploadStamps = new Map<string, UploadStamp>();
 	for (const name of names) {
@@ -813,7 +825,7 @@ export async function removeUnreferencedUploads(names: readonly string[], limits
 	if (!candidates.size) return [];
 	const deadline = performance.now() + normalized.timeoutMs;
 	if (!(await dropReferencedUploads(path.join(agentDir, "sessions"), candidates, normalized, deadline))) return [];
-	return removeUploadCandidates(dir, candidates, uploadStamps);
+	return removeUploadCandidates(dir, candidates, uploadStamps, "trash");
 }
 
 export function parseUploadLength(value: string | null): number {

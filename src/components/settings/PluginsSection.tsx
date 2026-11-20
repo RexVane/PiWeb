@@ -2,19 +2,21 @@
 import { clientFetch as fetch } from "@/lib/client-fetch";
 
 
-import { type ReactNode, useCallback, useDeferredValue, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import { useConfirmDialog } from "@/components/ConfirmDialog";
 import { FloatingToast } from "@/components/FloatingToast";
 import {
 	IconChevronDown14,
-	IconCloseOutline14,
 	IconDatabaseOutline16,
 	IconPluginOutline16,
 	IconRefreshOutline14,
 	IconSearchOutline16,
 	IconTerminalOutline14,
 } from "@/components/icons";
-import { useDialog } from "@/hooks/useDialog";
+import { AddResourceMenu } from "@/components/resources/AddResourceMenu";
+import { ResourceInstallModal, type StartResourceSession } from "@/components/resources/ResourceInstallModal";
+import { ResourceControls } from "@/components/resources/ResourceControls";
+import { notifyResourcesChanged } from "@/hooks/useResourceRegistry";
 import { useI18n } from "@/i18n";
 import { ScopeWorkspaceFilterBar } from "@/components/settings/SharedControls";
 import type { PluginResourceType } from "@/lib/plugins-service";
@@ -176,118 +178,13 @@ function PluginRow({
 	);
 }
 
-function AddPluginModal({
-	open,
-	cwd,
-	busy,
-	onClose,
-	onSubmit,
-}: {
-	open: boolean;
-	cwd: string;
-	busy: boolean;
-	onClose: () => void;
-	onSubmit: (source: string, local: boolean) => Promise<boolean>;
-}) {
-	const { t } = useI18n();
-	const [source, setSource] = useState("");
-	const [local, setLocal] = useState(false);
-	const dialogRef = useRef<HTMLDivElement>(null);
-	const titleId = useId();
-	useDialog({ open, onClose: () => { if (!busy) onClose(); }, ref: dialogRef });
-
-	if (!open) return null;
-
-	return (
-		<div
-			className="modal-mask fixed inset-0 z-[110] flex items-center justify-center p-4"
-			onMouseDown={(e) => {
-				if (e.target === e.currentTarget && !busy) onClose();
-			}}
-		>
-			<div
-				ref={dialogRef}
-				role="dialog"
-				aria-modal="true"
-				aria-labelledby={titleId}
-				className="glass-modal w-full overflow-hidden"
-				style={{
-					maxWidth: 480,
-					borderRadius: "var(--pw-radius-modal)",
-					boxShadow: "var(--pw-shadow-modal)",
-				}}
-			>
-				<div className="hairline-b flex items-center justify-between px-5 py-3.5">
-					<h2 id={titleId} style={{ fontSize: 15, fontWeight: 600, color: "var(--dsw-label-primary)" }}>
-						{t.addPackage}
-					</h2>
-					<button type="button" className="icon-btn" aria-label={t.close} disabled={busy} onClick={onClose}>
-						<IconCloseOutline14 size={14} />
-					</button>
-				</div>
-				<form
-					className="flex flex-col gap-4 p-5"
-					onSubmit={(e) => {
-						e.preventDefault();
-						const installSource = source.trim();
-						if (!installSource || busy) return;
-						void onSubmit(installSource, local).then((installed) => {
-							if (installed) setSource("");
-						});
-					}}
-				>
-					<div className="flex flex-col gap-1.5">
-						<input
-							autoFocus
-							value={source}
-							onChange={(e) => setSource(e.target.value)}
-							placeholder={t.addPackagePlaceholder}
-							className="w-full rounded-lg outline-none"
-							style={{
-								borderRadius: 8,
-								padding: "9px 12px",
-								fontSize: 13,
-								background: "var(--dsw-hover)",
-								border: "0.5px solid var(--dsw-border-l2)",
-								color: "var(--dsw-label-primary)",
-								fontFamily: "var(--font-mono)",
-							}}
-						/>
-					</div>
-					<label className="flex cursor-pointer items-center gap-2 select-none" style={{ fontSize: 12.5, color: "var(--dsw-label-secondary)" }}>
-						<input type="checkbox" checked={local} onChange={(e) => setLocal(e.target.checked)} disabled={!cwd || busy} />
-						{t.installLocal}
-					</label>
-					<div className="flex items-center justify-end gap-2 pt-1">
-						<button
-							type="button"
-							className="btn-outline"
-							style={{ height: 32, padding: "0 14px", fontSize: 13 }}
-							disabled={busy}
-							onClick={onClose}
-						>
-							{t.cancel}
-						</button>
-						<button
-							type="submit"
-							className="btn-primary-white"
-							style={{ height: 32, padding: "0 16px", fontSize: 13 }}
-							disabled={!source.trim() || busy}
-						>
-							{busy ? t.installing : t.install}
-						</button>
-					</div>
-				</form>
-			</div>
-		</div>
-	);
-}
-
 /** 导出仅供测试与工作区插件页复用 */
 export function PluginsSection({
 	cwd,
 	hideHeader = false,
 	installOpen,
+	installMode = "install",
+	onStartResourceSession,
 	onInstallOpenChange,
 	reloadSeq = 0,
 	onReloadBusyChange,
@@ -297,6 +194,8 @@ export function PluginsSection({
 	cwd: string;
 	hideHeader?: boolean;
 	installOpen?: boolean;
+	installMode?: "install" | "design";
+	onStartResourceSession?: StartResourceSession;
 	onInstallOpenChange?: (open: boolean) => void;
 	reloadSeq?: number;
 	onReloadBusyChange?: (busy: boolean) => void;
@@ -319,6 +218,7 @@ export function PluginsSection({
 	const [q, setQ] = useState("");
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const [internalInstallOpen, setInternalInstallOpen] = useState(false);
+	const [internalInstallMode, setInternalInstallMode] = useState<"install" | "design">("install");
 	const [busy, setBusy] = useState(false);
 	const [busyKey, setBusyKey] = useState<string | null>(null);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string; loading?: boolean } | null>(null);
@@ -340,7 +240,7 @@ export function PluginsSection({
 			if (j.success) {
 				setPackages(j.data.packages ?? []);
 				setExtensions(j.data.extensions ?? []);
-			} else setToast({ ok: false, msg: j.error || t.toastError });
+			} else setToast({ ok: false, msg: j.errorCode === "TRASH_UNAVAILABLE" ? t.apiErrorTrashUnavailable : j.error || t.toastError });
 		} catch (err: unknown) {
 			if (workspaceSeq === workspaceSeqRef.current && loadSeq === loadSeqRef.current) {
 				setToast({ ok: false, msg: err instanceof Error ? err.message : t.toastError });
@@ -350,7 +250,7 @@ export function PluginsSection({
 				setLoading(false);
 			}
 		}
-	}, [cwd, t.toastError]);
+	}, [cwd, t.toastError, t.apiErrorTrashUnavailable]);
 
 	useEffect(() => {
 		workspaceSeqRef.current += 1;
@@ -447,11 +347,12 @@ export function PluginsSection({
 			const j = await r.json();
 			if (workspaceSeq !== workspaceSeqRef.current) return false;
 			if (j.success) {
-				notify(!j.data?.warning, j.data?.warning ?? successMsg ?? (action === "toggle" ? (payload.disabled ? t.disabled : t.enabled) : t.toastSaved));
+				notifyResourcesChanged();
+				notify(!j.data?.warning, j.data?.warningCode === "PACKAGE_TRASH_PENDING" ? t.pluginTrashPendingWarning : j.data?.warning ?? successMsg ?? (action === "toggle" ? (payload.disabled ? t.disabled : t.enabled) : t.toastSaved));
 				await load();
 				return true;
 			}
-			notify(false, j.error ?? t.toastError);
+			notify(false, j.errorCode === "TRASH_UNAVAILABLE" ? t.apiErrorTrashUnavailable : j.error ?? t.toastError);
 			return false;
 		} catch (e: any) {
 			if (workspaceSeq === workspaceSeqRef.current) notify(false, e?.message ?? t.toastError);
@@ -661,14 +562,9 @@ export function PluginsSection({
 						>
 							<IconRefreshOutline14 size={13} /> {t.panelRefresh}
 						</button>
-						<button
-							type="button"
-							className="btn-primary-white"
-							style={{ height: 32, padding: "0 14px", fontSize: "var(--dsh-ui-font-sm)" }}
-							onClick={() => setModalOpen(true)}
-						>
-							+ {t.addPluginAction}
-						</button>
+						<AddResourceMenu label={t.addPluginAction} disabled={busy}
+							onInstall={() => { setInternalInstallMode("install"); setModalOpen(true); }}
+							onDesign={() => { setInternalInstallMode("design"); setModalOpen(true); }} />
 					</div>
 				</div>
 			)}
@@ -994,16 +890,20 @@ export function PluginsSection({
 				</div>
 			)}
 
-			<AddPluginModal
+			<ResourceControls cwd={cwd} />
+
+			<ResourceInstallModal
 				open={modalOpen}
+				mode={installOpen === undefined ? internalInstallMode : installMode}
+				onStartSession={onStartResourceSession}
 				cwd={cwd}
 				busy={busy}
 				onClose={() => setModalOpen(false)}
-				onSubmit={async (installSource, projectScope) => {
+				onSubmit={async (installSource, projectScope, selection) => {
 					const workspaceSeq = workspaceSeqRef.current;
 					if (!(await confirm({ title: t.install, message: t.pluginInstallConfirm.replace("{source}", installSource), confirmLabel: t.install }))) return false;
 					if (workspaceSeq !== workspaceSeqRef.current) return false;
-					if (await act("install", { source: installSource, local: projectScope }, undefined, t.installing, t.installSuccess)) {
+					if (await act("install", { source: installSource, local: projectScope, ...(selection ? { selection } : {}) }, undefined, t.installing, t.installSuccess)) {
 						setModalOpen(false);
 						return true;
 					}

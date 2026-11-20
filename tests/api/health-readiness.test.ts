@@ -5,10 +5,11 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as liveness } from "../../src/app/api/health/route";
 import { GET as readiness } from "../../src/app/api/health/readiness/route";
-import { getAutomationSchedulerStatus, startAutomationScheduler } from "../../src/lib/automations/runner";
+const resources = vi.hoisted(() => vi.fn(() => [] as Array<{ id: string; scope: string; state: string; services: string[]; active: number }>));
+vi.mock("../../src/lib/resources/host", () => ({ resourceHostStatuses: resources }));
 import { recycleTemporaryDirectory } from "../../src/lib/recycle-temporary";
 
 const ENV_KEYS = ["PI_CODING_AGENT_DIR"] as const;
@@ -17,6 +18,7 @@ let root: string;
 let agentDir: string;
 
 beforeEach(async () => {
+	resources.mockReturnValue([]);
 	previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 	root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-readiness-"));
 	agentDir = path.join(root, "agent");
@@ -53,21 +55,15 @@ describe("readiness", () => {
 		expect(body.data.ready).toBe(true);
 		expect(body.data.checks.dataDir.ok).toBe(true);
 		expect(body.data.checks.modelConfig.ok).toBe(true);
-		// 调度器没启动只算 warning，不把实例判成未就绪（不影响网页核心功能）。
-		expect(body.data.checks.scheduler.running).toBe(false);
-		expect(body.data.checks.scheduler.ok).toBe(false);
+		// No installed resources is a healthy baseline, not a missing mandatory scheduler.
+		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [] });
 	});
 
-	it("reports a running automation scheduler", async () => {
+	it("reports optional resource service states through the public registry", async () => {
 		await fs.mkdir(agentDir, { recursive: true });
-		const stop = startAutomationScheduler({ intervalMs: 60_000 });
-		try {
-			expect(getAutomationSchedulerStatus().running).toBe(true);
-			const body = await (await readiness()).json() as { data: { checks: { scheduler: { ok: boolean; running?: boolean } } } };
-			expect(body.data.checks.scheduler).toMatchObject({ ok: true, running: true });
-		} finally {
-			stop();
-		}
+		resources.mockReturnValue([{ id: "third-party", scope: "user", state: "running", services: ["watcher"], active: 0 }]);
+		const body = await (await readiness()).json();
+		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [{ id: "third-party", services: ["watcher"] }] });
 	});
 
 	it("returns 503 with a readable reason when settings.json is corrupt", async () => {

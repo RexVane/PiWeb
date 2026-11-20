@@ -278,7 +278,7 @@ export function FileViewer({
 	onSelectTab: (path: string | null) => void;
 	onCloseTab: (path: string) => void;
 	onOpen: (path: string, opts?: ViewerOpenOptions) => void;
-	onOpenContent?: (path: string, content: string, sourcePath?: string) => void;
+	onOpenContent?: (path: string, content: string, sourcePath?: string, sourceCwd?: string) => void;
 	onReference?: (path: string) => void;
 	onOpenEditor?: (path: string) => void;
 	onGitMutated?: () => void;
@@ -490,7 +490,7 @@ export function FileViewer({
 				if (tab.sourcePath !== undefined) {
 					const response = await fetch("/api/prompts", {
 						method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-						body: JSON.stringify({ action: "read", cwd, filePath: tab.path, sourcePath: tab.sourcePath }),
+						body: JSON.stringify({ action: "read", cwd: tab.sourceCwd || cwd, filePath: tab.path, sourcePath: tab.sourcePath }),
 					});
 					const payload = await response.json();
 					if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
@@ -622,12 +622,15 @@ export function FileViewer({
 			const sourcePath = activeTab.sourcePath ?? activeTab.path;
 			const response = await fetch("/api/prompts", {
 				method: "POST", headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action: "read", cwd, filePath: target, sourcePath }),
+				body: JSON.stringify({ action: "read", cwd: activeTab.sourceCwd || cwd, filePath: target, sourcePath }),
 			});
 			const payload = await response.json();
 			if (!response.ok || !payload.success) throw new Error(payload.error || t.viewerLoadFailed);
 			// 请求回来时用户可能已经切到另一份文档或关闭查看器。
-			if (linkScope.current === activeTab) onOpenContent(target, payload.data.content, sourcePath);
+			if (linkScope.current === activeTab) {
+				if (activeTab.sourceCwd) onOpenContent(target, payload.data.content, sourcePath, activeTab.sourceCwd);
+				else onOpenContent(target, payload.data.content, sourcePath);
+			}
 		} catch (error) {
 			if (linkScope.current === activeTab) setLinkError(error instanceof Error ? error.message : t.viewerLoadFailed);
 		}
@@ -639,7 +642,7 @@ export function FileViewer({
 			workspace: source ? undefined : cwd,
 			allowDocumentParents: true,
 			openFile: (href: string) => { void openDocumentLink(href); },
-			resolveImage: (href: string) => markdownDocumentImageUrl(cwd, activeTab.path, href, source),
+			resolveImage: (href: string) => markdownDocumentImageUrl(activeTab.sourceCwd || cwd, activeTab.path, href, source),
 		};
 	}, [activeTab, cwd, openDocumentLink]);
 	const handleOpenTreeFile = useCallback((node: TreeNode) => {

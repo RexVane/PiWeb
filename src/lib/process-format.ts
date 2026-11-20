@@ -232,8 +232,6 @@ const TOOL_DISPLAY: Record<string, string> = {
 	find: "Find",
 	ls: "List",
 	search: "Search",
-	ask_user_question: "AskUserQuestion",
-	manage_automation: "ManageAutomation",
 };
 
 /** 工具名的展示写法（Claude Code 式的 Bash / Read / Edit…），未知工具首字母大写 */
