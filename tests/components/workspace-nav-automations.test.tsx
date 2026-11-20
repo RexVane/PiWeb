@@ -19,6 +19,16 @@ describe("resource navigation without built-in business extensions", () => {
 		fireEvent.click(screen.getByRole("button", { name: "技能" })); expect(select).toHaveBeenCalledWith("skills");
 		fireEvent.click(screen.getByRole("button", { name: /^(?:插件|扩展)$/ })); expect(select).toHaveBeenCalledWith("plugins");
 	});
+	it("lists enabled panel resources as sidebar entries", () => {
+		const select = vi.fn();
+		render(<SessionSidebar sessions={[]} addedWorkspaces={[]} currentPath={null} groupBy="workspace" orderBy="updated" setGroupBy={vi.fn()} setOrderBy={vi.fn()} collapsed={false}
+			onToggleCollapse={vi.fn()} onOpen={vi.fn()} onNew={vi.fn()} onNewInWorkspace={vi.fn()} onRename={vi.fn(async () => {})} onOpenSettings={vi.fn()} onAddWorkspace={vi.fn()}
+			activeView="resource:tasks" onSelectView={select} resourcePanels={[{ id: "tasks", label: "Automations" }]} />);
+		const entry = screen.getByRole("button", { name: "Automations" });
+		expect(entry.getAttribute("data-active")).toBe("true");
+		fireEvent.click(screen.getByRole("button", { name: "技能" })); expect(select).toHaveBeenLastCalledWith("skills");
+		fireEvent.click(entry); expect(select).toHaveBeenLastCalledWith("resource:tasks");
+	});
 	it("keeps application settings separate from resource installation", () => {
 		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10000 }, compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 } } }) })));
 		render(<SettingsPanel open onClose={vi.fn()} />);
