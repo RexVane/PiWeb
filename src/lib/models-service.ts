@@ -12,13 +12,14 @@ import { BlockList, isIP } from "node:net";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { applyEdits, modify, getNodeValue, parseTree, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { filterModelsByPiScope } from "./models/model-scope";
-import { invalidateJsonFilesNamed, readJsonObjectSafe } from "./agent-config";
+import { invalidateJsonFilesNamed, readJsonObjectFresh, readJsonObjectSafe } from "./agent-config";
 import { getAgentDir, getModelRuntime, getResourceLoader, modelRuntimeVersion, refreshModelRuntime, refreshModelRuntimeIfFilesChanged, refreshResourceLoaderIfStale, resourceLoaderReady, resourceLoaderVersion, resolveProjectTrust, withResourceLock } from "./pi";
 import { modelFilesFingerprint } from "./model-files";
 import { createSessionModelRuntime, releaseSessionModelRuntime } from "./session-model-runtime";
 import { getEnabledModelPatterns } from "./pi-settings";
 import { refreshSessionModels, reloadSessionsForCwd } from "./agent-manager";
-import { withContextWindow, withThinkingLevelMap } from "./model-draft";
+import { customModelGaps, withContextWindow, withThinkingLevelMap } from "./model-draft";
+import { inferModelCapabilities, type OfficialModelCapabilities } from "./model-capabilities";
 import { probeThinkingLevels, validateThinkingLevelMap, type ThinkingProbeReport } from "./thinking-probe";
 import { modelThinkingMetadata, onThinkingCapabilitiesChanged, type ThinkingMetadata } from "./automatic-thinking";
 import {
@@ -618,16 +619,16 @@ interface ConfiguredCredential {
  * 编辑表单的 key 框留空（「留空保持不变」）时的模型目录探测、各家用量探测都从这里取。
  * 拿不到或解析失败都返回 undefined：报错里可能带着命令原文，不往外带。
  */
-async function configuredCredentialFor(providerId: string): Promise<ConfiguredCredential | undefined> {
+async function configuredCredentialFor(providerId: string, options: { signal?: AbortSignal; background?: boolean } = {}): Promise<ConfiguredCredential | undefined> {
 	try {
 		const rt = await getModelRuntime();
 		// L2：两条认证查询共用一个 20s 超时控制器——getAuth 与 checkAuth 都可能碰网络
 		// （OAuth 刷新/探测），应用层必须保证整段有上限，不能只给第一条传 signal。
-		const deadline = AbortSignal.timeout(20_000);
+		const deadline = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
 		const resolved = await rt.getAuth(providerId, { signal: deadline });
 		const key = (resolved?.auth.apiKey ?? bearerToken(resolved?.auth.headers))?.trim();
 		if (!resolved || !key) return undefined;
-		const oauth = (await rt.checkAuth(providerId, { signal: deadline }).catch(() => undefined))?.type === "oauth";
+		const oauth = !options.background && (await rt.checkAuth(providerId, { signal: deadline }).catch(() => undefined))?.type === "oauth";
 		const resolvedHeaders: Record<string, string> = {};
 		for (const [name, value] of Object.entries(resolved.auth.headers ?? {})) {
 			if (typeof value !== "string" || !value) continue;
@@ -792,7 +793,7 @@ async function readModelCatalog(response: Response): Promise<unknown> {
 }
 
 /** Fetch a provider's conventional /models catalog without persisting credentials. */
-export async function discoverModels(input: { baseUrl: string; api?: string; apiKey?: string; providerId?: string; allowPrivate?: boolean; headers?: Record<string, string> }): Promise<DiscoveredModel[]> {
+export async function discoverModels(input: { baseUrl: string; api?: string; apiKey?: string; providerId?: string; allowPrivate?: boolean; headers?: Record<string, string>; signal?: AbortSignal; background?: boolean }): Promise<DiscoveredModel[]> {
 	const rawBaseUrl = input.baseUrl.trim();
 	if (!rawBaseUrl) throw new Error("缺少 API 地址");
 	const base = new URL(rawBaseUrl);
@@ -801,7 +802,7 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	const endpoint = modelsEndpoint(base);
 	const headers: Record<string, string> = { Accept: "application/json" };
 	// 表单 key 为空时回退到该 provider 已配置的凭证（编辑场景：占位符「留空保持不变」）
-	const storedCredential = input.providerId ? await configuredCredentialFor(input.providerId) : undefined;
+	const storedCredential = input.providerId ? await configuredCredentialFor(input.providerId, { signal: input.signal, background: input.background }) : undefined;
 	const credential: ConfiguredCredential | undefined = input.apiKey?.trim()
 		? { key: input.apiKey.trim(), oauth: false, ...(storedCredential?.headers ? { headers: storedCredential.headers } : {}), ...(storedCredential?.baseUrl ? { baseUrl: storedCredential.baseUrl } : {}) }
 		: storedCredential;
@@ -849,7 +850,9 @@ export async function discoverModels(input: { baseUrl: string; api?: string; api
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), 15000);
 		try {
-			const response = await requestModelCatalog(endpoint, headers, controller.signal, input.allowPrivate === true);
+			const signal = input.signal ? AbortSignal.any([controller.signal, input.signal]) : controller.signal;
+			signal.throwIfAborted();
+			const response = await requestModelCatalog(endpoint, headers, signal, input.allowPrivate === true);
 			if (response.status === 401) {
 				throw new Error(apiKey ? "模型目录请求失败（HTTP 401）：密钥或令牌无效" : "模型目录请求失败（HTTP 401）：请先填写 API 密钥");
 			}
@@ -1923,6 +1926,67 @@ export async function readCustomProviders(): Promise<{ content: string; exists: 
 		exists: snapshot.content !== undefined,
 		revision: snapshot.revision,
 	};
+}
+
+let capabilityCatalog: Promise<OfficialModelCapabilities[]> | null = null;
+type CapabilityResolution = { customProviders: Awaited<ReturnType<typeof readCustomProviders>>; filled: number };
+const capabilityJobs = new Map<string, { at: number; value: Promise<CapabilityResolution> }>();
+
+/** Try the configured /models endpoint, then the exact-version official catalog, before asking the user.
+ * No generation probes, private-network bypass, OAuth refresh or !credential/header execution. */
+export async function resolveCustomModelCapabilities(revision: string): Promise<CapabilityResolution> {
+	const file = modelsJsonPath();
+	const snapshot = await readCustomProvidersSnapshot(file);
+	if (snapshot.revision !== revision) throw new CustomProvidersConflictError();
+	const key = `${file}:${revision}:${modelFilesFingerprint(getAgentDir())}`;
+	const cached = capabilityJobs.get(key);
+	if (cached && Date.now() - cached.at < 60_000) return cached.value;
+	const value = (async (): Promise<CapabilityResolution> => {
+		const config = parseCustomProviders(snapshot.content ?? '{"providers":{}}');
+		const gaps = customModelGaps(config.providers);
+		if (!gaps.length) return { customProviders: await readCustomProviders(), filled: 0 };
+		const officialCatalog = capabilityCatalog ??= ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
+			credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
+		}).then((runtime) => [...runtime.getModels()]).catch((error) => { capabilityCatalog = null; throw error; });
+		const catalog = await officialCatalog;
+		const reported = new Map<string, DiscoveredModel[]>();
+		const deadline = AbortSignal.timeout(8_000);
+		const ids = [...new Set(gaps.map((gap) => gap.provider))].slice(0, 32);
+		let auth: Record<string, unknown> | null = null;
+		try { auth = await readJsonObjectFresh(path.join(getAgentDir(), "auth.json")); } catch { /* fail closed */ }
+		const command = (value: unknown) => typeof value === "string" && value.trimStart().startsWith("!");
+		const offline = /^(1|true|yes)$/i.test(process.env.PI_OFFLINE ?? "");
+		// Four bounded workers share one deadline, so many unreachable gateways never delay the UI indefinitely.
+		await Promise.all(Array.from({ length: Math.min(ids.length, 4) }, async () => {
+			while (ids.length && !deadline.aborted && !offline) {
+				const id = ids.shift()!;
+				const provider = config.providers[id];
+				const credential = auth?.[id] ?? (isRecord(auth?.providers) ? auth.providers[id] : undefined);
+				if (!auth || (isRecord(credential) && credential.type === "oauth") || id === "openai-codex") continue;
+				const declarations = [provider, ...(Array.isArray(provider.models) ? provider.models : []),
+					...Object.values(isRecord(provider.modelOverrides) ? provider.modelOverrides : {})];
+				if (command(isRecord(credential) ? credential.key : undefined) || declarations.some((entry) => isRecord(entry) &&
+					(command(entry.apiKey) || Object.values(isRecord(entry.headers) ? entry.headers : {}).some(command)))) continue;
+				if (typeof provider.baseUrl !== "string" || !provider.baseUrl.trim()) continue;
+				try {
+					const runtime = await getModelRuntime();
+					if (runtime.getRegisteredProviderIds().includes(id) || !runtime.hasConfiguredAuth(id)) continue;
+					// Don't run a stale discovery after a concurrent credential/config edit.
+					if ((await readCustomProvidersSnapshot(file)).revision !== revision) continue;
+					reported.set(id, await discoverModels({ providerId: id, baseUrl: provider.baseUrl,
+						api: typeof provider.api === "string" ? provider.api : runtime.getModels(id)[0]?.api,
+						signal: deadline, background: true }));
+				} catch { /* inaccessible/missing metadata: use official data, then leave genuine gaps */ }
+			}
+		}));
+		const result = inferModelCapabilities(config.providers, reported, catalog);
+		if (result.filled) await writeCustomProviders(JSON.stringify({ ...config, providers: result.providers }), revision);
+		else if ((await readCustomProvidersSnapshot(file)).revision !== revision) throw new CustomProvidersConflictError();
+		return { customProviders: await readCustomProviders(), filled: result.filled };
+	})();
+	capabilityJobs.set(key, { at: Date.now(), value });
+	while (capabilityJobs.size > 32) capabilityJobs.delete(capabilityJobs.keys().next().value!);
+	try { return await value; } catch (error) { capabilityJobs.delete(key); throw error; }
 }
 
 function validateTokenLimits(parsed: CustomProvidersFile): void {

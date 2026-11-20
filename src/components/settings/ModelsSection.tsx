@@ -232,6 +232,9 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const [catalogModels, setCatalogModels] = useState<ModelView[]>([]);
 	const [custom, setCustom] = useState<{ providers: Record<string, any>; [key: string]: unknown }>({ providers: {} });
 	const [customRevision, setCustomRevision] = useState<string | null>(null);
+	const [capabilityResolving, setCapabilityResolving] = useState(true);
+	const capabilityAttempts = useRef(new Set<string>());
+	const loadSequence = useRef(0);
 	const [secretProviderIds, setSecretProviderIds] = useState<Set<string>>(new Set());
 	const [secretHeaderKeys, setSecretHeaderKeys] = useState<Record<string, string[]>>({});
 	// 内置 provider → 目录里的模型 ID：编辑时同 ID 的行写 modelOverrides，「获取可用模型」里不再可选
@@ -295,11 +298,48 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	};
 
 	const load = useCallback(async () => {
+		const sequence = ++loadSequence.current;
 		try {
-			const r = await fetch("/api/models?custom=1");
-			const j = await r.json();
-			if (!r.ok || !j.success) throw Object.assign(new Error(j.error || "failed to load model configuration"), { errorCode: j.errorCode });
-			const parsed = JSON.parse(j.data.customProviders?.content ?? "{}");
+			const read = async () => {
+				const r = await fetch("/api/models?custom=1");
+				const j = await r.json();
+				if (!r.ok || !j.success) throw Object.assign(new Error(j.error || "failed to load model configuration"), { errorCode: j.errorCode });
+				return j;
+			};
+			let j = await read();
+			if (sequence !== loadSequence.current) return;
+			let parsed = JSON.parse(j.data.customProviders?.content ?? "{}");
+			const revision = j.data.customProviders?.revision;
+			if (j.data.capabilityResolutionAvailable && typeof revision === "string" && customModelGaps(parsed.providers ?? {}).length && !capabilityAttempts.current.has(revision)) {
+				setCapabilityResolving(true);
+				setCustomRevision(null);
+				try {
+					const response = await fetch("/api/models", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "resolveCapabilities", revision }) });
+					const result = await response.json();
+					if (response.ok && result.success && result.data?.customProviders) {
+						// The server persists detected fields before acknowledging them. Never republish old gaps.
+						j.data.customProviders = result.data.customProviders;
+						parsed = JSON.parse(result.data.customProviders.content);
+						if (result.data.filled) {
+							try {
+								const refreshed = await read();
+								const refreshedConfig = JSON.parse(refreshed.data.customProviders.content);
+								j = refreshed; parsed = refreshedConfig;
+							} catch { /* retain acknowledged values */ }
+							await onChanged?.();
+						}
+					} else if (response.status === 409) {
+						// Don't invite edits to a stale config when automatic completion races a manual save.
+						j = await read(); parsed = JSON.parse(j.data.customProviders.content);
+					}
+				} catch { /* Offline/unknown: only now offer manual completion, never invent limits. */ }
+				finally {
+					// Concurrent loads must also wait for detection, not expose gaps from an in-flight attempt.
+					capabilityAttempts.current.add(revision);
+					while (capabilityAttempts.current.size > 32) capabilityAttempts.current.delete(capabilityAttempts.current.values().next().value!);
+				}
+			}
+			if (sequence !== loadSequence.current) return;
 			if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || (parsed.providers !== undefined && (!parsed.providers || typeof parsed.providers !== "object" || Array.isArray(parsed.providers)))) {
 				throw new Error("invalid model configuration");
 			}
@@ -312,12 +352,15 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 			setCustom({ ...parsed, providers: parsed.providers ?? {} });
 			setCustomRevision(typeof j.data.customProviders?.revision === "string" ? j.data.customProviders.revision : null);
 		} catch (error) {
+			if (sequence !== loadSequence.current) return;
 			setCustomRevision(null);
 			const code = (error as { errorCode?: string }).errorCode;
 			const message = error instanceof Error ? error.message : "failed to load model configuration";
 			setToast({ ok: false, msg: localizeApiError(lang, code, message) });
+		} finally {
+			if (sequence === loadSequence.current) setCapabilityResolving(false);
 		}
-	}, [lang]);
+	}, [lang, onChanged]);
 	const thinkingPending = catalogModels.some((model) => model.thinkingProbePending);
 	useEffect(() => {
 		if (!thinkingPending) return;
@@ -348,7 +391,10 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 				if (j.data.done) {
 					finished = true;
 					setOauthDone({ ok: !j.data.error, msg: j.data.error ?? `${oauthProvider} ✓` });
-					if (!j.data.error) await Promise.all([load(), changed()]);
+					if (!j.data.error) {
+						capabilityAttempts.current.clear();
+						await Promise.all([load(), changed()]);
+					}
 				}
 			} catch {
 				// 短暂断线后继续轮询，不能留下未处理的 Promise 拒绝。
@@ -722,7 +768,10 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 	const call = async (body: Record<string, unknown>) => {
 		const j = await request(body);
 		notify(j.success, j.error);
-		if (j.success) await Promise.all([load(), ["setKey", "removeKey"].includes(String(body.action)) ? changed() : Promise.resolve()]);
+		if (j.success) {
+			if (["setKey", "removeKey"].includes(String(body.action))) capabilityAttempts.current.clear();
+			await Promise.all([load(), ["setKey", "removeKey"].includes(String(body.action)) ? changed() : Promise.resolve()]);
+		}
 		return j;
 	};
 
@@ -1124,8 +1173,10 @@ export function ModelsSection({ onChanged }: { onChanged?: () => void | Promise<
 				})}
 			</div>
 
-			{/* 模型配置体检：没写的字段 pi 会按缺省处理；由用户填，不替他猜 */}
-			{gaps.length > 0 ? (
+			{/* Only show manual gaps after automatic detection has exhausted endpoint and official data. */}
+			{capabilityResolving ? (
+				<div role="status" data-testid="model-capabilities-pending" style={{ fontSize: 12, color: "var(--dsw-label-caption)" }}>{t.modelCapabilitiesResolving}</div>
+			) : gaps.length > 0 ? (
 				<ModelFieldAudit gaps={gaps} providerLabel={providerName} busy={auditBusy || customRevision === null} onSave={saveAuditFills} />
 			) : null}
 

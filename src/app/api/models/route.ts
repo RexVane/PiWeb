@@ -17,6 +17,7 @@ import {
 	loginState,
 	providerUsage,
 	readCustomProviders,
+	resolveCustomModelCapabilities,
 	removeApiKey,
 	setApiKey,
 	setModelContextWindow,
@@ -78,7 +79,7 @@ export async function GET(req: Request) {
 		const catalogModelIds = customProviders ? await builtinCatalogModelIds(customProviders.content, data.models) : undefined;
 		// 由 Next 的 HTTP 层统一压缩；预压缩 Response 的 Content-Encoding 会被新版适配器移除。
 		return json(
-			{ success: true, data: { providers, models, customProviders, ...(catalogModelIds ? { catalogModelIds } : {}) } },
+			{ success: true, data: { providers, models, customProviders, ...(custom ? { capabilityResolutionAvailable: true } : {}), ...(catalogModelIds ? { catalogModelIds } : {}) } },
 			{ headers: { "Cache-Control": "no-store" } },
 		);
 	} catch (err: any) {
@@ -93,6 +94,7 @@ export async function POST(req: Request) {
 				| "setKey"
 				| "removeKey"
 				| "saveCustomProviders"
+				| "resolveCapabilities"
 				| "discoverModels"
 				| "providerUsage"
 				| "contextWindowInfo"
@@ -137,6 +139,12 @@ export async function POST(req: Request) {
 			}
 			await writeCustomProviders(body.content, body.revision);
 			return json({ success: true, data: { requiresSessionReopen: false } });
+		}
+		if (body.action === "resolveCapabilities") {
+			if (typeof body.revision !== "string" || !/^(?:missing|[a-f0-9]{64})$/.test(body.revision)) {
+				return json({ success: false, error: "invalid revision" }, { status: 400 });
+			}
+			return json({ success: true, data: await resolveCustomModelCapabilities(body.revision) });
 		}
 		if (body.action === "discoverModels") {
 			if (!body.baseUrl) return json({ success: false, error: "missing baseUrl" }, { status: 400 });

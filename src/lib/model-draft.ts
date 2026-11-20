@@ -35,7 +35,8 @@ export function modelInputFor(vision: boolean): string[] {
  *
  * PiWeb 不替用户编容量：maxTokens 会原样当成请求的 max_tokens 发出去（pi-ai simple-options），
  * contextWindow 决定 max_tokens 的钳制和自动压缩的时机——往大了猜，上游会直接拒绝请求；
- * 往小了猜只是提前压缩。除端点报的或用户填的值外，只有用户明确选择沿用缺省时才写下这些值。
+ * 往小了猜只是提前压缩。能力补全依次采用用户已写值、端点自报值、同版本官方目录；
+ * 都无法确定时留空，只有用户明确选择沿用缺省时才写下这些默认值。
  */
 export const PI_MODEL_FALLBACKS = { contextWindow: 128_000, maxTokens: 16_384, vision: false, reasoning: false } as const;
 

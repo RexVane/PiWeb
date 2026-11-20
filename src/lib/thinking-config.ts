@@ -35,17 +35,22 @@ const canonicalId = (id: string) => id.toLowerCase().split("/").at(-1)!.split(/[
 const suffix = /^(?:-(?:background|fast|ultrafast|spot|sg|free|latest|build|\d{4,8}))+$/;
 const owners: Array<[RegExp, string]> = [[/^claude/, "anthropic"], [/^gpt-|^o\d/, "openai"], [/^glm/, "zai"], [/^grok/, "xai"], [/^gemini/, "google"], [/^deepseek/, "deepseek"], [/^minimax/, "minimax"]];
 
-/** Match the exact model/version (with known gateway suffixes), never borrow another generation's levels. */
-export function matchOfficialThinkingModel(model: Pick<OfficialThinkingModel, "provider" | "id">, catalog: readonly OfficialThinkingModel[]): OfficialThinkingModel | undefined {
+/** Exact-version matching shared by capabilities and thinking levels; never borrow another generation. */
+export function matchOfficialModel<T extends OfficialThinkingModel>(model: Pick<OfficialThinkingModel, "provider" | "id">, catalog: readonly T[], reasoningOnly = false): T | undefined {
 	const exact = catalog.find((candidate) => candidate.provider === model.provider && candidate.id === model.id);
 	if (exact) return exact;
 	const id = canonicalId(model.id);
 	const owner = owners.find(([pattern]) => pattern.test(id))?.[1];
 	const rank = (provider: string) => provider === owner ? 0 : provider === "openrouter" ? 1 : provider === "radius" ? 2 : provider === "fireworks" ? 3 : 4;
 	return catalog.filter((candidate) => {
-		if (!candidate.reasoning) return false;
+		if (reasoningOnly && !candidate.reasoning) return false;
 		const base = canonicalId(candidate.id);
 		return id === base || (id.startsWith(base) && suffix.test(id.slice(base.length)));
 	}).sort((a, b) => canonicalId(b.id).length - canonicalId(a.id).length || rank(a.provider) - rank(b.provider)
 		|| Number(Boolean(b.thinkingLevelMap)) - Number(Boolean(a.thinkingLevelMap)) || a.provider.localeCompare(b.provider))[0];
+}
+
+/** Thinking only borrows maps from reasoning models; capability matching also includes text-only models. */
+export function matchOfficialThinkingModel(model: Pick<OfficialThinkingModel, "provider" | "id">, catalog: readonly OfficialThinkingModel[]): OfficialThinkingModel | undefined {
+	return matchOfficialModel(model, catalog, true);
 }

@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { parse } from "jsonc-parser";
 import lockfile from "proper-lockfile";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -19,7 +21,7 @@ vi.mock("../src/lib/pi", () => ({
 
 import {
 	CustomProvidersConflictError, CustomProvidersValidationError,
-	invalidateModelList, preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, writeCustomProviders,
+	invalidateModelList, preserveCustomProviderApiKeys, readCustomProviders, redactCustomProviderSecrets, resolveCustomModelCapabilities, writeCustomProviders,
 } from "../src/lib/models-service";
 import { GET, POST } from "../src/app/api/models/route";
 import { customModelGaps, fillModelFields, modelDraftFromConfig, PI_MODEL_FALLBACKS, serializeProviderDraft } from "../src/lib/model-draft";
@@ -54,6 +56,97 @@ function post(content: string, revision?: unknown) {
 async function expectOnlyConfig() {
 	expect((await fs.readdir(agentDir)).sort()).toEqual(["models.json"]);
 }
+
+describe("automatic capability persistence", () => {
+	it("persists exact official capabilities and retains manual limits, comments and keys after restart", async () => {
+		vi.stubEnv("PI_OFFLINE", "1");
+		const official = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+		const model = official.getModels("anthropic")[0];
+		await fs.writeFile(file, `// retained comment\n${JSON.stringify({ providers: { gateway: { ...provider, apiKey: "secret-key", models: [{ id: model.id, contextWindow: 64000 }] } } })}`);
+		const snapshot = await readCustomProviders();
+		const result = await resolveCustomModelCapabilities(snapshot.revision);
+		expect(result.filled).toBe(1);
+		expect(result.customProviders.content).not.toContain("secret-key");
+		const saved = JSON.parse(result.customProviders.content);
+		expect(saved.providers.gateway.models[0]).toMatchObject({ contextWindow: 64000, maxTokens: model.maxTokens, input: model.input, reasoning: model.reasoning });
+		expect(await fs.readFile(file, "utf8")).toContain("// retained comment");
+		expect(await fs.readFile(file, "utf8")).toContain("secret-key");
+		const restarted = await ModelRuntime.create({ modelsPath: file, credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+		expect(restarted.getModel("gateway", model.id)).toMatchObject({ contextWindow: 64000, maxTokens: model.maxTokens, reasoning: model.reasoning });
+		expect((await resolveCustomModelCapabilities(result.customProviders.revision)).filled).toBe(0);
+		expect(customModelGaps(saved.providers)).toEqual([]);
+		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
+	});
+
+	it("uses configured endpoint metadata first and coalesces simultaneous resolution requests", async () => {
+		let requests = 0;
+		const server = createServer((_request, response) => {
+			requests += 1;
+			response.setHeader("Content-Type", "application/json");
+			response.end(JSON.stringify({ data: [{ id: "model-a", context_window: 256000, max_output_tokens: 32000, input_modalities: ["text"], reasoning: false }] }));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		try {
+			vi.stubEnv("PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY", "1");
+			const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+			await fs.writeFile(file, JSON.stringify({ providers: { gateway: { ...provider, baseUrl, apiKey: "test-key" } } }));
+			const runtime = await ModelRuntime.create({ modelsPath: file, authPath: path.join(agentDir, "auth.json"), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+			await runtime.refresh({ allowNetwork: false });
+			const checkAuth = vi.spyOn(runtime, "checkAuth");
+			mocks.getModelRuntime.mockResolvedValue(runtime);
+			expect(runtime.getRegisteredProviderIds()).not.toContain("gateway");
+			expect(runtime.hasConfiguredAuth("gateway")).toBe(true);
+			const snapshot = await readCustomProviders();
+			const [one, two] = await Promise.all([resolveCustomModelCapabilities(snapshot.revision), resolveCustomModelCapabilities(snapshot.revision)]);
+			expect(one).toEqual(two);
+			expect(one.filled).toBe(1);
+			expect(JSON.parse(one.customProviders.content).providers.gateway.models[0]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: false });
+			expect(mocks.refreshModelRuntime).toHaveBeenCalledTimes(1);
+			expect(requests).toBe(1);
+			expect(checkAuth).not.toHaveBeenCalled();
+		} finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+	});
+
+	it("does not overwrite an external edit made during endpoint detection", async () => {
+		let external = "";
+		const server = createServer((_request, response) => {
+			void fs.writeFile(file, external).then(() => response.end(JSON.stringify({ data: [{ id: "model-a", context_window: 256000 }] })));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		try {
+			vi.stubEnv("PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY", "1");
+			const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+			const config = { providers: { gateway: { ...provider, baseUrl, apiKey: "test-key" } } };
+			external = JSON.stringify({ ...config, external: true });
+			await fs.writeFile(file, JSON.stringify(config));
+			const runtime = await ModelRuntime.create({ modelsPath: file, authPath: path.join(agentDir, "auth.json"), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
+			await runtime.refresh({ allowNetwork: false });
+			mocks.getModelRuntime.mockResolvedValue(runtime);
+			await expect(resolveCustomModelCapabilities((await readCustomProviders()).revision)).rejects.toThrow(CustomProvidersConflictError);
+			expect(await fs.readFile(file, "utf8")).toBe(external);
+			expect(mocks.refreshModelRuntime).not.toHaveBeenCalled();
+		} finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+	});
+
+	it.each(["command-key", "command-header", "oauth", "malformed-auth"])("does not execute unsafe background authentication (%s) or invent unknown limits", async (kind) => {
+		const config = { providers: { gateway: { ...provider, apiKey: kind === "command-key" ? "!must-not-execute" : "plain-key", ...(kind === "command-header" ? { headers: { Authorization: "!must-not-execute" } } : {}) } } };
+		await fs.writeFile(file, JSON.stringify(config));
+		if (kind === "oauth") await fs.writeFile(path.join(agentDir, "auth.json"), JSON.stringify({ gateway: { type: "oauth" } }));
+		if (kind === "malformed-auth") await fs.writeFile(path.join(agentDir, "auth.json"), "{broken");
+		const result = await resolveCustomModelCapabilities((await readCustomProviders()).revision);
+		expect(result.filled).toBe(0);
+		expect(await fs.readFile(file, "utf8")).toBe(JSON.stringify(config));
+		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it("rejects stale configuration revisions without discovery or writes", async () => {
+		await fs.writeFile(file, JSON.stringify({ providers: { gateway: provider } }));
+		await expect(resolveCustomModelCapabilities("missing")).rejects.toThrow(CustomProvidersConflictError);
+		expect(mocks.getModelRuntime).not.toHaveBeenCalled();
+		expect(mocks.refreshModelRuntime).not.toHaveBeenCalled();
+	});
+});
 
 describe("JSONC model configuration", () => {
 	it("allows an emptied builtin overlay after restoring its hidden credential", async () => {

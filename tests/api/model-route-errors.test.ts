@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-	catalog: vi.fn(), write: vi.fn(), defaults: vi.fn(), resolveWorkspace: vi.fn(),
+	catalog: vi.fn(), write: vi.fn(), resolveCapabilities: vi.fn(), defaults: vi.fn(), resolveWorkspace: vi.fn(),
 	BoundaryError: class BoundaryError extends Error {},
 	ValidationError: class CustomProvidersValidationError extends Error {},
 	ConflictError: class CustomProvidersConflictError extends Error {},
@@ -12,7 +12,7 @@ vi.mock("@/lib/model-defaults", () => ({ newSessionDefaults: mocks.defaults }));
 vi.mock("@/lib/models-service", () => ({
 	...Object.fromEntries(["answerLogin", "builtinCatalogModelIds", "cancelLogin", "contextWindowInfo", "discoverModels", "loginState", "providerUsage", "readCustomProviders", "removeApiKey", "setApiKey", "setModelContextWindow", "startLogin"].map((name) => [name, vi.fn()])),
 	listModels: mocks.catalog, listModelsForPiWeb: mocks.catalog, listWorkspaceModelsForPiWeb: mocks.catalog,
-	writeCustomProviders: mocks.write, CustomProvidersValidationError: mocks.ValidationError, CustomProvidersConflictError: mocks.ConflictError,
+	writeCustomProviders: mocks.write, resolveCustomModelCapabilities: mocks.resolveCapabilities, CustomProvidersValidationError: mocks.ValidationError, CustomProvidersConflictError: mocks.ConflictError,
 }));
 import { GET, POST } from "@/app/api/models/route";
 import { GET as defaultsGET } from "@/app/api/models/defaults/route";
@@ -36,6 +36,21 @@ beforeEach(() => {
 	mocks.defaults.mockResolvedValue({ modelThinkingLevels: {} });
 });
 describe("model API error boundaries", () => {
+	it("requires a valid revision for automatic capability completion", async () => {
+		for (const revision of [undefined, 123, "rev-1"]) {
+			expect((await post({ action: "resolveCapabilities", revision })).status).toBe(400);
+		}
+		expect(mocks.resolveCapabilities).not.toHaveBeenCalled();
+		mocks.resolveCapabilities.mockResolvedValueOnce({ filled: 0, customProviders: { content: '{"providers":{}}', revision: "missing" } });
+		const response = await post({ action: "resolveCapabilities", revision: "missing" });
+		expect(response.status).toBe(200);
+		expect(response.headers.get("cache-control")).toBe("no-store");
+		expect(mocks.resolveCapabilities).toHaveBeenCalledWith("missing");
+	});
+	it("reports automatic completion conflicts safely instead of overwriting manual changes", async () => {
+		mocks.resolveCapabilities.mockRejectedValueOnce(new mocks.ConflictError(privateMessage));
+		expect(await safeFailure(await post({ action: "resolveCapabilities", revision: "missing" }), 409)).toMatchObject({ errorCode: "CONFIG_CHANGED" });
+	});
 	it("redacts background authentication failures just like synchronous API errors", async () => {
 		vi.mocked(loginState).mockReturnValueOnce({ done: true, prompt: null, notifyLog: [], error: privateMessage });
 		const result = await post({ action: "loginState", providerId: "test" });

@@ -17,8 +17,9 @@ const providerConfig = () => ({ name: "Gateway", baseUrl: "https://gateway.inval
 	compat: { providerOption: true }, future: { nested: ["preserved"] }, models: [structuredClone(originalModel), { id: "delete-me", reasoning: false }] });
 
 function setup({ builtin = false, conflict = false, catalog, extraProviders = [], auditOnly = false, auditMissing = false, refreshFailure = false, outputOnly = false, reorderOnConflict = false,
-	onModelsChanged }: {
+	autoResolve = false, unresolved = false, resolutionFailure = false, resolutionDelay, onModelsChanged }: {
 	builtin?: boolean; conflict?: boolean; catalog?: Record<string, string[]>; extraProviders?: object[]; auditOnly?: boolean; auditMissing?: boolean; refreshFailure?: boolean; outputOnly?: boolean; reorderOnConflict?: boolean;
+	autoResolve?: boolean; unresolved?: boolean; resolutionFailure?: boolean; resolutionDelay?: Promise<void>;
 	onModelsChanged?: () => void | Promise<void>;
 } = {}) {
 	let saved = { schemaVersion: "future-1", providers: { gateway: providerConfig() } };
@@ -39,11 +40,21 @@ function setup({ builtin = false, conflict = false, catalog, extraProviders = []
 			return response({
 			providers: [{ id: "gateway", name: "Gateway", builtIn: builtin, authReady: true, authConfigured: true, keyManaged: false, authTypes: ["api_key"], apis: ["openai-completions"], modelCount: 2 }, ...extraProviders],
 			customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: ["gateway"] },
+			capabilityResolutionAvailable: autoResolve,
 			...(catalog ? { catalogModelIds: catalog } : {}),
 			});
 		}
 		if (url === "/api/models") {
 			const body = JSON.parse(String(init?.body));
+			if (body.action === "resolveCapabilities") {
+				await resolutionDelay;
+				if (resolutionFailure) return { ok: false, status: 503, json: async () => ({ success: false, error: "offline" }) };
+				if (!unresolved) {
+					Object.assign(saved.providers.gateway.models[1], { contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: true });
+					revision = "rev-auto";
+				}
+				return response({ filled: unresolved ? 0 : 1, customProviders: { content: JSON.stringify(saved), revision, secretProviderIds: ["gateway"] } });
+			}
 			if (body.action === "setKey") {
 				keys.push(body);
 				return response({});
@@ -76,6 +87,48 @@ function response(data: unknown) { return { ok: true, status: 200, json: async (
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "编辑" })); }
 
 describe("SettingsPanel model round trip and revision", () => {
+	it("hides manual fields while detecting and keeps persisted automatic capabilities after reopening", async () => {
+		let finish!: () => void;
+		const resolutionDelay = new Promise<void>((resolve) => { finish = resolve; });
+		const { saved, fetchMock } = setup({ auditMissing: true, autoResolve: true, resolutionDelay });
+		await screen.findByTestId("model-capabilities-pending");
+		await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => String(init?.body).includes("resolveCapabilities"))).toBe(true));
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+		await act(async () => finish());
+		await screen.findByRole("button", { name: "编辑" });
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, reasoning: true });
+		cleanup();
+		render(<SettingsPanel open onClose={vi.fn()} />);
+		fireEvent.click(screen.getByRole("button", { name: "模型" }));
+		await screen.findByRole("button", { name: "编辑" });
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+		expect(fetchMock.mock.calls.filter(([, init]) => String(init?.body).includes("resolveCapabilities"))).toHaveLength(1);
+	});
+
+	it("does not expose manual gaps when a second catalog load overlaps detection", async () => {
+		let finish!: () => void;
+		const resolutionDelay = new Promise<void>((resolve) => { finish = resolve; });
+		const { mounted, fetchMock } = setup({ auditMissing: true, autoResolve: true, resolutionDelay });
+		await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => String(init?.body).includes("resolveCapabilities"))).toHaveLength(1));
+		mounted.rerender(<SettingsPanel open onClose={vi.fn()} onModelsChanged={vi.fn()} />);
+		await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => String(init?.body).includes("resolveCapabilities"))).toHaveLength(2));
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+		await act(async () => finish());
+		await screen.findByRole("button", { name: "编辑" });
+		expect(screen.queryByTestId("model-audit")).toBeNull();
+	});
+
+	it.each([false, true])("offers manual input only after unknown/offline detection settles (failure=%s)", async (resolutionFailure) => {
+		const { writes, saved } = setup({ auditMissing: true, autoResolve: true, unresolved: true, resolutionFailure });
+		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 上下文" }), { target: { value: "512K" } });
+		expect(screen.queryByTestId("model-capabilities-pending")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "使用默认值并保存" }));
+		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
+		expect(writes).toHaveLength(1);
+		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 512000, maxTokens: 16384 });
+	});
+
 	it("refreshes the outer catalog after saving without rendering a persistent apply-session banner", async () => {
 		const onModelsChanged = vi.fn();
 		setup({ onModelsChanged });
