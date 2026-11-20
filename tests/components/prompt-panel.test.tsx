@@ -108,4 +108,20 @@ describe("PromptPanel", () => {
 		await waitFor(() => expect(screen.getByText(/会话尚未启动/)).toBeTruthy());
 		expect(screen.queryByText("read")).toBeNull();
 	});
+
+	it("refreshes the single compaction summary when another compaction finishes", async () => {
+		vi.stubGlobal("fetch", vi.fn()
+			.mockResolvedValueOnce(response({ sources: [], sessionReady: true, compactedSummary: "第一次摘要" }))
+			.mockResolvedValueOnce(response({ sources: [], sessionReady: true, compactedSummary: "最新摘要" })));
+		const props = { cwd: "/ws", sessionId: "sess-1", onOpenContent: vi.fn(), onClose: vi.fn() };
+		const view = render(<PromptPanel {...props} refreshKey="first" />);
+		const summary = await screen.findByRole("button", { name: "进入上下文的压缩摘要" });
+		fireEvent.click(summary);
+		expect(props.onOpenContent).toHaveBeenLastCalledWith("compacted-summary.md", "第一次摘要");
+
+		view.rerender(<PromptPanel {...props} refreshKey="latest" />);
+		await waitFor(() => expect((summary as HTMLButtonElement).disabled).toBe(false));
+		fireEvent.click(summary);
+		expect(props.onOpenContent).toHaveBeenLastCalledWith("compacted-summary.md", "最新摘要");
+	});
 });

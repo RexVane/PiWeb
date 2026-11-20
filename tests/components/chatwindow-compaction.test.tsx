@@ -1,8 +1,4 @@
 // @vitest-environment jsdom
-/**
- * 压缩分隔卡：压缩前的消息照常显示（还能编辑），卡片夹在中间说明「以上内容模型只看得到摘要」，
- * 摘要可展开；压缩切在回合中间时，卡片后面的助手消息另起一个回合，不并回卡片上方。
- */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ChatWindow } from "@/components/ChatWindow";
@@ -14,14 +10,14 @@ afterEach(cleanup);
 const MARKDOWN_READY_TIMEOUT_MS = 20_000;
 
 const text = (value: string) => [{ type: "text" as const, text: value }];
-const marker: WebMessage = { role: "summary", id: "c1", summaryKind: "compaction", summary: "**摘要正文**", tokensBefore: 12345, content: [], timestamp: 3 };
+const marker: WebMessage = { role: "summary", id: "c1", summaryKind: "compaction", automaticCompaction: true, summary: "**摘要正文**", tokensBefore: 12345, content: [], timestamp: 3 };
 
 function order(container: HTMLElement): string[] {
-	return [...container.querySelectorAll<HTMLElement>('[data-role="user"], [data-role="summary"], [data-role="assistant"]')].map((node) => node.dataset.role!);
+	return [...container.querySelectorAll<HTMLElement>('[data-role="user"], [data-role="summary"], [data-role="assistant"], [data-role="modelChange"]')].map((node) => node.dataset.role!);
 }
 
-describe("compaction divider", () => {
-	it("keeps messages above the divider editable and expands the summary", async () => {
+describe("chat timeline notices", () => {
+	it("shows one inline compaction notice and keeps earlier messages editable", () => {
 		const messages: WebMessage[] = [
 			{ role: "user", id: "u1", content: text("压缩前的问题"), timestamp: 1 },
 			{ role: "assistant", id: "a1", content: text("压缩前的回答"), stopReason: "stop", timestamp: 2 },
@@ -31,17 +27,13 @@ describe("compaction divider", () => {
 		];
 		const { container } = render(<ChatWindow messages={messages} tools={{}} isStreaming={false} onEditMessage={vi.fn()} />);
 
-		expect(screen.getByText("上下文已压缩 · 压缩前约 12.35K tokens")).toBeTruthy();
-		expect(screen.getByText("以上内容模型只看得到摘要")).toBeTruthy();
+		expect(screen.getAllByText("上下文已自动压缩")).toHaveLength(1);
+		expect(screen.queryByRole("button", { name: "查看摘要" })).toBeNull();
 		expect(order(container)).toEqual(["user", "assistant", "summary", "user", "assistant"]);
 		expect(screen.getAllByRole("button", { name: "编辑这条消息" })).toHaveLength(2);
+	});
 
-		fireEvent.click(screen.getByRole("button", { name: "查看摘要" }));
-		expect(screen.getByRole("button", { name: "收起摘要" }).getAttribute("aria-expanded")).toBe("true");
-		await waitFor(() => expect(screen.getByText("摘要正文")).toBeTruthy(), { timeout: MARKDOWN_READY_TIMEOUT_MS });
-	}, 30_000);
-
-	it("starts a new turn after the divider when compaction cut a turn in half", () => {
+	it("keeps the status between tool activity and the following response", () => {
 		const messages: WebMessage[] = [
 			{ role: "user", id: "u1", content: text("长任务"), timestamp: 1 },
 			{ role: "assistant", id: "a1", content: [{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } }], stopReason: "toolUse", timestamp: 2 },
@@ -52,12 +44,13 @@ describe("compaction divider", () => {
 		expect(order(container)).toEqual(["user", "summary", "assistant"]);
 	});
 
-	it("labels branch summaries separately", () => {
+	it("can still expand a branch summary", async () => {
 		const branch: WebMessage = { role: "summary", id: "b1", summaryKind: "branch", summary: "试过方案 B", content: [] };
 		render(<ChatWindow messages={[{ role: "user", id: "u1", content: text("q"), timestamp: 1 }, branch]} tools={{}} isStreaming={false} />);
 		expect(screen.getByText("分支摘要")).toBeTruthy();
-		expect(screen.queryByText("以上内容模型只看得到摘要")).toBeNull();
-	});
+		fireEvent.click(screen.getByRole("button", { name: "查看摘要" }));
+		await waitFor(() => expect(screen.getByText("试过方案 B")).toBeTruthy(), { timeout: MARKDOWN_READY_TIMEOUT_MS });
+	}, 30_000);
 
 	it("renders errors with selectable text and an explicit close button", () => {
 		const onClearError = vi.fn();
@@ -71,30 +64,39 @@ describe("compaction divider", () => {
 		expect(onClearError).toHaveBeenCalledTimes(1);
 	});
 
-	it("renders compacting toast as a single card and completed compaction as an inline status row with summary toggle", async () => {
+	it("replaces the animated compaction status with a static timeline row", () => {
+		const messages: WebMessage[] = [{ role: "user", id: "u1", content: text("q"), timestamp: Date.now() }];
 		const { container, rerender } = render(
-			<ChatWindow messages={[marker]} tools={{}} isStreaming={false} compaction={{ phase: "start", ts: 1 }} />,
+			<ChatWindow messages={messages} tools={{}} isStreaming={true} compaction={{ phase: "start", ts: 1 }} />,
 		);
-		expect(screen.getByText("正在压缩上下文…")).toBeTruthy();
-		expect(container.querySelector(".pw-toast-stack")).toBeNull();
-		expect(container.querySelector(".pw-toast-card")).toBeTruthy();
+		const progress = screen.getByText("正在压缩上下文 · 可能需要几分钟");
+		expect(progress.classList.contains("pw-shimmer")).toBe(true);
+		expect(container.querySelectorAll(".pw-shimmer")).toHaveLength(1);
+		expect(container.querySelector(".pw-toast-card")).toBeNull();
 
-		const onClearCompaction = vi.fn();
-		rerender(
-			<ChatWindow
-				messages={[{ role: "user", id: "u1", content: text("q"), timestamp: 1 }, marker, { role: "user", id: "u2", content: text("q2"), timestamp: 4 }]}
-				tools={{}}
-				isStreaming={false}
-				compaction={{ phase: "end", ts: 2 }}
-				onClearCompaction={onClearCompaction}
-			/>,
-		);
-		expect(screen.getAllByText("上下文已压缩 · 压缩前约 12.35K tokens")).toHaveLength(2);
-		const toggles = screen.getAllByRole("button", { name: "查看摘要" });
-		expect(toggles).toHaveLength(2);
-		fireEvent.click(toggles[1]);
-		await waitFor(() => expect(screen.getByText("摘要正文")).toBeTruthy(), { timeout: MARKDOWN_READY_TIMEOUT_MS });
-		fireEvent.click(screen.getByRole("button", { name: "关闭" }));
-		expect(onClearCompaction).toHaveBeenCalledTimes(1);
-	}, 30_000);
+		rerender(<ChatWindow messages={[...messages, marker]} tools={{}} isStreaming={false} />);
+		expect(screen.getAllByText("上下文已自动压缩")).toHaveLength(1);
+		expect(container.querySelector(".pw-shimmer")).toBeNull();
+		expect(order(container)).toEqual(["user", "summary"]);
+	});
+
+	it("shows the two model names at the point where the model switched", () => {
+		const notice: WebMessage = {
+			role: "modelChange", id: "m1", content: [],
+			modelChange: {
+				from: { provider: "openai", id: "astra", name: "GPT-6.2 Astra" },
+				to: { provider: "openai", id: "sol", name: "GPT-6.2 Sol" },
+			},
+		};
+		const { container } = render(<ChatWindow messages={[
+			{ role: "user", id: "u1", content: text("q"), timestamp: 1 },
+			notice,
+			{ role: "user", id: "u2", content: text("q2"), timestamp: 3 },
+		]} tools={{}} isStreaming={false} />);
+
+		expect(screen.getByText("模型已从 GPT-6.2 Astra 更改为 GPT-6.2 Sol。")).toBeTruthy();
+		expect(screen.getByTitle("openai/astra → openai/sol")).toBeTruthy();
+		expect(screen.queryByText("上下文已压缩")).toBeNull();
+		expect(order(container)).toEqual(["user", "modelChange", "user"]);
+	});
 });

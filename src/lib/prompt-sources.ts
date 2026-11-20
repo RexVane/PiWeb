@@ -158,9 +158,11 @@ async function fileSize(filePath: string | undefined): Promise<number | undefine
 }
 
 /** 当前模型上下文里的压缩摘要；其他分支的压缩记录不会进入这里。 */
-export function latestCompactionSummary(session: PromptSessionLike): string | undefined {
+export function latestCompactionSummary(
+	session?: PromptSessionLike | null,
+	manager = session?.sm ?? session?.sessionManager,
+): string | undefined {
 	try {
-		const manager = session.sm ?? session.sessionManager;
 		if (manager?.buildSessionProjection) {
 			const messages = manager.buildSessionProjection().messages;
 			for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -184,9 +186,11 @@ export function latestCompactionSummary(session: PromptSessionLike): string | un
 export async function listPromptSources({
 	cwd,
 	session,
+	sessionManager,
 }: {
 	cwd: string;
 	session?: PromptSessionLike | null;
+	sessionManager?: PromptSessionManagerLike;
 }): Promise<PromptSourcesResult> {
 	const resolvedCwd = path.resolve(cwd);
 	await refreshResourceLoaderIfStale(resolvedCwd);
@@ -209,8 +213,7 @@ export async function listPromptSources({
 	const withSizes = await Promise.all(raw.map(async (entry) => ({ ...entry, bytes: await fileSize(entry.path) })));
 	const sources = buildPromptSources(withSizes);
 
-	// 压缩摘要：compact 之后它以摘要形式进入上下文，界面上平时看不到，这里一并列出
-	const compacted = session ? latestCompactionSummary(session) : undefined;
+	const compacted = latestCompactionSummary(session, sessionManager);
 
 	const piwebToolNames: ReadonlySet<string> = new Set([ASK_USER_TOOL, MANAGE_AUTOMATION_TOOL]);
 	const tools = session

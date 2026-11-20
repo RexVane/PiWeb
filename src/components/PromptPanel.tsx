@@ -310,6 +310,7 @@ export function PromptPanel({
 								transition: "all 0.2s var(--isx-ease)",
 							}}
 							title={t.promptCompactedKey}
+							disabled={busy}
 							onMouseEnter={(e) => {
 								e.currentTarget.style.borderColor = "var(--dsw-border-l3)";
 								e.currentTarget.style.background = "var(--dsw-hover)";

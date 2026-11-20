@@ -13,16 +13,16 @@ export const dynamic = "force-dynamic";
  * - POST { action: "read", filePath }：按需读取单个来源的内容
  * 只读，不改动任何提示词内容。
  */
-async function hotSession(sessionId: string | null) {
-	if (!sessionId) return null;
+async function promptSession(sessionId: string | null) {
+	if (!sessionId) return {};
 	try {
 		// sessionId 是客户端已有的 base64url 编码 id（与 /api/agent/<id> 同一套），不要再编码一次
 		const sessionPath = await resolveSessionPath(sessionId, { allowPending: true });
 		const managed = getManaged(sessionPath);
-		return managed.session ?? null;
+		return { session: managed.session, sessionManager: managed.sm };
 	} catch {
 		// 会话路径不合法或已消失：退化为"只列文件来源"，不因此让整个面板失败
-		return null;
+		return {};
 	}
 }
 
@@ -30,8 +30,8 @@ export async function GET(req: Request) {
 	try {
 		const url = new URL(req.url);
 		const cwd = await resolveWorkspacePath(url.searchParams.get("cwd") || APP_ROOT);
-		const sessionId = url.searchParams.get("session");
-		const data = await listPromptSources({ cwd, session: await hotSession(sessionId) });
+		const session = await promptSession(url.searchParams.get("session"));
+		const data = await listPromptSources({ cwd, ...session });
 		return NextResponse.json({ success: true, data }, { headers: { "Cache-Control": "no-store" } });
 	} catch (err) {
 		return NextResponse.json({ success: false, ...apiError(err, "提示词来源读取失败，请检查配置后重试。") }, { status: err instanceof BoundaryError ? 400 : 500, headers: { "Cache-Control": "no-store" } });

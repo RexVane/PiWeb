@@ -314,6 +314,27 @@ export const IconDataOutline16 = ({ size = 16, ...rest }: P) => (
 );
 export const IconModelOutline16 = IconDataOutline16;
 
+export const IconCompactionOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+		<path d="M2 2v10a2 2 0 0 0 2 2h3M9 2h3a2 2 0 0 1 2 2v10M5.5 6.5h5m-5 3h3.5" />
+		<circle cx="2" cy="2" r="0.75" fill="currentColor" />
+		<circle cx="14" cy="14" r="0.75" fill="currentColor" />
+	</svg>
+);
+
+export const IconCubeOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" {...rest}>
+		<path d="M8 1.25 14.25 4.8v6.4L8 14.75 1.75 11.2V4.8L8 1.25ZM2 4.95 8 8.35l6-3.4M8 8.35v6.4" />
+	</svg>
+);
+
+export const IconInfoOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" {...rest}>
+		<circle cx="8" cy="8" r="6.5" />
+		<path d="M8 7.5v3.25m0-5.5v.1" />
+	</svg>
+);
+
 /** skill_outline_16 — 双星闪耀（AI 技能/能力图标） */
 export const IconSkillOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>

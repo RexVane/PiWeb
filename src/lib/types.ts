@@ -59,6 +59,12 @@ export interface TrajEntry {
 
 // ---------- 服务器 → 浏览器 事件 ----------
 
+export interface WebModelReference {
+	provider: string;
+	id: string;
+	name: string;
+}
+
 /** 消息在客户端渲染时的统一形状（pi AgentMessage 的投影） */
 export interface WebMessage {
 	/** Preview was shortened; full content is available in the session export. */
@@ -67,19 +73,23 @@ export interface WebMessage {
 	/** 热会话流的稳定身份；持久 entry id 尚未生成时也可关联 start/delta/end 与快照。 */
 	streamId?: string;
 	/**
-	 * summary：压缩分隔卡 / 分支摘要卡（pi 的 compactionSummary / branchSummary），不参与回合。
+	 * summary：压缩状态行 / 分支摘要卡（pi 的 compactionSummary / branchSummary）。
+	 * modelChange：模型切换成功后写入的时间线记录。
 	 * custom：扩展注入、要求显示的消息（pi 的 CustomMessage，display: true）——模型看得到，界面也必须看得到。
 	 * bashExecution：用户用 `!` 直接跑的命令（不是模型的工具调用）。
 	 */
-	role: "user" | "assistant" | "toolResult" | "custom" | "bashExecution" | "summary" | "other";
+	role: "user" | "assistant" | "toolResult" | "custom" | "bashExecution" | "summary" | "modelChange" | "other";
 	content: WebContent[];
 	/** custom：扩展给这类消息起的类型名（pi 的 customType） */
 	customType?: string;
 	/** bashExecution：命令与输出；running = 还在跑（输出由 bash_output 增量补齐） */
 	bash?: WebBashExecution;
-	/** summary：compaction = 以上内容模型只看得到摘要；branch = 切换分支时离开的分支被总结成摘要 */
 	summaryKind?: "compaction" | "branch";
 	summary?: string;
+	automaticCompaction?: boolean;
+	/** 压缩后模型仍能看到的第一条记录，用于计算上下文用量。 */
+	firstKeptEntryId?: string;
+	modelChange?: { from: WebModelReference; to: WebModelReference };
 	/** summary(compaction)：压缩前的上下文估算 */
 	tokensBefore?: number;
 	timestamp?: number;
@@ -406,7 +416,7 @@ export interface WebSnapshot {
 	/** 最近持久用户消息的索引；完整轮次保留在会话与 growth roundNumber 中。 */
 	userTurns: { id: string; ts: number }[];
 	growthError: string | null;
-	model?: { provider: string; id: string; name: string };
+	model?: WebModelReference;
 	/** 虚拟模型实际路由到的物理模型；缺省 = 不是虚拟模型 */
 	routedModel?: WebRoutedModel | null;
 	thinkingLevel?: string;
@@ -425,6 +435,7 @@ export interface WebSnapshot {
 	queue: WebQueue;
 	trajectory: TrajEntry[];
 	isStreaming: boolean;
+	compactionStartedAt?: number;
 	/** 这份会话刚因终端写入从磁盘重载过（at 为重载时间，前端据此只提示一次） */
 	externalReload?: { entries: number; at: number };
 }

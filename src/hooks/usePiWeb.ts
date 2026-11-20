@@ -329,7 +329,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 			return s;
 		case "compaction":
 			if (evt.marker) {
-				// 已显示的消息全部保留；分隔卡插到保留下来的第一条前面，和刷新后的快照位置一致
+				// 当前服务端按完成顺序追加；仍兼容带插入锚点的旧服务端。
 				const marker = evt.marker;
 				const msgs = s.messages.filter((message) => !(marker.id && message.id === marker.id));
 				const at = msgs.findIndex((message) =>
@@ -1188,7 +1188,7 @@ export function usePiWeb() {
 						tools: toolsFromMessages(nextMessages, snap.isStreaming),
 						connected: true,
 						error: null,
-						compaction: null,
+						compaction: typeof snap.compactionStartedAt === "number" ? { phase: "start", ts: snap.compactionStartedAt } : null,
 						retryNotice: null,
 						// 服务器当前 pending 集合是权威来源，刷新可恢复、已答请求不能复活。
 						extensionDialogs: extensionDialogsFromSnapshot(snap, prev.extensionDialogs),

@@ -191,6 +191,11 @@ describe("上下文里会影响模型的内容都要如实列出", () => {
 		expect((await listPromptSources({ cwd: ws, session })).compactedSummary).toBeUndefined();
 		sm.appendCompaction("Current branch B", branchB, 50);
 		expect(latestCompactionSummary(session)).toBe("Current branch B");
+		sm.appendCompaction("Latest branch B", branchB, 150);
+		expect(await listPromptSources({ cwd: ws, sessionManager: sm })).toMatchObject({
+			sessionReady: false,
+			compactedSummary: "Latest branch B",
+		});
 	});
 
 	it("系统提示词就是完整生效版本，不做任何过滤", async () => {

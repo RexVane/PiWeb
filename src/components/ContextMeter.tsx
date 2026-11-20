@@ -11,6 +11,7 @@ import { classifyMessageChars } from "@/lib/process-format";
 import type { ContextBreakdown, TrajTokens } from "@/lib/types";
 
 type ContextMessage = {
+	id?: string;
 	role?: string;
 	content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>;
 	/** `!` 命令：输出在 bash 里，不在 content 里（`!!` 的不进上下文） */
@@ -19,6 +20,7 @@ type ContextMessage = {
 	stopReason?: string;
 	timestamp?: number;
 	summaryKind?: string;
+	firstKeptEntryId?: string;
 };
 
 type ContextSource = {
@@ -34,13 +36,14 @@ type ContextSource = {
 
 const EMPTY_MESSAGES: ContextMessage[] = [];
 
-/**
- * 消息列表会照常显示压缩前的历史，但模型上下文只从最近一张压缩卡往后算（卡片以上只剩摘要，已计入 compacted）。
- * 保留下来的旧助手消息用量是压缩前那次请求的，也不能当「最近一次输入」。
- */
+/** 压缩状态行按完成时间显示，上下文从 SDK 保留的第一条消息算起。 */
 function inContext(messages: ContextMessage[]): { messages: ContextMessage[]; since?: number } {
 	const at = messages.findLastIndex((m) => m.role === "summary" && m.summaryKind === "compaction");
-	return at < 0 ? { messages } : { messages: messages.slice(at + 1), since: messages[at].timestamp };
+	if (at < 0) return { messages };
+	const { firstKeptEntryId, timestamp } = messages[at];
+	// 向上翻页之前，第一条保留消息可能早于当前加载窗口。
+	const from = firstKeptEntryId ? Math.max(0, messages.findIndex((message) => message.id === firstKeptEntryId)) : at + 1;
+	return { messages: messages.slice(from), since: timestamp };
 }
 
 export function ContextMeter({ percent, tokens, contextWindow, model, source, label }: {

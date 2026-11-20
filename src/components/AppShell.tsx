@@ -643,8 +643,8 @@ export function AppShell() {
 	latestMessagesRef.current = state.messages;
 	const getComposerMessages = useCallback(() => latestMessagesRef.current, []);
 	const loadFullContext = useCallback(() => sendCommand({ cmd: "prepare" }), [sendCommand]);
-	const hasCompactionMarker = state.messages.some((m) => m.role === "summary" && m.summaryKind === "compaction");
-	const compactedRecently = Boolean((state.compaction?.phase === "end" && !state.compaction?.errorMessage) || hasCompactionMarker);
+	const latestCompaction = state.messages.findLast((m) => m.role === "summary" && m.summaryKind === "compaction");
+	const compactedRecently = Boolean((state.compaction?.phase === "end" && !state.compaction?.errorMessage) || latestCompaction);
 	const composerContextSource = useMemo(
 		() => ({
 			systemChars: contextSystemChars,
@@ -1155,7 +1155,7 @@ export function AppShell() {
 					onSectionChange={chooseDrawerSection}
 					onClose={() => toggleDrawer(false)}
 					sessionId={currentId}
-					promptRefreshKey={currentId}
+					promptRefreshKey={latestCompaction?.id ?? currentId}
 					gitRefreshKey={panelRefreshKey}
 					growth={growth}
 					workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}

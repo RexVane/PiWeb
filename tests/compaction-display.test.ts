@@ -1,8 +1,4 @@
-/**
- * 压缩后被压缩掉的上下文照常显示：消息列表 = 压缩掉的历史 + 当前上下文，压缩条目投影成分隔卡，
- * 卡片在保留下来的第一条消息前面（卡片以上就是模型只看得到摘要的部分）。
- * 冷会话、热会话、只读接口、压缩完成事件四条路径的位置必须一致，刷新 / 重连后不变。
- */
+/** 压缩后完整聊天历史照常显示，压缩记录留在完成时的位置。 */
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -65,7 +61,7 @@ function open(sessionFile: string) {
 }
 
 describe("压缩后的消息显示", () => {
-	it("冷快照、只读接口、热快照都保留压缩前的消息，分隔卡在保留的第一条前面", async () => {
+	it("冷快照、只读接口和热快照都按发生顺序保留压缩前后的聊天记录", async () => {
 		const sm = await newSession();
 		const u1 = sm.appendMessage(user("第一个问题", 1000));
 		const a1 = sm.appendMessage(assistant("第一个回答", 1100));
@@ -74,7 +70,7 @@ describe("压缩后的消息显示", () => {
 		const c = sm.appendCompaction("## 摘要\n讨论了第一个问题", u2, 12345, undefined, false);
 		const u3 = sm.appendMessage(user("压缩后的问题", Date.now()));
 		const a3 = sm.appendMessage(assistant("压缩后的回答", Date.now()));
-		const expected = [`user:${u1}`, `assistant:${a1}`, `summary:compaction:${c}`, `user:${u2}`, `assistant:${a2}`, `user:${u3}`, `assistant:${a3}`];
+		const expected = [`user:${u1}`, `assistant:${a1}`, `user:${u2}`, `assistant:${a2}`, `summary:compaction:${c}`, `user:${u3}`, `assistant:${a3}`];
 
 		const m = open(sm.getSessionFile()!);
 		const cold = (await manager.buildSnapshot(m)).messages;
@@ -88,7 +84,7 @@ describe("压缩后的消息显示", () => {
 		expect(live.find((message) => message.role === "summary")).toMatchObject({ summary: "## 摘要\n讨论了第一个问题", tokensBefore: 12345 });
 	}, 60_000);
 
-	it("多次压缩：更早的分隔卡也挪到它保留的第一条前面", async () => {
+	it("多次压缩：每次完成都留一条记录，包括仍在保留范围内的旧记录", async () => {
 		const sm = await newSession();
 		const u1 = sm.appendMessage(user("q1", 1000));
 		const a1 = sm.appendMessage(assistant("a1", 1100));
@@ -97,15 +93,18 @@ describe("压缩后的消息显示", () => {
 		const c1 = sm.appendCompaction("旧摘要", u2, 500, undefined, false);
 		const u3 = sm.appendMessage(user("q3", 3000));
 		const a3 = sm.appendMessage(assistant("a3", 3100));
-		const c2 = sm.appendCompaction("新摘要", u3, 900, undefined, false);
+		const c2 = sm.appendCompaction("新摘要", u2, 900, undefined, false);
 		const u4 = sm.appendMessage(user("q4", 4000));
 		const a4 = sm.appendMessage(assistant("a4", 4100));
 
 		const m = open(sm.getSessionFile()!);
-		expect(shape((await manager.buildSnapshot(m)).messages)).toEqual([
-			`user:${u1}`, `assistant:${a1}`, `summary:compaction:${c1}`, `user:${u2}`, `assistant:${a2}`,
-			`summary:compaction:${c2}`, `user:${u3}`, `assistant:${a3}`, `user:${u4}`, `assistant:${a4}`,
-		]);
+		const expected = [
+			`user:${u1}`, `assistant:${a1}`, `user:${u2}`, `assistant:${a2}`, `summary:compaction:${c1}`,
+			`user:${u3}`, `assistant:${a3}`, `summary:compaction:${c2}`, `user:${u4}`, `assistant:${a4}`,
+		];
+		expect(shape((await manager.buildSnapshot(m)).messages)).toEqual(expected);
+		await manager.ensureSession(m);
+		expect(shape((await manager.buildSnapshot(m)).messages)).toEqual(expected);
 	}, 60_000);
 
 	it("分支摘要在原位置显示成摘要卡，冷热一致", async () => {
@@ -127,7 +126,7 @@ describe("压缩后的消息显示", () => {
 		expect(shape((await manager.buildSnapshot(m)).messages)).toEqual(expected);
 	}, 60_000);
 
-	it("压缩完成事件带分隔卡和插入位置；失败时不带", async () => {
+	it("重连快照显示压缩进度，成功时记录自动压缩并在刷新后保留", async () => {
 		const sm = await newSession();
 		sm.appendMessage(user("q1", 1000));
 		sm.appendMessage(assistant("a1", 1100));
@@ -139,18 +138,24 @@ describe("压缩后的消息显示", () => {
 		expect(manager.subscribe(m, (_seq, json) => events.push(JSON.parse(json)), m.seq)).toBe(true);
 
 		// SDK 先写压缩条目再发 compaction_end
-		const c = m.sm.appendCompaction("压缩摘要", u2, 4321, undefined, false);
 		const session = m.session as unknown as { _emit(event: unknown): void };
+		session._emit({ type: "compaction_start", reason: "threshold" });
+		expect((await manager.buildSnapshot(m)).compactionStartedAt).toEqual(expect.any(Number));
+		const c = m.sm.appendCompaction("压缩摘要", u2, 4321, undefined, false);
 		session._emit({ type: "compaction_end", reason: "threshold", result: { summary: "压缩摘要", firstKeptEntryId: u2, tokensBefore: 4321 }, aborted: false, willRetry: false });
 		session._emit({ type: "compaction_end", reason: "threshold", result: undefined, aborted: false, willRetry: false, errorMessage: "boom" });
 
 		const ends = events.filter((event): event is Extract<WebEvent, { type: "compaction" }> => event.type === "compaction" && event.phase === "end");
 		expect(ends).toHaveLength(2);
 		expect(ends[0]).toMatchObject({
-			marker: { id: c, role: "summary", summaryKind: "compaction", summary: "压缩摘要", tokensBefore: 4321 },
-			beforeId: u2,
+			marker: { id: c, role: "summary", summaryKind: "compaction", automaticCompaction: true, firstKeptEntryId: u2 },
 		});
+		expect(ends[0].beforeId).toBeUndefined();
 		expect(ends[1].errorMessage).toBe("boom");
 		expect(ends[1].marker).toBeUndefined();
+		const snapshot = await manager.buildSnapshot(m);
+		expect(snapshot.compactionStartedAt).toBeUndefined();
+		expect(snapshot.messages.at(-1)).toMatchObject(ends[0].marker!);
+		expect((await reader.readSession(sm.getSessionFile()!)).messages.at(-1)).toMatchObject(ends[0].marker!);
 	}, 60_000);
 });

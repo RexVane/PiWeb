@@ -5,7 +5,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import type { AgentSession, AgentSessionEvent, CreateAgentSessionOptions, ExtensionCommandContextActions, SessionStartEvent } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, CreateAgentSessionOptions, ExtensionCommandContextActions, SessionEntry, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import {
 ExtensionRunner,
 ModelRegistry,
@@ -68,6 +68,7 @@ import type {
 	TrajEntry,
 	WebEvent,
 	WebMessage,
+	WebModelReference,
 	WebNestedCall,
 	WebRoutedModel,
 	WebSnapshot,
@@ -137,6 +138,8 @@ export interface Managed {
 	messageIds: WeakMap<object, string>;
 	/** 用户在本会话里最后一次显式选择的思考级别；切模型后按新模型就近钳制重新应用，不让选择被 SDK 带丢 */
 	desiredThinkingLevel?: string;
+	modelSelection?: Promise<CommandResult>;
+	compactionStartedAt?: number;
 	/** 正在流式生成、尚未进入 session.messages 的助手消息（SDK 的共享 partial 对象）；中途订阅的快照要带上它 */
 	inflight: unknown | null;
 	/** 扩展界面请求桥（select/confirm/input/notify → 浏览器） */
@@ -273,12 +276,37 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 	return out;
 }
 
-/**
- * 会话条目 → 显示消息：消息照常投影，压缩 / 分支摘要投影成摘要卡，
- * 扩展注入的消息（custom_message）按 display 决定显示，其余条目（切模型、标签、自定义状态等）不显示。
- */
-function entryToWebMessage(entry: any): WebMessage | null {
-	if (entry?.type === "message" && entry.message) return toWebMessage(entry.message, entry.id);
+const AUTO_COMPACTION_ENTRY = "piweb-auto-compaction";
+const MODEL_CHANGE_ENTRY = "piweb-model-change";
+
+function automaticCompactionIds(branch: SessionEntry[]): Set<string> {
+	const ids = new Set<string>();
+	for (const entry of branch) {
+		if (entry.type === "custom" && entry.customType === AUTO_COMPACTION_ENTRY && typeof entry.data === "string") ids.add(entry.data);
+	}
+	return ids;
+}
+
+function modelReference(value: unknown): WebModelReference | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const { provider, id, name } = value as Partial<WebModelReference>;
+	if (typeof provider !== "string" || !provider || typeof id !== "string" || !id) return undefined;
+	return { provider, id, name: typeof name === "string" && name.trim() ? name : id };
+}
+
+function modelChangeMessage(entry: SessionEntry | undefined): WebMessage | null {
+	if (entry?.type !== "custom" || entry.customType !== MODEL_CHANGE_ENTRY) return null;
+	const data = entry.data as { from?: unknown; to?: unknown } | undefined;
+	const from = modelReference(data?.from);
+	const to = modelReference(data?.to);
+	if (!from || !to || (from.provider === to.provider && from.id === to.id)) return null;
+	return { id: entry.id, role: "modelChange", content: [], timestamp: Date.parse(entry.timestamp), modelChange: { from, to } };
+}
+
+/** 会话条目 → 显示消息，包括摘要、可见的扩展消息和 PiWeb 的模型切换记录。 */
+function entryToWebMessage(entry: SessionEntry | undefined, automatic?: Set<string>): WebMessage | null {
+	if (entry?.type === "message") return toWebMessage(entry.message, entry.id);
+	if (entry?.type === "custom") return modelChangeMessage(entry);
 	if (entry?.type === "custom_message") {
 		// display: false 的注入只进模型上下文，pi 终端同样不渲染
 		if (entry.display !== true) return null;
@@ -293,54 +321,58 @@ function entryToWebMessage(entry: any): WebMessage | null {
 	}
 	if (entry?.type !== "compaction" && !(entry?.type === "branch_summary" && entry.summary)) return null;
 	const timestamp = Date.parse(entry.timestamp);
-	return toWebMessage({
+	const message = toWebMessage({
 		role: entry.type === "compaction" ? "compactionSummary" : "branchSummary",
 		summary: entry.summary,
-		tokensBefore: entry.tokensBefore,
+		tokensBefore: entry.type === "compaction" ? entry.tokensBefore : undefined,
 		timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
 	}, entry.id);
-}
-
-/**
- * 被压缩掉的历史：当前分支上已不在模型上下文里的条目，按原顺序照常显示（可编辑、可分叉）。
- * 每张压缩卡挪到它保留的第一条（firstKeptEntryId）前面，和上下文部分「摘要在前、保留消息在后」一致；
- * 这样卡片以上就是模型只看得到摘要的内容。
- */
-function compactedHistory(sm: Pick<SessionManager, "getBranch">, context: any[]): WebMessage[] {
-	if (context[0]?.type !== "compaction") return [];
-	const inContext = new Set(context.map((entry) => entry.id));
-	const entries = (sm.getBranch() as any[]).filter((entry) => !inContext.has(entry.id));
-	const position = new Map(entries.map((entry, index) => [entry.id, index]));
-	const markersBefore = new Map<string, WebMessage[]>();
-	const moved = new Set<string>();
-	entries.forEach((entry, index) => {
-		if (entry.type !== "compaction") return;
-		const at = position.get(entry.firstKeptEntryId);
-		if (at === undefined || at >= index) return;
-		const marker = entryToWebMessage(entry)!;
-		markersBefore.set(entry.firstKeptEntryId, [...(markersBefore.get(entry.firstKeptEntryId) ?? []), marker]);
-		moved.add(entry.id);
-	});
-	const out: WebMessage[] = [];
-	for (const entry of entries) {
-		out.push(...(markersBefore.get(entry.id) ?? []));
-		if (moved.has(entry.id)) continue;
-		const message = entryToWebMessage(entry);
-		if (message) out.push(message);
+	if (entry.type === "compaction") {
+		message.firstKeptEntryId = entry.firstKeptEntryId;
+		if (automatic?.has(entry.id)) message.automaticCompaction = true;
 	}
-	return out;
+	return message;
 }
 
-/** 冷会话 / 只读接口的消息列表：被压缩掉的历史 + 当前上下文（最新一次压缩投影成分隔卡） */
-export function sessionDisplayMessages(sm: Pick<SessionManager, "getBranch" | "buildContextEntries">): WebMessage[] {
-	const context = sm.buildContextEntries() as any[];
-	const current = context.flatMap((entry, index) => {
-		// 保留区里更早的压缩条目不进模型上下文（SDK 投影只取下标 0 的那次），这里同样跳过
-		if (entry.type === "compaction" && index > 0) return [];
-		const message = entryToWebMessage(entry);
+/** 冷会话和只读接口按分支上的记录顺序显示完整聊天历史。 */
+export function sessionDisplayMessages(sm: Pick<SessionManager, "getBranch">): WebMessage[] {
+	const branch = sm.getBranch();
+	const automatic = automaticCompactionIds(branch);
+	const messages = branch.flatMap((entry) => {
+		const message = entryToWebMessage(entry, automatic);
 		return message ? [message] : [];
 	});
-	return hideImportedTaskNotifications(sm, [...compactedHistory(sm, context), ...current]);
+	return hideImportedTaskNotifications(branch, messages);
+}
+
+function isTimelineNotice(entry: SessionEntry): boolean {
+	return entry.type === "compaction" || (entry.type === "custom" && entry.customType === MODEL_CHANGE_ENTRY);
+}
+
+/** SDK 的热会话消息只包含模型上下文。按持久记录的位置补上聊天里的状态行。 */
+function insertTimelineNotices(branch: SessionEntry[], messages: WebMessage[]): WebMessage[] {
+	if (!branch.some(isTimelineNotice)) return messages;
+	const automatic = automaticCompactionIds(branch);
+	const visible = new Set(messages.map((message) => message.id));
+	const before = new Map<string, WebMessage[]>();
+	let pending: WebMessage[] = [];
+	for (const entry of branch) {
+		if (isTimelineNotice(entry)) {
+			const notice = entryToWebMessage(entry, automatic);
+			if (notice) pending.push(notice);
+		} else if (pending.length && visible.has(entry.id)) {
+			before.set(entry.id, pending);
+			pending = [];
+		}
+	}
+	const result: WebMessage[] = [];
+	for (const message of messages) {
+		if (message.id) result.push(...(before.get(message.id) ?? []));
+		result.push(message);
+	}
+	const persistedEnd = result.findLastIndex((message) => !!message.id) + 1;
+	result.splice(persistedEnd, 0, ...pending);
+	return result;
 }
 
 function imagePreviewUrl(m: Managed, message: WebMessage): ((part: number) => string) | undefined {
@@ -362,35 +394,27 @@ export function readSessionImage(m: Managed, entryId: string, part: number): { d
 	return { data: Buffer.from(image.data, "base64"), mimeType: image.mimeType };
 }
 
-function hideImportedTaskNotifications(sm: Pick<SessionManager, "getBranch">, messages: WebMessage[]): WebMessage[] {
+function hideImportedTaskNotifications(branch: SessionEntry[], messages: WebMessage[]): WebMessage[] {
 	// 兼容早期导入：只隐藏 Claude 来源中被误记成用户发言的任务通知，不改会话文件与模型上下文。
-	const importedFromClaude = sm.getBranch().some((entry: any) => entry.type === "custom" && entry.customType === "piweb-import" && entry.data?.source === "claude");
+	const importedFromClaude = branch.some((entry) => entry.type === "custom" && entry.customType === "piweb-import" && (entry.data as { source?: string } | undefined)?.source === "claude");
 	return importedFromClaude ? messages.filter((message) => message.role !== "user" || !isClaudeTaskNotification(message.content)) : messages;
 }
 
-/**
- * 压缩刚完成（SDK 先写条目再发 compaction_end）：分隔卡 + 它该插在哪条消息前。
- * 取保留下来的第一条用户 / 助手消息，和快照里「卡片在保留消息之前」的位置一致；没有保留消息就追加。
- */
-function compactionMarker(m: Managed): { marker?: WebMessage; beforeId?: string; beforeStreamId?: string } {
+/** SDK 先写压缩条目，再发完成事件。聊天按完成时的位置显示。 */
+function compactionMarker(m: Managed, automatic: boolean): WebMessage | undefined {
 	try {
-		const context = m.sm.buildContextEntries() as any[];
-		if (context[0]?.type !== "compaction") return {};
-		const kept = context.find((entry) => entry.type === "message" && (entry.message?.role === "user" || entry.message?.role === "assistant"));
-		return {
-			marker: entryToWebMessage(context[0]) ?? undefined,
-			beforeId: kept?.id,
-			beforeStreamId: kept ? m.messageIds?.get(kept.message) : undefined,
-		};
+		const entry = m.sm.getBranch().findLast((item) => item.type === "compaction");
+		if (!entry) return undefined;
+		const marker = entryToWebMessage(entry)!;
+		if (automatic) {
+			marker.automaticCompaction = true;
+			try { m.sm.appendCustomEntry(AUTO_COMPACTION_ENTRY, entry.id); }
+			catch (error) { console.warn("[piweb] Could not record the compaction reason", error); }
+		}
+		return marker;
 	} catch {
-		return {};
+		return undefined;
 	}
-}
-
-/** 热会话里摘要消息（SDK 每次投影新建的对象）对应的条目 ID：压缩取上下文首条，分支摘要按 fromId + 时间匹配 */
-function summaryEntryId(context: any[], message: any): string | undefined {
-	if (message?.role === "compactionSummary") return context[0]?.type === "compaction" ? context[0].id : undefined;
-	return context.find((entry) => entry.type === "branch_summary" && entry.fromId === message?.fromId && Date.parse(entry.timestamp) === message?.timestamp)?.id;
 }
 
 /** 消息对象 → 持久化条目 ID 的索引；条目数一变就重建（会话只追加，改写分支时条目数也会变） */
@@ -627,6 +651,13 @@ function publishModelState(m: Managed, session: AgentSession): void {
 		routedModel: routedModelOf(session),
 		ts: Date.now(),
 	});
+}
+
+function recordModelChange(m: Managed, from: WebModelReference | undefined, to: WebModelReference | undefined): void {
+	if (!from || !to || (from.provider === to.provider && from.id === to.id)) return;
+	const id = m.sm.appendCustomEntry(MODEL_CHANGE_ENTRY, { from, to });
+	const message = modelChangeMessage(m.sm.getEntry(id));
+	if (message) publish(m, { type: "message", phase: "end", message, ts: message.timestamp ?? Date.now() });
 }
 
 /** 虚拟模型实际路由到的物理模型；不是虚拟模型 / 还没回过话时是 undefined */
@@ -1147,16 +1178,18 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			deferPublish(m, () => [{ type: "queue", ...(m.session ? sessionQueueState(m.session) : { steering: [...evt.steering], followUp: [...evt.followUp] }), ts: now }]);
 			break;
 		case "compaction_start":
+			m.compactionStartedAt = now;
 			publish(m, { type: "status", isStreaming: true, state: "compacting", ts: now });
 			publish(m, { type: "compaction", phase: "start", reason: evt.reason, ts: now });
 			break;
 		case "compaction_end":
+			m.compactionStartedAt = undefined;
 			publish(m, {
 				type: "compaction",
 				phase: "end",
 				reason: evt.reason,
 				errorMessage: evt.errorMessage,
-				...((evt.result && !evt.errorMessage) ? compactionMarker(m) : {}),
+				marker: evt.result && !evt.aborted && !evt.errorMessage ? compactionMarker(m, evt.reason !== "manual") : undefined,
 				ts: now,
 			});
 			publishUsage(m, true);
@@ -2449,6 +2482,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		/* 重载失败不影响快照 */
 	}
 	const session = m.session;
+	const compactionStartedAt = session ? m.compactionStartedAt : undefined;
 	let messages: WebMessage[] = [];
 	let snapSeq: number | undefined;
 	let model: WebSnapshot["model"];
@@ -2458,28 +2492,36 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 
 	if (session) {
 		const hasInflightFinal = linkInflightFinal(m, session);
-		// session.messages 只是压缩后的模型上下文；前面补上被压缩掉的历史，压缩摘要投影成分隔卡
-		let context: any[] = [];
+		// session.messages 只有当前模型上下文。补回此前的聊天记录，并投影界面状态行。
+		let branch: SessionEntry[] = [];
 		let history: WebMessage[] = [];
 		try {
-			context = m.sm.buildContextEntries() as any[];
-			history = compactedHistory(m.sm, context);
+			branch = m.sm.getBranch();
+			const context = m.sm.buildContextEntries();
+			if (context[0]?.type === "compaction") {
+				const inContext = new Set(context.map((entry) => entry.id));
+				history = branch.flatMap((entry) => {
+					if (inContext.has(entry.id) || isTimelineNotice(entry)) return [];
+					const message = entryToWebMessage(entry);
+					return message ? [message] : [];
+				});
+			}
 		} catch {
 			/* 条目读不到时只显示上下文 */
 		}
-		messages = [
-			...history,
-			...session.messages.map((message: any) =>
-				message?.role === "compactionSummary" || message?.role === "branchSummary"
-					? toWebMessage(message, summaryEntryId(context, message))
-					: projectMessage(m, message)),
-		];
+		const current = session.messages.flatMap((message) => {
+			if (message.role === "compactionSummary") return [];
+			if (message.role !== "branchSummary") return [projectMessage(m, message)];
+			const entry = branch.find((entry) => entry.type === "branch_summary" && entry.fromId === message.fromId && Date.parse(entry.timestamp) === message.timestamp);
+			return [toWebMessage(message, entry?.id)];
+		});
+		messages = insertTimelineNotices(branch, [...history, ...current]);
 		// final 已被 SDK push 时只投影一次；延后的 end 使用相同 streamId 继续更新权威内容。
 		if (!hasInflightFinal && m.inflight) {
 			const partial = projectMessage(m, m.inflight);
 			if (partial.role === "assistant") messages.push({ ...partial, stopReason: "pending" });
 		}
-		messages = hideImportedTaskNotifications(m.sm, messages);
+		messages = hideImportedTaskNotifications(branch, messages);
 		snapSeq = m.seq;
 		const modelObj: any = session.model;
 		if (modelObj) model = { provider: String(modelObj.provider ?? ""), id: String(modelObj.id ?? ""), name: String(modelObj.name ?? modelObj.id ?? "") };
@@ -2596,6 +2638,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		queue,
 		trajectory,
 		isStreaming,
+		compactionStartedAt,
 		// 重载时没人在看（打开会话那一刻才发现）：靠快照把提示带给随后连上的浏览器，前端按 at 去重
 		...(m.externalReload && Date.now() - m.externalReload.at < EXTERNAL_RELOAD_NOTICE_MS ? { externalReload: m.externalReload } : {}),
 	};
@@ -2890,6 +2933,54 @@ async function runUserBash(m: Managed, session: AgentSession, command: string, e
 	}
 }
 
+async function selectModel(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
+	if (cmd.cmd === "setModel" && !m.session && !m.creating) {
+		const { listWorkspaceModelsForPiWeb } = await import("./models-service");
+		const { models } = await listWorkspaceModelsForPiWeb(m.cwd);
+		const model = models.find((item) => item.provider === cmd.provider && item.id === cmd.modelId);
+		if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
+		if (!m.session && !m.creating) {
+			const context = m.sm.buildSessionContext();
+			const previous = context.model;
+			const settings = getSettingsManager(m.cwd);
+			const requested = m.desiredThinkingLevel ?? (cmd.fresh
+				? newSessionThinkingLevel({ supported: model.thinkingLevels, modelOverride: settings.getModelThinkingLevel(model.provider, model.id), defaultLevel: settings.getDefaultThinkingLevel() })
+				: context.thinkingLevel);
+			const effective = clampThinkingLevelTo(model.thinkingLevels, requested ?? "off");
+			m.sm.appendModelChange(model.provider, model.id);
+			m.sm.appendThinkingLevelChange(effective);
+			publish(m, { type: "model", provider: model.provider, model: model.id, thinkingLevel: effective, thinkingLevels: model.thinkingLevels, ts: Date.now() });
+			if (!cmd.fresh && previous) {
+				const from = models.find((item) => item.provider === previous.provider && item.id === previous.modelId)
+					?? { provider: previous.provider, id: previous.modelId };
+				recordModelChange(m, modelReference(from), modelReference(model));
+			}
+			return { ok: true, data: { thinkingLevel: effective, thinkingLevels: model.thinkingLevels } };
+		}
+	}
+	const session = await ensureSession(m);
+	const from = modelReference(session.model);
+	if (cmd.cmd === "cycleModel") {
+		const result = await session.cycleModel(cmd.direction ?? "forward");
+		if (!result?.model) return { ok: false, error: "no scoped models to cycle" };
+		reapplyDesiredLevel(m, session);
+		publishModelState(m, session);
+		recordModelChange(m, from, modelReference(session.model));
+		return { ok: true, data: { model: String(result.model.id ?? ""), thinkingLevel: session.thinkingLevel } };
+	}
+	const model = session.modelRuntime.getModels(cmd.provider).find((item) => item.id === cmd.modelId);
+	if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
+	await session.setModel(model, { persist: false });
+	reapplyDesiredLevel(m, session);
+	// 新会话页先选的模型按新会话规则设档位；它不构成聊天中的一次切换。
+	if (cmd.fresh === true && !m.desiredThinkingLevel) applyNewSessionThinking(m, session);
+	usageCache.delete(m);
+	publishModelState(m, session);
+	if (!cmd.fresh) recordModelChange(m, from, modelReference(session.model));
+	publishUsage(m, true);
+	return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: safeThinkingLevels(session) } };
+}
+
 export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
 	touch(m);
 	try {
@@ -3022,32 +3113,14 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				await session.compact(cmd.instructions || undefined);
 				return { ok: true };
 			}
-			case "setModel": {
-				if (!m.session && !m.creating) {
-					const { listWorkspaceModelsForPiWeb } = await import("./models-service");
-					const model = (await listWorkspaceModelsForPiWeb(m.cwd)).models.find((item) => item.provider === cmd.provider && item.id === cmd.modelId);
-					if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
-					if (m.session || m.creating) return execute(m, cmd);
-					m.sm.appendModelChange(model.provider, model.id);
-					const settings = getSettingsManager(m.cwd);
-					const requested = m.desiredThinkingLevel ?? (cmd.fresh ? newSessionThinkingLevel({ supported: model.thinkingLevels, modelOverride: settings.getModelThinkingLevel(model.provider, model.id), defaultLevel: settings.getDefaultThinkingLevel() }) : m.sm.buildSessionContext().thinkingLevel);
-					const effective = clampThinkingLevelTo(model.thinkingLevels, requested ?? "off");
-					m.sm.appendThinkingLevelChange(effective);
-					publish(m, { type: "model", provider: model.provider, model: model.id, thinkingLevel: effective, thinkingLevels: model.thinkingLevels, ts: Date.now() });
-					return { ok: true, data: { thinkingLevel: effective, thinkingLevels: model.thinkingLevels } };
-				}
-				const session = await ensureSession(m);
-				const rt = session.modelRuntime;
-				const model = rt.getModels(cmd.provider).find((x) => x.id === cmd.modelId) as any;
-				if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
-				await session.setModel(model, { persist: false });
-				reapplyDesiredLevel(m, session);
-				// 新会话页选的模型（fresh）：思考档位按新会话的规则定；之后显式选的档位仍会覆盖
-				if (cmd.fresh === true && !m.desiredThinkingLevel) applyNewSessionThinking(m, session);
-				usageCache.delete(m); // 换模型 = contextWindow 变了，旧 usage 缓存作废
-				publishModelState(m, session);
-				publishUsage(m, true);
-					return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: safeThinkingLevels(session) } };
+			case "setModel":
+			case "cycleModel": {
+				// 等上一次切换生效后再取旧模型，连续点击时也能按顺序显示。
+				const prior = m.modelSelection?.catch(() => undefined);
+				const selection = Promise.resolve(prior).then(() => selectModel(m, cmd));
+				m.modelSelection = selection;
+				try { return await selection; }
+				finally { if (m.modelSelection === selection) m.modelSelection = undefined; }
 			}
 			case "setThinkingLevel": {
 				if (!m.session && !m.creating) {
@@ -3070,16 +3143,6 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				session.setThinkingLevel(effective as never);
 				publishModelState(m, session);
 				return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
-			}
-			case "cycleModel": {
-				const session = await ensureSession(m);
-				const r = await session.cycleModel(cmd.direction ?? "forward");
-				if (r?.model) {
-					reapplyDesiredLevel(m, session);
-					publishModelState(m, session);
-					return { ok: true, data: { model: String(r.model.id ?? ""), thinkingLevel: session.thinkingLevel } };
-				}
-				return { ok: false, error: "no scoped models to cycle" };
 			}
 			case "navigate": {
 				const entryId = cmd.entryId ?? "";

@@ -17,12 +17,15 @@ import {
 	IconChevronRight14,
 	IconClockOutline16,
 	IconCloseOutline14,
+	IconCompactionOutline16,
 	IconCopyOutline16,
+	IconCubeOutline16,
 	IconDatabaseOutline16,
 	IconDataOutline16,
 	IconEditOutline16,
 	IconFileOutline16,
 	IconGlobeOutline14,
+	IconInfoOutline16,
 	IconRefreshOutline14,
 	IconSearchOutline16,
 	IconSkillOutline16,
@@ -1638,12 +1641,11 @@ const UserMessage = memo(function UserMessage({ message, onEditMessage }: { mess
 
 // ---------- 回合：用户消息 → 过程步骤 → 最终回答 ----------
 
-/** summaryIndex：压缩分隔卡 / 分支摘要卡单独占一格，没有用户消息和过程 */
 /**
  * extraIndexes：不属于模型回合、但要显示在对话里的消息——扩展注入的消息（custom）和用户的 `!` 命令
  * （bashExecution）。它们按出现顺序排进所在回合的过程里。
  */
-type Turn = { key: string; userIndex: number; assistantIndexes: number[]; extraIndexes: number[]; summaryIndex?: number };
+type Turn = { key: string; userIndex: number; assistantIndexes: number[]; extraIndexes: number[]; noticeIndex?: number };
 
 function buildTurns(messages: WebMessage[]): Turn[] {
 	const out: Turn[] = [];
@@ -1652,9 +1654,9 @@ function buildTurns(messages: WebMessage[]): Turn[] {
 		if (m.role === "user") {
 			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [], extraIndexes: [] };
 			out.push(cur);
-		} else if (m.role === "summary") {
-			// 压缩可能切在回合中间：卡片后面的助手消息另起一个回合，不并回卡片上方的用户消息
-			out.push({ key: `s${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [], summaryIndex: i });
+		} else if (m.role === "summary" || m.role === "modelChange") {
+			// 时间线事件可以切在回合中间，保留它前后的消息顺序。
+			out.push({ key: `notice-${m.id ?? i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [], noticeIndex: i });
 			cur = null;
 		} else if (m.role === "custom" || m.role === "bashExecution") {
 			// 当前回合已经收尾（最后一条是最终回答）就另起一段：否则回答之后才跑的 `!` 命令
@@ -2020,62 +2022,62 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 	);
 }
 
-/**
- * 压缩分隔卡：卡片以上的消息照常显示（可编辑、可分叉），但模型只看得到它们的摘要；摘要可展开。
- * 分支摘要卡：切换分支时离开的那条分支被总结成摘要发给模型。
- */
-function CompactionNoticeRow({ summaryMessage, onClear }: { summaryMessage?: WebMessage; onClear?: () => void }) {
+function CompactionRow({ message }: { message?: WebMessage }) {
 	const { t } = useI18n();
-	const [open, setOpen] = useState(false);
-	const summary = summaryMessage?.summary?.trim();
-	const label = summaryMessage?.tokensBefore
-		? t.compactedTitleTokens.replace("{tokens}", fmtTokens(summaryMessage.tokensBefore))
-		: t.compactedTitle;
 	return (
-		<div className="mt-4 flex flex-col gap-1.5" role="status" style={{ fontSize: "var(--piweb-chat-font-s)", color: "var(--dsw-label-caption)" }}>
-			<div className="flex flex-wrap items-center gap-2">
-				<IconDataOutline16 size={15} className="flex-none opacity-80" />
-				<span style={{ color: "var(--dsw-label-secondary)" }}>{label}</span>
-				{summary && (
-					<button type="button" className="hover:underline" aria-expanded={open} onClick={() => setOpen((value) => !value)} style={{ color: "var(--dsw-label-secondary)" }}>
-						{open ? t.hideSummary : t.showSummary}
-					</button>
-				)}
-				{onClear && (
-					<button type="button" onClick={onClear} aria-label={t.close} className="icon-btn ml-auto" style={{ width: 20, height: 20 }}>
-						<IconCloseOutline14 size={12} />
-					</button>
-				)}
-			</div>
-			{open && summary && (
-				<div className="rounded-xl px-3 py-2" style={{ background: "var(--dsw-hover)", color: "var(--dsw-label-primary)" }}>
-					<Markdown text={summary} />
-				</div>
+		<div
+			className={message ? "pw-line" : "pw-line mt-2"}
+			data-role={message?.role}
+			data-message-id={message?.id}
+			data-compaction={message ? "end" : "start"}
+			role={message ? undefined : "status"}
+		>
+			<IconCompactionOutline16 aria-hidden="true" className="shrink-0" />
+			{message ? (
+				<span>{message.automaticCompaction ? t.compactedAutomatic : t.compactedTitle}</span>
+			) : (
+				<span className="pw-shimmer">{t.compacting}</span>
 			)}
 		</div>
 	);
 }
 
-function SummaryCard({ message }: { message: WebMessage }) {
+function ModelChangeRow({ message }: { message: WebMessage }) {
+	const { t } = useI18n();
+	if (!message.modelChange) return null;
+	const { from, to } = message.modelChange;
+	const label = t.modelChanged.replace(/\{(from|to)\}/g, (_, key) => key === "from" ? from.name : to.name);
+	const detail = `${from.provider}/${from.id} → ${to.provider}/${to.id}`;
+	const rule = <span aria-hidden="true" className="min-w-1 flex-1 border-t" style={{ borderColor: "var(--dsw-border-l2)" }} />;
+	return (
+		<div className="pw-line" data-role="modelChange" data-message-id={message.id} style={{ gap: "clamp(4px, 1.25vw, 12px)", lineHeight: 1.5 }}>
+			{rule}
+			<span className="flex min-w-0 items-center gap-1.5 text-center sm:gap-2">
+				<IconCubeOutline16 aria-hidden="true" className="shrink-0" />
+				<span className="min-w-0 text-balance [overflow-wrap:anywhere]">{label}</span>
+				<span className="flex shrink-0 items-center" title={detail} aria-label={detail} role="img">
+					<IconInfoOutline16 size={13} aria-hidden="true" />
+				</span>
+			</span>
+			{rule}
+		</div>
+	);
+}
+
+function BranchSummaryCard({ message }: { message: WebMessage }) {
 	const { t } = useI18n();
 	const [open, setOpen] = useState(false);
-	const branch = message.summaryKind === "branch";
 	const summary = message.summary?.trim();
-	const title = branch
-		? t.branchSummaryTitle
-		: message.tokensBefore
-			? t.compactedTitleTokens.replace("{tokens}", fmtTokens(message.tokensBefore))
-			: t.compactedTitle;
 	const rule = <span aria-hidden="true" style={{ flex: 1, borderTop: "1px dashed var(--dsw-border-l3)" }} />;
 	return (
 		<div className="w-full" data-role="summary" data-message-id={message.id} style={{ fontSize: "var(--piweb-chat-font-s)", color: "var(--dsw-label-caption)" }}>
 			<div className="flex items-center gap-3">
 				{rule}
-				<span style={{ flex: "none", color: "var(--dsw-label-secondary)" }}>{title}</span>
+				<span style={{ flex: "none", color: "var(--dsw-label-secondary)" }}>{t.branchSummaryTitle}</span>
 				{rule}
 			</div>
 			<div className="mt-1 flex flex-wrap items-center justify-center gap-x-2 text-center">
-				<span>{branch ? t.branchSummaryHint : t.compactedHint}</span>
+				<span>{t.branchSummaryHint}</span>
 				{summary && (
 					<button type="button" className="hover:underline" aria-expanded={open} onClick={() => setOpen((value) => !value)} style={{ color: "var(--dsw-label-secondary)" }}>
 						{open ? t.hideSummary : t.showSummary}
@@ -2337,8 +2339,8 @@ export function ChatWindow({
 		return -1;
 	}, [messages]);
 	const turns = useMemo(() => buildTurns(messages), [messages]);
-	// 工作指示 / 重试行挂在最后一个真正的回合上，压缩卡追加在末尾时也不抢走
-	const lastContentTurn = useMemo(() => turns.findLastIndex((turn) => turn.summaryIndex === undefined), [turns]);
+	const lastContentTurn = useMemo(() => turns.findLastIndex((turn) => turn.noticeIndex === undefined), [turns]);
+	const compactingNow = compaction?.phase === "start";
 	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
 	// 向上滚动加载更早消息时的滚动位置锚点：插入后把视口留在原处，而不是跳到旧内容顶部。
 	const earlierAnchor = useRef<{ height: number; top: number } | null>(null);
@@ -2591,40 +2593,49 @@ export function ChatWindow({
 								<span style={{ color: "var(--dsw-label-secondary)", fontSize: "var(--dsh-ui-font-sm)" }}>{t.loadingEarlierMessages}</span>
 							</div>
 						)}
-						{turns.map((turn, ti) => (
-							// 回合间 28px 的分隔挂在槽上：用户消息现在总是槽里的第一个子元素，它自己的 mt-7 会被 first:mt-0 吃掉
-							<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className="mt-7 first:mt-0">
-								{turn.summaryIndex !== undefined ? (
-									<SummaryCard message={messages[turn.summaryIndex]} />
-								) : isNear(ti) ? (
-									<TurnBlock
-										turn={turn}
-										messages={messages}
-										tools={tools}
-										cwd={cwd}
-										isStreaming={isStreaming}
-										isLast={ti === lastContentTurn}
-										lastAssistantIndex={lastAssistantIndex}
-										contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
-										retryNotice={retryNotice}
-										streamStartedAt={streamStartedAt}
-										runningTool={runningTool}
-										outputTokens={stats?.tokens.output}
-										workingMessage={workingMessage}
-										onFork={onFork}
-										onEditMessage={onEditMessage}
-										roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
-										onShowRound={onShowRound}
-										onInspectTool={onOpenTrajectory}
-										onOpenFile={onOpenFile}
-									/>
-								) : (
-									<TurnLite turn={turn} messages={messages} />
-								)}
-							</div>
-						))}
+						{turns.map((turn, ti) => {
+							const notice = turn.noticeIndex === undefined ? undefined : messages[turn.noticeIndex];
+							const precedingNotice = turns[ti - 1]?.noticeIndex;
+							const compactSpacing = notice?.summaryKind === "compaction" ||
+								(turn.userIndex < 0 && precedingNotice !== undefined && messages[precedingNotice].summaryKind === "compaction");
+							return (
+								<div key={turn.key} data-turn-slot={ti} ref={slotRef(ti)} className={compactSpacing ? "mt-2 first:mt-0" : "mt-7 first:mt-0"}>
+									{notice?.role === "modelChange" ? (
+										<ModelChangeRow message={notice} />
+									) : notice?.summaryKind === "compaction" ? (
+										<CompactionRow message={notice} />
+									) : notice ? (
+										<BranchSummaryCard message={notice} />
+									) : isNear(ti) ? (
+										<TurnBlock
+											turn={turn}
+											messages={messages}
+											tools={tools}
+											cwd={cwd}
+											isStreaming={isStreaming}
+											isLast={ti === lastContentTurn}
+											lastAssistantIndex={lastAssistantIndex}
+											contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
+											retryNotice={retryNotice}
+											streamStartedAt={compactingNow ? null : streamStartedAt}
+											runningTool={runningTool}
+											outputTokens={stats?.tokens.output}
+											workingMessage={workingMessage}
+											onFork={onFork}
+											onEditMessage={onEditMessage}
+											roundBadge={turn.userIndex >= 0 ? roundBadges?.get(messages[turn.userIndex].id ?? "") : undefined}
+											onShowRound={onShowRound}
+											onInspectTool={onOpenTrajectory}
+											onOpenFile={onOpenFile}
+										/>
+									) : (
+										<TurnLite turn={turn} messages={messages} />
+									)}
+								</div>
+							);
+						})}
 						{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
-						{isStreaming && streamStartedAt && lastContentTurn < 0 && (
+						{isStreaming && !compactingNow && streamStartedAt && lastContentTurn < 0 && (
 							<div className="pw-turn">
 								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} hasLiveStep={Boolean(runningTool)} />
 							</div>
@@ -2640,20 +2651,16 @@ export function ChatWindow({
 								</div>
 							</div>
 						)}
-						{compaction && (compaction.phase === "start" || compaction.errorMessage ? (
+						{compactingNow && <CompactionRow />}
+						{compaction?.phase === "end" && compaction.errorMessage && (
 							<div className="mt-3 flex justify-center" role="status">
 								<div className="pw-toast-card pw-toast-info flex items-center gap-2.5" style={{ fontSize: "var(--piweb-chat-font-s)" }}>
 									<span className="pw-toast-icon" aria-hidden="true">i</span>
-									<span className="pw-toast-body">{compaction.phase === "start" ? t.compacting : `${t.compactionFailed}: ${compaction.errorMessage}`}</span>
-									{compaction.phase === "end" && <button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn pw-toast-close">×</button>}
+									<span className="pw-toast-body">{`${t.compactionFailed}: ${compaction.errorMessage}`}</span>
+									<button type="button" onClick={onClearCompaction} aria-label={t.close} className="icon-btn pw-toast-close">×</button>
 								</div>
 							</div>
-						) : (
-							<CompactionNoticeRow
-								summaryMessage={messages.findLast((m) => m.role === "summary" && m.summaryKind === "compaction")}
-								onClear={onClearCompaction}
-							/>
-						))}
+						)}
 						{error && (
 							<div className="mt-3 flex justify-center">
 								<ErrorToast message={error} onDismiss={onClearError} fontSize="var(--piweb-chat-font-s)" />

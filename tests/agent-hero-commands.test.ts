@@ -12,7 +12,7 @@ vi.mock("../src/lib/pi", async (importOriginal) => ({
 }));
 
 import { execute } from "../src/lib/agent-manager";
-import { getModelRuntime, getSettingsManager, refreshModelRuntime } from "../src/lib/pi";
+import { getModelRuntime, getSettingsManager, refreshModelRuntime, SessionManager } from "../src/lib/pi";
 
 type Managed = Parameters<typeof execute>[0];
 type Model = { provider: string; id: string; name?: string; reasoning?: boolean };
@@ -72,6 +72,7 @@ function managed(session: FakeSession, extra: Record<string, unknown> = {}): Man
 		session, creating: null, disposed: false, promptSubmitting: false, runActive: false,
 		resourceReloading: false, resourceReloadPending: false, cwd: "/workspace", sessionPath: "/s",
 		seq: 0, buffer: [], subscribers: new Set(), lastActive: 0, ...extra,
+		sm: SessionManager.inMemory("/workspace"),
 	} as unknown as Managed;
 }
 

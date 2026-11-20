@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { WebEvent } from "../src/lib/types";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -240,15 +241,31 @@ describe("session model provider isolation", () => {
 			const session = await manager.ensureSession(m);
 			expect(session.model).toMatchObject({ provider: "selected-provider", id: "selected-model" });
 			expect(session.thinkingLevel).toBe("high");
+			const events: WebEvent[] = [];
+			manager.observeManagedEvents(m, (event) => events.push(event));
+			const select = (modelId: string) => manager.execute(m, { cmd: "setModel", provider: "selected-provider", modelId });
+			expect(await select("missing-model")).toMatchObject({ ok: false });
+			expect(await select("selected-model")).toMatchObject({ ok: true });
+			expect(await Promise.all([select("switched-model"), select("selected-model")])).toMatchObject([{ ok: true }, { ok: true }]);
+			const changes = events.flatMap((event) => event.type === "message" && event.message.role === "modelChange" ? [event.message] : []);
+			expect(changes).toMatchObject([
+				{ modelChange: { from: { name: "Selected" }, to: { name: "Switched" } } },
+				{ modelChange: { from: { name: "Switched" }, to: { name: "Selected" } } },
+			]);
+			expect((await manager.buildSnapshot(m)).messages.filter((message) => message.role === "modelChange")).toEqual(changes);
 
-			const coldSwitched = await manager.createNewSession(cwd);
+			const coldSwitched = await manager.createNewSession(cwd, { provider: "selected-provider", modelId: "selected-model" });
 			const m2 = manager.getManaged(coldSwitched.sessionPath);
 			managed.push(m2);
 			expect(await manager.execute(m2, { cmd: "setModel", provider: "selected-provider", modelId: "switched-model" })).toMatchObject({ ok: true });
 			expect(await manager.execute(m2, { cmd: "setThinkingLevel", level: "medium" })).toMatchObject({ ok: true });
+			expect(m2.session).toBeNull();
+			const coldChanges = (await manager.buildSnapshot(m2)).messages.filter((message) => message.role === "modelChange");
+			expect(coldChanges).toMatchObject([{ modelChange: { from: { name: "Selected" }, to: { name: "Switched" } } }]);
 			const session2 = await manager.ensureSession(m2);
 			expect(session2.model).toMatchObject({ provider: "selected-provider", id: "switched-model" });
 			expect(session2.thinkingLevel).toBe("medium");
+			expect((await manager.buildSnapshot(m2)).messages.filter((message) => message.role === "modelChange")).toEqual(coldChanges);
 		} finally {
 			await fs.writeFile(settingsFile, originalSettings);
 		}
