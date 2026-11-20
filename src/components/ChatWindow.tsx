@@ -25,6 +25,7 @@ import {
 	IconEditOutline16,
 	IconFileOutline16,
 	IconGlobeOutline14,
+	IconImageOutline16,
 	IconInfoOutline16,
 	IconRefreshOutline14,
 	IconSearchOutline16,
@@ -44,6 +45,8 @@ import { PreviewImage } from "@/components/PreviewImage";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
 import { WebSourcesPanel, WebSourcesTrigger } from "@/components/chat/web-sources";
+import { ViewedImages } from "@/components/chat/viewed-images";
+import { imageToolsFromMessages, toolImagePreviews, type ViewedImagePreview } from "@/lib/chat/tool-images";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
@@ -388,7 +391,7 @@ function fmtSpan(ms: number): string {
 }
 
 type StepTone = "dim" | "live" | "fail" | "warn";
-type StepKind = ToolKind | "web_search" | "web_fetch" | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
+type StepKind = ToolKind | "image" | "web_search" | "web_fetch" | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
 
 function KindIcon({ kind }: { kind: StepKind }) {
 	const p = { size: 14, style: { flex: "none" as const } };
@@ -397,6 +400,8 @@ function KindIcon({ kind }: { kind: StepKind }) {
 			return <IconTerminalOutline14 {...p} />;
 		case "read":
 			return <IconBrowseOutline14 {...p} />;
+		case "image":
+			return <IconImageOutline16 {...p} />;
 		case "search":
 			return <IconSearchOutline16 {...p} />;
 		case "web_search":
@@ -808,6 +813,19 @@ const ToolStep = memo(function ToolStep({
 			)}
 		</>
 	);
+	const imagePreviews = toolImagePreviews(id, args, state);
+	if (kind === "read" && !readSkillName && imagePreviews.length) {
+		return (
+			<Step kind="image">
+				<ViewedImages images={imagePreviews} cwd={cwd} onOpenFile={onOpenFile} />
+				{nested && nested.length > 0 && (
+					<div className="pw-nested">
+						{nested.map((node) => <ToolStep key={node.id} id={node.id} name={node.state.name} args={node.state.args} state={node.state} cwd={cwd} nested={node.children} onOpenFile={onOpenFile} />)}
+					</div>
+				)}
+			</Step>
+		);
+	}
 	return (
 		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
 			{splitInteractiveLine ? (
@@ -910,6 +928,7 @@ const ToolStep = memo(function ToolStep({
 					{output && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{output}</pre>}
 				</div>
 			)}
+			{imagePreviews.length > 0 && <ViewedImages images={imagePreviews} cwd={cwd} onOpenFile={onOpenFile} />}
 			{nested && nested.length > 0 && (
 				<div className="pw-nested">
 					{nested.map((node) => (
@@ -1122,6 +1141,7 @@ type Item =
 	| { kind: "think"; key: string; msgIndex: number; text: string; live: boolean; startedAt?: number }
 	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
 	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string; url?: string }
+	| { kind: "viewedImages"; key: string; msgIndex: number; images: ViewedImagePreview[] }
 	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState; nested?: ToolNode[]; badge?: string }
 	| { kind: "custom"; key: string; msgIndex: number; customType: string; text: string }
 	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
@@ -1215,6 +1235,27 @@ function itemWebInfo(it: Item): { hasWeb: boolean; role: WebToolRole | null; sou
 	return collectToolWebData(it.call.name, it.call.arguments, it.state, it.nested);
 }
 
+/** 连续成功的图片 read 合成一个计数行；叙述、文字读取、技能、错误或运行中调用都保留边界。 */
+function groupViewedImageReads(items: Item[]): Item[] {
+	const grouped: Item[] = [];
+	let current: Extract<Item, { kind: "viewedImages" }> | undefined;
+	for (const item of items) {
+		const images = item.kind === "tool" && !item.badge && !item.nested?.length && toolKind(item.call.name) === "read" && !skillNameFromRead(item.call.name, item.call.arguments)
+			? toolImagePreviews(item.call.id, item.call.arguments, item.state) : [];
+		if (!images.length) {
+			current = undefined;
+			grouped.push(item);
+			continue;
+		}
+		if (current) current.images.push(...images);
+		else {
+			current = { kind: "viewedImages", key: `viewed-${item.key}`, msgIndex: item.msgIndex, images };
+			grouped.push(current);
+		}
+	}
+	return grouped;
+}
+
 /** 可折进摘要的步骤：完成的思考，以及成功完成的命令 / 读取 / 搜索 / 联网（编辑与写入永远单独可见） */
 function isCollapsible(it: Item, finalIdx: number): boolean {
 	if (it.msgIndex === finalIdx) return false;
@@ -1223,7 +1264,7 @@ function isCollapsible(it: Item, finalIdx: number): boolean {
 		// 用户自己用 `!` 跑的命令不折进「运行了 N 条命令」：那是用户的动作，不是模型的过程
 		if (it.badge) return false;
 		const s = it.state;
-		if (!s || s.state !== "done" || s.isError) return false;
+		if (!s || s.state !== "done" || s.isError || s.images?.length) return false;
 		const k = toolKind(it.call.name);
 		if (k === "read" && skillNameFromRead(it.call.name, it.call.arguments)) return false;
 		if (k === "cmd" || k === "read" || k === "search") return true;
@@ -1381,6 +1422,8 @@ function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: 
 					<PreviewImage image={{ type: "image", mimeType: item.mimeType, data: item.data, url: item.url }} className="my-1 max-h-96 max-w-full rounded-2xl object-contain" />
 				</div>
 			);
+		case "viewedImages":
+			return <Step kind="image"><ViewedImages images={item.images} cwd={cwd} onOpenFile={onOpenFile} /></Step>;
 		case "tool":
 			return <ToolStep id={item.call.id} name={item.call.name} args={item.call.arguments} state={item.state} cwd={cwd} nested={item.nested} badge={item.badge} onInspectTool={item.badge ? undefined : onInspectTool} onOpenFile={onOpenFile} />;
 		case "custom":
@@ -1773,7 +1816,7 @@ function TurnBlockView({
 		...assistants.filter((k) => k !== finalIdx || messages[k].content.some((c) => c.type === "thinking" && c.thinking.trim())),
 		...turn.extraIndexes,
 	].sort((a, b) => a - b);
-	const items = processIdx.flatMap((k) => buildItems(messages, k, tools, turnLive && k === lastAssistantIndex, k === finalIdx, errorCounts.get(k)));
+	const items = groupViewedImageReads(processIdx.flatMap((k) => buildItems(messages, k, tools, turnLive && k === lastAssistantIndex, k === finalIdx, errorCounts.get(k))));
 	// 仅累计模型生成时间；相邻助手消息之间可能在等工具或等用户，不能算成思考。
 	const spanOf = (a: number, b: number): number | undefined => {
 		let duration = 0;
@@ -2339,6 +2382,8 @@ export function ChatWindow({
 		return -1;
 	}, [messages]);
 	const turns = useMemo(() => buildTurns(messages), [messages]);
+	const imageTools = useMemo(() => imageToolsFromMessages(messages), [messages]);
+	const displayTools = useMemo(() => ({ ...imageTools, ...tools }), [imageTools, tools]);
 	const lastContentTurn = useMemo(() => turns.findLastIndex((turn) => turn.noticeIndex === undefined), [turns]);
 	const compactingNow = compaction?.phase === "start";
 	const firstUser = useMemo(() => messages.findIndex((m) => m.role === "user"), [messages]);
@@ -2610,7 +2655,7 @@ export function ChatWindow({
 										<TurnBlock
 											turn={turn}
 											messages={messages}
-											tools={tools}
+											tools={displayTools}
 											cwd={cwd}
 											isStreaming={isStreaming}
 											isLast={ti === lastContentTurn}

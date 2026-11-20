@@ -249,7 +249,7 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 			encodingLoss: result.encodingLoss || undefined,
 			patch: patchOf(m.details),
 			nestedCalls: nestedCallsOf(m.nestedCalls),
-		}];
+		}, ...items.filter((part) => part.type === "image")];
 	} else if (m.role === "custom") {
 		// 扩展注入的消息（pi.sendMessage）：display: false 的只给模型看，pi 终端也不显示
 		if (m.display !== true) return out;
@@ -537,6 +537,8 @@ function coercePartial(p: unknown): string | undefined {
 		const obj = p as any;
 		const t = textOf(obj.content);
 		if (t) return t.slice(-4000);
+		// 图片单独走预览，不能把纯图片结果的 base64 当成文字输出。
+		if (Array.isArray(obj.content) && obj.content.some((part: any) => part?.type === "image")) return undefined;
 		try {
 			return JSON.stringify(p).slice(-4000);
 		} catch {
@@ -1148,6 +1150,8 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				isError: evt.isError,
 				encodingLoss: result.encodingLoss || undefined,
 				patch: patchOf(evt.result?.details) ?? (evt.toolName?.toLowerCase() === "write" ? takeWritePatch(m.cwd, m.sessionPath, evt.toolCallId) : undefined),
+				// 顶层结果随持久化 message_end 发送懒加载 URL；嵌套调用没有独立消息，保留受预算限制的图片预览。
+				images: evt.parentToolCallId ? previewMessage(toWebMessage({ role: "assistant", content: evt.result?.content })).content.filter((part) => part.type === "image") : undefined,
 				ts: now,
 			});
 			publishUsage(m);

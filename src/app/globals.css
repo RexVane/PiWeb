@@ -3216,6 +3216,63 @@ body[data-pebrel-theme="dawn"][data-ds-dark-theme] {
 	outline-offset: 3px;
 	border-radius: 12px;
 }
+/* 模型查看图片的过程：折叠计数 → 按需加载的小缩略图 → 共用只读大图预览。 */
+.pw-viewed-image-grid {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 6px 0 8px;
+}
+.pw-viewed-image {
+	flex: 0 0 112px;
+	min-width: 0;
+	margin: 0;
+}
+.pw-viewed-image-open {
+	display: block;
+	width: 100%;
+	height: 80px;
+	padding: 0;
+	overflow: hidden;
+	border: 0.5px solid var(--dsw-border-l2);
+	border-radius: 10px;
+	background: var(--dsw-glass-input);
+	cursor: zoom-in;
+}
+.pw-viewed-image-open > img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+}
+.pw-viewed-image > figcaption {
+	margin-top: 3px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--piweb-chat-font-t);
+	line-height: 18px;
+	color: var(--dsw-label-caption);
+}
+.pw-viewed-image-file {
+	display: block;
+	max-width: 100%;
+	padding: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	text-align: left;
+	font: inherit;
+	color: inherit;
+	cursor: pointer;
+}
+.pw-viewed-image-file:hover { color: var(--dsw-label-primary); text-decoration: underline; }
+.pw-viewed-image-open:focus-visible,
+.pw-viewed-image-file:focus-visible,
+.pw-viewed-images > .pw-line:focus-visible {
+	outline: 2px solid var(--dsw-accent);
+	outline-offset: 2px;
+}
 /* 放大预览 */
 .pw-lightbox {
 	position: fixed;

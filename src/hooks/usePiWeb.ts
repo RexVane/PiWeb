@@ -16,6 +16,7 @@ import type { AskQuestion } from "@/lib/ask-user";
 import type {
 	GrowthRound,
 	SessionSummary,
+	WebContent,
 	WebEvent,
 	WebExtensionWidget,
 	WebUiNode,
@@ -30,6 +31,8 @@ export interface ToolCardState {
 	state: "running" | "done";
 	partialResult?: string;
 	result?: string;
+	/** 工具返回的图片；已持久化时仅保存懒加载 URL，不把 base64 常驻在浏览器。 */
+	images?: Array<Extract<WebContent, { type: "image" }>>;
 	isError?: boolean;
 	encodingLoss?: boolean;
 	/** edit/write 的 unified patch，用于渲染红绿 diff */
@@ -243,6 +246,23 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 		}
 		case "message": {
 			if (evt.message.role !== "summary") clearCompletedCompaction(s);
+			if (evt.phase === "end" && evt.message.role === "toolResult") {
+				const images = evt.message.content.filter((part) => part.type === "image");
+				if (images.length || evt.message.content.some((part) => part.type === "toolResult" && part.toolCallId && s.tools[part.toolCallId]?.images?.length)) {
+					const tools = { ...s.tools };
+					for (const part of evt.message.content) {
+						if (part.type !== "toolResult" || !part.toolCallId || (!images.length && !tools[part.toolCallId]?.images?.length)) continue;
+						// 长会话的工具缓存可能已淘汰这次调用，仍可用消息里的参数关联权威结果。
+						const call = !tools[part.toolCallId]
+							? s.messages.findLast((message) => message.content.some((content) => content.type === "toolCall" && content.id === part.toolCallId))?.content.find((content): content is Extract<WebContent, { type: "toolCall" }> => content.type === "toolCall" && content.id === part.toolCallId)
+							: undefined;
+						const tool: ToolCardState | undefined = tools[part.toolCallId] ?? (call ? { name: call.name, args: call.arguments, state: "done" } : undefined);
+						if (!tool) continue;
+						tools[part.toolCallId] = { ...tool, state: "done", result: tool.result ?? part.text, isError: part.isError ?? tool.isError, images, endedAt: tool.endedAt ?? evt.ts };
+					}
+					s.tools = tools;
+				}
+			}
 			const msgs = [...s.messages];
 			const same = msgs.findIndex((message) =>
 				(!!evt.message.id && message.id === evt.message.id) ||
@@ -266,7 +286,8 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				// custom：扩展注入并声明要显示的消息；bashExecution：用户 `!` 命令
 				if (evt.message.role === "user" || evt.message.role === "assistant" || evt.message.role === "custom" || evt.message.role === "bashExecution")
 					msgs.push(evt.message);
-			} else if (evt.message.role !== "toolResult") {
+			} else if (evt.message.role !== "toolResult" || evt.message.content.some((part) => part.type === "image")) {
+				// 图片结果保留其懒加载引用；工具缓存淘汰后、或加载早期历史页时仍能还原图集。
 				// 无稳定流 ID 的旧服务端：只在本轮末尾匹配 pending，不按时间戳覆盖历史消息。
 				let index = -1;
 				if (!evt.message.streamId) {
@@ -290,6 +311,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				state: evt.state,
 				partialResult: evt.partialResult ?? (evt.state === "done" ? undefined : prev?.partialResult),
 				result: evt.result ?? prev?.result,
+				images: evt.images ?? prev?.images,
 				isError: evt.isError ?? prev?.isError,
 				encodingLoss: evt.encodingLoss ?? prev?.encodingLoss,
 				patch: evt.patch ?? prev?.patch,
@@ -454,7 +476,9 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 };
 
 export const foldPiWebEvent = (state: PiWebState, event: WebEvent): PiWebState => {
-	const evt = event.type === "message" ? { ...event, message: previewMessage(event.message) } : event;
+	const evt = event.type === "message" ? { ...event, message: previewMessage(event.message) }
+		: event.type === "tool" && event.images ? { ...event, images: previewMessage({ role: "toolResult", content: event.images }).content.filter((part) => part.type === "image") }
+		: event;
 	const next = foldEvent(state, evt);
 	if (next.tools !== state.tools && Object.keys(next.tools).length > MAX_VISIBLE_TOOLS) {
 		const entries = Object.entries(next.tools);
@@ -526,6 +550,7 @@ function toolsFromMessages(messages: WebMessage[], streaming = false): Record<st
 				tools[content.toolCallId] = {
 					...tools[content.toolCallId],
 					result: content.text,
+					images: message.content.filter((part) => part.type === "image"),
 					isError: content.isError,
 					encodingLoss: content.encodingLoss,
 					patch: content.patch,
@@ -1513,7 +1538,10 @@ export function usePiWeb() {
 				const older = page.messages!.filter((message) => !message.id || !seen.has(message.id));
 				const history = { total: page.total ?? previous.snapshot.history?.total ?? 0, omitted: page.olderBefore ?? 0 };
 				if (!older.length) return { ...previous, snapshot: { ...previous.snapshot, history } };
-				return { ...previous, messages: [...older, ...previous.messages], snapshot: { ...previous.snapshot, history } };
+				const messages = [...older, ...previous.messages];
+				// 历史页同样恢复工具图片；跨分页边界的调用/结果一起关联，当前实时状态优先。
+				const tools = { ...toolsFromMessages(messages, previous.snapshot.isStreaming), ...previous.tools };
+				return { ...previous, messages, tools, snapshot: { ...previous.snapshot, history } };
 			});
 		} catch {
 			// 加载失败保留当前视图；下一次滚到顶部会重试。

@@ -419,6 +419,15 @@ export const IconFileOutline16 = ({ size = 16, ...rest }: P) => (
 	</svg>
 );
 
+/** 图片（山形与圆点，与工具过程图标保持同一描边风格） */
+export const IconImageOutline16 = ({ size = 16, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<rect x="1.75" y="2.5" width="12.5" height="11" rx="2" stroke="currentColor" strokeWidth="1.25" />
+		<circle cx="5.25" cy="6" r="1.1" fill="currentColor" />
+		<path d="m2 11 3-3 2.5 2.5 3-4 3.5 4.5" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+	</svg>
+);
+
 /** GitHub Octocat 圆标（@lobehub/icons-static-svg icons/github.svg 原始路径，MIT）。
  *  单色品牌标，跟随 currentColor 适配主题。 */
 export const IconGitOutline16 = ({ size = 16, ...rest }: P) => (

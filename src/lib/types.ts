@@ -167,6 +167,8 @@ export type WebEvent =
 			state: "running" | "done";
 			partialResult?: string;
 			result?: string;
+			/** 嵌套调用的图片预览；顶层调用的图片走持久化消息与懒加载 URL。 */
+			images?: Array<Extract<WebContent, { type: "image" }>>;
 			isError?: boolean;
 			encodingLoss?: boolean;
 			/** edit/write 工具附带的 unified patch（pi 的 details.patch），前端渲染红绿 diff */

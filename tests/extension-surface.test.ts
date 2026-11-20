@@ -145,6 +145,37 @@ describe("模型看得到的，界面也看得到", () => {
 });
 
 describe("SDK 事件 → 前端事件", () => {
+	it("工具图片结束帧带持久化懒加载地址，不把纯图片结果的 base64 混进文字", async () => {
+		const sm = await newSession();
+		sm.appendMessage(user("查看图片", 1000));
+		sm.appendMessage({ ...assistant("", 1100), stopReason: "toolUse" as const, content: [{ type: "toolCall" as const, id: "read-image", name: "read", arguments: { path: "first.png" } }] });
+		const m = open(sm.getSessionFile()!);
+		await manager.ensureSession(m);
+		const image = { type: "image" as const, data: "Zmlyc3Q=", mimeType: "image/png" };
+		const raw = { role: "toolResult" as const, toolCallId: "read-image", toolName: "read", content: [image], isError: false, timestamp: 1200 };
+		const before = frames(m).length;
+		emit(m, { type: "tool_execution_end", toolCallId: "read-image", toolName: "read", result: { content: raw.content }, isError: false });
+		emit(m, { type: "message_end", message: raw });
+		// SDK 在通知 message_end 监听器后追加条目，PiWeb 延迟发布以取得稳定 entry id。
+		const entryId = m.sm.appendMessage(raw);
+		await vi.waitFor(() => expect(frames(m).slice(before).some((frame) => frame.type === "message" && frame.phase === "end")).toBe(true));
+		const seen = frames(m).slice(before);
+		const tool = seen.find((frame) => frame.type === "tool");
+		expect(tool).toMatchObject({ type: "tool", id: "read-image", state: "done" });
+		if (tool?.type !== "tool") throw new Error("missing tool frame");
+		expect(tool.result).toBeUndefined();
+		expect(tool.images).toBeUndefined();
+		const end = seen.find((frame) => frame.type === "message" && frame.phase === "end");
+		if (end?.type !== "message") throw new Error("missing image result frame");
+		expect(end.message.id).toBe(entryId);
+		const preview = end.message.content.find((part) => part.type === "image");
+		expect(preview).toMatchObject({ data: "", mimeType: "image/png" });
+		expect(preview?.url).toContain(`entry=${entryId}&part=1`);
+		expect(JSON.stringify(seen)).not.toContain(image.data);
+		expect(manager.readSessionImage(m, entryId, 1)).toEqual({ data: Buffer.from(image.data, "base64"), mimeType: image.mimeType });
+		expect(manager.getSessionHistory(m).messages.find((message) => message.id === entryId)?.content.find((part) => part.type === "image")).toEqual(preview);
+	}, 60_000);
+
 	it("工具调用的参数流出期间就推进度：起止必推、中间限速、长字符串截短", async () => {
 		const sm = await newSession();
 		sm.appendMessage(user("写个文件", 1000));
@@ -184,13 +215,14 @@ describe("SDK 事件 → 前端事件", () => {
 		await manager.ensureSession(m);
 		const before = frames(m).length;
 		emit(m, { type: "tool_execution_start", toolCallId: "call-1/1", toolName: "read", args: { path: "a.ts" }, parentToolCallId: "call-1" });
-		emit(m, { type: "tool_execution_end", toolCallId: "call-1/1", toolName: "read", result: { content: [{ type: "text", text: "内容" }] }, isError: false, parentToolCallId: "call-1" });
+		const nestedImage = { type: "image", data: "Zmlyc3Q=", mimeType: "image/png" };
+		emit(m, { type: "tool_execution_end", toolCallId: "call-1/1", toolName: "read", result: { content: [{ type: "text", text: "内容" }, nestedImage] }, isError: false, parentToolCallId: "call-1" });
 		emit(m, { type: "summarization_retry_scheduled", attempt: 2, maxAttempts: 5, delayMs: 10, errorMessage: "overloaded" });
 		emit(m, { type: "summarization_retry_finished" });
 		const seen = frames(m).slice(before);
 		expect(seen.filter((frame) => frame.type === "tool")).toMatchObject([
 			{ id: "call-1/1", name: "read", parentId: "call-1", state: "running", args: { path: "a.ts" } },
-			{ id: "call-1/1", name: "read", parentId: "call-1", state: "done", result: "内容" },
+			{ id: "call-1/1", name: "read", parentId: "call-1", state: "done", result: "内容", images: [nestedImage] },
 		]);
 		expect(seen.find((frame) => frame.type === "retry")).toMatchObject({ attempt: 2, maxAttempts: 5, message: "overloaded" });
 		expect(seen.some((frame) => frame.type === "retry_end")).toBe(true);
