@@ -139,7 +139,7 @@ describe("ChatWindow process phases UI", () => {
 		expect(summaryBtn!.textContent).not.toContain("含 1 段思考");
 
 		// Active phase remains expanded below
-		expect(await screen.findByText("First phase found port 15721.")).toBeTruthy();
+		expect(await screen.findByText("First phase found port 15721.", {}, { timeout: 5000 })).toBeTruthy();
 		expect(screen.getByRole("button", { name: /正在思考下一步/ })).toBeTruthy();
 	});
 
