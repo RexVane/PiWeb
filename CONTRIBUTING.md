@@ -62,7 +62,7 @@ Useful launcher flags are listed in the [README](README.md#usage-and-remote-acce
 | `src/app/` | Next.js App Router pages, login/pair routes, and `src/app/api/` route handlers. |
 | `src/components/` | React UI (chat, composer, settings, workspace, and related views). |
 | `src/hooks/` | Client hooks. |
-| `src/lib/` | Server and domain logic: auth, remote access, sessions, import, automations, git, models, updates, and related modules. |
+| `src/lib/` | Server and domain logic: auth, remote access, sessions, import, resources, git, models, updates, and related modules. |
 | `src/i18n.tsx`, `src/i18n-locales/` | UI strings (English, Simplified Chinese, Traditional Chinese, Japanese, Russian). |
 | `src/instrumentation.ts`, `src/instrumentation-node.ts` | Server startup: publish the launch token, prepare the LAN entry, update check, first-page warmup. |
 | `tests/` | Vitest tests (`tests/**/*.test.{ts,tsx}`). |

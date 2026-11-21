@@ -49,7 +49,7 @@
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi/PiWeb 共用的 agent 目录：设置、模型与凭据、会话、上传附件、自动化任务等。**它不是全部数据根**（会话导入来源与全局技能仍按 `HOME`/`USERPROFILE` 定位），部署隔离方式见[数据目录、隐私与留存](data-and-privacy.md)。 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi/PiWeb 共用的 agent 目录：设置、模型与凭据、会话、上传附件等。**它不是全部数据根**（会话导入来源与全局技能仍按 `HOME`/`USERPROFILE` 定位），部署隔离方式见[数据目录、隐私与留存](data-and-privacy.md)。 |
 | `PI_WEB_EDITOR` | `code` | “在编辑器中打开”使用的本机编辑器命令。仅对本机操作者有意义。 |
 | `PI_WEB_UPLOAD_RETENTION` | `30`（天） | `web-uploads` 中过期附件的后台清扫阈值。`0` 关闭该清扫。清扫走“先备份再移除”，恢复副本在 `~/.agents/backups/` 且记入 `INDEX.md`。 |
 | `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 启用 | 确认删除会话后，将仅由该会话引用的上传附件移到系统回收站，不另存副本；`0` 关闭这项清理，附件保留。 |

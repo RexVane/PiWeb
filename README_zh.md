@@ -42,13 +42,13 @@
 - **文件与改动** — 在项目生长树中按轮查看改动，包括 `SKILL.md` 读取步骤和 codemode 内的调用。支持源码、Markdown 预览、统一或并排 Diff，以及在对话中引用选中的行。
 - **模型、技能与扩展** — 配置模型提供方，使用 Pi 的 MCP 工具并管理 Pi 包。[安装已有资源或自己设计](docs/resources.md)，通过 JSON UI 或独立网页界面接入，无需重新构建 PiWeb。
 - **提示词来源** — 查看项目指令、技能、模板和工具定义及其资源来源。
-- **可选问答与自动化** — 从 [piweb-resources](https://github.com/RexVane/piweb-resources) 单独安装。当前源码的资源 API v1 替代了原来的内置工具；刷新旧 npm 安装不会启用新架构。
+- **可选问答资源** — 从 [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) 单独安装。当前源码的资源 API v1 替代了原来的内置问答工具；刷新旧 npm 安装不会启用新架构。
 - **手机访问与语言** — 在「设置 → 远程访问」扫码连接。界面支持英语、简体中文、繁体中文、日语和俄语。
 
 <details>
 <summary>更多截图（桌面端与手机端）</summary>
 
-以下截图使用旧版英文界面和示例数据；问答与自动化现在由可选资源提供。
+以下截图使用旧版英文界面和示例数据；问答现在由可选资源提供。
 
 <table>
   <tr>
@@ -64,8 +64,7 @@
     <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="桌面端技能工作区" /><br /><strong>技能</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="桌面端自动化编辑器" /><br /><strong>自动化任务</strong></td>
-    <td width="50%"><img src="assets/readme-mobile.jpg" alt="手机端对话" /><br /><strong>手机端对话</strong></td>
+    <td colspan="2" align="center"><img src="assets/readme-mobile.jpg" width="50%" alt="手机端对话" /><br /><strong>手机端对话</strong></td>
   </tr>
   <tr>
     <td width="50%"><img src="assets/readme-mobile-workspaces.jpg" alt="手机端工作区侧栏" /><br /><strong>工作区</strong></td>
@@ -193,7 +192,7 @@ piweb -H 0.0.0.0         # 同时把主服务绑到局域网（认证仍然开�
 
 | 变量 | 默认值 | 含义 |
 | --- | --- | --- |
-| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目录：设置、模型与凭据、会话、上传、自动化。它不是唯一数据根，见[数据与隐私](docs/operations/data-and-privacy.md)。 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目录：设置、模型与凭据、会话、上传。它不是唯一数据根，见[数据与隐私](docs/operations/data-and-privacy.md)。 |
 | `PI_WEB_EDITOR` | `code` | 「在编辑器中打开」使用的本机编辑器命令，仅对本机操作者有意义。 |
 | `PI_WEB_UPLOAD_RETENTION` | `30`（天） | `web-uploads` 中未被引用文件的后台清扫阈值。`0` 关闭该清扫。清扫会先复制到 `~/.agents/backups/`，并记入 `INDEX.md`。 |
 | `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 启用 | 删除会话时，一并清理仅被该会话引用的上传文件（先备份再删除）。`0` 保留这些上传。 |

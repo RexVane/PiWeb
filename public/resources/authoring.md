@@ -40,12 +40,16 @@ Never assume cancellation, timeout or missing UI implies approval. Validate brow
 
 Copy `client.js` into your resource's `web/` directory and include it as a **classic** script. Build React/Vue/etc into your own assets if desired; PiWeb is not rebuilt. Use `window.piwebResource`:
 
-- `onContext(callback)` receives `{ viewId, resourceId, scope, cwd, sessionPath?, request?, data?, preview? }`. Passive preview cannot invoke backend actions or approve a request.
+- `onContext(callback)` receives `{ viewId, resourceId, scope, cwd, sessionPath?, request?, data?, preview?, focusRequestSupported? }`. Passive preview cannot invoke backend actions or approve a request. Context updates retain the current document; preserve local drafts when theme or language changes.
 - `language` is the selected UI language. Theme variables are supplied as optional hints.
 - `answer(value)` returns JSON for custom requests; standard select/input/editor answers must be strings, confirm answers must be booleans.
 - `cancel()` closes a request without approval.
 - `invoke("action", args)` calls a registered backend action. The parent owns the resource identity, workspace and session; the iframe cannot choose an arbitrary API URL.
 - `resize(height)` requests a bounded frame height.
+- `observeSize(element)` selects the content root for automatic height measurement and returns an unsubscribe function. Measure the content, not `documentElement.scrollHeight` or the iframe viewport, so the frame can shrink. The default root is `body`.
+- `focusRequestSupported` reports an optional frontend capability. `await requestFocus()` returns `true` only when the host grants focus to this iframe; unsupported, refused or abandoned requests return `false`. Check `document.hasFocus()` before focusing a local control. Ask once for a new interaction and preserve the user's focus during updates.
+
+The host supplies `--pw-resource-viewport-height` and `--pw-resource-viewport-width` as outer-page dimensions, plus whitelisted theme and font tokens. Use them for viewport-dependent card limits: `vh` inside an iframe describes the iframe itself. Embedded views own their card border, corners and animation; PiWeb adds no question-specific wrapper.
 
 The frame is sandboxed without `allow-same-origin`. No host DOM/cookies, network fetch, arbitrary HTML injection into the main application or automatic permission bypass. A frame is not a sandbox for the Node extension code, which has full host OS permissions. DOM content derived from data must use safe text rendering, not unsanitized HTML.
 
@@ -60,7 +64,7 @@ The frame is sandboxed without `allow-same-origin`. No host DOM/cookies, network
 - `host.paths.resolveWorkspace(path)` validates a workspace through the host's configured boundary.
 - `host.sessions.run({ cwd, prompt, title?, model?, timeoutMs?, signal? })` runs an isolated unattended Pi session, waits for settlement and returns `{ sessionPath, status, summary?, error? }`. Human interaction is unavailable and cannot approve work.
 
-Personal host services start at PiWeb startup; project services only after trust and actual session/action use. Resource listing and compatibility review do not execute these entries. Multiple chats share the scoped host service rather than starting multiple schedulers. Runtime API v1 is an initial contract; declare the version and handle unavailable capabilities.
+Personal host services start at PiWeb startup; project services only after trust and actual session/action use. Resource listing and compatibility review do not execute these entries. Within one PiWeb process, multiple chats share the same scoped host service instance. Runtime API v1 is an initial contract; declare the version and handle unavailable capabilities.
 
 ## Resource collections
 

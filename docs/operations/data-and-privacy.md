@@ -8,7 +8,7 @@
 
 | 位置 | 内容 | 代码位置 |
 | --- | --- | --- |
-| `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-automations.json`、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
+| `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
 | `$HOME` / `%USERPROFILE%` 下的导入来源 | 会话导入只读取、不修改：`~/.claude/projects`、`~/.codex/sessions`、`~/.grok/sessions`、`~/.dsh/sessions`、`~/.zcode/cli/db/db.sqlite`、`~/.local/share/opencode/opencode.db`、`~/.kimi`、`~/.workbuddy` / `~/.workbuddy-ai`（支持 `WORKBUDDY_CONFIG_DIR`）、`~/.gemini/antigravity`、`~/.gemini/antigravity-cli`、`~/.qwen`（支持 `QWEN_HOME`）、`~/.cursor/chats` | `src/lib/session-import/paths.ts` |
 | `~/.agents/skills` | 全局技能目录（个人技能来源之一） | `src/lib/skills-service.ts` |
 | `~/.agents/backups` + `INDEX.md` | 后台过期附件清理、损坏配置修复及旧版本删除留下的恢复副本与索引；手动确认的文件删除不再另存副本 | `src/lib/recoverable-remove.ts` |
