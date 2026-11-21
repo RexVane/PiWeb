@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 import { readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +18,10 @@ vi.mock("../src/lib/pi", () => ({
 	reloadAllLoaders: mocks.reloadAllLoaders,
 }));
 vi.mock("../src/lib/agent-manager", () => ({ reloadSessionsForCwd: mocks.reloadSessionsForCwd }));
-vi.mock("../src/lib/resources/host", () => ({ reconcileResourceHosts: async () => {} }));
+vi.mock("../src/lib/resources/host", () => ({
+	reconcileResourceHosts: async () => {},
+	withResourceHostsSuspended: async <T>(_source: string, _scope: string, _cwd: string, operation: () => Promise<T>) => operation(),
+}));
 
 import { installPackage, removePackage, toggleExtension, togglePackage } from "../src/lib/plugins-service";
 import { POST } from "../src/app/api/plugins/route";
@@ -44,7 +48,7 @@ it("preserves unrelated settings and never overwrites a malformed file when togg
 	} finally {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
-		await fs.rm(agentDir, { recursive: true, force: true });
+		await recycleGeneratedFixture(agentDir);
 	}
 });
 
@@ -102,6 +106,8 @@ describe("SDK package and extension persistence", () => {
 		mocks.getPackageManager.mockReset().mockReturnValue({
 			installAndPersist: mocks.installAndPersist, removeAndPersist: mocks.removeAndPersist,
 			resolve: packageManager.resolve.bind(packageManager),
+			// These mocked package operations use synthetic sources verbatim rather than resolving local paths.
+			packageSourcesMatch: (entry: unknown, source: string) => (typeof entry === "string" ? entry : (entry as { source?: unknown } | null)?.source) === source,
 		});
 		mocks.reloadAllLoaders.mockClear();
 		mocks.reloadSessionsForCwd.mockClear();
@@ -110,7 +116,7 @@ describe("SDK package and extension persistence", () => {
 	afterEach(async () => {
 		vi.restoreAllMocks();
 		vi.unstubAllEnvs();
-		await fs.rm(agentDir, { recursive: true, force: true });
+		await recycleGeneratedFixture(agentDir);
 	});
 
 	function expectNoResourceReload() {

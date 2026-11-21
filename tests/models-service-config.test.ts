@@ -88,6 +88,8 @@ describe("automatic capability persistence", () => {
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		try {
 			vi.stubEnv("PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY", "1");
+			// CI 全局设 PI_OFFLINE=1；本用例要真发一次本机 HTTP 请求，必须显式关掉离线。
+			vi.stubEnv("PI_OFFLINE", "0");
 			const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
 			await fs.writeFile(file, JSON.stringify({ providers: { gateway: { ...provider, baseUrl, apiKey: "test-key" } } }));
 			const runtime = await ModelRuntime.create({ modelsPath: file, authPath: path.join(agentDir, "auth.json"), modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false });
@@ -115,6 +117,8 @@ describe("automatic capability persistence", () => {
 		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 		try {
 			vi.stubEnv("PI_WEB_ALLOW_PRIVATE_MODEL_DISCOVERY", "1");
+			// 同上：离线短路会让服务端根本不发请求，冲突场景就不存在了。
+			vi.stubEnv("PI_OFFLINE", "0");
 			const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
 			const config = { providers: { gateway: { ...provider, baseUrl, apiKey: "test-key" } } };
 			external = JSON.stringify({ ...config, external: true });

@@ -17,24 +17,26 @@ const empty = (): ResourceRegistry => ({ packages: [], views: [], preferences: {
 export function useResourceRegistry(cwd: string) {
 	const [registry, setRegistry] = useState<ResourceRegistry>(empty);
 	const [error, setError] = useState("");
+	const [loaded, setLoaded] = useState(false);
+	const [registryCwd, setRegistryCwd] = useState(cwd);
 	const sequence = useRef(0);
 	const refresh = useCallback(async () => {
 		const seq = ++sequence.current;
-		if (!cwd) { setRegistry(empty()); return; }
 		try {
-			const response = await clientFetch(`/api/resources?cwd=${encodeURIComponent(cwd)}`);
+			const response = await clientFetch(`/api/resources${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`);
 			const result = await response.json();
 			if (seq !== sequence.current) return;
 			if (result.success) { setRegistry({ packages: result.data.packages ?? [], views: result.data.views ?? [], preferences: result.data.preferences ?? empty().preferences, hosts: result.data.hosts ?? [] }); setError(""); }
 			else { setRegistry(empty()); setError(result.error || "Resource catalog unavailable"); }
 		} catch { if (seq === sequence.current) { setRegistry(empty()); setError("Resource catalog unavailable"); } }
+		finally { if (seq === sequence.current) { setRegistryCwd(cwd); setLoaded(true); } }
 	}, [cwd]);
 	useEffect(() => {
-		setRegistry(empty()); setError("");
+		setRegistry(empty()); setError(""); setLoaded(false); setRegistryCwd(cwd);
 		void refresh();
 		window.addEventListener(RESOURCE_CHANGE_EVENT, refresh);
 		const timer = setInterval(refresh, 15_000);
 		return () => { sequence.current += 1; clearInterval(timer); window.removeEventListener(RESOURCE_CHANGE_EVENT, refresh); };
 	}, [refresh]);
-	return { ...registry, error, refresh };
+	return { ...registry, error, loaded, registryCwd, refresh };
 }

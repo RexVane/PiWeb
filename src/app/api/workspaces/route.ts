@@ -68,6 +68,7 @@ export async function POST(req: Request) {
 				| "add"
 				| "remove"
 				| "pick"
+				| "pickDirectory"
 				| "rename"
 				| "archiveSession"
 				| "forgetSession"
@@ -87,18 +88,19 @@ export async function POST(req: Request) {
 		if (typeof body.name === "string" && body.name.length > MAX_WORKSPACE_NAME_LENGTH) {
 			return json({ success: false, error: "workspace name is too long", errorCode: "VALIDATION_ERROR" }, { status: 400 });
 		}
-		if (body.action === "pick") {
+		if (body.action === "pick" || body.action === "pickDirectory") {
 			if (!isLoopbackRequest(req)) {
 				// 远程设备：不弹主机上的对话框，让前端改用应用内目录浏览器。
 				return json({ success: true, data: { path: null, canceled: false, remote: true } });
 			}
 			let r;
 			try {
-				r = await pickFolderNative();
+				r = await pickFolderNative(body.action === "pickDirectory" ? "source" : "workspace");
 			} catch {
 				// 无可用原生对话框或超时：保留在页面里选目录的入口。
 				return json({ success: true, data: { path: null, canceled: false, browse: true } });
 			}
+			if (body.action === "pickDirectory") return json({ success: true, data: r });
 			const registry = r.path ? await addWorkspace(await resolveWorkspacePath(r.path)) : null;
 			return registry ? mutationResponse({ ...r, ...registry }) : json({ success: true, data: r });
 		}

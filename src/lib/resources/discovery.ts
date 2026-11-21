@@ -58,9 +58,11 @@ export async function discoverResourcePackages(cwd: string, options: { manager?:
 				if (manifest) { for (const view of manifest.views) await resolveResourceFile(root, view.entry); if (manifest.host) await resolveResourceFile(root, manifest.host); }
 			} catch (failure) { error = failure instanceof Error ? failure.message : "Invalid resource package"; }
 			const extensions = resolved.extensions.filter(owns);
+			const relative = (entry: ResolvedResource) => path.relative(isPathInside(installRoot, entry.path) ? installRoot : realInstallRoot, entry.path).replaceAll(path.sep, "/");
+			const resourcePaths = { extensions: extensions.map(relative), skills: resolved.skills.filter(owns).map(relative), prompts: resolved.prompts.filter(owns).map(relative), themes: resolved.themes.filter(owns).map(relative) };
 			const enabled = manifest ? extensions.some((entry) => entry.enabled) : entries.some((entry) => entry.enabled);
 			result.push({ id: manifest?.id ?? name, name, version, source: configured.source, scope: configured.scope, root, installRoot,
-				extensionPaths: extensions.map((entry) => path.relative(isPathInside(installRoot, entry.path) ? installRoot : realInstallRoot, entry.path).replaceAll(path.sep, "/")), cwd, enabled: enabled && !error, ...(manifest ? { manifest } : {}), ...(error ? { error } : {}) });
+				extensionPaths: resourcePaths.extensions, resourcePaths, cwd, enabled: enabled && !error, ...(manifest ? { manifest } : {}), ...(error ? { error } : {}) });
 		}
 	}
 	const ids = new Map<string, ResourcePackage[]>();
@@ -73,6 +75,7 @@ export function resourceViewId(resource: ResourcePackage, view: ResourceView): s
 export function webResourceView(resource: ResourcePackage, view: ResourceView): WebResourceView {
 	const token = Buffer.from(JSON.stringify({ cwd: resource.cwd, source: resource.source, scope: resource.scope, resourceId: resource.id, view: view.id, revision: resource.version })).toString("base64url");
 	return { id: resourceViewId(resource, view), resourceId: resource.id, scope: resource.scope, title: view.title, placement: view.placement, methods: view.methods,
+		...(view.titles ? { titles: view.titles } : {}), ...(view.icon ? { icon: view.icon } : {}), ...(view.capabilities ? { capabilities: view.capabilities } : {}),
 		url: `/api/resources/views/${token}/assets/${encodeURIComponent(path.posix.basename(view.entry))}` };
 }
 export async function resourceViews(cwd: string): Promise<WebResourceView[]> {

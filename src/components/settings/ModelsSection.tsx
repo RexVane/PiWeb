@@ -183,12 +183,9 @@ function ModelFieldAudit({ gaps, providerLabel, busy, onSave }: {
 								</div>
 								<div role="cell" className="min-w-0" title={t.reasoningHint}>
 									{gap.missing.includes("reasoning") ? (
-										<select className="pw-audit-field" aria-label={`${gap.id} ${t.reasoningLabel}`} value={rowOf(gap).reasoning} disabled={busy}
-											onChange={(event) => edit(gap, { reasoning: event.target.value as AuditRow["reasoning"] })}>
-											<option value="">{t.reasoningUnset}</option>
-											<option value="on">{t.reasoningOn}</option>
-											<option value="off">{t.reasoningOff}</option>
-										</select>
+										<SelectOption variant="compact" label={`${gap.id} ${t.reasoningLabel}`} value={rowOf(gap).reasoning} disabled={busy}
+											options={[{ value: "", label: t.reasoningUnset }, { value: "on", label: t.reasoningOn }, { value: "off", label: t.reasoningOff }]}
+											onChange={(next) => edit(gap, { reasoning: next as AuditRow["reasoning"] })} />
 									) : <span style={{ color: "var(--dsw-label-secondary)" }}>{gap.reasoning ? t.reasoningOn : t.reasoningOff}</span>}
 								</div>
 							</div>

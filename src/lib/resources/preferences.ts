@@ -6,9 +6,9 @@ import { replaceFileAtomically } from "../atomic-file";
 import { withExternalSettingsLock, withSettingsWriteLock } from "../settings-write-lock";
 import type { ResourcePreferences } from "./protocol";
 
-export const DEFAULT_RESOURCE_CATALOG = "https://raw.githubusercontent.com/RexVane/piweb-resources/main/catalog/index.json";
+export const DEFAULT_RESOURCE_CATALOG = "https://raw.githubusercontent.com/RexVane/PiWeb/main/resources/catalog/index.json";
 const METHODS = ["select", "confirm", "input", "editor", "web"] as const;
-const defaults = (): ResourcePreferences => ({ catalogUrls: [DEFAULT_RESOURCE_CATALOG], renderers: {} });
+const defaults = (): ResourcePreferences => ({ catalogUrls: [], renderers: {} });
 
 export function publicCatalogUrl(value: unknown): string {
 	if (typeof value !== "string" || value.length > 2048) throw new Error("Invalid resource catalog URL");
@@ -45,6 +45,22 @@ export function normalizeResourcePreferences(raw: unknown): ResourcePreferences 
 }
 
 export function resourcePreferencesPath(): string { return path.join(getAgentDir(), "web-resources.json"); }
+
+/**
+ * 默认的资源源码根：agent 目录下的 resource-sources。
+ *
+ * 源码根是全局一份，不按工作区分；没在设置里改过就直接用它，不必先选目录。
+ * 刻意放在 Pi 的自动扫描目录（extensions / skills / prompts / themes）之外，
+ * 避免未完成的设计或适配工作区在显式安装前被 Pi SDK 自动加载执行。
+ */
+export function defaultResourceDevelopmentRoot(): string {
+	return path.join(getAgentDir(), "resource-sources");
+}
+
+/** 实际生效的源码根：用户选过的优先，否则就是默认的全局目录。 */
+export async function effectiveResourceDevelopmentRoot(): Promise<string> {
+	return (await getResourcePreferences()).developmentRoot || defaultResourceDevelopmentRoot();
+}
 
 export async function getResourcePreferences(): Promise<ResourcePreferences> {
 	try {

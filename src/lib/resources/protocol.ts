@@ -1,6 +1,19 @@
 /** Public, data-only PiWeb resource protocol. Pi owns extension discovery and tool registration. */
 export const RESOURCE_API_VERSION = 1 as const;
 export const RESOURCE_FRAME_CHANNEL = "piweb-resource/v1" as const;
+/** Optional, declarative browser capabilities. No feature-specific URLs or tool names. */
+export const RESOURCE_BROWSER_CAPABILITIES = ["workspaces.list", "models.list", "sessions.open", "sessions.draft", "views.open"] as const;
+export type ResourceBrowserCapability = typeof RESOURCE_BROWSER_CAPABILITIES[number];
+export type ResourceNavigationIntent =
+	| { type: "sessions.open"; sessionPath: string }
+	| { type: "sessions.draft"; cwd: string; text: string };
+export interface ResourceDialogIntent {
+	type: "views.open";
+	view: WebResourceView;
+	cwd: string;
+	sessionPath?: string;
+	data: JsonValue;
+}
 
 export type ResourceType = "extensions" | "skills" | "prompts";
 export type ResourceScope = "user" | "project";
@@ -14,6 +27,11 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
 export interface ResourceView {
 	id: string;
 	title: string;
+	/** 自带的各语言名称（zh / zh-Hant / en / ja / ru）；缺省时用 title */
+	titles?: Partial<Record<"zh" | "zh-Hant" | "en" | "ja" | "ru", string>>;
+	/** 侧栏入口图标名（白名单：clock / cube / chat / file / terminal / plugin）；缺省用 cube */
+	icon?: string;
+	capabilities?: ResourceBrowserCapability[];
 	entry: string;
 	placement: ResourcePlacement;
 	/** Only explicit user selection makes this view the renderer of a standard Pi request. */
@@ -38,6 +56,8 @@ export interface ResourcePackage {
 	installRoot: string;
 	/** Paths relative to the containing Pi package, used for its official resource filter. */
 	extensionPaths: string[];
+	/** All declared contributions owned by this feature/member, for its unified switch. */
+	resourcePaths?: ResourceSelection;
 	cwd: string;
 	enabled: boolean;
 	manifest?: ResourceManifest;
@@ -50,6 +70,11 @@ export interface WebResourceView {
 	resourceId: string;
 	scope: ResourceScope;
 	title: string;
+	/** 资源自带的本地化名称，侧栏/标题优先用它 */
+	titles?: Partial<Record<"zh" | "zh-Hant" | "en" | "ja" | "ru", string>>;
+	/** 侧栏图标名（白名单）；缺省用 cube */
+	icon?: string;
+	capabilities?: ResourceBrowserCapability[];
 	placement: ResourcePlacement;
 	methods: ResourceDialogMethod[];
 	url: string;
@@ -129,6 +154,8 @@ export interface ResourceHostApi {
 		write(name: string, value: JsonValue): Promise<void>;
 	};
 	paths: { resolveWorkspace(value: string): Promise<string> };
+	/** Optional additive v1 capability for an extension-owned workspace, never a private settings-file edit. */
+	workspaces?: { register(cwd: string): Promise<string> };
 	sessions: { run(request: ResourceRunRequest): Promise<ResourceRunResult> };
 }
 
@@ -149,6 +176,9 @@ export interface ResourceFrameContext {
 	cwd: string;
 	sessionPath?: string;
 	preview?: boolean;
+	capabilities?: ResourceBrowserCapability[];
+	/** Additive v1 frontend capability; older hosts omit it. */
+	focusRequestSupported?: boolean;
 	request?: JsonValue;
 	data?: JsonValue;
 }

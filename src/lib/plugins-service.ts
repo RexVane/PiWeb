@@ -102,14 +102,15 @@ function assertStandaloneExtension(resource: ResolvedResource | undefined): asse
 
 /** 全部变更后的统一收尾：加载器就地重载 + 活跃会话 session.reload() + 广播新清单；全局变更影响所有目录 */
 async function applyResourceChange(cwd: string, scope: "user" | "project"): Promise<void> {
-	try {
-		await reloadAllLoaders();
-		await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
-		const { reconcileResourceHosts } = await import("./resources/host");
-		await reconcileResourceHosts(cwd, { startGlobal: true });
-	} catch (error) {
-		throw new ResourceRefreshError(`更改已保存，但资源刷新失败；请刷新列表或重载会话。${error instanceof Error ? error.message : ""}`);
-	}
+	const failures: unknown[] = [];
+	const collectFailure = (error: unknown) => failures.push(...(error instanceof AggregateError ? error.errors : [error]));
+	const { reconcileResourceHosts } = await import("./resources/host");
+	// Revocation must not depend on a successful loader/session refresh.
+	try { await reconcileResourceHosts(cwd); } catch (error) { collectFailure(error); }
+	try { await reloadAllLoaders(); } catch (error) { collectFailure(error); }
+	try { await reloadSessionsForCwd(scope === "project" ? cwd : undefined); } catch (error) { collectFailure(error); }
+	try { await reconcileResourceHosts(cwd, { startGlobal: failures.length === 0 }); } catch (error) { collectFailure(error); }
+	if (failures.length) throw new ResourceRefreshError("更改已保存，但资源刷新失败；请刷新列表或重载会话。", { cause: new AggregateError(failures) });
 }
 
 /** npm/git share their scope's install prefix across sources and processes. */
@@ -505,7 +506,7 @@ export async function toggleResource(resourceId: string, disabled: boolean, scop
 		const index = current.findIndex((entry) => pm.packageSourcesMatch(entry, resource.source, scope));
 		if (index < 0) throw new ExtensionToggleError("Resource configuration changed; refresh its list");
 		const next = [...current];
-		next[index] = toggleResourcePaths(current[index], resource.source, resource.extensionPaths, disabled) as never;
+		next[index] = toggleResourcePaths(current[index], resource.source, resource.resourcePaths ?? resource.extensionPaths, disabled) as never;
 		if (scope === "project") sm.setProjectPackages(next); else sm.setPackages(next);
 		await flushSettingsOrThrow(sm); await verifySettingsField(file, "packages", next);
 	});
@@ -516,13 +517,14 @@ export async function removePackage(source: string, local: boolean, cwd: string)
 	validatePackageSource(source);
 	const pm = getPackageManager(cwd);
 	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	const removed = await withPackageInstallLock(cwd, local, () => withSettingsWriteLock(settingsPath, async () => {
+	const { withResourceHostsSuspended } = await import("./resources/host");
+	const removed = await withResourceHostsSuspended(source, local ? "project" : "user", cwd, () => withPackageInstallLock(cwd, local, () => withSettingsWriteLock(settingsPath, async () => {
 		const sm = await prepareSettingsWrite(cwd, settingsPath);
 		const disabled = (await readSettingsFileStrict(settingsPath)).disabledPackages;
-		const sourceOf = (value: unknown) => typeof value === "string" ? value : (value as { source?: string } | null)?.source;
+		const internal = pm as unknown as PackageManagerInternals;
+		const matches = (entry: unknown) => internal.packageSourcesMatch(entry, source, local ? "project" : "user");
 		const active = (await readSettingsFileStrict(settingsPath)).packages;
-		if (!(Array.isArray(active) && active.some((entry) => sourceOf(entry) === source))
-			&& !(Array.isArray(disabled) && disabled.some((entry) => sourceOf(entry) === source))) return false;
+		if (!(Array.isArray(active) && active.some(matches)) && !(Array.isArray(disabled) && disabled.some(matches))) return false;
 		const remove = async () => {
 		// SDK failures must surface before touching the disabled-package bookkeeping.
 		const removedActive = await pm.removeAndPersist(source, { local });
@@ -531,9 +533,8 @@ export async function removePackage(source: string, local: boolean, cwd: string)
 		let removedDisabled = false;
 		if (source.startsWith("npm:")) beginNpmSettingsWrite(path.join(path.dirname(settingsPath), "npm"));
 		mutateJsoncSettingsFileSync(settingsPath, (settings) => {
-			const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
-			if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some((p) => sourceOf(p) === source)) {
-				settings.disabledPackages = settings.disabledPackages.filter((p) => sourceOf(p) !== source);
+			if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some(matches)) {
+				settings.disabledPackages = settings.disabledPackages.filter((entry) => !matches(entry));
 				removedDisabled = true;
 				return settings;
 			}
@@ -543,7 +544,7 @@ export async function removePackage(source: string, local: boolean, cwd: string)
 		return removedActive || removedDisabled;
 		};
 		return source.startsWith("npm:") ? runNpmMutation([await npmMutationPlan(pm, cwd, local, source, true)], sm, remove) : remove();
-	}));
+	})));
 	await applyResourceChange(cwd, local ? "project" : "user");
 	return removed;
 }

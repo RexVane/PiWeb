@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -40,7 +41,7 @@ afterAll(async () => {
 	await vi.waitFor(() => expect(host.resourceHostStatuses()).toEqual([]));
 	vi.unstubAllEnvs();
 	for (const key of ["__resourceActivations", "__resourceStarts", "__resourceStops"]) Reflect.deleteProperty(globalThis, key);
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleGeneratedFixture(root);
 });
 
 describe("real Pi package discovery and public host", () => {

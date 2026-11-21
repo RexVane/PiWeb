@@ -10,7 +10,7 @@ export interface WorkspaceOption {
 }
 
 /**
- * Shared layout shell for main-pane workspace pages (Skills, Plugins, Automations).
+ * Shared layout shell for main-pane workspace pages (Skills, Plugins, Prompt Templates, resource panels).
  * Keeps header hierarchy, optional workspace selector, and scrollable body uniform.
  */
 export function WorkspaceViewShell({

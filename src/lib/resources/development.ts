@@ -4,9 +4,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { APP_ROOT } from "../app-root";
+import { getAgentDir } from "../pi";
 import { resolveWorkspacePath, isPathInside } from "../path-security";
 import { securePackageManager, validatePackageSource } from "../package-manager-safe";
-import { getResourcePreferences, saveResourcePreferences } from "./preferences";
+import { getResourcePreferences, saveResourcePreferences, defaultResourceDevelopmentRoot } from "./preferences";
 import { parseResourceManifest, readPackageManifest, staticResourceCompatibility } from "./manifest";
 import type { ResourceCompatibility, ResourceType } from "./protocol";
 import { addWorkspace } from "../workspace-store";
@@ -15,7 +16,6 @@ import { readFileBounded } from "../read-file-bounded";
 export interface PreparedResource {
 	cwd: string;
 	source?: string;
-	installSource: string;
 	name: string;
 	version?: string;
 	types: ResourceType[];
@@ -25,12 +25,35 @@ const EXCLUDED = new Set(["node_modules", ".git", ".pi", ".agents", ".next", "ba
 const MAX_COPY_FILES = 4000;
 const MAX_COPY_BYTES = 64 * 1024 * 1024;
 
-async function developmentRoot(value?: string): Promise<string> {
-	const chosen = value || (await getResourcePreferences()).developmentRoot;
-	if (!chosen) throw new Error("Choose a resource source directory first");
+const AUTO_LOADED_DIRS = ["extensions", "skills", "prompts", "themes"];
+
+/** 校验资源源码根目录：必须位于 PiWeb 安装目录和 Pi 自动扫描目录之外。 */
+export async function validateResourceDevelopmentRoot(chosen: string, { createMissing = false } = {}): Promise<string> {
+	if (createMissing) await fs.mkdir(chosen, { recursive: true, mode: 0o700 }).catch(() => undefined);
 	const root = await resolveWorkspacePath(chosen);
 	const app = await fs.realpath(APP_ROOT).catch(() => APP_ROOT);
 	if (isPathInside(app, root)) throw new Error("Resource sources must be outside the PiWeb installation");
+	const agentDir = getAgentDir();
+	for (const name of AUTO_LOADED_DIRS) {
+		const candidate = path.join(agentDir, name);
+		const resolved = await fs.realpath(candidate).catch(() => path.resolve(candidate));
+		if (isPathInside(resolved, root)) throw new Error("Resource sources must be outside Pi auto-loaded resource directories");
+	}
+	const segments = path.resolve(root).split(path.sep);
+	for (let i = 0; i < segments.length - 1; i += 1) {
+		if (segments[i].toLowerCase() === ".pi" && AUTO_LOADED_DIRS.includes(segments[i + 1].toLowerCase())) {
+			throw new Error("Resource sources must be outside Pi auto-loaded resource directories");
+		}
+	}
+	return root;
+}
+
+async function developmentRoot(value?: string): Promise<string> {
+	const saved = (await getResourcePreferences()).developmentRoot;
+	const fallback = defaultResourceDevelopmentRoot();
+	const chosen = value || saved || fallback;
+	// 默认的全局源码根不存在时自动建出来；用户自选目录仍要求先存在。
+	const root = await validateResourceDevelopmentRoot(chosen, { createMissing: path.resolve(chosen) === path.resolve(fallback) });
 	if (value) await saveResourcePreferences({ developmentRoot: root });
 	return root;
 }
@@ -120,7 +143,7 @@ export async function prepareExistingResource(source: string, rootValue?: string
 	}
 	if (!types.length) types.push("extensions");
 	await fs.writeFile(path.join(directory, "piweb-upstream.json"), `${JSON.stringify({ source, name, version, preparedAt: new Date().toISOString(), status: "review" }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-	return { cwd: directory, source, installSource: directory, name, version, types, compatibility: staticResourceCompatibility(manifest, texts) };
+	return { cwd: directory, source, name, version, types, compatibility: staticResourceCompatibility(manifest, texts) };
 }
 
 export async function prepareNewResource(rootValue?: string): Promise<PreparedResource> {
@@ -138,7 +161,7 @@ export async function prepareNewResource(rootValue?: string): Promise<PreparedRe
 	await fs.writeFile(path.join(directory, "web", "index.html"), `<!doctype html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resource preview</title><style>body{font:14px system-ui;color:var(--dsw-label-primary);background:transparent;margin:16px}button{padding:8px 14px}</style></head><body><p id="message">Design your resource interface here.</p><script src="client.js"></script><script>piwebResource.onContext(context=>{document.getElementById('message').textContent=context.data?.message||'Design your resource interface here.';});</script></body></html>\n`, { flag: "wx" });
 	await fs.writeFile(path.join(directory, ".gitignore"), "node_modules/\nbackups/\n.env*\n!.env.example\n*.log\n", { flag: "wx" });
 	await copyAuthoringGuide(directory);
-	return { cwd: directory, name, installSource: directory, compatibility: "unknown", types: ["extensions"] };
+	return { cwd: directory, name, compatibility: "unknown", types: ["extensions"] };
 }
 
 export function resourceDesignPrompt(prepared: PreparedResource, adapting: boolean): string {

@@ -29,6 +29,10 @@ export interface ExtensionUiBridge {
 	/** 会话销毁：把挂起的对话框全部按取消结束 */
 	dispose(): void;
 	cancelPending(): void;
+	/** Cancel requests whose owning resource is no longer enabled. */
+	reconcileResources(views: WebResourceView[]): void;
+	/** Clear old-runtime decorations before new extensions receive session_start. */
+	resetDecorations(): void;
 	/** 扩展通过 setStatus 设的状态文本（页脚展示） */
 	statuses: Map<string, string>;
 	/** 扩展通过 setWidget 设的文字块（输入框上方 / 下方） */
@@ -418,6 +422,17 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		},
 		cancelPending() {
 			for (const entry of [...pending.values()]) entry.resolve({ cancelled: true });
+		},
+		reconcileResources(views) {
+			const available = new Set(views.map((view) => view.id));
+			for (const entry of [...pending.values()]) if (entry.request.method === "resource" && !available.has(entry.request.resourceView?.id ?? "")) entry.resolve({ cancelled: true });
+		},
+		resetDecorations() {
+			for (const key of statuses.keys()) opts.publish({ type: "extension_ui", id: randomUUID(), method: "setStatus", statusKey: key, ts: Date.now() });
+			for (const key of widgets.keys()) opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWidget", widgetKey: key, ts: Date.now() });
+			statuses.clear(); widgets.clear(); title = undefined;
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setTitle", title: "", ts: Date.now() });
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWorkingMessage", ts: Date.now() });
 		},
 		dispose() {
 			disposed = true;

@@ -36,14 +36,18 @@ export function mergeResourceSelection(existing: unknown, source: string, select
 	return entry;
 }
 
-export function toggleResourcePaths(existing: unknown, source: string, paths: string[], disabled: boolean): Record<string, unknown> {
+export function toggleResourcePaths(existing: unknown, source: string, paths: string[] | ResourceSelection, disabled: boolean): Record<string, unknown> {
 	const entry: Record<string, unknown> = typeof existing === "string" ? { source } : { ...(existing as Record<string, unknown>), source };
-	const current = entry.extensions;
-	if (current !== undefined && !Array.isArray(current)) throw new Error("Invalid existing extension filter");
-	const owned = new Set(paths);
-	const filters = (current as string[] | undefined ?? []).filter((value) => !(typeof value === "string" && /^[+-]/.test(value) && owned.has(value.slice(1))));
-	// An empty array means NONE in Pi, while a +/- only array means ALL with overrides.
-	if (Array.isArray(current) && !current.length) entry.extensions = disabled ? [] : paths;
-	else entry.extensions = [...filters, ...paths.map((value) => `${disabled ? "-" : "+"}${value}`)];
+	const contributions: ResourceSelection = Array.isArray(paths) ? { extensions: paths, skills: [], prompts: [], themes: [] } : paths;
+	for (const type of TYPES) {
+		const ownedPaths = contributions[type]; if (!ownedPaths.length) continue;
+		const current = entry[type];
+		if (current !== undefined && !Array.isArray(current)) throw new Error("Invalid existing resource filter");
+		const owned = new Set(ownedPaths);
+		const filters = (current as string[] | undefined ?? []).filter((value) => !(typeof value === "string" && /^[+-]/.test(value) && owned.has(value.slice(1))));
+		// An empty array means NONE in Pi, while a +/- only array means ALL with overrides.
+		if (Array.isArray(current) && !current.length) entry[type] = disabled ? [] : ownedPaths;
+		else entry[type] = [...filters, ...ownedPaths.map((value) => `${disabled ? "-" : "+"}${value}`)];
+	}
 	return entry;
 }

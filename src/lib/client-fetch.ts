@@ -1,13 +1,13 @@
 /** Bounded browser requests; caller cancellation and timeout both cancel the underlying fetch. */
-export async function clientFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+export async function clientFetch(input: RequestInfo | URL, { timeoutMs, ...init }: RequestInit & { timeoutMs?: number } = {}): Promise<Response> {
 	const controller = new AbortController();
 	const caller = init.signal ?? (input instanceof Request ? input.signal : undefined);
 	const cancel = () => controller.abort(caller?.reason);
 	if (caller?.aborted) cancel();
 	else caller?.addEventListener("abort", cancel, { once: true });
 	const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-	const timeoutMs = /\/api\/(plugins|sessions\/import|update|files\/upload)(?:[/?]|$)/.test(url) && init.method && init.method !== "GET" ? 120_000 : 30_000;
-	const timer = setTimeout(() => controller.abort(new Error("请求超时，请检查连接后重试。")), timeoutMs);
+	const defaultTimeoutMs = /\/api\/(plugins|sessions\/import|update|files\/upload)(?:[/?]|$)/.test(url) && init.method && init.method !== "GET" ? 120_000 : 30_000;
+	const timer = setTimeout(() => controller.abort(new Error("请求超时，请检查连接后重试。")), timeoutMs ?? defaultTimeoutMs);
 	const finish = () => { clearTimeout(timer); caller?.removeEventListener("abort", cancel); };
 	try {
 		const response = await globalThis.fetch(input, { ...init, signal: controller.signal });

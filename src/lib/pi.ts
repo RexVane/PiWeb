@@ -306,6 +306,8 @@ interface LoaderEntry {
 	cwd: string;
 	loader: DefaultResourceLoader;
 	ready: Promise<void>;
+	/** A rejected discovery load is retried once by the next caller, never from its own catch. */
+	reloadFailed: boolean;
 	/** 发现缓存的版本；每个热会话分别追踪自己已应用的版本。 */
 	version: number;
 	fingerprint: string;
@@ -394,7 +396,7 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 	let entry = loaderCache.get(key);
 	if (!entry) {
 		const loader = new DefaultResourceLoader({ cwd: path.resolve(cwd), agentDir: getAgentDir(), settingsManager: getSettingsManager(cwd), extensionFactories: BUILTIN_EXTENSIONS });
-		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), version: 0, fingerprint: "", packageRoots: [] };
+		entry = { cwd: path.resolve(cwd), loader, ready: Promise.resolve(), reloadFailed: false, version: 0, fingerprint: "", packageRoots: [] };
 		disableImplicitPackageInstall(loader);
 		loaderCache.set(key, entry);
 		enforceLoaderCacheLimit();
@@ -405,6 +407,7 @@ export function getResourceLoader(cwd: string): DefaultResourceLoader {
 
 function queueLoaderReload(cwd: string, entry: LoaderEntry): Promise<void> {
 	fingerprintChecks.delete(entry);
+	entry.reloadFailed = false;
 	const run = withResourceLock(async () => {
 		getSettingsManager(cwd).setProjectTrusted(resolveProjectTrust(cwd).trusted);
 		// 发现缓存从未被会话绑定；替换前释放它自己的 event-bus 订阅。
@@ -424,7 +427,10 @@ function queueLoaderReload(cwd: string, entry: LoaderEntry): Promise<void> {
 	});
 	entry.ready = run;
 	// getResourceLoader 是同步兼容接口；错误仍由 ready 的 await 方接收。
-	void run.catch(() => undefined);
+	void run.catch(() => {
+		// An older queued failure must not overwrite a newer reload's state.
+		if (entry.ready === run) entry.reloadFailed = true;
+	});
 	return run;
 }
 
@@ -437,7 +443,11 @@ export async function resourceLoaderReady(cwd: string): Promise<void> {
 	getResourceLoader(cwd);
 	const entry = loaderCache.get(loaderKey(cwd));
 	// 缓存超限淘汰与这次调用之间可能把条目删掉：重新创建过一次就不会再被删（容量只会继续增长到下一个上限）。
-	if (entry) await entry.ready;
+	if (entry) {
+		// Clear the failure synchronously when queueing so concurrent readers join the same recovery.
+		if (entry.reloadFailed) await queueLoaderReload(cwd, entry);
+		else await entry.ready;
+	}
 }
 
 function resourceFingerprint(cwd: string): string {
@@ -452,7 +462,7 @@ function resourceFingerprint(cwd: string): string {
  */
 export function resourceLoaderIsStale(cwd: string, { fresh = false }: { fresh?: boolean } = {}): boolean {
 	const entry = loaderCache.get(loaderKey(cwd));
-	if (!entry) return true;
+	if (!entry || entry.reloadFailed) return true;
 	const cached = fingerprintChecks.get(entry);
 	if (!fresh && cached && Date.now() - cached.at < 2_000) return cached.fingerprint !== entry.fingerprint;
 	const fingerprint = resourceFingerprint(cwd);

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { WebEvent } from "../../src/lib/types";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 
 vi.mock("../../src/lib/growth-tracker", () => ({ GROWTH_TRACKER_VERSION: 1, createGrowthTracker: () => ({ version: 1, prepare: async () => {}, onEvent: () => {}, getError: () => null, dispose: () => {} }) }));
 let root: string;
@@ -11,28 +12,33 @@ let manager: typeof import("../../src/lib/agent-manager");
 let pi: typeof import("../../src/lib/pi");
 let host: typeof import("../../src/lib/resources/host");
 const sessions: Array<ReturnType<typeof import("../../src/lib/agent-manager")["getManaged"]>> = [];
-let packageRoot: string;
+let questionRoot: string;
+let serviceRoot: string;
 
-async function createFixtures(directory: string) {
-	for (const name of ["ask-user", "automations"]) {
-		const root = path.join(directory, name);
-		await fs.mkdir(path.join(root, "src"), { recursive: true }); await fs.mkdir(path.join(root, "web"));
-		const id = name === "ask-user" ? "@rexvane/piweb-ask-user" : "@rexvane/piweb-automations";
-		await fs.writeFile(path.join(root, "web/index.html"), "<!doctype html><p>Independent test view</p>");
-		await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: `fixture-${name}`, type: "module", pi: { extensions: ["src/index.ts"] },
-			piweb: { apiVersion: 1, id, ...(name === "automations" ? { host: "dist/host.mjs" } : {}), views: [{ id: name === "ask-user" ? "questions" : "tasks", entry: "web/index.html", placement: name === "ask-user" ? "aboveEditor" : "panel" }] } }));
-		const question = `import { Type } from "typebox"; export default function(pi) { pi.registerTool({ name: "ask_user_question", label: "Question fixture", description: "Independent question fixture", parameters: Type.Object({ questions: Type.Array(Type.Any()) }), async execute(_id, args, _signal, _update, ctx) { const result = await ctx.ui.resources.request("${id}", "questions", args); return { content: [{ type: "text", text: args.questions[0].question + " → " + result.value.answers[0].selected[0] }], details: result.value }; } }); }`;
-		const automation = `import { Type } from "typebox"; export default function(pi) { pi.registerTool({ name: "manage_automation", label: "Automation fixture", description: "Independent automation fixture", parameters: Type.Any(), async execute(_id, args, _signal, _update, ctx) { const result = await ctx.ui.resources.invoke("${id}", "create", args); return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }; } }); }`;
-		await fs.writeFile(path.join(root, "src/index.ts"), name === "ask-user" ? question : automation);
-		if (name === "automations") { await fs.mkdir(path.join(root, "dist")); await fs.writeFile(path.join(root, "dist/host.mjs"), 'export function activate(host) { host.actions.register("create", (args) => args); host.services.register("scheduler", () => () => {}); }'); }
-	}
+async function createQuestionFixture(directory: string) {
+	await fs.mkdir(path.join(directory, "src"), { recursive: true }); await fs.mkdir(path.join(directory, "web"));
+	await fs.writeFile(path.join(directory, "web/index.html"), "<!doctype html><p>Independent question view</p>");
+	await fs.writeFile(path.join(directory, "package.json"), JSON.stringify({ name: "fixture-ask-user", type: "module", pi: { extensions: ["src/index.ts"] },
+		piweb: { apiVersion: 1, id: "@rexvane/piweb-ask-user", views: [{ id: "questions", entry: "web/index.html", placement: "aboveEditor" }] } }));
+	await fs.writeFile(path.join(directory, "src/index.ts"), 'import { Type } from "typebox"; export default function(pi) { pi.registerTool({ name: "ask_user_question", label: "Question fixture", description: "Independent question fixture", parameters: Type.Object({ questions: Type.Array(Type.Any()) }), async execute(_id, args, _signal, _update, ctx) { const result = await ctx.ui.resources.request("@rexvane/piweb-ask-user", "questions", args); return { content: [{ type: "text", text: args.questions[0].question + " → " + result.value.answers[0].selected[0] }], details: result.value }; } }); }');
+}
+
+async function createServiceFixture(directory: string) {
+	await fs.mkdir(path.join(directory, "src"), { recursive: true }); await fs.mkdir(path.join(directory, "web"));
+	await fs.writeFile(path.join(directory, "web/index.html"), "<!doctype html><p>Independent service view</p>");
+	await fs.writeFile(path.join(directory, "package.json"), JSON.stringify({ name: "fixture-service", type: "module", pi: { extensions: ["src/index.ts"] },
+		piweb: { apiVersion: 1, id: "fixture-service", host: "src/host.mjs", views: [{ id: "main", entry: "web/index.html", placement: "panel" }] } }));
+	await fs.writeFile(path.join(directory, "src/index.ts"), 'import { Type } from "typebox"; export default function(pi) { pi.registerTool({ name: "resource_echo", label: "Service fixture", description: "Independent service fixture", parameters: Type.Object({ message: Type.String() }), async execute(_id, args, _signal, _update, ctx) { const result = await ctx.ui.resources.invoke("fixture-service", "echo", args); return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }; } }); }');
+	await fs.writeFile(path.join(directory, "src/host.mjs"), 'export function activate(host) { host.actions.register("echo", (args) => args); host.services.register("worker", () => () => {}); }');
 }
 
 beforeAll(async () => {
-	root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-independent-sdk-")); cwd = path.join(root, "workspace");
-	// CI exercises self-contained, independently authored fixtures. The same contract test can verify the separate real resource checkout without copying its code into PiWeb.
-	packageRoot = process.env.PIWEB_TEST_RESOURCES_DIR || path.join(root, "packages");
-	if (!process.env.PIWEB_TEST_RESOURCES_DIR) await createFixtures(packageRoot);
+	root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "piweb-independent-sdk-"))); cwd = path.join(root, "workspace");
+	// The optional path points directly to the standalone ask-user checkout. Host coverage always uses a local, neutral service fixture.
+	questionRoot = process.env.PIWEB_TEST_RESOURCES_DIR ? path.resolve(process.env.PIWEB_TEST_RESOURCES_DIR) : path.join(root, "ask-user");
+	serviceRoot = path.join(root, "service");
+	if (!process.env.PIWEB_TEST_RESOURCES_DIR) await createQuestionFixture(questionRoot);
+	await createServiceFixture(serviceRoot);
 	await fs.mkdir(cwd); await fs.mkdir(path.join(root, "agent"));
 	await fs.writeFile(path.join(root, "agent/settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
 	vi.stubEnv("PI_CODING_AGENT_DIR", path.join(root, "agent")); vi.stubEnv("PI_OFFLINE", "1");
@@ -43,7 +49,7 @@ afterAll(async () => {
 	for (const session of sessions) await manager.disposeSession(session);
 	await fs.writeFile(path.join(root, "agent/settings.json"), "{}"); await host.reconcileResourceHosts(cwd);
 	await vi.waitFor(() => expect(host.resourceHostStatuses()).toEqual([]));
-	vi.unstubAllGlobals(); vi.unstubAllEnvs(); await fs.rm(root, { recursive: true, force: true });
+	vi.unstubAllGlobals(); vi.unstubAllEnvs(); await recycleGeneratedFixture(root);
 });
 async function fresh() { const { sessionPath } = await manager.createNewSession(cwd); const managed = manager.getManaged(sessionPath); sessions.push(managed); await manager.ensureSession(managed); return managed; }
 
@@ -51,12 +57,12 @@ describe("independent resources through the real Pi SDK", () => {
 	it("starts without any PiWeb-specific tool or injected tool description when no resource is installed", async () => {
 		const managed = await fresh();
 		expect(managed.session!.getAllTools().map((tool) => tool.name)).not.toContain("ask_user_question");
-		expect(managed.session!.getAllTools().map((tool) => tool.name)).not.toContain("manage_automation");
+		expect(managed.session!.getAllTools().map((tool) => tool.name)).not.toContain("resource_echo");
 		expect(managed.session!.systemPrompt).not.toContain("Ask the user 1–4 multiple-choice");
 	});
 	it("loads the external question tool without an SDK override and sends a generic resource request", async () => {
-		await fs.access(path.join(packageRoot, "ask-user/src/index.ts"));
-		await fs.writeFile(path.join(root, "agent/settings.json"), JSON.stringify({ packages: [path.join(packageRoot, "ask-user")] }));
+		await fs.access(path.join(questionRoot, "src/index.ts"));
+		await fs.writeFile(path.join(root, "agent/settings.json"), JSON.stringify({ packages: [questionRoot] }));
 		await pi.reloadAllLoaders();
 		const managed = await fresh();
 		const tool = managed.session!.agent.state.tools.find((tool) => tool.name === "ask_user_question")!;
@@ -70,15 +76,15 @@ describe("independent resources through the real Pi SDK", () => {
 		const source = managed.session!.getAllTools().find((tool) => tool.name === "ask_user_question")?.sourceInfo;
 		expect(source?.source).not.toBe("sdk");
 	});
-	it("loads an external automation tool and host through the same public path", async () => {
-		await fs.access(path.join(packageRoot, "automations/dist/host.mjs"));
-		await fs.writeFile(path.join(root, "agent/settings.json"), JSON.stringify({ packages: [path.join(packageRoot, "automations")] }));
+	it("loads an independently authored service tool and host through the public path", async () => {
+		await fs.writeFile(path.join(root, "agent/settings.json"), JSON.stringify({ packages: [serviceRoot] }));
 		await pi.reloadAllLoaders(); await host.reconcileResourceHosts(cwd);
 		const managed = await fresh();
-		const tool = managed.session!.agent.state.tools.find((tool) => tool.name === "manage_automation")!;
-		const result = await tool.execute("automation-call", { action: "create", name: "Independent task", prompt: "Check status", enabled: false, schedule: { kind: "daily", time: "09:00" } }, new AbortController().signal);
-		expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Independent task") });
-		expect(host.resourceHostStatuses()).toMatchObject([{ id: "@rexvane/piweb-automations", services: ["scheduler"] }]);
+		const tool = managed.session!.agent.state.tools.find((tool) => tool.name === "resource_echo")!;
+		expect(tool).toBeTruthy();
+		const result = await tool.execute("service-call", { message: "Independent value" }, new AbortController().signal);
+		expect(result.content[0]).toMatchObject({ type: "text", text: JSON.stringify({ message: "Independent value" }) });
+		expect(host.resourceHostStatuses()).toMatchObject([{ id: "fixture-service", services: ["worker"] }]);
 		const frames = managed.buffer.map((frame) => JSON.parse(frame.json) as WebEvent);
 		expect(frames.some((frame) => frame.type === "error" && /activation failed/.test(frame.message))).toBe(false);
 	});

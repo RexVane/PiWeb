@@ -37,8 +37,8 @@ const rowOf = (name: string) => {
 };
 
 describe("插件页面状态与布局", () => {
-	it("按 SDK 来源显示整包开关和作用域，不把本地包文件当作独立扩展", async () => {
-		vi.stubGlobal("fetch", vi.fn(async () => ({
+	it("按 SDK 来源显示整包开关和作用域，不额外加载资源界面设置", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL) => ({
 			ok: true,
 			json: async () => ({ success: true, data: {
 				packages: [{ source: "/workspace/local-package", scope: "project", resources: { extensions: 1, skills: 0, prompts: 0, themes: 0 } }],
@@ -48,9 +48,12 @@ describe("插件页面状态与布局", () => {
 					{ name: "external-file-project-config", path: "/outside/project.js", scope: "project", origin: "top-level", sourceInfo: { origin: "top-level", source: "local", scope: "project" } },
 				],
 			} }),
-		})));
+		}));
+		vi.stubGlobal("fetch", fetchMock);
 		render(<PluginsSection cwd="/workspace" />);
 		await screen.findByText("workspace-file-global-config");
+		expect(screen.getByRole("heading", { name: "已安装的 pi 包" })).toBeTruthy();
+		expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/resources"))).toBe(false);
 		expect(screen.queryByRole("switch", { name: "package-child" })).toBeNull();
 		expect(screen.queryByText("package-child")).toBeNull();
 		expect(screen.getByRole("switch", { name: "/workspace/local-package" })).toBeTruthy();

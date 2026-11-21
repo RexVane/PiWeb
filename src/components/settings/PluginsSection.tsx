@@ -15,7 +15,6 @@ import {
 } from "@/components/icons";
 import { AddResourceMenu } from "@/components/resources/AddResourceMenu";
 import { ResourceInstallModal, type StartResourceSession } from "@/components/resources/ResourceInstallModal";
-import { ResourceControls } from "@/components/resources/ResourceControls";
 import { notifyResourcesChanged } from "@/hooks/useResourceRegistry";
 import { useI18n } from "@/i18n";
 import { ScopeWorkspaceFilterBar } from "@/components/settings/SharedControls";
@@ -890,8 +889,6 @@ export function PluginsSection({
 				</div>
 			)}
 
-			<ResourceControls cwd={cwd} />
-
 			<ResourceInstallModal
 				open={modalOpen}
 				mode={installOpen === undefined ? internalInstallMode : installMode}
@@ -899,11 +896,11 @@ export function PluginsSection({
 				cwd={cwd}
 				busy={busy}
 				onClose={() => setModalOpen(false)}
-				onSubmit={async (installSource, projectScope, selection) => {
+				onSubmit={async (installSource, projectScope) => {
 					const workspaceSeq = workspaceSeqRef.current;
 					if (!(await confirm({ title: t.install, message: t.pluginInstallConfirm.replace("{source}", installSource), confirmLabel: t.install }))) return false;
 					if (workspaceSeq !== workspaceSeqRef.current) return false;
-					if (await act("install", { source: installSource, local: projectScope, ...(selection ? { selection } : {}) }, undefined, t.installing, t.installSuccess)) {
+					if (await act("install", { source: installSource, local: projectScope }, undefined, t.installing, t.installSuccess)) {
 						setModalOpen(false);
 						return true;
 					}

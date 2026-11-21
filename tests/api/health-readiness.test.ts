@@ -10,7 +10,7 @@ import { GET as liveness } from "../../src/app/api/health/route";
 import { GET as readiness } from "../../src/app/api/health/readiness/route";
 const resources = vi.hoisted(() => vi.fn(() => [] as Array<{ id: string; scope: string; state: string; services: string[]; active: number }>));
 vi.mock("../../src/lib/resources/host", () => ({ resourceHostStatuses: resources }));
-import { recycleTemporaryDirectory } from "../../src/lib/recycle-temporary";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 
 const ENV_KEYS = ["PI_CODING_AGENT_DIR"] as const;
 let previous: Record<string, string | undefined>;
@@ -30,7 +30,7 @@ afterEach(async () => {
 		if (previous[key] === undefined) delete process.env[key];
 		else process.env[key] = previous[key];
 	}
-	await recycleTemporaryDirectory(root).catch(() => undefined);
+	await recycleGeneratedFixture(root).catch(() => undefined);
 });
 
 describe("liveness stays unchanged", () => {
@@ -43,7 +43,7 @@ describe("liveness stays unchanged", () => {
 });
 
 describe("readiness", () => {
-	it("reports the data directory, model configuration and scheduler state", async () => {
+	it("reports the data directory, model configuration and optional resource services", async () => {
 		await fs.mkdir(agentDir, { recursive: true });
 		await fs.writeFile(path.join(agentDir, "settings.json"), "{}");
 		const response = await readiness();
@@ -55,7 +55,7 @@ describe("readiness", () => {
 		expect(body.data.ready).toBe(true);
 		expect(body.data.checks.dataDir.ok).toBe(true);
 		expect(body.data.checks.modelConfig.ok).toBe(true);
-		// No installed resources is a healthy baseline, not a missing mandatory scheduler.
+		// An empty optional resource service registry is a healthy baseline.
 		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [] });
 	});
 

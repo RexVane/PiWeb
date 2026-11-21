@@ -2,12 +2,15 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { isPathInside } from "../path-boundary";
 import type { ResourceCompatibility, ResourceManifest, ResourceView } from "./protocol";
-import { RESOURCE_API_VERSION } from "./protocol";
+import { RESOURCE_API_VERSION, RESOURCE_BROWSER_CAPABILITIES } from "./protocol";
 
 const ID = /^[a-zA-Z0-9@][a-zA-Z0-9._@/-]{0,159}$/;
 const VIEW_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
 const METHODS = new Set(["select", "confirm", "input", "editor", "web"]);
 const PLACEMENTS = new Set(["dialog", "panel", "aboveEditor", "belowEditor"]);
+const TITLE_LANGS = new Set(["zh", "zh-Hant", "en", "ja", "ru"]);
+/** 侧栏图标白名单：资源只能从 PiWeb 现有图标里挑，不能让包名决定渲染什么组件 */
+export const RESOURCE_VIEW_ICONS = new Set(["clock", "cube", "chat", "file", "terminal", "plugin"]);
 export const MAX_MANIFEST_BYTES = 256 * 1024;
 
 export function resourceRelativePath(value: unknown): string {
@@ -17,8 +20,19 @@ export function resourceRelativePath(value: unknown): string {
 	return normalized;
 }
 
-export function parseResourceManifest(raw: unknown, packageName: string): ResourceManifest | undefined {
+/** 视图自带的本地化标题：只收已知语言、去重长度限制，其它键直接丢弃。 */
+function parseViewTitles(raw: unknown): Partial<Record<"zh" | "zh-Hant" | "en" | "ja" | "ru", string>> | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const titles: Partial<Record<"zh" | "zh-Hant" | "en" | "ja" | "ru", string>> = {};
+	for (const [lang, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (!TITLE_LANGS.has(lang) || typeof value !== "string") continue;
+		const text = value.trim().slice(0, 200);
+		if (text) titles[lang as keyof typeof titles] = text;
+	}
+	return Object.keys(titles).length ? titles : undefined;
+}
+
+export function parseResourceManifest(raw: unknown, packageName: string): ResourceManifest | undefined {	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const value = raw as Record<string, unknown>;
 	if (value.apiVersion !== RESOURCE_API_VERSION) throw new Error(`Unsupported PiWeb resource API version: ${String(value.apiVersion)}`);
 	const id = typeof value.id === "string" ? value.id : packageName;
@@ -35,7 +49,13 @@ export function parseResourceManifest(raw: unknown, packageName: string): Resour
 		if (!/\.html?$/i.test(entry) || path.posix.dirname(entry) === ".") throw new Error("A resource view entry must be an HTML file in a dedicated asset directory");
 		if (view.placement !== undefined && !PLACEMENTS.has(String(view.placement))) throw new Error("Invalid resource view placement");
 		if (view.methods !== undefined && (!Array.isArray(view.methods) || view.methods.some((method) => !METHODS.has(String(method))))) throw new Error("Invalid resource dialog method");
+		if (view.capabilities !== undefined && (!Array.isArray(view.capabilities) || view.capabilities.length > RESOURCE_BROWSER_CAPABILITIES.length
+			|| view.capabilities.some((capability) => !RESOURCE_BROWSER_CAPABILITIES.includes(capability as never)))) throw new Error("Invalid browser capability");
+		const titles = parseViewTitles(view.titles);
 		views.push({ id: view.id, title: typeof view.title === "string" ? view.title.slice(0, 200) : view.id,
+			...(titles ? { titles } : {}),
+			...(view.capabilities ? { capabilities: [...new Set(view.capabilities as ResourceView["capabilities"])] } : {}),
+			...(typeof view.icon === "string" && RESOURCE_VIEW_ICONS.has(view.icon) ? { icon: view.icon } : {}),
 			entry, placement: (view.placement ?? "panel") as ResourceView["placement"], methods: [...new Set(view.methods as ResourceView["methods"] ?? [])] });
 	}
 	const host = value.host === undefined ? undefined : resourceRelativePath(value.host);

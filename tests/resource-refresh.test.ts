@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,7 +42,7 @@ afterAll(async () => {
 	for (const session of managed) manager.disposeSession(session);
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleGeneratedFixture(root);
 });
 
 describe("SDK resource refresh", () => {

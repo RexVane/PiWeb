@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { getAgentDir } from "../pi";
+import { getAgentDir, getPackageManager } from "../pi";
 import { replaceFileAtomically } from "../atomic-file";
 import { withExternalSettingsLock, withSettingsWriteLock } from "../settings-write-lock";
 import { registerShutdownHook } from "../graceful-shutdown";
@@ -32,10 +32,23 @@ interface Entry {
 	error?: string;
 	stopPromise?: Promise<void>;
 }
-interface HostState { entries: Map<string, Entry>; queue: Promise<unknown>; workspaces: Set<string> }
+interface HostState { entries: Map<string, Entry>; queue: Promise<unknown>; workspaces: Set<string>; suspended: Map<string, number> }
 function state(): HostState {
 	const store = globalThis as Record<PropertyKey, unknown>;
-	return (store[STATE_KEY] ??= { entries: new Map(), queue: Promise.resolve(), workspaces: new Set() }) as HostState;
+	const current = (store[STATE_KEY] ??= { entries: new Map(), queue: Promise.resolve(), workspaces: new Set() }) as HostState;
+	current.suspended ??= new Map();
+	return current;
+}
+function packageKey(source: string, scope: "user" | "project", cwd: string): string {
+	const normalize = (value: string) => { const absolute = path.resolve(value); return process.platform === "win32" ? absolute.toLowerCase() : absolute; };
+	// Pi persists local sources relative to settings (and normalizes Windows separators).
+	// npm versions share one package identity, even while a prefix transaction uses staging paths.
+	const npm = /^npm:((?:@[^/]+\/)?[^@]+)(?:@.*)?$/.exec(source);
+	const identity = npm ? `npm:${npm[1].toLowerCase()}` : normalize(getPackageManager(cwd).getInstalledPath(source, scope) || source);
+	return `${normalize(getAgentDir())}\n${scope}\n${scope === "project" ? normalize(cwd) : ""}\n${identity}`;
+}
+function suspended(resource: ResourcePackage): boolean {
+	return state().suspended.has(packageKey(resource.source, resource.scope, resource.cwd));
 }
 function key(resource: ResourcePackage): string {
 	return `${getAgentDir()}\n${resource.scope}\n${resource.scope === "project" ? resource.cwd : ""}\n${resource.source}\n${resource.id}`;
@@ -63,12 +76,15 @@ async function stopEntry(entry: Entry): Promise<void> {
 	entry.controller.abort(new Error("Resource is stopping"));
 	entry.stopPromise = (async () => {
 		await entry.loading?.catch(() => undefined);
-		for (const stop of entry.stops.values()) {
-			try { await stop(); } catch { entry.error = "Resource service cleanup failed"; }
+		const failures: unknown[] = [];
+		for (const [name, stop] of entry.stops) {
+			try { await stop(); entry.stops.delete(name); entry.services.delete(name); }
+			catch (error) { entry.error = "Resource service cleanup failed"; failures.push(error); }
 		}
-		entry.stops.clear();
 		if (entry.active > 0) await new Promise<void>((resolve) => entry.idle.push(resolve));
-		try { await entry.cleanup?.(); } catch { entry.error = "Resource cleanup failed"; }
+		try { await entry.cleanup?.(); } catch (error) { entry.error = "Resource cleanup failed"; failures.push(error); }
+		// Never report an unload as clean when an extension failed to release its work.
+		if (failures.length) throw new AggregateError(failures, entry.error);
 		const s = state();
 		if (s.entries.get(entry.key) === entry) s.entries.delete(entry.key);
 	})();
@@ -133,10 +149,17 @@ function makeApi(entry: Entry): ResourceHostApi {
 			},
 		},
 		paths: { resolveWorkspace: resolveWorkspacePath },
+		workspaces: { async register(value) {
+			if (entry.stopping) throw new Error("Resource is stopping");
+			const cwd = await resolveWorkspacePath(value);
+			const { addWorkspace } = await import("../workspace-store");
+			await addWorkspace(cwd); return cwd;
+		} },
 		sessions: { async run(request) {
 			if (entry.stopping) throw new Error("Resource is stopping");
 			entry.active += 1;
-			try { return await runResourceSession(request); } finally { finishWork(entry); }
+			const signal = request.signal ? AbortSignal.any([entry.controller.signal, request.signal]) : entry.controller.signal;
+			try { return await runResourceSession({ ...request, signal }); } finally { finishWork(entry); }
 		} },
 	};
 }
@@ -144,6 +167,7 @@ function makeApi(entry: Entry): ResourceHostApi {
 async function ensureEntry(resource: ResourcePackage): Promise<Entry> {
 	if (!resource.enabled || !resource.manifest?.host) throw new Error("Resource host is not enabled");
 	return serialized(async () => {
+		if (suspended(resource)) throw new Error("Resource package is being removed or updated");
 		const code = await resourceHostCode(resource, getAgentDir());
 		const file = code.file;
 		const fingerprint = code.revision;
@@ -151,7 +175,7 @@ async function ensureEntry(resource: ResourcePackage): Promise<Entry> {
 		const previous = s.entries.get(key(resource));
 		if (previous && previous.fingerprint === fingerprint && !previous.stopping) { await previous.loading; if (previous.error) throw new Error(previous.error); return previous; }
 		if (previous) {
-			if (previous.active > 0) { void stopEntry(previous); throw new Error("Resource update is waiting for active work to finish"); }
+			if (previous.active > 0) { void stopEntry(previous).catch(() => undefined); throw new Error("Resource update is waiting for active work to finish"); }
 			await stopEntry(previous);
 		}
 		const entry: Entry = { key: key(resource), agentDir: getAgentDir(), resource, fingerprint, controller: new AbortController(), actions: new Map(), stops: new Map(), services: new Set(), active: 0, idle: [], stopping: false };
@@ -164,7 +188,7 @@ async function ensureEntry(resource: ResourcePackage): Promise<Entry> {
 			const cleanup = await module.activate(makeApi(entry));
 			if (typeof cleanup === "function") entry.cleanup = cleanup as () => unknown;
 		})();
-		try { await entry.loading; } catch { entry.error = "Resource host activation failed"; void stopEntry(entry); throw new Error(entry.error); }
+		try { await entry.loading; } catch { entry.error = "Resource host activation failed"; void stopEntry(entry).catch(() => undefined); throw new Error(entry.error); }
 		return entry;
 	});
 }
@@ -178,7 +202,22 @@ export async function invokeResourceAction(resourceId: string, action: string, a
 	if (!handler || entry.stopping) throw new Error("Resource action is unavailable");
 	context.signal?.throwIfAborted();
 	entry.active += 1;
-	try { return resourceJson(await handler(resourceJson(args), context)); } finally { finishWork(entry); }
+	const signal = context.signal ? AbortSignal.any([entry.controller.signal, context.signal]) : entry.controller.signal;
+	try { return resourceJson(await handler(resourceJson(args), { ...context, signal })); } finally { finishWork(entry); }
+}
+
+/** Revoke new calls and await actual cleanup before package files/dependencies are removed. */
+export async function withResourceHostsSuspended<T>(source: string, scope: "user" | "project", cwd: string, operation: () => Promise<T>): Promise<T> {
+	const s = state(); const id = packageKey(source, scope, cwd);
+	s.suspended.set(id, (s.suspended.get(id) ?? 0) + 1);
+	try {
+		const entries = [...s.entries.values()].filter((entry) => packageKey(entry.resource.source, entry.resource.scope, entry.resource.cwd) === id);
+		await Promise.all(entries.map(stopEntry));
+		return await operation();
+	} finally {
+		const count = (s.suspended.get(id) ?? 1) - 1;
+		if (count > 0) s.suspended.set(id, count); else s.suspended.delete(id);
+	}
 }
 
 /** Stop missing entries without blocking a settings request on a long-running job. */
@@ -188,10 +227,10 @@ export async function reconcileResourceHosts(cwd: string, options: { startGlobal
 	const enabled = new Map([...global, ...local.filter((resource) => resource.scope === "project")].filter((resource) => resource.enabled && resource.manifest?.host).map((resource) => [key(resource), resource]));
 	for (const [id, entry] of state().entries) {
 		if (entry.resource.scope === "project" && entry.resource.cwd !== cwd) continue;
-		if (!enabled.has(id)) void stopEntry(entry);
+		if (!enabled.has(id)) void stopEntry(entry).catch(() => undefined);
 	}
 	if (options.startGlobal) for (const resource of [...global, ...(state().workspaces.has(cwd) ? local.filter((item) => item.scope === "project") : [])].filter((item) => item.enabled && item.manifest?.host)) {
-		await ensureEntry(resource).catch(() => undefined);
+		if (!suspended(resource)) await ensureEntry(resource).catch(() => undefined);
 	}
 }
 
@@ -200,9 +239,9 @@ export async function startResourceWorkspace(cwd: string): Promise<void> {
 	await reconcileResourceHosts(cwd, { startGlobal: true });
 }
 
-export function resourceHostStatuses(): Array<{ id: string; scope: string; state: "running" | "stopping" | "error"; services: string[]; active: number }> {
+export function resourceHostStatuses(): Array<{ id: string; scope: string; state: "running" | "stopping" | "error"; services: string[]; active: number; error?: string }> {
 	return [...state().entries.values()].map((entry) => ({ id: entry.resource.id, scope: entry.resource.scope,
-		state: entry.stopping ? "stopping" : entry.error ? "error" : "running", services: [...entry.services], active: entry.active }));
+		state: entry.error ? "error" : entry.stopping ? "stopping" : "running", services: [...entry.services], active: entry.active, ...(entry.error ? { error: entry.error } : {}) }));
 }
 
 export function startResourceHost(cwd: string): Promise<void> {
@@ -210,7 +249,7 @@ export function startResourceHost(cwd: string): Promise<void> {
 	return reconcileResourceHosts(cwd, { startGlobal: true });
 }
 
-/** Public session service; no automation-specific rules, storage, schedules or tool names. */
+/** Run unattended sessions through the public resource API. */
 export async function runResourceSession(request: ResourceRunRequest): Promise<ResourceRunResult> {
 	if (typeof request.prompt !== "string" || !request.prompt.trim() || request.prompt.length > 50_000) throw new Error("Invalid resource prompt");
 	const timeoutMs = request.timeoutMs ?? 30 * 60_000;

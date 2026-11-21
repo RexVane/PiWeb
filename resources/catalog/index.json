@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "@rexvane/piweb-ask-user",
+      "name": "Ask user / 问用户",
+      "description": "Optional question tool and customizable web selection interface. 标准 Pi 交互可选择此界面；未启用时使用基础界面。",
+      "author": "RexVane",
+      "version": "0.1.1",
+      "types": [
+        "extensions"
+      ],
+      "compatibility": "web",
+      "apiVersion": 1,
+      "source": "git:github.com/RexVane/piweb-ask-user@v0.1.1",
+      "selection": {
+        "extensions": [
+          "src/index.ts"
+        ],
+        "skills": [],
+        "prompts": [],
+        "themes": []
+      },
+      "repository": "https://github.com/RexVane/piweb-ask-user"
+    }
+  ]
+}

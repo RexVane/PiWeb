@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,7 +9,7 @@ import { resourceFrameMessage, safeResourceViewUrl } from "../../src/lib/resourc
 import { RESOURCE_FRAME_CHANNEL } from "../../src/lib/resources/protocol";
 
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await fs.rm(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const root of roots.splice(0)) await recycleGeneratedFixture(root); });
 const manifest = (entry = "web/index.html") => ({ apiVersion: 1, id: "sample", views: [{ id: "main", entry, placement: "panel", methods: ["select"] }], host: "src/host.mjs" });
 
 describe("resource manifest", () => {
@@ -22,9 +23,17 @@ describe("resource manifest", () => {
 	it("checks canonical asset paths rather than allowing escaping symlinks", async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-resource-manifest-")); roots.push(root);
 		await fs.mkdir(path.join(root, "package"));
+		await fs.mkdir(path.join(root, "outside"));
+		await fs.writeFile(path.join(root, "outside", "index.html"), "private");
+		await fs.symlink(path.join(root, "outside"), path.join(root, "package", "escape"), process.platform === "win32" ? "junction" : "dir");
+		await expect(resolveResourceFile(path.join(root, "package"), "escape/index.html")).rejects.toThrow(/escapes/);
 		await fs.writeFile(path.join(root, "outside.html"), "private");
-		await fs.symlink(path.join(root, "outside.html"), path.join(root, "package", "escape.html"));
-		await expect(resolveResourceFile(path.join(root, "package"), "escape.html")).rejects.toThrow(/escapes/);
+		try {
+			await fs.symlink(path.join(root, "outside.html"), path.join(root, "package", "escape.html"), "file");
+			await expect(resolveResourceFile(path.join(root, "package"), "escape.html")).rejects.toThrow(/escapes/);
+		} catch (error) {
+			if (!["EPERM", "EACCES", "ENOTSUP"].includes((error as NodeJS.ErrnoException).code || "")) throw error;
+		}
 	});
 	it("does not claim generic CLI code is proven compatible", () => {
 		expect(staticResourceCompatibility(undefined, ["pi.registerTool({})"])).toBe("unknown");

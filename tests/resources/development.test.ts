@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
@@ -9,7 +10,7 @@ beforeAll(async () => {
 	vi.stubEnv("PI_CODING_AGENT_DIR", path.join(root, "agent")); vi.stubEnv("PI_WEB_ROOT", path.resolve(".")); vi.resetModules();
 	development = await import("../../src/lib/resources/development"); preview = await import("../../src/lib/resources/preview"); assets = await import("../../src/lib/resources/assets"); discovery = await import("../../src/lib/resources/discovery");
 });
-afterAll(async () => { vi.unstubAllEnvs(); await fs.rm(root, { recursive: true, force: true }); });
+afterAll(async () => { vi.unstubAllEnvs(); await recycleGeneratedFixture(root); });
 
 describe("independent resource design and passive preview", () => {
 	it("creates a real workspace with public documentation but never auto-installs it", async () => {
@@ -32,7 +33,16 @@ describe("independent resource design and passive preview", () => {
 		expect(prepared.cwd).not.toBe(original); expect(prepared.compatibility).toBe("adapt");
 		expect(await fs.readFile(path.join(original, "src/index.ts"), "utf8")).toBe(source);
 		expect((globalThis as Record<string, unknown>).shouldNotRun).toBeUndefined();
-		expect(await fs.readFile(path.join(prepared.cwd, "piweb-upstream.json"), "utf8")).toContain(original);
+		expect(JSON.parse(await fs.readFile(path.join(prepared.cwd, "piweb-upstream.json"), "utf8")).source).toBe(original);
+	});
+	it("places default development sources outside Pi auto-loaded extensions and rejects extensions dirs", async () => {
+		const { defaultResourceDevelopmentRoot } = await import("../../src/lib/resources/preferences");
+		const fallback = defaultResourceDevelopmentRoot();
+		const autoExt = path.join(root, "agent", "extensions");
+		await fs.mkdir(autoExt, { recursive: true });
+		expect(path.resolve(fallback)).not.toBe(path.resolve(autoExt));
+		expect(path.basename(fallback)).toBe("resource-sources");
+		await expect(development.prepareNewResource(autoExt)).rejects.toThrow(/auto-loaded/);
 	});
 	it("refuses previewing arbitrary workspaces outside the remembered development directory", async () => {
 		await expect(preview.preparedResourceViews(path.join(root, "original"))).rejects.toThrow(/development workspace/);

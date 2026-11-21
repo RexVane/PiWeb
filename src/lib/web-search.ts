@@ -31,8 +31,6 @@ const BUILTIN_LOCAL_TOOLS = new Set([
 	"glob",
 	"find",
 	"ls",
-	"ask_user_question",
-	"manage_automation",
 ]);
 
 const NON_WEB_SEARCH_TOKENS = new Set([

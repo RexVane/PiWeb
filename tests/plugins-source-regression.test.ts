@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 import os from "node:os";
 import path from "node:path";
 import { DefaultPackageManager, DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -41,7 +42,7 @@ beforeEach(async () => {
 afterEach(async () => {
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleGeneratedFixture(root);
 });
 
 async function initialize(globalSettings: Record<string, unknown>, projectSettings: Record<string, unknown> = {}) {

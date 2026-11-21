@@ -611,14 +611,15 @@ function applePathToPosix(out: string): string {
  * - Linux：zenity / kdialog（哪个可用用哪个）
  * 都不可用时抛错，由接口通知前端打开应用内目录浏览器。
  */
-export async function pickFolderNative(): Promise<{ path: string | null; canceled: boolean }> {
+export async function pickFolderNative(purpose: "workspace" | "source" = "workspace"): Promise<{ path: string | null; canceled: boolean }> {
 	if (picking) return { path: null, canceled: true };
 	picking = true;
+	const title = purpose === "source" ? "选择本地目录" : "选择工作区文件夹";
 	try {
 		if (process.platform === "win32") {
 			const script = path.join(APP_ROOT, "scripts", "pick-folder.ps1");
 			const out = await runDialog(
-				["powershell.exe", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", script, "选择工作区文件夹"],
+				["powershell.exe", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", script, title],
 				{ windowsHide: true },
 			);
 			return out ? { path: out, canceled: false } : { path: null, canceled: true };
@@ -626,7 +627,7 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 		if (process.platform === "darwin") {
 			// 直接要 POSIX path 输出；老 osascript / 异常路径由 applePathToPosix 兜底转换
 			try {
-				const out = await runDialog(["osascript", "-e", 'POSIX path of (choose folder with prompt "选择工作区文件夹")']);
+				const out = await runDialog(["osascript", "-e", `POSIX path of (choose folder with prompt "${title}")`]);
 				const p = applePathToPosix(out);
 				return p ? { path: p, canceled: false } : { path: null, canceled: true };
 			} catch (error) {
@@ -637,8 +638,8 @@ export async function pickFolderNative(): Promise<{ path: string | null; cancele
 		}
 		// Linux /其他：zenity → kdialog
 		for (const argv of [
-			["zenity", "--file-selection", "--directory", "--title=选择工作区文件夹"],
-			["kdialog", "--getexistingdirectory", `${os.homedir()}`, "--title", "选择工作区文件夹"],
+			["zenity", "--file-selection", "--directory", `--title=${title}`],
+			["kdialog", "--getexistingdirectory", `${os.homedir()}`, "--title", title],
 		]) {
 			try {
 				const out = await runDialog(argv);

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { prepareExistingResource, prepareNewResource, resourceDesignPrompt, type PreparedResource } from "@/lib/resources/development";
-import { getResourcePreferences } from "@/lib/resources/preferences";
+import { effectiveResourceDevelopmentRoot } from "@/lib/resources/preferences";
 import { resolveWorkspacePath, isPathInside } from "@/lib/path-security";
 import { apiError } from "@/lib/api-error";
 import { preparedResourceViews } from "@/lib/resources/preview";
@@ -23,11 +23,11 @@ export async function POST(request: Request) {
 		if (body.action === "design") prepared = await prepareNewResource(body.root);
 		else if (body.action === "inspect" || body.action === "adapt") {
 			if (body.preparedCwd) {
-				const root = (await getResourcePreferences()).developmentRoot;
+				const root = await effectiveResourceDevelopmentRoot();
 				const cwd = await resolveWorkspacePath(body.preparedCwd);
 				if (!root || !isPathInside(await resolveWorkspacePath(root), cwd) || cwd === root) throw new Error("Not a prepared resource workspace");
 				const upstream = JSON.parse(await fs.readFile(path.join(cwd, "piweb-upstream.json"), "utf8"));
-				prepared = { cwd, source: upstream.source, installSource: cwd, name: upstream.name, version: upstream.version, types: ["extensions"], compatibility: "unknown" };
+				prepared = { cwd, source: upstream.source, name: upstream.name, version: upstream.version, types: ["extensions"], compatibility: "unknown" };
 			} else {
 				if (!body.source) throw new Error("Resource source is required");
 				prepared = await prepareExistingResource(body.source, body.root);

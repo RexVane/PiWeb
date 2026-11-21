@@ -1,15 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getResourcePreferences } from "./preferences";
+import { effectiveResourceDevelopmentRoot } from "./preferences";
 import { parseResourceManifest, readPackageManifest, resourceRelativePath, resolveResourceFile } from "./manifest";
 import { resolveWorkspacePath, isPathInside } from "../path-security";
 import type { WebResourceView } from "./protocol";
 
 /** Inspect only an explicitly chosen development workspace. No Pi loader or host entry is executed. */
 export async function preparedResourceViews(cwd: string): Promise<Array<{ view: WebResourceView; root: string; entry: string }>> {
-	const preferences = await getResourcePreferences();
+	const root = await effectiveResourceDevelopmentRoot();
 	const workspace = await resolveWorkspacePath(cwd);
-	if (!preferences.developmentRoot || !isPathInside(await fs.realpath(preferences.developmentRoot), workspace) || workspace === await fs.realpath(preferences.developmentRoot)) throw new Error("Not an independent resource development workspace");
+	const realRoot = await fs.realpath(root).catch(() => null);
+	if (!realRoot || !isPathInside(realRoot, workspace) || workspace === realRoot) throw new Error("Not an independent resource development workspace");
 	const parent = await readPackageManifest(workspace);
 	const declared = (parent?.piweb as { resources?: unknown } | undefined)?.resources;
 	const roots = declared === undefined ? [workspace] : Array.isArray(declared) ? await Promise.all(declared.slice(0, 64).map(async (value) => {
@@ -25,6 +26,7 @@ export async function preparedResourceViews(cwd: string): Promise<Array<{ view: 
 			await resolveResourceFile(root, view.entry);
 			const token = Buffer.from(JSON.stringify({ cwd: workspace, source: "development-preview", scope: "user", resourceId: manifest!.id, view: view.id, preview: true, revision: Date.now() })).toString("base64url");
 			result.push({ root, entry: view.entry, view: { id: `preview:${manifest!.id}:${view.id}`, resourceId: manifest!.id, scope: "user", title: view.title, placement: view.placement, methods: [], preview: true,
+				...(view.titles ? { titles: view.titles } : {}), ...(view.icon ? { icon: view.icon } : {}),
 				url: `/api/resources/views/${token}/assets/${encodeURIComponent(path.posix.basename(view.entry))}` } });
 		}
 	}
