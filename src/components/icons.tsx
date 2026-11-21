@@ -578,3 +578,14 @@ export const IconExternalLink12 = ({ size = 12, ...rest }: P) => (
 		/>
 	</svg>
 );
+
+/** 推演星芒（思考步骤与多色行动簇徽标用，小尺寸下比复杂原子轨道更锐利） */
+export const IconSparkOutline14 = ({ size = 14, ...rest }: P) => (
+	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
+		<path
+			d="M8 1.6L9.45 5.45L13.3 6.9L9.45 8.35L8 12.2L6.55 8.35L2.7 6.9L6.55 5.45L8 1.6Z"
+			fill="currentColor"
+		/>
+		<circle cx="12.6" cy="12.2" r="1.35" fill="currentColor" opacity="0.8" />
+	</svg>
+);

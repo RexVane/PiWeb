@@ -2113,11 +2113,22 @@ body[data-ds-dark-theme] {
 	--pw-danger-soft: rgba(236, 19, 19, 0.12);
 	/* 闪光高光：浅色主题下比强调色更亮更淡，深色主题下接近白 */
 	--pw-shimmer-hi: rgb(150, 190, 255);
+	/* 过程时间轴低饱和语义色板（思考 / 探测 / 执行 / 修改 / 联网） */
+	--pw-tone-think: #7c3aed;
+	--pw-tone-inspect: #0284c7;
+	--pw-tone-exec: #d97706;
+	--pw-tone-mutate: #059669;
+	--pw-tone-web: #0d9488;
 }
 html[data-ds-dark-theme],
 body[data-ds-dark-theme] {
 	--pw-danger-soft: rgba(242, 90, 90, 0.16);
 	--pw-shimmer-hi: rgb(225, 236, 255);
+	--pw-tone-think: #a78bfa;
+	--pw-tone-inspect: #7dd3fc;
+	--pw-tone-exec: #fbbf24;
+	--pw-tone-mutate: #6ee7b7;
+	--pw-tone-web: #5eead4;
 }
 
 .pw-turn {
@@ -2136,7 +2147,7 @@ body[data-ds-dark-theme] {
 .pw-turn-toggle {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: 7px;
 	padding: 0;
 	border: 0;
 	background: none;
@@ -2212,19 +2223,56 @@ body[data-ds-dark-theme] {
 }
 .pw-icon {
 	flex: none;
-	width: 16px;
-	height: 26px;
+	width: 20px;
+	height: 20px;
+	margin-top: 3px;
+	border-radius: 6px;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	color: var(--dsw-label-tertiary);
-	transition: transform 0.2s var(--isx-ease), color 0.2s var(--isx-ease);
+	transition: transform 0.2s var(--isx-ease), color 0.2s var(--isx-ease), background 0.2s var(--isx-ease);
 }
-.pw-step:hover .pw-icon {
+.pw-icon[data-badge="work"] {
+	background: transparent;
+	color: var(--pw-tone-inspect);
+}
+.pw-icon[data-badge="think"] {
+	background: color-mix(in srgb, var(--pw-tone-think) 14%, transparent);
+	color: var(--pw-tone-think);
+}
+.pw-icon[data-badge="inspect"] {
+	background: color-mix(in srgb, var(--pw-tone-inspect) 14%, transparent);
+	color: var(--pw-tone-inspect);
+}
+.pw-icon[data-badge="exec"] {
+	background: color-mix(in srgb, var(--pw-tone-exec) 14%, transparent);
+	color: var(--pw-tone-exec);
+}
+.pw-icon[data-badge="mutate"] {
+	background: color-mix(in srgb, var(--pw-tone-mutate) 14%, transparent);
+	color: var(--pw-tone-mutate);
+}
+.pw-icon[data-badge="accent"] {
+	background: color-mix(in srgb, var(--dsw-accent) 14%, transparent);
+	color: var(--dsw-accent);
+}
+.pw-icon[data-badge="warn"] {
+	background: color-mix(in srgb, var(--dsw-warn) 16%, transparent);
+	color: var(--dsw-warn);
+}
+.pw-icon[data-badge="fail"] {
+	background: color-mix(in srgb, var(--dsw-danger) 15%, transparent);
+	color: var(--dsw-danger);
+}
+.pw-icon[data-badge="neutral"] {
+	background: var(--dsw-hover);
+	color: var(--dsw-label-tertiary);
+}
+.pw-step:hover .pw-icon[data-badge="neutral"] {
 	color: var(--dsw-label-primary);
 }
 .pw-step[data-tone="live"] .pw-icon {
-	color: var(--dsw-label-primary);
 	animation: isx-icon-pulse 1.8s ease-in-out infinite;
 }
 .pw-step[data-kind="work"][data-tone="live"] .pw-icon {
@@ -2363,10 +2411,152 @@ button.pw-line:hover .pw-chev {
 }
 .pw-summary strong {
 	font-weight: 600;
+	color: var(--dsw-label-primary);
+}
+.pw-step-summary {
+	align-items: center;
+}
+.pw-phase-head {
+	gap: 8px;
+	min-height: 30px;
+}
+.pw-phase-head .pw-gist {
+	color: var(--dsw-label-primary);
+}
+.pw-run[data-open="true"] > .pw-step-summary .pw-phase-head {
+	background: color-mix(in srgb, var(--dsw-hover) 68%, transparent);
+}
+button.pw-line.pw-phase-head:hover {
+	padding-left: 6px;
+}
+.pw-phase-diff {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--dsw-hover) 90%, transparent);
+	font-family: var(--font-mono);
+	font-size: var(--piweb-chat-font-t);
+	line-height: 1.4;
+}
+.pw-phase-diff .pw-add {
+	color: var(--dsw-success-text);
+}
+.pw-phase-diff .pw-del {
+	color: var(--dsw-danger);
+}
+.pw-summary-dur {
+	flex: none;
+	font-variant-numeric: tabular-nums;
+}
+.pw-cluster {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+}
+.pw-cluster-dot {
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	border: 1.5px solid var(--dsw-bg-base);
+	background: var(--dsw-hover);
+	color: var(--dsw-label-tertiary);
+}
+.pw-cluster-dot + .pw-cluster-dot {
+	margin-left: -6px;
+}
+.pw-cluster-dot[data-cluster="think"] {
+	background: color-mix(in srgb, var(--pw-tone-think) 20%, var(--dsw-bg-base));
+	color: var(--pw-tone-think);
+}
+.pw-cluster-dot[data-cluster="inspect"] {
+	background: color-mix(in srgb, var(--pw-tone-inspect) 20%, var(--dsw-bg-base));
+	color: var(--pw-tone-inspect);
+}
+.pw-cluster-dot[data-cluster="exec"] {
+	background: color-mix(in srgb, var(--pw-tone-exec) 20%, var(--dsw-bg-base));
+	color: var(--pw-tone-exec);
+}
+.pw-cluster-dot[data-cluster="mutate"] {
+	background: color-mix(in srgb, var(--pw-tone-mutate) 20%, var(--dsw-bg-base));
+	color: var(--pw-tone-mutate);
+}
+.pw-cluster-dot[data-cluster="web"] {
+	background: color-mix(in srgb, var(--pw-tone-web) 20%, var(--dsw-bg-base));
+	color: var(--pw-tone-web);
+}
+.pw-phase-body {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	margin: 4px 0 8px 9px;
+	padding: 2px 0 2px 15px;
+	border-left: 1.5px solid color-mix(in srgb, var(--dsw-border-l3) 76%, transparent);
+}
+.pw-phase-body .pw-line {
+	font-size: var(--piweb-chat-font-s);
+	min-height: 24px;
+	line-height: 24px;
+}
+.pw-phase-body .pw-icon {
+	width: 18px;
+	height: 18px;
+	margin-top: 3px;
+	border-radius: 5px;
+}
+.pw-think-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 3px 0 6px 4px;
+	padding-left: 12px;
+	border-left: 1.5px solid color-mix(in srgb, var(--pw-tone-think) 36%, transparent);
+}
+.pw-think-bead {
+	position: relative;
+	font-size: var(--piweb-chat-font-s);
+	line-height: 1.58;
 	color: var(--dsw-label-secondary);
 }
-.pw-run[data-open] > .pw-step:not(:first-child) {
-	margin-left: 4px;
+.pw-think-bead-dot {
+	position: absolute;
+	left: -16px;
+	top: 8px;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--pw-tone-think);
+	border: 1.5px solid var(--dsw-bg-base);
+}
+.pw-think-bead-text {
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-family: inherit;
+}
+.pw-work-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.pw-work-metrics {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	font-variant-numeric: tabular-nums;
+}
+.pw-nested .pw-icon {
+	width: 16px;
+	height: 16px;
+	margin-top: 4px;
+	border-radius: 5px;
 }
 
 /* 嵌套调用（codemode 脚本里发起的读 / 写 / 命令）：缩进 + 左侧细线，与父调用区分开 */

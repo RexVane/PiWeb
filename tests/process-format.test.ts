@@ -4,7 +4,9 @@ import {
 	classifyMessageChars,
 	classifyModelError,
 	cleanCommand,
+	compactDisplayPath,
 	deleteTargetOf,
+	describeCommandIntent,
 	firstSentence,
 	dropEchoSeparators,
 	displayToolName,
@@ -252,5 +254,98 @@ describe("skillNameFromRead", () => {
 		expect(skillNameFromRead("read", { path: "docs/README.md" })).toBeNull();
 		expect(skillNameFromRead("edit", { path: "/skills/x/SKILL.md" })).toBeNull();
 		expect(skillNameFromRead("bash", { command: "cat SKILL.md" })).toBeNull();
+	});
+});
+
+describe("describeCommandIntent", () => {
+	it("extracts port and process intent from PowerShell / ss commands", () => {
+		const ps = describeCommandIntent("Get-NetTCPConnection -LocalPort 15721 | Select-Object OwningProcess");
+		expect(ps?.category).toBe("port_proc");
+		expect(ps?.target).toBe(":15721");
+
+		const proc = describeCommandIntent("Get-Process -Id 4096 | Select-Object Name, Path");
+		expect(proc?.category).toBe("port_proc");
+		expect(proc?.target).toBe("PID 4096");
+	});
+
+	it("translates directory listings while stripping error-action noise", () => {
+		const ls = describeCommandIntent("Get-ChildItem \"$env:USERPROFILE\\.cc-switch\" -ErrorAction SilentlyContinue");
+		expect(ls?.category).toBe("dir_list");
+		expect(ls?.target).toContain("%USERPROFILE%/.cc-switch");
+	});
+
+	it("categorizes python scripts, vitest, tsc, git, sqlite, and capture tools", () => {
+		const py = describeCommandIntent("cd /repo/tools && python3 inspect_logs.py", "/repo");
+		expect(py?.category).toBe("script_py");
+		expect(py?.target).toBe("inspect_logs.py");
+
+		const testRun = describeCommandIntent("npx vitest run tests/process-format.test.ts");
+		expect(testRun?.category).toBe("test_check");
+		expect(testRun?.target).toBe("tests/process-format.test.ts");
+
+		const typeRun = describeCommandIntent("npx tsc --noEmit");
+		expect(typeRun?.category).toBe("type_check");
+
+		const gitRead = describeCommandIntent("git status --short");
+		expect(gitRead?.category).toBe("git_inspect");
+
+		const gitMutate = describeCommandIntent("git commit -m \"feat: timeline\"");
+		expect(gitMutate?.category).toBe("git_write");
+
+		const db = describeCommandIntent("sqlite3 app.db \"SELECT count(*) FROM proxy_request_logs\"");
+		expect(db?.category).toBe("sqlite");
+		expect(db?.target).toBe("app.db");
+
+		const cap = describeCommandIntent("tshark -i lo0 -f \"tcp port 15721\"");
+		expect(cap?.category).toBe("net_capture");
+		expect(cap?.target).toContain("tshark");
+	});
+
+	it("returns null for unrecognized custom commands so fallback stays untouched", () => {
+		expect(describeCommandIntent("my-custom-binary --foo bar")).toBeNull();
+		expect(describeCommandIntent("")).toBeNull();
+	});
+
+	it("extracts module and inline script hints for python and strips env setup", () => {
+		const mod = describeCommandIntent("$env:PYTHONIOENCODING='utf-8'; python -m json.tool");
+		expect(mod?.category).toBe("script_py");
+		expect(mod?.target).toBe("-m json.tool");
+
+		const inline = describeCommandIntent("python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:15721').read())\"");
+		expect(inline?.category).toBe("script_py");
+		expect(inline?.target).toBe(":15721");
+	});
+
+	it("skips rg/grep/Get-ChildItem flag values and wildcard/ellipsis noise tokens", () => {
+		const ctxSearch = describeCommandIntent("rg -n -C 30 \"activatedOnRegistration\" src/");
+		expect(ctxSearch?.category).toBe("code_search");
+		expect(ctxSearch?.target).toContain("activatedOnRegistration");
+		expect(ctxSearch?.target).not.toContain("30");
+
+		const globSearch = describeCommandIntent("rg -g \"*.ts\" \"disabledPackages\" src/agent");
+		expect(globSearch?.category).toBe("code_search");
+		expect(globSearch?.target).toContain("disabledPackages");
+		expect(globSearch?.target).not.toContain("*.ts");
+
+		const wildDir = describeCommandIntent("Get-ChildItem \"$env:TEMP\" -Filter *.ts");
+		expect(wildDir?.category).toBe("dir_list");
+		expect(wildDir?.target).not.toContain("*");
+
+		const psRead = describeCommandIntent("Get-Content web-resources.json -TotalCount 60");
+		expect(psRead?.category).toBe("file_read");
+		expect(psRead?.target).toBe("web-resources.json");
+
+		const wrapped = describeCommandIntent("powershell -NoProfile -Command \"rg -n magpie src/lib\"");
+		expect(wrapped?.category).toBe("code_search");
+		expect(wrapped?.target).toContain("magpie");
+	});
+});
+
+describe("compactDisplayPath", () => {
+	it("shortens Temp and home directories while preserving workspace relative paths", () => {
+		expect(compactDisplayPath("D:/AIApp/PiWeb/src/app/page.tsx", "D:/AIApp/PiWeb")).toBe("src/app/page.tsx");
+		expect(compactDisplayPath("C:\\Users\\guica\\AppData\\Local\\Temp\\codex-sniff\\capture.py", "D:/AIApp/PiWeb")).toBe("Temp/codex-sniff/capture.py");
+		expect(compactDisplayPath("/tmp/codex-sniff/probe.py", "/repo")).toBe("Temp/codex-sniff/probe.py");
+		expect(compactDisplayPath("C:/Users/guica/.cc-switch/config.json", "D:/AIApp/PiWeb")).toBe("~/.cc-switch/config.json");
 	});
 });

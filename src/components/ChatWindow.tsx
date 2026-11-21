@@ -30,8 +30,8 @@ import {
 	IconRefreshOutline14,
 	IconSearchOutline16,
 	IconSkillOutline16,
+	IconSparkOutline14,
 	IconTerminalOutline14,
-	IconThinkOutline14,
 	IconWarningOutline16,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
@@ -42,30 +42,30 @@ import { isCancelledTool } from "@/lib/chat/cancellation";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
 import { PreviewImage } from "@/components/PreviewImage";
+import { ActionCluster } from "@/components/chat/ActionCluster";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
 import { WebSourcesPanel, WebSourcesTrigger } from "@/components/chat/web-sources";
 import { ViewedImages } from "@/components/chat/viewed-images";
-import { imageToolsFromMessages, toolImagePreviews, type ViewedImagePreview } from "@/lib/chat/tool-images";
+import { imageToolsFromMessages, toolImagePreviews } from "@/lib/chat/tool-images";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
 import type { ToolCardState } from "@/hooks/usePiWeb";
-import type { ContextResource, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
+import type { ContextResource, TrajTokens, WebMessage, WebStats } from "@/lib/types";
 import {
-	classifyWebTool,
 	extractWebQuery,
-	extractWebSources,
 	formatWebUrlLabel,
 	mergeWebSources,
 	normalizeWebUrl,
 	type WebSource,
-	type WebToolRole,
 } from "@/lib/web-search";
 import {
 	classifyModelError,
 	cleanCommand,
+	compactDisplayPath,
 	deleteTargetOf,
+	describeCommandIntent,
 	displayToolName,
 	firstSentence,
 	isDeleteCommand,
@@ -77,12 +77,25 @@ import {
 	splitLines,
 	toolKind,
 	trimNoiseTail,
+	type CommandIntentCategory,
 	type ModelErrorKind,
 	type ToolKind,
 } from "@/lib/process-format";
+import {
+	buildProcessBlocks,
+	collectClusterKinds,
+	collectToolWebData,
+	EMPTY_WEB_SOURCES,
+	itemWebInfo,
+	nestedNodes,
+	type ClusterKind,
+	type ProcessBlock,
+	type ProcessItem,
+	type ProcessRun,
+	type ToolNode,
+} from "@/lib/process-phases";
 
 type Dict = Record<string, string>;
-type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
 
 
 /** dsh message-chrome formatRunDuration：整秒，分钟档秒数补零 */
@@ -363,10 +376,6 @@ function MessageActions({
 const RAIL = "⎿";
 /** 命令输出默认露出的行数 */
 const PREVIEW_LINES = 3;
-/** 进行中的状态词：Claude Code 同款用法，闪光渐变，按用户要求用英文（两种界面语言都一样） */
-const WORKING_VERBS = ["Thinking", "Pondering", "Cogitating", "Mulling", "Percolating", "Brewing", "Simmering", "Ruminating", "Synthesizing", "Noodling", "Marinating", "Crafting"];
-/** 有步骤在闪光时 π 行只报时长；这行和状态词一样固定英文，不随界面语言变 */
-const WORKING_FOR = "Working for {d}";
 
 /** 每秒刷新一次的已用时长（仅在 active 时计时） */
 function useElapsed(startedAt: number | undefined, active: boolean): number {
@@ -390,10 +399,39 @@ function fmtSpan(ms: number): string {
 }
 
 type StepTone = "dim" | "live" | "fail" | "warn";
+type StepBadgeTone = "think" | "inspect" | "exec" | "mutate" | "accent" | "warn" | "fail" | "work" | "neutral";
 type StepKind = ToolKind | "image" | "web_search" | "web_fetch" | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
 
+function stepBadgeTone(kind: StepKind, tone: StepTone): StepBadgeTone {
+	if (tone === "fail") return "fail";
+	if (tone === "warn") return "warn";
+	switch (kind) {
+		case "think":
+		case "summary":
+			return "think";
+		case "read":
+		case "search":
+		case "image":
+		case "web_search":
+		case "web_fetch":
+		case "context":
+			return "inspect";
+		case "write":
+			return "mutate";
+		case "skill":
+		case "custom":
+			return "accent";
+		case "cmd":
+			return "exec";
+		case "work":
+			return "work";
+		default:
+			return "neutral";
+	}
+}
+
 function KindIcon({ kind }: { kind: StepKind }) {
-	const p = { size: 14, style: { flex: "none" as const } };
+	const p = { size: 13, style: { flex: "none" as const } };
 	switch (kind) {
 		case "cmd":
 			return <IconTerminalOutline14 {...p} />;
@@ -410,7 +448,7 @@ function KindIcon({ kind }: { kind: StepKind }) {
 			return <IconEditOutline16 {...p} />;
 		case "think":
 		case "summary":
-			return <IconThinkOutline14 {...p} />;
+			return <IconSparkOutline14 size={13} style={{ flex: "none" }} />;
 		case "context":
 			return <IconFileOutline16 {...p} />;
 		case "error":
@@ -422,16 +460,17 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "work":
 			return <span className="pw-pi" aria-hidden="true">π</span>;
 		case "skill":
-			return <IconSkillOutline16 size={14} style={{ flex: "none" }} />;
+			return <IconSkillOutline16 size={13} style={{ flex: "none" }} />;
 		default:
 			return <IconDataOutline16 {...p} />;
 	}
 }
 
-function Step({ kind, tone = "dim", live, className, children }: { kind: StepKind; tone?: StepTone; live?: boolean; className?: string; children: ReactNode }) {
+function Step({ kind, tone = "dim", badgeTone, live, className, children }: { kind: StepKind; tone?: StepTone; badgeTone?: StepBadgeTone; live?: boolean; className?: string; children: ReactNode }) {
+	const resolvedBadge = tone === "fail" ? "fail" : tone === "warn" ? "warn" : badgeTone ?? stepBadgeTone(kind, tone);
 	return (
 		<div className={className ? `pw-step ${className}` : "pw-step"} data-kind={kind} data-tone={tone} data-live={live || undefined}>
-			<span className="pw-icon" aria-hidden>
+			<span className="pw-icon" data-badge={resolvedBadge} aria-hidden>
 				<KindIcon kind={kind} />
 			</span>
 			<div className="pw-body">{children}</div>
@@ -521,43 +560,6 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	}
 }
 
-const EMPTY_WEB_SOURCES: WebSource[] = [];
-
-function nestedHasWebTool(nodes: ToolNode[] | undefined): boolean {
-	if (!nodes?.length) return false;
-	for (const node of nodes) {
-		const out = node.state.result ?? node.state.partialResult;
-		if (classifyWebTool(node.state.name, node.state.args, out) !== null) return true;
-		if (nestedHasWebTool(node.children)) return true;
-	}
-	return false;
-}
-
-function collectToolWebData(
-	name: string,
-	args: unknown,
-	state: ToolCardState | undefined,
-	nested: ToolNode[] | undefined,
-): { hasWeb: boolean; role: WebToolRole | null; sources: WebSource[] } {
-	const output = state?.result ?? state?.partialResult ?? "";
-	const role = classifyWebTool(name, args, output);
-	const childLists: WebSource[][] = [];
-	let hasWeb = role !== null;
-	if (nested?.length) {
-		const stack = [...nested];
-		while (stack.length > 0) {
-			const node = stack.shift()!;
-			const sub = collectToolWebData(node.state.name, node.state.args, node.state, node.children);
-			if (sub.hasWeb) hasWeb = true;
-			if (sub.sources.length > 0) childLists.push(sub.sources);
-		}
-	}
-	if (!hasWeb) return { hasWeb: false, role: null, sources: EMPTY_WEB_SOURCES };
-	const ownSources = extractWebSources(args, output, role);
-	const sources = childLists.length > 0 ? mergeWebSources([...childLists, ownSources]) : ownSources;
-	return { hasWeb: true, role, sources };
-}
-
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
 	if (kind === "cmd") return t.stepRan;
@@ -567,25 +569,32 @@ function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	return displayToolName(name);
 }
 
-/**
- * 嵌套调用树：工具在执行中自己发起的调用（codemode 脚本、扩展的 ctx.executeTool）。
- * 模型没有为它们发 toolCall，所以消息里找不到；跟着父调用的 children 渲染在它下面。
- */
-type ToolNode = { id: string; state: ToolCardState; children: ToolNode[] };
+const INTENT_LABEL_KEY: Record<CommandIntentCategory, string> = {
+	port_proc: "intentPortProc",
+	dir_list: "intentDirList",
+	code_search: "intentCodeSearch",
+	file_read: "intentFileRead",
+	script_py: "intentScriptPy",
+	script_node: "intentScriptNode",
+	test_check: "intentTestCheck",
+	type_check: "intentTypeCheck",
+	build: "intentBuild",
+	git_inspect: "intentGitInspect",
+	git_write: "intentGitWrite",
+	net_capture: "intentNetCapture",
+	sqlite: "intentSqlite",
+	http: "intentHttp",
+	env_probe: "intentEnvProbe",
+};
 
-const NESTED_MAX_DEPTH = 4;
-const NO_NESTED: ToolNode[] = [];
-
-function nestedNodes(tools: Record<string, ToolCardState>, parentId: string, depth = 0): ToolNode[] {
-	const ids = tools[parentId]?.children;
-	if (!ids?.length || depth >= NESTED_MAX_DEPTH) return NO_NESTED;
-	const out: ToolNode[] = [];
-	for (const id of ids) {
-		const state = tools[id];
-		if (state) out.push({ id, state, children: nestedNodes(tools, id, depth + 1) });
-	}
-	return out;
-}
+const READONLY_INTENTS = new Set<CommandIntentCategory>([
+	"port_proc",
+	"dir_list",
+	"code_search",
+	"file_read",
+	"git_inspect",
+	"env_probe",
+]);
 
 const ToolStep = memo(function ToolStep({
 	id,
@@ -661,6 +670,13 @@ const ToolStep = memo(function ToolStep({
 		return str(a?.path ?? a?.file_path) ?? "";
 	})();
 	const fullCommand = kind === "cmd" ? (str((args as Record<string, unknown>)?.command) ?? str((args as Record<string, unknown>)?.cmd) ?? str((args as Record<string, unknown>)?.script) ?? "") : "";
+	const cmdIntent = useMemo(
+		() => (kind === "cmd" && !badge && fullCommand ? describeCommandIntent(fullCommand, cwd) : null),
+		[badge, cwd, fullCommand, kind],
+	);
+	const cmdBadgeTone: StepBadgeTone | undefined = cmdIntent
+		? (READONLY_INTENTS.has(cmdIntent.category) ? "inspect" : "exec")
+		: undefined;
 	// 删除文件的命令：完成后给红色标记（内容级 diff 不强求）
 	const deletedTarget = kind === "cmd" && !running && !failed && !cancelled && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
 	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
@@ -752,12 +768,23 @@ const ToolStep = memo(function ToolStep({
 			<span className="pw-badge">skill</span>
 			<span className="pw-skill-name" title={summary.text || argPath || argsTitle}>{readSkillName}</span>
 		</>
+	) : cmdIntent ? (
+		<>
+			{running ? (
+				<span className="pw-shimmer" title={summary.text || argsTitle}>{tt[INTENT_LABEL_KEY[cmdIntent.category]]}</span>
+			) : (
+				<span className="pw-verb" data-failed={failed || undefined} title={summary.text || argsTitle}>{tt[INTENT_LABEL_KEY[cmdIntent.category]]}</span>
+			)}
+			{cmdIntent.target && <span className="pw-arg" title={summary.text || argsTitle}>{cmdIntent.target}</span>}
+		</>
 	) : (
 		<>
 			{running ? <span className="pw-shimmer">{t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
 			{badge && <span className="pw-badge">{badge}</span>}
 			{summary.text ? (
-				<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={argsTitle}>{summary.text}</span>
+				<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={summary.text || argsTitle}>
+					{kind === "read" || kind === "write" || name.toLowerCase() === "ls" ? compactDisplayPath(argPath || summary.text, cwd) : summary.text}
+				</span>
 			) : (
 				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
 			)}
@@ -807,7 +834,7 @@ const ToolStep = memo(function ToolStep({
 		);
 	}
 	return (
-		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
+		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} badgeTone={cmdBadgeTone} live={running} className="group/tool">
 			{splitInteractiveLine ? (
 				<div className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}>
 					{webRole === "search" ? (
@@ -931,11 +958,16 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 		const tail = one.length > 220 ? `…${one.slice(-220)}` : one;
 		return (
 			<Step kind="think" tone="live" live>
-				<div className="pw-line">
-					<span className="pw-shimmer">{t.thinkingLive}…</span>
+				<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
+					<span className="pw-shimmer">{t.thinkingStepLive}…</span>
 					{startedAt && elapsed >= 3000 ? <span className="pw-meta">{fmtSpan(elapsed)}</span> : null}
-				</div>
-				{tail && <div className="pw-tail">{tail}</div>}
+					{tail && <IconChevronRight14 size={11} className="pw-chev" />}
+				</button>
+				{open && text.trim() ? (
+					<pre className="pw-output pw-think-full">{text}</pre>
+				) : (
+					tail && <div className="pw-tail">{tail}</div>
+				)}
 			</Step>
 		);
 	}
@@ -943,8 +975,32 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 		<Step kind="think">
 			<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
 				<span className="pw-gist">{firstSentence(text, 140)}</span>
+				<IconChevronRight14 size={11} className="pw-chev" />
 			</button>
 			{open && <pre className="pw-output pw-think-full">{text}</pre>}
+		</Step>
+	);
+});
+
+const ThoughtThread = memo(function ThoughtThread({ thoughts }: { thoughts: ReadonlyArray<Extract<ProcessItem, { kind: "think" }>> }) {
+	const [open, setOpen] = useState(false);
+	const { t } = useI18n();
+	return (
+		<Step kind="think">
+			<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+				<span className="pw-gist">{t.thinkThreadTitle.replace("{n}", String(thoughts.length))}</span>
+				<IconChevronRight14 size={11} className="pw-chev" />
+			</button>
+			{open && (
+				<div className="pw-think-list">
+					{thoughts.map((th) => (
+						<div key={th.key} className="pw-think-bead">
+							<span className="pw-think-bead-dot" aria-hidden="true" />
+							<pre className="pw-think-bead-text">{th.text}</pre>
+						</div>
+					))}
+				</div>
+			)}
 		</Step>
 	);
 });
@@ -1097,50 +1153,25 @@ function CustomStep({ customType, text }: { customType: string; text: string }) 
 	);
 }
 
-// ---------- 工作指示：π 记号 + 英文状态词闪光（没有正在进行的步骤时）或「Working for 12s」；整行固定英文 ----------
+// ---------- 工作指示：π 记号表示会话工作中，纯展示不可展开，思考与过程在上方就位推进 ----------
 
-function WorkingStep({ startedAt, outputTokens, workingMessage, hasLiveStep }: { startedAt: number; outputTokens?: number; workingMessage?: string | null; hasLiveStep: boolean }) {
+function WorkingStep({ startedAt, outputTokens, workingMessage }: { startedAt: number; outputTokens?: number; workingMessage?: string | null }) {
 	const elapsed = useElapsed(startedAt, true);
-	const verb = WORKING_VERBS[Math.floor(elapsed / 3000) % WORKING_VERBS.length];
-	// 扩展可以用 setWorkingMessage 覆盖这行文案（pi 终端同款能力）；有步骤在闪光时这里只报时长
-	const label = workingMessage || (hasLiveStep ? null : `${verb}…`);
+	const label = workingMessage || "Working…";
 	return (
 		<Step kind="work" tone="live" live>
-			<div className="pw-line">
-				{label ? <span className="pw-shimmer">{label}</span> : <span className="pw-verb">{fillBold(WORKING_FOR, { d: fmtSpan(elapsed) })}</span>}
-				{label && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
-				{outputTokens ? <span className="pw-meta">↓ {fmtTokens(outputTokens)} tokens</span> : null}
+			<div className="pw-line pw-work-line">
+				<span className="pw-shimmer">{label}</span>
+				<span className="pw-work-metrics">
+					<span className="pw-meta">{fmtSpan(elapsed)}</span>
+					{outputTokens ? <span className="pw-meta">↓ {fmtTokens(outputTokens)} tokens</span> : null}
+				</span>
 			</div>
 		</Step>
 	);
 }
 
-// ---------- 回合内容 → 步骤项；已完成回合把连续的思考 / 命令折成摘要行 ----------
-
-type Item =
-	| { kind: "think"; key: string; msgIndex: number; text: string; live: boolean; startedAt?: number }
-	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
-	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string; url?: string }
-	| { kind: "viewedImages"; key: string; msgIndex: number; images: ViewedImagePreview[] }
-	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState; nested?: ToolNode[]; badge?: string }
-	| { kind: "custom"; key: string; msgIndex: number; customType: string; text: string }
-	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
-	| { kind: "abort"; key: string; msgIndex: number };
-
-type Run = {
-	kind: "run";
-	key: string;
-	items: Item[];
-	hasThink: boolean;
-	cmds: number;
-	reads: number;
-	searches: number;
-	webSearches: number;
-	webFetches: number;
-	webSources: WebSource[];
-	durationMs?: number;
-};
-type Block = { kind: "item"; item: Item } | Run;
+// ---------- 回合内容 → 步骤项；阶段规则见 @/lib/process-phases ----------
 
 /** 消息里的文本块拼成一段（扩展消息 / `!` 命令的输出都用它） */
 function messageText(message: WebMessage): string {
@@ -1158,7 +1189,7 @@ const USER_BASH_EXCLUDED_BADGE = "!!";
  * 用户 `!` 命令 → 工具行：与模型的工具调用同一套排版（命令 + 输出 + 耗时），用行内标签区分。
  * SDK 不给这类消息发工具事件，卡片状态由消息本身给出。
  */
-function bashToolItem(message: WebMessage, k: number): Extract<Item, { kind: "tool" }> | null {
+function bashToolItem(message: WebMessage, k: number): Extract<ProcessItem, { kind: "tool" }> | null {
 	const bash = message.bash;
 	if (!bash) return null;
 	const running = bash.running === true;
@@ -1184,11 +1215,11 @@ function bashToolItem(message: WebMessage, k: number): Extract<Item, { kind: "to
 	};
 }
 
-function buildItems(messages: WebMessage[], k: number, tools: Record<string, ToolCardState>, live: boolean, omitText: boolean, errorCount: number | undefined): Item[] {
+function buildItems(messages: WebMessage[], k: number, tools: Record<string, ToolCardState>, live: boolean, omitText: boolean, errorCount: number | undefined): ProcessItem[] {
 	const message = messages[k];
 	const lastIndex = message.content.length - 1;
 	const isError = message.stopReason === "error";
-	const items: Item[] = [];
+	const items: ProcessItem[] = [];
 	if (message.role === "custom") {
 		items.push({ kind: "custom", key: `${k}-custom`, msgIndex: k, customType: message.customType ?? "", text: messageText(message) });
 		return items;
@@ -1210,15 +1241,10 @@ function buildItems(messages: WebMessage[], k: number, tools: Record<string, Too
 	return items;
 }
 
-function itemWebInfo(it: Item): { hasWeb: boolean; role: WebToolRole | null; sources: WebSource[] } {
-	if (it.kind !== "tool") return { hasWeb: false, role: null, sources: EMPTY_WEB_SOURCES };
-	return collectToolWebData(it.call.name, it.call.arguments, it.state, it.nested);
-}
-
 /** 连续成功的图片 read 合成一个计数行；叙述、文字读取、技能、错误或运行中调用都保留边界。 */
-function groupViewedImageReads(items: Item[]): Item[] {
-	const grouped: Item[] = [];
-	let current: Extract<Item, { kind: "viewedImages" }> | undefined;
+function groupViewedImageReads(items: ProcessItem[]): ProcessItem[] {
+	const grouped: ProcessItem[] = [];
+	let current: Extract<ProcessItem, { kind: "viewedImages" }> | undefined;
 	for (const item of items) {
 		const images = item.kind === "tool" && !item.badge && !item.nested?.length && toolKind(item.call.name) === "read" && !skillNameFromRead(item.call.name, item.call.arguments)
 			? toolImagePreviews(item.call.id, item.call.arguments, item.state) : [];
@@ -1236,128 +1262,106 @@ function groupViewedImageReads(items: Item[]): Item[] {
 	return grouped;
 }
 
-/** 可折进摘要的步骤：完成的思考，以及成功完成的命令 / 读取 / 搜索 / 联网（编辑与写入永远单独可见） */
-function isCollapsible(it: Item, finalIdx: number): boolean {
-	if (it.msgIndex === finalIdx) return false;
-	if (it.kind === "think") return !it.live;
-	if (it.kind === "tool") {
-		// 用户自己用 `!` 跑的命令不折进「运行了 N 条命令」：那是用户的动作，不是模型的过程
-		if (it.badge) return false;
-		const s = it.state;
-		if (!s || s.state !== "done" || s.isError || s.images?.length) return false;
-		const k = toolKind(it.call.name);
-		if (k === "read" && skillNameFromRead(it.call.name, it.call.arguments)) return false;
-		if (k === "cmd" || k === "read" || k === "search") return true;
-		return classifyWebTool(it.call.name, it.call.arguments, s.result ?? s.partialResult) !== null || nestedHasWebTool(it.nested);
-	}
-	return false;
+function formatPhaseFiles(files: string[], t: Dict): string {
+	if (files.length === 0) return "";
+	if (files.length <= 2) return files.join(t.sumListJoin);
+	return t.phaseEtcFiles.replace("{files}", files.slice(0, 2).join(t.sumListJoin)).replace("{n}", String(files.length));
 }
 
-function collapseRuns(items: Item[], finalIdx: number, spanOf: (a: number, b: number) => number | undefined): Block[] {
-	const blocks: Block[] = [];
-	let i = 0;
-	while (i < items.length) {
-		if (!isCollapsible(items[i], finalIdx)) {
-			blocks.push({ kind: "item", item: items[i] });
-			i += 1;
-			continue;
-		}
-		let j = i;
-		while (j < items.length && isCollapsible(items[j], finalIdx)) j += 1;
-		const run = items.slice(i, j);
-		let cmds = 0;
-		let reads = 0;
-		let searches = 0;
-		let webSearches = 0;
-		let webFetches = 0;
-		let hasThink = false;
-		const sourceBatches: WebSource[][] = [];
-		for (const it of run) {
-			if (it.kind === "think") hasThink = true;
-			else if (it.kind === "tool") {
-				const web = itemWebInfo(it);
-				if (web.sources.length > 0) sourceBatches.push(web.sources);
-				if (web.role === "search") {
-					webSearches += 1;
-				} else if (web.role === "fetch") {
-					webFetches += 1;
-				} else if (web.hasWeb) {
-					webSearches += 1;
-				} else {
-					const k = toolKind(it.call.name);
-					if (k === "cmd") cmds += 1;
-					else if (k === "read") reads += 1;
-					else searches += 1;
-				}
-			}
-		}
-		const durationMs = spanOf(run[0].msgIndex, run[run.length - 1].msgIndex);
-		const webSources = sourceBatches.length > 0 ? mergeWebSources(sourceBatches) : EMPTY_WEB_SOURCES;
-		const totalTools = cmds + reads + searches + webSearches + webFetches;
-		// 单条独立的联网步骤直接展示查询词与来源，避免多包一层折叠
-		if (run.length === 1 && !hasThink && cmds + reads + searches === 0 && webSearches + webFetches === 1) {
-			blocks.push({ kind: "item", item: run[0] });
-		} else if (totalTools === 0 && durationMs === undefined) {
-			for (const it of run) blocks.push({ kind: "item", item: it });
-		} else {
-			blocks.push({
-				kind: "run",
-				key: `run-${run[0].key}`,
-				items: run,
-				hasThink,
-				cmds,
-				reads,
-				searches,
-				webSearches,
-				webFetches,
-				webSources,
-				durationMs,
-			});
-		}
-		i = j;
-	}
-	return blocks;
-}
-
-function SummaryStep({ run, expanded, onToggle }: { run: Run; expanded: boolean; onToggle: () => void }) {
+function SummaryStep({ run, expanded, onToggle }: { run: ProcessRun; expanded: boolean; onToggle: () => void }) {
 	const { t } = useI18n();
+	const tt = t as unknown as Dict;
 	const [sourcesOpen, setSourcesOpen] = useState(false);
-	const isPureWeb = run.cmds === 0 && run.reads === 0 && run.searches === 0 && (run.webSearches > 0 || run.webFetches > 0);
+	const isPureWeb = run.cmds === 0 && run.reads === 0 && run.searches === 0 && run.writes === 0 && (run.webSearches > 0 || run.webFetches > 0);
 	if (isPureWeb) {
 		const stepKind: StepKind = run.webSearches > 0 ? "web_search" : "web_fetch";
 		const label = run.webSearches > 0 ? t.sumWebSearched : t.sumWebFetched;
+		const clusterKinds: ClusterKind[] = run.cluster.length > 0 ? run.cluster : ["web"];
 		return (
-			<Step kind={stepKind}>
-				<div className="pw-summary-row">
-					<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
-						<span className="pw-gist">
-							<strong>{label}</strong>
-						</span>
-						<IconChevronRight14 size={12} className="pw-chev" />
-					</button>
-					{run.webSources.length > 0 && (
-						<WebSourcesTrigger
-							sources={run.webSources}
-							expanded={sourcesOpen}
-							onToggle={() => setSourcesOpen((v) => !v)}
-						/>
-					)}
+			<div className="pw-step pw-step-summary" data-kind={stepKind}>
+				<div className="pw-body">
+					<div className="pw-summary-row">
+						<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
+							<ActionCluster kinds={clusterKinds} />
+							<span className="pw-gist">
+								<strong>{label}</strong>
+							</span>
+							{run.durationMs !== undefined && run.durationMs >= 1000 && (
+								<span className="pw-meta pw-summary-dur" aria-hidden="true">{fmtSpan(run.durationMs)}</span>
+							)}
+							<IconChevronRight14 size={12} className="pw-chev" />
+						</button>
+						{run.webSources.length > 0 && (
+							<WebSourcesTrigger
+								sources={run.webSources}
+								expanded={sourcesOpen}
+								onToggle={() => setSourcesOpen((v) => !v)}
+							/>
+						)}
+					</div>
+					{sourcesOpen && run.webSources.length > 0 && <WebSourcesPanel sources={run.webSources} />}
 				</div>
-				{sourcesOpen && run.webSources.length > 0 && <WebSourcesPanel sources={run.webSources} />}
-			</Step>
+			</div>
 		);
 	}
+	const totalTools = run.cmds + run.reads + run.searches + run.writes + run.webSearches + run.webFetches;
+	const isPureThink = totalTools === 0 && run.hasThink;
 	const parts: ReactNode[][] = [];
-	if (run.hasThink && run.durationMs !== undefined) parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
-	if (run.cmds) parts.push(fillBold(run.cmds === 1 ? t.sumRan1 : t.sumRan, { n: String(run.cmds) }));
-	if (run.reads) parts.push(fillBold(run.reads === 1 ? t.sumRead1 : t.sumRead, { n: String(run.reads) }));
-	if (run.searches) parts.push(fillBold(run.searches === 1 ? t.sumSearched1 : t.sumSearched, { n: String(run.searches) }));
-	if (run.webSearches) parts.push(fillBold(t.sumWebSearchedN, { n: String(run.webSearches) }));
-	if (run.webFetches) parts.push(fillBold(t.sumWebFetchedN, { n: String(run.webFetches) }));
+	if (isPureThink) {
+		if (run.durationMs !== undefined) {
+			parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
+		} else {
+			const thinkCount = run.items.filter((it) => it.kind === "think").length;
+			parts.push([thinkCount >= 2 ? t.thinkThreadTitle.replace("{n}", String(thinkCount)) : t.thinkLabel]);
+		}
+	} else {
+		const filesLabel = formatPhaseFiles(run.writtenFiles, tt);
+		const hasScriptExec = run.intentCategories.includes("script_py") || run.intentCategories.includes("script_node");
+		const mergeWriteAndScript = run.writes > 0 && hasScriptExec && Boolean(filesLabel);
+		const mergedScriptSet = new Set<CommandIntentCategory>(mergeWriteAndScript ? ["script_py", "script_node"] : []);
+		const targetsByCat = new Map<CommandIntentCategory, string[]>();
+		for (const entry of run.intentTargets) {
+			const list = targetsByCat.get(entry.category) ?? [];
+			if (list.length < 2 && !list.includes(entry.target) && !run.writtenFiles.includes(entry.target)) {
+				list.push(entry.target);
+				targetsByCat.set(entry.category, list);
+			}
+		}
+		const intentPhrases: string[] = [];
+		for (const cat of run.intentCategories) {
+			if (mergedScriptSet.has(cat)) continue;
+			const base = tt[INTENT_LABEL_KEY[cat]] ?? cat;
+			const catTargets = targetsByCat.get(cat) ?? [];
+			const joinedTgt = catTargets.join(t.sumListJoin);
+			const chosenTgt = joinedTgt.length <= 28 ? joinedTgt : (catTargets[0] && catTargets[0].length <= 28 ? catTargets[0] : "");
+			intentPhrases.push(chosenTgt ? `${base} ${chosenTgt}` : base);
+			if (intentPhrases.length >= 2) break;
+		}
+		const writeTargetText = filesLabel || String(run.writes);
+		const writePhrase = run.writes > 0
+			? (mergeWriteAndScript
+				? tt.phaseWroteAndRan
+				: run.editedOnly ? tt.phaseEdited : tt.phaseWrote
+			).replace("{files}", writeTargetText)
+			: "";
+		const headlineItems = writePhrase ? [...intentPhrases, writePhrase] : intentPhrases;
+		if (headlineItems.length > 0) {
+			parts.push([<strong key="phase">{headlineItems.join(t.sumListJoin)}</strong>]);
+		} else if (run.cmds) {
+			parts.push(fillBold(run.cmds === 1 ? t.sumRan1 : t.sumRan, { n: String(run.cmds) }));
+		}
+		if (run.reads) parts.push(fillBold(run.reads === 1 ? t.sumRead1 : t.sumRead, { n: String(run.reads) }));
+		if (run.searches) parts.push(fillBold(run.searches === 1 ? t.sumSearched1 : t.sumSearched, { n: String(run.searches) }));
+		if (run.webSearches) parts.push(fillBold(t.sumWebSearchedN, { n: String(run.webSearches) }));
+		if (run.webFetches) parts.push(fillBold(t.sumWebFetchedN, { n: String(run.webFetches) }));
+	}
 	// 英文时首字母大写（模板里只有第一段是大写开头）
 	if (parts.length && typeof parts[0][0] === "string") parts[0][0] = (parts[0][0] as string).replace(/^[a-z]/, (ch) => ch.toUpperCase());
+	const stepKind: StepKind = run.hasThink ? "summary" : run.writes && !run.cmds ? "write" : run.cmds ? "cmd" : run.reads ? "read" : run.webSearches ? "web_search" : run.webFetches ? "web_fetch" : "search";
+	const clusterKinds: ClusterKind[] = run.cluster.length > 0 ? run.cluster : [run.hasThink ? "think" : run.writes ? "mutate" : run.cmds ? "exec" : run.webSearches || run.webFetches ? "web" : "inspect"];
 	const toggleButton = (
-		<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
+		<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
+			<ActionCluster kinds={clusterKinds} />
 			<span className="pw-gist">
 				{parts.map((p, i) => (
 					<span key={i}>
@@ -1366,31 +1370,42 @@ function SummaryStep({ run, expanded, onToggle }: { run: Run; expanded: boolean;
 					</span>
 				))}
 			</span>
+			{(run.writeAdd > 0 || run.writeDel > 0) && (
+				<span className="pw-phase-diff" aria-hidden="true">
+					<span className="pw-add">+{run.writeAdd}</span>
+					{run.writeDel > 0 ? <span className="pw-del"> −{run.writeDel}</span> : null}
+				</span>
+			)}
+			{!isPureThink && run.durationMs !== undefined && run.durationMs >= 1000 && (
+				<span className="pw-meta pw-summary-dur" aria-hidden="true">{fmtSpan(run.durationMs)}</span>
+			)}
 			<IconChevronRight14 size={12} className="pw-chev" />
 		</button>
 	);
 	return (
-		<Step kind={run.hasThink ? "summary" : run.cmds ? "cmd" : run.reads ? "read" : run.webSearches ? "web_search" : run.webFetches ? "web_fetch" : "search"}>
-			{run.webSources.length > 0 ? (
-				<>
-					<div className="pw-summary-row">
-						{toggleButton}
-						<WebSourcesTrigger
-							sources={run.webSources}
-							expanded={sourcesOpen}
-							onToggle={() => setSourcesOpen((v) => !v)}
-						/>
-					</div>
-					{sourcesOpen && <WebSourcesPanel sources={run.webSources} />}
-				</>
-			) : (
-				toggleButton
-			)}
-		</Step>
+		<div className="pw-step pw-step-summary" data-kind={stepKind}>
+			<div className="pw-body">
+				{run.webSources.length > 0 ? (
+					<>
+						<div className="pw-summary-row">
+							{toggleButton}
+							<WebSourcesTrigger
+								sources={run.webSources}
+								expanded={sourcesOpen}
+								onToggle={() => setSourcesOpen((v) => !v)}
+							/>
+						</div>
+						{sourcesOpen && <WebSourcesPanel sources={run.webSources} />}
+					</>
+				) : (
+					toggleButton
+				)}
+			</div>
+		</div>
 	);
 }
 
-function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: string; onInspectTool?: (toolCallId: string) => void; onOpenFile?: (path: string) => void }) {
+function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: ProcessItem; cwd?: string; onInspectTool?: (toolCallId: string) => void; onOpenFile?: (path: string) => void }) {
 	switch (item.kind) {
 		case "think":
 			return <ThinkStep text={item.text} live={item.live} startedAt={item.startedAt} />;
@@ -1720,7 +1735,6 @@ function TurnBlockView({
 	contextFiles,
 	retryNotice,
 	streamStartedAt,
-	runningTool,
 	outputTokens,
 	workingMessage,
 	onFork,
@@ -1740,7 +1754,6 @@ function TurnBlockView({
 	contextFiles?: Array<ContextResource | string>;
 	retryNotice?: string | null;
 	streamStartedAt: number | null;
-	runningTool?: string;
 	outputTokens?: number;
 	workingMessage?: string | null;
 	onFork?: (entryId: string) => void;
@@ -1808,7 +1821,8 @@ function TurnBlockView({
 		}
 		return duration;
 	};
-	const blocks: Block[] = turnLive ? items.map((item) => ({ kind: "item", item })) : collapseRuns(items, finalIdx, spanOf);
+	const blocks: ProcessBlock[] = buildProcessBlocks(items, finalIdx, spanOf, { turnLive, cwd });
+	const turnCluster = collectClusterKinds(items, cwd, 4);
 	const turnWeb = (() => {
 		let hasWeb = false;
 		let hasSearch = false;
@@ -1826,8 +1840,6 @@ function TurnBlockView({
 			sources: batches.length > 0 ? mergeWebSources(batches) : EMPTY_WEB_SOURCES,
 		};
 	})();
-	const last = items[items.length - 1];
-	const hasLiveStep = Boolean(runningTool) || (last?.kind === "think" && last.live) || (last?.kind === "narr" && last.live);
 	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
 	const canCollapseProcess = !turnLive && finalIdx >= 0;
 	const processCollapsed = !processOpen && canCollapseProcess;
@@ -1859,6 +1871,7 @@ function TurnBlockView({
 								aria-expanded={processOpen}
 								onClick={() => setProcessOpen((v) => !v)}
 							>
+								{turnCluster.length > 0 && <ActionCluster kinds={turnCluster} />}
 								<span>
 									{turnDurationMs !== undefined && turnDurationMs > 0
 										? t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))
@@ -1903,6 +1916,11 @@ function TurnBlockView({
 							{blocks.map((b) => {
 								if (b.kind === "item") return <ItemView key={b.item.key} item={b.item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />;
 								const open = expanded.has(b.key);
+								const completedThoughts = b.items.filter(
+									(it): it is Extract<ProcessItem, { kind: "think" }> => it.kind === "think" && !it.live,
+								);
+								const useThread = completedThoughts.length >= 2;
+								const bodyItems = useThread ? b.items.filter((it) => it.kind !== "think" || it.live) : b.items;
 								return (
 									<div key={b.key} className="pw-run" data-open={open || undefined}>
 										<SummaryStep
@@ -1915,12 +1933,19 @@ function TurnBlockView({
 												return next;
 											})}
 										/>
-										{open && b.items.map((item) => <ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />)}
+										{open && (
+											<div className="pw-phase-body">
+												{useThread && <ThoughtThread thoughts={completedThoughts} />}
+												{bodyItems.map((item) => (
+													<ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />
+												))}
+											</div>
+										)}
 									</div>
 								);
 							})}
 							{isLast && retryNotice && <RetryStep text={retryNotice} />}
-							{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} hasLiveStep={hasLiveStep} />}
+							{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} />}
 						</div>
 					</div>
 				</div>
@@ -2184,7 +2209,6 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 		prev.lastAssistantIndex !== next.lastAssistantIndex ||
 		prev.retryNotice !== next.retryNotice ||
 		prev.streamStartedAt !== next.streamStartedAt ||
-		prev.runningTool !== next.runningTool ||
 		prev.outputTokens !== next.outputTokens ||
 		prev.workingMessage !== next.workingMessage ||
 		prev.contextFiles !== next.contextFiles ||
@@ -2356,7 +2380,6 @@ export function ChatWindow({
 	useEffect(() => {
 		setStreamStartedAt((prev) => (isStreaming ? prev ?? (lastUserTs && Date.now() - lastUserTs < 6 * 3600_000 ? lastUserTs : Date.now()) : null));
 	}, [isStreaming, lastUserTs]);
-	const runningTool = useMemo(() => Object.values(tools).find((tool) => tool.state === "running")?.name, [tools]);
 	const lastAssistantIndex = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === "assistant") return i;
 		return -1;
@@ -2643,7 +2666,6 @@ export function ChatWindow({
 											contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
 											retryNotice={retryNotice}
 											streamStartedAt={compactingNow ? null : streamStartedAt}
-											runningTool={runningTool}
 											outputTokens={stats?.tokens.output}
 											workingMessage={workingMessage}
 											onFork={onFork}
@@ -2662,7 +2684,7 @@ export function ChatWindow({
 						{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
 						{isStreaming && !compactingNow && streamStartedAt && lastContentTurn < 0 && (
 							<div className="pw-turn">
-								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} hasLiveStep={Boolean(runningTool)} />
+								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} />
 							</div>
 						)}
 						{/* 重连提示：跟随消息流显示在最后一条输出下面 */}

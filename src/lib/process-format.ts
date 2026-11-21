@@ -41,6 +41,21 @@ export function relativizePath(path: string, cwd?: string): string {
 	return p;
 }
 
+/** 展示层路径压缩：工作区内保持相对路径；临时目录缩成 Temp/…，家目录缩成 ~/…（保留完整路径在 tooltip） */
+export function compactDisplayPath(path: string, cwd?: string): string {
+	const rel = relativizePath(path, cwd);
+	if (!rel) return rel;
+	const tempWin = rel.match(/\/AppData\/Local\/Temp\/(.+)$/i);
+	if (tempWin) return `Temp/${tempWin[1]}`;
+	const tempMac = rel.match(/^\/private\/var\/folders\/[^/]+\/[^/]+\/T\/(.+)$/);
+	if (tempMac) return `Temp/${tempMac[1]}`;
+	const tempUnix = rel.match(/^\/tmp\/(.+)$/);
+	if (tempUnix) return `Temp/${tempUnix[1]}`;
+	const home = rel.match(/^(?:[A-Za-z]:)?\/(?:Users|home)\/[^/]+\/(.+)$/);
+	if (home) return `~/${home[1]}`;
+	return rel;
+}
+
 export function basename(p: string): string {
 	const parts = canonPath(p).split("/").filter(Boolean);
 	return parts[parts.length - 1] ?? p;
@@ -353,4 +368,360 @@ export function trimNoiseTail(lines: string[]): string[] {
 	let end = lines.length;
 	while (end > 0 && !/[\p{L}\p{N}]/u.test(lines[end - 1])) end -= 1;
 	return end === lines.length ? lines : lines.slice(0, end);
+}
+
+// ---------- 命令意图提炼（将冗长 Shell 脚手架转为紧凑人话标签） ----------
+
+export type CommandIntentCategory =
+	| "port_proc"
+	| "dir_list"
+	| "code_search"
+	| "file_read"
+	| "script_py"
+	| "script_node"
+	| "test_check"
+	| "type_check"
+	| "build"
+	| "git_inspect"
+	| "git_write"
+	| "net_capture"
+	| "sqlite"
+	| "http"
+	| "env_probe";
+
+export interface CommandIntent {
+	category: CommandIntentCategory;
+	/** 提炼出的关键目标（端口、路径、测试文件或工具名）；为空时退回默认摘要 */
+	target: string;
+	lines: number;
+}
+
+const SHELL_PATH_TOKEN = /"([^"]+)"|'([^']+)'|(\S+)/g;
+
+function extractTokens(segment: string): string[] {
+	const out: string[] = [];
+	for (const m of segment.matchAll(SHELL_PATH_TOKEN)) {
+		const raw = m[1] ?? m[2] ?? m[3] ?? "";
+		if (raw) out.push(raw);
+	}
+	return out;
+}
+
+function unquote(s: string): string {
+	return s.replace(/^["']|["']$/g, "").trim();
+}
+
+function compactTarget(s: string, max = 64): string {
+	const clean = s.replace(/\s+/g, " ").trim();
+	return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
+}
+
+function peelLeadingCd(text: string): { dirHint: string; body: string } {
+	let body = text.trim();
+	let dirHint = "";
+	for (;;) {
+		const envPs = body.match(/^(?:\$env:[A-Za-z0-9_]+\s*=\s*(?:"[^"]*"|'[^']*'|\S+)|set\s+[A-Za-z0-9_]+=[^\s&;]+)\s*(?:&&|;)\s*(.+)$/i);
+		if (envPs) {
+			body = envPs[1].trim();
+			continue;
+		}
+		const m = body.match(/^(?:cd|pushd|Set-Location)\s+(?:\/d\s+)?("[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*(.+)$/i);
+		if (!m) break;
+		dirHint = compactDisplayPath(unquote(m[1]));
+		body = m[2].trim();
+	}
+	return { dirHint, body };
+}
+
+function isNoiseTarget(s: string): boolean {
+	const t = s.trim();
+	if (!t || t === "Temp") return true;
+	if (/^[.*…_-]+$/.test(t)) return true;
+	if (/^\*+(?:[/.][^*]+)?$/.test(t) || /^\*\.[a-z0-9]+$/i.test(t)) return true;
+	if (/^\d+$/.test(t)) return true;
+	return false;
+}
+
+function normalizeShellPathToken(raw: string, cwd?: string): string {
+	const cleaned = unquote(raw).replace(/\$env:([A-Za-z0-9_]+)/gi, "%$1%");
+	if (!cleaned || cleaned.startsWith("-")) return "";
+	const out = compactDisplayPath(cleaned, cwd);
+	return isNoiseTarget(out) ? "" : out;
+}
+
+const PATH_FLAG_WITH_VALUE = /^-(?:filter|include|exclude|depth|erroraction|ea|encoding|sort|totalcount|tail|head|first|last|skip|select|context|pattern|l|n|c|f|m|i)$/i;
+
+function extractPathsFromArgs(segment: string, cwd?: string): string[] {
+	const tokens = extractTokens(segment).slice(1);
+	const paths: string[] = [];
+	for (let i = 0; i < tokens.length; i += 1) {
+		const tok = tokens[i];
+		if (tok === "|" || tok === ">" || tok === ">>" || tok.startsWith("2>")) break;
+		if (tok.startsWith("-")) {
+			// 跳过带参数标志的值，避免 SilentlyContinue / TotalCount 60 / *.ts 等进入路径列表
+			if (!tok.includes("=") && PATH_FLAG_WITH_VALUE.test(tok)) i += 1;
+			continue;
+		}
+		if (tok === "," || tok === "&&" || tok === ";") continue;
+		for (const piece of tok.split(",")) {
+			const normalized = normalizeShellPathToken(piece, cwd);
+			if (normalized) paths.push(normalized);
+		}
+		if (paths.length >= 2) break;
+	}
+	return [...new Set(paths)];
+}
+
+const SEARCH_VALUE_FLAGS = new Set([
+	"-a", "-b", "-c", "-m", "-g", "-t", "-f",
+	"--glob", "--iglob", "--type", "--type-not",
+	"--max-count", "--max-depth", "--context", "--after-context", "--before-context",
+	"-j", "--threads", "--sort", "--color", "--encoding",
+	"-filter", "-include", "-exclude", "-context", "-encoding",
+]);
+
+function extractSearchIntent(tokensAfterVerb: string[], cwd?: string, dirHint = ""): string {
+	let explicitPattern = "";
+	const pos: string[] = [];
+	for (let i = 0; i < tokensAfterVerb.length; i += 1) {
+		const tok = tokensAfterVerb[i];
+		if (tok === "|" || tok === ">" || tok === ">>" || tok.startsWith("2>")) break;
+		const low = tok.toLowerCase();
+		if (low === "-e" || low === "--regexp" || low === "-pattern") {
+			if (i + 1 < tokensAfterVerb.length) {
+				explicitPattern = unquote(tokensAfterVerb[i + 1]);
+				i += 1;
+			}
+			continue;
+		}
+		if (tok.startsWith("-")) {
+			if (!tok.includes("=") && SEARCH_VALUE_FLAGS.has(low)) i += 1;
+			continue;
+		}
+		pos.push(unquote(tok));
+	}
+	const rawPattern = explicitPattern || (pos[0] ?? "");
+	const rawPath = explicitPattern ? pos[0] : pos[1];
+	const cleanPattern =
+		rawPattern && !isNoiseTarget(rawPattern) && rawPattern.length <= 32 && !/[()[\]{}|]/.test(rawPattern)
+			? rawPattern
+			: "";
+	let cleanPath = rawPath ? compactDisplayPath(rawPath, cwd) : dirHint;
+	if (cleanPath && isNoiseTarget(cleanPath)) cleanPath = "";
+	return [cleanPattern, cleanPath].filter(Boolean).join(" · ");
+}
+
+function extractPortOrPid(segment: string): string {
+	const port = segment.match(/(?:-LocalPort|port\s+|[:=])\s*(\d{2,5})\b/i)?.[1];
+	const pid = segment.match(/(?:-Id\s+|ProcessId=)(\d+)\b/i)?.[1];
+	const parts: string[] = [];
+	if (port) parts.push(`:${port}`);
+	if (pid) parts.push(`PID ${pid}`);
+	if (parts.length) return parts.join(" · ");
+	const procName = segment.match(/(?:-Name\s+|--?process\s+)["']?([A-Za-z0-9._-]+)["']?/i)?.[1];
+	return procName ?? "";
+}
+
+/**
+ * 识别常见开发 / 诊断命令的语义意图与核心对象（纯文本、无语言依赖）。
+ * 无法安全归类时返回 null，前端回退为常规的 `cleanCommand` 展示。
+ */
+function describeCommandIntentInner(command: string, cwd?: string, depth = 0): CommandIntent | null {
+	const cleaned = cleanCommand(command, cwd);
+	if (!cleaned.text) return null;
+	const { dirHint, body } = peelLeadingCd(cleaned.text);
+	const segments = splitTopLevel(body).map((s) => s.trim()).filter(Boolean);
+	const primary = (segments[0] ?? body).replace(/^(?:\w+=\S*\s+)+/, "").trim();
+	const withoutVarAssign = primary.replace(/^\$[A-Za-z_][A-Za-z0-9_]*\s*=\s*/, "").trim();
+	const tokens = extractTokens(withoutVarAssign);
+	const rawVerb = basename(tokens[0] ?? "").replace(/\.(exe|cmd|bat|ps1)$/i, "").toLowerCase();
+	const sub = (tokens[1] ?? "").toLowerCase();
+	const lower = body.toLowerCase();
+
+	// 0. 剥开一层外壳封装命令（powershell -Command "..." / bash -lc "..." / cmd /c "..."）
+	if (depth === 0 && (rawVerb === "powershell" || rawVerb === "pwsh" || rawVerb === "bash" || rawVerb === "sh" || rawVerb === "cmd")) {
+		const flagIdx = tokens.findIndex((t, idx) => idx > 0 && /^-(?:command|c|lc)$/i.test(t) || t.toLowerCase() === "/c");
+		const inner = flagIdx > 0 ? unquote(tokens.slice(flagIdx + 1).join(" ")) : "";
+		if (inner) {
+			const nested = describeCommandIntentInner(inner, cwd, 1);
+			if (nested) return { ...nested, lines: cleaned.lines };
+		}
+	}
+
+	// 1. 网络抓包 / 抓包工具检测
+	if (
+		rawVerb === "tshark" ||
+		rawVerb === "dumpcap" ||
+		rawVerb === "pktmon" ||
+		rawVerb === "tcpdump" ||
+		/\b(tshark|dumpcap|pktmon|tcpdump|scapy)\b/.test(lower)
+	) {
+		const foundTools = [...new Set(lower.match(/\b(tshark|dumpcap|pktmon|tcpdump|scapy)\b/g) ?? [])];
+		const port = extractPortOrPid(body);
+		const target = [foundTools.slice(0, 3).join(" / "), port].filter(Boolean).join(" · ");
+		return { category: "net_capture", target: compactTarget(target || dirHint), lines: cleaned.lines };
+	}
+
+	// 2. 端口与进程探测
+	if (
+		rawVerb === "get-nettcpconnection" ||
+		rawVerb === "get-process" ||
+		rawVerb === "lsof" ||
+		rawVerb === "ss" ||
+		rawVerb === "netstat" ||
+		rawVerb === "tasklist" ||
+		rawVerb === "ps" ||
+		rawVerb === "pgrep" ||
+		(rawVerb === "get-ciminstance" && /win32_process/i.test(withoutVarAssign))
+	) {
+		return {
+			category: "port_proc",
+			target: compactTarget(extractPortOrPid(withoutVarAssign) || dirHint),
+			lines: cleaned.lines,
+		};
+	}
+
+	// 3. 测试 / 类型检查 / 打包构建
+	if (
+		rawVerb === "vitest" ||
+		rawVerb === "pytest" ||
+		rawVerb === "jest" ||
+		rawVerb === "playwright" ||
+		((rawVerb === "npx" || rawVerb === "pnpm" || rawVerb === "bunx") && /^(vitest|jest|playwright)$/.test(sub)) ||
+		((rawVerb === "npm" || rawVerb === "pnpm" || rawVerb === "yarn" || rawVerb === "bun") && (sub === "test" || (sub === "run" && /^test(:|$)/.test(tokens[2]?.toLowerCase() ?? "")))) ||
+		((rawVerb === "cargo" || rawVerb === "go") && sub === "test")
+	) {
+		const testFile = tokens.find((tok) => /\.(?:test|spec)\.[a-z]+$/i.test(unquote(tok)));
+		const target = testFile ? relativizePath(unquote(testFile), cwd) : dirHint;
+		return { category: "test_check", target: compactTarget(target), lines: cleaned.lines };
+	}
+
+	if (
+		rawVerb === "tsc" ||
+		rawVerb === "eslint" ||
+		rawVerb === "pyright" ||
+		rawVerb === "mypy" ||
+		rawVerb === "ruff" ||
+		((rawVerb === "npx" || rawVerb === "pnpm" || rawVerb === "bunx") && /^(tsc|eslint|pyright)$/.test(sub)) ||
+		((rawVerb === "npm" || rawVerb === "pnpm" || rawVerb === "yarn") && sub === "run" && /^(typecheck|lint|check)$/.test(tokens[2]?.toLowerCase() ?? ""))
+	) {
+		return { category: "type_check", target: compactTarget(dirHint), lines: cleaned.lines };
+	}
+
+	if (
+		((rawVerb === "npm" || rawVerb === "pnpm" || rawVerb === "yarn" || rawVerb === "bun") && (sub === "build" || (sub === "run" && /^build(:|$)/.test(tokens[2]?.toLowerCase() ?? "")))) ||
+		((rawVerb === "next" || rawVerb === "vite" || rawVerb === "cargo" || rawVerb === "go") && sub === "build")
+	) {
+		return { category: "build", target: compactTarget(dirHint), lines: cleaned.lines };
+	}
+
+	// 4. Git 操作
+	if (rawVerb === "git") {
+		if (sub === "grep") {
+			return { category: "code_search", target: compactTarget(extractSearchIntent(tokens.slice(2), cwd, dirHint)), lines: cleaned.lines };
+		}
+		if (GIT_HEAD_SUBS.has(sub) || sub === "rev-parse" || sub === "describe") {
+			return { category: "git_inspect", target: compactTarget(withoutVarAssign), lines: cleaned.lines };
+		}
+		if (sub) {
+			return { category: "git_write", target: compactTarget(withoutVarAssign), lines: cleaned.lines };
+		}
+	}
+
+	// 5. Python / Node 内联或脚本执行
+	if (rawVerb === "python" || rawVerb === "python3" || rawVerb === "py") {
+		const pyFile = tokens.slice(1).find((tok) => /\.py$/i.test(unquote(tok)));
+		const modIdx = tokens.findIndex((tok, i) => i > 0 && tok === "-m");
+		const modName = modIdx > 0 ? tokens[modIdx + 1] : undefined;
+		let target = pyFile ? compactDisplayPath(unquote(pyFile), cwd) : modName ? `-m ${modName}` : "";
+		if (!target) {
+			const hintFile = command.match(/([\w./-]+\.(?:py|db|sqlite|json|jsonl|log))\b/i)?.[1];
+			const hintPort = command.match(/(?:127\.0\.0\.1|localhost):(\d{2,5})/i)?.[1];
+			target = hintFile ? basename(hintFile) : hintPort ? `:${hintPort}` : dirHint;
+		}
+		return { category: "script_py", target: compactTarget(target), lines: cleaned.lines };
+	}
+	if (
+		(rawVerb === "node" &&
+			(sub === "-e" || sub === "--eval" || sub === "--input-type" || tokens.slice(1).some((tok) => /\.(?:m?js|cjs|tsx?)$/i.test(unquote(tok))))) ||
+		rawVerb === "tsx"
+	) {
+		const jsFile = tokens.slice(1).find((tok) => /\.(?:m?js|cjs|tsx?)$/i.test(unquote(tok)));
+		return { category: "script_node", target: compactTarget(jsFile ? compactDisplayPath(unquote(jsFile), cwd) : dirHint), lines: cleaned.lines };
+	}
+
+	// 6. SQLite 查询
+	if (rawVerb === "sqlite3") {
+		const dbFile = tokens.slice(1).find((tok) => !tok.startsWith("-"));
+		return { category: "sqlite", target: compactTarget(dbFile ? relativizePath(unquote(dbFile), cwd) : dirHint), lines: cleaned.lines };
+	}
+
+	// 7. 代码 / 文本搜索
+	if (rawVerb === "rg" || rawVerb === "grep" || rawVerb === "egrep" || rawVerb === "fgrep" || rawVerb === "ag" || rawVerb === "findstr" || rawVerb === "select-string" || rawVerb === "sls") {
+		const target = extractSearchIntent(tokens.slice(1), cwd, dirHint);
+		return { category: "code_search", target: compactTarget(target), lines: cleaned.lines };
+	}
+
+	// 8. 目录遍历与存在性探测
+	if (
+		rawVerb === "get-childitem" ||
+		rawVerb === "gci" ||
+		rawVerb === "test-path" ||
+		rawVerb === "resolve-path" ||
+		rawVerb === "ls" ||
+		rawVerb === "dir" ||
+		rawVerb === "tree" ||
+		rawVerb === "find" ||
+		rawVerb === "fd" ||
+		/^for\s+\w+\s+in\b/i.test(withoutVarAssign)
+	) {
+		let paths = extractPathsFromArgs(withoutVarAssign, cwd);
+		if (paths.length === 0 && /^for\s+\w+\s+in\b/i.test(withoutVarAssign)) {
+			const inMatch = withoutVarAssign.match(/\bin\s+([^;]+)/i)?.[1] ?? "";
+			paths = extractTokens(inMatch).map((tok) => normalizeShellPathToken(tok, cwd)).filter(Boolean).slice(0, 2);
+		}
+		if (paths.length === 0 && dirHint && !isNoiseTarget(dirHint)) paths = [dirHint];
+		return { category: "dir_list", target: compactTarget(paths.join(" · ")), lines: cleaned.lines };
+	}
+
+	// 9. 文件读取与日志查看
+	if (
+		rawVerb === "cat" ||
+		rawVerb === "head" ||
+		rawVerb === "tail" ||
+		rawVerb === "get-content" ||
+		rawVerb === "gc" ||
+		rawVerb === "get-item" ||
+		rawVerb === "gi" ||
+		rawVerb === "get-itemproperty" ||
+		rawVerb === "type" ||
+		rawVerb === "wc" ||
+		rawVerb === "stat" ||
+		rawVerb === "file" ||
+		rawVerb === "nl" ||
+		rawVerb === "sed" ||
+		rawVerb === "jq"
+	) {
+		const paths = extractPathsFromArgs(withoutVarAssign, cwd);
+		const safeDir = dirHint && !isNoiseTarget(dirHint) ? dirHint : "";
+		const target = paths.length > 0 ? paths.join(" · ") : safeDir;
+		return { category: "file_read", target: compactTarget(target), lines: cleaned.lines };
+	}
+
+	// 10. 网络请求与环境探测
+	if (rawVerb === "curl" || rawVerb === "wget" || rawVerb === "invoke-webrequest" || rawVerb === "invoke-restmethod" || rawVerb === "iwr" || rawVerb === "irm") {
+		const urlTok = tokens.find((tok) => /^https?:\/\//i.test(unquote(tok)));
+		return { category: "http", target: compactTarget(urlTok ? unquote(urlTok) : dirHint), lines: cleaned.lines };
+	}
+
+	if (rawVerb === "which" || rawVerb === "where" || rawVerb === "get-command") {
+		const cmds = tokens.slice(1).filter((tok) => !tok.startsWith("-") && !tok.startsWith("2>")).slice(0, 3);
+		return { category: "env_probe", target: compactTarget(cmds.join(" / ") || dirHint), lines: cleaned.lines };
+	}
+
+	return null;
+}
+
+export function describeCommandIntent(command: string, cwd?: string): CommandIntent | null {
+	return describeCommandIntentInner(command, cwd, 0);
 }
