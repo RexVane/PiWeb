@@ -10,7 +10,7 @@ import type { PreparedResource } from "@/lib/resources/development";
 import { useResourceText } from "./text";
 import { ResourceFrame } from "./ResourceFrame";
 
-export type StartResourceSession = (cwd: string, prompt: string) => Promise<boolean>;
+export type StartResourceSession = (cwd: string, prompt?: string) => Promise<boolean>;
 
 function normalizeInstallSource(value: string) {
 	const source = value.trim();
@@ -36,7 +36,7 @@ export function ResourceInstallModal({ open, cwd, mode = "install", busy: parent
 	const [error, setError] = useState("");
 	const [prepared, setPrepared] = useState<PreparedResource | null>(null);
 	const [preview, setPreview] = useState<WebResourceView | null>(null);
-	const [designPrompt, setDesignPrompt] = useState("");
+	const [rootLoading, setRootLoading] = useState(false);
 	const busyRef = useRef(false);
 	const operation = useRef(0);
 	const callbacks = useRef({ onClose, onStartSession, onSubmit });
@@ -48,15 +48,21 @@ export function ResourceInstallModal({ open, cwd, mode = "install", busy: parent
 		busyRef.current = true; setBusy(true); setError("");
 		const id = ++operation.current;
 		try {
-			const response = await clientFetch("/api/resources/development", { method: "POST", headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action, root: chosenRoot || undefined, source: existingSource, preparedCwd: action === "adapt" ? previous?.cwd : undefined }) });
-			const result = await response.json();
-			if (id !== operation.current) return;
-			if (!result.success) throw new Error(result.error || text.operationFailed);
-			setPrepared(result.data.prepared); setPreview(null); setDesignPrompt(result.data.prompt || "");
-			notifyResourcesChanged();
+			let workspace = action === "design" ? previous : undefined;
+			let prompt: string | undefined;
+			if (!workspace) {
+				const response = await clientFetch("/api/resources/development", { method: "POST", headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ action, root: chosenRoot || undefined, source: existingSource, preparedCwd: action === "adapt" ? previous?.cwd : undefined }) });
+				const result = await response.json();
+				if (id !== operation.current) return;
+				if (!result.success) throw new Error(result.error || text.operationFailed);
+				workspace = result.data.prepared as PreparedResource;
+				if (action === "adapt") prompt = result.data.prompt;
+				setPrepared(workspace); setPreview(null);
+				notifyResourcesChanged();
+			}
 			if (action !== "inspect" && callbacks.current.onStartSession) {
-				const started = await callbacks.current.onStartSession(result.data.prepared.cwd, result.data.prompt);
+				const started = await callbacks.current.onStartSession(workspace.cwd, prompt);
 				if (id !== operation.current) return;
 				if (started) callbacks.current.onClose(); else setError(text.operationFailed);
 			}
@@ -67,19 +73,21 @@ export function ResourceInstallModal({ open, cwd, mode = "install", busy: parent
 	useEffect(() => {
 		if (!open) { operation.current += 1; busyRef.current = false; return; }
 		let active = true;
-		setError(""); setPrepared(null); setPreview(null); setDesignPrompt(""); setAdvancedOpen(false); setSource(""); setBusy(false); setPicker(false);
+		setError(""); setPrepared(null); setPreview(null); setAdvancedOpen(false); setSource(""); setBusy(false); setPicker(false);
+		setRoot(""); setRootLoading(mode === "design");
 		if (mode === "design") void clientFetch(`/api/resources?cwd=${encodeURIComponent(cwd)}`).then((response) => response.json()).then((result) => {
-			if (!active || !result.success) return;
-			const directory = result.data.preferences?.developmentRoot || "";
-			setRoot(directory);
-			if (directory) void prepare("design", directory);
-		}).catch(() => undefined);
+			if (active && result.success) setRoot(result.data.preferences?.developmentRoot || "");
+		}).catch(() => undefined).finally(() => { if (active) setRootLoading(false); });
 		return () => { active = false; operation.current += 1; busyRef.current = false; };
-	}, [open, cwd, mode, prepare]);
+	}, [open, cwd, mode]);
 
 	if (!open) return null;
 	const changeSource = (value: string) => { setSource(value); setPrepared(null); setPreview(null); setError(""); };
 	const installSource = normalizeInstallSource(source);
+	const applyDirectory = (directory: string) => {
+		if (mode === "design") setRoot(directory);
+		else changeSource(directory);
+	};
 	const pickLocalDirectory = async () => {
 		if (busyRef.current || parentBusy) return;
 		busyRef.current = true; setBusy(true); setError("");
@@ -91,12 +99,12 @@ export function ResourceInstallModal({ open, cwd, mode = "install", busy: parent
 			if (id !== operation.current) return;
 			if (!response.ok || !result.success) throw new Error(result.error || text.operationFailed);
 			if (result.data?.remote || result.data?.browse) setPicker(true);
-			else if (typeof result.data?.path === "string" && result.data.path) changeSource(result.data.path);
+			else if (typeof result.data?.path === "string" && result.data.path) applyDirectory(result.data.path);
 		} catch (failure) { if (id === operation.current) setError(failure instanceof Error ? failure.message : text.operationFailed); }
 		finally { if (id === operation.current) { busyRef.current = false; setBusy(false); } }
 	};
 	const start = (action: "inspect" | "adapt" | "design") => {
-		if (action === "design" && !root) { setPicker(true); return; }
+		if (parentBusy || action === "design" && (rootLoading || !onStartSession)) return;
 		void prepare(action, action === "design" ? root : "", action === "design" ? undefined : installSource, prepared);
 	};
 	const install = async () => {
@@ -165,21 +173,16 @@ export function ResourceInstallModal({ open, cwd, mode = "install", busy: parent
 					</div>
 					{errorMessage}
 					<footer className="flex justify-end"><button type="submit" className="btn-primary-white" disabled={disabled || !source.trim() || (local && !cwd)}>{text.install}</button></footer>
-				</form> : <>
-					<div className="flex flex-col gap-2"><span style={{ fontSize: 13 }}>{text.developmentRoot}</span><div className="flex items-center gap-2"><span className="min-w-0 flex-1 break-all" style={{ fontSize: 12 }}>{root || "—"}</span><button type="button" className="btn-outline" disabled={disabled} onClick={() => setPicker(true)}>{text.chooseDirectory}</button></div><p style={{ fontSize: 11.5, color: "var(--dsw-label-caption)" }}>{text.directoryHint}</p></div>
-					{preparedContent}
+				</form> : <form className="flex flex-col gap-4" aria-busy={disabled} onSubmit={(event) => { event.preventDefault(); start("design"); }}>
+					<div className="flex flex-col gap-2"><span className="text-sm">{text.designDirectory}</span><div className="flex items-center gap-2"><span className="min-w-0 flex-1 break-all text-xs">{prepared?.cwd || root || "—"}</span><button type="button" className="btn-outline" disabled={disabled || rootLoading || Boolean(prepared)} onClick={() => void pickLocalDirectory()}>{text.chooseDirectory}</button></div><p className="text-xs text-[var(--dsw-label-caption)]">{text.designDirectoryHint}</p></div>
 					{errorMessage}
-					<footer className="flex justify-end">{disabled ? <span role="status">{text.creating}</span> : <button type="button" className="btn-primary-white" disabled={!onStartSession} onClick={() => {
-						if (prepared && designPrompt && onStartSession) void onStartSession(prepared.cwd, designPrompt).then((started) => { if (started) onClose(); }); else start("design");
-					}}>{text.startDesign}</button>}</footer>
-				</>}
+					<footer className="flex justify-end"><button type="submit" className="btn-primary-white" disabled={disabled || rootLoading || !onStartSession}>{disabled ? text.creating : prepared ? text.continueDesign : text.startDesign}</button></footer>
+				</form>}
 			</div>
 		</div>
-		{picker && <div className="relative z-[140]"><DirectoryPicker open title={mode === "install" ? text.pickLocalDirectory : undefined} onCancel={() => setPicker(false)} onConfirm={(directory) => {
+		{picker && <div className="relative z-[140]"><DirectoryPicker open title={text.pickLocalDirectory} onCancel={() => setPicker(false)} onConfirm={(directory) => {
 			setPicker(false);
-			if (mode === "install") { changeSource(directory); return; }
-			setRoot(directory);
-			void prepare("design", directory);
+			applyDirectory(directory);
 		}} /></div>}
 	</>;
 }
