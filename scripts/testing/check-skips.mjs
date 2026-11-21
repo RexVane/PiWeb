@@ -12,6 +12,22 @@ const windowsOnly = new Map([
 	]],
 	["tests/powershell-encoding.test.ts", ["decodes multilingual output without replacement characters"]],
 ]);
+const posixOnly = new Map([
+	["tests/recycle-bin.test.ts", [
+		"creates restorable freedesktop metadata in an isolated XDG Trash",
+		"recycles a long filename without overflowing the Trash metadata filename",
+		"rejects a linked or public Linux Trash directory and retains the source",
+	]],
+]);
+// 反向：只在 macOS 上成立的真实回收站用例，其他平台必须跳过。
+const darwinOnly = new Map([
+	["tests/integration/native-trash.test.ts", [
+		"puts a file into the real Trash without a backup or body changes",
+		"puts only a file link in Trash and retains the external target",
+		"recycles a directory link itself rather than coercing it to its target",
+		"recycles a skill directory intact, including its link rather than the link target",
+	]],
+]);
 export function unexpectedSkips(report, { platform = process.platform, nodeVersion = process.versions.node, cwd = process.cwd(), tunnelEnabled = process.env.PIWEB_TEST_TUNNEL === "1", ci = /^(1|true)$/i.test(process.env.CI ?? "") } = {}) {
 	if (!report || !Array.isArray(report.testResults) || !(report.numTotalTests > 0)) throw new Error("Missing or empty Vitest report");
 	const [major, minor] = nodeVersion.split(".").map(Number);
@@ -28,6 +44,8 @@ export function unexpectedSkips(report, { platform = process.platform, nodeVersi
 			skipped.push(label);
 			const allowed = test.status !== "todo" && (
 				(platform !== "win32" && windowsOnly.get(file)?.includes(title))
+				|| (platform === "win32" && posixOnly.get(file)?.includes(title))
+				|| (platform !== "darwin" && darwinOnly.get(file)?.includes(title))
 				// remote-e2e.yml executes this exact case on both platforms with
 				// PIWEB_TEST_TUNNEL=1; an enabled network run must never skip it.
 				|| (!tunnelEnabled && file === "tests/remote-tunnel.integration.test.ts" && title === "serves the LAN entry through a public https URL with the mobile CSS injected")

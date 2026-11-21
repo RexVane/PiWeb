@@ -20,6 +20,7 @@ import { isMainModule } from "./entrypoint.mjs";
 import { PI_PACKAGE, verifyPiRuntimePins } from "./runtime/pi-packages.mjs";
 import { isolatedCommandEnv, OFFICIAL_REGISTRY_ARGS } from "./update-environment.mjs";
 import { npmCommand } from "./npm-command.mjs";
+import { recycleGeneratedFixtureSync } from "./testing/recycle-fixture.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -88,7 +89,7 @@ export function verifyPackedPackage(root, { log = console.log, runtime = false }
 		log(`[piweb] ${entry.filename}: ${files.length} files, ${(bytes / 1024 / 1024).toFixed(1)} MB, build ${build.buildId}`);
 		return { filename: entry.filename, files, buildId: build.buildId, bytes };
 	} finally {
-		fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+		if (!recycleGeneratedFixtureSync(tmp)) log("[piweb] Verification files retained because system Trash was unavailable: " + tmp);
 	}
 }
 

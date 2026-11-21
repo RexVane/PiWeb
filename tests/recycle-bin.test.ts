@@ -50,7 +50,7 @@ afterEach(() => { Object.defineProperty(process, "platform", platform); vi.unstu
 
 describe("system Trash boundary and native protocol", () => {
 	it("uses macOS's file-URL Trash API with the path as an argument, not an interpolated alias", async () => {
-		setPlatform("darwin"); const quoted = path.join(root, "quoted' \" 中文\n.md"); await fs.rename(file, quoted);
+		setPlatform("darwin"); const quoted = path.join(root, platform.value === "win32" ? "quoted' 中文.md" : "quoted' \" 中文\n.md"); await fs.rename(file, quoted);
 		await expect(moveToTrash(quoted, { managedRoot: root, expectedCanonical: quoted, expectedLink: false })).resolves.toEqual({ removed: quoted });
 		expect(native.calls).toHaveLength(1); expect(native.calls[0].command).toBe("/usr/bin/osascript");
 		expect(native.calls[0].args.at(-1)).toBe(quoted);

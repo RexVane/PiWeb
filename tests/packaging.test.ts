@@ -9,6 +9,7 @@
  *   3. 发布闸门用真实 tarball 解包后校验，白名单漏文件时直接失败。
  */
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -24,7 +25,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 async function tempDir(prefix: string) {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
-	cleanups.push(() => fs.rm(dir, { recursive: true, force: true }));
+	cleanups.push(() => recycleGeneratedFixture(dir));
 	return dir;
 }
 

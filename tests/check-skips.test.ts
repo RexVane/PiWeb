@@ -26,6 +26,11 @@ describe("CI skipped test guard", () => {
 		expect(unexpectedSkips(sample, { platform: "linux" }).unexpected).toEqual([]);
 		expect(unexpectedSkips(sample, { platform: "win32" }).unexpected).toHaveLength(1);
 	});
+	it("allows Linux XDG Trash cases to skip on Windows only", () => {
+		const sample = report("tests/recycle-bin.test.ts", "creates restorable freedesktop metadata in an isolated XDG Trash");
+		expect(unexpectedSkips(sample, { platform: "win32" }).unexpected).toEqual([]);
+		expect(unexpectedSkips(sample, { platform: "linux" }).unexpected).toHaveLength(1);
+	});
 	it("allows the case-insensitive trust decision regression on non-Windows runners", () => {
 		const sample = report("tests/agent-resource-isolation.test.ts", "finds a remembered trust decision whatever case pi wrote the key in");
 		expect(unexpectedSkips(sample, { platform: "linux" }).unexpected).toEqual([]);
