@@ -125,7 +125,6 @@ export const ru: Dict = {
 	runningTool: "Выполняется {name}…",
 	thinkingLive: "Обдумывание",
 	thinkingStepLive: "Продумывает следующий шаг",
-	thinkThreadTitle: "Ход рассуждений · {n}",
 	stepRunning: "Выполняется",
 	stepRan: "Выполнено",
 	stepRead: "Прочитано",

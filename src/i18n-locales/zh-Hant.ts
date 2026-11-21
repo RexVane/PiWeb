@@ -125,7 +125,6 @@ export const zhHant: Dict = {
 	runningTool: "Running {name}…",
 	thinkingLive: "Thinking",
 	thinkingStepLive: "正在思考下一步",
-	thinkThreadTitle: "本階段推理 · {n} 段思考",
 	stepRunning: "Running",
 	stepRan: "已執行",
 	stepRead: "已讀取",

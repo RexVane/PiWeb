@@ -125,7 +125,6 @@ export const ja: Dict = {
 	runningTool: "{name} を実行中…",
 	thinkingLive: "思考中",
 	thinkingStepLive: "次のステップを思考中",
-	thinkThreadTitle: "この段階の推論 · {n} 件",
 	stepRunning: "実行中",
 	stepRan: "実行済み",
 	stepRead: "読み取り済み",

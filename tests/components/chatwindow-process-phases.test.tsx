@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * 过程时间轴（Phase Relay / ThoughtThread / ActionCluster / 语义命令 / 纯心跳 π 行）验证。
+ * 过程时间轴（Phase Relay / 原位思考穿插 / ActionCluster / 语义命令 / 纯心跳 π 行）验证。
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -143,7 +143,7 @@ describe("ChatWindow process phases UI", () => {
 		expect(screen.getByRole("button", { name: /正在思考下一步/ })).toBeTruthy();
 	});
 
-	it("groups >= 2 completed thoughts inside ThoughtThread without trailing preview, translates model command intent, and keeps raw user ! commands", () => {
+	it("keeps completed thoughts chronologically interleaved with tool steps inside expanded phase, translates model command intent, and keeps raw user ! commands", () => {
 		const fullPsCmd = "Get-NetTCPConnection -LocalPort 15721 | Select-Object LocalPort, OwningProcess";
 		const messages: WebMessage[] = [
 			{ role: "user", content: [{ type: "text", text: "audit proxy" }], timestamp: 0 },
@@ -197,11 +197,14 @@ describe("ChatWindow process phases UI", () => {
 		expect(summaryBtn.textContent).toContain("探测端口与进程");
 		fireEvent.click(summaryBtn);
 
-		// 3 thoughts grouped into ThoughtThread with no English trailing snippet
-		const threadBtn = screen.getByRole("button", { name: "本阶段推理 · 3 段思考" });
-		expect(threadBtn.textContent).not.toContain("Alpha thought");
-		fireEvent.click(threadBtn);
-		expect(container.querySelectorAll(".pw-think-bead").length).toBe(3);
+		// Thoughts stay chronologically interleaved with tool calls (think -> cmd -> think -> think)
+		const phaseSteps = Array.from(container.querySelectorAll(".pw-phase-body > .pw-step"));
+		expect(phaseSteps.map((el) => el.getAttribute("data-kind"))).toEqual(["think", "cmd", "think", "think"]);
+		expect(container.querySelector(".pw-think-list")).toBeNull();
+
+		const firstThinkBtn = screen.getByRole("button", { name: /Alpha thought paragraph one/ });
+		fireEvent.click(firstThinkBtn);
+		expect(container.querySelector(".pw-think-full")?.textContent).toBe("Alpha thought paragraph one.");
 
 		// Model command renders semantic intent + target + inspect badge, while raw command remains in expanded .pw-output
 		const cmdStep = container.querySelector('.pw-step[data-kind="cmd"]') as HTMLElement;

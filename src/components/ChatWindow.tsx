@@ -982,29 +982,6 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 	);
 });
 
-const ThoughtThread = memo(function ThoughtThread({ thoughts }: { thoughts: ReadonlyArray<Extract<ProcessItem, { kind: "think" }>> }) {
-	const [open, setOpen] = useState(false);
-	const { t } = useI18n();
-	return (
-		<Step kind="think">
-			<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-				<span className="pw-gist">{t.thinkThreadTitle.replace("{n}", String(thoughts.length))}</span>
-				<IconChevronRight14 size={11} className="pw-chev" />
-			</button>
-			{open && (
-				<div className="pw-think-list">
-					{thoughts.map((th) => (
-						<div key={th.key} className="pw-think-bead">
-							<span className="pw-think-bead-dot" aria-hidden="true" />
-							<pre className="pw-think-bead-text">{th.text}</pre>
-						</div>
-					))}
-				</div>
-			)}
-		</Step>
-	);
-});
-
 // ---------- 叙述：模型在工具之间说的话，作为阶段标题（基线对齐，主色） ----------
 
 const NarrationBlock = memo(function NarrationBlock({ text, live, error }: { text: string; live?: boolean; error?: boolean }) {
@@ -1311,8 +1288,7 @@ function SummaryStep({ run, expanded, onToggle }: { run: ProcessRun; expanded: b
 		if (run.durationMs !== undefined) {
 			parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
 		} else {
-			const thinkCount = run.items.filter((it) => it.kind === "think").length;
-			parts.push([thinkCount >= 2 ? t.thinkThreadTitle.replace("{n}", String(thinkCount)) : t.thinkLabel]);
+			parts.push([t.thinkLabel]);
 		}
 	} else {
 		const filesLabel = formatPhaseFiles(run.writtenFiles, tt);
@@ -1916,11 +1892,6 @@ function TurnBlockView({
 							{blocks.map((b) => {
 								if (b.kind === "item") return <ItemView key={b.item.key} item={b.item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />;
 								const open = expanded.has(b.key);
-								const completedThoughts = b.items.filter(
-									(it): it is Extract<ProcessItem, { kind: "think" }> => it.kind === "think" && !it.live,
-								);
-								const useThread = completedThoughts.length >= 2;
-								const bodyItems = useThread ? b.items.filter((it) => it.kind !== "think" || it.live) : b.items;
 								return (
 									<div key={b.key} className="pw-run" data-open={open || undefined}>
 										<SummaryStep
@@ -1935,8 +1906,7 @@ function TurnBlockView({
 										/>
 										{open && (
 											<div className="pw-phase-body">
-												{useThread && <ThoughtThread thoughts={completedThoughts} />}
-												{bodyItems.map((item) => (
+												{b.items.map((item) => (
 													<ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />
 												))}
 											</div>
