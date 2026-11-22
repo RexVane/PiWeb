@@ -847,9 +847,6 @@ export function PluginsSection({
 							<div style={{ fontSize: 13, fontWeight: 500, color: "var(--dsw-label-primary)" }}>
 								{t.pluginsEmptyInstalledTitle}
 							</div>
-							<div className="mt-0.5" style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>
-								{t.pluginsEmptyInstalledDesc}
-							</div>
 						</div>
 					</div>
 				</div>

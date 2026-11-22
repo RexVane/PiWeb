@@ -42,13 +42,12 @@ It bundles the official `@earendil-works/pi-*` SDK and shares your existing pi s
 - **Files and changes** — Inspect changes by round in the project growth tree, including `SKILL.md` reads and calls inside codemode. Open source, rendered Markdown, and unified or side-by-side diffs, and quote selected lines in chat.
 - **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Install packages through Pi](docs/resources.md); native interactions and JSON UI use the built-in web interface.
 - **Prompt sources** — Inspect project instructions, skills, templates, and tool definitions with their resource origin.
-- **Optional question resource** — Install [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) separately. The resource API v1 in this source tree replaces the previously bundled question tool; it is not enabled by refreshing an older npm installation.
 - **Mobile access and languages** — Scan the QR code in Settings → Remote access. The UI is available in English, Simplified Chinese, Traditional Chinese, Japanese, and Russian.
 
 <details>
 <summary>More screenshots (desktop and mobile)</summary>
 
-The screenshots use the English interface and sample data from an earlier version. Question functionality is now provided by an optional resource.
+The screenshots use the English interface and sample data from an earlier version.
 
 <table>
   <tr>

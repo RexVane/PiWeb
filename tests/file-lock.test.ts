@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { acquireFileLock } from "../scripts/file-lock.mjs";
 import { processIdentity, processIdentityAlive } from "../scripts/process-identity.mjs";
 import { lockChildEnvironment } from "../scripts/lock-child-env.mjs";
@@ -48,6 +48,19 @@ it("ties liveness to process birth and never steals a live owner merely because 
 	fs.writeFileSync(file, JSON.stringify({ pid: process.pid, birth: current.birth, startedAt: "2000-01-01" }));
 	expect(() => acquireFileLock(file)).toThrow(/already running/);
 });
+if (process.platform === "win32") {
+	it("recognizes a reused Windows PID even when a liveness probe gets EPERM", () => {
+		const current = processIdentity(process.pid).birth!;
+		const older = `win:${BigInt(current.slice(4)) - 600_000_000n}`;
+		const probe = vi.spyOn(process, "kill").mockImplementation(() => {
+			throw Object.assign(new Error("access denied"), { code: "EPERM" });
+		});
+		try {
+			expect(processIdentityAlive(process.pid, current)).toBe(true);
+			expect(processIdentityAlive(process.pid, older)).toBe(false);
+		} finally { probe.mockRestore(); }
+	}, 15_000);
+}
 it("reclaims a reused PID and ignores an abandoned legacy recovery directory", () => {
 	const file = fixture();
 	fs.mkdirSync(`${file}.recovery`);
