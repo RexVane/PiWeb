@@ -3,6 +3,7 @@
  * 纯函数实现，无 React/DOM 依赖，便于单元测试。
  */
 import type { ToolCardState } from "@/hooks/usePiWeb";
+import { isCancelledTool } from "@/lib/chat/cancellation";
 import type { ViewedImagePreview } from "@/lib/chat/tool-images";
 import type { CommandIntentCategory } from "@/lib/process-format";
 import { basename, describeCommandIntent, skillNameFromRead, toolKind } from "@/lib/process-format";
@@ -30,6 +31,7 @@ export type ProcessRun = {
 	key: string;
 	items: ProcessItem[];
 	hasThink: boolean;
+	thinks: number;
 	cmds: number;
 	reads: number;
 	searches: number;
@@ -108,17 +110,19 @@ export function itemWebInfo(item: ProcessItem): { hasWeb: boolean; role: WebTool
 	return collectToolWebData(item.call.name, item.call.arguments, item.state, item.nested);
 }
 
-/** 可折进阶段摘要的步骤：已完成的思考，以及成功完成的命令 / 读取 / 搜索 / 写入与编辑 / 联网 */
+/** 可折进阶段摘要的步骤：已完成的思考，以及成功结束的命令 / 读取 / 搜索 / 联网（编辑、失败与已中止步外露展示） */
 export function isCollapsibleProcessItem(item: ProcessItem): boolean {
 	if (item.kind === "think") return !item.live;
 	if (item.kind === "tool") {
 		if (item.badge) return false;
 		const s = item.state;
 		if (!s || s.state !== "done" || s.isError || s.images?.length) return false;
+		const raw = s.result ?? s.partialResult ?? "";
+		if (isCancelledTool(s.name, s.isError, raw)) return false;
 		const k = toolKind(item.call.name);
 		if (k === "read" && skillNameFromRead(item.call.name, item.call.arguments)) return false;
-		if (k === "cmd" || k === "read" || k === "search" || k === "write") return true;
-		return classifyWebTool(item.call.name, item.call.arguments, s.result ?? s.partialResult) !== null || nestedHasWebTool(item.nested);
+		if (k === "cmd" || k === "read" || k === "search") return true;
+		return classifyWebTool(item.call.name, item.call.arguments, raw) !== null || nestedHasWebTool(item.nested);
 	}
 	return false;
 }
@@ -248,6 +252,7 @@ function buildRun(
 	let webSearches = 0;
 	let webFetches = 0;
 	let hasThink = false;
+	let thinks = 0;
 	const sourceBatches: WebSource[][] = [];
 	const intentSet = new Set<CommandIntentCategory>();
 	const intentTargets: Array<{ category: CommandIntentCategory; target: string }> = [];
@@ -258,6 +263,7 @@ function buildRun(
 	for (const item of slice) {
 		if (item.kind === "think") {
 			hasThink = true;
+			thinks += 1;
 		} else if (item.kind === "tool") {
 			const web = itemWebInfo(item);
 			if (web.sources.length > 0) sourceBatches.push(web.sources);
@@ -305,14 +311,10 @@ function buildRun(
 
 	const durationMs = spanOf(slice[0].msgIndex, slice[slice.length - 1].msgIndex);
 	const webSources = sourceBatches.length > 0 ? mergeWebSources(sourceBatches) : EMPTY_WEB_SOURCES;
-	const totalNonWrite = cmds + reads + searches + webSearches + webFetches;
-	const totalTools = totalNonWrite + writes;
+	const totalTools = cmds + reads + searches + writes + webSearches + webFetches;
 
-	// 单条独立的联网步骤或单条独立的写入步骤直接原位展示，避免多包一层折叠
+	// 单条独立的联网步骤直接原位展示，避免多包一层折叠
 	if (slice.length === 1 && !hasThink && cmds + reads + searches + writes === 0 && webSearches + webFetches === 1) {
-		return [{ kind: "item", item: slice[0] }];
-	}
-	if (slice.length === 1 && !hasThink && writes === 1 && totalNonWrite === 0) {
 		return [{ kind: "item", item: slice[0] }];
 	}
 	if (totalTools === 0 && durationMs === undefined) {
@@ -324,6 +326,7 @@ function buildRun(
 			key: `run-${slice[0].key}`,
 			items: slice,
 			hasThink,
+			thinks,
 			cmds,
 			reads,
 			searches,
@@ -363,87 +366,14 @@ function hasPhaseBoundaryAfter(items: ProcessItem[], fromIndex: number): boolean
 }
 
 /**
- * 对长无旁白过程段按认知/任务节拍自动切分里程碑：
- * - 纯探测/搜索链不按 6 步硬切（最多 ~18–24 步合并，避免连刷七八行「搜索代码」）
- * - 探索转入写入或主动执行时切出独立阶段
- * - 写入+验证闭环完成后切换下一个脚本/文件阶段，实施阶段保持 3–8 步粒度
- */
-function segmentCollapsibleSlice(slice: ProcessItem[], cwd?: string): ProcessItem[][] {
-	if (slice.length <= 7) return [slice];
-	const groups: ProcessItem[][] = [];
-	let bucket: ProcessItem[] = [];
-	let toolCount = 0;
-	let writeCount = 0;
-	let execCount = 0;
-	let execAfterWrite = false;
-	const writtenNames = new Set<string>();
-
-	const reset = () => {
-		bucket = [];
-		toolCount = 0;
-		writeCount = 0;
-		execCount = 0;
-		execAfterWrite = false;
-		writtenNames.clear();
-	};
-
-	for (let k = 0; k < slice.length; k += 1) {
-		const item = slice[k];
-		const remaining = slice.length - k;
-		const kind = item.kind === "tool" ? toolKind(item.call.name) : null;
-		const isWrite = kind === "write";
-		const writeName = isWrite && item.kind === "tool" ? writeTargetOf(item.call.arguments) : "";
-		const isActiveExec =
-			kind === "cmd" &&
-			item.kind === "tool" &&
-			(() => {
-				const intent = describeCommandIntent(rawCommandOf(item.call.arguments), cwd);
-				return !intent || INTENT_TO_CLUSTER[intent.category] === "exec";
-			})();
-
-		if (bucket.length > 0 && remaining >= 3) {
-			const exploreOnly = writeCount === 0 && execCount === 0;
-			const exploreToBuild = exploreOnly && toolCount >= 2 && (isWrite || isActiveExec);
-			const writeCycleDone =
-				writeCount >= 1 &&
-				execAfterWrite &&
-				toolCount >= 3 &&
-				(item.kind === "think" || (isWrite && writeName !== "" && !writtenNames.has(writeName)));
-			const buildCap = !exploreOnly && ((toolCount >= 6 && (item.kind === "think" || isWrite)) || toolCount >= 8);
-			const exploreCap = exploreOnly && ((toolCount >= 18 && item.kind === "think") || toolCount >= 24);
-
-			if (exploreToBuild || writeCycleDone || buildCap || exploreCap) {
-				groups.push(bucket);
-				reset();
-			}
-		}
-
-		bucket.push(item);
-		if (item.kind === "tool") {
-			toolCount += 1;
-			if (isWrite) {
-				writeCount += 1;
-				if (writeName) writtenNames.add(writeName);
-			} else if (isActiveExec) {
-				execCount += 1;
-				if (writeCount > 0) execAfterWrite = true;
-			}
-		}
-	}
-	if (bucket.length > 0) groups.push(bucket);
-	return groups;
-}
-
-/**
  * 构建过程渲染块：
- * - 回合结束后（turnLive=false）：所有可收敛步骤按自然阶段折成清晰的里程碑摘要行；
+ * - 回合结束后（turnLive=false）：叙述或特殊边界之间所有连续可折叠步骤合并为 1 条摘要行，展开后保持原有时序；
  * - 流式运行中（turnLive=true）：遵循「运行中展开，完成一组立即收回，继续下一组」接力模型；
  *   当前进行中的阶段保持展开；一旦出现后续阶段边界，前面这组自动收回；
- *   若当前无分段连续超过 LIVE_FRONTIER_MAX_ITEMS，则把更早步数按里程碑折入摘要前缀，保留尾部展开。
+ *   若当前无分段连续超过 LIVE_FRONTIER_MAX_ITEMS，则把更早步数折入 1 条摘要前缀，保留尾部展开。
  */
 export function buildProcessBlocks(
 	items: ProcessItem[],
-	finalIdx: number,
 	spanOf: (a: number, b: number) => number | undefined,
 	options: { turnLive: boolean; cwd?: string } = { turnLive: false },
 ): ProcessBlock[] {
@@ -461,16 +391,12 @@ export function buildProcessBlocks(
 		const isActivePhase = !hasPhaseBoundaryAfter(items, j);
 
 		if (!options.turnLive || !isActivePhase) {
-			for (const group of segmentCollapsibleSlice(slice, options.cwd)) {
-				blocks.push(...buildRun(group, spanOf, options.cwd));
-			}
+			blocks.push(...buildRun(slice, spanOf, options.cwd));
 		} else if (slice.length <= LIVE_FRONTIER_MAX_ITEMS) {
 			for (const item of slice) blocks.push({ kind: "item", item });
 		} else {
 			const splitAt = slice.length - LIVE_FRONTIER_KEEP_TAIL;
-			for (const group of segmentCollapsibleSlice(slice.slice(0, splitAt), options.cwd)) {
-				blocks.push(...buildRun(group, spanOf, options.cwd));
-			}
+			blocks.push(...buildRun(slice.slice(0, splitAt), spanOf, options.cwd));
 			for (const item of slice.slice(splitAt)) blocks.push({ kind: "item", item });
 		}
 		i = j;

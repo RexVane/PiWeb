@@ -12,10 +12,6 @@ import { recycleGeneratedFixture as recycleFixture } from "./fixtures/system-tra
 const state = vi.hoisted(() => ({ agentDir: "", manager: undefined as DefaultPackageManager | undefined, settings: undefined as SettingsManager | undefined, reload: vi.fn(async () => {}) }));
 vi.mock("../src/lib/pi", () => ({ getAgentDir: () => state.agentDir, getPackageManager: () => state.manager!, getSettingsManager: () => state.settings!, reloadAllLoaders: state.reload }));
 vi.mock("../src/lib/agent-manager", () => ({ reloadSessionsForCwd: vi.fn(async () => {}) }));
-vi.mock("../src/lib/resources/host", () => ({
-	reconcileResourceHosts: async () => {},
-	withResourceHostsSuspended: async (_source: unknown, _scope: unknown, _cwd: unknown, fn: () => Promise<unknown>) => fn(),
-}));
 let base: string, cwd: string;
 let command: ReturnType<typeof vi.fn<(command: string, args: string[]) => Promise<void>>>;
 interface Internals {
