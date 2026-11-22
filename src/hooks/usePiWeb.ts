@@ -13,7 +13,6 @@ import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import { notifySessionsChanged } from "@/lib/session-change-events";
 import { useI18n } from "@/i18n";
-import type { JsonValue, WebResourceView } from "@/lib/resources/protocol";
 import type {
 	GrowthRound,
 	SessionSummary,
@@ -49,11 +48,11 @@ export interface ToolCardState {
 
 /**
  * 需要浏览器应答的对话框：扩展发来的 select/confirm/input/editor（对应 pi RPC 的 extension_ui_request），
- * and resource views from independently installed packages.
+
  */
 export interface ExtensionDialog {
 	id: string;
-	method: "select" | "confirm" | "input" | "editor" | "web" | "resource";
+	method: "select" | "confirm" | "input" | "editor" | "web";
 	title: string;
 	message?: string;
 	options?: string[];
@@ -63,8 +62,6 @@ export interface ExtensionDialog {
 	/** web：扩展给的界面树；webText 是终端组件的纯文本兜底 */
 	tree?: WebUiNode;
 	webText?: string;
-	resourceView?: WebResourceView;
-	resourceData?: JsonValue;
 	timeout?: number;
 	ts: number;
 }
@@ -408,7 +405,7 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 				if (s.extensionDialogs.some((dialog) => dialog.id === evt.id)) return s;
 				s.extensionDialogs = [
 					...s.extensionDialogs,
-					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, placeholder: evt.placeholder, prefill: evt.prefill, tree: evt.tree, webText: evt.webText, resourceView: evt.resourceView, resourceData: evt.resourceData, timeout: evt.timeout, ts: evt.ts },
+					{ id: evt.id, method: evt.method, title: evt.title ?? "", message: evt.message, options: evt.options, placeholder: evt.placeholder, prefill: evt.prefill, tree: evt.tree, webText: evt.webText, timeout: evt.timeout, ts: evt.ts },
 				];
 			} else if (evt.method === "notify") {
 				s.extensionNotices = [...s.extensionNotices.slice(-4), { id: evt.id, message: evt.message ?? "", type: evt.notifyType ?? "info", ts: evt.ts }];
@@ -524,7 +521,7 @@ export function foldPiWebEvents(state: PiWebState, events: readonly WebEvent[]):
 }
 
 function isDialogMethod(method: Extract<WebEvent, { type: "extension_ui" }>["method"]): method is ExtensionDialog["method"] {
-	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "web" || method === "resource";
+	return method === "select" || method === "confirm" || method === "input" || method === "editor" || method === "web";
 }
 
 export function extensionDialogsFromSnapshot(snapshot: WebSnapshot, previous: ExtensionDialog[] = []): ExtensionDialog[] {

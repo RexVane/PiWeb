@@ -15,6 +15,9 @@ interface SelectPosition {
 	maxWidth: number;
 }
 
+/** 触发按钮外观：chip = 设置页胶囊；field = 与输入框同款（扩展表单）；compact = 表格里的小控件 */
+type SelectVariant = "chip" | "field" | "compact";
+
 /** 通用下选芯片：自定义深色圆角浮层，替代原生 select */
 export function SelectOption({
 	value,
@@ -23,6 +26,7 @@ export function SelectOption({
 	onChange,
 	width,
 	disabled,
+	variant = "chip",
 }: {
 	value: string;
 	label?: string;
@@ -30,6 +34,7 @@ export function SelectOption({
 	onChange: (v: string) => void;
 	width?: number;
 	disabled?: boolean;
+	variant?: SelectVariant;
 }) {
 	const [open, setOpen] = useState(false);
 	const [position, setPosition] = useState<SelectPosition | null>(null);
@@ -110,9 +115,26 @@ export function SelectOption({
 		if (disabled) setOpen(false);
 	}, [disabled]);
 	const current = options.find((o) => o.value === value);
+	const triggerClass = variant === "chip" ? "select-chip" : variant === "field" ? "flex w-full items-center justify-between gap-2" : "pw-audit-field";
+	const triggerStyle = variant === "field"
+		? {
+			height: 32,
+			padding: "0 10px",
+			fontSize: 12.5,
+			borderRadius: 8,
+			background: "var(--dsw-hover)",
+			border: "0.5px solid var(--dsw-border-l2)",
+			color: "var(--dsw-label-primary)",
+			cursor: "pointer",
+			textAlign: "left" as const,
+			opacity: disabled ? 0.55 : undefined,
+		}
+		: variant === "compact"
+			? { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: "pointer", textAlign: "left" as const }
+			: undefined;
 	return (
 		<div className="relative" onKeyDown={keyboard.onKeyDown}>
-			<button ref={anchorRef} type="button" className="select-chip" data-open={open} disabled={disabled} aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => open ? keyboard.closeMenu() : keyboard.openMenu()}>
+			<button ref={anchorRef} type="button" className={triggerClass} style={triggerStyle} data-open={open} disabled={disabled} aria-label={label} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} onClick={() => open ? keyboard.closeMenu() : keyboard.openMenu()}>
 				<span className="flex items-center gap-2">
 					{current?.dotColor && <span className="inline-block flex-none rounded-full" aria-hidden="true" style={{ width: 8, height: 8, background: current.dotColor }} />}
 					<span>{current?.label ?? value}</span>

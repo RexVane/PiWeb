@@ -144,6 +144,7 @@ describe("web search & fetch steps in ChatWindow", () => {
 		);
 
 		// 回合已折叠时，顶部栏依然可见联网标志与去重总数「3 个来源」，点击即可打开外链
+		expect(container.querySelector(".pw-turn")?.getAttribute("data-collapsed")).toBe("true");
 		const collapsedTrigger = screen.getByRole("button", { name: /3 个来源/ });
 		fireEvent.click(collapsedTrigger);
 		expect(screen.getByRole("link", { name: /Repo One/ }).getAttribute("href")).toBe("https://github.com/a/piweb");

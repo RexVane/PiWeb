@@ -40,15 +40,15 @@ It bundles the official `@earendil-works/pi-*` SDK and shares your existing pi s
 - **Workspaces and sessions** — Organize sessions by project folder. Rename, branch, archive, restore drafts, and export sessions as JSONL or HTML.
 - **Session import** — Search and import local history from Claude Code, Codex, OpenCode, Grok, ZCode, dsh, Kimi Code, WorkBuddy, Antigravity, Antigravity CLI, Qwen Code, and Cursor. PiWeb reads the original files in place.
 - **Files and changes** — Inspect changes by round in the project growth tree, including `SKILL.md` reads and calls inside codemode. Open source, rendered Markdown, and unified or side-by-side diffs, and quote selected lines in chat.
-- **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Add existing resources or design your own](docs/resources.md); optional views use JSON UI or independent browser assets without rebuilding PiWeb.
+- **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Install packages through Pi](docs/resources.md); native interactions and JSON UI use the built-in web interface.
 - **Prompt sources** — Inspect project instructions, skills, templates, and tool definitions with their resource origin.
-- **Optional question and automation resources** — Install them separately from [piweb-resources](https://github.com/RexVane/piweb-resources). The resource API v1 in this source tree replaces the previously bundled tools; it is not enabled by refreshing an older npm installation.
+- **Optional question resource** — Install [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) separately. The resource API v1 in this source tree replaces the previously bundled question tool; it is not enabled by refreshing an older npm installation.
 - **Mobile access and languages** — Scan the QR code in Settings → Remote access. The UI is available in English, Simplified Chinese, Traditional Chinese, Japanese, and Russian.
 
 <details>
 <summary>More screenshots (desktop and mobile)</summary>
 
-The screenshots use the English interface and sample data from an earlier version. Question and automation functionality is now provided by optional resources.
+The screenshots use the English interface and sample data from an earlier version. Question functionality is now provided by an optional resource.
 
 <table>
   <tr>
@@ -64,8 +64,7 @@ The screenshots use the English interface and sample data from an earlier versio
     <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="Desktop skills workspace" /><br /><strong>Skills</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="Desktop automation editor" /><br /><strong>Automations</strong></td>
-    <td width="50%"><img src="assets/readme-mobile.jpg" alt="Mobile conversation" /><br /><strong>Mobile chat</strong></td>
+    <td colspan="2" align="center"><img src="assets/readme-mobile.jpg" width="50%" alt="Mobile conversation" /><br /><strong>Mobile chat</strong></td>
   </tr>
   <tr>
     <td width="50%"><img src="assets/readme-mobile-workspaces.jpg" alt="Mobile workspace sidebar" /><br /><strong>Workspaces</strong></td>
@@ -193,7 +192,7 @@ A Settings → General → Network proxy value (`httpProxy` in `settings.json`) 
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Shared Pi / PiWeb agent directory: settings, models and credentials, sessions, uploads, automations. It is not the only data root; see [data and privacy](docs/operations/data-and-privacy.md). |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Shared Pi / PiWeb agent directory: settings, models and credentials, sessions, uploads. It is not the only data root; see [data and privacy](docs/operations/data-and-privacy.md). |
 | `PI_WEB_EDITOR` | `code` | Local editor command for “Open in editor”. Meaningful on the host only. |
 | `PI_WEB_UPLOAD_RETENTION` | `30` (days) | Background sweep threshold for unused files in `web-uploads`. `0` disables that sweep. Sweeps copy to `~/.agents/backups/` first and record an entry in `INDEX.md`. |
 | `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | enabled | When a session is deleted, also clean uploads referenced only by that session (backup-then-remove). `0` leaves those uploads in place. |
@@ -255,6 +254,7 @@ PiWeb does not replace a separately installed `pi` CLI. They **share the same ag
 - [Environment reference](docs/operations/environment.md)
 - [Data, privacy and retention](docs/operations/data-and-privacy.md)
 - [Release, downgrade and rollback](docs/operations/release-and-rollback.md)
+- [Changes since 0.3.35](docs/releases/0.3.36.md)
 - [Extension web UI](docs/extension-web-ui.md) and [extension examples](examples/piweb-extensions/README.md)
 - Documentation index: [docs/README.md](docs/README.md)
 

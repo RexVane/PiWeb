@@ -46,7 +46,7 @@ describe("sending a message keeps finished turns collapsed", () => {
 		expect(answers()).toHaveLength(2);
 	});
 
-	it("still keeps the live turn's streaming answer inside the process", () => {
+	it("still keeps the live turn's streaming answer inside the process without toggling prior turns", () => {
 		const first = turn("第一个问题", 1_000);
 		const live = [
 			...first,
@@ -64,7 +64,7 @@ describe("sending a message keeps finished turns collapsed", () => {
 		render(<ChatWindow messages={live} tools={{}} isStreaming={true} />);
 
 		const blocks = turns();
-		// 上一回合仍然折叠
+		// 上一回合仍然保持默认折叠
 		expect(blocks[0].hasAttribute("data-collapsed")).toBe(true);
 		// 本回合（最后一个 pw-turn）还在流式：过程不能折叠
 		const last = blocks[blocks.length - 1];

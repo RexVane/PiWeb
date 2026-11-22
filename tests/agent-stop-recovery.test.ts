@@ -27,6 +27,8 @@ function fakeSession(overrides: Record<string, unknown> = {}) {
 		clearQueue: vi.fn(() => ({ steering: [], followUp: [] })),
 		dispose: vi.fn(),
 		prompt: vi.fn(async () => {}),
+		getAllTools: () => [],
+		getToolDefinition: () => undefined,
 		...overrides,
 	};
 }

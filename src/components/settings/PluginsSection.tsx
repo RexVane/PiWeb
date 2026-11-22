@@ -13,10 +13,6 @@ import {
 	IconSearchOutline16,
 	IconTerminalOutline14,
 } from "@/components/icons";
-import { AddResourceMenu } from "@/components/resources/AddResourceMenu";
-import { ResourceInstallModal, type StartResourceSession } from "@/components/resources/ResourceInstallModal";
-import { ResourceControls } from "@/components/resources/ResourceControls";
-import { notifyResourcesChanged } from "@/hooks/useResourceRegistry";
 import { useI18n } from "@/i18n";
 import { ScopeWorkspaceFilterBar } from "@/components/settings/SharedControls";
 import type { PluginResourceType } from "@/lib/plugins-service";
@@ -182,10 +178,6 @@ function PluginRow({
 export function PluginsSection({
 	cwd,
 	hideHeader = false,
-	installOpen,
-	installMode = "install",
-	onStartResourceSession,
-	onInstallOpenChange,
 	reloadSeq = 0,
 	onReloadBusyChange,
 	workspaceOptions,
@@ -193,10 +185,6 @@ export function PluginsSection({
 }: {
 	cwd: string;
 	hideHeader?: boolean;
-	installOpen?: boolean;
-	installMode?: "install" | "design";
-	onStartResourceSession?: StartResourceSession;
-	onInstallOpenChange?: (open: boolean) => void;
 	reloadSeq?: number;
 	onReloadBusyChange?: (busy: boolean) => void;
 	/** 切到「项目」页签时用来切换工作区 */
@@ -217,8 +205,6 @@ export function PluginsSection({
 	const [scopeFilter, setScopeFilter] = useState<"all" | PluginScope>("all");
 	const [q, setQ] = useState("");
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
-	const [internalInstallOpen, setInternalInstallOpen] = useState(false);
-	const [internalInstallMode, setInternalInstallMode] = useState<"install" | "design">("install");
 	const [busy, setBusy] = useState(false);
 	const [busyKey, setBusyKey] = useState<string | null>(null);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string; loading?: boolean } | null>(null);
@@ -226,9 +212,6 @@ export function PluginsSection({
 	const workspaceSeqRef = useRef(0);
 	const loadSeqRef = useRef(0);
 	const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	const modalOpen = installOpen ?? internalInstallOpen;
-	const setModalOpen = onInstallOpenChange ?? setInternalInstallOpen;
 
 	const load = useCallback(async () => {
 		const workspaceSeq = workspaceSeqRef.current;
@@ -347,7 +330,6 @@ export function PluginsSection({
 			const j = await r.json();
 			if (workspaceSeq !== workspaceSeqRef.current) return false;
 			if (j.success) {
-				notifyResourcesChanged();
 				notify(!j.data?.warning, j.data?.warningCode === "PACKAGE_TRASH_PENDING" ? t.pluginTrashPendingWarning : j.data?.warning ?? successMsg ?? (action === "toggle" ? (payload.disabled ? t.disabled : t.enabled) : t.toastSaved));
 				await load();
 				return true;
@@ -365,6 +347,7 @@ export function PluginsSection({
 			}
 		}
 	};
+
 
 	const toggleExpand = (key: string) =>
 		setExpanded((prev) => {
@@ -562,9 +545,6 @@ export function PluginsSection({
 						>
 							<IconRefreshOutline14 size={13} /> {t.panelRefresh}
 						</button>
-						<AddResourceMenu label={t.addPluginAction} disabled={busy}
-							onInstall={() => { setInternalInstallMode("install"); setModalOpen(true); }}
-							onDesign={() => { setInternalInstallMode("design"); setModalOpen(true); }} />
 					</div>
 				</div>
 			)}
@@ -589,6 +569,7 @@ export function PluginsSection({
 				}}
 			/>
 
+
 			{showSearch && (
 				<div className="isx-search flex items-center gap-2.5 px-3.5" style={{ height: 38 }}>
 					<IconSearchOutline16 size={15} className="isx-search-icon flex-none" style={{ color: "var(--dsw-label-caption)" }} />
@@ -602,6 +583,7 @@ export function PluginsSection({
 					/>
 				</div>
 			)}
+
 
 			{/* 内置插件配置（SDK builtin:codemode / builtin:tool-search / builtin:mcp） */}
 			{visibleBuiltins.length > 0 && (
@@ -739,7 +721,10 @@ export function PluginsSection({
 					>
 						{visiblePackages.map((p, idx) => {
 							const key = `pkg:${p.scope}:${p.source}`;
-							const shortName = p.source.replace(/^npm:/, "").replace(/^git[^:]*:/, "");
+							const isLocalSource = !/^(?:npm:|git[^:]*:|github:|https?:|ssh:|builtin:)/i.test(p.source);
+							const shortName = isLocalSource
+								? p.source.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p.source
+								: p.source.replace(/^npm:/, "").replace(/^git[^:]*:/, "");
 							const isDisabled = p.disabled === true;
 							const open = expanded.has(key);
 							return (
@@ -758,7 +743,7 @@ export function PluginsSection({
 											{stateBadge(isDisabled)}
 										</>
 									}
-									subtitle={p.source}
+									subtitle={isLocalSource ? undefined : p.source}
 									expandable
 									expanded={open}
 									onToggleExpand={() => toggleExpand(key)}
@@ -889,27 +874,6 @@ export function PluginsSection({
 					</div>
 				</div>
 			)}
-
-			<ResourceControls cwd={cwd} />
-
-			<ResourceInstallModal
-				open={modalOpen}
-				mode={installOpen === undefined ? internalInstallMode : installMode}
-				onStartSession={onStartResourceSession}
-				cwd={cwd}
-				busy={busy}
-				onClose={() => setModalOpen(false)}
-				onSubmit={async (installSource, projectScope, selection) => {
-					const workspaceSeq = workspaceSeqRef.current;
-					if (!(await confirm({ title: t.install, message: t.pluginInstallConfirm.replace("{source}", installSource), confirmLabel: t.install }))) return false;
-					if (workspaceSeq !== workspaceSeqRef.current) return false;
-					if (await act("install", { source: installSource, local: projectScope, ...(selection ? { selection } : {}) }, undefined, t.installing, t.installSuccess)) {
-						setModalOpen(false);
-						return true;
-					}
-					return false;
-				}}
-			/>
 
 			{confirmDialog}
 		</div>

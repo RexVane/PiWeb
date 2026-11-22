@@ -10,9 +10,6 @@ import { reloadSessionsForCwd } from "./agent-manager";
 import { flushSettingsOrThrow, withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 import { validatePackageSource } from "./package-manager-safe";
 import { beginNpmSettingsWrite, finishNpmTrashCleanup, NpmTransactionCommittedError, NpmUninstallTrashPendingError, recoverNpmPrefix, withNpmInstallTransaction, type NpmTransactionPlan } from "./npm-install-transaction";
-import { mergeResourceSelection, toggleResourcePaths } from "./resources/selection";
-import type { ResourceSelection } from "./resources/protocol";
-import { resolveModelPath } from "./path-security";
 
 /** 包内提供的资源类型：给「来源=包」打标签用，与 pi manifest 的四类资源一致 */
 export type PluginResourceType = "extensions" | "skills" | "prompts" | "themes";
@@ -102,14 +99,12 @@ function assertStandaloneExtension(resource: ResolvedResource | undefined): asse
 
 /** 全部变更后的统一收尾：加载器就地重载 + 活跃会话 session.reload() + 广播新清单；全局变更影响所有目录 */
 async function applyResourceChange(cwd: string, scope: "user" | "project"): Promise<void> {
-	try {
-		await reloadAllLoaders();
-		await reloadSessionsForCwd(scope === "project" ? cwd : undefined);
-		const { reconcileResourceHosts } = await import("./resources/host");
-		await reconcileResourceHosts(cwd, { startGlobal: true });
-	} catch (error) {
-		throw new ResourceRefreshError(`更改已保存，但资源刷新失败；请刷新列表或重载会话。${error instanceof Error ? error.message : ""}`);
-	}
+	const failures: unknown[] = [];
+	const collectFailure = (error: unknown) => failures.push(...(error instanceof AggregateError ? error.errors : [error]));
+	// Revocation must not depend on a successful loader/session refresh.
+	try { await reloadAllLoaders(); } catch (error) { collectFailure(error); }
+	try { await reloadSessionsForCwd(scope === "project" ? cwd : undefined); } catch (error) { collectFailure(error); }
+	if (failures.length) throw new ResourceRefreshError("更改已保存，但资源刷新失败；请刷新列表或重载会话。", { cause: new AggregateError(failures) });
 }
 
 /** npm/git share their scope's install prefix across sources and processes. */
@@ -126,25 +121,29 @@ const npmRecoveryScopes = (cwd: string): NpmTransactionPlan[] => [{ root: path.j
 type PackageManagerInternals = {
 	packageSourcesMatch(existing: unknown, source: string, scope: string): boolean;
 	parseSource(source: string): { type: string; pinned?: boolean };
+	resolvePathFromBase(source: string, baseDir: string): string;
 };
 const sourceOfPackage = (value: unknown): string => typeof value === "string" ? value : String((value as { source?: unknown } | null)?.source ?? "");
-async function npmMutationPlan(pm: ReturnType<typeof getPackageManager>, cwd: string, local: boolean, source: string, remove: boolean, selection?: ResourceSelection): Promise<NpmTransactionPlan> {
+/** Pi stores local sources relative to their settings directory, but SDK inputs are cwd-relative. */
+function configuredPackageInput(pm: PackageManagerInternals, source: string, settingsPath: string, entries: readonly unknown[]): string {
+	if (!entries.some((entry) => sourceOfPackage(entry) === source) || pm.parseSource(source).type !== "local") return source;
+	if (typeof pm.resolvePathFromBase !== "function") throw new Error("This pi SDK cannot resolve configured local package sources.");
+	// Resolve the declaration even when its source directory no longer exists.
+	return pm.resolvePathFromBase(source, path.dirname(settingsPath));
+}
+async function npmRemovalPlan(pm: ReturnType<typeof getPackageManager>, cwd: string, local: boolean, source: string): Promise<NpmTransactionPlan> {
 	const file = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	const current = await readSettingsFileStrict(file);
 	const internal = pm as unknown as PackageManagerInternals;
 	if (typeof internal.packageSourcesMatch !== "function") throw new Error("This pi SDK cannot prepare a safe npm settings transaction.");
 	const before = Array.isArray(current.packages) ? current.packages : [];
 	const scope = local ? "project" : "user";
-	let packages: unknown[];
-	if (remove) packages = before.filter((entry) => !internal.packageSourcesMatch(entry, source, scope));
-	else {
-		packages = [...before];
-		const index = packages.findIndex((entry) => internal.packageSourcesMatch(entry, source, scope));
-		if (index === -1) packages.push(selection ? mergeResourceSelection(undefined, source, selection) : source);
-		else packages[index] = selection ? mergeResourceSelection(packages[index], source, selection) : typeof packages[index] === "string" ? source : { ...(packages[index] as object), source };
-	}
-	const after = { ...(!remove || Object.hasOwn(current, "packages") || packages.length ? { packages } : {}), ...(Object.hasOwn(current, "disabledPackages") ? { disabledPackages: remove && Array.isArray(current.disabledPackages) ? current.disabledPackages.filter((entry) => sourceOfPackage(entry) !== source) : current.disabledPackages } : {}) };
-	return { root: path.join(path.dirname(file), "npm"), ...(local ? { projectRoot: cwd } : {}), settings: { file, ...(local ? { projectRoot: cwd } : {}), after }, ...(remove ? { recyclePrevious: true } : {}) };
+	const packages = before.filter((entry) => !internal.packageSourcesMatch(entry, source, scope));
+	const after = {
+		...(Object.hasOwn(current, "packages") || packages.length ? { packages } : {}),
+		...(Object.hasOwn(current, "disabledPackages") ? { disabledPackages: Array.isArray(current.disabledPackages) ? current.disabledPackages.filter((entry) => sourceOfPackage(entry) !== source) : current.disabledPackages } : {}),
+	};
+	return { root: path.join(path.dirname(file), "npm"), ...(local ? { projectRoot: cwd } : {}), settings: { file, ...(local ? { projectRoot: cwd } : {}), after }, recyclePrevious: true };
 }
 async function runNpmMutation<T>(plans: NpmTransactionPlan[], sm: ReturnType<typeof getSettingsManager>, operation: () => Promise<T>): Promise<T> {
 	try { return await withNpmInstallTransaction(plans, operation); }
@@ -273,6 +272,7 @@ export async function listPackages(cwd: string): Promise<PackageView[]> {
 		const resources = installedPath ? await countResources(installedPath, pm) : { extensions: 0, skills: 0, prompts: 0, themes: 0 };
 		out.push({ source, scope: "user", installedPath, resources, types: packageTypes(resources), disabled: true });
 	}
+
 
 	return out;
 }
@@ -452,88 +452,29 @@ export async function toggleExtension(
 	await applyResourceChange(cwd, isProject ? "project" : "user");
 }
 
-export async function installPackage(source: string, local: boolean, cwd: string, selection?: ResourceSelection): Promise<void> {
-	validatePackageSource(source);
-	if (selection && !/^(?:npm:|git[^:]*:|https?:\/\/)/.test(source)) source = resolveModelPath(source, cwd);
-	const pm = getPackageManager(cwd);
-	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	await withPackageInstallLock(cwd, local, () => withSettingsWriteLock(settingsPath, async () => {
-		const sm = await prepareSettingsWrite(cwd, settingsPath);
-		const before = (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages ?? [];
-		const install = async () => {
-			if (!selection) await pm.installAndPersist(source, { local });
-			else {
-				// Acquire files without ever briefly enabling the whole collection in settings.
-				await pm.install(source, { local });
-				const installedPath = pm.getInstalledPath(source, local ? "project" : "user");
-				if (!installedPath) throw new ExtensionToggleError("Cannot resolve the resource collection");
-				const resources = await pm.resolveExtensionSources([path.resolve(installedPath)], { temporary: true });
-				for (const type of ["extensions", "skills", "prompts", "themes"] as const) for (const value of selection[type]) {
-					const target = path.resolve(installedPath, value);
-					if (!resources[type].some((resource) => resourcePathKey(resource.path) === resourcePathKey(target)
-						|| type === "skills" && path.basename(resource.path) === "SKILL.md" && resourcePathKey(path.dirname(resource.path)) === resourcePathKey(target))) {
-						throw new ExtensionToggleError("Selection is not declared by the Pi package");
-					}
-				}
-				const internal = pm as unknown as PackageManagerInternals;
-				const next = [...before];
-				const index = next.findIndex((entry) => internal.packageSourcesMatch(entry, source, local ? "project" : "user"));
-				const merged = mergeResourceSelection(index < 0 ? undefined : next[index], source, selection);
-				if (index < 0) next.push(merged as never); else next[index] = merged as never;
-				if (source.startsWith("npm:")) beginNpmSettingsWrite(path.join(path.dirname(settingsPath), "npm"));
-				if (local) sm.setProjectPackages(next); else sm.setPackages(next);
-			}
-			await flushSettingsOrThrow(sm);
-			await verifySettingsField(settingsPath, "packages", (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages);
-		};
-		if (source.startsWith("npm:")) await runNpmMutation([await npmMutationPlan(pm, cwd, local, source, false, selection)], sm, install);
-		else await install();
-	}));
-	await applyResourceChange(cwd, local ? "project" : "user");
-}
-
-/** Toggle one extension inside a collection using Pi's package filter, not a second loader or private enable flag. */
-export async function toggleResource(resourceId: string, disabled: boolean, scope: "user" | "project", cwd: string): Promise<void> {
-	const { discoverResourcePackages } = await import("./resources/discovery");
-	const resource = (await discoverResourcePackages(cwd)).find((item) => item.id === resourceId && item.scope === scope);
-	if (!resource || !resource.extensionPaths.length) throw new ExtensionToggleError("Resource is not a configured extension");
-	const file = scope === "project" ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	await withSettingsWriteLock(file, async () => {
-		const sm = await prepareSettingsWrite(cwd, file);
-		const pm = getPackageManager(cwd) as unknown as PackageManagerInternals;
-		const current = (scope === "project" ? sm.getProjectSettings() : sm.getGlobalSettings()).packages ?? [];
-		const index = current.findIndex((entry) => pm.packageSourcesMatch(entry, resource.source, scope));
-		if (index < 0) throw new ExtensionToggleError("Resource configuration changed; refresh its list");
-		const next = [...current];
-		next[index] = toggleResourcePaths(current[index], resource.source, resource.extensionPaths, disabled) as never;
-		if (scope === "project") sm.setProjectPackages(next); else sm.setPackages(next);
-		await flushSettingsOrThrow(sm); await verifySettingsField(file, "packages", next);
-	});
-	await applyResourceChange(cwd, scope);
-}
-
 export async function removePackage(source: string, local: boolean, cwd: string): Promise<boolean> {
 	validatePackageSource(source);
 	const pm = getPackageManager(cwd);
 	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	const removed = await withPackageInstallLock(cwd, local, () => withSettingsWriteLock(settingsPath, async () => {
 		const sm = await prepareSettingsWrite(cwd, settingsPath);
-		const disabled = (await readSettingsFileStrict(settingsPath)).disabledPackages;
-		const sourceOf = (value: unknown) => typeof value === "string" ? value : (value as { source?: string } | null)?.source;
-		const active = (await readSettingsFileStrict(settingsPath)).packages;
-		if (!(Array.isArray(active) && active.some((entry) => sourceOf(entry) === source))
-			&& !(Array.isArray(disabled) && disabled.some((entry) => sourceOf(entry) === source))) return false;
+		const settings = await readSettingsFileStrict(settingsPath);
+		const active = Array.isArray(settings.packages) ? settings.packages : [];
+		const disabled = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
+		const internal = pm as unknown as PackageManagerInternals;
+		const sdkSource = configuredPackageInput(internal, source, settingsPath, [...active, ...disabled]);
+		const matches = (entry: unknown) => internal.packageSourcesMatch(entry, sdkSource, local ? "project" : "user");
+		if (!active.some(matches) && !disabled.some(matches)) return false;
 		const remove = async () => {
 		// SDK failures must surface before touching the disabled-package bookkeeping.
-		const removedActive = await pm.removeAndPersist(source, { local });
+		const removedActive = await pm.removeAndPersist(sdkSource, { local });
 		await flushSettingsOrThrow(sm);
 		await verifySettingsField(settingsPath, "packages", (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages);
 		let removedDisabled = false;
 		if (source.startsWith("npm:")) beginNpmSettingsWrite(path.join(path.dirname(settingsPath), "npm"));
 		mutateJsoncSettingsFileSync(settingsPath, (settings) => {
-			const sourceOf = (p: unknown) => (typeof p === "string" ? p : (p as { source?: string } | null)?.source);
-			if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some((p) => sourceOf(p) === source)) {
-				settings.disabledPackages = settings.disabledPackages.filter((p) => sourceOf(p) !== source);
+			if (Array.isArray(settings.disabledPackages) && settings.disabledPackages.some(matches)) {
+				settings.disabledPackages = settings.disabledPackages.filter((entry) => !matches(entry));
 				removedDisabled = true;
 				return settings;
 			}
@@ -542,7 +483,7 @@ export async function removePackage(source: string, local: boolean, cwd: string)
 		if (removedDisabled) invalidateJsonFile(settingsPath);
 		return removedActive || removedDisabled;
 		};
-		return source.startsWith("npm:") ? runNpmMutation([await npmMutationPlan(pm, cwd, local, source, true)], sm, remove) : remove();
+		return source.startsWith("npm:") ? runNpmMutation([await npmRemovalPlan(pm, cwd, local, source)], sm, remove) : remove();
 	}));
 	await applyResourceChange(cwd, local ? "project" : "user");
 	return removed;
@@ -575,7 +516,5 @@ export async function updatePackages(source: string | undefined, cwd: string): P
 export async function reloadExtensions(cwd?: string): Promise<{ loaders: number; sessions: number }> {
 	const loaders = (await reloadAllLoaders()).length;
 	const sessions = await reloadSessionsForCwd(cwd);
-	const { reconcileResourceHosts } = await import("./resources/host");
-	if (cwd) await reconcileResourceHosts(cwd, { startGlobal: true });
 	return { loaders, sessions };
 }

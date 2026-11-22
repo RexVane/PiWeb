@@ -125,6 +125,7 @@ export interface Managed {
 	 * reload 重建会话时保留用户或扩展已激活的 opt-in 工具。
 	 */
 	requestedTools: Set<string>;
+	deactivatedTools?: Set<string>;
 	resourceVersion: number;
 	resourceReloadPending: boolean;
 	resourceReloading: boolean;
@@ -170,6 +171,7 @@ export interface Managed {
 
 const globalForAgentManager = globalThis as typeof globalThis & {
 	__piWebSessions?: Map<string, Managed>;
+	__piWebSessionHooks?: ReturnType<typeof createSessionHookState>;
 };
 const sessions = globalForAgentManager.__piWebSessions ??= new Map<string, Managed>();
 
@@ -557,7 +559,7 @@ const internalListeners = new WeakMap<Managed, Set<(evt: WebEvent) => void>>();
 
 /**
  * Subscribe to translated WebEvents without counting as a UI viewer (`hasViewers`).
- * Used by background automation runs so headless extension UI prompts keep using defaults.
+ * Resource session runners use this to observe unattended sessions.
  */
 export function observeManagedEvents(m: Managed, listener: (evt: WebEvent) => void): () => void {
 	let listeners = internalListeners.get(m);
@@ -1172,7 +1174,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			// 用户的 ! 命令可能比模型回合跑得久；回合结束不能把仍在执行的命令报成空闲。
 			publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: now });
 			publishUsage(m, true);
-			if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+			schedulePendingResourceReload(m);
 			// 扩展命令调了 ctx.shutdown()：本轮收尾后才回收，回收中途不能掐掉正在写的东西
 			if (m.shutdownRequested) queueMicrotask(() => requestExtensionShutdown(m));
 			break;
@@ -1198,7 +1200,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			publishContextBreakdown(m);
 			if (evt.reason === "manual") {
 				publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: now });
-				if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+				schedulePendingResourceReload(m);
 			}
 			break;
 		case "session_info_changed":
@@ -1767,20 +1769,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				try { translate(m, evt); }
 				catch (error) { console.warn("[piweb] Session event failed", error); publish(m, { type: "error", message: "An event could not be displayed; reconnect to refresh the session.", ts: Date.now() }); }
 			});
-			const ui = createExtensionUiBridge({
-				publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true,
-				resources: {
-					async resolve(resourceId, viewId) {
-						const { resourceViews } = await import("./resources/discovery");
-						const candidates = (await resourceViews(m.cwd)).filter((view) => view.resourceId === resourceId && view.id.endsWith(`:${viewId}`));
-						return candidates.length === 1 ? candidates[0] : undefined;
-					},
-					async invoke(resourceId, action, args) {
-						const { invokeResourceAction } = await import("./resources/host");
-						return invokeResourceAction(resourceId, action, args, { cwd: m.cwd, sessionPath: m.sessionPath });
-					},
-				},
-			});
+			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true });
 			m.ui = ui;
 			await session.bindExtensions({
 				mode: "rpc",
@@ -1798,7 +1787,6 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				},
 				abortHandler: () => void session.abort().catch(() => undefined),
 			});
-			await (await import("./resources/host")).startResourceWorkspace(m.cwd);
 			if (m.disposed) throw new Error("session is disposed");
 			if (!hasMessages && recordedModelRef && !initialModel) {
 				const extensionModel = modelRuntime.getModel(recordedModelRef.provider, recordedModelRef.modelId);
@@ -1839,8 +1827,8 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 	return m.creating;
 }
 
-function isManagedBusy(m: Managed): boolean {
-	return m.promptSubmitting || m.resourceReloading || m.runActive || m.commandRunning === true || !!m.stopping || m.stopFailed === true || m.bashActive === true || !!(m.session && !m.session.isIdle);
+function isManagedBusy(m: Managed, ownSubmission = false): boolean {
+	return (!ownSubmission && m.promptSubmitting) || m.resourceReloading || m.runActive || m.commandRunning === true || !!m.stopping || m.stopFailed === true || m.bashActive === true || !!(m.session && !m.session.isIdle);
 }
 
 /** SDK 注册即激活的规则：direct / model-only 曝光、且没有写 defaultActive: false */
@@ -1860,7 +1848,18 @@ function activeToolNamesForSession(m: Managed, session: AgentSession): string[] 
 }
 
 /** installSessionHooks 包装前的原始 setActiveToolsByName：PiWeb 自己落工具集时不能被记成"扩展要求" */
-const rawSetActiveTools = new WeakMap<AgentSession, (names: string[]) => void>();
+function createSessionHookState() {
+	return {
+		rawSetActiveTools: new WeakMap<AgentSession, (names: string[]) => void>(),
+		rawReloads: new WeakMap<AgentSession, AgentSession["reload"]>(),
+		commandReloads: new WeakMap<AgentSession, () => Promise<void>>(),
+		reloadTasks: new WeakMap<Managed, Promise<void>>(),
+		failedResourceReloadVersions: new WeakMap<Managed, number>(),
+		scheduledResourceReloads: new WeakSet<Managed>(),
+	};
+}
+const { rawSetActiveTools, rawReloads, commandReloads, reloadTasks, failedResourceReloadVersions, scheduledResourceReloads } =
+	globalForAgentManager.__piWebSessionHooks ??= createSessionHookState();
 const guardedTools = new WeakSet<object>();
 
 function guardGrowthTools(m: Managed, session: AgentSession): void {
@@ -1882,6 +1881,18 @@ function applySessionTools(m: Managed, session: AgentSession): void {
 	const names = activeToolNamesForSession(m, session);
 	(rawSetActiveTools.get(session) ?? session.setActiveToolsByName.bind(session))(names);
 	guardGrowthTools(m, session);
+}
+
+function restoreRegisteredPackageTools(m: Managed, session: AgentSession): boolean {
+	const active = new Set(listActiveTools(session));
+	const missing = session.getAllTools().filter((tool) => tool.sourceInfo?.origin === "package"
+		&& (tool.exposure === "direct" || tool.exposure === "model-only")
+		&& !active.has(tool.name) && !m.deactivatedTools?.has(tool.name)
+		&& session.getToolDefinition(tool.name)?.defaultActive !== false);
+	if (!missing.length) return false;
+	(rawSetActiveTools.get(session) ?? session.setActiveToolsByName.bind(session))([...active, ...missing.map((tool) => tool.name)]);
+	guardGrowthTools(m, session);
+	return true;
 }
 
 /**
@@ -1935,10 +1946,18 @@ function publishTools(m: Managed, session: AgentSession | null): void {
 	publishContextBreakdown(m);
 }
 
-/** installSessionHooks 包装前的原始 reload / 扩展命令专用的重载入口（见 performReload） */
-const rawReloads = new WeakMap<AgentSession, AgentSession["reload"]>();
-const commandReloads = new WeakMap<AgentSession, () => Promise<void>>();
-const reloadTasks = new WeakMap<Managed, Promise<void>>();
+function schedulePendingResourceReload(m: Managed): void {
+	if (m.disposed || !m.resourceReloadPending || scheduledResourceReloads.has(m)
+		|| failedResourceReloadVersions.get(m) === resourceLoaderVersion(m.cwd)) return;
+	scheduledResourceReloads.add(m);
+	queueMicrotask(() => {
+		scheduledResourceReloads.delete(m);
+		if (m.disposed || !m.resourceReloadPending
+			|| failedResourceReloadVersions.get(m) === resourceLoaderVersion(m.cwd)) return;
+		// reloadManagedResources publishes the failure; background callers must also consume its rejection.
+		void reloadManagedResources(m).catch(() => undefined);
+	});
+}
 
 /** Wait briefly if an active performReload task is finishing before accepting user input. */
 async function waitWhileReloading(m: Managed, ownSubmission = false): Promise<string | null> {
@@ -1971,7 +1990,7 @@ async function claimSubmission(m: Managed): Promise<string | null> {
 }
 
 /**
- * session.reload 的统一实现。扩展命令处理器就在一次 prompt 提交里跑，它自己要重载不算「忙」，
+ * session.reload 的统一实现。提交前的资源检查和扩展命令处理器都持有 prompt 提交占位，不算「忙」，
  * 其余忙态（正在跑、正在压缩、正在重载）照常挡住；正常路径仍按 isManagedBusy 判。
  */
 async function performReload(
@@ -1983,12 +2002,20 @@ async function performReload(
 	const rawReload = rawReloads.get(session);
 	if (!rawReload) throw new Error("session is not ready");
 	if (fromCommand ? m.resourceReloading || m.runActive || !session.isIdle : isManagedBusy(m)) throw new Error("session is busy");
+	let attemptedVersion = resourceLoaderVersion(m.cwd);
+	m.resourceReloadPending = false;
 	m.resourceReloading = true;
 	let task!: Promise<void>;
 	task = (async () => {
+		let reloadFailed = false;
+		let hasPublishError = false;
+		let publishError: unknown;
 		try {
 			await withResourceLock(async () => {
 				if (m.disposed || m.runActive || !session.isIdle) throw new Error("session is busy");
+				attemptedVersion = resourceLoaderVersion(m.cwd);
+				m.ui?.cancelPending();
+				m.ui?.resetDecorations();
 				await rawReload({ beforeSessionStart: async () => {
 					// reload 绕过包装直接按 defaultTools 重算了激活集（新加进 defaultTools 的工具会被打开）
 					for (const name of listActiveTools(session)) m.requestedTools.add(name);
@@ -1996,21 +2023,42 @@ async function performReload(
 					await options?.beforeSessionStart?.();
 					applySessionTools(m, session);
 				} });
+				// session_start may register or activate tools, so the final tool set is part of reload success.
+				applySessionTools(m, session);
+				swapCurrentModelObject(session);
 			});
-			m.resourceVersion = resourceLoaderVersion(m.cwd);
+			m.resourceVersion = attemptedVersion;
+			m.resourceReloadPending ||= attemptedVersion !== resourceLoaderVersion(m.cwd);
+			failedResourceReloadVersions.delete(m);
+		} catch (error) {
+			reloadFailed = true;
+			m.resourceReloadPending = true;
+			failedResourceReloadVersions.set(m, attemptedVersion);
+			throw error;
 		} finally {
 			m.resourceReloading = false;
 			if (reloadTasks.get(m) === task) reloadTasks.delete(m);
-			applySessionTools(m, session);
 			if (!m.disposed) {
-				publishTools(m, session);
-				publishEnvironmentTrajectory(m, session);
-				publishResources(m);
+				try {
+					publishTools(m, session);
+					publishEnvironmentTrajectory(m, session);
+					publishResources(m);
+				} catch (error) {
+					if (reloadFailed) console.warn("[piweb] Failed to publish resource refresh state", error);
+					else {
+						m.resourceReloadPending = true;
+						failedResourceReloadVersions.set(m, attemptedVersion);
+						publishError = error;
+						hasPublishError = true;
+					}
+				}
 			}
 		}
+		if (hasPublishError) throw publishError;
 	})();
 	reloadTasks.set(m, task);
 	await task;
+	schedulePendingResourceReload(m);
 }
 
 /** SDK reload 自动启用扩展工具，注册新工具也会刷新全集；统一在激活边界跟踪 requestedTools 并挂上生长等待钩子。 */
@@ -2020,11 +2068,25 @@ function installSessionHooks(m: Managed, session: AgentSession): void {
 	session.setActiveToolsByName = (names) => {
 		const wanted = [...new Set(names)];
 		// 扩展传的是完整列表（多半是 getActiveTools() 加减几项）：原本激活、这次没列的算关掉，其余都算要求打开
-		for (const name of listActiveTools(session)) if (!wanted.includes(name)) m.requestedTools.delete(name);
-		for (const name of wanted) m.requestedTools.add(name);
+		const deactivated = m.deactivatedTools ??= new Set<string>();
+		for (const name of listActiveTools(session)) {
+			if (wanted.includes(name)) continue;
+			m.requestedTools.delete(name);
+			deactivated.add(name);
+		}
+		for (const name of wanted) {
+			m.requestedTools.add(name);
+			deactivated.delete(name);
+		}
 		const available = new Set(listAllToolNames(session));
 		setActive(wanted.filter((name) => available.has(name)));
 		guardGrowthTools(m, session);
+	};
+	const navigate = session.navigateTree.bind(session);
+	session.navigateTree = async (...args) => {
+		const result = await navigate(...args);
+		if (!result.cancelled && !m.disposed && !isManagedBusy(m, true) && restoreRegisteredPackageTools(m, session)) publishTools(m, session);
+		return result;
 	};
 	rawReloads.set(session, session.reload.bind(session));
 	commandReloads.set(session, () => performReload(m, session, undefined, true));
@@ -2338,25 +2400,22 @@ export function publishResources(m: Managed): void {
  * 资源变更后（安装插件 / 新建模板 / 切换信任）：让持有该 cwd 的活跃会话重建扩展运行时
  * （SDK 的 session.reload() = pi 的 /reload），再广播新清单。正在流式的会话跳过，等它空闲。
  */
-async function reloadManagedResources(m: Managed): Promise<boolean> {
-	if (m.disposed || !m.session || m.creating || isManagedBusy(m)) return false;
+async function reloadManagedResources(m: Managed, ownSubmission = false): Promise<boolean> {
+	if (m.disposed || !m.session || m.creating || isManagedBusy(m, ownSubmission)) return false;
+	const attemptedVersion = resourceLoaderVersion(m.cwd);
 	m.resourceReloadPending = false;
 	try {
-		await m.session.reload();
-		// pi 1.3.0 起 reload 会保留原来的活动工具集：被移除的扩展工具会继续留在活动集里。
-		// 这里按当前注册表重算一次；策略本身出错不能把重载判成失败。
-		try {
-			applySessionTools(m, m.session);
-		} catch {
-			/* 工具集合是附带动作，失败下次重载会再算 */
+		if (ownSubmission) await performReload(m, m.session, undefined, true);
+		else {
+			await m.session.reload();
+			swapCurrentModelObject(m.session);
 		}
-		swapCurrentModelObject(m.session);
 		return true;
 	} catch (err) {
+		m.resourceReloadPending = true;
+		if (!failedResourceReloadVersions.has(m)) failedResourceReloadVersions.set(m, attemptedVersion);
 		publish(m, { type: "error", message: `重载扩展失败：${String((err as Error)?.message ?? err)}`, ts: Date.now() });
-		return false;
-	} finally {
-		if (m.resourceReloadPending && !isManagedBusy(m)) queueMicrotask(() => void reloadManagedResources(m));
+		throw err;
 	}
 }
 
@@ -2430,21 +2489,33 @@ export function applySettingsToSessions(patch: { steeringMode?: "all" | "one-at-
 export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 	const key = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
 	let n = 0;
+	const failures: unknown[] = [];
 	for (const m of sessions.values()) {
 		if (cwd && key(m.cwd) !== key(cwd)) continue;
-		if (!m.session) {
-			// 冷会话没有扩展运行时可重建，但页面可能开着：把新清单（模板 / 技能 / 信任）推过去
-			if (hasViewers(m)) publishResources(m);
-			continue;
+		m.resourceReloadPending = Boolean(m.session || m.creating);
+		failedResourceReloadVersions.delete(m);
+		try {
+			if (!m.session) {
+				// 冷会话没有扩展运行时可重建，但页面可能开着：把新清单（模板 / 技能 / 信任）推过去
+				if (hasViewers(m)) publishResources(m);
+				continue;
+			}
+			if (m.creating || isManagedBusy(m)) {
+				m.resourceReloadPending = true;
+				publish(m, { type: "error", message: "资源已更新，将在本轮结束后生效", ts: Date.now() });
+				publishResources(m);
+				continue;
+			}
+			if (await reloadManagedResources(m)) n += 1;
+		} catch (error) {
+			if (m.session || m.creating) {
+				m.resourceReloadPending = true;
+				if (!failedResourceReloadVersions.has(m)) failedResourceReloadVersions.set(m, resourceLoaderVersion(m.cwd));
+			}
+			failures.push(error);
 		}
-		if (m.creating || isManagedBusy(m)) {
-			m.resourceReloadPending = true;
-			publish(m, { type: "error", message: "资源已更新，将在本轮结束后生效", ts: Date.now() });
-			publishResources(m);
-			continue;
-		}
-		if (await reloadManagedResources(m)) n += 1;
 	}
+	if (failures.length) throw new AggregateError(failures, `${failures.length} session(s) could not refresh resources; saved changes remain applied.`);
 	return n;
 }
 
@@ -2818,12 +2889,30 @@ function stopManagedRun(m: Managed, session: AgentSession): Promise<boolean> {
 const abortRequests = new WeakMap<Managed, Promise<CommandResult>>();
 
 /** 交给 SDK，并在「受理」那一刻返回，而不是等整轮跑完；受理之后的错误经 SSE 可见 */
-function submitPrompt(
+async function submitPrompt(
 	m: Managed,
 	session: AgentSession,
 	text: string,
 	options: Pick<NonNullable<Parameters<AgentSession["prompt"]>[1]>, "images" | "streamingBehavior"> = {},
 ): Promise<CommandResult> {
+	// A queued steer/followUp belongs to the current run. An idle submission must refresh before SDK preflight.
+	if (!m.runActive && session.isIdle && (m.resourceReloadPending
+		|| (peekResourceLoader(m.cwd) && (resourceLoaderIsStale(m.cwd) || m.resourceVersion !== resourceLoaderVersion(m.cwd))))) {
+		m.resourceReloadPending = true;
+		try {
+			await refreshResourceLoaderIfStale(m.cwd);
+		} catch (error) {
+			failedResourceReloadVersions.set(m, resourceLoaderVersion(m.cwd));
+			throw error;
+		}
+		if (!await reloadManagedResources(m, true) || m.resourceReloadPending
+			|| m.resourceVersion !== resourceLoaderVersion(m.cwd)) {
+			throw new Error("资源刷新尚未完成，请在会话空闲后重试。");
+		}
+	}
+	if (m.disposed) throw new Error("session is disposed");
+	if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
+	if (!m.runActive && session.isIdle && restoreRegisteredPackageTools(m, session)) publishTools(m, session);
 	return new Promise<CommandResult>((resolve) => {
 		let accepted = false;
 		const commandName = text.startsWith("/") ? text.slice(1).split(/\s/, 1)[0] : "";
@@ -2849,6 +2938,7 @@ function submitPrompt(
 				m.commandRunning = false;
 				if (session.isIdle && !m.bashActive) m.stopFailed = false;
 				publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
+				schedulePendingResourceReload(m);
 			}).catch(() => undefined);
 		}
 		// 同步挂好 rejection handler；接受后的错误仍经 SSE 可见，不能成为未处理拒绝。
@@ -2977,6 +3067,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 		switch (cmd.cmd) {
 			case "prepare": {
 				const session = await ensureSession(m);
+				if (!isManagedBusy(m)) restoreRegisteredPackageTools(m, session);
 				// 已热启动的会话也重新推送，覆盖浏览器先收到冷快照或丢失工具增量的情况。
 				publishTools(m, session);
 				return { ok: true };
@@ -3001,7 +3092,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 					m.promptSubmitting = false;
 					m.submissionCancelled = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
-					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+					schedulePendingResourceReload(m);
 				}
 			}
 			case "steer":
@@ -3052,7 +3143,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				} finally {
 					m.promptSubmitting = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
-					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+					schedulePendingResourceReload(m);
 				}
 			}
 			case "abort": {
@@ -3090,7 +3181,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				void runUserBash(m, session, command, cmd.excludeFromContext === true).finally(() => {
 					m.bashActive = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
-					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+					schedulePendingResourceReload(m);
 				});
 				return { ok: true, data: { accepted: true } };
 			}
@@ -3179,7 +3270,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				} finally {
 					m.promptSubmitting = false;
 					if (!m.disposed) publish(m, { type: "status", isStreaming: isManagedBusy(m), state: isManagedBusy(m) ? "running" : "idle", ts: Date.now() });
-					if (m.resourceReloadPending) queueMicrotask(() => void reloadManagedResources(m));
+					schedulePendingResourceReload(m);
 				}
 			}
 			case "rename": {
@@ -3195,23 +3286,20 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 			}
 			case "reload": {
 				if (isManagedBusy(m)) return { ok: false, error: "session is busy" };
+				m.resourceReloadPending = true;
 				// /reload：先就地刷新共享的模型目录（models.json / auth.json 可能是手改的）；其它会话手里的
 				// 模型对象跟着换新，忙着的等本轮结束再换；本会话重载资源后再换一次
 				await refreshModelRuntime();
 				for (const other of sessions.values()) {
 					if (other === m || !other.session) continue;
-					if (isManagedBusy(other)) other.resourceReloadPending = true;
+					if (isManagedBusy(other)) {
+						other.resourceReloadPending = true;
+						failedResourceReloadVersions.delete(other);
+					}
 					else swapCurrentModelObject(other.session);
 				}
-				const session = await ensureSession(m);
-				await session.reload();
-				// 同 reloadManagedResources：pi 1.3.0 保留活动工具集，重载后按当前注册表重算
-				try {
-					applySessionTools(m, session);
-				} catch {
-					/* 同上：工具同步失败不影响 /reload 本身 */
-				}
-				swapCurrentModelObject(session);
+				await ensureSession(m);
+				if (!await reloadManagedResources(m)) return { ok: false, error: "session is busy" };
 				return { ok: true };
 			}
 			case "fork": {

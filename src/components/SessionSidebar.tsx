@@ -19,7 +19,6 @@ import {
 	IconArchiveOutline20,
 	IconBranchOutline16,
 	IconCheckOutline14,
-	IconClockOutline16,
 	IconDownloadOutline16,
 	IconEditOutline16,
 	IconEllipsisOutline16,
@@ -171,6 +170,7 @@ function SessionSidebarImpl({
 	/** 当前主区域展示的视图：会话对话或顶部工作区视图 */
 	activeView?: WorkspaceView;
 	onSelectView?: (view: Exclude<WorkspaceView, "chat">) => void;
+	/** 已启用的资源面板（placement=panel）：在侧栏各占一项，点开在主区域渲染 */
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");

@@ -40,10 +40,12 @@ async function post(action: "roots" | "list", target?: string): Promise<Record<s
 
 export function DirectoryPicker({
 	open,
+	title,
 	onConfirm,
 	onCancel,
 }: {
 	open: boolean;
+	title?: string;
 	onConfirm: (path: string) => void;
 	onCancel: () => void;
 }) {
@@ -114,7 +116,7 @@ export function DirectoryPicker({
 				}}
 			>
 				<div id={titleId} className="px-5 pb-2 pt-4" style={{ fontSize: 15, fontWeight: 500 }}>
-					{t.pickFolderTitle}
+					{title ?? t.pickFolderTitle}
 				</div>
 
 				{roots.length > 0 && (

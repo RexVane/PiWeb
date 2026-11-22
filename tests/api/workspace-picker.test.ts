@@ -51,10 +51,10 @@ describe("workspace picker API and native process", () => {
 		await fs.rm(root, { recursive: true, force: true });
 	});
 
-	async function pick(data: { stdout?: string; stderr?: string; code: number }, host = "localhost") {
+	async function pick(data: { stdout?: string; stderr?: string; code: number }, host = "localhost", action = "pick") {
 		await fs.writeFile(fixture, JSON.stringify({ ...data, called }));
 		return POST(new Request(`http://${host}/api/workspaces`, {
-			method: "POST", body: JSON.stringify({ action: "pick" }),
+			method: "POST", body: JSON.stringify({ action }),
 		}));
 	}
 
@@ -79,6 +79,13 @@ describe("workspace picker API and native process", () => {
 		expect((await response.json()).data).toMatchObject({ path: project, canceled: false, workspaces: [project] });
 		expect((await getWorkspaceRegistry()).workspaces).toEqual([project]);
 	});
+	it("returns a native directory for an install source without registering a workspace", async () => {
+		const response = await pick({ stdout: `${project}\n`, code: 0 }, "localhost", "pickDirectory");
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ success: true, data: { path: project, canceled: false } });
+		expect(await fs.readFile(called, "utf8")).toBe("yes");
+		expect((await getWorkspaceRegistry()).workspaces).toEqual([]);
+	});
 
 	it("keeps invalid chosen paths as validation errors", async () => {
 		const response = await pick({ stdout: path.join(root, "missing"), code: 0 });
@@ -87,8 +94,8 @@ describe("workspace picker API and native process", () => {
 		expect((await getWorkspaceRegistry()).workspaces).toEqual([]);
 	});
 
-	it("browses on remote clients without starting the native program", async () => {
-		const response = await pick({ code: 2 }, "piweb.example");
+	it.each(["pick", "pickDirectory"])("browses on remote clients without starting the native program for %s", async (action) => {
+		const response = await pick({ code: 2 }, "piweb.example", action);
 		expect(await response.json()).toEqual({ success: true, data: { path: null, canceled: false, remote: true } });
 		await expect(fs.stat(called)).rejects.toMatchObject({ code: "ENOENT" });
 	});

@@ -7,7 +7,6 @@
  */
 import { randomUUID } from "node:crypto";
 import type { WebEvent, WebExtensionWidget, WebUiNode, WebUiResult, WebUiTone } from "./types";
-import type { JsonValue, ResourceUiApi, ResourceUiOutcome, WebResourceView } from "./resources/protocol";
 
 type UiMethod = Extract<WebEvent, { type: "extension_ui" }>["method"];
 type UiEvent = Extract<WebEvent, { type: "extension_ui" }>;
@@ -29,6 +28,8 @@ export interface ExtensionUiBridge {
 	/** 会话销毁：把挂起的对话框全部按取消结束 */
 	dispose(): void;
 	cancelPending(): void;
+	/** Clear old-runtime decorations before new extensions receive session_start. */
+	resetDecorations(): void;
 	/** 扩展通过 setStatus 设的状态文本（页脚展示） */
 	statuses: Map<string, string>;
 	/** 扩展通过 setWidget 设的文字块（输入框上方 / 下方） */
@@ -211,10 +212,6 @@ async function terminalComponentLines(component: unknown, width = 80): Promise<s
 export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void;
 	hasViewers: () => boolean;
 	isHeadless?: () => boolean;
-	resources?: {
-		resolve(resourceId: string, viewId: string): Promise<WebResourceView | undefined>;
-		invoke(resourceId: string, action: string, args: JsonValue): Promise<JsonValue>;
-	};
 }): ExtensionUiBridge {
 	const pending = new Map<string, PendingUi>();
 	const statuses = new Map<string, string>();
@@ -289,39 +286,8 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		);
 	};
 
-	const resourceUi: ResourceUiApi = {
-		apiVersion: 1,
-		async request(resourceId, viewId, data, options) {
-			if (disposed || options?.signal?.aborted || !opts.resources) return { status: "unavailable" };
-			if (opts.isHeadless?.()) {
-				opts.publish({ type: "interaction_unavailable", method: "resource", reason: "headless", ts: Date.now() });
-				return { status: "unavailable" };
-			}
-			let safeData: JsonValue;
-			try {
-				const json = JSON.stringify(data ?? null);
-				if (json.length > 128 * 1024) return { status: "unavailable" };
-				safeData = JSON.parse(json);
-			} catch { return { status: "unavailable" }; }
-			const view = await opts.resources.resolve(resourceId, viewId);
-			if (!view || disposed || options?.signal?.aborted) return { status: "unavailable" };
-			const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
-			if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 24 * 60 * 60_000) throw new Error("Invalid resource dialog timeout");
-			const outcome = await ask<ResourceUiOutcome>({ method: "resource", title: options?.title?.slice(0, 200) || view.title, resourceView: view, resourceData: safeData },
-				{ ...options, timeout, waitForViewer: true }, { status: "timeout" }, (response) => {
-					if (response.cancelled || typeof response.value !== "string" || response.value.length > 128 * 1024) return { status: "cancelled" };
-					try { return { status: "answered", value: JSON.parse(response.value) as JsonValue }; } catch { return { status: "cancelled" }; }
-				});
-			return outcome.status === "timeout" && options?.signal?.aborted ? { status: "cancelled" } : outcome;
-		},
-		async invoke(resourceId, action, args) {
-			if (disposed || !opts.resources) throw new Error("Resource API unavailable");
-			return opts.resources.invoke(resourceId, action, args ?? null);
-		},
-	};
 
 	const uiContext: Record<string, unknown> = {
-		resources: resourceUi,
 		select: (title: string, options: string[], o?: { signal?: AbortSignal; timeout?: number }) =>
 			ask<string | undefined>({ method: "select", title, options }, { ...o, waitForViewer: true }, undefined, (r) => (r.cancelled || !options.includes(r.value ?? "") ? undefined : r.value)),
 		confirm: (title: string, message: string, o?: { signal?: AbortSignal; timeout?: number }) =>
@@ -418,6 +384,13 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		},
 		cancelPending() {
 			for (const entry of [...pending.values()]) entry.resolve({ cancelled: true });
+		},
+		resetDecorations() {
+			for (const key of statuses.keys()) opts.publish({ type: "extension_ui", id: randomUUID(), method: "setStatus", statusKey: key, ts: Date.now() });
+			for (const key of widgets.keys()) opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWidget", widgetKey: key, ts: Date.now() });
+			statuses.clear(); widgets.clear(); title = undefined;
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setTitle", title: "", ts: Date.now() });
+			opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWorkingMessage", ts: Date.now() });
 		},
 		dispose() {
 			disposed = true;

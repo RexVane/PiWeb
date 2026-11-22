@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 import os from "node:os";
 import path from "node:path";
 import { DefaultPackageManager, DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -10,7 +11,6 @@ const runtime = vi.hoisted(() => ({
 }));
 vi.mock("../src/lib/pi", () => ({ ...runtime, getAgentDir: () => process.env.PI_CODING_AGENT_DIR }));
 vi.mock("../src/lib/agent-manager", () => ({ reloadSessionsForCwd: runtime.reloadSessionsForCwd }));
-vi.mock("../src/lib/resources/host", () => ({ reconcileResourceHosts: async () => {} }));
 
 import { listLoadedExtensions, listPackages, toggleExtension, togglePackage } from "../src/lib/plugins-service";
 import { POST } from "../src/app/api/plugins/route";
@@ -41,7 +41,7 @@ beforeEach(async () => {
 afterEach(async () => {
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleGeneratedFixture(root);
 });
 
 async function initialize(globalSettings: Record<string, unknown>, projectSettings: Record<string, unknown> = {}) {

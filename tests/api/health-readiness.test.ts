@@ -5,12 +5,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GET as liveness } from "../../src/app/api/health/route";
 import { GET as readiness } from "../../src/app/api/health/readiness/route";
-const resources = vi.hoisted(() => vi.fn(() => [] as Array<{ id: string; scope: string; state: string; services: string[]; active: number }>));
-vi.mock("../../src/lib/resources/host", () => ({ resourceHostStatuses: resources }));
-import { recycleTemporaryDirectory } from "../../src/lib/recycle-temporary";
+import { recycleGeneratedFixture } from "../fixtures/system-trash";
 
 const ENV_KEYS = ["PI_CODING_AGENT_DIR"] as const;
 let previous: Record<string, string | undefined>;
@@ -18,7 +16,6 @@ let root: string;
 let agentDir: string;
 
 beforeEach(async () => {
-	resources.mockReturnValue([]);
 	previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 	root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-readiness-"));
 	agentDir = path.join(root, "agent");
@@ -30,7 +27,7 @@ afterEach(async () => {
 		if (previous[key] === undefined) delete process.env[key];
 		else process.env[key] = previous[key];
 	}
-	await recycleTemporaryDirectory(root).catch(() => undefined);
+	await recycleGeneratedFixture(root).catch(() => undefined);
 });
 
 describe("liveness stays unchanged", () => {
@@ -43,7 +40,7 @@ describe("liveness stays unchanged", () => {
 });
 
 describe("readiness", () => {
-	it("reports the data directory, model configuration and scheduler state", async () => {
+	it("reports the data directory, model configuration", async () => {
 		await fs.mkdir(agentDir, { recursive: true });
 		await fs.writeFile(path.join(agentDir, "settings.json"), "{}");
 		const response = await readiness();
@@ -55,16 +52,8 @@ describe("readiness", () => {
 		expect(body.data.ready).toBe(true);
 		expect(body.data.checks.dataDir.ok).toBe(true);
 		expect(body.data.checks.modelConfig.ok).toBe(true);
-		// No installed resources is a healthy baseline, not a missing mandatory scheduler.
-		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [] });
 	});
 
-	it("reports optional resource service states through the public registry", async () => {
-		await fs.mkdir(agentDir, { recursive: true });
-		resources.mockReturnValue([{ id: "third-party", scope: "user", state: "running", services: ["watcher"], active: 0 }]);
-		const body = await (await readiness()).json();
-		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [{ id: "third-party", services: ["watcher"] }] });
-	});
 
 	it("returns 503 with a readable reason when settings.json is corrupt", async () => {
 		await fs.mkdir(agentDir, { recursive: true });

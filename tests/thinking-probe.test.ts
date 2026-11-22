@@ -29,8 +29,6 @@ function attempt(level: string, over: Partial<ThinkingProbeAttempt> = {}): Think
 	};
 }
 
-const ok = (id: string, model = "m", reasoningTokens = 0, completionTokens = 10) => ({ ok: true, status: 200, id, modelEcho: model, usage: { completion_tokens: completionTokens, completion_tokens_details: { reasoning_tokens: reasoningTokens } } });
-
 describe("parse helpers", () => {
 	it("extracts reasoning and completion tokens from OpenAI-style usage", () => {
 		expect(parseReasoningTokens({ completion_tokens_details: { reasoning_tokens: 17 } })).toBe(17);

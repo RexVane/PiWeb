@@ -22,13 +22,6 @@ export function PiMark({
 			className={className}
 			style={{ display: "block", flex: "none", ...style }}
 		>
-			<defs>
-				<linearGradient id="isx-pi-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-					<stop offset="0%" stopColor="#02defc" />
-					<stop offset="50%" stopColor="#7ffe00" />
-					<stop offset="100%" stopColor="#fc0197" />
-				</linearGradient>
-			</defs>
 			{/* 现代圆角 π 字符造型：水平顶梁与双流线支腿 */}
 			<path
 				d="M3.75 6.75C3.75 5.92 4.42 5.25 5.25 5.25H18.75C19.58 5.25 20.25 5.92 20.25 6.75C20.25 7.58 19.58 8.25 18.75 8.25H5.25C4.42 8.25 3.75 7.58 3.75 6.75Z"

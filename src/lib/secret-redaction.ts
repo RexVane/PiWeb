@@ -45,7 +45,7 @@ export function redactSecrets(text: string): string {
 	if (!text) return text;
 	let result = text;
 	result = result.replace(URL_USERINFO_PASSWORD, "$1$2:***@");
-	for (const pattern of API_KEY_PATTERNS) result = result.replace(pattern, (match, ...rest) => {
+	for (const pattern of API_KEY_PATTERNS) result = result.replace(pattern, (match) => {
 		// 保留原始前缀（sk-/ghp_/AKIA…），只把密钥主体换掉，方便排查“哪一类凭据泄露”
 		const prefix = /^([A-Za-z]+[-_]?(?:proj-|ant-|or-|svcacct-)?)/.exec(match)?.[1] ?? match.slice(0, 3);
 		return `${prefix}***`;

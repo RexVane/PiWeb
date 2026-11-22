@@ -181,7 +181,7 @@ describe("sidebar row menus", () => {
 		fireEvent.click(screen.getByText("删除会话"));
 		expect(onDelete).not.toHaveBeenCalled();
 		const dialog = screen.getByRole("dialog");
-		expect(dialog.textContent).toContain("永久删除");
+		expect(dialog.textContent).toContain("系统回收站");
 		expect(dialog.textContent).toContain("old archive");
 		await act(async () => fireEvent.click(within(dialog).getByRole("button", { name: "删除会话" })));
 		expect(onDelete).toHaveBeenCalledExactlyOnceWith(archived.path);
@@ -193,7 +193,7 @@ describe("sidebar row menus", () => {
 		press(screen.getByRole("button", { name: "session-actions" }));
 		fireEvent.click(screen.getByText("删除会话"));
 		expect(onDelete).not.toHaveBeenCalled();
-		expect(screen.getByRole("dialog").textContent).toContain("永久删除");
+		expect(screen.getByRole("dialog").textContent).toContain("系统回收站");
 
 		fireEvent.click(screen.getByRole("button", { name: "取消" }));
 		expect(screen.queryByRole("dialog")).toBeNull();

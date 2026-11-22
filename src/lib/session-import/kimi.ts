@@ -10,7 +10,6 @@
  * 只读主 agent（agents/main）；子代理自己的 wire.jsonl 不导入。
  */
 import path from "node:path";
-import fs from "node:fs/promises";
 import { eachJsonLine, jsonlImportWarnings, listFiles, readFileBounded, readHead, reachedLimit, sortByRecency } from "./files";
 import { kimiHome, kimiSessionsRoot } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";

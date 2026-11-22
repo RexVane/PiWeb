@@ -216,7 +216,6 @@ const delay = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, 
 async function completionsCall(options: ThinkingProbeOptions, body: Record<string, unknown>, effort?: string): Promise<RawAttempt> {
 	const headers = { "Content-Type": "application/json", Accept: "application/json", ...(options.headers ?? {}) };
 	const payload: Record<string, unknown> = { ...body, ...(effort === undefined ? {} : { reasoning_effort: effort }) };
-	const startedAt = Date.now();
 	try {
 		const fetchImpl = options.fetchImpl ?? fetch;
 		const response = await fetchImpl(`${options.baseUrl.replace(/\/+$/, "")}/chat/completions`, {

@@ -7,31 +7,36 @@ import { safeLocalStorage } from "@/lib/browser-storage";
  * 每个回合 = 用户消息 → 过程（叙述句是阶段标题，其下是带图标的步骤列表）→ 最终回答。
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import {
+	IconAlertCircle14,
 	IconBranchOutline16,
 	IconBrowseOutline14,
 	IconCheckOutline14,
 	IconChevronRight14,
 	IconClockOutline16,
 	IconCloseOutline14,
+	IconCmdPrompt14,
 	IconCompactionOutline16,
 	IconCopyOutline16,
 	IconCubeOutline16,
 	IconDatabaseOutline16,
 	IconDataOutline16,
 	IconEditOutline16,
+	IconEditPencil14,
 	IconFileOutline16,
+	IconFileWrite14,
 	IconGlobeOutline14,
 	IconImageOutline16,
 	IconInfoOutline16,
 	IconRefreshOutline14,
 	IconSearchOutline16,
 	IconSkillOutline16,
-	IconTerminalOutline14,
-	IconThinkOutline14,
+	IconSparkOutline14,
+	IconThinkBulb14,
+	IconThinkRing14,
 	IconWarningOutline16,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
@@ -41,37 +46,36 @@ import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
 import { isCancelledTool } from "@/lib/chat/cancellation";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
+import { PiMark } from "@/components/PiMark";
 import { PreviewImage } from "@/components/PreviewImage";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
 import { WebSourcesPanel, WebSourcesTrigger } from "@/components/chat/web-sources";
 import { ViewedImages } from "@/components/chat/viewed-images";
-import { imageToolsFromMessages, toolImagePreviews, type ViewedImagePreview } from "@/lib/chat/tool-images";
+import { imageToolsFromMessages, toolImagePreviews } from "@/lib/chat/tool-images";
 import { useChatReadingAnchor } from "@/components/chat/reading-anchor";
 import { useI18n } from "@/i18n";
 import { fmtDuration, fmtPercent, fmtThroughput, fmtTokens } from "@/lib/format";
 import type { ToolCardState } from "@/hooks/usePiWeb";
-import type { ContextResource, TrajTokens, WebContent, WebMessage, WebStats } from "@/lib/types";
+import type { ContextResource, TrajTokens, WebMessage, WebStats } from "@/lib/types";
 import {
-	classifyWebTool,
 	extractWebQuery,
-	extractWebSources,
 	formatWebUrlLabel,
 	mergeWebSources,
 	normalizeWebUrl,
 	type WebSource,
-	type WebToolRole,
 } from "@/lib/web-search";
 import {
 	classifyModelError,
 	cleanCommand,
-	deleteTargetOf,
+	cleanErrorPreviewLines,
+	compactDisplayPath,
+	compactPathsInText,
+	describeCommandIntent,
 	displayToolName,
 	firstSentence,
-	isDeleteCommand,
 	langOfPath,
 	previewSide,
-	relativizeInText,
 	relativizePath,
 	skillNameFromRead,
 	splitLines,
@@ -80,9 +84,19 @@ import {
 	type ModelErrorKind,
 	type ToolKind,
 } from "@/lib/process-format";
+import {
+	buildProcessBlocks,
+	collectToolWebData,
+	EMPTY_WEB_SOURCES,
+	itemWebInfo,
+	nestedNodes,
+	type ProcessBlock,
+	type ProcessItem,
+	type ProcessRun,
+	type ToolNode,
+} from "@/lib/process-phases";
 
 type Dict = Record<string, string>;
-type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
 
 
 /** dsh message-chrome formatRunDuration：整秒，分钟档秒数补零 */
@@ -360,13 +374,8 @@ function MessageActions({
 // 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后每个阶段下的思考与命令折成一行
 // 「思考了 1m 12s，运行了 6 条命令」（Claude Code 的折叠摘要），编辑文件保留 diff；末尾 π 记号做工作指示。没有连线。
 
-const RAIL = "⎿";
 /** 命令输出默认露出的行数 */
 const PREVIEW_LINES = 3;
-/** 进行中的状态词：Claude Code 同款用法，闪光渐变，按用户要求用英文（两种界面语言都一样） */
-const WORKING_VERBS = ["Thinking", "Pondering", "Cogitating", "Mulling", "Percolating", "Brewing", "Simmering", "Ruminating", "Synthesizing", "Noodling", "Marinating", "Crafting"];
-/** 有步骤在闪光时 π 行只报时长；这行和状态词一样固定英文，不随界面语言变 */
-const WORKING_FOR = "Working for {d}";
 
 /** 每秒刷新一次的已用时长（仅在 active 时计时） */
 function useElapsed(startedAt: number | undefined, active: boolean): number {
@@ -390,13 +399,42 @@ function fmtSpan(ms: number): string {
 }
 
 type StepTone = "dim" | "live" | "fail" | "warn";
+type StepBadgeTone = "think" | "inspect" | "exec" | "mutate" | "accent" | "warn" | "fail" | "work" | "neutral";
 type StepKind = ToolKind | "image" | "web_search" | "web_fetch" | "think" | "summary" | "context" | "error" | "abort" | "retry" | "work" | "skill" | "custom";
 
+function stepBadgeTone(kind: StepKind, tone: StepTone): StepBadgeTone {
+	if (tone === "fail") return "fail";
+	if (tone === "warn") return "warn";
+	switch (kind) {
+		case "think":
+		case "summary":
+			return "think";
+		case "read":
+		case "search":
+		case "image":
+		case "web_search":
+		case "web_fetch":
+		case "context":
+			return "inspect";
+		case "write":
+			return "mutate";
+		case "skill":
+		case "custom":
+			return "accent";
+		case "cmd":
+			return "exec";
+		case "work":
+			return "work";
+		default:
+			return "neutral";
+	}
+}
+
 function KindIcon({ kind }: { kind: StepKind }) {
-	const p = { size: 14, style: { flex: "none" as const } };
+	const p = { size: 13, style: { flex: "none" as const } };
 	switch (kind) {
 		case "cmd":
-			return <IconTerminalOutline14 {...p} />;
+			return <IconCmdPrompt14 {...p} />;
 		case "read":
 			return <IconBrowseOutline14 {...p} />;
 		case "image":
@@ -407,10 +445,11 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "web_fetch":
 			return <IconGlobeOutline14 {...p} />;
 		case "write":
-			return <IconEditOutline16 {...p} />;
+			return <IconEditPencil14 {...p} />;
 		case "think":
+			return <IconThinkBulb14 {...p} />;
 		case "summary":
-			return <IconThinkOutline14 {...p} />;
+			return <IconSparkOutline14 {...p} />;
 		case "context":
 			return <IconFileOutline16 {...p} />;
 		case "error":
@@ -420,39 +459,26 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "retry":
 			return <IconRefreshOutline14 {...p} />;
 		case "work":
-			return <span className="pw-pi" aria-hidden="true">π</span>;
+			return <span className="pw-pi" aria-hidden="true"><PiMark size={14} /></span>;
 		case "skill":
-			return <IconSkillOutline16 size={14} style={{ flex: "none" }} />;
+			return <IconSkillOutline16 size={13} style={{ flex: "none" }} />;
 		default:
 			return <IconDataOutline16 {...p} />;
 	}
 }
 
-function Step({ kind, tone = "dim", live, className, children }: { kind: StepKind; tone?: StepTone; live?: boolean; className?: string; children: ReactNode }) {
+function Step({ kind, tone = "dim", badgeTone, icon, live, hideIcon, className, children }: { kind: StepKind; tone?: StepTone; badgeTone?: StepBadgeTone; icon?: ReactNode; live?: boolean; hideIcon?: boolean; className?: string; children: ReactNode }) {
+	const resolvedBadge = tone === "fail" ? "fail" : tone === "warn" ? "warn" : badgeTone ?? stepBadgeTone(kind, tone);
 	return (
 		<div className={className ? `pw-step ${className}` : "pw-step"} data-kind={kind} data-tone={tone} data-live={live || undefined}>
-			<span className="pw-icon" aria-hidden>
-				<KindIcon kind={kind} />
-			</span>
+			{!hideIcon && (
+				<span className="pw-icon" data-badge={resolvedBadge} aria-hidden>
+					{tone === "fail" ? <IconAlertCircle14 size={13} style={{ flex: "none" }} /> : (icon ?? <KindIcon kind={kind} />)}
+				</span>
+			)}
 			<div className="pw-body">{children}</div>
 		</div>
 	);
-}
-
-/** 把模板里的 {n}/{d} 占位换成加粗的值（摘要行里数字加粗，像 Claude Code） */
-function fillBold(template: string, values: Record<string, string>): ReactNode[] {
-	const out: ReactNode[] = [];
-	const re = /\{(\w+)\}/g;
-	let last = 0;
-	let m: RegExpExecArray | null;
-	let i = 0;
-	while ((m = re.exec(template))) {
-		if (m.index > last) out.push(template.slice(last, m.index));
-		out.push(<strong key={i++}>{values[m[1]] ?? ""}</strong>);
-		last = m.index + m[0].length;
-	}
-	if (last < template.length) out.push(template.slice(last));
-	return out;
 }
 
 // ---------- 工具步骤 ----------
@@ -488,7 +514,7 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
 	const body = splitLines(raw).filter((l) => !/^Command exited with code \d+/.test(l));
 	const count = (k: string, v: number) => t[k].replace("{n}", String(v));
-	const rel = (lines: string[]) => (cwd ? lines.map((l) => relativizeInText(l, cwd)) : lines);
+	const rel = (lines: string[]) => lines.map((l) => compactPathsInText(l, cwd));
 	const tailBody = trimNoiseTail(body);
 	const tail = (n: number): Preview => ({ lines: rel(tailBody.slice(-n)), hidden: Math.max(0, body.length - Math.min(n, tailBody.length)), side: "tail" });
 	const head = (n: number): Preview => ({ lines: rel(body.slice(0, n)), hidden: Math.max(0, body.length - n), side: "head" });
@@ -497,10 +523,16 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	const command = kind === "cmd" ? (str(a?.command) ?? str(a?.cmd) ?? str(a?.script) ?? "") : "";
 	const byCmd = (n: number) => (previewSide(cleanCommand(command, cwd).text) === "head" ? head(n) : tail(n));
 	if (running) return kind === "cmd" && body.length ? tail(PREVIEW_LINES) : none;
-	if (isCancelledTool(state.name, state.isError, raw)) return { head: t.turnAborted, ...(kind === "cmd" ? tail(4) : head(4)) };
+	if (isCancelledTool(state.name, state.isError, raw)) {
+		const cleaned = cleanErrorPreviewLines(kind === "cmd" ? trimNoiseTail(body) : body, cwd);
+		const shown = kind === "cmd" ? cleaned.slice(-2) : cleaned.slice(0, 2);
+		return { head: t.turnAborted, lines: shown, hidden: Math.max(0, cleaned.length - shown.length), side: kind === "cmd" ? "tail" : "head" };
+	}
 	if (state.isError) {
 		const h = exitCode !== undefined && exitCode !== 0 ? `${t.toolFailed} · ${t.toolExit.replace("{code}", String(exitCode))}` : t.toolFailed;
-		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
+		const cleaned = cleanErrorPreviewLines(kind === "cmd" ? trimNoiseTail(body) : body, cwd);
+		const shown = kind === "cmd" ? cleaned.slice(-2) : cleaned.slice(0, 2);
+		return { head: h, lines: shown, hidden: Math.max(0, cleaned.length - shown.length), side: kind === "cmd" ? "tail" : "head" };
 	}
 	switch (kind) {
 		case "read": {
@@ -521,43 +553,6 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	}
 }
 
-const EMPTY_WEB_SOURCES: WebSource[] = [];
-
-function nestedHasWebTool(nodes: ToolNode[] | undefined): boolean {
-	if (!nodes?.length) return false;
-	for (const node of nodes) {
-		const out = node.state.result ?? node.state.partialResult;
-		if (classifyWebTool(node.state.name, node.state.args, out) !== null) return true;
-		if (nestedHasWebTool(node.children)) return true;
-	}
-	return false;
-}
-
-function collectToolWebData(
-	name: string,
-	args: unknown,
-	state: ToolCardState | undefined,
-	nested: ToolNode[] | undefined,
-): { hasWeb: boolean; role: WebToolRole | null; sources: WebSource[] } {
-	const output = state?.result ?? state?.partialResult ?? "";
-	const role = classifyWebTool(name, args, output);
-	const childLists: WebSource[][] = [];
-	let hasWeb = role !== null;
-	if (nested?.length) {
-		const stack = [...nested];
-		while (stack.length > 0) {
-			const node = stack.shift()!;
-			const sub = collectToolWebData(node.state.name, node.state.args, node.state, node.children);
-			if (sub.hasWeb) hasWeb = true;
-			if (sub.sources.length > 0) childLists.push(sub.sources);
-		}
-	}
-	if (!hasWeb) return { hasWeb: false, role: null, sources: EMPTY_WEB_SOURCES };
-	const ownSources = extractWebSources(args, output, role);
-	const sources = childLists.length > 0 ? mergeWebSources([...childLists, ownSources]) : ownSources;
-	return { hasWeb: true, role, sources };
-}
-
 function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	const n = name.toLowerCase();
 	if (kind === "cmd") return t.stepRan;
@@ -567,24 +562,37 @@ function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	return displayToolName(name);
 }
 
-/**
- * 嵌套调用树：工具在执行中自己发起的调用（codemode 脚本、扩展的 ctx.executeTool）。
- * 模型没有为它们发 toolCall，所以消息里找不到；跟着父调用的 children 渲染在它下面。
- */
-type ToolNode = { id: string; state: ToolCardState; children: ToolNode[] };
-
-const NESTED_MAX_DEPTH = 4;
-const NO_NESTED: ToolNode[] = [];
-
-function nestedNodes(tools: Record<string, ToolCardState>, parentId: string, depth = 0): ToolNode[] {
-	const ids = tools[parentId]?.children;
-	if (!ids?.length || depth >= NESTED_MAX_DEPTH) return NO_NESTED;
-	const out: ToolNode[] = [];
-	for (const id of ids) {
-		const state = tools[id];
-		if (state) out.push({ id, state, children: nestedNodes(tools, id, depth + 1) });
+function SplitArgText({ value, splitPath }: { value: string; splitPath?: boolean }) {
+	if (value.includes(" · ")) {
+		const parts = value.split(" · ");
+		return (
+			<>
+				{parts.map((part, idx) => (
+					<span key={idx}>
+						{idx > 0 && <span className="pw-arg-sep"> · </span>}
+						<SplitArgText value={part} splitPath={splitPath || part.includes("/")} />
+					</span>
+				))}
+			</>
+		);
 	}
-	return out;
+	if (splitPath) {
+		const trimmed = value.endsWith("/") && value.length > 1 ? value.slice(0, -1) : value;
+		const slash = trimmed.lastIndexOf("/");
+		if (slash >= 0) {
+			const dir = value.slice(0, slash + 1);
+			const leaf = value.slice(slash + 1);
+			if (leaf) {
+				return (
+					<>
+						<span className="pw-arg-dir">{dir}</span>
+						<span className="pw-arg-leaf">{leaf}</span>
+					</>
+				);
+			}
+		}
+	}
+	return <>{value}</>;
 }
 
 const ToolStep = memo(function ToolStep({
@@ -661,26 +669,55 @@ const ToolStep = memo(function ToolStep({
 		return str(a?.path ?? a?.file_path) ?? "";
 	})();
 	const fullCommand = kind === "cmd" ? (str((args as Record<string, unknown>)?.command) ?? str((args as Record<string, unknown>)?.cmd) ?? str((args as Record<string, unknown>)?.script) ?? "") : "";
-	// 删除文件的命令：完成后给红色标记（内容级 diff 不强求）
-	const deletedTarget = kind === "cmd" && !running && !failed && !cancelled && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
-	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
+	const displayCmd = kind === "cmd" && summary.text ? compactPathsInText(summary.text, cwd) : "";
+	const cmdIntent = kind === "cmd" && !running ? describeCommandIntent(fullCommand || summary.text, cwd) : null;
+	const isGitCmd = cmdIntent?.category === "git_inspect" || cmdIntent?.category === "git_write";
+	const toolDurationMs = !running && state?.startedAt && state?.endedAt && state.endedAt >= state.startedAt ? state.endedAt - state.startedAt : 0;
+	const stepIconNode = kind === "write"
+		? (isWriteTool ? <IconFileWrite14 size={13} style={{ flex: "none" }} /> : <IconEditPencil14 size={13} style={{ flex: "none" }} />)
+		: isGitCmd
+			? <IconBranchOutline16 size={13} style={{ flex: "none" }} />
+			: undefined;
+	// 标题行已经完整展示短单行命令时，展开抽屉不再重复打印一遍命令行；多行脚本、被路径压缩或可能被省略号截断的长命令保留完整 cmdline
+	const showCmdlineInOutput = Boolean(
+		fullCommand && (summary.scriptLines > 1 || fullCommand.trim() !== displayCmd.trim() || fullCommand.length > 64),
+	);
+	const formattedOutput = output
+		? output.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "").replace(/\n{3,}/g, "\n\n")
+		: "";
 	const hasDiff = Boolean(diff && diff.length);
 	const hasOutput = Boolean(output || state?.encodingLoss);
-	const canExpand = hasOutput && !hasDiff && !running;
-	const duration = state?.startedAt && state?.endedAt ? state.endedAt - state.startedAt : 0;
+	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
+	const redundantSingleLineError =
+		failed &&
+		!fullCommand &&
+		!state?.encodingLoss &&
+		preview.hidden === 0 &&
+		preview.lines.length > 0 &&
+		splitLines(output ?? "").length <= 2;
+	const canExpand = hasOutput && !hasDiff && !running && !redundantSingleLineError;
+	const inlineStatusHead = failed || cancelled ? preview.head : undefined;
 	// Completed tools share a neutral summary; extensions own their specialized UI.
-	const showPreview = (running || failed || cancelled) && (Boolean(preview.head) || preview.lines.length > 0);
+	const showPreview = running
+		? Boolean(preview.head) || preview.lines.length > 0
+		: (failed || cancelled) && !open && (preview.lines.length > 0 || preview.hidden > 0);
 	const lineInteractive = hasDiff || canExpand;
 	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
 	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));
 	// 折叠时只留标题行：diff 正文整块不渲染（原来固定露出前 12 行，手机上十几次编辑
-	// 会把整段对话淹没）。标题里已经有「+N −M 行」，点标题行展开看全文。
+	// 会把整段对话淹没）。标题里已经有「+N −M」，点标题行展开看全文。
 	const diffLines = hasDiff && diff ? (open ? diff : null) : null;
-	const diffStat = hasDiff && diff
+	const diffCounts = hasDiff && diff
 		? isWriteTool && !state?.patch
-			? t.diffSummary.replace("{add}", String(diff.length)).replace("{del}", "0")
-			: t.diffSummary.replace("{add}", String(diff.filter((l) => l.kind === "add").length)).replace("{del}", String(diff.filter((l) => l.kind === "del").length))
-		: "";
+			? { add: diff.length, del: 0 }
+			: { add: diff.filter((l) => l.kind === "add").length, del: diff.filter((l) => l.kind === "del").length }
+		: null;
+	const diffStat = diffCounts && (diffCounts.add > 0 || diffCounts.del > 0) ? (
+		<>
+			{diffCounts.add > 0 && <span className="pw-add">+{diffCounts.add}</span>}
+			{diffCounts.del > 0 && <span className="pw-del">−{diffCounts.del}</span>}
+		</>
+	) : null;
 	const toggle = () => setOpen((o) => !o);
 	const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
 		if (e.key === "Enter" || e.key === " ") {
@@ -691,14 +728,9 @@ const ToolStep = memo(function ToolStep({
 	const splitInteractiveLine = webRole !== null || webSources.length > 0;
 	const actionButtons = (
 		<>
-			{deletedTarget && (
-				<span className="pw-meta" style={{ color: "var(--dsw-danger)" }} title={deletedTarget}>
-					{t.deletedFile.replace("{path}", relativizeInText(deletedTarget, cwd || ""))}
-				</span>
-			)}
-			{summary.scriptLines > 1 && <span className="pw-meta">{t.commandLines.replace("{n}", String(summary.scriptLines))}</span>}
+			{summary.scriptLines > 1 && <span className="pw-meta pw-cmd-lines">· {summary.scriptLines}L</span>}
 			{running && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
-			{!running && duration >= 1000 && <span className="pw-meta">{fmtSpan(duration)}</span>}
+			{!running && toolDurationMs >= 1000 && <span className="pw-meta">{fmtSpan(toolDurationMs)}</span>}
 			{onOpenFile && argPath && (
 				<button
 					type="button"
@@ -733,7 +765,7 @@ const ToolStep = memo(function ToolStep({
 	);
 	const rawChevron = lineInteractive ? (
 		<span
-			className={hasDiff ? "pw-meta" : "pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"}
+			className="pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"
 			aria-hidden
 			style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)", opacity: open ? 1 : undefined }}
 		>
@@ -752,12 +784,45 @@ const ToolStep = memo(function ToolStep({
 			<span className="pw-badge">skill</span>
 			<span className="pw-skill-name" title={summary.text || argPath || argsTitle}>{readSkillName}</span>
 		</>
+	) : kind === "cmd" ? (
+		<>
+			{running ? (
+				<span className="pw-shimmer">{t.stepRunning}</span>
+			) : (
+				<span className="pw-verb" data-tone={failed || cancelled ? undefined : "exec"} data-failed={failed || undefined}>
+					{isGitCmd ? "Git" : stepVerb(tt, kind, name)}
+				</span>
+			)}
+			{badge && <span className="pw-badge">{badge}</span>}
+			{displayCmd ? (
+				<span className="pw-arg pw-arg-cmd" data-failed={failed || undefined} title={summary.text || argsTitle}>
+					{displayCmd}
+				</span>
+			) : (
+				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
+			)}
+		</>
 	) : (
 		<>
-			{running ? <span className="pw-shimmer">{t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
+			{running ? (
+				<span className="pw-shimmer">{t.stepRunning}</span>
+			) : (
+				<span className="pw-verb" data-tone={failed || cancelled ? undefined : stepBadgeTone(kind, "dim")} data-failed={failed || undefined}>
+					{stepVerb(tt, kind, name)}
+				</span>
+			)}
 			{badge && <span className="pw-badge">{badge}</span>}
 			{summary.text ? (
-				<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={argsTitle}>{summary.text}</span>
+				<span className={kind === "read" || kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={summary.text || argsTitle}>
+					{kind === "read" || kind === "write" || kind === "search" ? (
+						<SplitArgText
+							value={kind === "read" || kind === "write" || name.toLowerCase() === "ls" ? compactDisplayPath(argPath || summary.text, cwd) : compactPathsInText(summary.text, cwd)}
+							splitPath
+						/>
+					) : (
+						summary.text
+					)}
+				</span>
 			) : (
 				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
 			)}
@@ -807,7 +872,7 @@ const ToolStep = memo(function ToolStep({
 		);
 	}
 	return (
-		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} live={running} className="group/tool">
+		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} icon={stepIconNode} live={running} className="group/tool">
 			{splitInteractiveLine ? (
 				<div className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}>
 					{webRole === "search" ? (
@@ -846,7 +911,8 @@ const ToolStep = memo(function ToolStep({
 							onToggle={() => setSourcesOpen((v) => !v)}
 						/>
 					)}
-					{diffStat && <span className="pw-meta">{diffStat}</span>}
+					{diffStat && <span className="pw-phase-diff">{diffStat}</span>}
+					{inlineStatusHead && <span className="pw-meta pw-status-head" data-failed={failed || undefined}>{inlineStatusHead}</span>}
 					{webSources.length === 0 && rawChevron}
 					{actionButtons}
 				</div>
@@ -862,7 +928,8 @@ const ToolStep = memo(function ToolStep({
 					onKeyDown={lineInteractive ? onKey : undefined}
 				>
 					{regularSummaryNode}
-					{diffStat && <span className="pw-meta">{diffStat}</span>}
+					{diffStat && <span className="pw-phase-diff">{diffStat}</span>}
+					{inlineStatusHead && <span className="pw-meta pw-status-head" data-failed={failed || undefined}>{inlineStatusHead}</span>}
 					{rawChevron}
 					{actionButtons}
 				</div>
@@ -883,9 +950,8 @@ const ToolStep = memo(function ToolStep({
 					onKeyDown={canExpand ? onKey : undefined}
 					title={canExpand ? (open ? t.collapseOutput : t.expandOutput) : undefined}
 				>
-					<span className="pw-rail">{RAIL}</span>
 					<span className="pw-lines">
-						{preview.head && <div className="pw-head">{preview.head}</div>}
+						{!inlineStatusHead && preview.head && <div className="pw-head">{preview.head}</div>}
 						{!open && preview.side === "tail" && preview.hidden > 0 && <div className="pw-more">… {t.moreLines.replace("{n}", String(preview.hidden))}</div>}
 						{!open && preview.lines.map((l, i) => <div key={i}>{l}</div>)}
 						{!open && preview.side !== "tail" && preview.hidden > 0 && <div className="pw-more">… {t.moreLines.replace("{n}", String(preview.hidden))}</div>}
@@ -903,9 +969,9 @@ const ToolStep = memo(function ToolStep({
 			)}
 			{showFullOutput && (
 				<div className="pw-output">
-					{fullCommand && <div className="cmdline">{fullCommand}</div>}
+					{showCmdlineInOutput && <div className="cmdline">{fullCommand}</div>}
 					{state?.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn-text)" }}>{t.encodingLossWarning}</p>}
-					{output && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{output}</pre>}
+					{formattedOutput && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{formattedOutput}</pre>}
 				</div>
 			)}
 			{imagePreviews.length > 0 && <ViewedImages images={imagePreviews} cwd={cwd} onOpenFile={onOpenFile} />}
@@ -930,19 +996,26 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 		const one = text.replace(/\s+/g, " ").trim();
 		const tail = one.length > 220 ? `…${one.slice(-220)}` : one;
 		return (
-			<Step kind="think" tone="live" live>
-				<div className="pw-line">
-					<span className="pw-shimmer">{t.thinkingLive}…</span>
+			<Step kind="think" tone="live" icon={<IconThinkRing14 size={13} style={{ flex: "none" }} />} live>
+				<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
+					<span className="pw-shimmer">{t.thinkingStepLive}…</span>
 					{startedAt && elapsed >= 3000 ? <span className="pw-meta">{fmtSpan(elapsed)}</span> : null}
-				</div>
-				{tail && <div className="pw-tail">{tail}</div>}
+					{tail && <IconChevronRight14 size={11} className="pw-chev" />}
+				</button>
+				{open && text.trim() ? (
+					<pre className="pw-output pw-think-full">{text}</pre>
+				) : (
+					tail && <div className="pw-tail">{tail}</div>
+				)}
 			</Step>
 		);
 	}
 	return (
-		<Step kind="think">
-			<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
-				<span className="pw-gist">{firstSentence(text, 140)}</span>
+		<Step kind="think" className="pw-step-think-prose">
+			<button type="button" className="pw-line pw-clickable pw-think-prose-line" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
+				<span className="pw-verb" data-tone="think">{t.thinkLabel}</span>
+				<span className="pw-gist">{firstSentence(text, 180)}</span>
+				<IconChevronRight14 size={11} className="pw-chev pw-hover-chev" />
 			</button>
 			{open && <pre className="pw-output pw-think-full">{text}</pre>}
 		</Step>
@@ -1097,50 +1170,25 @@ function CustomStep({ customType, text }: { customType: string; text: string }) 
 	);
 }
 
-// ---------- 工作指示：π 记号 + 英文状态词闪光（没有正在进行的步骤时）或「Working for 12s」；整行固定英文 ----------
+// ---------- 工作指示：π 记号表示会话工作中，纯展示不可展开，思考与过程在上方就位推进 ----------
 
-function WorkingStep({ startedAt, outputTokens, workingMessage, hasLiveStep }: { startedAt: number; outputTokens?: number; workingMessage?: string | null; hasLiveStep: boolean }) {
+function WorkingStep({ startedAt, outputTokens, workingMessage }: { startedAt: number; outputTokens?: number; workingMessage?: string | null }) {
 	const elapsed = useElapsed(startedAt, true);
-	const verb = WORKING_VERBS[Math.floor(elapsed / 3000) % WORKING_VERBS.length];
-	// 扩展可以用 setWorkingMessage 覆盖这行文案（pi 终端同款能力）；有步骤在闪光时这里只报时长
-	const label = workingMessage || (hasLiveStep ? null : `${verb}…`);
+	const label = workingMessage || "Working…";
 	return (
 		<Step kind="work" tone="live" live>
-			<div className="pw-line">
-				{label ? <span className="pw-shimmer">{label}</span> : <span className="pw-verb">{fillBold(WORKING_FOR, { d: fmtSpan(elapsed) })}</span>}
-				{label && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
-				{outputTokens ? <span className="pw-meta">↓ {fmtTokens(outputTokens)} tokens</span> : null}
+			<div className="pw-line pw-work-line">
+				<span className="pw-shimmer">{label}</span>
+				<span className="pw-work-metrics">
+					<span className="pw-meta">{fmtSpan(elapsed)}</span>
+					{outputTokens ? <span className="pw-meta">↓ {fmtTokens(outputTokens)} tokens</span> : null}
+				</span>
 			</div>
 		</Step>
 	);
 }
 
-// ---------- 回合内容 → 步骤项；已完成回合把连续的思考 / 命令折成摘要行 ----------
-
-type Item =
-	| { kind: "think"; key: string; msgIndex: number; text: string; live: boolean; startedAt?: number }
-	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
-	| { kind: "image"; key: string; msgIndex: number; data: string; mimeType: string; url?: string }
-	| { kind: "viewedImages"; key: string; msgIndex: number; images: ViewedImagePreview[] }
-	| { kind: "tool"; key: string; msgIndex: number; call: ToolCallContent; state?: ToolCardState; nested?: ToolNode[]; badge?: string }
-	| { kind: "custom"; key: string; msgIndex: number; customType: string; text: string }
-	| { kind: "error"; key: string; msgIndex: number; message: string; count: number }
-	| { kind: "abort"; key: string; msgIndex: number };
-
-type Run = {
-	kind: "run";
-	key: string;
-	items: Item[];
-	hasThink: boolean;
-	cmds: number;
-	reads: number;
-	searches: number;
-	webSearches: number;
-	webFetches: number;
-	webSources: WebSource[];
-	durationMs?: number;
-};
-type Block = { kind: "item"; item: Item } | Run;
+// ---------- 回合内容 → 步骤项；阶段规则见 @/lib/process-phases ----------
 
 /** 消息里的文本块拼成一段（扩展消息 / `!` 命令的输出都用它） */
 function messageText(message: WebMessage): string {
@@ -1158,7 +1206,7 @@ const USER_BASH_EXCLUDED_BADGE = "!!";
  * 用户 `!` 命令 → 工具行：与模型的工具调用同一套排版（命令 + 输出 + 耗时），用行内标签区分。
  * SDK 不给这类消息发工具事件，卡片状态由消息本身给出。
  */
-function bashToolItem(message: WebMessage, k: number): Extract<Item, { kind: "tool" }> | null {
+function bashToolItem(message: WebMessage, k: number): Extract<ProcessItem, { kind: "tool" }> | null {
 	const bash = message.bash;
 	if (!bash) return null;
 	const running = bash.running === true;
@@ -1184,11 +1232,11 @@ function bashToolItem(message: WebMessage, k: number): Extract<Item, { kind: "to
 	};
 }
 
-function buildItems(messages: WebMessage[], k: number, tools: Record<string, ToolCardState>, live: boolean, omitText: boolean, errorCount: number | undefined): Item[] {
+function buildItems(messages: WebMessage[], k: number, tools: Record<string, ToolCardState>, live: boolean, omitText: boolean, errorCount: number | undefined): ProcessItem[] {
 	const message = messages[k];
 	const lastIndex = message.content.length - 1;
 	const isError = message.stopReason === "error";
-	const items: Item[] = [];
+	const items: ProcessItem[] = [];
 	if (message.role === "custom") {
 		items.push({ kind: "custom", key: `${k}-custom`, msgIndex: k, customType: message.customType ?? "", text: messageText(message) });
 		return items;
@@ -1210,15 +1258,10 @@ function buildItems(messages: WebMessage[], k: number, tools: Record<string, Too
 	return items;
 }
 
-function itemWebInfo(it: Item): { hasWeb: boolean; role: WebToolRole | null; sources: WebSource[] } {
-	if (it.kind !== "tool") return { hasWeb: false, role: null, sources: EMPTY_WEB_SOURCES };
-	return collectToolWebData(it.call.name, it.call.arguments, it.state, it.nested);
-}
-
 /** 连续成功的图片 read 合成一个计数行；叙述、文字读取、技能、错误或运行中调用都保留边界。 */
-function groupViewedImageReads(items: Item[]): Item[] {
-	const grouped: Item[] = [];
-	let current: Extract<Item, { kind: "viewedImages" }> | undefined;
+function groupViewedImageReads(items: ProcessItem[]): ProcessItem[] {
+	const grouped: ProcessItem[] = [];
+	let current: Extract<ProcessItem, { kind: "viewedImages" }> | undefined;
 	for (const item of items) {
 		const images = item.kind === "tool" && !item.badge && !item.nested?.length && toolKind(item.call.name) === "read" && !skillNameFromRead(item.call.name, item.call.arguments)
 			? toolImagePreviews(item.call.id, item.call.arguments, item.state) : [];
@@ -1236,103 +1279,25 @@ function groupViewedImageReads(items: Item[]): Item[] {
 	return grouped;
 }
 
-/** 可折进摘要的步骤：完成的思考，以及成功完成的命令 / 读取 / 搜索 / 联网（编辑与写入永远单独可见） */
-function isCollapsible(it: Item, finalIdx: number): boolean {
-	if (it.msgIndex === finalIdx) return false;
-	if (it.kind === "think") return !it.live;
-	if (it.kind === "tool") {
-		// 用户自己用 `!` 跑的命令不折进「运行了 N 条命令」：那是用户的动作，不是模型的过程
-		if (it.badge) return false;
-		const s = it.state;
-		if (!s || s.state !== "done" || s.isError || s.images?.length) return false;
-		const k = toolKind(it.call.name);
-		if (k === "read" && skillNameFromRead(it.call.name, it.call.arguments)) return false;
-		if (k === "cmd" || k === "read" || k === "search") return true;
-		return classifyWebTool(it.call.name, it.call.arguments, s.result ?? s.partialResult) !== null || nestedHasWebTool(it.nested);
-	}
-	return false;
+function fillBold(template: string, vars: Record<string, string>): ReactNode[] {
+	return template.split(/(\{[a-z]+\})/g).map((chunk, i) => {
+		const key = chunk.startsWith("{") && chunk.endsWith("}") ? chunk.slice(1, -1) : "";
+		return key && key in vars ? <strong key={i}>{vars[key]}</strong> : chunk;
+	});
 }
 
-function collapseRuns(items: Item[], finalIdx: number, spanOf: (a: number, b: number) => number | undefined): Block[] {
-	const blocks: Block[] = [];
-	let i = 0;
-	while (i < items.length) {
-		if (!isCollapsible(items[i], finalIdx)) {
-			blocks.push({ kind: "item", item: items[i] });
-			i += 1;
-			continue;
-		}
-		let j = i;
-		while (j < items.length && isCollapsible(items[j], finalIdx)) j += 1;
-		const run = items.slice(i, j);
-		let cmds = 0;
-		let reads = 0;
-		let searches = 0;
-		let webSearches = 0;
-		let webFetches = 0;
-		let hasThink = false;
-		const sourceBatches: WebSource[][] = [];
-		for (const it of run) {
-			if (it.kind === "think") hasThink = true;
-			else if (it.kind === "tool") {
-				const web = itemWebInfo(it);
-				if (web.sources.length > 0) sourceBatches.push(web.sources);
-				if (web.role === "search") {
-					webSearches += 1;
-				} else if (web.role === "fetch") {
-					webFetches += 1;
-				} else if (web.hasWeb) {
-					webSearches += 1;
-				} else {
-					const k = toolKind(it.call.name);
-					if (k === "cmd") cmds += 1;
-					else if (k === "read") reads += 1;
-					else searches += 1;
-				}
-			}
-		}
-		const durationMs = spanOf(run[0].msgIndex, run[run.length - 1].msgIndex);
-		const webSources = sourceBatches.length > 0 ? mergeWebSources(sourceBatches) : EMPTY_WEB_SOURCES;
-		const totalTools = cmds + reads + searches + webSearches + webFetches;
-		// 单条独立的联网步骤直接展示查询词与来源，避免多包一层折叠
-		if (run.length === 1 && !hasThink && cmds + reads + searches === 0 && webSearches + webFetches === 1) {
-			blocks.push({ kind: "item", item: run[0] });
-		} else if (totalTools === 0 && durationMs === undefined) {
-			for (const it of run) blocks.push({ kind: "item", item: it });
-		} else {
-			blocks.push({
-				kind: "run",
-				key: `run-${run[0].key}`,
-				items: run,
-				hasThink,
-				cmds,
-				reads,
-				searches,
-				webSearches,
-				webFetches,
-				webSources,
-				durationMs,
-			});
-		}
-		i = j;
-	}
-	return blocks;
-}
-
-function SummaryStep({ run, expanded, onToggle }: { run: Run; expanded: boolean; onToggle: () => void }) {
+function SummaryStep({ run, expanded, onToggle }: { run: ProcessRun; expanded: boolean; onToggle: () => void }) {
 	const { t } = useI18n();
 	const [sourcesOpen, setSourcesOpen] = useState(false);
-	const isPureWeb = run.cmds === 0 && run.reads === 0 && run.searches === 0 && (run.webSearches > 0 || run.webFetches > 0);
+	const isPureWeb = run.cmds === 0 && run.reads === 0 && run.searches === 0 && run.writes === 0 && (run.webSearches > 0 || run.webFetches > 0);
 	if (isPureWeb) {
 		const stepKind: StepKind = run.webSearches > 0 ? "web_search" : "web_fetch";
 		const label = run.webSearches > 0 ? t.sumWebSearched : t.sumWebFetched;
 		return (
-			<Step kind={stepKind}>
+			<Step kind={stepKind} className="pw-step-summary">
 				<div className="pw-summary-row">
-					<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
-						<span className="pw-gist">
-							<strong>{label}</strong>
-						</span>
+					<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
+						<span className="pw-gist">{label}</span>
 						<IconChevronRight14 size={12} className="pw-chev" />
 					</button>
 					{run.webSources.length > 0 && (
@@ -1348,29 +1313,52 @@ function SummaryStep({ run, expanded, onToggle }: { run: Run; expanded: boolean;
 		);
 	}
 	const parts: ReactNode[][] = [];
-	if (run.hasThink && run.durationMs !== undefined) parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
+	if (run.hasThink) {
+		if (run.durationMs !== undefined) parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
+		else parts.push([t.thinkLabel]);
+	}
 	if (run.cmds) parts.push(fillBold(run.cmds === 1 ? t.sumRan1 : t.sumRan, { n: String(run.cmds) }));
 	if (run.reads) parts.push(fillBold(run.reads === 1 ? t.sumRead1 : t.sumRead, { n: String(run.reads) }));
 	if (run.searches) parts.push(fillBold(run.searches === 1 ? t.sumSearched1 : t.sumSearched, { n: String(run.searches) }));
+	if (run.writes) parts.push([run.writes === 1 ? (run.editedOnly ? t.sumActionEdited1 : t.sumActionWrote1) : t.sumActionEditedMany]);
 	if (run.webSearches) parts.push(fillBold(t.sumWebSearchedN, { n: String(run.webSearches) }));
 	if (run.webFetches) parts.push(fillBold(t.sumWebFetchedN, { n: String(run.webFetches) }));
-	// 英文时首字母大写（模板里只有第一段是大写开头）
-	if (parts.length && typeof parts[0][0] === "string") parts[0][0] = (parts[0][0] as string).replace(/^[a-z]/, (ch) => ch.toUpperCase());
+	if (typeof parts[0]?.[0] === "string") {
+		parts[0][0] = parts[0][0].replace(/^[a-z]/, (ch) => ch.toUpperCase());
+	}
+	const summaryContent = parts.map((nodes, idx) => (
+		<Fragment key={idx}>
+			{idx > 0 && t.sumDotJoin}
+			{nodes}
+		</Fragment>
+	));
+	const stepKind: StepKind = run.hasThink
+		? "summary"
+		: run.webSearches > 0
+			? "web_search"
+			: run.webFetches > 0
+				? "web_fetch"
+				: run.cmds > 0
+					? "cmd"
+					: run.searches > 0
+						? "search"
+						: "read";
+	const phaseBadgeTone: StepBadgeTone = run.hasThink
+		? "think"
+		: stepKind === "cmd"
+			? "exec"
+			: "inspect";
+	const summaryIcon = run.hasThink
+		? <IconSparkOutline14 size={13} style={{ flex: "none" }} />
+		: undefined;
 	const toggleButton = (
-		<button type="button" className="pw-line pw-clickable pw-summary" aria-expanded={expanded} onClick={onToggle}>
-			<span className="pw-gist">
-				{parts.map((p, i) => (
-					<span key={i}>
-						{i > 0 ? t.sumJoin : ""}
-						{p}
-					</span>
-				))}
-			</span>
+		<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
+			<span className="pw-gist">{summaryContent}</span>
 			<IconChevronRight14 size={12} className="pw-chev" />
 		</button>
 	);
 	return (
-		<Step kind={run.hasThink ? "summary" : run.cmds ? "cmd" : run.reads ? "read" : run.webSearches ? "web_search" : run.webFetches ? "web_fetch" : "search"}>
+		<Step kind={stepKind} badgeTone={phaseBadgeTone} icon={summaryIcon} className="pw-step-summary">
 			{run.webSources.length > 0 ? (
 				<>
 					<div className="pw-summary-row">
@@ -1390,7 +1378,7 @@ function SummaryStep({ run, expanded, onToggle }: { run: Run; expanded: boolean;
 	);
 }
 
-function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: Item; cwd?: string; onInspectTool?: (toolCallId: string) => void; onOpenFile?: (path: string) => void }) {
+function ItemView({ item, cwd, onInspectTool, onOpenFile }: { item: ProcessItem; cwd?: string; onInspectTool?: (toolCallId: string) => void; onOpenFile?: (path: string) => void }) {
 	switch (item.kind) {
 		case "think":
 			return <ThinkStep text={item.text} live={item.live} startedAt={item.startedAt} />;
@@ -1486,7 +1474,7 @@ const FinalAnswer = memo(function FinalAnswer({
 		.join("");
 	const images = message.content.filter((c) => c.type === "image");
 	return (
-		<div className="group w-full" style={{ marginTop: hasProcessAbove ? 8 : 14 }} data-role="assistant">
+		<div className="group w-full" style={{ marginTop: hasProcessAbove ? 12 : 14 }} data-role="assistant">
 			{message.content.map((c, i) => {
 				if (c.type === "text" && c.text.trim()) return <Markdown key={i} text={c.text} />;
 				if (c.type === "image") return <PreviewImage key={i} image={c} images={images} index={images.indexOf(c)} className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
@@ -1673,6 +1661,10 @@ type Turn = { key: string; userIndex: number; assistantIndexes: number[]; extraI
 function buildTurns(messages: WebMessage[]): Turn[] {
 	const out: Turn[] = [];
 	let cur: Turn | null = null;
+	const hasFinished = (turn: Turn | null): boolean => {
+		const last = turn?.assistantIndexes[turn.assistantIndexes.length - 1];
+		return last !== undefined && isFinalAnswer(messages[last]);
+	};
 	messages.forEach((m, i) => {
 		if (m.role === "user") {
 			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [], extraIndexes: [] };
@@ -1684,14 +1676,15 @@ function buildTurns(messages: WebMessage[]): Turn[] {
 		} else if (m.role === "custom" || m.role === "bashExecution") {
 			// 当前回合已经收尾（最后一条是最终回答）就另起一段：否则回答之后才跑的 `!` 命令
 			// 会被排进过程里、显示在那条回答的上方
-			const last: number | undefined = cur?.assistantIndexes[cur.assistantIndexes.length - 1];
-			if (!cur || (last !== undefined && isFinalAnswer(messages[last]))) {
+			if (!cur || hasFinished(cur)) {
 				cur = { key: `x${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [] };
 				out.push(cur);
 			}
 			cur.extraIndexes.push(i);
 		} else if (m.role === "assistant") {
-			if (!cur) {
+			// 隐藏上下文触发（如 display: false 的自动续跑）在最终回答之后开启的新一轮
+			// 同样另起回合，避免粘在上一次回答下方并吞掉其页脚/被一同折叠。
+			if (!cur || hasFinished(cur)) {
 				cur = { key: `a${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [] };
 				out.push(cur);
 			}
@@ -1720,7 +1713,6 @@ function TurnBlockView({
 	contextFiles,
 	retryNotice,
 	streamStartedAt,
-	runningTool,
 	outputTokens,
 	workingMessage,
 	onFork,
@@ -1740,7 +1732,6 @@ function TurnBlockView({
 	contextFiles?: Array<ContextResource | string>;
 	retryNotice?: string | null;
 	streamStartedAt: number | null;
-	runningTool?: string;
 	outputTokens?: number;
 	workingMessage?: string | null;
 	onFork?: (entryId: string) => void;
@@ -1808,7 +1799,9 @@ function TurnBlockView({
 		}
 		return duration;
 	};
-	const blocks: Block[] = turnLive ? items.map((item) => ({ kind: "item", item })) : collapseRuns(items, finalIdx, spanOf);
+	const lastStop = lastIdx !== undefined ? messages[lastIdx]?.stopReason : undefined;
+	const canCollapseProcess = !turnLive && (finalIdx >= 0 || lastStop === "aborted" || lastStop === "error");
+	const blocks: ProcessBlock[] = buildProcessBlocks(items, spanOf, { turnLive, cwd });
 	const turnWeb = (() => {
 		let hasWeb = false;
 		let hasSearch = false;
@@ -1826,20 +1819,18 @@ function TurnBlockView({
 			sources: batches.length > 0 ? mergeWebSources(batches) : EMPTY_WEB_SOURCES,
 		};
 	})();
-	const last = items[items.length - 1];
-	const hasLiveStep = Boolean(runningTool) || (last?.kind === "think" && last.live) || (last?.kind === "narr" && last.live);
 	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
-	const canCollapseProcess = !turnLive && finalIdx >= 0;
 	const processCollapsed = !processOpen && canCollapseProcess;
 	const turnDurationMs = (() => {
-		if (finalIdx < 0) return undefined;
-		const endMsg = messages[finalIdx];
+		const endIdx = finalIdx >= 0 ? finalIdx : (lastStop === "aborted" || lastStop === "error") ? lastIdx : -1;
+		if (endIdx < 0) return undefined;
+		const endMsg = messages[endIdx];
 		const endMs = endMsg?.endedAt ?? endMsg?.timestamp;
 		const startMs = user?.timestamp ?? (assistants.length > 0 ? messages[assistants[0]]?.timestamp : undefined);
 		if (typeof startMs === "number" && typeof endMs === "number" && endMs > startMs) {
 			return endMs - startMs;
 		}
-		return assistants.length > 0 ? spanOf(assistants[0], finalIdx) : undefined;
+		return assistants.length > 0 ? spanOf(assistants[0], endIdx) : undefined;
 	})();
 
 	const turnUsage = sumTurnUsage(messages, assistants);
@@ -1859,10 +1850,21 @@ function TurnBlockView({
 								aria-expanded={processOpen}
 								onClick={() => setProcessOpen((v) => !v)}
 							>
+								<span
+									className="pw-turn-dot"
+									data-tone={lastStop === "aborted" ? "warn" : lastStop === "error" ? "fail" : "done"}
+									aria-hidden="true"
+								/>
 								<span>
-									{turnDurationMs !== undefined && turnDurationMs > 0
-										? t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))
-										: t.turnProcessToggle}
+									{lastStop === "aborted"
+										? (turnDurationMs !== undefined && turnDurationMs > 0
+											? `${t.turnAborted} · ${t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))}`
+											: t.turnAborted)
+										: turnDurationMs !== undefined && turnDurationMs > 0
+											? t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))
+											: lastStop === "error"
+												? t.modelError
+												: t.turnProcessToggle}
 								</span>
 								<IconChevronRight14 size={12} className="pw-turn-chev" />
 							</button>
@@ -1915,12 +1917,18 @@ function TurnBlockView({
 												return next;
 											})}
 										/>
-										{open && b.items.map((item) => <ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />)}
+										{open && (
+											<div className="pw-phase-body">
+												{b.items.map((item) => (
+													<ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />
+												))}
+											</div>
+										)}
 									</div>
 								);
 							})}
 							{isLast && retryNotice && <RetryStep text={retryNotice} />}
-							{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} hasLiveStep={hasLiveStep} />}
+							{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} />}
 						</div>
 					</div>
 				</div>
@@ -2184,7 +2192,6 @@ function turnBlockPropsEqual(prev: TurnBlockProps, next: TurnBlockProps): boolea
 		prev.lastAssistantIndex !== next.lastAssistantIndex ||
 		prev.retryNotice !== next.retryNotice ||
 		prev.streamStartedAt !== next.streamStartedAt ||
-		prev.runningTool !== next.runningTool ||
 		prev.outputTokens !== next.outputTokens ||
 		prev.workingMessage !== next.workingMessage ||
 		prev.contextFiles !== next.contextFiles ||
@@ -2356,7 +2363,6 @@ export function ChatWindow({
 	useEffect(() => {
 		setStreamStartedAt((prev) => (isStreaming ? prev ?? (lastUserTs && Date.now() - lastUserTs < 6 * 3600_000 ? lastUserTs : Date.now()) : null));
 	}, [isStreaming, lastUserTs]);
-	const runningTool = useMemo(() => Object.values(tools).find((tool) => tool.state === "running")?.name, [tools]);
 	const lastAssistantIndex = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === "assistant") return i;
 		return -1;
@@ -2643,7 +2649,6 @@ export function ChatWindow({
 											contextFiles={turn.userIndex >= 0 && turn.userIndex === firstUser ? contextFiles : undefined}
 											retryNotice={retryNotice}
 											streamStartedAt={compactingNow ? null : streamStartedAt}
-											runningTool={runningTool}
 											outputTokens={stats?.tokens.output}
 											workingMessage={workingMessage}
 											onFork={onFork}
@@ -2662,7 +2667,7 @@ export function ChatWindow({
 						{/* 还没有任何消息就已在流式（极少见）：单独给一条工作指示 */}
 						{isStreaming && !compactingNow && streamStartedAt && lastContentTurn < 0 && (
 							<div className="pw-turn">
-								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} hasLiveStep={Boolean(runningTool)} />
+								<WorkingStep startedAt={streamStartedAt} outputTokens={stats?.tokens.output} workingMessage={workingMessage} />
 							</div>
 						)}
 						{/* 重连提示：跟随消息流显示在最后一条输出下面 */}

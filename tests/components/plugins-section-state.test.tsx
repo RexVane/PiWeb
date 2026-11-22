@@ -5,7 +5,7 @@
  * 覆盖：
  * 1. 停用的本地扩展：头部只有「已停用」，展开后不会冒出矛盾的「已启用」。
  * 2. 停用的包不能点「更新」，并提示先启用；启用的包照常可点。
- * 3. 内置扩展展示描述并支持 switch 直接切换；支持在「已安装」与「插件市场」之间切换与安装。
+ * 3. 内置扩展展示描述并支持 switch 直接切换；不再提供安装或设计入口。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -37,8 +37,8 @@ const rowOf = (name: string) => {
 };
 
 describe("插件页面状态与布局", () => {
-	it("按 SDK 来源显示整包开关和作用域，不把本地包文件当作独立扩展", async () => {
-		vi.stubGlobal("fetch", vi.fn(async () => ({
+	it("按 SDK 来源显示整包开关和作用域，不额外加载资源界面设置", async () => {
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL) => ({
 			ok: true,
 			json: async () => ({ success: true, data: {
 				packages: [{ source: "/workspace/local-package", scope: "project", resources: { extensions: 1, skills: 0, prompts: 0, themes: 0 } }],
@@ -48,22 +48,29 @@ describe("插件页面状态与布局", () => {
 					{ name: "external-file-project-config", path: "/outside/project.js", scope: "project", origin: "top-level", sourceInfo: { origin: "top-level", source: "local", scope: "project" } },
 				],
 			} }),
-		})));
+		}));
+		vi.stubGlobal("fetch", fetchMock);
 		render(<PluginsSection cwd="/workspace" />);
 		await screen.findByText("workspace-file-global-config");
+		expect(screen.getByRole("heading", { name: "已安装的 pi 包" })).toBeTruthy();
+		expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/resources"))).toBe(false);
 		expect(screen.queryByRole("switch", { name: "package-child" })).toBeNull();
 		expect(screen.queryByText("package-child")).toBeNull();
-		expect(screen.getByRole("switch", { name: "/workspace/local-package" })).toBeTruthy();
+		expect(screen.getByRole("switch", { name: "local-package" })).toBeTruthy();
+		expect(screen.queryByText("/workspace/local-package")).toBeNull();
+		fireEvent.click(screen.getByText("local-package"));
+		expect(screen.getByText("/workspace/local-package")).toBeTruthy();
+		fireEvent.click(screen.getByText("local-package"));
 		expect(within(rowOf("workspace-file-global-config")).getByText("个人")).toBeTruthy();
 		expect(within(rowOf("external-file-project-config")).getByText("项目")).toBeTruthy();
 		fireEvent.click(screen.getByRole("tab", { name: /个人/ }));
 		expect(screen.getByText("workspace-file-global-config")).toBeTruthy();
 		expect(screen.queryByText("external-file-project-config")).toBeNull();
-		expect(screen.queryByRole("switch", { name: "/workspace/local-package" })).toBeNull();
+		expect(screen.queryByRole("switch", { name: "local-package" })).toBeNull();
 		fireEvent.click(screen.getByRole("tab", { name: /项目/ }));
 		expect(screen.queryByText("workspace-file-global-config")).toBeNull();
 		expect(screen.getByText("external-file-project-config")).toBeTruthy();
-		expect(screen.getByRole("switch", { name: "/workspace/local-package" })).toBeTruthy();
+		expect(screen.getByRole("switch", { name: "local-package" })).toBeTruthy();
 	});
 
 	it("停用的扩展：行内只有「已停用」，展开后不会又冒出「已启用」", async () => {
@@ -105,7 +112,7 @@ describe("插件页面状态与布局", () => {
 		expect(onUpdate.disabled).toBe(false);
 	});
 
-	it("启用的扩展显示「已启用」，内置扩展分节与添加入口都在", async () => {
+	it("启用的扩展显示「已启用」，保留内置扩展分节", async () => {
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = String(input);
 			if (url.startsWith("/api/plugins/marketplace")) {
@@ -160,10 +167,17 @@ describe("插件页面状态与布局", () => {
 		expect(screen.getByRole("heading", { name: /^内置(?:插件|扩展)(?:配置)?$/ })).toBeTruthy();
 		expect(screen.getByRole("switch", { name: "Codemode" })).toBeTruthy();
 		expect(screen.queryByText(/尚未安装任何 pi 包/)).toBeNull();
-		expect(screen.getAllByRole("button", { name: /\+\s*添加(?:插件|扩展)/ })).toHaveLength(1);
-		// 市场已经独立成「资源市场」页，这边不再有市场页签
+		// 扩展页仅管理已安装的资源，不提供市场页签。
 		expect(screen.queryByRole("tab", { name: /市场/ })).toBeNull();
 	});
 
 
+});
+
+it("ignores legacy recommendations without exposing an install action", async () => {
+ vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: { packages: [], extensions: [], featured: [{ id: "legacy", name: "Legacy recommendation", source: "npm:legacy" }] } }) })));
+ render(<PluginsSection cwd="/workspace" />);
+ await screen.findByText("暂无已安装的第三方扩展或本地扩展");
+ expect(screen.queryByText("Legacy recommendation")).toBeNull();
+ expect(screen.queryByRole("button", { name: "安装" })).toBeNull();
 });

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { WebEvent } from "../src/lib/types";
+import { recycleGeneratedFixture } from "./fixtures/system-trash";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -38,7 +39,7 @@ afterAll(async () => {
 	for (const m of managed) await manager.disposeSessionPath(m.sessionPath);
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
-	await fs.rm(root, { recursive: true, force: true });
+	await recycleGeneratedFixture(root);
 });
 
 async function create(name: string, extension?: string) {
@@ -152,7 +153,7 @@ describe("session model provider isolation", () => {
 		expect((await list(`session=${pi.encodeSessionId(path.join(root, "outside.jsonl"))}`)).status).toBe(400);
 	});
 
-	it("discovers an automation workspace's providers without starting a session or consuming its discovery queue", async () => {
+	it("discovers a workspace's providers without starting a session or consuming its discovery queue", async () => {
 		const cwd = path.join(root, "catalog-workspace");
 		await fs.mkdir(path.join(cwd, ".pi", "extensions"), { recursive: true });
 		await fs.writeFile(path.join(cwd, ".pi", "extensions", "provider.js"), `export default pi => {

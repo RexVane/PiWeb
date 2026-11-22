@@ -4,7 +4,7 @@
  * 设置弹窗（对齐 dsh SettingsRoot）：居中模态、左导航 + 右侧行式内容。
  * 三节：General / Models / 远程连接。
  */
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import { IconCloseOutline14, IconDownloadOutline16, IconModelOutline16, IconSettingsOutline16, IconShieldOutline16 } from "@/components/icons";
 import { RemoteSection } from "@/components/RemoteSection";
 import { useI18n } from "@/i18n";

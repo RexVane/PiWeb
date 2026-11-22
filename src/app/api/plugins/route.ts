@@ -3,7 +3,6 @@ import { PackageSourceValidationError } from "@/lib/package-manager-safe";
 import {
 	ExtensionToggleError,
 	ResourceRefreshError,
-	installPackage,
 	listLoadedExtensions,
 	listPackages,
 	reloadExtensions,
@@ -17,7 +16,6 @@ import { APP_ROOT } from "@/lib/app-root";
 import { apiError } from "@/lib/api-error";
 import { NpmTransactionPendingCommitError } from "@/lib/npm-install-transaction";
 import { publicDiagnostic } from "@/lib/public-diagnostic";
-import { parseResourceSelection } from "@/lib/resources/selection";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +23,10 @@ export async function GET(req: Request) {
 	try {
 		const cwd = await resolveWorkspacePath(new URL(req.url).searchParams.get("cwd") || APP_ROOT);
 		const [packages, extensions] = await Promise.all([listPackages(cwd), listLoadedExtensions(cwd)]);
-		return NextResponse.json({ success: true, data: { packages, extensions: extensions.map((extension) => extension.error ? { ...extension, error: publicDiagnostic(extension.error, "此扩展加载失败，请检查扩展配置后重新载入。") } : extension) } });
+		return NextResponse.json({ success: true, data: {
+			packages,
+			extensions: extensions.map((extension) => extension.error ? { ...extension, error: publicDiagnostic(extension.error, "此扩展加载失败，请检查扩展配置后重新载入。") } : extension),
+		} });
 	} catch (err: unknown) {
 		return NextResponse.json({ success: false, ...apiError(err, "读取插件失败，请检查文件权限或稍后重试。") }, { status: err instanceof BoundaryError ? 400 : 500 });
 	}
@@ -34,9 +35,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
 	try {
 		const body = (await req.json()) as {
-			action: "install" | "remove" | "update" | "reload" | "toggle";
+			action: "remove" | "update" | "reload" | "toggle";
 			source?: string;
-			selection?: unknown;
 			path?: string;
 			kind?: "package" | "extension";
 			disabled?: boolean;
@@ -62,12 +62,6 @@ export async function POST(req: Request) {
 				return NextResponse.json({ success: true });
 			}
 			return NextResponse.json({ success: false, error: "invalid toggle payload" }, { status: 400 });
-		}
-		if (body.action === "install") {
-			if (!body.source) return NextResponse.json({ success: false, error: "missing source" }, { status: 400 });
-			if (body.selection === undefined) await installPackage(body.source, body.local === true, cwd);
-			else await installPackage(body.source, body.local === true, cwd, parseResourceSelection(body.selection));
-			return NextResponse.json({ success: true });
 		}
 		if (body.action === "remove") {
 			if (!body.source) return NextResponse.json({ success: false, error: "missing source" }, { status: 400 });

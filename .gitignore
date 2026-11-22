@@ -60,3 +60,9 @@ id_dsa*
 audit_tmp/
 .audit-*/**/*.heapsnapshot
 .audit-*/**/coverage/.tmp/
+
+# 本机运行残留：PowerShell 把模块分析缓存写进了仓库根目录（%LOCALAPPDATA% 被重定向时会出现）
+/Microsoft/
+# 仓库自身的项目级 Pi 配置：只含本机相对路径的开发用扩展包，不进 git。
+# 只忽略根目录；测试在临时目录里创建的 .pi/ 不受影响。
+/.pi/

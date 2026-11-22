@@ -30,7 +30,10 @@ beforeEach(async () => {
 });
 const plans = () => [{ root, recyclePrevious: true, settings: { file: settings, after: { packages: [] } } }];
 async function stagedUninstall(): Promise<void> {
-	await fsp.rename(npmTransactionPath(path.join(root, "node_modules", "fixture")), path.join(directory, `removed-stage-copy-${randomUUID()}`));
+	// Windows pins `directory` (the parent of `npm`); move removed stage entries into a child subdir rather than `directory` itself.
+	const discardDir = path.join(directory, "discarded");
+	await fsp.mkdir(discardDir, { recursive: true });
+	await fsp.rename(npmTransactionPath(path.join(root, "node_modules", "fixture")), path.join(discardDir, `removed-stage-copy-${randomUUID()}`));
 	beginNpmSettingsWrite(root); mutateJsoncSettingsFileSync(settings, (current) => ({ ...current, packages: [] }));
 }
 const previous = () => path.join(directory, fs.readdirSync(directory).find((name) => name.startsWith("npm-previous-"))!);
@@ -91,7 +94,7 @@ const json=await jiti.import(${JSON.stringify(path.resolve("src/lib/jsonc-settin
 const root=process.argv[1], file=process.argv[2];
 if(process.platform==='win32'){const api=(await jiti.import(${JSON.stringify(path.resolve("src/lib/windows-directory-api.ts"))})).windowsDirectoryApiSync();const rename=api.rename.bind(api);api.rename=(a,b,...rest)=>{const value=rename(a,b,...rest);if(String(a).includes('npm-stage-')&&String(b)==='npm')process.exit(88);return value;};}
 else{const rename=fs.renameSync;fs.renameSync=(a,b)=>{const value=rename(a,b);if(String(a).includes('npm-stage-')&&String(b)===root)process.exit(88);return value;};}
-await tx.withNpmInstallTransaction([{root,recyclePrevious:true,settings:{file,after:{packages:[]}}}],async()=>{fs.renameSync(tx.npmTransactionPath(root+'/node_modules/fixture'),root+'-stage-discard');tx.beginNpmSettingsWrite(root);json.mutateJsoncSettingsFileSync(file,c=>({...c,packages:[]}));});`;
+await tx.withNpmInstallTransaction([{root,recyclePrevious:true,settings:{file,after:{packages:[]}}}],async()=>{fs.mkdirSync(root+'-discarded',{recursive:true});fs.renameSync(tx.npmTransactionPath(root+'/node_modules/fixture'),root+'-discarded/fixture');tx.beginNpmSettingsWrite(root);json.mutateJsoncSettingsFileSync(file,c=>({...c,packages:[]}));});`;
 		const child = spawn(process.execPath, ["--input-type=module", "-e", script, root, settings], { cwd: process.cwd(), env: { ...process.env, NODE_OPTIONS: "" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		let stderr = ""; child.stderr!.on("data", (chunk) => { stderr += chunk; });
 		const [code] = await once(child, "exit"); expect(code, stderr).toBe(88);

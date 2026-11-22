@@ -1,6 +1,8 @@
 # 数据目录、隐私与留存
 
-维护日期：2026-11-20。本文说明 PiWeb 实际读写哪些位置、如何做部署隔离、会联网做什么、删除与恢复的真实行为。历史审查记录属于工程档案，只保留在本机。
+本文说明 PiWeb 读写的位置、部署隔离、联网行为，以及删除和恢复的范围。
+
+旧版自建扩展体系留下的 `web-resources.json`、`web-resource-data/` 和 `web-resource-runtime/` 不再读取或写入；升级不会自动删除这些历史数据。
 
 ## 数据根不止 agent 目录
 
@@ -8,7 +10,8 @@
 
 | 位置 | 内容 | 代码位置 |
 | --- | --- | --- |
-| `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-automations.json`、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
+| `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
+| `<agent 目录>`（Pi 原生包） | `git/` 与 `npm/node_modules/` 是 Pi 的个人包目录，声明和启停状态保存在 `settings.json`；项目包使用工作区的 `.pi/` | `src/lib/plugins-service.ts` |
 | `$HOME` / `%USERPROFILE%` 下的导入来源 | 会话导入只读取、不修改：`~/.claude/projects`、`~/.codex/sessions`、`~/.grok/sessions`、`~/.dsh/sessions`、`~/.zcode/cli/db/db.sqlite`、`~/.local/share/opencode/opencode.db`、`~/.kimi`、`~/.workbuddy` / `~/.workbuddy-ai`（支持 `WORKBUDDY_CONFIG_DIR`）、`~/.gemini/antigravity`、`~/.gemini/antigravity-cli`、`~/.qwen`（支持 `QWEN_HOME`）、`~/.cursor/chats` | `src/lib/session-import/paths.ts` |
 | `~/.agents/skills` | 全局技能目录（个人技能来源之一） | `src/lib/skills-service.ts` |
 | `~/.agents/backups` + `INDEX.md` | 后台过期附件清理、损坏配置修复及旧版本删除留下的恢复副本与索引；手动确认的文件删除不再另存副本 | `src/lib/recoverable-remove.ts` |
@@ -22,7 +25,7 @@
 - **看住 agent 目录不等于看住全部数据**：`~/.agents/skills`、导入来源和 `~/.agents/backups` 仍在 `HOME`/`USERPROFILE` 下。
 - 会话导入只读取来源数据，不写入、不迁移；卸载 PiWeb 不会删除这些来源。
 - 普通目录首次记录时，在 `<agent 目录>/web-growth/` 建立快照库，项目里不会生成 `.git`。同一目录之后即使自行初始化 Git，也会继续使用原有的快照库。
-- 后端文件接口在默认配置下不要求 cwd 是已注册工作区（认证后本机操作者级权限）。需要更严格的边界时使用[严格工作区模式](environment.md#可选限制开关本修复轮新增默认不改变原有行为)。
+- 后端文件接口在默认配置下不要求 cwd 是已注册工作区（认证后本机操作者级权限）。需要更严格的边界时使用[严格工作区模式](environment.md#可选限制开关)。
 
 ## 导入会话的续聊兼容
 
@@ -32,6 +35,7 @@
 
 ## 自动思考档位与手动配置
 
+- 模型设置还会单独补齐缺失的上下文窗口、最大输出、图片和推理支持：先读取已配置端点的模型列表元数据，再参考 Pi 目录。已有值和显式覆盖不改写，仍缺失时才提示手动填写。这与下方的思考档位探测不同。
 - 优先级为：用户/扩展显式配置的 `thinkingLevelMap` → Pi SDK 官方对应模型配置 → 未识别兼容模型的后台探测缓存 → SDK 默认档位。匹配模型 ID、版本和已知网关后缀，不跨代借用其他型号的配置；不会修改模型的 API 地址、协议、价格或上下文上限。
 - 模型卡片中可编辑“档位 → API 参数值”。添加时从 `low → low` 开始，再选择未使用的 `medium`、`high`、`xhigh`、`max` 等标准档位；`off` 默认映射为 `none`。手动表单未列出的档位以 `null` 禁用，保存到与终端 Pi 共享的 `models.json`；选择“使用自动档位”会移除该手动映射。
 - 官方能匹配时不发额外请求。未知 `openai-completions` / `openai-responses` 模型才会进入后台队列：单次最多 9 个简短测试请求，请求输出上限设为 64 tokens，串行执行、请求间隔 3.5 秒；可能消耗所选提供方的额度。仅使用合成测试消息，不发送已有会话。OAuth 和凭证/请求头命令不在后台探测，遇到限速、认证失败或不确定结果保留默认配置。

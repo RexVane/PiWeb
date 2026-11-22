@@ -40,15 +40,15 @@
 - **工作區與會話** — 按專案資料夾組織會話。支援重新命名、分支、封存、恢復草稿，以及匯出為 JSONL 或 HTML。
 - **會話匯入** — 搜尋並匯入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本機歷史。PiWeb 就地讀取原始檔案。
 - **檔案與改動** — 在專案生長樹中按輪檢視改動，包括 `SKILL.md` 讀取步驟和 codemode 內的呼叫。支援原始碼、Markdown 預覽、統一或並排 Diff，以及在對話中引用選取的行。
-- **模型、技能與擴充功能** — 配置模型供應商，使用 Pi 的 MCP 工具並管理 Pi 包。[安裝已有資源或自行設計](docs/resources.md)，透過 JSON UI 或獨立網頁介面接入，無需重新建置 PiWeb。
+- **模型、技能與擴充功能** — 配置模型供應商，使用 Pi 的 MCP 工具並管理 Pi 套件。[透過 Pi 安裝擴充功能](docs/resources.md)，使用內建互動介面與 JSON UI。
 - **提示詞來源** — 檢視專案指令、技能、模板和工具定義及其資源來源。
-- **可選問答與自動化** — 從 [piweb-resources](https://github.com/RexVane/piweb-resources) 個別安裝。目前原始碼的資源 API v1 取代了原本的內建工具；重新整理舊 npm 安裝不會啟用新架構。
+- **可選問答資源** — 從 [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) 單獨安裝。目前原始碼的資源 API v1 取代了原本的內建問答工具；重新整理舊 npm 安裝不會啟用新架構。
 - **手機訪問與語言** — 在「設定 → 遠端連線」掃碼連線。介面支援英語、簡體中文、繁體中文、日語和俄語。
 
 <details>
 <summary>更多截圖（桌面端與手機端）</summary>
 
-以下截圖使用舊版英文介面和範例資料；問答與自動化現在由可選資源提供。
+以下截圖使用舊版英文介面和範例資料；問答現在由可選資源提供。
 
 <table>
   <tr>
@@ -64,8 +64,7 @@
     <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="桌面端技能工作區" /><br /><strong>技能</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="桌面端自動化編輯器" /><br /><strong>自動化任務</strong></td>
-    <td width="50%"><img src="assets/readme-mobile.jpg" alt="手機端對話" /><br /><strong>手機端對話</strong></td>
+    <td colspan="2" align="center"><img src="assets/readme-mobile.jpg" width="50%" alt="手機端對話" /><br /><strong>手機端對話</strong></td>
   </tr>
   <tr>
     <td width="50%"><img src="assets/readme-mobile-workspaces.jpg" alt="手機端工作區側欄" /><br /><strong>工作區</strong></td>
@@ -193,7 +192,7 @@ piweb -H 0.0.0.0         # 同時把主服務綁到區域網（認證仍然開�
 
 | 變數 | 預設值 | 含義 |
 | --- | --- | --- |
-| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目錄：設定、模型與憑據、會話、上傳、自動化。它不是唯一資料根，見[資料與隱私](docs/operations/data-and-privacy.md)。 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目錄：設定、模型與憑據、會話、上傳。它不是唯一資料根，見[資料與隱私](docs/operations/data-and-privacy.md)。 |
 | `PI_WEB_EDITOR` | `code` | 「在編輯器中開啟」使用的本機編輯器命令，僅對本機操作者有意義。 |
 | `PI_WEB_UPLOAD_RETENTION` | `30`（天） | `web-uploads` 中未被引用檔案的後臺清掃閾值。`0` 關閉該清掃。清掃會先複製到 `~/.agents/backups/`，並記入 `INDEX.md`。 |
 | `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 啟用 | 刪除會話時，一併清理僅被該會話引用的上傳檔案（先備份再刪除）。`0` 保留這些上傳。 |

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SettingsPanel } from "@/components/SettingsPanel";
 
 vi.mock("@/lib/theme", async (importOriginal) => ({
@@ -10,6 +10,13 @@ vi.mock("@/lib/theme", async (importOriginal) => ({
 	loadThemeMode: () => "system",
 }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+/** 模型体检里的推理档位已改成自定义浮层：先点开触发按钮，再按中文标签选一项。 */
+const REASONING_LABEL = { on: "支持推理", off: "不支持" } as const;
+async function chooseReasoning(choice: keyof typeof REASONING_LABEL) {
+	fireEvent.click(await screen.findByRole("button", { name: "undeclared 推理" }));
+	fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: REASONING_LABEL[choice] }));
+}
 
 const originalModel = { id: "test-model", name: "Test model", reasoning: true, input: ["text", "image"], contextWindow: 128000, maxTokens: 16000,
 	compat: { supportsDeveloperRole: false }, thinkingLevelMap: { high: "deep" }, headers: { "x-model": "test" }, cost: { input: 1, output: 2 } };
@@ -215,7 +222,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000 });
 		expect(screen.getByText("仍需补充：视觉、推理")).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "undeclared 确认纯文本" }));
-		fireEvent.change(screen.getByRole("combobox", { name: "undeclared 推理" }), { target: { value: "off" } });
+		await chooseReasoning("off");
 		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
 		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
 		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text"], reasoning: false });
@@ -231,7 +238,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		fireEvent.change(await screen.findByRole("textbox", { name: "undeclared 上下文" }), { target: { value: "256K" } });
 		fireEvent.change(screen.getByRole("textbox", { name: "undeclared 输出上限" }), { target: { value: "32K" } });
 		fireEvent.click(screen.getByRole("checkbox", { name: "undeclared 图片" }));
-		fireEvent.change(screen.getByRole("combobox", { name: "undeclared 推理" }), { target: { value: "on" } });
+		await chooseReasoning("on");
 		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
 		await screen.findByText("temporary refresh failure");
 		expect(saved().providers.gateway.models[1]).toMatchObject({ contextWindow: 256000, maxTokens: 32000, input: ["text", "image"], reasoning: true });
@@ -242,7 +249,7 @@ describe("SettingsPanel model round trip and revision", () => {
 		const { writes, saved } = setup({ auditOnly: true, builtin });
 		await edit();
 		if (builtin) fireEvent.click(screen.getByRole("button", { name: "自定义设置" }));
-		fireEvent.change(screen.getByRole("combobox", { name: "undeclared 推理" }), { target: { value: "off" } });
+		await chooseReasoning("off");
 		fireEvent.click(screen.getByRole("button", { name: "保存 1 个模型" }));
 		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());
 		fireEvent.click(screen.getByRole("button", { name: /^保存$/ }));
@@ -253,9 +260,9 @@ describe("SettingsPanel model round trip and revision", () => {
 
 	it.each([["on", true], ["off", false]])("fills an otherwise complete model's missing reasoning with %s", async (choice, expected) => {
 		const { writes, saved } = setup({ auditOnly: true });
-		const select = await screen.findByRole("combobox", { name: "undeclared 推理" });
+		await screen.findByRole("button", { name: "undeclared 推理" });
 		expect((screen.getByRole("button", { name: "填好后保存" }) as HTMLButtonElement).disabled).toBe(true);
-		fireEvent.change(select, { target: { value: choice } });
+		await chooseReasoning(choice as keyof typeof REASONING_LABEL);
 		fireEvent.click(screen.getByRole("button", { name: /保存.*1|1.*保存/ }));
 		await waitFor(() => expect(writes).toHaveLength(1));
 		await waitFor(() => expect(screen.queryByTestId("model-audit")).toBeNull());

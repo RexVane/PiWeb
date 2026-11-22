@@ -4,7 +4,11 @@ import {
 	classifyMessageChars,
 	classifyModelError,
 	cleanCommand,
+	cleanErrorPreviewLines,
+	compactDisplayPath,
+	compactPathsInText,
 	deleteTargetOf,
+	describeCommandIntent,
 	firstSentence,
 	dropEchoSeparators,
 	displayToolName,
@@ -68,6 +72,11 @@ describe("cleanCommand", () => {
 		const r = cleanCommand("python - <<'EOF'\nprint(1)\n\nEOF\n", "D:/x");
 		expect(r.text).toBe("python - <<'EOF'");
 		expect(r.lines).toBe(3);
+	});
+	it("previews the first code line cleanly when a multi-line inline script ends with an unclosed quote", () => {
+		const r = cleanCommand('cd ~/.cc-switch && python -c "\n# inspect db\nimport sqlite3, json\nprint(1)\n"', "D:/AIApp/PiWeb");
+		expect(r.text).toBe('cd ~/.cc-switch && python -c "import sqlite3, json …"');
+		expect(r.lines).toBe(5);
 	});
 });
 
@@ -252,5 +261,135 @@ describe("skillNameFromRead", () => {
 		expect(skillNameFromRead("read", { path: "docs/README.md" })).toBeNull();
 		expect(skillNameFromRead("edit", { path: "/skills/x/SKILL.md" })).toBeNull();
 		expect(skillNameFromRead("bash", { command: "cat SKILL.md" })).toBeNull();
+	});
+});
+
+describe("describeCommandIntent", () => {
+	it("extracts port and process intent from PowerShell / ss commands", () => {
+		const ps = describeCommandIntent("Get-NetTCPConnection -LocalPort 15721 | Select-Object OwningProcess");
+		expect(ps?.category).toBe("port_proc");
+		expect(ps?.target).toBe(":15721");
+
+		const proc = describeCommandIntent("Get-Process -Id 4096 | Select-Object Name, Path");
+		expect(proc?.category).toBe("port_proc");
+		expect(proc?.target).toBe("PID 4096");
+	});
+
+	it("translates directory listings while stripping error-action noise", () => {
+		const ls = describeCommandIntent("Get-ChildItem \"$env:USERPROFILE\\.cc-switch\" -ErrorAction SilentlyContinue");
+		expect(ls?.category).toBe("dir_list");
+		expect(ls?.target).toContain("%USERPROFILE%/.cc-switch");
+	});
+
+	it("categorizes python scripts, vitest, tsc, git, sqlite, and capture tools", () => {
+		const py = describeCommandIntent("cd /repo/tools && python3 inspect_logs.py", "/repo");
+		expect(py?.category).toBe("script_py");
+		expect(py?.target).toBe("inspect_logs.py");
+
+		const testRun = describeCommandIntent("npx vitest run tests/process-format.test.ts");
+		expect(testRun?.category).toBe("test_check");
+		expect(testRun?.target).toBe("tests/process-format.test.ts");
+
+		const typeRun = describeCommandIntent("npx tsc --noEmit");
+		expect(typeRun?.category).toBe("type_check");
+
+		const gitRead = describeCommandIntent("git status --short");
+		expect(gitRead?.category).toBe("git_inspect");
+
+		const gitMutate = describeCommandIntent("git commit -m \"feat: timeline\"");
+		expect(gitMutate?.category).toBe("git_write");
+
+		const db = describeCommandIntent("sqlite3 app.db \"SELECT count(*) FROM proxy_request_logs\"");
+		expect(db?.category).toBe("sqlite");
+		expect(db?.target).toBe("app.db");
+
+		const cap = describeCommandIntent("tshark -i lo0 -f \"tcp port 15721\"");
+		expect(cap?.category).toBe("net_capture");
+		expect(cap?.target).toContain("tshark");
+	});
+
+	it("returns null for unrecognized custom commands so fallback stays untouched", () => {
+		expect(describeCommandIntent("my-custom-binary --foo bar")).toBeNull();
+		expect(describeCommandIntent("")).toBeNull();
+	});
+
+	it("extracts module and inline script hints for python and strips env setup", () => {
+		const mod = describeCommandIntent("$env:PYTHONIOENCODING='utf-8'; python -m json.tool");
+		expect(mod?.category).toBe("script_py");
+		expect(mod?.target).toBe("-m json.tool");
+
+		const inline = describeCommandIntent("python -c \"import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:15721').read())\"");
+		expect(inline?.category).toBe("script_py");
+		expect(inline?.target).toBe(":15721");
+	});
+
+	it("skips rg/grep/Get-ChildItem flag values and wildcard/ellipsis noise tokens", () => {
+		const ctxSearch = describeCommandIntent("rg -n -C 30 \"activatedOnRegistration\" src/");
+		expect(ctxSearch?.category).toBe("code_search");
+		expect(ctxSearch?.target).toContain("activatedOnRegistration");
+		expect(ctxSearch?.target).not.toContain("30");
+
+		const globSearch = describeCommandIntent("rg -g \"*.ts\" \"disabledPackages\" src/agent");
+		expect(globSearch?.category).toBe("code_search");
+		expect(globSearch?.target).toContain("disabledPackages");
+		expect(globSearch?.target).not.toContain("*.ts");
+
+		const wildDir = describeCommandIntent("Get-ChildItem \"$env:TEMP\" -Filter *.ts");
+		expect(wildDir?.category).toBe("dir_list");
+		expect(wildDir?.target).not.toContain("*");
+
+		const psRead = describeCommandIntent("Get-Content web-resources.json -TotalCount 60");
+		expect(psRead?.category).toBe("file_read");
+		expect(psRead?.target).toBe("web-resources.json");
+
+		const wrapped = describeCommandIntent("powershell -NoProfile -Command \"rg -n magpie src/lib\"");
+		expect(wrapped?.category).toBe("code_search");
+		expect(wrapped?.target).toContain("magpie");
+	});
+});
+
+describe("compactDisplayPath", () => {
+	it("shortens Temp and home directories while preserving workspace relative paths", () => {
+		expect(compactDisplayPath("D:/AIApp/PiWeb/src/app/page.tsx", "D:/AIApp/PiWeb")).toBe("src/app/page.tsx");
+		expect(compactDisplayPath("C:\\Users\\guica\\AppData\\Local\\Temp\\codex-sniff\\capture.py", "D:/AIApp/PiWeb")).toBe("Temp/codex-sniff/capture.py");
+		expect(compactDisplayPath("/tmp/codex-sniff/probe.py", "/repo")).toBe("Temp/codex-sniff/probe.py");
+		expect(compactDisplayPath("C:/Users/guica/.cc-switch/config.json", "D:/AIApp/PiWeb")).toBe("~/.cc-switch/config.json");
+	});
+});
+
+describe("compactPathsInText", () => {
+	it("shortens workspace, Windows/POSIX home, and Temp paths inside free-form error text", () => {
+		expect(
+			compactPathsInText(
+				"Cannot access 'D:\\AIApp\\PiWeb\\src\\a.ts' or 'C:\\Users\\guica\\.pi\\agent\\npm\\node_modules\\@juicesharp\\rpiv-todo'",
+				"D:/AIApp/PiWeb",
+			),
+		).toBe("Cannot access 'src\\a.ts' or '~/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo'");
+		expect(compactPathsInText("Missing C:\\Users\\guica\\AppData\\Local\\Temp\\probe.ps1")).toBe("Missing Temp/probe.ps1");
+		expect(compactPathsInText("Not found /home/alice/.config/app.json")).toBe("Not found ~/.config/app.json");
+		expect(compactPathsInText('cd "/c/Users/guica/AppData/Local/Temp/codex-sniff" && python devs.py')).toBe('cd "Temp/codex-sniff" && python devs.py');
+		expect(compactPathsInText("cat /c/Users/guica/.codex/config.toml")).toBe("cat ~/.codex/config.toml");
+	});
+});
+
+describe("cleanErrorPreviewLines", () => {
+	it("strips PowerShell Line |, numbered context, and ~~~~ noise while preserving the core error and shortening paths", () => {
+		const raw = [
+			"Line |",
+			'   2 | ... Host "---"; Select-String -Path "C:\\Users\\guica\\.pi\\agent\\npm\\node_mo ...',
+			"     |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+			"     | Cannot find path 'C:\\Users\\guica\\.pi\\agent\\npm\\node_modules\\@juicesharp\\rpiv-todo' because it does not exist.",
+			"At line:1 char:1",
+			"+ CategoryInfo : ObjectNotFound: (:String) [], ItemNotFoundException",
+		];
+		expect(cleanErrorPreviewLines(raw)).toEqual([
+			"Cannot find path '~/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo' because it does not exist.",
+		]);
+	});
+
+	it("falls back to numbered code context if no non-frame message remains", () => {
+		expect(cleanErrorPreviewLines(["Line |", "   1 | C:\\Users\\guica\\AppData\\Local\\Temp\\run.ps1"])).toEqual([
+			"Temp/run.ps1",
+		]);
 	});
 });

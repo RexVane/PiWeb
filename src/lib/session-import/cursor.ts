@@ -10,11 +10,11 @@
  */
 import path from "node:path";
 import fs from "node:fs/promises";
-import { jsonlImportWarnings, readFileBounded } from "./files";
+import { readFileBounded } from "./files";
 import { cursorChatsRoot } from "./paths";
 import { openReadOnly } from "./sqlite";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";
-import { cleanTitle, compactBlocks, outputBlocks, parseArguments, textBlock, toEpochMs } from "./types";
+import { cleanTitle, compactBlocks, outputBlocks, parseArguments, toEpochMs } from "./types";
 
 /** meta 表里 agent 记录的 value 可能是十六进制编码的 JSON，也可能是明文 JSON */
 function parseAgentRecord(value: unknown): Record<string, unknown> | undefined {

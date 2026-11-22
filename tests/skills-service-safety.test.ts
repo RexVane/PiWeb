@@ -44,8 +44,9 @@ vi.mock("@/lib/settings-write-lock", () => ({
 	withExternalSettingsLock: (_file: string, operation: () => Promise<unknown>) => operation(),
 }));
 vi.mock("@/lib/atomic-file", () => ({ replaceFileAtomically: vi.fn(async () => undefined) }));
-vi.mock("@/lib/recoverable-remove", () => ({ recoverableRemove: async (removed: string) => {
-	fixture.remove(removed); return { removed, backup: `${removed}.backup` };
+// 删除走系统回收站（recycle-bin）；测试只关心交给回收站的路径，跳过真实 pin 与回收站实现。
+vi.mock("@/lib/recycle-bin", () => ({ moveToTrash: async (removed: string) => {
+	fixture.remove(removed); return { removed };
 } }));
 
 import { deleteSkill, listSkills, setSkillDisabled } from "@/lib/skills-service";
@@ -110,7 +111,7 @@ describe("package skill deletion boundary", () => {
 		const userSkill = (await listSkills(fixture.cwd))[0];
 		expect(userSkill.scope).toBe("user");
 		expect(userSkill.origin).toBe("top-level");
-		await expect(deleteSkill(file, fixture.cwd)).resolves.toEqual({ removed: path.dirname(file), backup: `${path.dirname(file)}.backup` });
+		await expect(deleteSkill(file, fixture.cwd)).resolves.toEqual({ removed: path.dirname(file) });
 		expect(fixture.remove).toHaveBeenCalledWith(path.dirname(file));
 	});
 
@@ -147,7 +148,7 @@ describe("shared skill root deletion boundary", () => {
 		fixture.aliases.set(root, canonicalRoot);
 		fixture.aliases.set(discovered, canonical);
 		addSkill(discovered, "top-level", scope);
-		await expect(deleteSkill(discovered, fixture.cwd)).resolves.toEqual({ removed: canonical, backup: `${canonical}.backup` });
+		await expect(deleteSkill(discovered, fixture.cwd)).resolves.toEqual({ removed: canonical });
 		expect(fixture.remove).toHaveBeenCalledWith(canonical);
 	});
 });

@@ -52,16 +52,26 @@ describe("workspace resource requests", () => {
 		const dialog = await screen.findByRole("alertdialog"); rerender(<PluginsSection cwd="/b" />); fireEvent.click(within(dialog).getByRole("button", { name: "卸载" }));
 		await act(async () => {}); expect(posts).not.toHaveBeenCalled();
 	});
-	it("keeps an installation dialog open while saving", async () => {
-		const saving = deferred<ReturnType<typeof response>>();
-		vi.stubGlobal("fetch", vi.fn((_url: string, init?: RequestInit) => init?.method === "POST" ? saving.promise : Promise.resolve(response({ packages: [], extensions: [] }))));
-		render(<PluginsSection cwd="/ws" />); fireEvent.click(screen.getByRole("button", { name: /添加(?:插件|扩展)/ }));
-		fireEvent.click(screen.getByRole("menuitem", { name: /安装已有扩展/ }));
-		const dialog = await screen.findByRole("dialog"); fireEvent.change(within(dialog).getByRole("textbox", { name: /npm/ }), { target: { value: "npm:demo" } });
-		fireEvent.click(within(dialog).getByRole("button", { name: "安装" })); fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "安装" }));
-		await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
-		fireEvent.keyDown(document, { key: "Escape" }); expect(screen.getByRole("dialog")).toBeTruthy();
-		await act(async () => { saving.resolve(response({})); }); await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+	it.each(["workspace", "standalone"] as const)("keeps only a working Refresh action in the %s extensions toolbar", async (view) => {
+		const pending = deferred<ReturnType<typeof response>>();
+		const posts: unknown[] = [];
+		const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+			if (init?.method !== "POST") return Promise.resolve(response({ packages: [], extensions: [] }));
+			posts.push(JSON.parse(String(init.body)));
+			return pending.promise;
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(view === "workspace" ? <PluginsWorkspaceView knownCwds={["/ws"]} defaultCwd="/ws" getWorkspaceName={() => "Workspace"} /> : <PluginsSection cwd="/ws" />);
+		const refresh = screen.getByRole<HTMLButtonElement>("button", { name: "刷新" });
+		expect(screen.queryByRole("button", { name: /添加(?:插件|扩展)/ })).toBeNull();
+		expect(screen.queryByRole("button", { name: "自己设计" })).toBeNull();
+		if (view === "workspace") expect(within(refresh.closest("header")!).getAllByRole("button")).toEqual([refresh]);
+		fireEvent.click(refresh);
+		await waitFor(() => expect(refresh.disabled).toBe(true));
+		expect(posts).toEqual([{ action: "reload", cwd: "/ws" }]);
+		await act(async () => { pending.resolve(response({})); });
+		await waitFor(() => expect(refresh.disabled).toBe(false));
+		expect(fetchMock.mock.calls).toHaveLength(3);
 	});
 	it("does not open a skill read response from a previous workspace", async () => {
 		const read = deferred<ReturnType<typeof response>>(); const onOpen = vi.fn();

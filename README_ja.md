@@ -40,15 +40,15 @@
 - **ワークスペースとセッション** — プロジェクトフォルダーごとに会話を整理します。名前変更、分岐、アーカイブ、下書きの復元、JSONL または HTML へのエクスポートが可能です。
 - **会話のインポート** — Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code、Cursor のローカル履歴を検索して取り込みます。元のファイルはその場所のまま読み取ります。
 - **ファイルと変更** — プロジェクトの変更履歴ツリーでターンごとの変更を確認し、`SKILL.md` の読み込みや codemode 内の呼び出しを追跡できます。ソース、Markdown プレビュー、統合または左右並列の差分を開き、選んだ行を会話に引用できます。
-- **モデル、スキル、拡張機能** — プロバイダー、Pi の MCP ツールとパッケージを管理します。[既存リソースの追加や独自の設計](docs/resources.md)が可能で、JSON UI や独立した Web ビューに PiWeb の再ビルドは不要です。
+- **モデル、スキル、拡張機能** — プロバイダー、Pi の MCP ツールとパッケージを管理します。[Pi で拡張機能をインストール](docs/resources.md)し、標準の対話 UI と JSON UI を利用できます。
 - **プロンプトのソース** — 指示、スキル、テンプレート、ツール定義とその提供元を確認できます。
-- **任意の質問・自動化リソース** — [piweb-resources](https://github.com/RexVane/piweb-resources) から個別に追加します。このソースのリソース API v1 は従来の内蔵ツールを置き換えます。古い npm インストールのページ更新だけでは有効になりません。
+- **任意の質問リソース** — [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) から個別に追加します。このソースのリソース API v1 は従来の内蔵質問ツールを置き換えます。古い npm インストールのページ更新だけでは有効になりません。
 - **モバイルと表示言語** — 「設定 → リモートアクセス」の QR コードを読み取ります。英語、簡体字中国語、繁体字中国語、日本語、ロシア語に対応しています。
 
 <details>
 <summary>スクリーンショットをさらに見る（デスクトップとモバイル）</summary>
 
-スクリーンショットは旧版の英語インターフェースとサンプルデータを使用しています。質問と自動化は現在、任意リソースとして提供されます。
+スクリーンショットは旧版の英語インターフェースとサンプルデータを使用しています。質問機能は現在、任意リソースとして提供されます。
 
 <table>
   <tr>
@@ -64,8 +64,7 @@
     <td width="50%"><img src="assets/readme-desktop-skills.jpg" alt="デスクトップのスキル" /><br /><strong>スキル</strong></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/readme-desktop-automations.jpg" alt="デスクトップの自動化エディター" /><br /><strong>自動化</strong></td>
-    <td width="50%"><img src="assets/readme-mobile.jpg" alt="モバイルの会話" /><br /><strong>モバイルのチャット</strong></td>
+    <td colspan="2" align="center"><img src="assets/readme-mobile.jpg" width="50%" alt="モバイルの会話" /><br /><strong>モバイルのチャット</strong></td>
   </tr>
   <tr>
     <td width="50%"><img src="assets/readme-mobile-workspaces.jpg" alt="モバイルのワークスペース" /><br /><strong>ワークスペース</strong></td>
@@ -193,7 +192,7 @@ LAN への直接 HTTP は暗号化されません。QR アドレスの TLS は C
 
 | 変数 | 既定値 | 意味 |
 | --- | --- | --- |
-| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb が共有する agent ディレクトリ：設定、モデルと認証情報、セッション、アップロード、自動化。唯一のデータルートではありません。[データとプライバシー](docs/operations/data-and-privacy.md) を参照してください。 |
+| `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb が共有する agent ディレクトリ：設定、モデルと認証情報、セッション、アップロード。唯一のデータルートではありません。[データとプライバシー](docs/operations/data-and-privacy.md) を参照してください。 |
 | `PI_WEB_EDITOR` | `code` | 「エディターで開く」に使うローカルのエディターコマンド。ホスト上の操作者にだけ意味があります。 |
 | `PI_WEB_UPLOAD_RETENTION` | `30`（日） | `web-uploads` 内の未参照ファイルを掃除する閾値。`0` で掃除を無効にします。掃除の前に `~/.agents/backups/` へコピーし、`INDEX.md` に記録します。 |
 | `PI_WEB_DELETE_ATTACHMENT_CLEANUP` | 有効 | セッション削除時に、そのセッションだけが参照するアップロードも掃除します（先にバックアップしてから削除）。`0` で残します。 |
