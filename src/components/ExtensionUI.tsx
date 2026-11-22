@@ -11,9 +11,6 @@ import { useI18n } from "@/i18n";
 import { useDialog } from "@/hooks/useDialog";
 import type { ExtensionDialog, PiWebNotice } from "@/hooks/usePiWeb";
 import type { WebExtensionWidget, WebUiFormField, WebUiNode, WebUiResult } from "@/lib/types";
-import type { JsonValue, WebResourceView } from "@/lib/resources/protocol";
-import { ResourceFrame } from "./resources/ResourceFrame";
-import { useResourceText } from "./resources/text";
 
 const TONE_COLOR: Record<string, string> = {
 	default: "var(--dsw-label-primary)",
@@ -253,21 +250,15 @@ function parseKeyValueRows(message: string): { key: string; value: string }[] | 
 export function ExtensionDialogHost({
 	dialog,
 	onAnswer,
-	renderer,
-	cwd = "",
-	sessionPath,
 	embedded = false,
 }: {
 	dialog: ExtensionDialog | null;
 	onAnswer: (id: string, response: { value?: string; confirmed?: boolean; cancelled?: boolean }) => void;
-	renderer?: WebResourceView;
 	cwd?: string;
 	sessionPath?: string;
 	embedded?: boolean;
 }) {
 	const { t } = useI18n();
-	const resourceText = useResourceText();
-	const [basic, setBasic] = useState(false);
 	const [text, setText] = useState("");
 	const [idx, setIdx] = useState(0);
 	const dialogRef = useRef<HTMLDivElement>(null);
@@ -279,37 +270,18 @@ export function ExtensionDialogHost({
 		// editor 的初始内容由扩展给（prefill），其余对话框每次从空开始
 		setText(dialog?.method === "editor" ? dialog.prefill ?? "" : "");
 		setIdx(0);
-		setBasic(false);
 	}, [dialog?.id, dialog?.method, dialog?.prefill]);
 	useEffect(() => {
-		if (!dialog || embedded && !basic && (renderer || dialog.resourceView)) return;
+		if (!dialog) return;
 		const previous = document.activeElement;
 		if (dialog.method !== "input" && dialog.method !== "editor") dialogRef.current?.focus();
 		return () => {
 			const focused = document.activeElement;
 			if ((!focused || focused === document.body || dialogRef.current?.contains(focused)) && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
 		};
-	}, [dialog?.id, dialog?.method, embedded, basic, renderer]);
+	}, [dialog?.id, dialog?.method, embedded]);
 	if (!dialog) return null;
-	const resourceView = basic ? undefined : renderer ?? dialog.resourceView;
-	const resourceAnswer = (value: JsonValue) => {
-		if (dialog.method === "confirm") onAnswer(dialog.id, { confirmed: value === true });
-		else if (dialog.method === "select" || dialog.method === "input" || dialog.method === "editor") {
-			if (typeof value === "string" && (dialog.method !== "select" || dialog.options?.includes(value))) onAnswer(dialog.id, { value });
-		} else onAnswer(dialog.id, { value: JSON.stringify(value) });
-	};
-	// 有资源接管时整张卡由资源渲染：不再套 PiWeb 的标题、「扩展」标签与 popover 外框（旧版卡片本来就没有这些）。
-	if (resourceView) return (
-		<div ref={dialogRef} tabIndex={-1} className={embedded ? "flex w-full flex-col" : "fixed inset-0 z-[120] flex items-center justify-center"}
-			style={embedded ? undefined : { background: "var(--dsw-mask)" }} role="dialog" aria-modal={embedded ? undefined : true} aria-label={dialog.title}
-			onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); onAnswer(dialog.id, { cancelled: true }); } }}>
-			<div className={embedded ? "w-full" : "popover w-full p-3"} style={embedded ? undefined : { maxWidth: "min(92vw,640px)", background: "var(--dsw-glass-modal)" }}>
-				<ResourceFrame key={`${dialog.id}:${resourceView.id}`} view={resourceView} cwd={cwd} sessionPath={sessionPath}
-					request={{ method: dialog.method, title: dialog.title, message: dialog.message ?? null, options: dialog.options ?? null, placeholder: dialog.placeholder ?? null, prefill: dialog.prefill ?? null }}
-					data={dialog.resourceData} onAnswer={resourceAnswer} onCancel={() => onAnswer(dialog.id, { cancelled: true })} onUnavailable={() => setBasic(true)} />
-			</div>
-		</div>
-	);
+
 	return (
 		<div
 			ref={dialogRef}
@@ -333,7 +305,7 @@ export function ExtensionDialogHost({
 				}
 			}}
 		>
-			<div className="popover flex flex-col gap-3 p-5" style={{ width: embedded ? "100%" : isEditor ? "min(92vw,640px)" : dialog.method === "web" || resourceView ? "min(92vw,640px)" : "min(92vw,480px)", background: "var(--dsw-glass-modal)" }}>
+			<div className="popover flex flex-col gap-3 p-5" style={{ width: embedded ? "100%" : isEditor ? "min(92vw,640px)" : dialog.method === "web" ? "min(92vw,640px)" : "min(92vw,480px)", background: "var(--dsw-glass-modal)" }}>
 				<div className="flex items-start gap-2.5">
 					{isPermission && (
 						<span className="flex-none flex items-center justify-center rounded-lg" style={{ width: 30, height: 30, background: "color-mix(in srgb, var(--dsw-warn) 15%, transparent)" }}>
@@ -421,21 +393,16 @@ export function ExtensionDialogHost({
 						/>
 					</div>
 				)}
-				{dialog.method === "resource" && <>
-					<pre className="max-h-48 overflow-auto whitespace-pre-wrap" style={{ fontSize: 12 }}>{JSON.stringify(dialog.resourceData, null, 2)}</pre>
-					<textarea aria-label={resourceText.basicInterface} value={text} onChange={(event) => setText(event.target.value)} className="rounded-xl px-3 py-2" />
-				</>}
 				</>}
 				<div className="flex justify-end gap-2">
 					<button className="btn-outline" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { cancelled: true })}>{t.cancel}</button>
-					{dialog.method === "resource" && !resourceView && <button type="button" className="btn-primary-white" onClick={() => { let value: JsonValue = text; try { value = JSON.parse(text); } catch { /* Free text remains text. */ } resourceAnswer(value); }}>{t.confirm}</button>}
-					{!resourceView && dialog.method === "confirm" && (
+					{dialog.method === "confirm" && (
 						<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { confirmed: true })}>{t.confirm}</button>
 					)}
-					{!resourceView && dialog.method === "input" && (
+					{dialog.method === "input" && (
 						<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { value: text })}>{t.confirm}</button>
 					)}
-					{!resourceView && dialog.method === "editor" && (
+					{dialog.method === "editor" && (
 						<button className="btn-primary-white" style={{ height: 32 }} onClick={() => onAnswer(dialog.id, { value: text })}>{t.confirm}</button>
 					)}
 				</div>

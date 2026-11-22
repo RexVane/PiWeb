@@ -40,7 +40,7 @@ It bundles the official `@earendil-works/pi-*` SDK and shares your existing pi s
 - **Workspaces and sessions** — Organize sessions by project folder. Rename, branch, archive, restore drafts, and export sessions as JSONL or HTML.
 - **Session import** — Search and import local history from Claude Code, Codex, OpenCode, Grok, ZCode, dsh, Kimi Code, WorkBuddy, Antigravity, Antigravity CLI, Qwen Code, and Cursor. PiWeb reads the original files in place.
 - **Files and changes** — Inspect changes by round in the project growth tree, including `SKILL.md` reads and calls inside codemode. Open source, rendered Markdown, and unified or side-by-side diffs, and quote selected lines in chat.
-- **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Add existing resources or design your own](docs/resources.md); optional views use JSON UI or independent browser assets without rebuilding PiWeb.
+- **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Install packages through Pi](docs/resources.md); native interactions and JSON UI use the built-in web interface.
 - **Prompt sources** — Inspect project instructions, skills, templates, and tool definitions with their resource origin.
 - **Optional question resource** — Install [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) separately. The resource API v1 in this source tree replaces the previously bundled question tool; it is not enabled by refreshing an older npm installation.
 - **Mobile access and languages** — Scan the QR code in Settings → Remote access. The UI is available in English, Simplified Chinese, Traditional Chinese, Japanese, and Russian.
@@ -254,6 +254,7 @@ PiWeb does not replace a separately installed `pi` CLI. They **share the same ag
 - [Environment reference](docs/operations/environment.md)
 - [Data, privacy and retention](docs/operations/data-and-privacy.md)
 - [Release, downgrade and rollback](docs/operations/release-and-rollback.md)
+- [Changes since 0.3.35](docs/releases/0.3.36.md)
 - [Extension web UI](docs/extension-web-ui.md) and [extension examples](examples/piweb-extensions/README.md)
 - Documentation index: [docs/README.md](docs/README.md)
 

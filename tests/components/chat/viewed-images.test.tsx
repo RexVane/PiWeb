@@ -108,6 +108,7 @@ describe("viewed image process steps", () => {
 			{ role: "assistant", id: "a3", content: [{ type: "text", text: "Done" }], stopReason: "stop", timestamp: 2000 },
 		];
 		const { container } = render(<ChatWindow messages={messages} tools={{ r1: done("first.png"), r2: done("second.jpg", [second]) }} />);
+		expect(container.querySelector(".pw-turn-toggle")?.getAttribute("aria-expanded")).toBe("false");
 		fireEvent.click(container.querySelector(".pw-turn-toggle")!);
 		expect(screen.getByRole("button", { name: "已查看 2 张图像" })).toBeTruthy();
 		expect(screen.queryByRole("img")).toBeNull();

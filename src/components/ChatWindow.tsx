@@ -7,23 +7,27 @@ import { safeLocalStorage } from "@/lib/browser-storage";
  * 每个回合 = 用户消息 → 过程（叙述句是阶段标题，其下是带图标的步骤列表）→ 最终回答。
  * 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后思考与命令折成一行摘要，编辑保留 diff。
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import {
+	IconAlertCircle14,
 	IconBranchOutline16,
 	IconBrowseOutline14,
 	IconCheckOutline14,
 	IconChevronRight14,
 	IconClockOutline16,
 	IconCloseOutline14,
+	IconCmdPrompt14,
 	IconCompactionOutline16,
 	IconCopyOutline16,
 	IconCubeOutline16,
 	IconDatabaseOutline16,
 	IconDataOutline16,
 	IconEditOutline16,
+	IconEditPencil14,
 	IconFileOutline16,
+	IconFileWrite14,
 	IconGlobeOutline14,
 	IconImageOutline16,
 	IconInfoOutline16,
@@ -31,7 +35,8 @@ import {
 	IconSearchOutline16,
 	IconSkillOutline16,
 	IconSparkOutline14,
-	IconTerminalOutline14,
+	IconThinkBulb14,
+	IconThinkRing14,
 	IconWarningOutline16,
 } from "@/components/icons";
 import { DiffView, type DiffLine, parseUnifiedDiff } from "@/components/DiffView";
@@ -41,8 +46,8 @@ import { parseExpandedSkill } from "@/lib/chat/skill-expansion";
 import { isCancelledTool } from "@/lib/chat/cancellation";
 import { copyText } from "@/lib/clipboard";
 import { OutlineRail } from "@/components/OutlineRail";
+import { PiMark } from "@/components/PiMark";
 import { PreviewImage } from "@/components/PreviewImage";
-import { ActionCluster } from "@/components/chat/ActionCluster";
 import { ChatScrollContext, type ChatScroll } from "@/components/chat/chat-scroll";
 import { MarkdownActionsProvider, type MarkdownActions } from "@/components/chat/markdown-actions";
 import { WebSourcesPanel, WebSourcesTrigger } from "@/components/chat/web-sources";
@@ -63,32 +68,28 @@ import {
 import {
 	classifyModelError,
 	cleanCommand,
+	cleanErrorPreviewLines,
 	compactDisplayPath,
-	deleteTargetOf,
+	compactPathsInText,
 	describeCommandIntent,
 	displayToolName,
 	firstSentence,
-	isDeleteCommand,
 	langOfPath,
 	previewSide,
-	relativizeInText,
 	relativizePath,
 	skillNameFromRead,
 	splitLines,
 	toolKind,
 	trimNoiseTail,
-	type CommandIntentCategory,
 	type ModelErrorKind,
 	type ToolKind,
 } from "@/lib/process-format";
 import {
 	buildProcessBlocks,
-	collectClusterKinds,
 	collectToolWebData,
 	EMPTY_WEB_SOURCES,
 	itemWebInfo,
 	nestedNodes,
-	type ClusterKind,
 	type ProcessBlock,
 	type ProcessItem,
 	type ProcessRun,
@@ -373,7 +374,6 @@ function MessageActions({
 // 进行中的思考 / 命令用闪光渐变的英文状态词；回合结束后每个阶段下的思考与命令折成一行
 // 「思考了 1m 12s，运行了 6 条命令」（Claude Code 的折叠摘要），编辑文件保留 diff；末尾 π 记号做工作指示。没有连线。
 
-const RAIL = "⎿";
 /** 命令输出默认露出的行数 */
 const PREVIEW_LINES = 3;
 
@@ -434,7 +434,7 @@ function KindIcon({ kind }: { kind: StepKind }) {
 	const p = { size: 13, style: { flex: "none" as const } };
 	switch (kind) {
 		case "cmd":
-			return <IconTerminalOutline14 {...p} />;
+			return <IconCmdPrompt14 {...p} />;
 		case "read":
 			return <IconBrowseOutline14 {...p} />;
 		case "image":
@@ -445,10 +445,11 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "web_fetch":
 			return <IconGlobeOutline14 {...p} />;
 		case "write":
-			return <IconEditOutline16 {...p} />;
+			return <IconEditPencil14 {...p} />;
 		case "think":
+			return <IconThinkBulb14 {...p} />;
 		case "summary":
-			return <IconSparkOutline14 size={13} style={{ flex: "none" }} />;
+			return <IconSparkOutline14 {...p} />;
 		case "context":
 			return <IconFileOutline16 {...p} />;
 		case "error":
@@ -458,7 +459,7 @@ function KindIcon({ kind }: { kind: StepKind }) {
 		case "retry":
 			return <IconRefreshOutline14 {...p} />;
 		case "work":
-			return <span className="pw-pi" aria-hidden="true">π</span>;
+			return <span className="pw-pi" aria-hidden="true"><PiMark size={14} /></span>;
 		case "skill":
 			return <IconSkillOutline16 size={13} style={{ flex: "none" }} />;
 		default:
@@ -466,32 +467,18 @@ function KindIcon({ kind }: { kind: StepKind }) {
 	}
 }
 
-function Step({ kind, tone = "dim", badgeTone, live, className, children }: { kind: StepKind; tone?: StepTone; badgeTone?: StepBadgeTone; live?: boolean; className?: string; children: ReactNode }) {
+function Step({ kind, tone = "dim", badgeTone, icon, live, hideIcon, className, children }: { kind: StepKind; tone?: StepTone; badgeTone?: StepBadgeTone; icon?: ReactNode; live?: boolean; hideIcon?: boolean; className?: string; children: ReactNode }) {
 	const resolvedBadge = tone === "fail" ? "fail" : tone === "warn" ? "warn" : badgeTone ?? stepBadgeTone(kind, tone);
 	return (
 		<div className={className ? `pw-step ${className}` : "pw-step"} data-kind={kind} data-tone={tone} data-live={live || undefined}>
-			<span className="pw-icon" data-badge={resolvedBadge} aria-hidden>
-				<KindIcon kind={kind} />
-			</span>
+			{!hideIcon && (
+				<span className="pw-icon" data-badge={resolvedBadge} aria-hidden>
+					{tone === "fail" ? <IconAlertCircle14 size={13} style={{ flex: "none" }} /> : (icon ?? <KindIcon kind={kind} />)}
+				</span>
+			)}
 			<div className="pw-body">{children}</div>
 		</div>
 	);
-}
-
-/** 把模板里的 {n}/{d} 占位换成加粗的值（摘要行里数字加粗，像 Claude Code） */
-function fillBold(template: string, values: Record<string, string>): ReactNode[] {
-	const out: ReactNode[] = [];
-	const re = /\{(\w+)\}/g;
-	let last = 0;
-	let m: RegExpExecArray | null;
-	let i = 0;
-	while ((m = re.exec(template))) {
-		if (m.index > last) out.push(template.slice(last, m.index));
-		out.push(<strong key={i++}>{values[m[1]] ?? ""}</strong>);
-		last = m.index + m[0].length;
-	}
-	if (last < template.length) out.push(template.slice(last));
-	return out;
 }
 
 // ---------- 工具步骤 ----------
@@ -527,7 +514,7 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
 	const body = splitLines(raw).filter((l) => !/^Command exited with code \d+/.test(l));
 	const count = (k: string, v: number) => t[k].replace("{n}", String(v));
-	const rel = (lines: string[]) => (cwd ? lines.map((l) => relativizeInText(l, cwd)) : lines);
+	const rel = (lines: string[]) => lines.map((l) => compactPathsInText(l, cwd));
 	const tailBody = trimNoiseTail(body);
 	const tail = (n: number): Preview => ({ lines: rel(tailBody.slice(-n)), hidden: Math.max(0, body.length - Math.min(n, tailBody.length)), side: "tail" });
 	const head = (n: number): Preview => ({ lines: rel(body.slice(0, n)), hidden: Math.max(0, body.length - n), side: "head" });
@@ -536,10 +523,16 @@ function toolPreview(kind: ToolKind, state: ToolCardState, t: Dict, cwd?: string
 	const command = kind === "cmd" ? (str(a?.command) ?? str(a?.cmd) ?? str(a?.script) ?? "") : "";
 	const byCmd = (n: number) => (previewSide(cleanCommand(command, cwd).text) === "head" ? head(n) : tail(n));
 	if (running) return kind === "cmd" && body.length ? tail(PREVIEW_LINES) : none;
-	if (isCancelledTool(state.name, state.isError, raw)) return { head: t.turnAborted, ...(kind === "cmd" ? tail(4) : head(4)) };
+	if (isCancelledTool(state.name, state.isError, raw)) {
+		const cleaned = cleanErrorPreviewLines(kind === "cmd" ? trimNoiseTail(body) : body, cwd);
+		const shown = kind === "cmd" ? cleaned.slice(-2) : cleaned.slice(0, 2);
+		return { head: t.turnAborted, lines: shown, hidden: Math.max(0, cleaned.length - shown.length), side: kind === "cmd" ? "tail" : "head" };
+	}
 	if (state.isError) {
 		const h = exitCode !== undefined && exitCode !== 0 ? `${t.toolFailed} · ${t.toolExit.replace("{code}", String(exitCode))}` : t.toolFailed;
-		return { head: h, ...(kind === "cmd" ? tail(4) : head(4)) };
+		const cleaned = cleanErrorPreviewLines(kind === "cmd" ? trimNoiseTail(body) : body, cwd);
+		const shown = kind === "cmd" ? cleaned.slice(-2) : cleaned.slice(0, 2);
+		return { head: h, lines: shown, hidden: Math.max(0, cleaned.length - shown.length), side: kind === "cmd" ? "tail" : "head" };
 	}
 	switch (kind) {
 		case "read": {
@@ -569,32 +562,38 @@ function stepVerb(t: Dict, kind: ToolKind, name: string): string {
 	return displayToolName(name);
 }
 
-const INTENT_LABEL_KEY: Record<CommandIntentCategory, string> = {
-	port_proc: "intentPortProc",
-	dir_list: "intentDirList",
-	code_search: "intentCodeSearch",
-	file_read: "intentFileRead",
-	script_py: "intentScriptPy",
-	script_node: "intentScriptNode",
-	test_check: "intentTestCheck",
-	type_check: "intentTypeCheck",
-	build: "intentBuild",
-	git_inspect: "intentGitInspect",
-	git_write: "intentGitWrite",
-	net_capture: "intentNetCapture",
-	sqlite: "intentSqlite",
-	http: "intentHttp",
-	env_probe: "intentEnvProbe",
-};
-
-const READONLY_INTENTS = new Set<CommandIntentCategory>([
-	"port_proc",
-	"dir_list",
-	"code_search",
-	"file_read",
-	"git_inspect",
-	"env_probe",
-]);
+function SplitArgText({ value, splitPath }: { value: string; splitPath?: boolean }) {
+	if (value.includes(" · ")) {
+		const parts = value.split(" · ");
+		return (
+			<>
+				{parts.map((part, idx) => (
+					<span key={idx}>
+						{idx > 0 && <span className="pw-arg-sep"> · </span>}
+						<SplitArgText value={part} splitPath={splitPath || part.includes("/")} />
+					</span>
+				))}
+			</>
+		);
+	}
+	if (splitPath) {
+		const trimmed = value.endsWith("/") && value.length > 1 ? value.slice(0, -1) : value;
+		const slash = trimmed.lastIndexOf("/");
+		if (slash >= 0) {
+			const dir = value.slice(0, slash + 1);
+			const leaf = value.slice(slash + 1);
+			if (leaf) {
+				return (
+					<>
+						<span className="pw-arg-dir">{dir}</span>
+						<span className="pw-arg-leaf">{leaf}</span>
+					</>
+				);
+			}
+		}
+	}
+	return <>{value}</>;
+}
 
 const ToolStep = memo(function ToolStep({
 	id,
@@ -670,33 +669,55 @@ const ToolStep = memo(function ToolStep({
 		return str(a?.path ?? a?.file_path) ?? "";
 	})();
 	const fullCommand = kind === "cmd" ? (str((args as Record<string, unknown>)?.command) ?? str((args as Record<string, unknown>)?.cmd) ?? str((args as Record<string, unknown>)?.script) ?? "") : "";
-	const cmdIntent = useMemo(
-		() => (kind === "cmd" && !badge && fullCommand ? describeCommandIntent(fullCommand, cwd) : null),
-		[badge, cwd, fullCommand, kind],
+	const displayCmd = kind === "cmd" && summary.text ? compactPathsInText(summary.text, cwd) : "";
+	const cmdIntent = kind === "cmd" && !running ? describeCommandIntent(fullCommand || summary.text, cwd) : null;
+	const isGitCmd = cmdIntent?.category === "git_inspect" || cmdIntent?.category === "git_write";
+	const toolDurationMs = !running && state?.startedAt && state?.endedAt && state.endedAt >= state.startedAt ? state.endedAt - state.startedAt : 0;
+	const stepIconNode = kind === "write"
+		? (isWriteTool ? <IconFileWrite14 size={13} style={{ flex: "none" }} /> : <IconEditPencil14 size={13} style={{ flex: "none" }} />)
+		: isGitCmd
+			? <IconBranchOutline16 size={13} style={{ flex: "none" }} />
+			: undefined;
+	// 标题行已经完整展示短单行命令时，展开抽屉不再重复打印一遍命令行；多行脚本、被路径压缩或可能被省略号截断的长命令保留完整 cmdline
+	const showCmdlineInOutput = Boolean(
+		fullCommand && (summary.scriptLines > 1 || fullCommand.trim() !== displayCmd.trim() || fullCommand.length > 64),
 	);
-	const cmdBadgeTone: StepBadgeTone | undefined = cmdIntent
-		? (READONLY_INTENTS.has(cmdIntent.category) ? "inspect" : "exec")
-		: undefined;
-	// 删除文件的命令：完成后给红色标记（内容级 diff 不强求）
-	const deletedTarget = kind === "cmd" && !running && !failed && !cancelled && isDeleteCommand(fullCommand) ? deleteTargetOf(fullCommand) : "";
-	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
+	const formattedOutput = output
+		? output.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "").replace(/\n{3,}/g, "\n\n")
+		: "";
 	const hasDiff = Boolean(diff && diff.length);
 	const hasOutput = Boolean(output || state?.encodingLoss);
-	const canExpand = hasOutput && !hasDiff && !running;
-	const duration = state?.startedAt && state?.endedAt ? state.endedAt - state.startedAt : 0;
+	const preview = state ? toolPreview(kind, state, tt, cwd) : { lines: [], hidden: 0 };
+	const redundantSingleLineError =
+		failed &&
+		!fullCommand &&
+		!state?.encodingLoss &&
+		preview.hidden === 0 &&
+		preview.lines.length > 0 &&
+		splitLines(output ?? "").length <= 2;
+	const canExpand = hasOutput && !hasDiff && !running && !redundantSingleLineError;
+	const inlineStatusHead = failed || cancelled ? preview.head : undefined;
 	// Completed tools share a neutral summary; extensions own their specialized UI.
-	const showPreview = (running || failed || cancelled) && (Boolean(preview.head) || preview.lines.length > 0);
+	const showPreview = running
+		? Boolean(preview.head) || preview.lines.length > 0
+		: (failed || cancelled) && !open && (preview.lines.length > 0 || preview.hidden > 0);
 	const lineInteractive = hasDiff || canExpand;
 	// 失败且有 diff 时，出错信息要完整可见（此时 diff 占用了展开位）
 	const showFullOutput = hasOutput && (open && canExpand || (failed && hasDiff));
 	// 折叠时只留标题行：diff 正文整块不渲染（原来固定露出前 12 行，手机上十几次编辑
-	// 会把整段对话淹没）。标题里已经有「+N −M 行」，点标题行展开看全文。
+	// 会把整段对话淹没）。标题里已经有「+N −M」，点标题行展开看全文。
 	const diffLines = hasDiff && diff ? (open ? diff : null) : null;
-	const diffStat = hasDiff && diff
+	const diffCounts = hasDiff && diff
 		? isWriteTool && !state?.patch
-			? t.diffSummary.replace("{add}", String(diff.length)).replace("{del}", "0")
-			: t.diffSummary.replace("{add}", String(diff.filter((l) => l.kind === "add").length)).replace("{del}", String(diff.filter((l) => l.kind === "del").length))
-		: "";
+			? { add: diff.length, del: 0 }
+			: { add: diff.filter((l) => l.kind === "add").length, del: diff.filter((l) => l.kind === "del").length }
+		: null;
+	const diffStat = diffCounts && (diffCounts.add > 0 || diffCounts.del > 0) ? (
+		<>
+			{diffCounts.add > 0 && <span className="pw-add">+{diffCounts.add}</span>}
+			{diffCounts.del > 0 && <span className="pw-del">−{diffCounts.del}</span>}
+		</>
+	) : null;
 	const toggle = () => setOpen((o) => !o);
 	const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
 		if (e.key === "Enter" || e.key === " ") {
@@ -707,14 +728,9 @@ const ToolStep = memo(function ToolStep({
 	const splitInteractiveLine = webRole !== null || webSources.length > 0;
 	const actionButtons = (
 		<>
-			{deletedTarget && (
-				<span className="pw-meta" style={{ color: "var(--dsw-danger)" }} title={deletedTarget}>
-					{t.deletedFile.replace("{path}", relativizeInText(deletedTarget, cwd || ""))}
-				</span>
-			)}
-			{summary.scriptLines > 1 && <span className="pw-meta">{t.commandLines.replace("{n}", String(summary.scriptLines))}</span>}
+			{summary.scriptLines > 1 && <span className="pw-meta pw-cmd-lines">· {summary.scriptLines}L</span>}
 			{running && <span className="pw-meta">{fmtSpan(elapsed)}</span>}
-			{!running && duration >= 1000 && <span className="pw-meta">{fmtSpan(duration)}</span>}
+			{!running && toolDurationMs >= 1000 && <span className="pw-meta">{fmtSpan(toolDurationMs)}</span>}
 			{onOpenFile && argPath && (
 				<button
 					type="button"
@@ -749,7 +765,7 @@ const ToolStep = memo(function ToolStep({
 	);
 	const rawChevron = lineInteractive ? (
 		<span
-			className={hasDiff ? "pw-meta" : "pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"}
+			className="pw-meta pw-touch-reveal opacity-0 group-hover/tool:opacity-100"
 			aria-hidden
 			style={{ display: "inline-flex", transform: open ? "rotate(90deg)" : undefined, transition: "transform var(--ds-duration-fast)", opacity: open ? 1 : undefined }}
 		>
@@ -768,22 +784,44 @@ const ToolStep = memo(function ToolStep({
 			<span className="pw-badge">skill</span>
 			<span className="pw-skill-name" title={summary.text || argPath || argsTitle}>{readSkillName}</span>
 		</>
-	) : cmdIntent ? (
+	) : kind === "cmd" ? (
 		<>
 			{running ? (
-				<span className="pw-shimmer" title={summary.text || argsTitle}>{tt[INTENT_LABEL_KEY[cmdIntent.category]]}</span>
+				<span className="pw-shimmer">{t.stepRunning}</span>
 			) : (
-				<span className="pw-verb" data-failed={failed || undefined} title={summary.text || argsTitle}>{tt[INTENT_LABEL_KEY[cmdIntent.category]]}</span>
+				<span className="pw-verb" data-tone={failed || cancelled ? undefined : "exec"} data-failed={failed || undefined}>
+					{isGitCmd ? "Git" : stepVerb(tt, kind, name)}
+				</span>
 			)}
-			{cmdIntent.target && <span className="pw-arg" title={summary.text || argsTitle}>{cmdIntent.target}</span>}
+			{badge && <span className="pw-badge">{badge}</span>}
+			{displayCmd ? (
+				<span className="pw-arg pw-arg-cmd" data-failed={failed || undefined} title={summary.text || argsTitle}>
+					{displayCmd}
+				</span>
+			) : (
+				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
+			)}
 		</>
 	) : (
 		<>
-			{running ? <span className="pw-shimmer">{t.stepRunning}</span> : <span className="pw-verb" data-failed={failed || undefined}>{stepVerb(tt, kind, name)}</span>}
+			{running ? (
+				<span className="pw-shimmer">{t.stepRunning}</span>
+			) : (
+				<span className="pw-verb" data-tone={failed || cancelled ? undefined : stepBadgeTone(kind, "dim")} data-failed={failed || undefined}>
+					{stepVerb(tt, kind, name)}
+				</span>
+			)}
 			{badge && <span className="pw-badge">{badge}</span>}
 			{summary.text ? (
-				<span className={kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={summary.text || argsTitle}>
-					{kind === "read" || kind === "write" || name.toLowerCase() === "ls" ? compactDisplayPath(argPath || summary.text, cwd) : summary.text}
+				<span className={kind === "read" || kind === "write" ? "pw-arg pw-arg-file" : kind === "search" ? "pw-arg pw-arg-search" : "pw-arg"} title={summary.text || argsTitle}>
+					{kind === "read" || kind === "write" || kind === "search" ? (
+						<SplitArgText
+							value={kind === "read" || kind === "write" || name.toLowerCase() === "ls" ? compactDisplayPath(argPath || summary.text, cwd) : compactPathsInText(summary.text, cwd)}
+							splitPath
+						/>
+					) : (
+						summary.text
+					)}
 				</span>
 			) : (
 				<span className="pw-arg" style={{ color: "var(--dsw-label-caption)" }}>{displayToolName(name)}</span>
@@ -834,7 +872,7 @@ const ToolStep = memo(function ToolStep({
 		);
 	}
 	return (
-		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} badgeTone={cmdBadgeTone} live={running} className="group/tool">
+		<Step kind={stepKind} tone={running ? "live" : failed ? "fail" : "dim"} icon={stepIconNode} live={running} className="group/tool">
 			{splitInteractiveLine ? (
 				<div className={lineInteractive ? "pw-line pw-line-interactive" : "pw-line"}>
 					{webRole === "search" ? (
@@ -873,7 +911,8 @@ const ToolStep = memo(function ToolStep({
 							onToggle={() => setSourcesOpen((v) => !v)}
 						/>
 					)}
-					{diffStat && <span className="pw-meta">{diffStat}</span>}
+					{diffStat && <span className="pw-phase-diff">{diffStat}</span>}
+					{inlineStatusHead && <span className="pw-meta pw-status-head" data-failed={failed || undefined}>{inlineStatusHead}</span>}
 					{webSources.length === 0 && rawChevron}
 					{actionButtons}
 				</div>
@@ -889,7 +928,8 @@ const ToolStep = memo(function ToolStep({
 					onKeyDown={lineInteractive ? onKey : undefined}
 				>
 					{regularSummaryNode}
-					{diffStat && <span className="pw-meta">{diffStat}</span>}
+					{diffStat && <span className="pw-phase-diff">{diffStat}</span>}
+					{inlineStatusHead && <span className="pw-meta pw-status-head" data-failed={failed || undefined}>{inlineStatusHead}</span>}
 					{rawChevron}
 					{actionButtons}
 				</div>
@@ -910,9 +950,8 @@ const ToolStep = memo(function ToolStep({
 					onKeyDown={canExpand ? onKey : undefined}
 					title={canExpand ? (open ? t.collapseOutput : t.expandOutput) : undefined}
 				>
-					<span className="pw-rail">{RAIL}</span>
 					<span className="pw-lines">
-						{preview.head && <div className="pw-head">{preview.head}</div>}
+						{!inlineStatusHead && preview.head && <div className="pw-head">{preview.head}</div>}
 						{!open && preview.side === "tail" && preview.hidden > 0 && <div className="pw-more">… {t.moreLines.replace("{n}", String(preview.hidden))}</div>}
 						{!open && preview.lines.map((l, i) => <div key={i}>{l}</div>)}
 						{!open && preview.side !== "tail" && preview.hidden > 0 && <div className="pw-more">… {t.moreLines.replace("{n}", String(preview.hidden))}</div>}
@@ -930,9 +969,9 @@ const ToolStep = memo(function ToolStep({
 			)}
 			{showFullOutput && (
 				<div className="pw-output">
-					{fullCommand && <div className="cmdline">{fullCommand}</div>}
+					{showCmdlineInOutput && <div className="cmdline">{fullCommand}</div>}
 					{state?.encodingLoss && <p className="mb-2 whitespace-normal" style={{ color: "var(--dsw-warn-text)" }}>{t.encodingLossWarning}</p>}
-					{output && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{output}</pre>}
+					{formattedOutput && <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit" }}>{formattedOutput}</pre>}
 				</div>
 			)}
 			{imagePreviews.length > 0 && <ViewedImages images={imagePreviews} cwd={cwd} onOpenFile={onOpenFile} />}
@@ -957,7 +996,7 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 		const one = text.replace(/\s+/g, " ").trim();
 		const tail = one.length > 220 ? `…${one.slice(-220)}` : one;
 		return (
-			<Step kind="think" tone="live" live>
+			<Step kind="think" tone="live" icon={<IconThinkRing14 size={13} style={{ flex: "none" }} />} live>
 				<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
 					<span className="pw-shimmer">{t.thinkingStepLive}…</span>
 					{startedAt && elapsed >= 3000 ? <span className="pw-meta">{fmtSpan(elapsed)}</span> : null}
@@ -972,10 +1011,11 @@ const ThinkStep = memo(function ThinkStep({ text, live, startedAt }: { text: str
 		);
 	}
 	return (
-		<Step kind="think">
-			<button type="button" className="pw-line pw-clickable" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
-				<span className="pw-gist">{firstSentence(text, 140)}</span>
-				<IconChevronRight14 size={11} className="pw-chev" />
+		<Step kind="think" className="pw-step-think-prose">
+			<button type="button" className="pw-line pw-clickable pw-think-prose-line" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={t.thinkLabel}>
+				<span className="pw-verb" data-tone="think">{t.thinkLabel}</span>
+				<span className="pw-gist">{firstSentence(text, 180)}</span>
+				<IconChevronRight14 size={11} className="pw-chev pw-hover-chev" />
 			</button>
 			{open && <pre className="pw-output pw-think-full">{text}</pre>}
 		</Step>
@@ -1239,145 +1279,102 @@ function groupViewedImageReads(items: ProcessItem[]): ProcessItem[] {
 	return grouped;
 }
 
-function formatPhaseFiles(files: string[], t: Dict): string {
-	if (files.length === 0) return "";
-	if (files.length <= 2) return files.join(t.sumListJoin);
-	return t.phaseEtcFiles.replace("{files}", files.slice(0, 2).join(t.sumListJoin)).replace("{n}", String(files.length));
+function fillBold(template: string, vars: Record<string, string>): ReactNode[] {
+	return template.split(/(\{[a-z]+\})/g).map((chunk, i) => {
+		const key = chunk.startsWith("{") && chunk.endsWith("}") ? chunk.slice(1, -1) : "";
+		return key && key in vars ? <strong key={i}>{vars[key]}</strong> : chunk;
+	});
 }
 
 function SummaryStep({ run, expanded, onToggle }: { run: ProcessRun; expanded: boolean; onToggle: () => void }) {
 	const { t } = useI18n();
-	const tt = t as unknown as Dict;
 	const [sourcesOpen, setSourcesOpen] = useState(false);
 	const isPureWeb = run.cmds === 0 && run.reads === 0 && run.searches === 0 && run.writes === 0 && (run.webSearches > 0 || run.webFetches > 0);
 	if (isPureWeb) {
 		const stepKind: StepKind = run.webSearches > 0 ? "web_search" : "web_fetch";
 		const label = run.webSearches > 0 ? t.sumWebSearched : t.sumWebFetched;
-		const clusterKinds: ClusterKind[] = run.cluster.length > 0 ? run.cluster : ["web"];
 		return (
-			<div className="pw-step pw-step-summary" data-kind={stepKind}>
-				<div className="pw-body">
-					<div className="pw-summary-row">
-						<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
-							<ActionCluster kinds={clusterKinds} />
-							<span className="pw-gist">
-								<strong>{label}</strong>
-							</span>
-							{run.durationMs !== undefined && run.durationMs >= 1000 && (
-								<span className="pw-meta pw-summary-dur" aria-hidden="true">{fmtSpan(run.durationMs)}</span>
-							)}
-							<IconChevronRight14 size={12} className="pw-chev" />
-						</button>
-						{run.webSources.length > 0 && (
-							<WebSourcesTrigger
-								sources={run.webSources}
-								expanded={sourcesOpen}
-								onToggle={() => setSourcesOpen((v) => !v)}
-							/>
-						)}
-					</div>
-					{sourcesOpen && run.webSources.length > 0 && <WebSourcesPanel sources={run.webSources} />}
+			<Step kind={stepKind} className="pw-step-summary">
+				<div className="pw-summary-row">
+					<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
+						<span className="pw-gist">{label}</span>
+						<IconChevronRight14 size={12} className="pw-chev" />
+					</button>
+					{run.webSources.length > 0 && (
+						<WebSourcesTrigger
+							sources={run.webSources}
+							expanded={sourcesOpen}
+							onToggle={() => setSourcesOpen((v) => !v)}
+						/>
+					)}
 				</div>
-			</div>
+				{sourcesOpen && run.webSources.length > 0 && <WebSourcesPanel sources={run.webSources} />}
+			</Step>
 		);
 	}
-	const totalTools = run.cmds + run.reads + run.searches + run.writes + run.webSearches + run.webFetches;
-	const isPureThink = totalTools === 0 && run.hasThink;
 	const parts: ReactNode[][] = [];
-	if (isPureThink) {
-		if (run.durationMs !== undefined) {
-			parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
-		} else {
-			parts.push([t.thinkLabel]);
-		}
-	} else {
-		const filesLabel = formatPhaseFiles(run.writtenFiles, tt);
-		const hasScriptExec = run.intentCategories.includes("script_py") || run.intentCategories.includes("script_node");
-		const mergeWriteAndScript = run.writes > 0 && hasScriptExec && Boolean(filesLabel);
-		const mergedScriptSet = new Set<CommandIntentCategory>(mergeWriteAndScript ? ["script_py", "script_node"] : []);
-		const targetsByCat = new Map<CommandIntentCategory, string[]>();
-		for (const entry of run.intentTargets) {
-			const list = targetsByCat.get(entry.category) ?? [];
-			if (list.length < 2 && !list.includes(entry.target) && !run.writtenFiles.includes(entry.target)) {
-				list.push(entry.target);
-				targetsByCat.set(entry.category, list);
-			}
-		}
-		const intentPhrases: string[] = [];
-		for (const cat of run.intentCategories) {
-			if (mergedScriptSet.has(cat)) continue;
-			const base = tt[INTENT_LABEL_KEY[cat]] ?? cat;
-			const catTargets = targetsByCat.get(cat) ?? [];
-			const joinedTgt = catTargets.join(t.sumListJoin);
-			const chosenTgt = joinedTgt.length <= 28 ? joinedTgt : (catTargets[0] && catTargets[0].length <= 28 ? catTargets[0] : "");
-			intentPhrases.push(chosenTgt ? `${base} ${chosenTgt}` : base);
-			if (intentPhrases.length >= 2) break;
-		}
-		const writeTargetText = filesLabel || String(run.writes);
-		const writePhrase = run.writes > 0
-			? (mergeWriteAndScript
-				? tt.phaseWroteAndRan
-				: run.editedOnly ? tt.phaseEdited : tt.phaseWrote
-			).replace("{files}", writeTargetText)
-			: "";
-		const headlineItems = writePhrase ? [...intentPhrases, writePhrase] : intentPhrases;
-		if (headlineItems.length > 0) {
-			parts.push([<strong key="phase">{headlineItems.join(t.sumListJoin)}</strong>]);
-		} else if (run.cmds) {
-			parts.push(fillBold(run.cmds === 1 ? t.sumRan1 : t.sumRan, { n: String(run.cmds) }));
-		}
-		if (run.reads) parts.push(fillBold(run.reads === 1 ? t.sumRead1 : t.sumRead, { n: String(run.reads) }));
-		if (run.searches) parts.push(fillBold(run.searches === 1 ? t.sumSearched1 : t.sumSearched, { n: String(run.searches) }));
-		if (run.webSearches) parts.push(fillBold(t.sumWebSearchedN, { n: String(run.webSearches) }));
-		if (run.webFetches) parts.push(fillBold(t.sumWebFetchedN, { n: String(run.webFetches) }));
+	if (run.hasThink) {
+		if (run.durationMs !== undefined) parts.push(fillBold(t.sumThought, { d: fmtSpan(run.durationMs) }));
+		else parts.push([t.thinkLabel]);
 	}
-	// 英文时首字母大写（模板里只有第一段是大写开头）
-	if (parts.length && typeof parts[0][0] === "string") parts[0][0] = (parts[0][0] as string).replace(/^[a-z]/, (ch) => ch.toUpperCase());
-	const stepKind: StepKind = run.hasThink ? "summary" : run.writes && !run.cmds ? "write" : run.cmds ? "cmd" : run.reads ? "read" : run.webSearches ? "web_search" : run.webFetches ? "web_fetch" : "search";
-	const clusterKinds: ClusterKind[] = run.cluster.length > 0 ? run.cluster : [run.hasThink ? "think" : run.writes ? "mutate" : run.cmds ? "exec" : run.webSearches || run.webFetches ? "web" : "inspect"];
+	if (run.cmds) parts.push(fillBold(run.cmds === 1 ? t.sumRan1 : t.sumRan, { n: String(run.cmds) }));
+	if (run.reads) parts.push(fillBold(run.reads === 1 ? t.sumRead1 : t.sumRead, { n: String(run.reads) }));
+	if (run.searches) parts.push(fillBold(run.searches === 1 ? t.sumSearched1 : t.sumSearched, { n: String(run.searches) }));
+	if (run.writes) parts.push([run.writes === 1 ? (run.editedOnly ? t.sumActionEdited1 : t.sumActionWrote1) : t.sumActionEditedMany]);
+	if (run.webSearches) parts.push(fillBold(t.sumWebSearchedN, { n: String(run.webSearches) }));
+	if (run.webFetches) parts.push(fillBold(t.sumWebFetchedN, { n: String(run.webFetches) }));
+	if (typeof parts[0]?.[0] === "string") {
+		parts[0][0] = parts[0][0].replace(/^[a-z]/, (ch) => ch.toUpperCase());
+	}
+	const summaryContent = parts.map((nodes, idx) => (
+		<Fragment key={idx}>
+			{idx > 0 && t.sumDotJoin}
+			{nodes}
+		</Fragment>
+	));
+	const stepKind: StepKind = run.hasThink
+		? "summary"
+		: run.webSearches > 0
+			? "web_search"
+			: run.webFetches > 0
+				? "web_fetch"
+				: run.cmds > 0
+					? "cmd"
+					: run.searches > 0
+						? "search"
+						: "read";
+	const phaseBadgeTone: StepBadgeTone = run.hasThink
+		? "think"
+		: stepKind === "cmd"
+			? "exec"
+			: "inspect";
+	const summaryIcon = run.hasThink
+		? <IconSparkOutline14 size={13} style={{ flex: "none" }} />
+		: undefined;
 	const toggleButton = (
 		<button type="button" className="pw-line pw-clickable pw-summary pw-phase-head" aria-expanded={expanded} onClick={onToggle}>
-			<ActionCluster kinds={clusterKinds} />
-			<span className="pw-gist">
-				{parts.map((p, i) => (
-					<span key={i}>
-						{i > 0 ? t.sumJoin : ""}
-						{p}
-					</span>
-				))}
-			</span>
-			{(run.writeAdd > 0 || run.writeDel > 0) && (
-				<span className="pw-phase-diff" aria-hidden="true">
-					<span className="pw-add">+{run.writeAdd}</span>
-					{run.writeDel > 0 ? <span className="pw-del"> −{run.writeDel}</span> : null}
-				</span>
-			)}
-			{!isPureThink && run.durationMs !== undefined && run.durationMs >= 1000 && (
-				<span className="pw-meta pw-summary-dur" aria-hidden="true">{fmtSpan(run.durationMs)}</span>
-			)}
+			<span className="pw-gist">{summaryContent}</span>
 			<IconChevronRight14 size={12} className="pw-chev" />
 		</button>
 	);
 	return (
-		<div className="pw-step pw-step-summary" data-kind={stepKind}>
-			<div className="pw-body">
-				{run.webSources.length > 0 ? (
-					<>
-						<div className="pw-summary-row">
-							{toggleButton}
-							<WebSourcesTrigger
-								sources={run.webSources}
-								expanded={sourcesOpen}
-								onToggle={() => setSourcesOpen((v) => !v)}
-							/>
-						</div>
-						{sourcesOpen && <WebSourcesPanel sources={run.webSources} />}
-					</>
-				) : (
-					toggleButton
-				)}
-			</div>
-		</div>
+		<Step kind={stepKind} badgeTone={phaseBadgeTone} icon={summaryIcon} className="pw-step-summary">
+			{run.webSources.length > 0 ? (
+				<>
+					<div className="pw-summary-row">
+						{toggleButton}
+						<WebSourcesTrigger
+							sources={run.webSources}
+							expanded={sourcesOpen}
+							onToggle={() => setSourcesOpen((v) => !v)}
+						/>
+					</div>
+					{sourcesOpen && <WebSourcesPanel sources={run.webSources} />}
+				</>
+			) : (
+				toggleButton
+			)}
+		</Step>
 	);
 }
 
@@ -1477,7 +1474,7 @@ const FinalAnswer = memo(function FinalAnswer({
 		.join("");
 	const images = message.content.filter((c) => c.type === "image");
 	return (
-		<div className="group w-full" style={{ marginTop: hasProcessAbove ? 8 : 14 }} data-role="assistant">
+		<div className="group w-full" style={{ marginTop: hasProcessAbove ? 12 : 14 }} data-role="assistant">
 			{message.content.map((c, i) => {
 				if (c.type === "text" && c.text.trim()) return <Markdown key={i} text={c.text} />;
 				if (c.type === "image") return <PreviewImage key={i} image={c} images={images} index={images.indexOf(c)} className="my-2 max-h-96 max-w-full rounded-2xl object-contain" />;
@@ -1664,6 +1661,10 @@ type Turn = { key: string; userIndex: number; assistantIndexes: number[]; extraI
 function buildTurns(messages: WebMessage[]): Turn[] {
 	const out: Turn[] = [];
 	let cur: Turn | null = null;
+	const hasFinished = (turn: Turn | null): boolean => {
+		const last = turn?.assistantIndexes[turn.assistantIndexes.length - 1];
+		return last !== undefined && isFinalAnswer(messages[last]);
+	};
 	messages.forEach((m, i) => {
 		if (m.role === "user") {
 			cur = { key: `u${i}`, userIndex: i, assistantIndexes: [], extraIndexes: [] };
@@ -1675,14 +1676,15 @@ function buildTurns(messages: WebMessage[]): Turn[] {
 		} else if (m.role === "custom" || m.role === "bashExecution") {
 			// 当前回合已经收尾（最后一条是最终回答）就另起一段：否则回答之后才跑的 `!` 命令
 			// 会被排进过程里、显示在那条回答的上方
-			const last: number | undefined = cur?.assistantIndexes[cur.assistantIndexes.length - 1];
-			if (!cur || (last !== undefined && isFinalAnswer(messages[last]))) {
+			if (!cur || hasFinished(cur)) {
 				cur = { key: `x${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [] };
 				out.push(cur);
 			}
 			cur.extraIndexes.push(i);
 		} else if (m.role === "assistant") {
-			if (!cur) {
+			// 隐藏上下文触发（如 display: false 的自动续跑）在最终回答之后开启的新一轮
+			// 同样另起回合，避免粘在上一次回答下方并吞掉其页脚/被一同折叠。
+			if (!cur || hasFinished(cur)) {
 				cur = { key: `a${i}`, userIndex: -1, assistantIndexes: [], extraIndexes: [] };
 				out.push(cur);
 			}
@@ -1797,8 +1799,9 @@ function TurnBlockView({
 		}
 		return duration;
 	};
-	const blocks: ProcessBlock[] = buildProcessBlocks(items, finalIdx, spanOf, { turnLive, cwd });
-	const turnCluster = collectClusterKinds(items, cwd, 4);
+	const lastStop = lastIdx !== undefined ? messages[lastIdx]?.stopReason : undefined;
+	const canCollapseProcess = !turnLive && (finalIdx >= 0 || lastStop === "aborted" || lastStop === "error");
+	const blocks: ProcessBlock[] = buildProcessBlocks(items, spanOf, { turnLive, cwd });
 	const turnWeb = (() => {
 		let hasWeb = false;
 		let hasSearch = false;
@@ -1817,17 +1820,17 @@ function TurnBlockView({
 		};
 	})();
 	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
-	const canCollapseProcess = !turnLive && finalIdx >= 0;
 	const processCollapsed = !processOpen && canCollapseProcess;
 	const turnDurationMs = (() => {
-		if (finalIdx < 0) return undefined;
-		const endMsg = messages[finalIdx];
+		const endIdx = finalIdx >= 0 ? finalIdx : (lastStop === "aborted" || lastStop === "error") ? lastIdx : -1;
+		if (endIdx < 0) return undefined;
+		const endMsg = messages[endIdx];
 		const endMs = endMsg?.endedAt ?? endMsg?.timestamp;
 		const startMs = user?.timestamp ?? (assistants.length > 0 ? messages[assistants[0]]?.timestamp : undefined);
 		if (typeof startMs === "number" && typeof endMs === "number" && endMs > startMs) {
 			return endMs - startMs;
 		}
-		return assistants.length > 0 ? spanOf(assistants[0], finalIdx) : undefined;
+		return assistants.length > 0 ? spanOf(assistants[0], endIdx) : undefined;
 	})();
 
 	const turnUsage = sumTurnUsage(messages, assistants);
@@ -1847,11 +1850,21 @@ function TurnBlockView({
 								aria-expanded={processOpen}
 								onClick={() => setProcessOpen((v) => !v)}
 							>
-								{turnCluster.length > 0 && <ActionCluster kinds={turnCluster} />}
+								<span
+									className="pw-turn-dot"
+									data-tone={lastStop === "aborted" ? "warn" : lastStop === "error" ? "fail" : "done"}
+									aria-hidden="true"
+								/>
 								<span>
-									{turnDurationMs !== undefined && turnDurationMs > 0
-										? t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))
-										: t.turnProcessToggle}
+									{lastStop === "aborted"
+										? (turnDurationMs !== undefined && turnDurationMs > 0
+											? `${t.turnAborted} · ${t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))}`
+											: t.turnAborted)
+										: turnDurationMs !== undefined && turnDurationMs > 0
+											? t.turnWorkedFor.replace("{duration}", fmtSpan(turnDurationMs))
+											: lastStop === "error"
+												? t.modelError
+												: t.turnProcessToggle}
 								</span>
 								<IconChevronRight14 size={12} className="pw-turn-chev" />
 							</button>

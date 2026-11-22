@@ -107,11 +107,6 @@ export function injectAssets(html: string, { css = null, js = null }: { css?: st
 	return tag + html;
 }
 
-/** @deprecated 保留旧名字，测试与调用方还在用 */
-export function injectStyle(html: string, css: string): string {
-	return injectAssets(html, { css });
-}
-
 export interface MobileProxyOptions {
 	targetPort: number;
 	targetHost?: string;

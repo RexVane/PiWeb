@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { JsoncSettingsStorage } from "../src/lib/jsonc-settings-storage";
 import { securePackageManager } from "../src/lib/package-manager-safe";
-import { installPackage, removePackage, updatePackages, ResourceRefreshError } from "../src/lib/plugins-service";
+import { removePackage, updatePackages, ResourceRefreshError } from "../src/lib/plugins-service";
 import { recycleGeneratedFixture as recycleFixture } from "./fixtures/system-trash";
 
 const state = vi.hoisted(() => ({ agentDir: "", manager: undefined as DefaultPackageManager | undefined, settings: undefined as SettingsManager | undefined, reload: vi.fn(async () => {}) }));
@@ -46,19 +46,14 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await recycleFixture(base); });
 
-it.each([false, true])("installs through the real SDK into only the requested scope local=%s", async (local) => {
-	await installPackage("npm:fixture@2.0.0", local, cwd);
-	expect(readVersion(local)).toBe("2.0.0"); expect(readVersion(!local)).toBe("1.0.0");
-	expect(JSON.parse(fs.readFileSync(settingsFile(local), "utf8")).packages).toEqual(["npm:fixture@2.0.0"]);
-	expect(fs.readFileSync(path.join(prefix(local), "user-package-note.txt"), "utf8")).toBe("retain package edits");
-});
 
 it("keeps the previous installation and SDK settings when a staged npm command fails", async () => {
 	command.mockImplementationOnce(async (_command, args) => {
 		fs.writeFileSync(path.join(args[args.indexOf("--prefix") + 1], "node_modules", "fixture", "package.json"), '{"version":"damaged"}');
 		throw new Error("npm late failure");
 	});
-	await expect(installPackage("npm:fixture@2.0.0", false, cwd)).rejects.toThrow("npm late failure");
+	vi.stubEnv("PI_OFFLINE", "");
+	await expect(updatePackages("npm:fixture", cwd)).rejects.toThrow("npm late failure");
 	expect(readVersion(false)).toBe("1.0.0");
 	expect(state.settings!.getGlobalSettings().packages).toEqual(["npm:fixture"]);
 	expect(state.reload).not.toHaveBeenCalled();
@@ -82,9 +77,10 @@ it("updates both npm scopes through their private stages", async () => {
 	for (const local of [false, true]) expect(JSON.parse(fs.readFileSync(settingsFile(local), "utf8")).packages).toEqual(["npm:fixture"]);
 });
 
-it("keeps a committed installation when resource refresh fails afterwards", async () => {
+it("keeps a committed update when resource refresh fails afterwards", async () => {
 	state.reload.mockRejectedValueOnce(new Error("refresh failed"));
-	await expect(installPackage("npm:fixture@2.0.0", false, cwd)).rejects.toBeInstanceOf(ResourceRefreshError);
+	vi.stubEnv("PI_OFFLINE", "");
+	await expect(updatePackages("npm:fixture", cwd)).rejects.toBeInstanceOf(ResourceRefreshError);
 	expect(readVersion(false)).toBe("2.0.0");
-	expect(JSON.parse(fs.readFileSync(settingsFile(false), "utf8")).packages).toEqual(["npm:fixture@2.0.0"]);
+	expect(JSON.parse(fs.readFileSync(settingsFile(false), "utf8")).packages).toEqual(["npm:fixture"]);
 });

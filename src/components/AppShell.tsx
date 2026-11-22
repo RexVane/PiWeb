@@ -51,16 +51,10 @@ const FileViewer = dynamic(() => import("@/components/FileViewer").then((m) => m
 import {
 	IconCheckOutline14,
 	IconChevronDown14,
-	IconChatBubbleOutline16,
-	IconClockOutline16,
-	IconCubeOutline16,
-	IconFileOutline16,
 	IconFolderClose16,
 	IconPanelLeftOutline16,
 	IconPanelRightOutline16,
-	IconPluginOutline16,
 	IconProjectAddOutline16,
-	IconTerminalOutline14,
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
@@ -141,7 +135,7 @@ function restoreRightWidth(): number {
 }
 
 export function AppShell() {
-	const { t, lang } = useI18n();
+	const { t } = useI18n();
 	const {
 		sessions,
 		sessionListError,

@@ -140,16 +140,6 @@ describe("PiWeb SSE event folding", () => {
 		expect(state.extensionDialogs).toEqual([]);
 	});
 
-	it("keeps independent resource data from events and snapshots", () => {
-		const resourceData = { questions: [{ question: "Which DB?", options: [{ label: "SQLite" }] }] };
-		const request = { type: "extension_ui", id: "q1", method: "resource", title: "Independent question", resourceData, ts: 1 } as const;
-		let state = { extensionDialogs: [] } as unknown as PiWebState;
-		state = foldPiWebEvent(state, request);
-		expect(state.extensionDialogs).toEqual([expect.objectContaining({ id: "q1", method: "resource", resourceData })]);
-		expect(extensionDialogsFromSnapshot({ extensionUiRequests: [request] } as unknown as WebSnapshot)).toEqual([expect.objectContaining({ id: "q1", method: "resource", resourceData })]);
-		state = foldPiWebEvent(state, { type: "extension_ui_resolved", id: "q1", ts: 2 });
-		expect(state.extensionDialogs).toEqual([]);
-	});
 
 	it("终端在回合中途写会话：提示一条警告，重复发现只留最新一条", () => {
 		let state = { extensionNotices: [{ id: "ext", message: "扩展通知", type: "info", ts: 1 }] } as PiWebState;

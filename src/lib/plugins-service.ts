@@ -10,9 +10,6 @@ import { reloadSessionsForCwd } from "./agent-manager";
 import { flushSettingsOrThrow, withExternalSettingsLock, withSettingsWriteLock } from "./settings-write-lock";
 import { validatePackageSource } from "./package-manager-safe";
 import { beginNpmSettingsWrite, finishNpmTrashCleanup, NpmTransactionCommittedError, NpmUninstallTrashPendingError, recoverNpmPrefix, withNpmInstallTransaction, type NpmTransactionPlan } from "./npm-install-transaction";
-import { mergeResourceSelection } from "./resources/selection";
-import type { ResourceSelection } from "./resources/protocol";
-import { resolveModelPath } from "./path-security";
 
 /** 包内提供的资源类型：给「来源=包」打标签用，与 pi manifest 的四类资源一致 */
 export type PluginResourceType = "extensions" | "skills" | "prompts" | "themes";
@@ -134,23 +131,19 @@ function configuredPackageInput(pm: PackageManagerInternals, source: string, set
 	// Resolve the declaration even when its source directory no longer exists.
 	return pm.resolvePathFromBase(source, path.dirname(settingsPath));
 }
-async function npmMutationPlan(pm: ReturnType<typeof getPackageManager>, cwd: string, local: boolean, source: string, remove: boolean, selection?: ResourceSelection): Promise<NpmTransactionPlan> {
+async function npmRemovalPlan(pm: ReturnType<typeof getPackageManager>, cwd: string, local: boolean, source: string): Promise<NpmTransactionPlan> {
 	const file = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	const current = await readSettingsFileStrict(file);
 	const internal = pm as unknown as PackageManagerInternals;
 	if (typeof internal.packageSourcesMatch !== "function") throw new Error("This pi SDK cannot prepare a safe npm settings transaction.");
 	const before = Array.isArray(current.packages) ? current.packages : [];
 	const scope = local ? "project" : "user";
-	let packages: unknown[];
-	if (remove) packages = before.filter((entry) => !internal.packageSourcesMatch(entry, source, scope));
-	else {
-		packages = [...before];
-		const index = packages.findIndex((entry) => internal.packageSourcesMatch(entry, source, scope));
-		if (index === -1) packages.push(selection ? mergeResourceSelection(undefined, source, selection) : source);
-		else packages[index] = selection ? mergeResourceSelection(packages[index], source, selection) : typeof packages[index] === "string" ? source : { ...(packages[index] as object), source };
-	}
-	const after = { ...(!remove || Object.hasOwn(current, "packages") || packages.length ? { packages } : {}), ...(Object.hasOwn(current, "disabledPackages") ? { disabledPackages: remove && Array.isArray(current.disabledPackages) ? current.disabledPackages.filter((entry) => sourceOfPackage(entry) !== source) : current.disabledPackages } : {}) };
-	return { root: path.join(path.dirname(file), "npm"), ...(local ? { projectRoot: cwd } : {}), settings: { file, ...(local ? { projectRoot: cwd } : {}), after }, ...(remove ? { recyclePrevious: true } : {}) };
+	const packages = before.filter((entry) => !internal.packageSourcesMatch(entry, source, scope));
+	const after = {
+		...(Object.hasOwn(current, "packages") || packages.length ? { packages } : {}),
+		...(Object.hasOwn(current, "disabledPackages") ? { disabledPackages: Array.isArray(current.disabledPackages) ? current.disabledPackages.filter((entry) => sourceOfPackage(entry) !== source) : current.disabledPackages } : {}),
+	};
+	return { root: path.join(path.dirname(file), "npm"), ...(local ? { projectRoot: cwd } : {}), settings: { file, ...(local ? { projectRoot: cwd } : {}), after }, recyclePrevious: true };
 }
 async function runNpmMutation<T>(plans: NpmTransactionPlan[], sm: ReturnType<typeof getSettingsManager>, operation: () => Promise<T>): Promise<T> {
 	try { return await withNpmInstallTransaction(plans, operation); }
@@ -459,46 +452,6 @@ export async function toggleExtension(
 	await applyResourceChange(cwd, isProject ? "project" : "user");
 }
 
-export async function installPackage(source: string, local: boolean, cwd: string, selection?: ResourceSelection): Promise<void> {
-	validatePackageSource(source);
-	if (selection && !/^(?:npm:|git[^:]*:|https?:\/\/)/.test(source)) source = resolveModelPath(source, cwd);
-	const pm = getPackageManager(cwd);
-	const settingsPath = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
-	await withPackageInstallLock(cwd, local, () => withSettingsWriteLock(settingsPath, async () => {
-		const sm = await prepareSettingsWrite(cwd, settingsPath);
-		const before = (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages ?? [];
-		const install = async () => {
-			if (!selection) await pm.installAndPersist(source, { local });
-			else {
-				// Acquire files without ever briefly enabling the whole collection in settings.
-				await pm.install(source, { local });
-				const installedPath = pm.getInstalledPath(source, local ? "project" : "user");
-				if (!installedPath) throw new ExtensionToggleError("Cannot resolve the resource collection");
-				const resources = await pm.resolveExtensionSources([path.resolve(installedPath)], { temporary: true });
-				for (const type of ["extensions", "skills", "prompts", "themes"] as const) for (const value of selection[type]) {
-					const target = path.resolve(installedPath, value);
-					if (!resources[type].some((resource) => resourcePathKey(resource.path) === resourcePathKey(target)
-						|| type === "skills" && path.basename(resource.path) === "SKILL.md" && resourcePathKey(path.dirname(resource.path)) === resourcePathKey(target))) {
-						throw new ExtensionToggleError("Selection is not declared by the Pi package");
-					}
-				}
-				const internal = pm as unknown as PackageManagerInternals;
-				const next = [...before];
-				const index = next.findIndex((entry) => internal.packageSourcesMatch(entry, source, local ? "project" : "user"));
-				const merged = mergeResourceSelection(index < 0 ? undefined : next[index], source, selection);
-				if (index < 0) next.push(merged as never); else next[index] = merged as never;
-				if (source.startsWith("npm:")) beginNpmSettingsWrite(path.join(path.dirname(settingsPath), "npm"));
-				if (local) sm.setProjectPackages(next); else sm.setPackages(next);
-			}
-			await flushSettingsOrThrow(sm);
-			await verifySettingsField(settingsPath, "packages", (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages);
-		};
-		if (source.startsWith("npm:")) await runNpmMutation([await npmMutationPlan(pm, cwd, local, source, false, selection)], sm, install);
-		else await install();
-	}));
-	await applyResourceChange(cwd, local ? "project" : "user");
-}
-
 export async function removePackage(source: string, local: boolean, cwd: string): Promise<boolean> {
 	validatePackageSource(source);
 	const pm = getPackageManager(cwd);
@@ -530,7 +483,7 @@ export async function removePackage(source: string, local: boolean, cwd: string)
 		if (removedDisabled) invalidateJsonFile(settingsPath);
 		return removedActive || removedDisabled;
 		};
-		return source.startsWith("npm:") ? runNpmMutation([await npmMutationPlan(pm, cwd, local, source, true)], sm, remove) : remove();
+		return source.startsWith("npm:") ? runNpmMutation([await npmRemovalPlan(pm, cwd, local, source)], sm, remove) : remove();
 	}));
 	await applyResourceChange(cwd, local ? "project" : "user");
 	return removed;

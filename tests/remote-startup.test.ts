@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerNode } from "@/instrumentation-node";
 
-const mocks = vi.hoisted(() => ({ publish: vi.fn(), connect: vi.fn(), resourceHost: vi.fn() }));
+const mocks = vi.hoisted(() => ({ publish: vi.fn(), connect: vi.fn() }));
 vi.mock("@/lib/web-launch-token", () => ({ publishLaunchToken: mocks.publish }));
 vi.mock("@/lib/update/startup-check", () => ({ ensureStartupCheck: async () => {} }));
-vi.mock("@/lib/resources/host", () => ({ startResourceHost: mocks.resourceHost }));
 vi.mock("@/lib/remote/supervisor", () => ({
 	remoteLanEnabled: () => process.env.PIWEB_REMOTE_LAN !== "0",
 	remoteBlocked: () => process.env.PI_WEB_AUTH === "0" ? "auth" : process.env.NODE_ENV === "development" ? "dev" : null,
@@ -20,7 +19,6 @@ beforeEach(() => {
 	vi.spyOn(console, "log").mockImplementation(() => {});
 	vi.spyOn(console, "warn").mockImplementation(() => {});
 	mocks.publish.mockReset();
-	mocks.resourceHost.mockReset();
 	mocks.connect.mockReset().mockResolvedValue({ lan: { running: true, urls: ["http://192.168.1.2:30142"] } });
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });

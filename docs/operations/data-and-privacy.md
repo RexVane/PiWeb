@@ -2,6 +2,8 @@
 
 本文说明 PiWeb 读写的位置、部署隔离、联网行为，以及删除和恢复的范围。
 
+旧版自建扩展体系留下的 `web-resources.json`、`web-resource-data/` 和 `web-resource-runtime/` 不再读取或写入；升级不会自动删除这些历史数据。
+
 ## 数据根不止 agent 目录
 
 `PI_CODING_AGENT_DIR`（默认 `~/.pi/agent`）是 Pi/PiWeb 共享的**主数据根**，但**不是全部数据根**。只重定向它，以下位置仍然指向运行用户的家目录：
@@ -9,7 +11,7 @@
 | 位置 | 内容 | 代码位置 |
 | --- | --- | --- |
 | `<agent 目录>`（`PI_CODING_AGENT_DIR`） | `settings.json`、`models.json`、`auth.json`、`sessions/`、`skills/`、`web-skills/`、`web-uploads/`、`web-growth/`（普通目录的生长树快照）、`web-workspaces.json`、`web-devices.json`、`web-revocations.json`、`web-secret`、`trust.json`、`web-bin/`、`web-launch/`、`npm/` | `src/lib/pi.ts`、`web-secret.ts`、`files-service.ts` 等 |
-| `<agent 目录>`（扩展资源） | `git/` 与 `npm/node_modules/` 是 Pi 的个人包目录；`web-resources.json` 保存 PiWeb 的资源偏好；`web-resource-data/` 保存扩展后台数据，`web-resource-runtime/` 存放后台代码的运行快照 | `src/lib/plugins-service.ts`、`src/lib/resources/` |
+| `<agent 目录>`（Pi 原生包） | `git/` 与 `npm/node_modules/` 是 Pi 的个人包目录，声明和启停状态保存在 `settings.json`；项目包使用工作区的 `.pi/` | `src/lib/plugins-service.ts` |
 | `$HOME` / `%USERPROFILE%` 下的导入来源 | 会话导入只读取、不修改：`~/.claude/projects`、`~/.codex/sessions`、`~/.grok/sessions`、`~/.dsh/sessions`、`~/.zcode/cli/db/db.sqlite`、`~/.local/share/opencode/opencode.db`、`~/.kimi`、`~/.workbuddy` / `~/.workbuddy-ai`（支持 `WORKBUDDY_CONFIG_DIR`）、`~/.gemini/antigravity`、`~/.gemini/antigravity-cli`、`~/.qwen`（支持 `QWEN_HOME`）、`~/.cursor/chats` | `src/lib/session-import/paths.ts` |
 | `~/.agents/skills` | 全局技能目录（个人技能来源之一） | `src/lib/skills-service.ts` |
 | `~/.agents/backups` + `INDEX.md` | 后台过期附件清理、损坏配置修复及旧版本删除留下的恢复副本与索引；手动确认的文件删除不再另存副本 | `src/lib/recoverable-remove.ts` |

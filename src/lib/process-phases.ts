@@ -14,8 +14,6 @@ export type ToolCallContent = Extract<WebContent, { type: "toolCall" }>;
 
 export type ToolNode = { id: string; state: ToolCardState; children: ToolNode[] };
 
-export type ClusterKind = "think" | "inspect" | "exec" | "mutate" | "web";
-
 export type ProcessItem =
 	| { kind: "think"; key: string; msgIndex: number; text: string; live: boolean; startedAt?: number }
 	| { kind: "narr"; key: string; msgIndex: number; text: string; live: boolean; error: boolean }
@@ -45,7 +43,6 @@ export type ProcessRun = {
 	webSources: WebSource[];
 	intentCategories: CommandIntentCategory[];
 	intentTargets: Array<{ category: CommandIntentCategory; target: string }>;
-	cluster: ClusterKind[];
 	durationMs?: number;
 };
 
@@ -172,54 +169,6 @@ function toolDiffCounts(name: string, args: unknown, state: ToolCardState | unde
 	return { add: 0, del: 0 };
 }
 
-const CLUSTER_ORDER: ClusterKind[] = ["think", "inspect", "exec", "mutate", "web"];
-
-const INTENT_TO_CLUSTER: Record<CommandIntentCategory, ClusterKind> = {
-	port_proc: "inspect",
-	dir_list: "inspect",
-	code_search: "inspect",
-	file_read: "inspect",
-	git_inspect: "inspect",
-	env_probe: "inspect",
-	script_py: "exec",
-	script_node: "exec",
-	test_check: "exec",
-	type_check: "exec",
-	build: "exec",
-	git_write: "exec",
-	net_capture: "exec",
-	sqlite: "exec",
-	http: "web",
-};
-
-/** 按条目列表提炼最多 max 个不重复的行动簇图标类别（保持语义顺序） */
-export function collectClusterKinds(items: ProcessItem[], cwd?: string, max = 3): ClusterKind[] {
-	const present = new Set<ClusterKind>();
-	for (const item of items) {
-		if (item.kind === "think") {
-			present.add("think");
-		} else if (item.kind === "viewedImages") {
-			present.add("inspect");
-		} else if (item.kind === "tool") {
-			const web = itemWebInfo(item);
-			if (web.hasWeb) {
-				present.add("web");
-				continue;
-			}
-			const k = toolKind(item.call.name);
-			if (k === "write") present.add("mutate");
-			else if (k === "read" || k === "search") present.add("inspect");
-			else if (k === "cmd") {
-				const intent = describeCommandIntent(rawCommandOf(item.call.arguments), cwd);
-				present.add(intent ? INTENT_TO_CLUSTER[intent.category] : "exec");
-			} else {
-				present.add("exec");
-			}
-		}
-	}
-	return CLUSTER_ORDER.filter((k) => present.has(k)).slice(0, max);
-}
-
 function summarizeTargetToken(category: CommandIntentCategory, rawTarget: string): string {
 	const t = rawTarget.trim();
 	if (!t) return "";
@@ -340,7 +289,6 @@ function buildRun(
 			webSources,
 			intentCategories: [...intentSet],
 			intentTargets,
-			cluster: collectClusterKinds(slice, cwd),
 			durationMs,
 		},
 	];

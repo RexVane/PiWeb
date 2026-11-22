@@ -7,7 +7,7 @@
  * 不进入 props（改为打开时惰性读取），所以 messages 变化不会击穿 memo。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
 import { AppShell } from "@/components/AppShell";
 import type { WebMessage } from "@/lib/types";

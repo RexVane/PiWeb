@@ -129,6 +129,10 @@ describe("模型主动读取 SKILL.md 的 [skill] 步骤渲染", () => {
 				tools={tools}
 			/>,
 		);
+		const turnToggle = container.querySelector(".pw-turn-toggle")!;
+		expect(turnToggle.getAttribute("aria-expanded")).toBe("false");
+		fireEvent.click(turnToggle);
+
 		const skillStep = container.querySelector('.pw-step[data-kind="skill"]');
 		expect(skillStep).toBeTruthy();
 		expect(skillStep?.querySelector(".pw-badge")?.textContent).toBe("skill");
@@ -136,8 +140,13 @@ describe("模型主动读取 SKILL.md 的 [skill] 步骤渲染", () => {
 		expect(skillName?.textContent).toBe("plan-review");
 		expect(skillName?.getAttribute("title")).toBe("C:/Users/demo/.agents/skills/plan-review/SKILL.md");
 
-		// 普通 read 被折进汇总，read SKILL.md 保持独立可见
-		expect(container.querySelector(".pw-summary")?.textContent).toContain("读了 1 个文件");
+		// 普通 read 被折进阶段汇总，点开后可见具体读取文件
+		const phaseSummary = container.querySelector(".pw-summary")!;
+		expect(phaseSummary.textContent).toContain("读了 1 个文件");
+		fireEvent.click(phaseSummary);
+		const readStep = container.querySelector('.pw-phase-body .pw-step[data-kind="read"]');
+		expect(readStep?.textContent).toContain("src/app.ts");
+		expect(readStep?.querySelector(".pw-arg-file")).not.toBeNull();
 
 		// 点击可展开 SKILL.md 原始内容
 		const btn = skillStep!.querySelector(".pw-line-interactive")!;

@@ -40,7 +40,6 @@ import {
 	encodeSessionId,
 } from "./pi";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
-import { createResourceToolDispatcher } from "./resources/tool-dispatch";
 import { createSessionModelRuntime, clearSessionModelProviders, releaseSessionModelRuntime } from "./session-model-runtime";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
 import { userTurnsFromEntries } from "./growth-turns";
@@ -1770,36 +1769,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				try { translate(m, evt); }
 				catch (error) { console.warn("[piweb] Session event failed", error); publish(m, { type: "error", message: "An event could not be displayed; reconnect to refresh the session.", ts: Date.now() }); }
 			});
-			let resourceToolDispatcher: ReturnType<typeof createResourceToolDispatcher> | undefined;
-			const ui = createExtensionUiBridge({
-				publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true,
-				requestSignal: () => resourceToolDispatcher?.getSignal(),
-				resources: {
-					async resolve(resourceId, viewId) {
-						const { resourceViews } = await import("./resources/discovery");
-						const candidates = (await resourceViews(m.cwd)).filter((view) => view.resourceId === resourceId && view.id.endsWith(`:${viewId}`));
-						return candidates.length === 1 ? candidates[0] : undefined;
-					},
-					async invoke(resourceId, action, args) {
-						const { invokeResourceAction } = await import("./resources/host");
-						return invokeResourceAction(resourceId, action, args, { cwd: m.cwd, sessionPath: m.sessionPath });
-					},
-					async executeTool(name, args, options) {
-						const runner = session.extensionRunner;
-						const runtime = loader.getExtensions().runtime;
-						const current = () => !m.disposed && !m.resourceReloading && m.session === session
-							&& session.extensionRunner === runner && loader.getExtensions().runtime === runtime;
-						if (!current() || options?.signal?.aborted) throw new Error("Resource tool execution unavailable for this session generation");
-						runtime.assertActive();
-						if (!resourceToolDispatcher || resourceToolDispatcher.runner !== runner) resourceToolDispatcher = createResourceToolDispatcher(session, {
-							isCurrent: current, emit: event => translate(m, event as AgentSessionEvent),
-						});
-						const outcome = await resourceToolDispatcher.execute(name, args, options?.signal);
-						if (!current() || options?.signal?.aborted) throw new Error("Resource tool execution cancelled or replaced");
-						return outcome;
-					},
-				},
-			});
+			const ui = createExtensionUiBridge({ publish: (evt) => publish(m, evt), hasViewers: () => !m.disposed && hasViewers(m), isHeadless: () => m.headless === true });
 			m.ui = ui;
 			await session.bindExtensions({
 				mode: "rpc",
@@ -1817,7 +1787,6 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 				},
 				abortHandler: () => void session.abort().catch(() => undefined),
 			});
-			await (await import("./resources/host")).startResourceWorkspace(m.cwd);
 			if (m.disposed) throw new Error("session is disposed");
 			if (!hasMessages && recordedModelRef && !initialModel) {
 				const extensionModel = modelRuntime.getModel(recordedModelRef.provider, recordedModelRef.modelId);
@@ -2518,8 +2487,6 @@ export function applySettingsToSessions(patch: { steeringMode?: "all" | "one-at-
 }
 
 export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
-	const views = new Map<string, Promise<import("./resources/protocol").WebResourceView[]>>();
-	const { resourceViews } = await import("./resources/discovery");
 	const key = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/").toLowerCase() : p.replace(/\\/g, "/"));
 	let n = 0;
 	const failures: unknown[] = [];
@@ -2528,10 +2495,6 @@ export async function reloadSessionsForCwd(cwd?: string): Promise<number> {
 		m.resourceReloadPending = Boolean(m.session || m.creating);
 		failedResourceReloadVersions.delete(m);
 		try {
-			if (m.ui?.getPendingRequests().some((request) => request.method === "resource")) {
-				if (!views.has(key(m.cwd))) views.set(key(m.cwd), resourceViews(m.cwd));
-				m.ui.reconcileResources(await views.get(key(m.cwd))!);
-			}
 			if (!m.session) {
 				// 冷会话没有扩展运行时可重建，但页面可能开着：把新清单（模板 / 技能 / 信任）推过去
 				if (hasViewers(m)) publishResources(m);

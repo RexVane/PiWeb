@@ -2554,38 +2554,6 @@ button.pw-line.pw-phase-head:hover {
 	flex: none;
 	font-variant-numeric: tabular-nums;
 }
-.pw-cluster {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	flex: none;
-}
-.pw-cluster-dot {
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	flex: none;
-	opacity: 0.78;
-	background: var(--dsw-label-caption);
-}
-.pw-phase-head .pw-cluster {
-	margin-right: 2px;
-}
-.pw-cluster-dot[data-cluster="think"] {
-	background: var(--pw-tone-think);
-}
-.pw-cluster-dot[data-cluster="inspect"] {
-	background: var(--pw-tone-inspect);
-}
-.pw-cluster-dot[data-cluster="exec"] {
-	background: var(--pw-tone-exec);
-}
-.pw-cluster-dot[data-cluster="mutate"] {
-	background: var(--pw-tone-mutate);
-}
-.pw-cluster-dot[data-cluster="web"] {
-	background: var(--pw-tone-web);
-}
 .pw-phase-body {
 	display: flex;
 	flex-direction: column;

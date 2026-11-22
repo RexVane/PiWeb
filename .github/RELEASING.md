@@ -1,6 +1,6 @@
 # Releasing
 
-Maintainer notes, reviewed against the repository on 2026-11-18. Users only need `npm install -g @rexvane/piweb`. [Documentation index](../docs/README.md).
+Release procedure for maintainers. For user installation and rollback, see the [operations guide](../docs/operations/README.md).
 
 Releases are **manual**. Prepare changes on a reviewed feature branch and update the version in `package.json` and `package-lock.json` in the same commit. Merge the release PR only after its checks pass, then trigger [publish.yml](workflows/publish.yml) on `main`. The workflow does not require a particular source branch name.
 
@@ -45,7 +45,7 @@ For coverage, set `PIWEB_COVERAGE=1`, `PIWEB_COVERAGE_REPORT_DIR` to an evidence
 
 `verify:package` checks the actual packed tarball, installs it into an empty global prefix with lifecycle scripts disabled, and starts the installed copy using isolated data. It verifies the compatible Pi runtime set, authentication and first-paint APIs. It does not replace browser interaction checks, an actual public tunnel probe, or production plugin mutation checks. For installation/auth/native changes, also verify a relocated installed copy; for npm plugin transactions, verify install → update → remove through authenticated APIs with a local fixture registry and check retained generations and settings.
 
-Record source fingerprint/commit, build ID, passed/failed/skipped counts, coverage and platform. The 2026-11-14 repair acceptance, measured **before** the later dead-code and file cleanup, recorded 2211 passed, 2 approved skips, 73.03% branch coverage and 37 browser checks. Later changes require their own validation; those numbers do not certify a newly modified tree or imply npm publication.
+Record the tested source fingerprint or commit, build ID, passed/failed/skipped counts, coverage and platform. Results from a different commit do not certify the current release candidate.
 
 ## Local release builds and cleanup
 

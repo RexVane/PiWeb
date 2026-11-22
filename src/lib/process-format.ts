@@ -56,6 +56,51 @@ export function compactDisplayPath(path: string, cwd?: string): string {
 	return rel;
 }
 
+/** 把报错/预览文本里的工作区路径和用户目录/Temp 路径统一压缩成紧凑展示（不改原文） */
+export function compactPathsInText(text: string, cwd?: string): string {
+	let out = cwd ? relativizeInText(text, cwd) : text;
+	// Windows / POSIX / MSYS (/c/Users/...) Temp 与家目录
+	out = out.replace(
+		/(?:^|(?<=[\s"'=(;,]))(?:(?:[A-Za-z]:|\/[A-Za-z]))?(?:\/|\\+)(?:Users|home)(?:\/|\\+)[^/\\\s'"]+(?:\/|\\+)AppData(?:\/|\\+)Local(?:\/|\\+)Temp(?:\/|\\+)/gi,
+		"Temp/",
+	);
+	out = out.replace(
+		/(?:^|(?<=[\s"'=(;,]))(?:(?:[A-Za-z]:|\/[A-Za-z]))?(?:\/|\\+)(?:Users|home)(?:\/|\\+)[^/\\\s'"]+(?:\/|\\+)/gi,
+		"~/",
+	);
+	// 统一残留反斜杠为正斜杠（仅路径分隔，比如 ~/.pi\agent -> ~/.pi/agent）
+	out = out.replace(/(?:Temp|~)\/[^\s'"]+/g, (seg) => seg.replace(/\\+/g, "/"));
+	return out;
+}
+
+/** 过滤 PowerShell / 终端预览里的纯装饰边框与波形线（如 `Line |`、`~~~~`、`2 | ...`），保留核心错误信息 */
+export function cleanErrorPreviewLines(lines: string[], cwd?: string): string[] {
+	const cleaned: string[] = [];
+	const fallback: string[] = [];
+	for (const raw of lines) {
+		const line = raw.replace(/\r/g, "");
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		if (/^Line\s*\|\s*$/i.test(trimmed)) continue;
+		if (/^\|\s*[-~^*─═]+\s*$/.test(trimmed)) continue;
+		if (/^[-~^*─═]{3,}$/.test(trimmed)) continue;
+		if (/^\+\s*(?:CategoryInfo|FullyQualifiedErrorId)\s*:/i.test(trimmed)) continue;
+		if (/^At line:\d+\s+char:\d+/i.test(trimmed)) continue;
+		if (/^\d+\s*\|\s*/.test(trimmed)) {
+			const codeLine = trimmed.replace(/^\d+\s*\|\s*/, "").trim();
+			if (codeLine) fallback.push(compactPathsInText(codeLine, cwd));
+			continue;
+		}
+		// PowerShell `| Cannot find path ...` 去掉前导 `| `，保留真正错误信息
+		const withoutPipe = trimmed.startsWith("| ") ? trimmed.slice(2).trim() : trimmed;
+		if (!withoutPipe) continue;
+		cleaned.push(compactPathsInText(withoutPipe, cwd));
+	}
+	if (cleaned.length > 0) return cleaned;
+	if (fallback.length > 0) return fallback;
+	return lines.map((l) => compactPathsInText(l, cwd));
+}
+
 export function basename(p: string): string {
 	const parts = canonPath(p).split("/").filter(Boolean);
 	return parts[parts.length - 1] ?? p;
@@ -100,6 +145,22 @@ export function cleanCommand(command: string, cwd?: string): { text: string; lin
 	let text = first.replace(/\s+/g, " ").trim();
 	text = dropEchoSeparators(text);
 	if (cwd) text = relativizeInText(text, cwd);
+	if (lines.length > 1) {
+		const tailQuote = text.endsWith('"') ? '"' : text.endsWith("'") ? "'" : "";
+		if (tailQuote) {
+			const quoteCount = text.split(tailQuote).length - 1;
+			if (quoteCount % 2 === 1) {
+				const bodyLine = lines
+					.slice(1)
+					.map((l) => l.trim())
+					.find((l) => l && l !== tailQuote && !/^(?:#|\/\/)/.test(l));
+				const snippet = bodyLine
+					? bodyLine.replace(new RegExp(`${escapeRe(tailQuote)}$`), "").trim().slice(0, 72)
+					: "";
+				text = snippet ? `${text}${snippet} …${tailQuote}` : `${text}…${tailQuote}`;
+			}
+		}
+	}
 	return { text, lines: lines.length };
 }
 

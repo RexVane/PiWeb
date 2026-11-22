@@ -62,7 +62,7 @@ Useful launcher flags are listed in the [README](README.md#usage-and-remote-acce
 | `src/app/` | Next.js App Router pages, login/pair routes, and `src/app/api/` route handlers. |
 | `src/components/` | React UI (chat, composer, settings, workspace, and related views). |
 | `src/hooks/` | Client hooks. |
-| `src/lib/` | Server and domain logic: auth, remote access, sessions, import, resources, git, models, updates, and related modules. |
+| `src/lib/` | Server and domain logic: auth, remote access, sessions, import, Pi packages, skills, prompt templates, git, models, updates, and related modules. |
 | `src/i18n.tsx`, `src/i18n-locales/` | UI strings (English, Simplified Chinese, Traditional Chinese, Japanese, Russian). |
 | `src/instrumentation.ts`, `src/instrumentation-node.ts` | Server startup: publish the launch token, prepare the LAN entry, update check, first-page warmup. |
 | `tests/` | Vitest tests (`tests/**/*.test.{ts,tsx}`). |
@@ -80,7 +80,9 @@ PiWeb is a Next.js 16 + React 19 TypeScript web shell around the official `@eare
 
 Authentication exchanges a one-time launch token for an HMAC-signed HttpOnly session cookie. Production startup can prepare a LAN proxy and a Cloudflare quick tunnel for remote access. PiWeb shares the agent directory (`~/.pi/agent` or `PI_CODING_AGENT_DIR`) with a separately installed `pi` CLI; it does not replace that CLI.
 
-The [README “How it works”](README.md#how-it-works) and [usage and remote access](README.md#usage-and-remote-access) sections describe this in more detail. Extension UI behavior is documented in [docs/extension-web-ui.md](docs/extension-web-ui.md).
+The [README “How it works”](README.md#how-it-works) and [usage and remote access](README.md#usage-and-remote-access) sections describe this in more detail. The sidebar keeps skills, extensions and prompt templates. Extensions manage existing Pi packages; new packages are installed with `pi install <source>`. There is no custom resource host, iframe view registry or design workspace.
+
+Extension UI behavior is documented in [docs/extension-web-ui.md](docs/extension-web-ui.md).
 
 ## Coding conventions
 

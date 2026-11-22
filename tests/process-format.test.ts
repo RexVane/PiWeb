@@ -4,7 +4,9 @@ import {
 	classifyMessageChars,
 	classifyModelError,
 	cleanCommand,
+	cleanErrorPreviewLines,
 	compactDisplayPath,
+	compactPathsInText,
 	deleteTargetOf,
 	describeCommandIntent,
 	firstSentence,
@@ -70,6 +72,11 @@ describe("cleanCommand", () => {
 		const r = cleanCommand("python - <<'EOF'\nprint(1)\n\nEOF\n", "D:/x");
 		expect(r.text).toBe("python - <<'EOF'");
 		expect(r.lines).toBe(3);
+	});
+	it("previews the first code line cleanly when a multi-line inline script ends with an unclosed quote", () => {
+		const r = cleanCommand('cd ~/.cc-switch && python -c "\n# inspect db\nimport sqlite3, json\nprint(1)\n"', "D:/AIApp/PiWeb");
+		expect(r.text).toBe('cd ~/.cc-switch && python -c "import sqlite3, json …"');
+		expect(r.lines).toBe(5);
 	});
 });
 
@@ -347,5 +354,42 @@ describe("compactDisplayPath", () => {
 		expect(compactDisplayPath("C:\\Users\\guica\\AppData\\Local\\Temp\\codex-sniff\\capture.py", "D:/AIApp/PiWeb")).toBe("Temp/codex-sniff/capture.py");
 		expect(compactDisplayPath("/tmp/codex-sniff/probe.py", "/repo")).toBe("Temp/codex-sniff/probe.py");
 		expect(compactDisplayPath("C:/Users/guica/.cc-switch/config.json", "D:/AIApp/PiWeb")).toBe("~/.cc-switch/config.json");
+	});
+});
+
+describe("compactPathsInText", () => {
+	it("shortens workspace, Windows/POSIX home, and Temp paths inside free-form error text", () => {
+		expect(
+			compactPathsInText(
+				"Cannot access 'D:\\AIApp\\PiWeb\\src\\a.ts' or 'C:\\Users\\guica\\.pi\\agent\\npm\\node_modules\\@juicesharp\\rpiv-todo'",
+				"D:/AIApp/PiWeb",
+			),
+		).toBe("Cannot access 'src\\a.ts' or '~/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo'");
+		expect(compactPathsInText("Missing C:\\Users\\guica\\AppData\\Local\\Temp\\probe.ps1")).toBe("Missing Temp/probe.ps1");
+		expect(compactPathsInText("Not found /home/alice/.config/app.json")).toBe("Not found ~/.config/app.json");
+		expect(compactPathsInText('cd "/c/Users/guica/AppData/Local/Temp/codex-sniff" && python devs.py')).toBe('cd "Temp/codex-sniff" && python devs.py');
+		expect(compactPathsInText("cat /c/Users/guica/.codex/config.toml")).toBe("cat ~/.codex/config.toml");
+	});
+});
+
+describe("cleanErrorPreviewLines", () => {
+	it("strips PowerShell Line |, numbered context, and ~~~~ noise while preserving the core error and shortening paths", () => {
+		const raw = [
+			"Line |",
+			'   2 | ... Host "---"; Select-String -Path "C:\\Users\\guica\\.pi\\agent\\npm\\node_mo ...',
+			"     |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+			"     | Cannot find path 'C:\\Users\\guica\\.pi\\agent\\npm\\node_modules\\@juicesharp\\rpiv-todo' because it does not exist.",
+			"At line:1 char:1",
+			"+ CategoryInfo : ObjectNotFound: (:String) [], ItemNotFoundException",
+		];
+		expect(cleanErrorPreviewLines(raw)).toEqual([
+			"Cannot find path '~/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo' because it does not exist.",
+		]);
+	});
+
+	it("falls back to numbered code context if no non-frame message remains", () => {
+		expect(cleanErrorPreviewLines(["Line |", "   1 | C:\\Users\\guica\\AppData\\Local\\Temp\\run.ps1"])).toEqual([
+			"Temp/run.ps1",
+		]);
 	});
 });

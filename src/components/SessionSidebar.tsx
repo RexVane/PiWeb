@@ -31,7 +31,6 @@ import {
 	IconPinFill16,
 	IconPinOutline16,
 	IconPluginOutline16,
-	IconCubeOutline16,
 	IconPlusOutline16,
 	IconProjectAddOutline16,
 	IconSearchOutline16,

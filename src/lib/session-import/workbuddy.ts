@@ -10,7 +10,6 @@
  * 子代理的记录在 `<会话>/subagents/` 下，不导入；真正的会话 id 是文件名。
  */
 import path from "node:path";
-import fs from "node:fs/promises";
 import { eachJsonLine, jsonlImportWarnings, listFiles, readFileBounded, readHead, reachedLimit, sortByRecency } from "./files";
 import { workbuddyRoots } from "./paths";
 import type { ExternalSessionSummary, ImportedBlock, ImportedEntry, ImportedSession, ImportSourceModule, ScanOptions } from "./types";

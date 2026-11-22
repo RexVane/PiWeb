@@ -2,7 +2,6 @@
  * 客户端 / 服务端共享类型：Web 事件协议、轨迹账本、会话视图模型。
  * 服务端把 pi 的 AgentSessionEvent 翻译成这里的渲染级事件，浏览器只消费这些。
  */
-import type { JsonValue, WebResourceView } from "./resources/protocol";
 
 // ---------- 会话元信息 ----------
 
@@ -227,13 +226,12 @@ export type WebEvent =
 	| {
 			/**
 			 * 扩展请求界面交互（对应 pi RPC 模式的 extension_ui_request）：select/confirm/input/editor 需要浏览器应答。
-			 * resource is an independently installed view, resolved through the public resource API.
 			 * web 是 PiWeb 专有的 JSON UI：扩展送一棵树过来，浏览器用它自己的组件渲染（见 WebUiNode）。
 			 * 其余（notify / setStatus / setWidget / setTitle / setEditorText / setWorkingMessage）只通知、不等应答。
 			 */
 			type: "extension_ui";
 			id: string;
-			method: "select" | "confirm" | "input" | "editor" | "web" | "resource" | "notify" | "setStatus" | "setWidget" | "setTitle" | "setEditorText" | "setWorkingMessage";
+			method: "select" | "confirm" | "input" | "editor" | "web" | "notify" | "setStatus" | "setWidget" | "setTitle" | "setEditorText" | "setWorkingMessage";
 			title?: string;
 			message?: string;
 			options?: string[];
@@ -243,9 +241,6 @@ export type WebEvent =
 			/** web：要渲染的界面树；webText 是没适配扩展的纯文本兜底 */
 			tree?: WebUiNode;
 			webText?: string;
-			/** Independent resource view, resolved from the enabled Pi package declaration. */
-			resourceView?: WebResourceView;
-			resourceData?: JsonValue;
 			notifyType?: "info" | "warning" | "error";
 			statusKey?: string;
 			statusText?: string;

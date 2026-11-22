@@ -20,9 +20,6 @@ export async function registerNode() {
 	// 每次启动检查一次 PiWeb / pi 有没有新版本：不等结果，查到了在终端打一行，页面右下角也会提醒
 	void (await import("./lib/update/startup-check")).ensureStartupCheck().catch(() => {});
 
-	// Only installed resources participate; the host has no first-party resource factories.
-	const { APP_ROOT } = await import("./lib/app-root");
-	await (await import("./lib/resources/host")).startResourceHost(APP_ROOT);
 
 	const { remoteBlocked, remoteLanEnabled, ensureRemoteAccess } = await import("./lib/remote/supervisor");
 	if (!remoteLanEnabled()) return;

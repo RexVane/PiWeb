@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatWindow } from "@/components/ChatWindow";
+import { buildProcessBlocks, type ProcessItem } from "@/lib/process-phases";
 import type { WebMessage } from "@/lib/types";
 
 afterEach(cleanup);
@@ -36,7 +37,18 @@ describe("stopped tools and model generation time", () => {
 		expect(screen.getByRole("button", { name: "思考了 4s" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "思考了 59s" })).toBeNull();
 		fireEvent.click(turnToggle);
-		expect(screen.queryByRole("button", { name: "思考了 4s" })).toBeNull();
+		expect(turnToggle.getAttribute("aria-expanded")).toBe("false");
+		expect(process.getAttribute("data-collapsed")).toBe("true");
+		expect(process.getAttribute("aria-hidden")).toBe("true");
 		expect(process.hasAttribute("inert")).toBe(true);
+		expect(screen.queryByRole("button", { name: "思考了 4s" })).toBeNull();
+
+		// Model generation span excludes time waiting for ask_user_question in non-turn-wrapped process blocks
+		const items: ProcessItem[] = [
+			{ kind: "think", key: "1-0", msgIndex: 1, text: "Choose a format", live: false },
+			{ kind: "tool", key: "1-1", msgIndex: 1, call: { type: "toolCall", id: "q", name: "ask_user_question", arguments: {} }, state: { name: "ask_user_question", args: {}, state: "done", result: "short", startedAt: 5000, endedAt: 60_000 } },
+		];
+		const blocks = buildProcessBlocks(items, (a, b) => (a === 1 && b === 1 ? 4000 : 59_000), { turnLive: false });
+		expect(blocks[0]).toMatchObject({ kind: "run", durationMs: 4000 });
 	});
 });

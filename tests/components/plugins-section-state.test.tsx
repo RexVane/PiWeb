@@ -5,7 +5,7 @@
  * 覆盖：
  * 1. 停用的本地扩展：头部只有「已停用」，展开后不会冒出矛盾的「已启用」。
  * 2. 停用的包不能点「更新」，并提示先启用；启用的包照常可点。
- * 3. 内置扩展展示描述并支持 switch 直接切换；支持在「已安装」与「插件市场」之间切换与安装。
+ * 3. 内置扩展展示描述并支持 switch 直接切换；不再提供安装或设计入口。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -167,9 +167,17 @@ describe("插件页面状态与布局", () => {
 		expect(screen.getByRole("heading", { name: /^内置(?:插件|扩展)(?:配置)?$/ })).toBeTruthy();
 		expect(screen.getByRole("switch", { name: "Codemode" })).toBeTruthy();
 		expect(screen.queryByText(/尚未安装任何 pi 包/)).toBeNull();
-		// 市场已经独立成「资源市场」页，这边不再有市场页签
+		// 扩展页仅管理已安装的资源，不提供市场页签。
 		expect(screen.queryByRole("tab", { name: /市场/ })).toBeNull();
 	});
 
 
+});
+
+it("ignores legacy recommendations without exposing an install action", async () => {
+ vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: { packages: [], extensions: [], featured: [{ id: "legacy", name: "Legacy recommendation", source: "npm:legacy" }] } }) })));
+ render(<PluginsSection cwd="/workspace" />);
+ await screen.findByText("暂无已安装的第三方扩展或本地扩展");
+ expect(screen.queryByText("Legacy recommendation")).toBeNull();
+ expect(screen.queryByRole("button", { name: "安装" })).toBeNull();
 });

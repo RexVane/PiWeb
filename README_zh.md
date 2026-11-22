@@ -40,7 +40,7 @@
 - **工作区与会话** — 按项目文件夹组织会话。支持重命名、分支、归档、恢复草稿，以及导出为 JSONL 或 HTML。
 - **会话导入** — 搜索并导入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本机历史。PiWeb 就地读取原始文件。
 - **文件与改动** — 在项目生长树中按轮查看改动，包括 `SKILL.md` 读取步骤和 codemode 内的调用。支持源码、Markdown 预览、统一或并排 Diff，以及在对话中引用选中的行。
-- **模型、技能与扩展** — 配置模型提供方，使用 Pi 的 MCP 工具并管理 Pi 包。[安装已有资源或自己设计](docs/resources.md)，通过 JSON UI 或独立网页界面接入，无需重新构建 PiWeb。
+- **模型、技能与扩展** — 配置模型提供方，使用 Pi 的 MCP 工具并管理 Pi 包。[通过 Pi 安装扩展](docs/resources.md)，使用内置交互界面与 JSON UI。
 - **提示词来源** — 查看项目指令、技能、模板和工具定义及其资源来源。
 - **可选问答资源** — 从 [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) 单独安装。当前源码的资源 API v1 替代了原来的内置问答工具；刷新旧 npm 安装不会启用新架构。
 - **手机访问与语言** — 在「设置 → 远程访问」扫码连接。界面支持英语、简体中文、繁体中文、日语和俄语。
@@ -254,6 +254,7 @@ PiWeb 不会取代单独安装的 `pi` CLI。两者**共用同一个 agent 目�
 - [环境变量参考](docs/operations/environment.md)
 - [数据、隐私与留存](docs/operations/data-and-privacy.md)
 - [发布、降级与回滚](docs/operations/release-and-rollback.md)
+- [自 0.3.35 以来的变化](docs/releases/0.3.36.md)
 - [扩展 Web UI](docs/extension-web-ui.md) 与[扩展示例](examples/piweb-extensions/README.md)
 - 文档导航：[docs/README.md](docs/README.md)
 

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	getSettingsManager: vi.fn(), getPackageManager: vi.fn(),
 	reloadAllLoaders: vi.fn(async () => []), reloadSessionsForCwd: vi.fn(async () => 0),
-	installAndPersist: vi.fn(), removeAndPersist: vi.fn(),
+	removeAndPersist: vi.fn(),
 }));
 vi.mock("../src/lib/pi", () => ({
 	getAgentDir: () => process.env.PI_CODING_AGENT_DIR,
@@ -20,7 +20,7 @@ vi.mock("../src/lib/pi", () => ({
 }));
 vi.mock("../src/lib/agent-manager", () => ({ reloadSessionsForCwd: mocks.reloadSessionsForCwd }));
 
-import { installPackage, listPackages, removePackage, toggleExtension, togglePackage } from "../src/lib/plugins-service";
+import { removePackage, toggleExtension, togglePackage } from "../src/lib/plugins-service";
 import { POST } from "../src/app/api/plugins/route";
 
 it("preserves unrelated settings and never overwrites a malformed file when toggling a package", async () => {
@@ -84,12 +84,6 @@ describe("SDK package and extension persistence", () => {
 		manager.setProjectTrusted(true);
 		mocks.getSettingsManager.mockReset().mockReturnValue(manager);
 		// Package operations are mocked: no package download/install/uninstall ever occurs.
-		mocks.installAndPersist.mockReset().mockImplementation(async (source: string, { local }: { local: boolean }) => {
-			const settings = local ? manager.getProjectSettings() : manager.getGlobalSettings();
-			const packages = [...settings.packages ?? [], source];
-			if (local) manager.setProjectPackages(packages);
-			else manager.setPackages(packages);
-		});
 		mocks.removeAndPersist.mockReset().mockImplementation(async (source: string, { local }: { local: boolean }) => {
 			const settings = local ? manager.getProjectSettings() : manager.getGlobalSettings();
 			const old = settings.packages ?? [];
@@ -101,7 +95,7 @@ describe("SDK package and extension persistence", () => {
 		});
 		const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager: manager });
 		mocks.getPackageManager.mockReset().mockReturnValue({
-			installAndPersist: mocks.installAndPersist, removeAndPersist: mocks.removeAndPersist,
+			removeAndPersist: mocks.removeAndPersist,
 			resolve: packageManager.resolve.bind(packageManager),
 			// These mocked package operations use synthetic sources verbatim rather than resolving local paths.
 			parseSource: () => ({ type: "synthetic" }),
@@ -240,20 +234,33 @@ describe("SDK package and extension persistence", () => {
 		expectNoResourceReload();
 	});
 
-	it.each(["install", "remove"] as const)("surfaces swallowed %s persistence failures without reloading", async (action) => {
+	it("surfaces swallowed removal persistence failures without reloading", async () => {
 		mode = "deny";
 		const original = await fs.readFile(file, "utf8");
-		const operation = action === "install" ? installPackage("new-package", false, cwd) : removePackage("example-package", false, cwd);
+		const operation = removePackage("example-package", false, cwd);
 		await expect(operation).rejects.toThrow("EACCES");
 		expect(await fs.readFile(file, "utf8")).toBe(original);
 		expectNoResourceReload();
 	});
 
+	it("rejects removed install and design actions without mutating package settings", async () => {
+		const original = await fs.readFile(file, "utf8");
+		for (const action of ["install", "design"]) {
+			const response = await POST(new Request("http://localhost/api/plugins", {
+				method: "POST", headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action, source: "npm:example", cwd }),
+			}));
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ success: false, error: "unknown action" });
+		}
+		expect(await fs.readFile(file, "utf8")).toBe(original);
+		expect(mocks.getPackageManager).not.toHaveBeenCalled();
+		expectNoResourceReload();
+	});
+
 	it("rejects broken files before attempting any package operation", async () => {
 		await fs.writeFile(file, "{broken");
-		await expect(installPackage("new-package", false, cwd)).rejects.toThrow();
 		await expect(removePackage("example-package", false, cwd)).rejects.toThrow();
-		expect(mocks.installAndPersist).not.toHaveBeenCalled();
 		expect(mocks.removeAndPersist).not.toHaveBeenCalled();
 		expect(await fs.readFile(file, "utf8")).toBe("{broken");
 		expectNoResourceReload();

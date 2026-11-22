@@ -5,8 +5,6 @@ import { IconPluginOutline16, IconRefreshOutline14, IconSkillOutline16 } from "@
 import { PluginsSection } from "@/components/settings/PluginsSection";
 import { SkillsSection } from "@/components/settings/SkillsSection";
 import { useI18n } from "@/i18n";
-import { AddResourceMenu } from "@/components/resources/AddResourceMenu";
-import type { StartResourceSession } from "@/components/resources/ResourceInstallModal";
 import { WorkspaceViewShell } from "./WorkspaceViewShell";
 
 function useScopedWorkspace(knownCwds: string[], defaultCwd: string, getWorkspaceName: (cwd: string) => string) {
@@ -74,17 +72,13 @@ export function PluginsWorkspaceView({
 	knownCwds,
 	defaultCwd,
 	getWorkspaceName,
-	onStartResourceSession,
 }: {
 	knownCwds: string[];
 	defaultCwd: string;
 	getWorkspaceName: (cwd: string) => string;
-	onStartResourceSession?: StartResourceSession;
 }) {
 	const { t } = useI18n();
 	const { activeCwd, setSelectedCwd, workspaceOptions } = useScopedWorkspace(knownCwds, defaultCwd, getWorkspaceName);
-	const [installOpen, setInstallOpen] = useState(false);
-	const [installMode, setInstallMode] = useState<"install" | "design">("install");
 	const [reloadSeq, setReloadSeq] = useState(0);
 	const [reloadBusy, setReloadBusy] = useState(false);
 
@@ -94,29 +88,20 @@ export function PluginsWorkspaceView({
 			description={t.pluginPageDesc}
 			icon={<IconPluginOutline16 size={16} />}
 			actions={
-				<div className="flex items-center gap-2">
-					<button
-						type="button"
-						className="btn-outline"
-						style={{ height: 32, padding: "0 12px", fontSize: 13 }}
-						disabled={reloadBusy}
-						onClick={() => setReloadSeq((n) => n + 1)}
-					>
-						<IconRefreshOutline14 size={13} /> {t.panelRefresh}
-					</button>
-					<AddResourceMenu label={t.addPluginAction} disabled={reloadBusy}
-						onInstall={() => { setInstallMode("install"); setInstallOpen(true); }}
-						onDesign={() => { setInstallMode("design"); setInstallOpen(true); }} />
-				</div>
+				<button
+					type="button"
+					className="btn-outline"
+					style={{ height: 32, padding: "0 12px", fontSize: 13 }}
+					disabled={reloadBusy}
+					onClick={() => setReloadSeq((n) => n + 1)}
+				>
+					<IconRefreshOutline14 size={13} /> {t.panelRefresh}
+				</button>
 			}
 		>
 			<PluginsSection
 				cwd={activeCwd}
 				hideHeader
-				installOpen={installOpen}
-				installMode={installMode}
-				onStartResourceSession={onStartResourceSession}
-				onInstallOpenChange={setInstallOpen}
 				reloadSeq={reloadSeq}
 				onReloadBusyChange={setReloadBusy}
 				workspaceOptions={workspaceOptions}

@@ -1,6 +1,6 @@
 /**
  * 就绪检查（M4）：`/api/health` 保持原样作为 liveness（不查依赖、不泄密）；
- * 这里额外检查「数据目录可写 / 模型配置可读」，可选资源服务通过通用注册表报告。
+ * 这里额外检查「数据目录可写 / 模型配置可读」。
  *
  * 认证：`src/proxy.ts` 只放行精确路径 `/api/health`，因此本路由默认受启动令牌/会话 Cookie
  * 保护，未认证请求在中间件层直接 401，不会到这里。
@@ -11,7 +11,6 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { agentDir } from "@/lib/web-secret";
 import { readJsoncSettingsObjectSync } from "@/lib/jsonc-settings-storage";
-import { resourceHostStatuses } from "@/lib/resources/host";
 
 export const dynamic = "force-dynamic";
 
@@ -66,18 +65,14 @@ export async function GET() {
 	const directory = agentDir();
 	const dataDir = await checkDataDirectoryWritable(directory);
 	const modelConfig = checkModelConfiguration(directory);
-	const services = resourceHostStatuses();
-	const resources = { ok: services.every((service) => service.state !== "error"), services };
 
-	// Optional resources do not determine whether the base PiWeb session UI is ready.
+	// Readiness depends on the data directory and model configuration.
 	const ready = dataDir.ok && modelConfig.ok;
-	const warnings = resources.ok ? [] : ["部分可选资源服务不可用，请在扩展页查看状态"];
 	const data = {
 		ok: ready,
 		service: "piweb",
 		ready,
-		checks: { dataDir, modelConfig, resources },
-		...(warnings.length ? { warnings } : {}),
+		checks: { dataDir, modelConfig },
 	};
 	if (!ready) {
 		const reason = [dataDir.ok ? "" : dataDir.detail ?? "数据目录不可写", modelConfig.ok ? "" : modelConfig.detail ?? "模型配置不可用"].filter(Boolean).join("；");

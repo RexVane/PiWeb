@@ -2,12 +2,12 @@
  * graceful-shutdown：进程级优雅停机（L5/L6）。
  *
  * 目标：收到 SIGINT/SIGTERM/SIGHUP 时，先让已注册的收尾动作跑完（停远程隧道/LAN 监听、
- * 停资源后台服务、等待已开始的落盘…），给它们一个有上限的时间窗口，再以「进程正常退出」
+ * 等待已开始的落盘…），给它们一个有上限的时间窗口，再以「进程正常退出」
  * 的方式结束；只有第二次信号才立即退出。默认行为（无钩子、超时兜底、退出码）保持
  * Node 的原生语义：SIGINT=130、SIGTERM=143、SIGHUP=129。
  *
- * 谁注册：`src/lib/remote/supervisor.ts`（远程入口）、`src/lib/resources/host.ts`
- * （外部资源后台服务）。第一个注册会自动安装信号处理器——启动链里 instrumentation 总会 import
+ * 谁注册：`src/lib/remote/supervisor.ts`（远程入口）
+ * 。第一个注册会自动安装信号处理器——启动链里 instrumentation 总会 import
  * 这些模块，所以不需要额外改启动入口。状态挂 globalThis：Next 热重载/模块重求值不会
  * 重复安装处理器或丢钩子。
  */

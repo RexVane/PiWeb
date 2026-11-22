@@ -13,14 +13,9 @@ import {
 	IconSearchOutline16,
 	IconTerminalOutline14,
 } from "@/components/icons";
-import { ResourceDesignWorkspace } from "@/components/resources/ResourceDesignWorkspace";
-import { PackageResourceSettings } from "@/components/resources/PackageResourceSettings";
-import { useResourceText } from "@/components/resources/text";
-import { notifyResourcesChanged } from "@/hooks/useResourceRegistry";
 import { useI18n } from "@/i18n";
 import { ScopeWorkspaceFilterBar } from "@/components/settings/SharedControls";
 import type { PluginResourceType } from "@/lib/plugins-service";
-import type { FeaturedExtension, ResourceSelection } from "@/lib/resources/protocol";
 
 // ---------- Plugins ----------
 
@@ -197,7 +192,6 @@ export function PluginsSection({
 	onCwdChange?: (cwd: string) => void;
 }) {
 	const { t, lang } = useI18n();
-	const resourceText = useResourceText();
 	const { confirm, confirmDialog } = useConfirmDialog();
 	const confirmUninstall = async (src: string) => {
 		const workspaceSeq = workspaceSeqRef.current;
@@ -207,7 +201,6 @@ export function PluginsSection({
 
 	const [packages, setPackages] = useState<PackageItem[]>([]);
 	const [extensions, setExtensions] = useState<ExtensionItem[]>([]);
-	const [featured, setFeatured] = useState<FeaturedExtension[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [scopeFilter, setScopeFilter] = useState<"all" | PluginScope>("all");
 	const [q, setQ] = useState("");
@@ -230,7 +223,6 @@ export function PluginsSection({
 			if (j.success) {
 				setPackages(j.data.packages ?? []);
 				setExtensions(j.data.extensions ?? []);
-				setFeatured(j.data.featured ?? []);
 			} else setToast({ ok: false, msg: j.errorCode === "TRASH_UNAVAILABLE" ? t.apiErrorTrashUnavailable : j.error || t.toastError });
 		} catch (err: unknown) {
 			if (workspaceSeq === workspaceSeqRef.current && loadSeq === loadSeqRef.current) {
@@ -248,7 +240,6 @@ export function PluginsSection({
 		busyRef.current = false;
 		setPackages([]);
 		setExtensions([]);
-		setFeatured([]);
 		setLoading(true);
 		setExpanded(new Set());
 		setToast(null);
@@ -339,7 +330,6 @@ export function PluginsSection({
 			const j = await r.json();
 			if (workspaceSeq !== workspaceSeqRef.current) return false;
 			if (j.success) {
-				notifyResourcesChanged();
 				notify(!j.data?.warning, j.data?.warningCode === "PACKAGE_TRASH_PENDING" ? t.pluginTrashPendingWarning : j.data?.warning ?? successMsg ?? (action === "toggle" ? (payload.disabled ? t.disabled : t.enabled) : t.toastSaved));
 				await load();
 				return true;
@@ -358,14 +348,6 @@ export function PluginsSection({
 		}
 	};
 
-	const confirmInstall = async (name: string, source: string, projectScope: boolean, selection?: ResourceSelection) => {
-		const workspaceSeq = workspaceSeqRef.current;
-		const scope = projectScope ? resourceText.project : resourceText.user;
-		const message = `${t.pluginInstallConfirm.replace("{source}", `${name} (${source})`)} ${resourceText.scope}: ${scope}`;
-		if (!(await confirm({ title: t.install, message, confirmLabel: t.install }))) return false;
-		if (workspaceSeq !== workspaceSeqRef.current) return false;
-		return act("install", { source, local: projectScope, selection }, undefined, t.installing, t.installSuccess);
-	};
 
 	const toggleExpand = (key: string) =>
 		setExpanded((prev) => {
@@ -438,7 +420,6 @@ export function PluginsSection({
 	const localExtensions = extensions.filter((e) => placementOf(e).origin === "top-level");
 
 	const matchesQuery = (text: string) => !query || text.toLowerCase().includes(query);
-	const visibleFeatured = featured.filter((item) => matchesQuery(`${item.name} ${item.description} ${item.author} ${item.id}`));
 	// 内置扩展在「全部」视图集中展示，不占「个人 / 项目」扩展包计数
 	const visibleBuiltins = scopeFilter === "all"
 		? builtinExtensions.filter((e) => {
@@ -512,7 +493,7 @@ export function PluginsSection({
 		localExtensions.filter((e) => placementOf(e).scope === scope).length
 		+ packages.filter((p) => p.scope === scope).length;
 
-	const totalItems = builtinExtensions.length + localExtensions.length + packages.length + featured.length;
+	const totalItems = builtinExtensions.length + localExtensions.length + packages.length;
 	const showSearch = totalItems > 5 || query.length > 0;
 
 	const renderToggle = (label: string, itemKey: string, isDisabled: boolean, payload: Record<string, unknown>) => (
@@ -588,7 +569,6 @@ export function PluginsSection({
 				}}
 			/>
 
-			<ResourceDesignWorkspace key={cwd} cwd={cwd} reloadSeq={reloadSeq} />
 
 			{showSearch && (
 				<div className="isx-search flex items-center gap-2.5 px-3.5" style={{ height: 38 }}>
@@ -604,32 +584,6 @@ export function PluginsSection({
 				</div>
 			)}
 
-			{visibleFeatured.length > 0 && (
-				<section aria-label={resourceText.featuredExtensions} className="flex flex-col gap-2">
-					<h2 className="pl-1 font-medium" style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-secondary)" }}>
-						{resourceText.featuredExtensions}
-					</h2>
-					<div className="overflow-hidden rounded-xl" style={{ border: "0.5px solid var(--dsw-border-l2)", background: "var(--dsw-bg-elevated, transparent)" }}>
-						{visibleFeatured.map(({ id, name, description, source, selection, installed }, index) => (
-							<PluginRow
-								key={id}
-								borderedTop={index > 0}
-								icon={<IconPluginOutline16 size={16} />}
-								iconBg="rgba(129, 120, 255, 0.14)"
-								iconColor="#a59bff"
-								title={name}
-								subtitle={description}
-								controls={installed ? scopeBadge(resourceText.installed) : source ? (
-									<button type="button" className="btn-outline px-3 py-1.5" disabled={busy || loading}
-										onClick={() => void confirmInstall(name, source, scopeFilter === "project", selection)}>
-										{resourceText.install}
-									</button>
-								) : scopeBadge(resourceText.unavailable)}
-							/>
-						))}
-					</div>
-				</section>
-			)}
 
 			{/* 内置插件配置（SDK builtin:codemode / builtin:tool-search / builtin:mcp） */}
 			{visibleBuiltins.length > 0 && (
@@ -801,7 +755,6 @@ export function PluginsSection({
 											<div style={{ color: "var(--dsw-label-caption)", fontSize: 11.5 }}>
 												{t.resources}: {p.resources.extensions} ext · {p.resources.skills} skills · {p.resources.prompts} prompts
 											</div>
-											{open && !isDisabled && <PackageResourceSettings item={p} extensions={extensions} cwd={cwd} />}
 										</>
 									}
 									controls={
@@ -902,7 +855,7 @@ export function PluginsSection({
 				</div>
 			)}
 
-			{!loading && visibleFeatured.length === 0 && visibleBuiltins.length === 0 && visibleLocals.length === 0 && visiblePackages.length === 0 && (
+			{!loading && visibleBuiltins.length === 0 && visibleLocals.length === 0 && visiblePackages.length === 0 && (
 				<div
 					className="flex flex-wrap items-center justify-between gap-4 rounded-xl px-4 py-4"
 					style={{

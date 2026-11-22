@@ -51,7 +51,6 @@ describe("buildProcessBlocks relay collapsing", () => {
 		expect(blocks[0].kind).toBe("run");
 		if (blocks[0].kind === "run") {
 			expect(blocks[0].intentCategories).toEqual(["port_proc"]);
-			expect(blocks[0].cluster).toEqual(["think", "inspect"]);
 		}
 		expect(blocks[1]).toMatchObject({ kind: "item", item: { kind: "narr" } });
 		expect(blocks[2]).toMatchObject({ kind: "item", item: { kind: "think", live: true } });
@@ -340,7 +339,6 @@ describe("ChatWindow process phases UI", () => {
 		expect(blocks).toHaveLength(3);
 		expect(blocks[0].kind).toBe("run");
 		if (blocks[0].kind === "run") {
-			expect(blocks[0].cluster).toEqual(["inspect"]);
 			expect(blocks[0].cmds).toBe(14);
 			expect(blocks[0].writes).toBe(0);
 			expect(blocks[0].intentTargets.map((t) => t.target)).toContain("activatedOnRegistration");
@@ -350,7 +348,7 @@ describe("ChatWindow process phases UI", () => {
 		expect(blocks[2]).toMatchObject({ kind: "run", cmds: 3 });
 	});
 
-	it("renders aligned single-icon summary headers with right-aligned compact cluster and clean failure callout while preserving step order", () => {
+	it("renders aligned single-icon summary headers with a clean failure callout while preserving step order", () => {
 		const targetPath = "~/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo/todo-overlay.ts";
 		const winPkgDir = "C:\\Users\\guica\\.pi\\agent\\npm\\node_modules\\@juicesharp\\rpiv-todo";
 		const psErr = [

@@ -40,7 +40,7 @@
 - **工作區與會話** — 按專案資料夾組織會話。支援重新命名、分支、封存、恢復草稿，以及匯出為 JSONL 或 HTML。
 - **會話匯入** — 搜尋並匯入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本機歷史。PiWeb 就地讀取原始檔案。
 - **檔案與改動** — 在專案生長樹中按輪檢視改動，包括 `SKILL.md` 讀取步驟和 codemode 內的呼叫。支援原始碼、Markdown 預覽、統一或並排 Diff，以及在對話中引用選取的行。
-- **模型、技能與擴充功能** — 配置模型供應商，使用 Pi 的 MCP 工具並管理 Pi 包。[安裝已有資源或自行設計](docs/resources.md)，透過 JSON UI 或獨立網頁介面接入，無需重新建置 PiWeb。
+- **模型、技能與擴充功能** — 配置模型供應商，使用 Pi 的 MCP 工具並管理 Pi 套件。[透過 Pi 安裝擴充功能](docs/resources.md)，使用內建互動介面與 JSON UI。
 - **提示詞來源** — 檢視專案指令、技能、模板和工具定義及其資源來源。
 - **可選問答資源** — 從 [piweb-ask-user](https://github.com/RexVane/piweb-ask-user) 單獨安裝。目前原始碼的資源 API v1 取代了原本的內建問答工具；重新整理舊 npm 安裝不會啟用新架構。
 - **手機訪問與語言** — 在「設定 → 遠端連線」掃碼連線。介面支援英語、簡體中文、繁體中文、日語和俄語。
