@@ -104,6 +104,22 @@ export async function checkInstalledRuntime(root = process.cwd()) {
 		if (!page.ok || !(page.headers.get("content-type") ?? "").includes("text/html") || (await page.text()).length < 500) {
 			throw new Error("production home page failed: " + page.status);
 		}
+		if (process.platform === "win32") {
+			const sessions = path.join(process.env.PI_CODING_AGENT_DIR, "sessions");
+			fs.mkdirSync(sessions, { recursive: true });
+			const fixture = fs.mkdtempSync(path.join(sessions, "verify-recycle-"));
+			const file = path.join(fixture, "verify-recycle.jsonl");
+			const record = { type: "session", version: 3, id: path.basename(fixture), cwd: root, timestamp: new Date().toISOString() };
+			fs.writeFileSync(file, JSON.stringify(record) + "\n", { flag: "wx" });
+			const id = Buffer.from(file, "utf8").toString("base64url");
+			const removal = await fetch(`${base}/api/sessions/${id}`, {
+				method: "DELETE", headers: { cookie: session, origin: base }, signal: AbortSignal.timeout(70_000),
+			});
+			const result = await removal.json();
+			if (!removal.ok || result.success !== true || fs.existsSync(file)) {
+				throw new Error(`installed Windows session recycling failed (${removal.status}, ${result.errorCode ?? "no error code"})`);
+			}
+		}
 		return { version, routes, homePage: true, launchTokenExchange: true, deviceCookieMetadata: true, earlyAuthentication: true, authenticatedUpload: true, uploadContentLimitMiB: 100, uploadWireLimitMiB: 101 };
 	} finally {
 		if (server.listening) {

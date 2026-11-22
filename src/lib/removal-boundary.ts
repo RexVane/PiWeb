@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
+import { runtimeRequire } from "../../scripts/runtime-require.mjs";
 
 const inside = (child: string, parent: string) => child === parent || child.startsWith(parent.replace(/\/$/, "") + "/");
 
@@ -27,7 +28,8 @@ export async function withProtectedRemovalSource<T>(target: string, action: (sou
 	const parent = path.dirname(absolute);
 	const volume = path.parse(absolute).root;
 	if (process.platform === "win32") {
-		const module = await import("koffi"); const koffi = module.default ?? module;
+		// Resolve the native loader on the installed machine, including for Linux-built npm packages.
+		const koffi = runtimeRequire(import.meta.url)("koffi") as typeof import("koffi");
 		const kernel = koffi.load("kernel32.dll");
 		const create = kernel.func("void *CreateFileW(str16 name, uint32 access, uint32 share, void *security, uint32 disposition, uint32 flags, void *templateFile)");
 		const info = kernel.func("bool GetFileInformationByHandle(void *file, void *information)");

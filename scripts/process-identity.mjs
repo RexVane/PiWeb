@@ -4,6 +4,13 @@ import { runtimeRequire } from "./runtime-require.mjs";
 import { spawnSync } from "node:child_process";
 
 let windowsApi;
+function windowsPowerShell(command) {
+	const shell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+	const result = spawnSync(shell, ["-NoProfile", "-NonInteractive", "-Command", command], { windowsHide: true, timeout: 5000, encoding: "utf8" });
+	const value = result.stdout?.trim();
+	return result.status === 0 && /^\d+$/.test(value) ? value : null;
+}
+
 function nativeWindowsBirth(pid) {
 	if (windowsApi === undefined) {
 		try {
@@ -32,13 +39,7 @@ export function processIdentity(pid) {
 	catch (error) { return { alive: error.code === "ESRCH" ? false : true, birth: null }; }
 	try {
 		if (process.platform === "win32") {
-			let birth = nativeWindowsBirth(pid);
-			if (!birth) {
-				const shell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-				const result = spawnSync(shell, ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToFileTimeUtc()`], { windowsHide: true, timeout: 5000, encoding: "utf8" });
-				const value = result.stdout?.trim();
-				if (result.status === 0 && /^\d+$/.test(value)) birth = value;
-			}
+			const birth = nativeWindowsBirth(pid) ?? windowsPowerShell(`(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToFileTimeUtc()`);
 			return { alive: true, birth: birth ? `win:${birth}` : null };
 		}
 		if (process.platform === "linux") {
@@ -55,6 +56,14 @@ export function processIdentity(pid) {
 /** An unknown identity cannot prove that a live owner disappeared. */
 export function processIdentityAlive(pid, birth) {
 	const current = processIdentity(pid);
-	return current.alive === false || (typeof birth === "string" && current.birth !== null && current.birth !== birth)
-		? false : current.alive;
+	if (!current.alive || typeof birth !== "string") return current.alive;
+	if (current.birth !== null) return current.birth === birth;
+	if (process.platform === "win32" && /^win:\d+$/.test(birth)) {
+		// A recycled PID can now belong to a service we cannot open directly.
+		// The system inventory is less precise than GetProcessTimes, so only a
+		// clearly later creation time proves the recorded process is gone.
+		const comparison = windowsPowerShell(`$process = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' -ErrorAction Stop; if ($process.CreationDate) { $process.CreationDate.ToUniversalTime().ToFileTimeUtc() }`);
+		if (comparison && BigInt(comparison) > BigInt(birth.slice(4)) + 10_000_000n) return false;
+	}
+	return current.alive;
 }
