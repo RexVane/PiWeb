@@ -11,7 +11,9 @@ import { flushSettingsOrThrow, withExternalSettingsLock, withSettingsWriteLock }
 import { validatePackageSource } from "./package-manager-safe";
 import { beginNpmSettingsWrite, finishNpmTrashCleanup, NpmTransactionCommittedError, NpmUninstallTrashPendingError, recoverNpmPrefix, withNpmInstallTransaction, type NpmTransactionPlan } from "./npm-install-transaction";
 import { mergeResourceSelection, toggleResourcePaths } from "./resources/selection";
-import type { ResourceSelection } from "./resources/protocol";
+import { readBundledResourceCatalog } from "./resources/catalog";
+import { readPackageManifest } from "./resources/manifest";
+import type { FeaturedExtension, ResourceSelection } from "./resources/protocol";
 import { resolveModelPath } from "./path-security";
 
 /** 包内提供的资源类型：给「来源=包」打标签用，与 pi manifest 的四类资源一致 */
@@ -21,6 +23,8 @@ export interface PackageView {
 	source: string;
 	scope: "user" | "project";
 	installedPath?: string;
+	/** Installed manifest name, used only to recognize local packages in recommendations. */
+	packageName?: string;
 	resources: { extensions: number; skills: number; prompts: number; themes: number };
 	/** resources 里非零的类型（扩展 / 技能 / 提示词 / 主题），界面用它当标签 */
 	types: PluginResourceType[];
@@ -127,8 +131,16 @@ const npmRecoveryScopes = (cwd: string): NpmTransactionPlan[] => [{ root: path.j
 type PackageManagerInternals = {
 	packageSourcesMatch(existing: unknown, source: string, scope: string): boolean;
 	parseSource(source: string): { type: string; pinned?: boolean };
+	resolvePathFromBase(source: string, baseDir: string): string;
 };
 const sourceOfPackage = (value: unknown): string => typeof value === "string" ? value : String((value as { source?: unknown } | null)?.source ?? "");
+/** Pi stores local sources relative to their settings directory, but SDK inputs are cwd-relative. */
+function configuredPackageInput(pm: PackageManagerInternals, source: string, settingsPath: string, entries: readonly unknown[]): string {
+	if (!entries.some((entry) => sourceOfPackage(entry) === source) || pm.parseSource(source).type !== "local") return source;
+	if (typeof pm.resolvePathFromBase !== "function") throw new Error("This pi SDK cannot resolve configured local package sources.");
+	// Resolve the declaration even when its source directory no longer exists.
+	return pm.resolvePathFromBase(source, path.dirname(settingsPath));
+}
 async function npmMutationPlan(pm: ReturnType<typeof getPackageManager>, cwd: string, local: boolean, source: string, remove: boolean, selection?: ResourceSelection): Promise<NpmTransactionPlan> {
 	const file = local ? path.join(cwd, ".pi", "settings.json") : path.join(getAgentDir(), "settings.json");
 	const current = await readSettingsFileStrict(file);
@@ -275,7 +287,31 @@ export async function listPackages(cwd: string): Promise<PackageView[]> {
 		out.push({ source, scope: "user", installedPath, resources, types: packageTypes(resources), disabled: true });
 	}
 
+	await Promise.all(out.map(async (pkg) => {
+		if (!pkg.installedPath) return;
+		// Optional listing metadata: never load extension code or reject the whole
+		// package list because a manifest is missing, invalid or unreadable.
+		const manifest = await readPackageManifest(pkg.installedPath).catch(() => undefined);
+		if (typeof manifest?.name === "string" && manifest.name) pkg.packageName = manifest.name;
+	}));
+
 	return out;
+}
+
+export function listFeaturedExtensions(cwd: string, packages: readonly PackageView[]): FeaturedExtension[] {
+	const pm = getPackageManager(cwd) as unknown as PackageManagerInternals;
+	return readBundledResourceCatalog().items.filter((item) => item.types.includes("extensions") && item.compatibility === "web").map((item) => {
+		const source = item.source;
+		const installed = !!source && packages.some((pkg) => {
+			if (!pkg.installedPath) return false;
+			try {
+				if (pm.packageSourcesMatch(pkg.source, source, pkg.scope)) return true;
+				return pm.parseSource(pkg.source).type === "local" && pkg.packageName === item.id;
+			}
+			catch { return false; }
+		});
+		return { ...item, installed };
+	});
 }
 
 export async function listLoadedExtensions(cwd: string): Promise<ExtensionView[]> {
@@ -503,7 +539,8 @@ export async function toggleResource(resourceId: string, disabled: boolean, scop
 		const sm = await prepareSettingsWrite(cwd, file);
 		const pm = getPackageManager(cwd) as unknown as PackageManagerInternals;
 		const current = (scope === "project" ? sm.getProjectSettings() : sm.getGlobalSettings()).packages ?? [];
-		const index = current.findIndex((entry) => pm.packageSourcesMatch(entry, resource.source, scope));
+		const sdkSource = configuredPackageInput(pm, resource.source, file, current);
+		const index = current.findIndex((entry) => pm.packageSourcesMatch(entry, sdkSource, scope));
 		if (index < 0) throw new ExtensionToggleError("Resource configuration changed; refresh its list");
 		const next = [...current];
 		next[index] = toggleResourcePaths(current[index], resource.source, resource.resourcePaths ?? resource.extensionPaths, disabled) as never;
@@ -520,14 +557,16 @@ export async function removePackage(source: string, local: boolean, cwd: string)
 	const { withResourceHostsSuspended } = await import("./resources/host");
 	const removed = await withResourceHostsSuspended(source, local ? "project" : "user", cwd, () => withPackageInstallLock(cwd, local, () => withSettingsWriteLock(settingsPath, async () => {
 		const sm = await prepareSettingsWrite(cwd, settingsPath);
-		const disabled = (await readSettingsFileStrict(settingsPath)).disabledPackages;
+		const settings = await readSettingsFileStrict(settingsPath);
+		const active = Array.isArray(settings.packages) ? settings.packages : [];
+		const disabled = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
 		const internal = pm as unknown as PackageManagerInternals;
-		const matches = (entry: unknown) => internal.packageSourcesMatch(entry, source, local ? "project" : "user");
-		const active = (await readSettingsFileStrict(settingsPath)).packages;
-		if (!(Array.isArray(active) && active.some(matches)) && !(Array.isArray(disabled) && disabled.some(matches))) return false;
+		const sdkSource = configuredPackageInput(internal, source, settingsPath, [...active, ...disabled]);
+		const matches = (entry: unknown) => internal.packageSourcesMatch(entry, sdkSource, local ? "project" : "user");
+		if (!active.some(matches) && !disabled.some(matches)) return false;
 		const remove = async () => {
 		// SDK failures must surface before touching the disabled-package bookkeeping.
-		const removedActive = await pm.removeAndPersist(source, { local });
+		const removedActive = await pm.removeAndPersist(sdkSource, { local });
 		await flushSettingsOrThrow(sm);
 		await verifySettingsField(settingsPath, "packages", (local ? sm.getProjectSettings() : sm.getGlobalSettings()).packages);
 		let removedDisabled = false;

@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { request as httpsRequest, type RequestOptions } from "node:https";
+import bundledCatalog from "../../../resources/catalog/index.json";
 import { validatePackageSource } from "../package-manager-safe";
 import { getResourcePreferences, publicCatalogUrl } from "./preferences";
 import type { ResourceCatalog, ResourceCatalogItem } from "./protocol";
@@ -48,6 +49,10 @@ export function parseResourceCatalog(raw: unknown): ResourceCatalog {
 		} catch { /* A malformed item is not a reason to execute or expose its contents. */ }
 	}
 	return { version: 1, items };
+}
+
+export function readBundledResourceCatalog(): ResourceCatalog {
+	return parseResourceCatalog(bundledCatalog);
 }
 
 function privateAddress(address: string): boolean {

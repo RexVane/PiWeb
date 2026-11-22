@@ -4,16 +4,13 @@ PiWeb uses Pi's official package/resource loader. Optional extensions, skills an
 
 The structure is **Pi native capabilities + PiWeb's generic web bridge + user-selected enhancements**. An extension owns its tools, prompts, behavior and optional web assets. With no enhancement installed, Pi's standard interactions use the basic web interface. A resource catalog is only an optional installation list; direct Git/npm installation uses the same package manager.
 
-The first-party catalog is [`resources/catalog/index.json`](../resources/catalog/index.json) in this repository; the optional question resource lives in [RexVane/piweb-ask-user](https://github.com/RexVane/piweb-ask-user).
+The Extensions page shows first-party recommendations from [`resources/catalog/index.json`](../resources/catalog/index.json), starting with the optional [Ask user extension](https://github.com/RexVane/piweb-ask-user). Opening the page does not download or install anything. Choose **Install** and confirm to install through Pi; the **Project** tab targets the current workspace, while **All** and **Personal** target all workspaces. To publish another recommendation, add its description and a published Pi install source to the catalog. Pin Git recommendations to a verified commit or release tag.
 
 ## Adding a resource
 
-**Add extension ▾** has two choices:
+The Extensions toolbar has only **Refresh**. For packages not listed in Recommendations, run `pi install <source>` with an npm, Git, or local source, then use **Refresh** in PiWeb. Personal Git and npm packages go under `~/.pi/agent/git/` and `~/.pi/agent/npm/node_modules/`; project packages go under the current workspace's `.pi/git/` and `.pi/npm/node_modules/`. Local packages are referenced in place.
 
-- **Install existing**: use a catalog entry or give Pi an npm, Git or local source. Pi's package manager installs the original source. Personal Git and npm packages go under `~/.pi/agent/git/` and `~/.pi/agent/npm/node_modules/`; project packages go under the current workspace's `.pi/git/` and `.pi/npm/node_modules/`. Local packages are referenced in place.
-- **Design your own**: choose a source directory once, create a separate workspace, open a real session and send a visible design request. No instruction is injected into unrelated sessions and unfinished code is not auto-loaded.
-
-Paste a Git repository link or an npm package page link, or choose a local folder from the PiWeb host. Local connections use the system folder picker when available; remote connections use the in-app browser. The install form links to the Pi package gallery and keeps inspection and adaptation under **Advanced options**. Static compatibility inspection acquires source without executing extension factories or npm lifecycle scripts. It may identify terminal-only UI, but cannot prove safety or complete compatibility. Inspection and adaptation use a separate source copy; neither changes the source or destination of the **Install** action. Install a completed adaptation explicitly by giving Pi its local path.
+For an existing extension development workspace, select it on the Extensions page to continue its latest conversation or preview its Web interface. Source is not installed automatically; install the finished directory explicitly through Pi.
 
 A **passive preview** reads a declared browser view from the chosen development workspace without installing its Pi extension or starting a host service. Preview frames cannot call backend actions. Real execution must be tested separately after deliberate installation.
 

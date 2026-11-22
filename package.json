@@ -38,6 +38,7 @@
 		"src",
 		"scripts",
 		"public",
+		"resources/catalog",
 		"assets",
 		"next.config.ts",
 		"tsconfig.json",

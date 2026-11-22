@@ -37,6 +37,38 @@ const rowOf = (name: string) => {
 };
 
 describe("插件页面状态与布局", () => {
+	it.each([
+		{ tab: null, project: false, scope: "所有工作区" },
+		{ tab: /项目/, project: true, scope: "仅当前工作区" },
+	])("确认后才原生安装推荐扩展（$scope）", async ({ tab, project, scope }) => {
+		const source = "git:github.com/example/ask-user@v1.0.0";
+		const selection = { extensions: ["src/index.ts"], skills: [], prompts: [], themes: [] };
+		const mutations: unknown[] = [];
+		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			if (init?.method === "POST") {
+				mutations.push(JSON.parse(String(init.body)));
+				return { ok: true, json: async () => ({ success: true }) };
+			}
+			return { ok: true, json: async () => ({ success: true, data: {
+				packages: [], extensions: [], featured: [{ id: "ask-user", name: "问用户", description: "交互式选择", source, selection, installed: mutations.length > 0 }],
+			} }) };
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		render(<PluginsSection cwd="/workspace" />);
+		const recommended = await screen.findByRole("region", { name: "PiWeb 推荐扩展" });
+		if (tab) fireEvent.click(screen.getByRole("tab", { name: tab }));
+		expect(within(recommended).getByText("问用户")).toBeTruthy();
+		expect(mutations).toEqual([]);
+		fireEvent.click(within(recommended).getByRole("button", { name: "安装" }));
+		const dialog = within(await screen.findByRole("alertdialog"));
+		expect(dialog.getByText(new RegExp(scope))).toBeTruthy();
+		expect(mutations).toEqual([]);
+		fireEvent.click(dialog.getByRole("button", { name: "安装" }));
+		await within(recommended).findByText("已安装");
+		expect(mutations).toEqual([{ action: "install", cwd: "/workspace", source, local: project, selection }]);
+		expect(within(recommended).queryByRole("button", { name: "安装" })).toBeNull();
+	});
+
 	it("按 SDK 来源显示整包开关和作用域，不额外加载资源界面设置", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL) => ({
 			ok: true,
@@ -56,17 +88,21 @@ describe("插件页面状态与布局", () => {
 		expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith("/api/resources"))).toBe(false);
 		expect(screen.queryByRole("switch", { name: "package-child" })).toBeNull();
 		expect(screen.queryByText("package-child")).toBeNull();
-		expect(screen.getByRole("switch", { name: "/workspace/local-package" })).toBeTruthy();
+		expect(screen.getByRole("switch", { name: "local-package" })).toBeTruthy();
+		expect(screen.queryByText("/workspace/local-package")).toBeNull();
+		fireEvent.click(screen.getByText("local-package"));
+		expect(screen.getByText("/workspace/local-package")).toBeTruthy();
+		fireEvent.click(screen.getByText("local-package"));
 		expect(within(rowOf("workspace-file-global-config")).getByText("个人")).toBeTruthy();
 		expect(within(rowOf("external-file-project-config")).getByText("项目")).toBeTruthy();
 		fireEvent.click(screen.getByRole("tab", { name: /个人/ }));
 		expect(screen.getByText("workspace-file-global-config")).toBeTruthy();
 		expect(screen.queryByText("external-file-project-config")).toBeNull();
-		expect(screen.queryByRole("switch", { name: "/workspace/local-package" })).toBeNull();
+		expect(screen.queryByRole("switch", { name: "local-package" })).toBeNull();
 		fireEvent.click(screen.getByRole("tab", { name: /项目/ }));
 		expect(screen.queryByText("workspace-file-global-config")).toBeNull();
 		expect(screen.getByText("external-file-project-config")).toBeTruthy();
-		expect(screen.getByRole("switch", { name: "/workspace/local-package" })).toBeTruthy();
+		expect(screen.getByRole("switch", { name: "local-package" })).toBeTruthy();
 	});
 
 	it("停用的扩展：行内只有「已停用」，展开后不会又冒出「已启用」", async () => {
@@ -108,7 +144,7 @@ describe("插件页面状态与布局", () => {
 		expect(onUpdate.disabled).toBe(false);
 	});
 
-	it("启用的扩展显示「已启用」，内置扩展分节与添加入口都在", async () => {
+	it("启用的扩展显示「已启用」，保留内置扩展分节", async () => {
 		const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = String(input);
 			if (url.startsWith("/api/plugins/marketplace")) {
@@ -163,7 +199,6 @@ describe("插件页面状态与布局", () => {
 		expect(screen.getByRole("heading", { name: /^内置(?:插件|扩展)(?:配置)?$/ })).toBeTruthy();
 		expect(screen.getByRole("switch", { name: "Codemode" })).toBeTruthy();
 		expect(screen.queryByText(/尚未安装任何 pi 包/)).toBeNull();
-		expect(screen.getAllByRole("button", { name: /\+\s*添加(?:插件|扩展)/ })).toHaveLength(1);
 		// 市场已经独立成「资源市场」页，这边不再有市场页签
 		expect(screen.queryByRole("tab", { name: /市场/ })).toBeNull();
 	});

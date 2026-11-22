@@ -13,12 +13,14 @@ import {
 	IconSearchOutline16,
 	IconTerminalOutline14,
 } from "@/components/icons";
-import { AddResourceMenu } from "@/components/resources/AddResourceMenu";
-import { ResourceInstallModal, type StartResourceSession } from "@/components/resources/ResourceInstallModal";
+import { ResourceDesignWorkspace } from "@/components/resources/ResourceDesignWorkspace";
+import { PackageResourceSettings } from "@/components/resources/PackageResourceSettings";
+import { useResourceText } from "@/components/resources/text";
 import { notifyResourcesChanged } from "@/hooks/useResourceRegistry";
 import { useI18n } from "@/i18n";
 import { ScopeWorkspaceFilterBar } from "@/components/settings/SharedControls";
 import type { PluginResourceType } from "@/lib/plugins-service";
+import type { FeaturedExtension, ResourceSelection } from "@/lib/resources/protocol";
 
 // ---------- Plugins ----------
 
@@ -181,10 +183,6 @@ function PluginRow({
 export function PluginsSection({
 	cwd,
 	hideHeader = false,
-	installOpen,
-	installMode = "install",
-	onStartResourceSession,
-	onInstallOpenChange,
 	reloadSeq = 0,
 	onReloadBusyChange,
 	workspaceOptions,
@@ -192,10 +190,6 @@ export function PluginsSection({
 }: {
 	cwd: string;
 	hideHeader?: boolean;
-	installOpen?: boolean;
-	installMode?: "install" | "design";
-	onStartResourceSession?: StartResourceSession;
-	onInstallOpenChange?: (open: boolean) => void;
 	reloadSeq?: number;
 	onReloadBusyChange?: (busy: boolean) => void;
 	/** 切到「项目」页签时用来切换工作区 */
@@ -203,6 +197,7 @@ export function PluginsSection({
 	onCwdChange?: (cwd: string) => void;
 }) {
 	const { t, lang } = useI18n();
+	const resourceText = useResourceText();
 	const { confirm, confirmDialog } = useConfirmDialog();
 	const confirmUninstall = async (src: string) => {
 		const workspaceSeq = workspaceSeqRef.current;
@@ -212,12 +207,11 @@ export function PluginsSection({
 
 	const [packages, setPackages] = useState<PackageItem[]>([]);
 	const [extensions, setExtensions] = useState<ExtensionItem[]>([]);
+	const [featured, setFeatured] = useState<FeaturedExtension[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [scopeFilter, setScopeFilter] = useState<"all" | PluginScope>("all");
 	const [q, setQ] = useState("");
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
-	const [internalInstallOpen, setInternalInstallOpen] = useState(false);
-	const [internalInstallMode, setInternalInstallMode] = useState<"install" | "design">("install");
 	const [busy, setBusy] = useState(false);
 	const [busyKey, setBusyKey] = useState<string | null>(null);
 	const [toast, setToast] = useState<{ ok: boolean; msg: string; loading?: boolean } | null>(null);
@@ -225,9 +219,6 @@ export function PluginsSection({
 	const workspaceSeqRef = useRef(0);
 	const loadSeqRef = useRef(0);
 	const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	const modalOpen = installOpen ?? internalInstallOpen;
-	const setModalOpen = onInstallOpenChange ?? setInternalInstallOpen;
 
 	const load = useCallback(async () => {
 		const workspaceSeq = workspaceSeqRef.current;
@@ -239,6 +230,7 @@ export function PluginsSection({
 			if (j.success) {
 				setPackages(j.data.packages ?? []);
 				setExtensions(j.data.extensions ?? []);
+				setFeatured(j.data.featured ?? []);
 			} else setToast({ ok: false, msg: j.errorCode === "TRASH_UNAVAILABLE" ? t.apiErrorTrashUnavailable : j.error || t.toastError });
 		} catch (err: unknown) {
 			if (workspaceSeq === workspaceSeqRef.current && loadSeq === loadSeqRef.current) {
@@ -256,6 +248,7 @@ export function PluginsSection({
 		busyRef.current = false;
 		setPackages([]);
 		setExtensions([]);
+		setFeatured([]);
 		setLoading(true);
 		setExpanded(new Set());
 		setToast(null);
@@ -365,6 +358,15 @@ export function PluginsSection({
 		}
 	};
 
+	const confirmInstall = async (name: string, source: string, projectScope: boolean, selection?: ResourceSelection) => {
+		const workspaceSeq = workspaceSeqRef.current;
+		const scope = projectScope ? resourceText.project : resourceText.user;
+		const message = `${t.pluginInstallConfirm.replace("{source}", `${name} (${source})`)} ${resourceText.scope}: ${scope}`;
+		if (!(await confirm({ title: t.install, message, confirmLabel: t.install }))) return false;
+		if (workspaceSeq !== workspaceSeqRef.current) return false;
+		return act("install", { source, local: projectScope, selection }, undefined, t.installing, t.installSuccess);
+	};
+
 	const toggleExpand = (key: string) =>
 		setExpanded((prev) => {
 			const next = new Set(prev);
@@ -436,6 +438,7 @@ export function PluginsSection({
 	const localExtensions = extensions.filter((e) => placementOf(e).origin === "top-level");
 
 	const matchesQuery = (text: string) => !query || text.toLowerCase().includes(query);
+	const visibleFeatured = featured.filter((item) => matchesQuery(`${item.name} ${item.description} ${item.author} ${item.id}`));
 	// 内置扩展在「全部」视图集中展示，不占「个人 / 项目」扩展包计数
 	const visibleBuiltins = scopeFilter === "all"
 		? builtinExtensions.filter((e) => {
@@ -509,7 +512,7 @@ export function PluginsSection({
 		localExtensions.filter((e) => placementOf(e).scope === scope).length
 		+ packages.filter((p) => p.scope === scope).length;
 
-	const totalItems = builtinExtensions.length + localExtensions.length + packages.length;
+	const totalItems = builtinExtensions.length + localExtensions.length + packages.length + featured.length;
 	const showSearch = totalItems > 5 || query.length > 0;
 
 	const renderToggle = (label: string, itemKey: string, isDisabled: boolean, payload: Record<string, unknown>) => (
@@ -561,9 +564,6 @@ export function PluginsSection({
 						>
 							<IconRefreshOutline14 size={13} /> {t.panelRefresh}
 						</button>
-						<AddResourceMenu label={t.addPluginAction} disabled={busy}
-							onInstall={() => { setInternalInstallMode("install"); setModalOpen(true); }}
-							onDesign={() => { setInternalInstallMode("design"); setModalOpen(true); }} />
 					</div>
 				</div>
 			)}
@@ -588,6 +588,8 @@ export function PluginsSection({
 				}}
 			/>
 
+			<ResourceDesignWorkspace key={cwd} cwd={cwd} reloadSeq={reloadSeq} />
+
 			{showSearch && (
 				<div className="isx-search flex items-center gap-2.5 px-3.5" style={{ height: 38 }}>
 					<IconSearchOutline16 size={15} className="isx-search-icon flex-none" style={{ color: "var(--dsw-label-caption)" }} />
@@ -600,6 +602,33 @@ export function PluginsSection({
 						style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-primary)" }}
 					/>
 				</div>
+			)}
+
+			{visibleFeatured.length > 0 && (
+				<section aria-label={resourceText.featuredExtensions} className="flex flex-col gap-2">
+					<h2 className="pl-1 font-medium" style={{ fontSize: "var(--dsh-ui-font-sm)", color: "var(--dsw-label-secondary)" }}>
+						{resourceText.featuredExtensions}
+					</h2>
+					<div className="overflow-hidden rounded-xl" style={{ border: "0.5px solid var(--dsw-border-l2)", background: "var(--dsw-bg-elevated, transparent)" }}>
+						{visibleFeatured.map(({ id, name, description, source, selection, installed }, index) => (
+							<PluginRow
+								key={id}
+								borderedTop={index > 0}
+								icon={<IconPluginOutline16 size={16} />}
+								iconBg="rgba(129, 120, 255, 0.14)"
+								iconColor="#a59bff"
+								title={name}
+								subtitle={description}
+								controls={installed ? scopeBadge(resourceText.installed) : source ? (
+									<button type="button" className="btn-outline px-3 py-1.5" disabled={busy || loading}
+										onClick={() => void confirmInstall(name, source, scopeFilter === "project", selection)}>
+										{resourceText.install}
+									</button>
+								) : scopeBadge(resourceText.unavailable)}
+							/>
+						))}
+					</div>
+				</section>
 			)}
 
 			{/* 内置插件配置（SDK builtin:codemode / builtin:tool-search / builtin:mcp） */}
@@ -738,7 +767,10 @@ export function PluginsSection({
 					>
 						{visiblePackages.map((p, idx) => {
 							const key = `pkg:${p.scope}:${p.source}`;
-							const shortName = p.source.replace(/^npm:/, "").replace(/^git[^:]*:/, "");
+							const isLocalSource = !/^(?:npm:|git[^:]*:|github:|https?:|ssh:|builtin:)/i.test(p.source);
+							const shortName = isLocalSource
+								? p.source.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p.source
+								: p.source.replace(/^npm:/, "").replace(/^git[^:]*:/, "");
 							const isDisabled = p.disabled === true;
 							const open = expanded.has(key);
 							return (
@@ -757,7 +789,7 @@ export function PluginsSection({
 											{stateBadge(isDisabled)}
 										</>
 									}
-									subtitle={p.source}
+									subtitle={isLocalSource ? undefined : p.source}
 									expandable
 									expanded={open}
 									onToggleExpand={() => toggleExpand(key)}
@@ -769,6 +801,7 @@ export function PluginsSection({
 											<div style={{ color: "var(--dsw-label-caption)", fontSize: 11.5 }}>
 												{t.resources}: {p.resources.extensions} ext · {p.resources.skills} skills · {p.resources.prompts} prompts
 											</div>
+											{open && !isDisabled && <PackageResourceSettings item={p} extensions={extensions} cwd={cwd} />}
 										</>
 									}
 									controls={
@@ -869,7 +902,7 @@ export function PluginsSection({
 				</div>
 			)}
 
-			{!loading && visibleBuiltins.length === 0 && visibleLocals.length === 0 && visiblePackages.length === 0 && (
+			{!loading && visibleFeatured.length === 0 && visibleBuiltins.length === 0 && visibleLocals.length === 0 && visiblePackages.length === 0 && (
 				<div
 					className="flex flex-wrap items-center justify-between gap-4 rounded-xl px-4 py-4"
 					style={{
@@ -888,25 +921,6 @@ export function PluginsSection({
 					</div>
 				</div>
 			)}
-
-			<ResourceInstallModal
-				open={modalOpen}
-				mode={installOpen === undefined ? internalInstallMode : installMode}
-				onStartSession={onStartResourceSession}
-				cwd={cwd}
-				busy={busy}
-				onClose={() => setModalOpen(false)}
-				onSubmit={async (installSource, projectScope) => {
-					const workspaceSeq = workspaceSeqRef.current;
-					if (!(await confirm({ title: t.install, message: t.pluginInstallConfirm.replace("{source}", installSource), confirmLabel: t.install }))) return false;
-					if (workspaceSeq !== workspaceSeqRef.current) return false;
-					if (await act("install", { source: installSource, local: projectScope }, undefined, t.installing, t.installSuccess)) {
-						setModalOpen(false);
-						return true;
-					}
-					return false;
-				}}
-			/>
 
 			{confirmDialog}
 		</div>

@@ -4,6 +4,7 @@ import {
 	ExtensionToggleError,
 	ResourceRefreshError,
 	installPackage,
+	listFeaturedExtensions,
 	listLoadedExtensions,
 	listPackages,
 	reloadExtensions,
@@ -25,7 +26,11 @@ export async function GET(req: Request) {
 	try {
 		const cwd = await resolveWorkspacePath(new URL(req.url).searchParams.get("cwd") || APP_ROOT);
 		const [packages, extensions] = await Promise.all([listPackages(cwd), listLoadedExtensions(cwd)]);
-		return NextResponse.json({ success: true, data: { packages, extensions: extensions.map((extension) => extension.error ? { ...extension, error: publicDiagnostic(extension.error, "此扩展加载失败，请检查扩展配置后重新载入。") } : extension) } });
+		return NextResponse.json({ success: true, data: {
+			packages,
+			extensions: extensions.map((extension) => extension.error ? { ...extension, error: publicDiagnostic(extension.error, "此扩展加载失败，请检查扩展配置后重新载入。") } : extension),
+			featured: listFeaturedExtensions(cwd, packages),
+		} });
 	} catch (err: unknown) {
 		return NextResponse.json({ success: false, ...apiError(err, "读取插件失败，请检查文件权限或稍后重试。") }, { status: err instanceof BoundaryError ? 400 : 500 });
 	}

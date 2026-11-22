@@ -4,9 +4,6 @@ export const RESOURCE_FRAME_CHANNEL = "piweb-resource/v1" as const;
 /** Optional, declarative browser capabilities. No feature-specific URLs or tool names. */
 export const RESOURCE_BROWSER_CAPABILITIES = ["workspaces.list", "models.list", "sessions.open", "sessions.draft", "views.open"] as const;
 export type ResourceBrowserCapability = typeof RESOURCE_BROWSER_CAPABILITIES[number];
-export type ResourceNavigationIntent =
-	| { type: "sessions.open"; sessionPath: string }
-	| { type: "sessions.draft"; cwd: string; text: string };
 export interface ResourceDialogIntent {
 	type: "views.open";
 	view: WebResourceView;
@@ -20,7 +17,7 @@ export type ResourceScope = "user" | "project";
 export type ResourceCompatibility = "web" | "adapt" | "unknown";
 /** Pi's own per-package resource filters; a market item may select just one part of a Git package. */
 export interface ResourceSelection { extensions: string[]; skills: string[]; prompts: string[]; themes: string[] }
-export type ResourcePlacement = "dialog" | "panel" | "aboveEditor" | "belowEditor";
+export type ResourcePlacement = "dialog" | "panel" | "settings" | "aboveEditor" | "belowEditor";
 export type ResourceDialogMethod = "select" | "confirm" | "input" | "editor" | "web";
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -34,6 +31,8 @@ export interface ResourceView {
 	capabilities?: ResourceBrowserCapability[];
 	entry: string;
 	placement: ResourcePlacement;
+	/** Mount a request-free status view beside the composer. Only valid for aboveEditor/belowEditor. */
+	autoMount?: boolean;
 	/** Only explicit user selection makes this view the renderer of a standard Pi request. */
 	methods: ResourceDialogMethod[];
 }
@@ -76,6 +75,7 @@ export interface WebResourceView {
 	icon?: string;
 	capabilities?: ResourceBrowserCapability[];
 	placement: ResourcePlacement;
+	autoMount?: boolean;
 	methods: ResourceDialogMethod[];
 	url: string;
 	/** Passive development preview: frame actions must not reach an installed backend. */
@@ -100,6 +100,10 @@ export interface ResourceCatalogItem {
 export interface ResourceCatalog {
 	version: 1;
 	items: ResourceCatalogItem[];
+}
+
+export interface FeaturedExtension extends ResourceCatalogItem {
+	installed: boolean;
 }
 
 export interface ResourcePreferences {
@@ -167,6 +171,13 @@ export interface ResourceUiApi {
 	apiVersion: 1;
 	request(resourceId: string, viewId: string, data: JsonValue, options?: { title?: string; timeout?: number; signal?: AbortSignal }): Promise<ResourceUiOutcome>;
 	invoke(resourceId: string, action: string, args?: JsonValue): Promise<JsonValue>;
+	/** Optional v1 capability: uses this live session's SDK tool validation, hooks and permissions. Never exposed directly to a browser. */
+	executeTool?(name: string, args: JsonValue, options?: { signal?: AbortSignal }): Promise<ResourceToolOutcome>;
+}
+
+export interface ResourceToolOutcome {
+	isError: boolean;
+	result: { content: unknown[]; details?: unknown };
 }
 
 export interface ResourceFrameContext {
