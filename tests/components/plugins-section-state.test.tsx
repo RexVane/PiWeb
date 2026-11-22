@@ -37,38 +37,6 @@ const rowOf = (name: string) => {
 };
 
 describe("插件页面状态与布局", () => {
-	it.each([
-		{ tab: null, project: false, scope: "所有工作区" },
-		{ tab: /项目/, project: true, scope: "仅当前工作区" },
-	])("确认后才原生安装推荐扩展（$scope）", async ({ tab, project, scope }) => {
-		const source = "git:github.com/example/ask-user@v1.0.0";
-		const selection = { extensions: ["src/index.ts"], skills: [], prompts: [], themes: [] };
-		const mutations: unknown[] = [];
-		const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-			if (init?.method === "POST") {
-				mutations.push(JSON.parse(String(init.body)));
-				return { ok: true, json: async () => ({ success: true }) };
-			}
-			return { ok: true, json: async () => ({ success: true, data: {
-				packages: [], extensions: [], featured: [{ id: "ask-user", name: "问用户", description: "交互式选择", source, selection, installed: mutations.length > 0 }],
-			} }) };
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		render(<PluginsSection cwd="/workspace" />);
-		const recommended = await screen.findByRole("region", { name: "PiWeb 推荐扩展" });
-		if (tab) fireEvent.click(screen.getByRole("tab", { name: tab }));
-		expect(within(recommended).getByText("问用户")).toBeTruthy();
-		expect(mutations).toEqual([]);
-		fireEvent.click(within(recommended).getByRole("button", { name: "安装" }));
-		const dialog = within(await screen.findByRole("alertdialog"));
-		expect(dialog.getByText(new RegExp(scope))).toBeTruthy();
-		expect(mutations).toEqual([]);
-		fireEvent.click(dialog.getByRole("button", { name: "安装" }));
-		await within(recommended).findByText("已安装");
-		expect(mutations).toEqual([{ action: "install", cwd: "/workspace", source, local: project, selection }]);
-		expect(within(recommended).queryByRole("button", { name: "安装" })).toBeNull();
-	});
-
 	it("按 SDK 来源显示整包开关和作用域，不额外加载资源界面设置", async () => {
 		const fetchMock = vi.fn(async (_input: RequestInfo | URL) => ({
 			ok: true,

@@ -1,4 +1,10 @@
-import { resourceRelativePath } from "./manifest";
+import path from "node:path";
+export function resourceRelativePath(value: unknown): string {
+	if (typeof value !== "string" || !value || value.length > 512 || /[\x00-\x1f\x7f\\?#%]/.test(value)) throw new Error("Invalid resource entry path");
+	const normalized = value.replace(/^\.\//, "");
+	if (path.posix.isAbsolute(normalized) || /^[a-z]:/i.test(normalized) || normalized.split("/").some((part) => !part || part === "." || part === ".." || part.startsWith("."))) throw new Error("Resource entry must stay inside its package");
+	return normalized;
+}
 import type { ResourceSelection } from "./protocol";
 
 const TYPES = ["extensions", "skills", "prompts", "themes"] as const;
@@ -11,7 +17,7 @@ export function parseResourceSelection(raw: unknown): ResourceSelection {
 		if (!Array.isArray(values) || values.length > 128) throw new Error("Invalid Pi resource filter");
 		result[type] = [...new Set(values.map((value) => {
 			const clean = resourceRelativePath(value);
-			if (/[*!+]/.test(clean) || clean.startsWith("-")) throw new Error("Market selections must name exact declared paths");
+			if (/[*!+]/.test(clean) || clean.startsWith("-")) throw new Error("Pi selections must name exact declared paths");
 			return clean;
 		}))];
 	}

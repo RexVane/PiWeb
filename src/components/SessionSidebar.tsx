@@ -73,7 +73,7 @@ function basename(p: string): string {
 
 type GroupBy = "workspace" | "flat";
 type OrderBy = "updated" | "manual";
-export type WorkspaceView = "chat" | "skills" | "plugins" | "prompts" | `resource:${string}`;
+export type WorkspaceView = "chat" | "skills" | "plugins" | "prompts";
 
 interface WorkspaceGroup {
 	cwd: string;
@@ -122,7 +122,6 @@ function SessionSidebarImpl({
 	draftCwd,
 	activeView = "chat",
 	onSelectView,
-	resourcePanels = [],
 }: {
 	sessions: SessionListItem[];
 	sessionListError?: string | null;
@@ -173,7 +172,6 @@ function SessionSidebarImpl({
 	activeView?: WorkspaceView;
 	onSelectView?: (view: Exclude<WorkspaceView, "chat">) => void;
 	/** 已启用的资源面板（placement=panel）：在侧栏各占一项，点开在主区域渲染 */
-	resourcePanels?: { id: string; label: string; icon?: React.ReactNode }[];
 }) {
 	const { t, lang } = useI18n();
 	const [q, setQ] = useState("");
@@ -454,8 +452,6 @@ function SessionSidebarImpl({
 	const workspaceNavItems: { id: Exclude<WorkspaceView, "chat">; label: string; icon: React.ReactNode }[] = [
 		{ id: "skills", label: t.navSkills, icon: <IconSkillOutline16 size={15} /> },
 		{ id: "plugins", label: t.navPlugins, icon: <IconPluginOutline16 size={15} /> },
-		// 已启用的资源面板排在「扩展」之后，与内置页并列，可直接在主区域打开。
-		...resourcePanels.map((panel) => ({ id: `resource:${panel.id}` as const, label: panel.label, icon: panel.icon ?? <IconCubeOutline16 size={15} /> })),
 		{ id: "prompts", label: t.navPromptTemplates, icon: <IconFileOutline16 size={15} /> },
 	];
 

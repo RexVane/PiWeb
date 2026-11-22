@@ -49,7 +49,7 @@
 ## 部署健康检查
 
 - **liveness**：`GET /api/health` 保持原样，返回静态 `{ ok: true, service: "piweb" }`，不查依赖、不泄露内部状态，用于“进程是否活着/端口是否可连”。匿名可访问。
-- **readiness**：`GET /api/health/readiness` 在 liveness 之外检查数据目录可写（真实写探针文件）、`settings.json`/`models.json`/`auth.json` 可解析，并报告可选资源后台服务状态。任一核心检查失败返回 **503** 和可读原因（`not ready: …`）；可选资源服务报错只作为 `warnings` 报告，不把实例判为未就绪。该路由受启动令牌/会话 Cookie 保护（`proxy.ts` 只匿名放行精确路径 `/api/health`），监控端需要带认证（本机可再次运行 `piweb` 获取登录凭据，或接入自己的 Cookie）。
+- **readiness**：`GET /api/health/readiness` 在 liveness 之外检查数据目录可写（真实写探针文件）、`settings.json`/`models.json`/`auth.json` 可解析。任一核心检查失败返回 **503** 和可读原因（`not ready: …`）。该路由受启动令牌/会话 Cookie 保护（`proxy.ts` 只匿名放行精确路径 `/api/health`），监控端需要带认证（本机可再次运行 `piweb` 获取登录凭据，或接入自己的 Cookie）。
 
 容器/反向代理的探针建议：liveness 用 `/api/health`；就绪/滚动更新用带认证的 `/api/health/readiness`，并把首次安装自愈构建的时间窗口算进去（见上节）。
 

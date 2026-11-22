@@ -7,8 +7,8 @@
  * 不进入 props（改为打开时惰性读取），所以 messages 变化不会击穿 memo。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render } from "@testing-library/react";
-import { useState } from "react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { useState, type ReactNode } from "react";
 import { AppShell } from "@/components/AppShell";
 import type { WebMessage } from "@/lib/types";
 
@@ -19,6 +19,7 @@ const counters = vi.hoisted(() => ({
 	pushMessages: null as null | ((update: (messages: WebMessage[]) => WebMessage[]) => void),
 	lastProps: null as null | Record<string, unknown>,
 	diff: [] as string[],
+	registryCwd: undefined as string | undefined,
 }));
 
 const model = { id: "test-model", name: "Test", provider: "test", reasoning: false, contextWindow: 1000, thinkingLevels: [] };
@@ -62,6 +63,7 @@ vi.mock("next/dynamic", () => ({
 	},
 }));
 vi.mock("@/lib/theme", () => ({ syncPebrelTheme: () => {} }));
+
 vi.mock("@/hooks/useGrowth", () => ({
 	useGrowth: () => ({
 		available: false, loading: false, error: null, rounds: [], selected: null, scope: "session", range: undefined,
@@ -83,7 +85,7 @@ vi.mock("@/components/ChatInput", () => ({
 			counters.diff = Object.keys(props).filter((key) => props[key] !== counters.lastProps![key]);
 		}
 		counters.lastProps = props;
-		return null;
+		return <div>{props.topSlot as ReactNode}</div>;
 	},
 	EMPTY_CHAT_DRAFT: { text: "", images: [], uploads: [], references: [] },
 }));
@@ -147,7 +149,7 @@ vi.mock("@/hooks/usePiWeb", () => ({
 	},
 }));
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); });
 
 describe("Composer isolation", () => {
 	it("does not re-render the composer when only streaming messages change", () => {

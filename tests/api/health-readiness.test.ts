@@ -8,8 +8,6 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as liveness } from "../../src/app/api/health/route";
 import { GET as readiness } from "../../src/app/api/health/readiness/route";
-const resources = vi.hoisted(() => vi.fn(() => [] as Array<{ id: string; scope: string; state: string; services: string[]; active: number }>));
-vi.mock("../../src/lib/resources/host", () => ({ resourceHostStatuses: resources }));
 import { recycleGeneratedFixture } from "../fixtures/system-trash";
 
 const ENV_KEYS = ["PI_CODING_AGENT_DIR"] as const;
@@ -18,7 +16,6 @@ let root: string;
 let agentDir: string;
 
 beforeEach(async () => {
-	resources.mockReturnValue([]);
 	previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 	root = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-readiness-"));
 	agentDir = path.join(root, "agent");
@@ -55,16 +52,8 @@ describe("readiness", () => {
 		expect(body.data.ready).toBe(true);
 		expect(body.data.checks.dataDir.ok).toBe(true);
 		expect(body.data.checks.modelConfig.ok).toBe(true);
-		// An empty optional resource service registry is a healthy baseline.
-		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [] });
 	});
 
-	it("reports optional resource service states through the public registry", async () => {
-		await fs.mkdir(agentDir, { recursive: true });
-		resources.mockReturnValue([{ id: "third-party", scope: "user", state: "running", services: ["watcher"], active: 0 }]);
-		const body = await (await readiness()).json();
-		expect(body.data.checks.resources).toMatchObject({ ok: true, services: [{ id: "third-party", services: ["watcher"] }] });
-	});
 
 	it("returns 503 with a readable reason when settings.json is corrupt", async () => {
 		await fs.mkdir(agentDir, { recursive: true });

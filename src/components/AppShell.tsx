@@ -17,8 +17,6 @@ import { ExtensionDialogHost, ExtensionNotices, ExtensionWidgets } from "@/compo
 import { UpdateNotice } from "@/components/update/UpdateNotice";
 import dynamic from "next/dynamic";
 import { SessionSidebar, type WorkspaceView } from "@/components/SessionSidebar";
-import { ResourceFrame } from "@/components/resources/ResourceFrame";
-import { ResourceNavigationProvider } from "@/components/resources/ResourceNavigation";
 import type { DrawerSection } from "@/components/DrawerPanel";
 import { preserveChatReadingPosition } from "@/components/chat/reading-anchor";
 import { canonicalDraftPath, knownWorkspaceCwds, sameWorkspacePath } from "@/lib/workspace-path";
@@ -66,8 +64,6 @@ import {
 } from "@/components/icons";
 import { useI18n } from "@/i18n";
 import { usePiWeb } from "@/hooks/usePiWeb";
-import { useResourceRegistry } from "@/hooks/useResourceRegistry";
-import { useDialogRenderers } from "@/hooks/useDialogRenderers";
 import { useGrowth } from "@/hooks/useGrowth";
 import { useFileViewer } from "@/hooks/useFileViewer";
 import { useAttentionNotifications } from "@/hooks/useAttentionNotifications";
@@ -794,24 +790,6 @@ export function AppShell() {
 		setActiveView("chat");
 		setMobileSidebarOpen(false);
 	}, [closeSession]);
-	const resourceNavigation = useMemo(() => ({
-		openSession: openSessionAndCloseMobileNav,
-		continueDesign: (cwd: string) => {
-			const latest = sessions.filter((session) => samePath(session.cwd, cwd))
-				.sort((first, second) => second.modified.localeCompare(first.modified))[0];
-			if (latest) openSessionAndCloseMobileNav(latest.path);
-			else {
-				setHeroDraftKey(`__hero__:${++draftSequence.current}`);
-				startNewSessionInWorkspace(cwd);
-			}
-		},
-		createDraft: (cwd: string, text: string) => {
-			// A fresh draft preserves the user's current unsent text and attachments.
-			const key = `__hero__:${++draftSequence.current}`;
-			updateDraft(key, { ...EMPTY_CHAT_DRAFT, text });
-			setHeroDraftKey(key); startNewSessionInWorkspace(cwd);
-		},
-	}), [openSessionAndCloseMobileNav, sessions, startNewSessionInWorkspace, updateDraft]);
 
 	const exportSessionFile = useCallback((path: string) => {
 		window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank");
@@ -979,33 +957,6 @@ export function AppShell() {
 
 	// 项目栏/文件查看器的工作区：当前会话的工作区优先，快照未到时回落到会话列表里的 cwd
 	const panelCwd = snapshot?.cwd || currentSession?.cwd || heroCwd || knownCwds[0] || "";
-	const resourceRegistry = useResourceRegistry(panelCwd);
-	// 已启用的面板资源直接进侧栏，与技能/扩展/提示词模板并列。
-	const resourcePanels = useMemo(() => resourceRegistry.views.filter((view) => view.placement === "panel").map((view) => ({
-		id: view.id, label: view.titles?.[lang as keyof NonNullable<typeof view.titles>] ?? view.title,
-		icon: view.icon === "clock" ? <IconClockOutline16 size={15} /> : view.icon === "chat" ? <IconChatBubbleOutline16 size={15} /> : view.icon === "file" ? <IconFileOutline16 size={15} /> : view.icon === "terminal" ? <IconTerminalOutline14 size={15} /> : view.icon === "plugin" ? <IconPluginOutline16 size={15} /> : <IconCubeOutline16 size={15} />,
-	})), [resourceRegistry.views, lang]);
-	const activeResourcePanel = activeView.startsWith("resource:") ? resourceRegistry.views.find((view) => view.placement === "panel" && `resource:${view.id}` === activeView) : undefined;
-	useEffect(() => {
-		if (activeView.startsWith("resource:") && resourceRegistry.loaded && resourceRegistry.registryCwd === panelCwd && !activeResourcePanel) setActiveView("chat");
-	}, [activeView, activeResourcePanel, resourceRegistry.loaded, resourceRegistry.registryCwd, panelCwd]);
-	const { embedded: embeddedDialog, modal: modalDialog } = useDialogRenderers(state.extensionDialogs, resourceRegistry, panelCwd, currentPath);
-	const requestDialog = embeddedDialog?.dialog;
-	const requestRenderer = embeddedDialog?.renderer;
-	const embeddedRequest = useMemo(() => requestDialog ? <ExtensionDialogHost key={requestDialog.id} dialog={requestDialog} embedded cwd={panelCwd} sessionPath={currentPath ?? undefined}
-		renderer={requestRenderer} onAnswer={(id, response) => void answerExtensionDialog(id, response)} /> : undefined,
-	[requestDialog, requestRenderer, panelCwd, currentPath, answerExtensionDialog]);
-	const automaticComposerViews = useMemo(() => resourceRegistry.loaded && resourceRegistry.registryCwd === panelCwd && !resourceRegistry.error
-		? resourceRegistry.views.filter((view) => view.autoMount === true && !view.preview && view.methods.length === 0
-			&& (view.placement === "aboveEditor" || view.placement === "belowEditor")) : [],
-	[resourceRegistry.views, resourceRegistry.loaded, resourceRegistry.registryCwd, resourceRegistry.error, panelCwd]);
-	const automaticAboveEditor = useMemo(() => currentPath ? automaticComposerViews.filter((view) => view.placement === "aboveEditor").map((view) =>
-		<ResourceFrame key={`${panelCwd}:${currentPath}:${view.id}:${view.url}`} view={view} cwd={panelCwd} sessionPath={currentPath} />) : [], [automaticComposerViews, panelCwd, currentPath]);
-	const automaticBelowEditor = useMemo(() => currentPath ? automaticComposerViews.filter((view) => view.placement === "belowEditor").map((view) =>
-		<ResourceFrame key={`${panelCwd}:${currentPath}:${view.id}:${view.url}`} view={view} cwd={panelCwd} sessionPath={currentPath} />) : [], [automaticComposerViews, panelCwd, currentPath]);
-	const composerTopSlot = useMemo(() => {
-		return embeddedDialog?.placement === "aboveEditor" ? embeddedRequest : undefined;
-	}, [embeddedDialog?.placement, embeddedRequest]);
 
 	// Git 面板自动刷新：pi 每完成一个会改动文件的工具，或一轮结束时，静默重拉
 	const mutatingDone = useMemo(
@@ -1207,7 +1158,6 @@ export function AppShell() {
 	);
 
 	return (
-		<ResourceNavigationProvider value={resourceNavigation}>
 		<div
 			className={`pw-app-shell ${shellStyles.shell} grid w-screen overflow-hidden`}
 			style={{
@@ -1267,7 +1217,6 @@ export function AppShell() {
 					draftCwd={activeView === "chat" && !currentId ? heroCwd || null : null}
 					activeView={activeView}
 					onSelectView={selectWorkspaceView}
-					resourcePanels={resourcePanels}
 				/>
 			</div>
 
@@ -1295,11 +1244,7 @@ export function AppShell() {
 						getWorkspaceName={getWorkspaceName}
 						onOpenFileContent={(path, content, sourceCwd) => viewer.openStatic(path, content, path, sourceCwd)}
 					/>
-				) : activeResourcePanel ? (
-					<div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-5">
-						<ResourceFrame key={activeResourcePanel.id} view={activeResourcePanel} cwd={panelCwd} sessionPath={currentPath ?? undefined} />
-					</div>
-				) : !currentId ? (
+				 ) : !currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
 						<div className="flex shrink-0 justify-end px-5 pt-3">{drawerToggle}</div>
 						<Hero
@@ -1420,12 +1365,8 @@ export function AppShell() {
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
-										{automaticAboveEditor}
 										<DraftChatInput
-											topSlot={composerTopSlot}
 											key={draftKey}
-											// Independent resource requests may occupy the composer slot.
-											attachmentLayout={embeddedDialog || automaticAboveEditor.length ? "flow" : undefined}
 												draftStore={draftStore}
 												draftKey={draftKey}
 												onDraftChange={saveSessionDraft}
@@ -1465,8 +1406,6 @@ export function AppShell() {
 											onEditQueue={editQueuePrompt}
 											onSendQueueNow={sendQueueNowPrompt}
 										/>
-										{embeddedDialog?.placement === "belowEditor" && embeddedRequest}
-										{automaticBelowEditor}
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="belowEditor" className="mt-1" />
 										{Object.keys(state.extensionStatuses).length > 0 && (
@@ -1522,7 +1461,7 @@ export function AppShell() {
 				/>
 			)}
 
-			<ExtensionDialogHost dialog={modalDialog?.dialog ?? null} cwd={panelCwd} sessionPath={currentPath ?? undefined} renderer={modalDialog?.renderer} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
+			<ExtensionDialogHost dialog={state.extensionDialogs[0] ?? null} onAnswer={(id, response) => void answerExtensionDialog(id, response)} />
 
 			{/* 只有远程设备（手机走 tailnet）会走到这里：本机仍然用系统原生对话框 */}
 			{dirPickerOpen && <DirectoryPicker open onConfirm={(path) => void confirmDirPicker(path)} onCancel={cancelDirPicker} />}
@@ -1569,7 +1508,6 @@ export function AppShell() {
 				/>
 			)}
 		</div>
-		</ResourceNavigationProvider>
 	);
 }
 
