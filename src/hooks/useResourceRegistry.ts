@@ -6,7 +6,7 @@ import type { ResourcePreferences, ResourceScope, WebResourceView } from "@/lib/
 export const RESOURCE_CHANGE_EVENT = "piweb:resources-changed";
 export function notifyResourcesChanged(): void { window.dispatchEvent(new Event(RESOURCE_CHANGE_EVENT)); }
 export interface ResourceRegistry {
-	packages: Array<{ id: string; name: string; scope: ResourceScope; source: string; enabled: boolean; extensionPaths: string[] }>;
+	packages: Array<{ id: string; name: string; scope: ResourceScope; source: string; enabled: boolean; extensionPaths: string[]; error?: string }>;
 	views: WebResourceView[];
 	preferences: ResourcePreferences;
 	hosts: Array<{ id: string; scope: string; state: string; services: string[]; active: number }>;

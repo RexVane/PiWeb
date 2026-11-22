@@ -76,12 +76,12 @@ export function webResourceView(resource: ResourcePackage, view: ResourceView): 
 	const token = Buffer.from(JSON.stringify({ cwd: resource.cwd, source: resource.source, scope: resource.scope, resourceId: resource.id, view: view.id, revision: resource.version })).toString("base64url");
 	return { id: resourceViewId(resource, view), resourceId: resource.id, scope: resource.scope, title: view.title, placement: view.placement, methods: view.methods,
 		...(view.titles ? { titles: view.titles } : {}), ...(view.icon ? { icon: view.icon } : {}), ...(view.capabilities ? { capabilities: view.capabilities } : {}),
+		...(view.autoMount ? { autoMount: true } : {}),
 		url: `/api/resources/views/${token}/assets/${encodeURIComponent(path.posix.basename(view.entry))}` };
 }
 export async function resourceViews(cwd: string): Promise<WebResourceView[]> {
 	return (await discoverResourcePackages(cwd)).filter((resource) => resource.enabled && resource.manifest).flatMap((resource) => resource.manifest!.views.map((view) => webResourceView(resource, view)));
 }
-export async function findResourceView(cwd: string, id: string): Promise<WebResourceView | undefined> { return (await resourceViews(cwd)).find((view) => view.id === id); }
 export function parseResourceViewToken(token: string): { cwd: string; source: string; scope: "user" | "project"; resourceId?: string; preview?: boolean; view: string } {
 	if (typeof token !== "string" || token.length > 12_000 || !/^[\w-]+$/.test(token)) throw new Error("Invalid resource view token");
 	const value = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));

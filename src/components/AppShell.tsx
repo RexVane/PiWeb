@@ -794,25 +794,24 @@ export function AppShell() {
 		setActiveView("chat");
 		setMobileSidebarOpen(false);
 	}, [closeSession]);
-	const startResourceSession = useCallback(async (cwd: string, prompt: string): Promise<boolean> => {
-		const model = heroChoice ?? (snapshot?.model ? { provider: snapshot.model.provider, id: snapshot.model.id } : null);
-		if (!model) { setError(t.blockedComposer); return false; }
-		const created = await newSession(cwd, { provider: model.provider, modelId: model.id });
-		if (!created) return false;
-		setActiveView("chat"); setMobileSidebarOpen(false);
-		const result = await sendCommand({ cmd: "prompt", text: prompt }, encodeURIComponent(b64url(created)));
-		return result.success === true;
-	}, [heroChoice, snapshot?.model, newSession, sendCommand, setError, t.blockedComposer]);
-
 	const resourceNavigation = useMemo(() => ({
 		openSession: openSessionAndCloseMobileNav,
+		continueDesign: (cwd: string) => {
+			const latest = sessions.filter((session) => samePath(session.cwd, cwd))
+				.sort((first, second) => second.modified.localeCompare(first.modified))[0];
+			if (latest) openSessionAndCloseMobileNav(latest.path);
+			else {
+				setHeroDraftKey(`__hero__:${++draftSequence.current}`);
+				startNewSessionInWorkspace(cwd);
+			}
+		},
 		createDraft: (cwd: string, text: string) => {
 			// A fresh draft preserves the user's current unsent text and attachments.
 			const key = `__hero__:${++draftSequence.current}`;
 			updateDraft(key, { ...EMPTY_CHAT_DRAFT, text });
 			setHeroDraftKey(key); startNewSessionInWorkspace(cwd);
 		},
-	}), [openSessionAndCloseMobileNav, startNewSessionInWorkspace, updateDraft]);
+	}), [openSessionAndCloseMobileNav, sessions, startNewSessionInWorkspace, updateDraft]);
 
 	const exportSessionFile = useCallback((path: string) => {
 		window.open(`/api/sessions/${encodeURIComponent(b64url(path))}/export?format=jsonl`, "_blank");
@@ -986,10 +985,27 @@ export function AppShell() {
 		id: view.id, label: view.titles?.[lang as keyof NonNullable<typeof view.titles>] ?? view.title,
 		icon: view.icon === "clock" ? <IconClockOutline16 size={15} /> : view.icon === "chat" ? <IconChatBubbleOutline16 size={15} /> : view.icon === "file" ? <IconFileOutline16 size={15} /> : view.icon === "terminal" ? <IconTerminalOutline14 size={15} /> : view.icon === "plugin" ? <IconPluginOutline16 size={15} /> : <IconCubeOutline16 size={15} />,
 	})), [resourceRegistry.views, lang]);
-	const activeResourcePanel = activeView.startsWith("resource:") ? resourceRegistry.views.find((view) => `resource:${view.id}` === activeView) : undefined;
+	const activeResourcePanel = activeView.startsWith("resource:") ? resourceRegistry.views.find((view) => view.placement === "panel" && `resource:${view.id}` === activeView) : undefined;
+	useEffect(() => {
+		if (activeView.startsWith("resource:") && resourceRegistry.loaded && resourceRegistry.registryCwd === panelCwd && !activeResourcePanel) setActiveView("chat");
+	}, [activeView, activeResourcePanel, resourceRegistry.loaded, resourceRegistry.registryCwd, panelCwd]);
 	const { embedded: embeddedDialog, modal: modalDialog } = useDialogRenderers(state.extensionDialogs, resourceRegistry, panelCwd, currentPath);
-	const embeddedRequest = embeddedDialog ? <ExtensionDialogHost key={embeddedDialog.dialog.id} dialog={embeddedDialog.dialog} embedded cwd={panelCwd} sessionPath={currentPath ?? undefined}
-		renderer={embeddedDialog.renderer} onAnswer={(id, response) => void answerExtensionDialog(id, response)} /> : undefined;
+	const requestDialog = embeddedDialog?.dialog;
+	const requestRenderer = embeddedDialog?.renderer;
+	const embeddedRequest = useMemo(() => requestDialog ? <ExtensionDialogHost key={requestDialog.id} dialog={requestDialog} embedded cwd={panelCwd} sessionPath={currentPath ?? undefined}
+		renderer={requestRenderer} onAnswer={(id, response) => void answerExtensionDialog(id, response)} /> : undefined,
+	[requestDialog, requestRenderer, panelCwd, currentPath, answerExtensionDialog]);
+	const automaticComposerViews = useMemo(() => resourceRegistry.loaded && resourceRegistry.registryCwd === panelCwd && !resourceRegistry.error
+		? resourceRegistry.views.filter((view) => view.autoMount === true && !view.preview && view.methods.length === 0
+			&& (view.placement === "aboveEditor" || view.placement === "belowEditor")) : [],
+	[resourceRegistry.views, resourceRegistry.loaded, resourceRegistry.registryCwd, resourceRegistry.error, panelCwd]);
+	const automaticAboveEditor = useMemo(() => currentPath ? automaticComposerViews.filter((view) => view.placement === "aboveEditor").map((view) =>
+		<ResourceFrame key={`${panelCwd}:${currentPath}:${view.id}:${view.url}`} view={view} cwd={panelCwd} sessionPath={currentPath} />) : [], [automaticComposerViews, panelCwd, currentPath]);
+	const automaticBelowEditor = useMemo(() => currentPath ? automaticComposerViews.filter((view) => view.placement === "belowEditor").map((view) =>
+		<ResourceFrame key={`${panelCwd}:${currentPath}:${view.id}:${view.url}`} view={view} cwd={panelCwd} sessionPath={currentPath} />) : [], [automaticComposerViews, panelCwd, currentPath]);
+	const composerTopSlot = useMemo(() => {
+		return embeddedDialog?.placement === "aboveEditor" ? embeddedRequest : undefined;
+	}, [embeddedDialog?.placement, embeddedRequest]);
 
 	// Git 面板自动刷新：pi 每完成一个会改动文件的工具，或一轮结束时，静默重拉
 	const mutatingDone = useMemo(
@@ -1271,7 +1287,6 @@ export function AppShell() {
 						knownCwds={knownCwds}
 						defaultCwd={panelCwd}
 						getWorkspaceName={getWorkspaceName}
-						onStartResourceSession={startResourceSession}
 					/>
 				) : activeView === "prompts" ? (
 					<PromptTemplatesWorkspaceView
@@ -1405,11 +1420,12 @@ export function AppShell() {
 									<div className="mx-auto w-full" style={{ maxWidth: "var(--dsh-composer-card-max-width)" }}>
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
+										{automaticAboveEditor}
 										<DraftChatInput
-											topSlot={embeddedDialog?.placement === "aboveEditor" ? embeddedRequest : undefined}
+											topSlot={composerTopSlot}
 											key={draftKey}
 											// Independent resource requests may occupy the composer slot.
-											attachmentLayout={embeddedDialog ? "flow" : undefined}
+											attachmentLayout={embeddedDialog || automaticAboveEditor.length ? "flow" : undefined}
 												draftStore={draftStore}
 												draftKey={draftKey}
 												onDraftChange={saveSessionDraft}
@@ -1450,6 +1466,7 @@ export function AppShell() {
 											onSendQueueNow={sendQueueNowPrompt}
 										/>
 										{embeddedDialog?.placement === "belowEditor" && embeddedRequest}
+										{automaticBelowEditor}
 										<SessionStatsBar stats={snapshot?.stats ?? null} />
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="belowEditor" className="mt-1" />
 										{Object.keys(state.extensionStatuses).length > 0 && (

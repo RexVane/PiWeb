@@ -3,7 +3,6 @@ import { useI18n } from "@/i18n";
 
 const en = {
 	retry: "Retry",
-	featuredExtensions: "Recommended PiWeb extensions",
 	designDirectory: "Development folder (not installed)", designDirectoryHint: "This is where the source is saved. Install it with Pi only when you’re ready.", designWorkspace: "Extension design workspace", continueDesign: "Continue designing",
 	advancedOptions: "Advanced options",
 	pickLocalDirectory: "Choose local folder",
@@ -17,7 +16,6 @@ const en = {
 type Text = { [K in keyof typeof en]: string };
 const zh: Text = {
 	retry: "重试",
-	featuredExtensions: "PiWeb 推荐扩展",
 	designDirectory: "开发目录（不安装）", designDirectoryHint: "这里只保存源码，完成后再按 Pi 原生方式手动安装。", designWorkspace: "扩展设计工作区", continueDesign: "继续设计",
 	advancedOptions: "高级选项",
 	pickLocalDirectory: "选择本地目录",
@@ -30,7 +28,6 @@ const zh: Text = {
 };
 const hant: Text = { ...zh,
 	retry: "重試",
-	featuredExtensions: "PiWeb 推薦擴充功能",
 	designDirectory: "開發目錄（不安裝）", designDirectoryHint: "這裡只儲存原始碼，完成後再依 Pi 原生方式手動安裝。", designWorkspace: "擴充功能設計工作區", continueDesign: "繼續設計",
 	advancedOptions: "進階選項",
 	pickLocalDirectory: "選擇本機資料夾",
@@ -39,7 +36,6 @@ const hant: Text = { ...zh,
 };
 const ja: Text = {
 	retry: "再試行",
-	featuredExtensions: "PiWeb おすすめ拡張",
 	designDirectory: "開発フォルダー（未インストール）", designDirectoryHint: "ここにはソースのみを保存します。完成後に Pi で手動インストールしてください。", designWorkspace: "拡張開発ワークスペース", continueDesign: "設計を続ける",
 	advancedOptions: "詳細オプション",
 	pickLocalDirectory: "ローカルフォルダーを選択",
@@ -48,7 +44,6 @@ const ja: Text = {
 };
 const ru: Text = {
 	retry: "Повторить",
-	featuredExtensions: "Рекомендуемые расширения PiWeb",
 	designDirectory: "Папка разработки (без установки)", designDirectoryHint: "Здесь сохраняется только исходный код. Готовое расширение можно установить вручную через Pi.", designWorkspace: "Рабочая папка расширения", continueDesign: "Продолжить разработку",
 	advancedOptions: "Дополнительные настройки",
 	pickLocalDirectory: "Выбрать локальную папку",

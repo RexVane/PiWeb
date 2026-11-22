@@ -8,6 +8,8 @@ import { useResourceText } from "./text";
 import { useResourceNavigation } from "./ResourceNavigation";
 
 const RESOURCE_THEME_PROPERTY = /^--(?:dsw|dsh|pw|isx|ds|font)-/;
+const RESOURCE_DOCUMENT_LOAD_TIMEOUT_MS = 30_000;
+const RESOURCE_BRIDGE_READY_TIMEOUT_MS = 10_000;
 /**
  * 资源帧拿不到宿主样式表，只能把设计令牌作为自定义属性传进去。
  * 从 frame 的挂载点沿祖先链往上读，而不是只读 :root——
@@ -38,18 +40,28 @@ export function ResourceFrame(props: {
 	view: WebResourceView; cwd: string; sessionPath?: string; request?: JsonValue; data?: JsonValue;
 	onAnswer?: (value: JsonValue) => void; onCancel?: () => void; onUnavailable?: () => void; onBusyChange?: (busy: boolean) => void;
 }) {
-	return <ResourceFrameBody key={`${props.view.id}:${props.view.url}`} {...props} />;
+	const automatic = isAutomatic(props.view);
+	const [attempt, setAttempt] = useState(0);
+	return <ResourceFrameBody key={`${props.view.id}:${props.view.url}:${automatic ? JSON.stringify([props.cwd, props.sessionPath]) : ""}:${attempt}`} {...props} onRetry={() => setAttempt((value) => value + 1)} />;
 }
 
-function ResourceFrameBody({ view, cwd, sessionPath, request, data, onAnswer, onCancel, onUnavailable, onBusyChange }: {
+function isAutomatic(view: WebResourceView): boolean {
+	return view.autoMount === true && (view.placement === "aboveEditor" || view.placement === "belowEditor") && view.methods.length === 0;
+}
+
+function ResourceFrameBody({ view, cwd, sessionPath, request, data, onAnswer, onCancel, onUnavailable, onBusyChange, onRetry }: {
 	view: WebResourceView; cwd: string; sessionPath?: string; request?: JsonValue; data?: JsonValue;
 	onAnswer?: (value: JsonValue) => void; onCancel?: () => void; onUnavailable?: () => void; onBusyChange?: (busy: boolean) => void;
+	onRetry: () => void;
 }) {
 	const text = useResourceText();
 	const navigation = useResourceNavigation();
 	const { lang } = useI18n();
 	const iframe = useRef<HTMLIFrameElement>(null);
-	const [height, setHeight] = useState(260);
+	const documentState = useRef<"loading" | "loaded" | "failed">("loading");
+	const frameLifecycle = useRef<{ loaded: () => void; fail: () => void } | null>(null);
+	const automatic = isAutomatic(view);
+	const [height, setHeight] = useState(automatic ? 0 : 260);
 	const [failed, setFailed] = useState(false);
 	const [ready, setReady] = useState(false);
 	const [token] = useState(() => crypto.randomUUID());
@@ -61,22 +73,48 @@ function ResourceFrameBody({ view, cwd, sessionPath, request, data, onAnswer, on
 	latest.current = { context, lang, navigation, errorText: text.operationFailed };
 
 	useEffect(() => {
-		setFailed(false); setReady(false); setHeight(260);
+		setFailed(false); setReady(false); setHeight(automatic ? 0 : 260);
 		if (!safeResourceViewUrl(view.url)) { setFailed(true); return; }
 		let active = true;
+		let bridgeReady = false;
+		let loadObserved = false;
+		let busy = false;
 		let pending = 0;
 		const requests = new Set<string>();
 		const controller = new AbortController();
 		const send = (message: Record<string, unknown>) => { if (active) iframe.current?.contentWindow?.postMessage({ channel: RESOURCE_FRAME_CHANNEL, token, ...message }, "*"); };
-		const deadline = setTimeout(() => { if (active) setFailed(true); }, 10_000);
+		let loadDeadline: ReturnType<typeof setTimeout> | undefined;
+		let readyDeadline: ReturnType<typeof setTimeout> | undefined;
+		const clearDeadlines = () => {
+			if (loadDeadline !== undefined) clearTimeout(loadDeadline);
+			if (readyDeadline !== undefined) clearTimeout(readyDeadline);
+			loadDeadline = undefined; readyDeadline = undefined;
+		};
+		const dispose = () => {
+			active = false; controller.abort(); clearDeadlines(); window.removeEventListener("message", receive);
+			if (busy) { busy = false; callbacks.current.onBusyChange?.(false); }
+		};
+		const fail = () => {
+			if (!active) return;
+			documentState.current = "failed";
+			dispose(); setReady(false); setFailed(true);
+		};
+		const loaded = () => {
+			if (!active || loadObserved) return;
+			loadObserved = true;
+			if (loadDeadline !== undefined) clearTimeout(loadDeadline);
+			loadDeadline = undefined;
+			// A bridge can announce readiness before the document's load event.
+			if (!bridgeReady) readyDeadline = setTimeout(fail, RESOURCE_BRIDGE_READY_TIMEOUT_MS);
+		};
 		const receive = (event: MessageEvent) => {
-			if (event.source !== iframe.current?.contentWindow) return;
-			const message = resourceFrameMessage(event.data, token);
+			if (!active || event.source !== iframe.current?.contentWindow) return;
+			const message = resourceFrameMessage(event.data, token, automatic ? 0 : 80);
 			if (!message) return;
 			if (message.type === "ready") {
-				clearTimeout(deadline); setReady(true);
+				bridgeReady = true; clearDeadlines(); setReady(true);
 				send({ type: "context", context: latest.current.context, language: latest.current.lang, theme: collectTheme(iframe.current?.parentElement) });
-			} else if (message.type === "resize") setHeight(message.height!);
+			} else if (message.type === "resize") setHeight(automatic && message.height! <= 1 ? 0 : message.height!);
 			else if (message.type === "focus") {
 				const frame = iframe.current;
 				const focused = document.activeElement;
@@ -86,7 +124,7 @@ function ResourceFrameBody({ view, cwd, sessionPath, request, data, onAnswer, on
 			}
 			else if (message.type === "answer" && !latest.current.context.preview) callbacks.current.onAnswer?.(message.value ?? null);
 			else if (message.type === "cancel") callbacks.current.onCancel?.();
-			else if (message.type === "busy" && !latest.current.context.preview) callbacks.current.onBusyChange?.(message.value === true);
+			else if (message.type === "busy" && !latest.current.context.preview) { busy = message.value === true; callbacks.current.onBusyChange?.(busy); }
 			else if (message.type === "invoke" || message.type === "host") {
 				const captured = latest.current.context;
 				if (captured.preview) { send({ type: "result", id: message.id, error: "Passive preview cannot execute backend actions." }); return; }
@@ -118,8 +156,13 @@ function ResourceFrameBody({ view, cwd, sessionPath, request, data, onAnswer, on
 			}
 		};
 		window.addEventListener("message", receive);
-		return () => { active = false; controller.abort(); clearTimeout(deadline); window.removeEventListener("message", receive); };
-	}, [view.id, view.url, token]);
+		const lifecycle = { loaded, fail };
+		frameLifecycle.current = lifecycle;
+		if (documentState.current === "failed") fail();
+		else if (documentState.current === "loaded") loaded();
+		else loadDeadline = setTimeout(fail, RESOURCE_DOCUMENT_LOAD_TIMEOUT_MS);
+		return () => { dispose(); if (frameLifecycle.current === lifecycle) frameLifecycle.current = null; };
+	}, [view.id, view.url, token, automatic]);
 
 	// Explicit context updates reuse the document, preserving form edits and local component state.
 	useEffect(() => {
@@ -138,14 +181,18 @@ function ResourceFrameBody({ view, cwd, sessionPath, request, data, onAnswer, on
 		return () => { observer.disconnect(); window.removeEventListener("resize", pushContext); };
 	}, [context, lang, ready, token]);
 
+	if ((failed || !safeResourceViewUrl(view.url)) && automatic) return null;
 	if (failed || !safeResourceViewUrl(view.url)) return <div role="status" className="flex flex-col gap-2 p-3">
 		<span>{text.frameFailed}</span>
+		{safeResourceViewUrl(view.url) && <button type="button" className="btn-outline" onClick={onRetry}>{text.retry}</button>}
 		{onUnavailable && <button type="button" className="btn-outline" onClick={() => callbacks.current.onUnavailable?.()}>{text.basicInterface}</button>}
 	</div>;
 	const isPanel = view.placement === "panel";
 	const isEmbedded = view.placement === "aboveEditor" || view.placement === "belowEditor";
 	return <iframe key={`${view.id}:${view.url}`} ref={iframe} src={view.url} title={view.title} sandbox="allow-scripts" referrerPolicy="no-referrer"
-		className={isPanel ? "min-h-full w-full flex-1 rounded-lg" : isEmbedded ? "w-full" : "w-full rounded-lg"}
+		className={isPanel ? "min-h-full w-full flex-1 rounded-lg" : isEmbedded ? "block w-full" : "w-full rounded-lg"}
+		aria-hidden={automatic && height === 0 ? true : undefined} tabIndex={automatic && height === 0 ? -1 : undefined}
 		style={isPanel ? { minHeight: height, border: 0, background: "transparent" } : { height, border: 0, background: "transparent" }}
-		onError={() => setFailed(true)} />;
+		onLoad={() => { if (documentState.current !== "failed") { documentState.current = "loaded"; frameLifecycle.current?.loaded(); } }}
+		onErrorCapture={() => { documentState.current = "failed"; if (frameLifecycle.current) frameLifecycle.current.fail(); else setFailed(true); }} />;
 }

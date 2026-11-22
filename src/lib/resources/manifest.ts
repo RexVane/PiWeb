@@ -7,7 +7,7 @@ import { RESOURCE_API_VERSION, RESOURCE_BROWSER_CAPABILITIES } from "./protocol"
 const ID = /^[a-zA-Z0-9@][a-zA-Z0-9._@/-]{0,159}$/;
 const VIEW_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/;
 const METHODS = new Set(["select", "confirm", "input", "editor", "web"]);
-const PLACEMENTS = new Set(["dialog", "panel", "aboveEditor", "belowEditor"]);
+const PLACEMENTS = new Set(["dialog", "panel", "settings", "aboveEditor", "belowEditor"]);
 const TITLE_LANGS = new Set(["zh", "zh-Hant", "en", "ja", "ru"]);
 /** 侧栏图标白名单：资源只能从 PiWeb 现有图标里挑，不能让包名决定渲染什么组件 */
 export const RESOURCE_VIEW_ICONS = new Set(["clock", "cube", "chat", "file", "terminal", "plugin"]);
@@ -49,6 +49,8 @@ export function parseResourceManifest(raw: unknown, packageName: string): Resour
 		if (!/\.html?$/i.test(entry) || path.posix.dirname(entry) === ".") throw new Error("A resource view entry must be an HTML file in a dedicated asset directory");
 		if (view.placement !== undefined && !PLACEMENTS.has(String(view.placement))) throw new Error("Invalid resource view placement");
 		if (view.methods !== undefined && (!Array.isArray(view.methods) || view.methods.some((method) => !METHODS.has(String(method))))) throw new Error("Invalid resource dialog method");
+		if (view.autoMount !== undefined && typeof view.autoMount !== "boolean") throw new Error("Invalid resource automatic mounting");
+		if (view.autoMount === true && (!new Set(["aboveEditor", "belowEditor"]).has(String(view.placement)) || (Array.isArray(view.methods) && view.methods.length))) throw new Error("Automatic resource views must be request-free composer views");
 		if (view.capabilities !== undefined && (!Array.isArray(view.capabilities) || view.capabilities.length > RESOURCE_BROWSER_CAPABILITIES.length
 			|| view.capabilities.some((capability) => !RESOURCE_BROWSER_CAPABILITIES.includes(capability as never)))) throw new Error("Invalid browser capability");
 		const titles = parseViewTitles(view.titles);
@@ -56,6 +58,7 @@ export function parseResourceManifest(raw: unknown, packageName: string): Resour
 			...(titles ? { titles } : {}),
 			...(view.capabilities ? { capabilities: [...new Set(view.capabilities as ResourceView["capabilities"])] } : {}),
 			...(typeof view.icon === "string" && RESOURCE_VIEW_ICONS.has(view.icon) ? { icon: view.icon } : {}),
+			...(view.autoMount === true ? { autoMount: true } : {}),
 			entry, placement: (view.placement ?? "panel") as ResourceView["placement"], methods: [...new Set(view.methods as ResourceView["methods"] ?? [])] });
 	}
 	const host = value.host === undefined ? undefined : resourceRelativePath(value.host);

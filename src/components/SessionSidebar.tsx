@@ -19,7 +19,6 @@ import {
 	IconArchiveOutline20,
 	IconBranchOutline16,
 	IconCheckOutline14,
-	IconClockOutline16,
 	IconDownloadOutline16,
 	IconEditOutline16,
 	IconEllipsisOutline16,

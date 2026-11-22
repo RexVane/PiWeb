@@ -4,13 +4,14 @@ import { effectiveResourceDevelopmentRoot } from "./preferences";
 import { parseResourceManifest, readPackageManifest, resourceRelativePath, resolveResourceFile } from "./manifest";
 import { resolveWorkspacePath, isPathInside } from "../path-security";
 import type { WebResourceView } from "./protocol";
+import { isResourceDesignWorkspace } from "./development";
 
 /** Inspect only an explicitly chosen development workspace. No Pi loader or host entry is executed. */
 export async function preparedResourceViews(cwd: string): Promise<Array<{ view: WebResourceView; root: string; entry: string }>> {
 	const root = await effectiveResourceDevelopmentRoot();
 	const workspace = await resolveWorkspacePath(cwd);
 	const realRoot = await fs.realpath(root).catch(() => null);
-	if (!realRoot || !isPathInside(realRoot, workspace) || workspace === realRoot) throw new Error("Not an independent resource development workspace");
+	if ((!realRoot || !isPathInside(realRoot, workspace) || workspace === realRoot) && !await isResourceDesignWorkspace(workspace)) throw new Error("Not an independent resource development workspace");
 	const parent = await readPackageManifest(workspace);
 	const declared = (parent?.piweb as { resources?: unknown } | undefined)?.resources;
 	const roots = declared === undefined ? [workspace] : Array.isArray(declared) ? await Promise.all(declared.slice(0, 64).map(async (value) => {
@@ -26,7 +27,7 @@ export async function preparedResourceViews(cwd: string): Promise<Array<{ view: 
 			await resolveResourceFile(root, view.entry);
 			const token = Buffer.from(JSON.stringify({ cwd: workspace, source: "development-preview", scope: "user", resourceId: manifest!.id, view: view.id, preview: true, revision: Date.now() })).toString("base64url");
 			result.push({ root, entry: view.entry, view: { id: `preview:${manifest!.id}:${view.id}`, resourceId: manifest!.id, scope: "user", title: view.title, placement: view.placement, methods: [], preview: true,
-				...(view.titles ? { titles: view.titles } : {}), ...(view.icon ? { icon: view.icon } : {}),
+				...(view.titles ? { titles: view.titles } : {}), ...(view.icon ? { icon: view.icon } : {}), ...(view.autoMount === true ? { autoMount: true } : {}),
 				url: `/api/resources/views/${token}/assets/${encodeURIComponent(path.posix.basename(view.entry))}` } });
 		}
 	}

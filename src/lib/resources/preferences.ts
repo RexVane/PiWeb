@@ -6,7 +6,6 @@ import { replaceFileAtomically } from "../atomic-file";
 import { withExternalSettingsLock, withSettingsWriteLock } from "../settings-write-lock";
 import type { ResourcePreferences } from "./protocol";
 
-export const DEFAULT_RESOURCE_CATALOG = "https://raw.githubusercontent.com/RexVane/PiWeb/main/resources/catalog/index.json";
 const METHODS = ["select", "confirm", "input", "editor", "web"] as const;
 const defaults = (): ResourcePreferences => ({ catalogUrls: [], renderers: {} });
 

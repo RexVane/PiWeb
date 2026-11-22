@@ -5,12 +5,12 @@ import { randomUUID } from "node:crypto";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { APP_ROOT } from "../app-root";
 import { getAgentDir } from "../pi";
-import { resolveWorkspacePath, isPathInside } from "../path-security";
+import { resolveWorkspacePath, isPathInside, samePath } from "../path-security";
 import { securePackageManager, validatePackageSource } from "../package-manager-safe";
 import { getResourcePreferences, saveResourcePreferences, defaultResourceDevelopmentRoot } from "./preferences";
 import { parseResourceManifest, readPackageManifest, staticResourceCompatibility } from "./manifest";
 import type { ResourceCompatibility, ResourceType } from "./protocol";
-import { addWorkspace } from "../workspace-store";
+import { addWorkspace, listAdded } from "../workspace-store";
 import { readFileBounded } from "../read-file-bounded";
 
 export interface PreparedResource {
@@ -146,6 +146,12 @@ export async function prepareExistingResource(source: string, rootValue?: string
 	return { cwd: directory, source, name, version, types, compatibility: staticResourceCompatibility(manifest, texts) };
 }
 
+export async function isResourceDesignWorkspace(cwd: string): Promise<boolean> {
+	if (!/^resource-\d{4}-\d{2}-\d{2}-[a-f0-9]{8}$/.test(path.basename(cwd))) return false;
+	if (!(await listAdded()).some((directory) => samePath(directory, cwd))) return false;
+	return validateResourceDevelopmentRoot(path.dirname(cwd)).then(() => true, () => false);
+}
+
 export async function prepareNewResource(rootValue?: string): Promise<PreparedResource> {
 	const root = await developmentRoot(rootValue);
 	const directory = await workspace(root, "resource");
@@ -153,22 +159,24 @@ export async function prepareNewResource(rootValue?: string): Promise<PreparedRe
 	await fs.mkdir(path.join(directory, "src"));
 	await fs.mkdir(path.join(directory, "web"));
 	await fs.writeFile(path.join(directory, "package.json"), `${JSON.stringify({ name, version: "0.1.0", type: "module", private: true,
-		pi: { extensions: ["src/index.ts"] }, piweb: { apiVersion: 1, id: name, views: [{ id: "main", title: name, entry: "web/index.html", placement: "panel", methods: [] }] },
+		pi: { extensions: ["src/index.ts"] },
+		piweb: { apiVersion: 1, id: name, views: [{ id: "main", title: name, entry: "web/index.html", placement: "panel", methods: [] }] },
 		peerDependencies: { "@earendil-works/pi-coding-agent": "*", typebox: "*" },
 	}, null, 2)}\n`, { flag: "wx" });
-	await fs.writeFile(path.join(directory, "src", "index.ts"), `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n\n// Design this extension through Pi's public API; do not import PiWeb internals.\nexport default function resource(pi: ExtensionAPI) {\n  // Register tools, commands and events after the requirements are clear.\n}\n`, { flag: "wx" });
+	await fs.writeFile(path.join(directory, "src", "index.ts"), `import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n\nexport default function resource(pi: ExtensionAPI) {}\n`, { flag: "wx" });
 	await fs.copyFile(path.join(APP_ROOT, "public", "resources", "client.js"), path.join(directory, "web", "client.js"));
 	await fs.writeFile(path.join(directory, "web", "index.html"), `<!doctype html>\n<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Resource preview</title><style>body{font:14px system-ui;color:var(--dsw-label-primary);background:transparent;margin:16px}button{padding:8px 14px}</style></head><body><p id="message">Design your resource interface here.</p><script src="client.js"></script><script>piwebResource.onContext(context=>{document.getElementById('message').textContent=context.data?.message||'Design your resource interface here.';});</script></body></html>\n`, { flag: "wx" });
-	await fs.writeFile(path.join(directory, ".gitignore"), "node_modules/\nbackups/\n.env*\n!.env.example\n*.log\n", { flag: "wx" });
 	await copyAuthoringGuide(directory);
+	await fs.writeFile(path.join(directory, ".gitignore"), "node_modules/\nbackups/\n.env*\n!.env.example\n*.log\n", { flag: "wx" });
 	return { cwd: directory, name, compatibility: "unknown", types: ["extensions"] };
 }
 
-export function resourceDesignPrompt(prepared: PreparedResource, adapting: boolean): string {
-	return [adapting ? "Help me adapt this independent Pi resource to PiWeb's web UI while preserving its terminal behavior." : "Help me design my own independent Pi/PiWeb resource. Start by asking what function and visual style I want.",
-		`Work only in this resource workspace: ${prepared.cwd}. Read PIWEB-API.md first.`,
-		prepared.source ? `Upstream source: ${prepared.source}. Preserve the provenance in piweb-upstream.json and do not edit the original installed package.` : "Use Pi's official extension/skill/prompt mechanism; use the public PiWeb bridge only for browser and host capabilities.",
-		"Do not modify or rebuild the PiWeb package, auto-install unfinished code, or change unrelated user settings. Test passive UI and real actions separately. Handle cancellation and never infer permission approval from a missing answer.",
-		"After implementation, explain the tests and offer installation of this local directory for me to confirm.",
+export function resourceAdaptationPrompt(prepared: PreparedResource): string {
+	return ["Help me adapt this independent Pi resource to PiWeb's web UI while preserving its terminal behavior.",
+		`Work only in this resource workspace: ${prepared.cwd}. Use Pi's public extension API.`,
+		"Read PIWEB-API.md. Use PiWeb's public bridge only for Web capabilities. Test passive preview and real actions separately.",
+		...(prepared.source ? [`Upstream source: ${prepared.source}. Preserve piweb-upstream.json and do not edit the original installed package.`] : []),
+		"Do not modify PiWeb, install the extension or change unrelated settings. Handle cancellation and never infer approval from a missing answer.",
+		"After implementation, explain how you tested it and how I can manually install this local package.",
 	].join("\n\n");
 }

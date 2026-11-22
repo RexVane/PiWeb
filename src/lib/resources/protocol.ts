@@ -102,10 +102,6 @@ export interface ResourceCatalog {
 	items: ResourceCatalogItem[];
 }
 
-export interface FeaturedExtension extends ResourceCatalogItem {
-	installed: boolean;
-}
-
 export interface ResourcePreferences {
 	developmentRoot?: string;
 	catalogUrls: string[];

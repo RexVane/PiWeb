@@ -1,7 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { request as httpsRequest, type RequestOptions } from "node:https";
-import bundledCatalog from "../../../resources/catalog/index.json";
 import { validatePackageSource } from "../package-manager-safe";
 import { getResourcePreferences, publicCatalogUrl } from "./preferences";
 import type { ResourceCatalog, ResourceCatalogItem } from "./protocol";
@@ -51,9 +50,6 @@ export function parseResourceCatalog(raw: unknown): ResourceCatalog {
 	return { version: 1, items };
 }
 
-export function readBundledResourceCatalog(): ResourceCatalog {
-	return parseResourceCatalog(bundledCatalog);
-}
 
 function privateAddress(address: string): boolean {
 	if (isIP(address) === 4) {

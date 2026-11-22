@@ -215,9 +215,12 @@ async function terminalComponentLines(component: unknown, width = 80): Promise<s
 export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void;
 	hasViewers: () => boolean;
 	isHeadless?: () => boolean;
+	/** Cancellation scope of a user resource tool, including editor calls whose SDK wrapper drops options. */
+	requestSignal?: () => AbortSignal | undefined;
 	resources?: {
 		resolve(resourceId: string, viewId: string): Promise<WebResourceView | undefined>;
 		invoke(resourceId: string, action: string, args: JsonValue): Promise<JsonValue>;
+		executeTool?: NonNullable<ResourceUiApi["executeTool"]>;
 	};
 }): ExtensionUiBridge {
 	const pending = new Map<string, PendingUi>();
@@ -225,6 +228,9 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 	const widgets = new Map<string, WebExtensionWidget>();
 	let title: string | undefined;
 	let disposed = false;
+	let resourceGeneration = 0;
+	const resourceCalls = new Set<AbortController>();
+	const cancelResourceCalls = () => { for (const controller of resourceCalls) controller.abort(); };
 
 	const ask = <T,>(
 		request: Omit<UiEvent, "type" | "id" | "ts">,
@@ -232,6 +238,8 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		fallback: T,
 		parse: (r: { value?: string; confirmed?: boolean; cancelled?: boolean }) => T,
 	): Promise<T> => {
+		const requestSignal = opts.requestSignal?.();
+		if (requestSignal) dialogOpts = { ...dialogOpts, signal: dialogOpts?.signal ? AbortSignal.any([requestSignal, dialogOpts.signal]) : requestSignal };
 		// No viewer: basic Pi calls keep their fallback semantics; explicitly viewer-waiting requests are retained.
 		if (opts.isHeadless?.()) { opts.publish({ type: "interaction_unavailable", method: request.method, reason: "headless", ts: Date.now() }); return Promise.resolve(fallback); }
 		if (disposed || dialogOpts?.signal?.aborted || (!opts.hasViewers() && !dialogOpts?.waitForViewer)) return Promise.resolve(fallback);
@@ -293,10 +301,13 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		);
 	};
 
-	const resourceUi: ResourceUiApi = {
+	const createResourceUi = (): ResourceUiApi => {
+		const generation = resourceGeneration;
+		const current = () => !disposed && generation === resourceGeneration;
+		return {
 		apiVersion: 1,
 		async request(resourceId, viewId, data, options) {
-			if (disposed || options?.signal?.aborted || !opts.resources) return { status: "unavailable" };
+			if (!current() || options?.signal?.aborted || !opts.resources) return { status: "unavailable" };
 			if (opts.isHeadless?.()) {
 				opts.publish({ type: "interaction_unavailable", method: "resource", reason: "headless", ts: Date.now() });
 				return { status: "unavailable" };
@@ -308,7 +319,7 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 				safeData = JSON.parse(json);
 			} catch { return { status: "unavailable" }; }
 			const view = await opts.resources.resolve(resourceId, viewId);
-			if (!view || disposed || options?.signal?.aborted) return { status: "unavailable" };
+			if (!view || !current() || options?.signal?.aborted) return { status: "unavailable" };
 			const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
 			if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 24 * 60 * 60_000) throw new Error("Invalid resource dialog timeout");
 			const outcome = await ask<ResourceUiOutcome>({ method: "resource", title: options?.title?.slice(0, 200) || view.title, resourceView: view, resourceData: safeData },
@@ -319,13 +330,25 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 			return outcome.status === "timeout" && options?.signal?.aborted ? { status: "cancelled" } : outcome;
 		},
 		async invoke(resourceId, action, args) {
-			if (disposed || !opts.resources) throw new Error("Resource API unavailable");
+			if (!current() || !opts.resources) throw new Error("Resource API unavailable");
 			return opts.resources.invoke(resourceId, action, args ?? null);
 		},
+		...(opts.resources?.executeTool ? { executeTool: async (name: string, args: JsonValue, options?: { signal?: AbortSignal }) => {
+			if (!current() || options?.signal?.aborted) throw new Error("Resource tool execution unavailable for this session generation");
+			const controller = new AbortController();
+			const signal = options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
+			resourceCalls.add(controller);
+			try {
+				const result = await opts.resources!.executeTool!(name, args, { signal });
+				if (!current() || signal.aborted) throw new Error("Resource tool execution cancelled or replaced");
+				return result;
+			} finally { resourceCalls.delete(controller); }
+		} } : {}),
+		};
 	};
 
 	const uiContext: Record<string, unknown> = {
-		resources: resourceUi,
+		resources: createResourceUi(),
 		select: (title: string, options: string[], o?: { signal?: AbortSignal; timeout?: number }) =>
 			ask<string | undefined>({ method: "select", title, options }, { ...o, waitForViewer: true }, undefined, (r) => (r.cancelled || !options.includes(r.value ?? "") ? undefined : r.value)),
 		confirm: (title: string, message: string, o?: { signal?: AbortSignal; timeout?: number }) =>
@@ -421,6 +444,7 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 			return true;
 		},
 		cancelPending() {
+			cancelResourceCalls();
 			for (const entry of [...pending.values()]) entry.resolve({ cancelled: true });
 		},
 		reconcileResources(views) {
@@ -428,6 +452,9 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 			for (const entry of [...pending.values()]) if (entry.request.method === "resource" && !available.has(entry.request.resourceView?.id ?? "")) entry.resolve({ cancelled: true });
 		},
 		resetDecorations() {
+			cancelResourceCalls();
+			resourceGeneration += 1;
+			uiContext.resources = createResourceUi();
 			for (const key of statuses.keys()) opts.publish({ type: "extension_ui", id: randomUUID(), method: "setStatus", statusKey: key, ts: Date.now() });
 			for (const key of widgets.keys()) opts.publish({ type: "extension_ui", id: randomUUID(), method: "setWidget", widgetKey: key, ts: Date.now() });
 			statuses.clear(); widgets.clear(); title = undefined;
@@ -436,6 +463,7 @@ export function createExtensionUiBridge(opts: {	publish: (evt: WebEvent) => void
 		},
 		dispose() {
 			disposed = true;
+			cancelResourceCalls();
 			for (const entry of pending.values()) entry.resolve({ cancelled: true });
 			pending.clear();
 		},

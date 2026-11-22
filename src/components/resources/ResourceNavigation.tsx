@@ -9,6 +9,7 @@ import { ResourceFrame } from "./ResourceFrame";
 export interface ResourceNavigation {
 	openSession(sessionPath: string): void;
 	createDraft(cwd: string, text: string): void;
+	continueDesign?(cwd: string): void;
 	openView(intent: ResourceDialogIntent, signal: AbortSignal): Promise<ResourceUiOutcome>;
 }
 const Context = createContext<ResourceNavigation | null>(null);
@@ -46,8 +47,10 @@ function ResourceDialog({ request }: { request: PendingDialog }) {
 	useEffect(() => () => clearTimeout(busyTimer.current), []);
 	useDialog({ open: true, ref, onClose: cancel });
 	useEffect(() => {
-		if (registry.loaded && !registry.views.some((view) => view.id === intent.view.id)) request.finish({ status: "cancelled" });
-	}, [registry.loaded, registry.views, intent.view.id, request]);
+		// Only successful discovery for this workspace can revoke an open dialog.
+		if (registry.loaded && registry.registryCwd === intent.cwd && !registry.error
+			&& !registry.views.some((view) => view.id === intent.view.id)) request.finish({ status: "cancelled" });
+	}, [registry.loaded, registry.registryCwd, registry.error, registry.views, intent.cwd, intent.view.id, request]);
 	return <div className="fixed inset-0 z-[125] flex items-center justify-center p-4" style={{ background: "var(--dsw-mask)" }} onMouseDown={(event) => { if (event.target === event.currentTarget) cancel(); }}>
 		<div ref={ref} role="dialog" aria-modal="true" aria-label={intent.view.title} className="w-full" style={{ maxWidth: "min(92vw,640px)", maxHeight: "90vh", overflowY: "auto" }}>
 			<ResourceFrame view={intent.view} cwd={intent.cwd} sessionPath={intent.sessionPath} data={intent.data}
