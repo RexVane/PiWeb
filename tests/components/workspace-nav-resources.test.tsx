@@ -14,19 +14,10 @@ describe("resource navigation without built-in business extensions", () => {
 			addedWorkspaces={["/ws"]} currentPath="/sessions/a.jsonl" groupBy="workspace" orderBy="updated" setGroupBy={vi.fn()} setOrderBy={vi.fn()} collapsed={false}
 			onToggleCollapse={vi.fn()} onOpen={vi.fn()} onNew={vi.fn()} onNewInWorkspace={vi.fn()} onRename={vi.fn(async () => {})} onOpenSettings={vi.fn()} onAddWorkspace={vi.fn()} activeView="plugins" onSelectView={select} />);
 		expect(screen.getByRole("button", { name: "技能" })).toBeTruthy();
+		expect(screen.getByRole("button", { name: "提示词模板" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: /^(?:插件|扩展)$/ }).getAttribute("data-active")).toBe("true");
 		fireEvent.click(screen.getByRole("button", { name: "技能" })); expect(select).toHaveBeenCalledWith("skills");
 		fireEvent.click(screen.getByRole("button", { name: /^(?:插件|扩展)$/ })); expect(select).toHaveBeenCalledWith("plugins");
-	});
-	it("lists enabled panel resources as sidebar entries", () => {
-		const select = vi.fn();
-		render(<SessionSidebar sessions={[]} addedWorkspaces={[]} currentPath={null} groupBy="workspace" orderBy="updated" setGroupBy={vi.fn()} setOrderBy={vi.fn()} collapsed={false}
-			onToggleCollapse={vi.fn()} onOpen={vi.fn()} onNew={vi.fn()} onNewInWorkspace={vi.fn()} onRename={vi.fn(async () => {})} onOpenSettings={vi.fn()} onAddWorkspace={vi.fn()}
-			activeView="resource:sample" onSelectView={select} resourcePanels={[{ id: "sample", label: "Sample resource" }]} />);
-		const entry = screen.getByRole("button", { name: "Sample resource" });
-		expect(entry.getAttribute("data-active")).toBe("true");
-		fireEvent.click(screen.getByRole("button", { name: "技能" })); expect(select).toHaveBeenLastCalledWith("skills");
-		fireEvent.click(entry); expect(select).toHaveBeenLastCalledWith("resource:sample");
 	});
 	it("keeps application settings separate from resource installation", () => {
 		vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 10000 }, compaction: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 } } }) })));

@@ -16,7 +16,9 @@ A PiWeb resource is a normal Pi package. Pi loads its `pi.extensions`, skills an
 }
 ```
 
-`views` and `host` are optional. A view lives in a dedicated asset directory, not the package root. `placement` is `panel`, `dialog`, `aboveEditor` or `belowEditor`. `methods` can declare standard Pi `select`, `confirm`, `input`, `editor` or `web` request rendering. Users explicitly select a default renderer; load order never chooses it. The entire web/host part is active only while an associated Pi extension is enabled.
+`views` and `host` are optional. A view lives in a dedicated asset directory, not the package root. `placement` is `panel`, `dialog`, `settings`, `aboveEditor` or `belowEditor`. A `panel` becomes a sidebar entry. A `settings` view appears inside its enabled package's expanded row on the Extensions page, with the package scope and workspace but no conversation by default. A `dialog` opens through a formal request or declared `views.open` capability. `methods` can declare standard Pi `select`, `confirm`, `input`, `editor` or `web` request rendering. Users explicitly select a default renderer; load order never chooses it. The entire web/host part is active only while an associated Pi extension is enabled.
+
+An `aboveEditor` or `belowEditor` view may opt into `autoMount: true` with empty `methods` to show a persistent conversation status view. Other embedded views remain request-only. An automatic view is detached when the conversation changes and starts at zero height; use `resize(1)` for empty content and report the actual compact content height when visible. It does not warm a cold session or start a model turn. Read your live extension binding and stay empty until normal conversation or command use initializes it. Never use an automatic view to imply human approval.
 
 ## Pi extension entry
 
@@ -33,6 +35,8 @@ if (web?.apiVersion === 1) {
 ```
 
 `web.invoke(resourceId, action, args)` calls an action owned by an enabled host entry. Tool and command calls are associated with the current workspace and session. An ordinary model text question does not automatically become a request. Register a tool or use Pi's formal UI methods.
+
+Hosts may expose the optional `web.executeTool(name, args, { signal })` capability to Node extensions. It dispatches a tool in the current live SDK session through the same schema validation, `tool_call`/`tool_result` hooks and permissions as a model-issued call, returning `{ isError, result }`. It is not an iframe API. Check that the method exists, handle tool errors, and never call a tool's implementation directly as a fallback. Stored capabilities from a replaced or reloaded session fail closed; lifecycle cancellation also cancels permission dialogs. Only active direct or registered deferred tools are callable; model-only tools retain their restriction.
 
 Never assume cancellation, timeout or missing UI implies approval. Validate browser values against the options you displayed. Permission extensions must block the actual tool in `tool_call`, including nested calls, not merely display an approval card. Store branch-dependent todo/goal state in Pi entries/tool-result details and reconstruct from the active branch.
 
@@ -55,7 +59,7 @@ The frame is sandboxed without `allow-same-origin`. No host DOM/cookies, network
 
 ## Optional host entry
 
-`src/host.mjs` exports `activate(host)`, optionally returning an async cleanup function. No background work at module scope.
+`src/host.mjs` exports `activate(host)`, optionally returning an async cleanup function. The host entry must live in a dedicated code directory such as `src/` or `host/`, not the package root. No background work at module scope.
 
 - `host.apiVersion`, `id`, `scope`, `cwd`, `agentDir`, `dataDir`, `signal` describe this instance.
 - `host.actions.register(name, async (args, context) => value)` registers a JSON action; `context` includes validated cwd and optional sessionPath/signal.

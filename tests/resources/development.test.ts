@@ -23,6 +23,26 @@ describe("independent resource design and passive preview", () => {
 		const token = item.view.url.split("/")[4];
 		expect((await assets.readResourceAsset(token, "index.html")).data.toString()).toContain("Resource preview");
 		await expect(assets.readResourceAsset(token, "../PIWEB-API.md")).rejects.toThrow();
+		const newRoot = path.join(root, "new-default"); await fs.mkdir(newRoot);
+		await development.prepareNewResource(newRoot);
+		expect(await preview.preparedResourceViews(prepared.cwd)).toHaveLength(1);
+	});
+	it("scaffolds a PiWeb package without a brief and returns no session prompt", async () => {
+		const route = await import("../../src/app/api/resources/development/route");
+		const post = (body: object) => route.POST(new Request("http://localhost/api/resources/development", { method: "POST", body: JSON.stringify(body) }));
+		const destination = path.join(root, "resources");
+		const response = await post({ action: "design", root: destination });
+		const { data } = await response.json();
+		expect(response.status).toBe(200);
+		expect(data.prompt).toBeUndefined();
+		expect(path.dirname(data.prepared.cwd)).toBe(destination);
+		const manifest = JSON.parse(await fs.readFile(path.join(data.prepared.cwd, "package.json"), "utf8"));
+		expect(manifest.pi).toEqual({ extensions: ["src/index.ts"] });
+		expect(manifest.piweb.views).toEqual([expect.objectContaining({ entry: "web/index.html" })]);
+		expect(await fs.readdir(path.join(data.prepared.cwd, "web"))).toEqual(["client.js", "index.html"]);
+		const status = await route.GET(new Request(`http://localhost/api/resources/development?status=1&cwd=${encodeURIComponent(data.prepared.cwd)}`));
+		expect((await status.json()).data).toEqual({ design: true, hasWeb: true });
+		expect(await discovery.discoverResourcePackages(data.prepared.cwd)).toEqual([]);
 	});
 	it("copies a CLI resource into an independent adaptation workspace without executing its factory", async () => {
 		const original = path.join(root, "original"); await fs.mkdir(original); await fs.mkdir(path.join(original, "src"));

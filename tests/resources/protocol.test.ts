@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseResourceManifest, resolveResourceFile, staticResourceCompatibility } from "../../src/lib/resources/manifest";
-import { parseResourceCatalog, readBundledResourceCatalog } from "../../src/lib/resources/catalog";
+import { parseResourceCatalog } from "../../src/lib/resources/catalog";
 import { resourceFrameMessage, safeResourceViewUrl } from "../../src/lib/resources/frame-protocol";
 import { RESOURCE_FRAME_CHANNEL } from "../../src/lib/resources/protocol";
 
@@ -12,13 +12,6 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await recycleGeneratedFixture(root); });
 const manifest = (entry = "web/index.html") => ({ apiVersion: 1, id: "sample", views: [{ id: "main", entry, placement: "panel", methods: ["select"] }], host: "src/host.mjs" });
 
-it("bundles the optional Ask user recommendation with a fixed Git revision", () => {
-	expect(readBundledResourceCatalog().items).toContainEqual(expect.objectContaining({
-		id: "@rexvane/piweb-ask-user", types: ["extensions"], compatibility: "web",
-		source: expect.stringMatching(/^git:github\.com\/RexVane\/piweb-ask-user@[a-f\d]{40}$/),
-		selection: { extensions: ["src/index.ts"], skills: [], prompts: [], themes: [] },
-	}));
-});
 
 describe("resource manifest", () => {
 	it("accepts embedded package settings and explicit request-free automatic composer views", () => {

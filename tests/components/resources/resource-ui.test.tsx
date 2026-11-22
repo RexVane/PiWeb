@@ -1,167 +1,190 @@
 // @vitest-environment jsdom
-import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { AddResourceMenu } from "@/components/resources/AddResourceMenu";
-import { ResourceInstallModal } from "@/components/resources/ResourceInstallModal";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ResourceDesignWorkspace } from "@/components/resources/ResourceDesignWorkspace";
+import { ResourceNavigationProvider } from "@/components/resources/ResourceNavigation";
 import { ResourceFrame } from "@/components/resources/ResourceFrame";
 import { RESOURCE_FRAME_CHANNEL, type WebResourceView } from "@/lib/resources/protocol";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 const view: WebResourceView = { id: "user:demo:main", resourceId: "demo", scope: "user", title: "Demo view", placement: "panel", methods: [], url: "/api/resources/views/abcd/assets/index.html" };
 
-describe("resource adding flow", () => {
-	it("opens exactly the two choices and invokes the selected action", () => {
-		const install = vi.fn(); const design = vi.fn();
-		render(<AddResourceMenu label="添加扩展" onInstall={install} onDesign={design} />);
-		fireEvent.click(screen.getByRole("button", { name: /添加扩展/ }));
-		expect(screen.getAllByRole("menuitem")).toHaveLength(2);
-		fireEvent.click(screen.getByRole("menuitem", { name: /自己设计/ }));
-		expect(design).toHaveBeenCalledTimes(1); expect(install).not.toHaveBeenCalled(); expect(screen.queryByRole("menu")).toBeNull();
-	});
-	it("actually starts a design session in the prepared workspace, once even in StrictMode", async () => {
-		const calls: Array<Record<string, unknown>> = [];
-		vi.stubGlobal("fetch", vi.fn(async (url, init) => {
-			if (String(url) === "/api/resources/development") {
-				calls.push(JSON.parse(init.body));
-				return { ok: true, json: async () => ({ success: true, data: { prepared: { cwd: "/resources/new", name: "new", types: ["extensions"], compatibility: "unknown" }, prompt: "Read the public API and design this resource." } }) };
-			}
-			return { ok: true, json: async () => ({ success: true, data: { preferences: { developmentRoot: "/resources" } } }) };
-		}));
-		const start = vi.fn(async () => true); const close = vi.fn();
-		render(<StrictMode><ResourceInstallModal open cwd="/workspace" mode="design" onClose={close} onSubmit={vi.fn()} onStartSession={start} /></StrictMode>);
-		await waitFor(() => expect(start).toHaveBeenCalledWith("/resources/new", "Read the public API and design this resource."));
-		expect(calls).toHaveLength(1); expect(close).toHaveBeenCalledTimes(1);
-	});
-	it("installs a direct Git source with the selected Pi scope without requesting a market index", async () => {
-		const fetcher = vi.fn(async (_input: RequestInfo | URL) => ({ ok: true, json: async () => ({ success: true, data: { preferences: { renderers: {}, catalogUrls: [] } } }) }));
+describe("resource design workspace", () => {
+	it("resumes and previews an existing design without creating or installing anything", async () => {
+		const fetcher = vi.fn(async (url: string) => ({ ok: true, json: async () => ({ success: true, data:
+			url.endsWith("&status=1") ? { design: true, hasWeb: true } : { views: [{ ...view, preview: true }] },
+		}) }));
 		vi.stubGlobal("fetch", fetcher);
-		const install = vi.fn(async () => true);
-		render(<ResourceInstallModal open cwd="/workspace" onClose={vi.fn()} onSubmit={install} />);
-		fireEvent.change(screen.getByRole("textbox", { name: /npm \/ Git/ }), { target: { value: "git:github.com/example/demo" } });
-		fireEvent.click(screen.getByRole("radio", { name: "仅当前工作区" }));
-		fireEvent.click(screen.getByRole("button", { name: "安装" }));
-		await waitFor(() => expect(install).toHaveBeenCalledWith("git:github.com/example/demo", true));
-		expect(fetcher.mock.calls.some(([url]) => String(url).includes("market=1"))).toBe(false);
-	});
-	it.each([{ remote: true }, { browse: true }])("fills a local folder through the in-app fallback after %j", async (fallback) => {
-		const basePath = "D:\\Packages";
-		const packagePath = `${basePath}\\demo`;
-		const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
-			const request = JSON.parse(String(init?.body));
-			const data = request.action === "pickDirectory" ? { path: null, canceled: false, ...fallback }
-				: request.action === "roots" ? { roots: [] } : request.path === packagePath
-				? { path: packagePath, parent: basePath, entries: [], truncated: false }
-				: { path: basePath, parent: null, entries: [{ name: "demo", path: packagePath }], truncated: false };
-			return { ok: true, json: async () => ({ success: true, data }) };
-		});
-		vi.stubGlobal("fetch", fetcher);
-		const install = vi.fn(async () => true);
-		const start = vi.fn(async () => true);
-		render(<ResourceInstallModal open cwd="/workspace" onClose={vi.fn()} onSubmit={install} onStartSession={start} />);
-		const input = screen.getByRole<HTMLInputElement>("textbox", { name: /npm \/ Git/ });
-		const project = screen.getByRole<HTMLInputElement>("radio", { name: "仅当前工作区" });
-		fireEvent.click(project);
-		fireEvent.click(screen.getByRole("button", { name: "选择本地目录" }));
-		expect(await screen.findByRole("dialog", { name: "选择本地目录" })).toBeTruthy();
-		fireEvent.click(await screen.findByRole("button", { name: "demo" }));
-		await screen.findByText(packagePath);
-		fireEvent.click(screen.getByRole("button", { name: "选择此文件夹" }));
-		expect(screen.queryByRole("dialog", { name: "选择本地目录" })).toBeNull();
-		expect(input.value).toBe(packagePath);
-		expect(project.checked).toBe(true);
-		expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/workspaces", "/api/fs", "/api/fs", "/api/fs"]);
-		expect(install).not.toHaveBeenCalled();
-		expect(start).not.toHaveBeenCalled();
-		fireEvent.click(screen.getByRole("button", { name: "安装" }));
-		await waitFor(() => expect(install).toHaveBeenCalledWith(packagePath, true));
-	});
-	it.each([
-		{ directory: "D:\\Packages\\demo", expectedSource: "D:\\Packages\\demo" },
-		{ directory: null, expectedSource: "https://github.com/example/demo" },
-	])("uses the native picker result $directory without opening the in-app browser", async ({ directory, expectedSource }) => {
-		const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, json: async () => ({ success: true, data: { path: directory, canceled: directory === null } }) }));
-		vi.stubGlobal("fetch", fetcher);
-		const install = vi.fn(async () => true);
-		render(<ResourceInstallModal open cwd="/workspace" onClose={vi.fn()} onSubmit={install} />);
-		const input = screen.getByRole<HTMLInputElement>("textbox", { name: /npm \/ Git/ });
-		const pick = screen.getByRole<HTMLButtonElement>("button", { name: "选择本地目录" });
-		fireEvent.change(input, { target: { value: "https://github.com/example/demo" } });
-		fireEvent.click(pick);
-		expect(pick.disabled).toBe(true);
-		await waitFor(() => expect(pick.disabled).toBe(false));
-		expect(input.value).toBe(expectedSource);
-		expect(screen.queryByRole("dialog", { name: "选择本地目录" })).toBeNull();
-		expect(fetcher.mock.calls.map(([url, init]) => [url, JSON.parse(String(init?.body))])).toEqual([["/api/workspaces", { action: "pickDirectory" }]]);
-		expect(install).not.toHaveBeenCalled();
-	});
-	it("offers the Pi gallery as a link and keeps development actions collapsed on every open", () => {
-		const props = { cwd: "/workspace", onClose: vi.fn(), onSubmit: vi.fn(), onStartSession: vi.fn() };
-		const { rerender } = render(<ResourceInstallModal open {...props} />);
-		const toggle = () => screen.getByRole("button", { name: "高级选项" });
-		expect(screen.queryByRole("tablist")).toBeNull();
-		const gallery = screen.getByRole("link", { name: "打开 Pi 官方包目录" });
-		expect(gallery.getAttribute("href")).toBe("https://pi.dev/packages");
-		expect(gallery.getAttribute("target")).toBe("_blank");
-		expect(toggle().getAttribute("aria-expanded")).toBe("false");
-		expect(screen.queryByRole("button", { name: "检查兼容性" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "开始适配" })).toBeNull();
-		fireEvent.click(toggle());
-		expect(toggle().getAttribute("aria-expanded")).toBe("true");
-		expect(screen.getByRole("button", { name: "检查兼容性" })).toBeTruthy();
-		expect(screen.getByRole("button", { name: "开始适配" })).toBeTruthy();
-		fireEvent.click(toggle());
-		expect(screen.queryByRole("button", { name: "开始适配" })).toBeNull();
-		fireEvent.click(toggle());
-		rerender(<ResourceInstallModal open={false} {...props} />);
-		rerender(<ResourceInstallModal open {...props} />);
-		expect(toggle().getAttribute("aria-expanded")).toBe("false");
-	});
-	it.each([
-		{ source: "https://github.com/example/demo", local: false, compatibility: "web", badge: "网页可用" },
-		{ source: "git:github.com/example/demo@86a2ab4d45fd8c4ce80e9e8249af6c3248641125", local: false, compatibility: "web", badge: "网页可用" },
-		{ source: "npm:@example/demo", local: true, compatibility: "adapt", badge: "需要网页适配" },
-		{ source: "https://www.npmjs.com/package/demo", expectedSource: "npm:demo", local: false, compatibility: "web", badge: "网页可用" },
-		{ source: "https://npmjs.com/package/@example/demo/v/1.2.3?activeTab=readme", expectedSource: "npm:@example/demo@1.2.3", local: true, compatibility: "adapt", badge: "需要网页适配" },
-		{ source: "https://www.npmjs.com.example/package/demo", local: false, compatibility: "unknown", badge: "兼容性未确认" },
-		{ source: "/original/local-demo", local: false, compatibility: "unknown", badge: "兼容性未确认" },
-	])("uses the same package source for inspecting and installing $source", async ({ source, expectedSource = source, local, compatibility, badge }) => {
-		const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, json: async () => ({ success: true, data: {
-			prepared: { cwd: "/resources/preview-copy", source, name: "Demo", types: ["extensions"], compatibility, installSource: "/resources/preview-copy" },
-		} }) }));
-		vi.stubGlobal("fetch", fetcher);
-		const install = vi.fn(async () => true);
-		const start = vi.fn(async () => true);
-		render(<ResourceInstallModal open cwd="/workspace" onClose={vi.fn()} onSubmit={install} onStartSession={start} />);
-		fireEvent.change(screen.getByRole("textbox", { name: /npm \/ Git/ }), { target: { value: source } });
-		if (local) fireEvent.click(screen.getByRole("radio", { name: "仅当前工作区" }));
-		fireEvent.click(screen.getByRole("button", { name: "高级选项" }));
-		fireEvent.click(screen.getByRole("button", { name: "检查兼容性" }));
-		await screen.findByText(badge);
-		expect(fetcher.mock.calls.filter(([url]) => url === "/api/resources/development").map(([, init]) => JSON.parse(String(init?.body)))).toEqual([{ action: "inspect", source: expectedSource }]);
-		fireEvent.click(screen.getByRole("button", { name: "安装" }));
-		await waitFor(() => expect(install).toHaveBeenCalledWith(expectedSource, local));
-		expect(start).not.toHaveBeenCalled();
-	});
-	it("starts adaptation from the advanced panel without submitting the install form", async () => {
-		const source = "git:github.com/example/demo";
-		const prepared = { cwd: "/resources/demo", source, name: "Demo", types: ["extensions"], compatibility: "adapt" };
-		const prompt = "Adapt the extension in its own workspace.";
-		const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, json: async () => ({ success: true, data: { prepared, prompt } }) }));
-		vi.stubGlobal("fetch", fetcher);
-		const install = vi.fn(async () => true);
-		const start = vi.fn(async () => true);
-		render(<ResourceInstallModal open cwd="/workspace" onClose={vi.fn()} onSubmit={install} onStartSession={start} />);
-		fireEvent.change(screen.getByRole("textbox", { name: /npm \/ Git/ }), { target: { value: source } });
-		fireEvent.click(screen.getByRole("button", { name: "高级选项" }));
-		fireEvent.click(screen.getByRole("button", { name: "开始适配" }));
-		await waitFor(() => expect(start).toHaveBeenCalledWith(prepared.cwd, prompt));
-		expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ action: "adapt", source });
-		expect(install).not.toHaveBeenCalled();
+		const resume = vi.fn();
+		render(<ResourceNavigationProvider value={{ openSession: vi.fn(), createDraft: vi.fn(), continueDesign: resume }}><ResourceDesignWorkspace cwd="/resources/new" reloadSeq={0} /></ResourceNavigationProvider>);
+		fireEvent.click(await screen.findByRole("button", { name: "继续设计" }));
+		expect(resume).toHaveBeenCalledWith("/resources/new");
+		fireEvent.click(screen.getByRole("button", { name: "预览界面" }));
+		expect(await screen.findByTitle("Demo view")).toBeTruthy();
+		expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/resources/development?cwd=%2Fresources%2Fnew&status=1", "/api/resources/development?cwd=%2Fresources%2Fnew"]);
 	});
 });
 
 describe("independent browser frame", () => {
+	it.each(["settings", "automatic"] as const)("keeps a cold %s document alive beyond ten seconds and allows bridge readiness after load", (kind) => {
+		vi.useFakeTimers();
+		const resourceView: WebResourceView = kind === "automatic" ? { ...view, placement: "aboveEditor", autoMount: true } : { ...view, placement: "settings" };
+		const { container } = render(<ResourceFrame view={resourceView} cwd="/workspace" sessionPath="/chat-a" />);
+		const frame = container.querySelector("iframe")!;
+		const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+		act(() => { vi.advanceTimersByTime(12_000); });
+		expect(container.querySelector("iframe")).toBe(frame);
+		expect(screen.queryByRole("status")).toBeNull();
+		fireEvent.load(frame);
+		act(() => { vi.advanceTimersByTime(9_999); });
+		expect(container.querySelector("iframe")).toBe(frame);
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: frame.contentWindow! }));
+		expect(post).toHaveBeenCalled();
+		const token = (post.mock.calls[0][0] as { token: string }).token;
+		const height = kind === "automatic" ? 42 : 120;
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "resize", token, height }, source: frame.contentWindow! }));
+		act(() => { vi.advanceTimersByTime(60_000); });
+		expect(container.querySelector("iframe")).toBe(frame);
+		expect(frame.style.height).toBe(`${height}px`);
+		expect(frame.hasAttribute("aria-hidden")).toBe(false);
+		expect(screen.queryByRole("status")).toBeNull();
+	});
+	it("bounds a stalled document load and ignores a foreign readiness announcement", () => {
+		vi.useFakeTimers();
+		const { container } = render(<ResourceFrame view={{ ...view, placement: "settings" }} cwd="/workspace" />);
+		const frame = container.querySelector("iframe")!;
+		act(() => { vi.advanceTimersByTime(29_999); });
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: window }));
+		expect(container.querySelector("iframe")).toBe(frame);
+		act(() => { vi.advanceTimersByTime(1); });
+		expect(container.querySelector("iframe")).toBeNull();
+		expect(screen.getByRole("status").textContent).toContain("扩展界面暂时不可用");
+		expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+	});
+	it("gives a late-loaded automatic frame ten seconds for its bridge and leaves no space after failure", () => {
+		vi.useFakeTimers();
+		const { container } = render(<ResourceFrame view={{ ...view, placement: "aboveEditor", autoMount: true }} cwd="/workspace" sessionPath="/chat-a" />);
+		const frame = container.querySelector("iframe")!;
+		act(() => { vi.advanceTimersByTime(29_999); });
+		fireEvent.load(frame);
+		act(() => { vi.advanceTimersByTime(9_999); });
+		expect(container.querySelector("iframe")).toBe(frame);
+		expect(frame.style.height).toBe("0px");
+		act(() => { vi.advanceTimersByTime(1); });
+		expect(container.childElementCount).toBe(0);
+		expect(screen.queryByRole("status")).toBeNull();
+		expect(screen.queryByRole("button", { name: "重试" })).toBeNull();
+	});
+	it("cancels both deadlines when the bridge is ready before the load event", () => {
+		vi.useFakeTimers();
+		const { container } = render(<ResourceFrame view={{ ...view, placement: "settings" }} cwd="/workspace" />);
+		const frame = container.querySelector("iframe")!;
+		const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: frame.contentWindow! }));
+		expect(post).toHaveBeenCalled();
+		act(() => { vi.advanceTimersByTime(45_000); });
+		fireEvent.load(frame);
+		act(() => { vi.advanceTimersByTime(10_001); });
+		expect(container.querySelector("iframe")).toBe(frame);
+		expect(screen.queryByRole("status")).toBeNull();
+	});
+	it("retries with a new document and token, aborts old actions, and drops late old responses", async () => {
+		const signals: AbortSignal[] = [];
+		const finish: Array<(response: Response) => void> = [];
+		const fetcher = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+			signals.push(init!.signal as AbortSignal);
+			return new Promise<Response>((resolve) => { finish.push(resolve); });
+		});
+		vi.stubGlobal("fetch", fetcher);
+		const openSession = vi.fn(); const answer = vi.fn(); const busy = vi.fn();
+		const { container } = render(<ResourceNavigationProvider value={{ openSession, createDraft: vi.fn() }}><ResourceFrame view={{ ...view, capabilities: ["sessions.open"] }} cwd="/workspace" onAnswer={answer} onBusyChange={busy} /></ResourceNavigationProvider>);
+		const oldFrame = container.querySelector("iframe")!;
+		const oldWindow = oldFrame.contentWindow!;
+		const oldPost = vi.spyOn(oldWindow, "postMessage").mockImplementation(() => {});
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: oldWindow }));
+		const oldToken = (oldPost.mock.calls[0][0] as { token: string }).token;
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "busy", token: oldToken, value: true }, source: oldWindow }));
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "host", token: oldToken, id: "read-state", name: "sessions.open", args: { sessionPath: "/old-chat" } }, source: oldWindow }));
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		fireEvent.error(oldFrame);
+		expect(container.querySelector("iframe")).toBeNull();
+		expect(signals[0].aborted).toBe(true);
+		expect(busy).toHaveBeenLastCalledWith(false);
+		fireEvent.click(screen.getByRole("button", { name: "重试" }));
+		const newFrame = container.querySelector("iframe")!;
+		expect(newFrame).not.toBe(oldFrame);
+		expect(newFrame.getAttribute("src")).toBe(view.url);
+		expect(newFrame.getAttribute("sandbox")).toBe("allow-scripts");
+		const newWindow = newFrame.contentWindow!;
+		const newPost = vi.spyOn(newWindow, "postMessage").mockImplementation(() => {});
+		fireEvent.load(newFrame);
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: newWindow }));
+		const newToken = (newPost.mock.calls[0][0] as { token: string }).token;
+		expect(newToken).not.toBe(oldToken);
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "answer", token: newToken, value: "old-window" }, source: oldWindow }));
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "answer", token: oldToken, value: "old-token" }, source: newWindow }));
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "invoke", token: oldToken, id: "stale", name: "state" }, source: newWindow }));
+		expect(answer).not.toHaveBeenCalled();
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "invoke", token: newToken, id: "read-state", name: "state" }, source: newWindow }));
+		expect(fetcher).toHaveBeenCalledTimes(2);
+		expect(signals[1]).not.toBe(signals[0]);
+		expect(signals[1].aborted).toBe(false);
+		await act(async () => {
+			finish[0]({ ok: true, json: async () => ({ success: true, data: { type: "sessions.open", sessionPath: "/stale-chat" } }) } as Response);
+			finish[1]({ ok: true, json: async () => ({ success: true, data: "fresh" }) } as Response);
+		});
+		await waitFor(() => expect(newPost.mock.calls.some(([message]) => (message as { type?: string; value?: unknown }).type === "result" && (message as { value?: unknown }).value === "fresh")).toBe(true));
+		expect(openSession).not.toHaveBeenCalled();
+		expect(oldPost.mock.calls.some(([message]) => (message as { type?: string }).type === "result")).toBe(false);
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "answer", token: newToken, value: "fresh-answer" }, source: newWindow }));
+		expect(answer).toHaveBeenCalledWith("fresh-answer");
+	});
+	it("starts automatic status frames collapsed, supports compact height, and collapses empty status", async () => {
+		const { container } = render(<ResourceFrame view={{ ...view, placement: "aboveEditor", autoMount: true }} cwd="/workspace" sessionPath="/chat-a" />);
+		const frame = container.querySelector("iframe")!;
+		expect(frame.style.height).toBe("0px");
+		expect(frame.getAttribute("aria-hidden")).toBe("true");
+		const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: frame.contentWindow! }));
+		await waitFor(() => expect(post).toHaveBeenCalled());
+		const token = (post.mock.calls[0][0] as { token: string }).token;
+		const resize = (height: number) => fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "resize", token, height }, source: frame.contentWindow! }));
+		resize(42); expect(frame.style.height).toBe("42px"); expect(frame.hasAttribute("aria-hidden")).toBe(false);
+		resize(1); expect(frame.style.height).toBe("0px"); expect(frame.getAttribute("tabindex")).toBe("-1");
+		resize(5000); expect(frame.style.height).toBe("1000px");
+	});
+	it("keeps the existing question and settings frame height limits", async () => {
+		const { container } = render(<ResourceFrame view={{ ...view, placement: "settings" }} cwd="/workspace" />);
+		const frame = container.querySelector("iframe")!;
+		expect(frame.style.height).toBe("260px");
+		const post = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: frame.contentWindow! }));
+		await waitFor(() => expect(post).toHaveBeenCalled());
+		const token = (post.mock.calls[0][0] as { token: string }).token;
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "resize", token, height: 1 }, source: frame.contentWindow! }));
+		expect(frame.style.height).toBe("80px");
+	});
+	it("detaches automatic status and aborts its in-flight action when the selected chat changes", async () => {
+		let signal: AbortSignal | undefined;
+		vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => {
+			signal = init.signal as AbortSignal;
+			return new Promise((_resolve, reject) => signal!.addEventListener("abort", () => reject(new Error("Cancelled")), { once: true }));
+		}));
+		const automaticView = { ...view, placement: "aboveEditor" as const, autoMount: true };
+		const { container, rerender } = render(<ResourceFrame view={automaticView} cwd="/workspace" sessionPath="/chat-a" />);
+		const previous = container.querySelector("iframe")!;
+		const post = vi.spyOn(previous.contentWindow!, "postMessage").mockImplementation(() => {});
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "ready" }, source: previous.contentWindow! }));
+		await waitFor(() => expect(post).toHaveBeenCalled());
+		const token = (post.mock.calls[0][0] as { token: string }).token;
+		fireEvent(window, new MessageEvent("message", { data: { channel: RESOURCE_FRAME_CHANNEL, type: "invoke", token, id: "read-state", name: "state", args: {} }, source: previous.contentWindow! }));
+		await waitFor(() => expect(signal).toBeDefined());
+		rerender(<ResourceFrame view={automaticView} cwd="/workspace" sessionPath="/chat-b" />);
+		expect(signal!.aborted).toBe(true);
+		expect(container.querySelector("iframe")).not.toBe(previous);
+		expect(container.querySelector("iframe")!.style.height).toBe("0px");
+	});
 	it("is opaque-origin and accepts messages only from its own frame with the issued token", async () => {
 		const answer = vi.fn();
 		const { container } = render(<ResourceFrame view={view} cwd="/workspace" onAnswer={answer} />);
