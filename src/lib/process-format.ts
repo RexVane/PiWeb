@@ -372,7 +372,7 @@ export function classifyModelError(message: string): ModelErrorKind | null {
 	if (/sensitive[ _-]?words?|content (moderation|filter)|moderation|content_policy|content policy|input blocked/.test(m)) return "moderation";
 	if (/\b429\b|rate.?limit|too many requests|requests per (minute|second)/.test(m)) return "rateLimit";
 	if (/\b402\b|insufficient (balance|credits|quota|funds)|billing|quota exceeded|余额/.test(m)) return "billing";
-	if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid.*(api.?key|token)|authentication|permission denied/.test(m)) return "auth";
+	if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|invalid.*(api.?key|token)|invalid_grant|\boauth\b.*(fail|expired|invalid|revoked|refresh)|authentication|permission denied/.test(m)) return "auth";
 	if (/\b404\b|model.*not (found|exist)|unknown model|no such model|not_found_error/.test(m)) return "notFound";
 	if (/context.*(length|window|limit)|too long|maximum.*tokens|prompt is too long|input length|exceeds the (limit|maximum)/.test(m)) return "context";
 	if (/timeout|timed out|etimedout|\b408\b|\b504\b/.test(m)) return "timeout";

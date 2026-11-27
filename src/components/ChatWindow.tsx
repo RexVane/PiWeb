@@ -1054,7 +1054,7 @@ function ErrorStep({ message, count }: { message: string; count: number }) {
 	return (
 		<Step kind="error" tone="warn">
 			<div className="pw-line">
-				<span className="pw-warn-text" title={message}>
+				<span className="pw-warn-text" title={message} style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
 					{t.modelError}: {message}
 					{hint ? ` · ${hint}` : ""}
 				</span>
@@ -1253,7 +1253,7 @@ function buildItems(messages: WebMessage[], k: number, tools: Record<string, Too
 		else if (c.type === "text" && !omitText && c.text.trim()) items.push({ kind: "narr", key, msgIndex: k, text: c.text, live: live && i === lastIndex, error: isError });
 		else if (c.type === "image" && !omitText) items.push({ kind: "image", key, msgIndex: k, data: c.data, mimeType: c.mimeType, url: (c as { url?: string }).url });
 	});
-	if (isError && (errorCount ?? 1) > 0) items.push({ kind: "error", key: `${k}-err`, msgIndex: k, message: message.errorMessage || message.stopReason || "error", count: errorCount ?? 1 });
+	if (isError && (errorCount ?? 1) > 0) items.push({ kind: "error", key: `${k}-err`, msgIndex: k, message: message.errorMessage?.trim() || message.stopReason || "error", count: errorCount ?? 1 });
 	if (message.stopReason === "aborted") items.push({ kind: "abort", key: `${k}-abort`, msgIndex: k });
 	return items;
 }
@@ -1800,13 +1800,20 @@ function TurnBlockView({
 		return duration;
 	};
 	const lastStop = lastIdx !== undefined ? messages[lastIdx]?.stopReason : undefined;
-	const canCollapseProcess = !turnLive && (finalIdx >= 0 || lastStop === "aborted" || lastStop === "error");
-	const blocks: ProcessBlock[] = buildProcessBlocks(items, spanOf, { turnLive, cwd });
+	// Failed turns must keep their terminal error(s) visibly surfaced outside any collapsed body.
+	let trailingErrorStart = items.length;
+	if (!turnLive && finalIdx < 0 && lastStop === "error") {
+		while (trailingErrorStart > 0 && items[trailingErrorStart - 1]?.kind === "error") trailingErrorStart -= 1;
+	}
+	const processItems = trailingErrorStart < items.length ? items.slice(0, trailingErrorStart) : items;
+	const visibleErrors = trailingErrorStart < items.length ? items.slice(trailingErrorStart) : [];
+	const canCollapseProcess = !turnLive && (finalIdx >= 0 || lastStop === "aborted" || (lastStop === "error" && processItems.length > 0));
+	const blocks: ProcessBlock[] = buildProcessBlocks(processItems, spanOf, { turnLive, cwd });
 	const turnWeb = (() => {
 		let hasWeb = false;
 		let hasSearch = false;
 		const batches: WebSource[][] = [];
-		for (const it of items) {
+		for (const it of processItems) {
 			const info = itemWebInfo(it);
 			if (!info.hasWeb) continue;
 			hasWeb = true;
@@ -1819,7 +1826,8 @@ function TurnBlockView({
 			sources: batches.length > 0 ? mergeWebSources(batches) : EMPTY_WEB_SOURCES,
 		};
 	})();
-	const showProcess = items.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
+	const hasCollapsibleSteps = processItems.length > 0 || Boolean(contextFiles?.length) || turnLive || Boolean(skill) || (isLast && Boolean(retryNotice));
+	const showProcess = hasCollapsibleSteps || visibleErrors.length > 0;
 	const processCollapsed = !processOpen && canCollapseProcess;
 	const turnDurationMs = (() => {
 		const endIdx = finalIdx >= 0 ? finalIdx : (lastStop === "aborted" || lastStop === "error") ? lastIdx : -1;
@@ -1842,7 +1850,7 @@ function TurnBlockView({
 			{skill && <UserImages images={user?.content.filter((c) => c.type === "image") ?? []} />}
 			{showProcess && (
 				<div className="pw-turn" data-collapsed={processCollapsed || undefined}>
-					{canCollapseProcess && (
+					{hasCollapsibleSteps && canCollapseProcess && (
 						<div className="pw-turn-bar">
 							<button
 								type="button"
@@ -1893,9 +1901,10 @@ function TurnBlockView({
 							)}
 						</div>
 					)}
-					{processCollapsed && turnSourcesOpen && turnWeb.sources.length > 0 && (
+					{hasCollapsibleSteps && processCollapsed && turnSourcesOpen && turnWeb.sources.length > 0 && (
 						<WebSourcesPanel sources={turnWeb.sources} />
 					)}
+					{hasCollapsibleSteps && (
 					<div className="pw-turn-body" data-collapsed={processCollapsed || undefined} inert={processCollapsed || undefined} aria-hidden={processCollapsed || undefined}>
 						<div className="pw-turn-body-inner">
 							{skill && <SkillStep name={skill.name} args={skill.args} />}
@@ -1931,6 +1940,10 @@ function TurnBlockView({
 							{turnLive && streamStartedAt && <WorkingStep startedAt={streamStartedAt} outputTokens={outputTokens} workingMessage={workingMessage} />}
 						</div>
 					</div>
+					)}
+					{visibleErrors.map((item) => (
+						<ItemView key={item.key} item={item} cwd={cwd} onInspectTool={onInspectTool} onOpenFile={onOpenFile} />
+					))}
 				</div>
 			)}
 			{finalIdx >= 0 && (
@@ -2033,6 +2046,11 @@ function TurnLite({ turn, messages }: { turn: Turn; messages: WebMessage[] }) {
 						{text && (
 							<div className="pw-turn-lite">
 								<div>{text}</div>
+							</div>
+						)}
+						{m.stopReason === "error" && (
+							<div className="pw-line pw-warn-text" style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>
+								{`${t.modelError}: ${m.errorMessage?.trim() || m.stopReason}`}
 							</div>
 						)}
 					</div>

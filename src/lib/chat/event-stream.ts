@@ -45,7 +45,7 @@ export function parseSseText(text: string): SseFrame[] {
 export interface EventPollHandlers {
 	/** 一次请求成功返回（断开后恢复时也会再调） */
 	onOpen(): void;
-	onMessage(data: string): void;
+	onMessage(data: string, id?: string): void;
 	/** 一次请求失败；之后按退避自动重试 */
 	onError(): void;
 	/** 每次请求成功返回都调（没有事件的空响应也算）：调用方据此判断连接还活着 */
@@ -103,7 +103,7 @@ export function pollEventStream(url: string, handlers: EventPollHandlers, { fetc
 				handlers.onPoll?.();
 				for (const frame of frames) {
 					if (closed) return;
-					handlers.onMessage(frame.data);
+					handlers.onMessage(frame.data, frame.id);
 					if (frame.id !== undefined) lastEventId = frame.id;
 				}
 				failures = 0;

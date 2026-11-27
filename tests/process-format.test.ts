@@ -164,6 +164,7 @@ describe("classifyModelError", () => {
 		expect(classifyModelError("Rate limit reached for gpt-4o")).toBe("rateLimit");
 		expect(classifyModelError("401 Unauthorized: invalid api key")).toBe("auth");
 		expect(classifyModelError("403 Forbidden")).toBe("auth");
+		expect(classifyModelError("OAuth refresh failed for xai: xAI OAuth token refresh failed (HTTP 400): invalid_grant")).toBe("auth");
 		expect(classifyModelError("402 insufficient balance")).toBe("billing");
 		expect(classifyModelError("404 model not found")).toBe("notFound");
 		expect(classifyModelError("prompt is too long: 210000 tokens > 200000 maximum")).toBe("context");

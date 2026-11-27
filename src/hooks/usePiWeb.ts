@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollEventStream, usesEventPolling } from "@/lib/chat/event-stream";
 import { createEventBatcher, type EventBatcher } from "@/lib/event-batcher";
 import { notifySessionsChanged } from "@/lib/session-change-events";
+import { clampThinkingLevelTo } from "@/lib/thinking-level";
 import { useI18n } from "@/i18n";
 import type {
 	GrowthRound,
@@ -121,6 +122,15 @@ interface PendingOptimisticPrompt {
 	rawText: string;
 	signature: string;
 	settled: boolean;
+}
+
+interface PendingThinkingSelection {
+	id: number;
+	level: string;
+	previousLevel?: string;
+	settled: boolean;
+	settledAt?: number;
+	seqAtDispatch?: number;
 }
 
 function isOptimisticUserMessage(message: WebMessage | undefined): boolean {
@@ -661,6 +671,10 @@ export function usePiWeb() {
 	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
 	const pendingOptimisticRef = useRef(new Map<string, PendingOptimisticPrompt>());
+	const pendingModelOpsRef = useRef(new Map<string, Promise<unknown>>());
+	const pendingThinkingRef = useRef(new Map<string, PendingThinkingSelection>());
+	const thinkingSeqRef = useRef(0);
+	const lastSessionSeqRef = useRef(new Map<string, { epoch?: string; seq: number }>());
 	const optimisticSeqRef = useRef(0);
 	const shownReloadsRef = useRef(new Set<string>());
 	const liveStateRef = useRef(state);
@@ -1165,7 +1179,19 @@ export function usePiWeb() {
 			lastFrameAt = Date.now();
 			// 流式事件按帧合并：token 速率再高也只每 16ms 渲染一次（见 event-batcher）
 			const batcher = createEventBatcher<WebEvent>({
-				flush: (events) => setState((s) => foldPiWebEvents(s, events)),
+				flush: (events) => setState((s) => {
+					const next = foldPiWebEvents(s, events);
+					const pendingThinking = pendingThinkingRef.current.get(currentId);
+					if (pendingThinking && !pendingThinking.settled && next.snapshot) {
+						const preserved = next.snapshot.thinkingLevels?.length
+							? clampThinkingLevelTo(next.snapshot.thinkingLevels, pendingThinking.level)
+							: pendingThinking.level;
+						if (next.snapshot.thinkingLevel !== preserved) {
+							return { ...next, snapshot: { ...next.snapshot, thinkingLevel: preserved } };
+						}
+					}
+					return next;
+				}),
 			});
 			batcherRef.current = batcher;
 			const onOpen = () => {
@@ -1174,9 +1200,27 @@ export function usePiWeb() {
 				retryDelayMs = 2000;
 				setState((s) => ({ ...s, connected: true }));
 			};
-			const onMessage = (data: string) => {
+			const onMessage = (data: string, eventId?: string) => {
 				if (disposed || activeSessionRef.current !== currentId) return;
 				lastFrameAt = Date.now();
+				let eventEpoch: string | undefined;
+				let eventSeq: number | undefined;
+				if (typeof eventId === "string" && eventId) {
+					const dot = eventId.lastIndexOf(".");
+					if (dot > 0) {
+						const parsedSeq = Number(eventId.slice(dot + 1));
+						if (Number.isSafeInteger(parsedSeq)) {
+							eventEpoch = eventId.slice(0, dot);
+							eventSeq = parsedSeq;
+						}
+					}
+				}
+				if (eventSeq !== undefined) {
+					const prevSeq = lastSessionSeqRef.current.get(currentId);
+					if (!prevSeq || prevSeq.epoch !== eventEpoch || eventSeq > prevSeq.seq) {
+						lastSessionSeqRef.current.set(currentId, { epoch: eventEpoch, seq: eventSeq });
+					}
+				}
 				let parsed: any;
 				try {
 					parsed = JSON.parse(data);
@@ -1209,7 +1253,27 @@ export function usePiWeb() {
 					retryDelayMs = 2000;
 					const receivedMessages = Array.isArray(parsed.snapshot.messages) ? parsed.snapshot.messages.map((message: WebMessage) => previewMessage(message)) : [];
 					// 聊天窗口保留完整历史（不再按窗口截断）；单条体积仍受 previewMessage 限制。
-					const snap = { ...parsed.snapshot, sessionPath: parsed.snapshot.sessionPath ?? currentPath, messages: receivedMessages, trajectory: recentTrajectory(Array.isArray(parsed.snapshot.trajectory) ? parsed.snapshot.trajectory : []) } as WebSnapshot;
+					let snap = { ...parsed.snapshot, sessionPath: parsed.snapshot.sessionPath ?? currentPath, messages: receivedMessages, trajectory: recentTrajectory(Array.isArray(parsed.snapshot.trajectory) ? parsed.snapshot.trajectory : []) } as WebSnapshot;
+					if (typeof snap.seq === "number") {
+						const prevSeq = lastSessionSeqRef.current.get(currentId);
+						if (!prevSeq || (eventEpoch && prevSeq.epoch !== eventEpoch) || snap.seq > prevSeq.seq) {
+							lastSessionSeqRef.current.set(currentId, { epoch: eventEpoch ?? prevSeq?.epoch, seq: snap.seq });
+						}
+					}
+					const pendingThinking = pendingThinkingRef.current.get(currentId);
+					if (pendingThinking) {
+						const snapSeqNum = typeof snap.seq === "number" ? snap.seq : undefined;
+						const staleSnapshot = !pendingThinking.settled
+							|| (snapSeqNum !== undefined && pendingThinking.seqAtDispatch !== undefined && snapSeqNum <= pendingThinking.seqAtDispatch)
+							|| (pendingThinking.settled && snap.thinkingLevel !== pendingThinking.level && typeof pendingThinking.settledAt === "number" && Date.now() - pendingThinking.settledAt < 2000);
+						if (staleSnapshot) {
+							pendingThinking.previousLevel = snap.thinkingLevel;
+							const preservedLevel = snap.thinkingLevels?.length ? clampThinkingLevelTo(snap.thinkingLevels, pendingThinking.level) : pendingThinking.level;
+							snap = { ...snap, thinkingLevel: preservedLevel };
+						} else {
+							pendingThinkingRef.current.delete(currentId);
+						}
+					}
 					const pendingOpt = pendingOptimisticRef.current.get(currentId);
 					let nextMessages = snap.messages;
 					if (pendingOpt) {
@@ -1244,8 +1308,26 @@ export function usePiWeb() {
 					if (parsed.type === "message" && parsed.message?.role === "user") {
 						pendingOptimisticRef.current.delete(currentId);
 					}
+					let eventForBatch = parsed as WebEvent;
 					if (parsed.type === "resources" || parsed.type === "model") void refreshModels();
-					batcher.push(parsed as WebEvent);
+					if (parsed.type === "model") {
+						const pendingThinking = pendingThinkingRef.current.get(currentId);
+						if (pendingThinking) {
+							const levels = Array.isArray(parsed.thinkingLevels) ? parsed.thinkingLevels : liveStateRef.current.snapshot?.thinkingLevels;
+							const preserved = levels?.length ? clampThinkingLevelTo(levels, pendingThinking.level) : pendingThinking.level;
+							if (!pendingThinking.settled) {
+								if (typeof parsed.thinkingLevel === "string") pendingThinking.previousLevel = parsed.thinkingLevel;
+								eventForBatch = { ...parsed, thinkingLevel: preserved } as WebEvent;
+							} else if (parsed.thinkingLevel === pendingThinking.level) {
+								pendingThinkingRef.current.delete(currentId);
+							} else if (eventSeq !== undefined && pendingThinking.seqAtDispatch !== undefined && eventSeq <= pendingThinking.seqAtDispatch) {
+								eventForBatch = { ...parsed, thinkingLevel: preserved } as WebEvent;
+							} else {
+								pendingThinkingRef.current.delete(currentId);
+							}
+						}
+					}
+					batcher.push(eventForBatch);
 				}
 			};
 			// Cloudflare 快速隧道不支持 SSE（流被攒成 128KB 一块，快照永远收不全）：改用长轮询，
@@ -1280,7 +1362,7 @@ export function usePiWeb() {
 					if (esRef.current === null) connect();
 				}, delay);
 			};
-			es.onmessage = (e) => onMessage(e.data);
+			es.onmessage = (e) => onMessage(e.data, e.lastEventId);
 		};
 		let retryTimer: ReturnType<typeof setTimeout> | undefined;
 		connect();
@@ -1374,10 +1456,26 @@ export function usePiWeb() {
 			return { success: false, error: "no session" };
 		}
 		const isPrompt = cmd.cmd === "prompt" || cmd.cmd === "sendQueueNow";
+		const isModelOp = cmd.cmd === "setThinkingLevel" || cmd.cmd === "setModel" || cmd.cmd === "cycleModel";
+		const needsModelOrder = isModelOp || isPrompt || cmd.cmd === "steer" || cmd.cmd === "followUp" || cmd.cmd === "editAndResend";
 		// Active-session composer sends show acceptance errors inline in ChatInput; keep state.error for Hero (explicit id) and other commands.
 		const reportError = () => options?.shouldReportError ? options.shouldReportError() : !(id === undefined && isPrompt);
 		if (isPrompt && promptRequestsRef.current.has(target)) return { success: false, error: "prompt acceptance pending" };
 		if (isPrompt) promptRequestsRef.current.add(target);
+		let thinkingOp: PendingThinkingSelection | null = null;
+		if (cmd.cmd === "setThinkingLevel") {
+			if (activeSessionRef.current === target) batcherRef.current?.flush();
+			const requested = String(cmd.level ?? "medium");
+			const activeSnap = activeSessionRef.current === target ? liveStateRef.current.snapshot : null;
+			const previousLevel = pendingThinkingRef.current.get(target)?.previousLevel ?? activeSnap?.thinkingLevel;
+			const optimisticLevel = activeSnap?.thinkingLevels?.length ? clampThinkingLevelTo(activeSnap.thinkingLevels, requested) : requested;
+			const seqAtDispatch = lastSessionSeqRef.current.get(target)?.seq ?? (typeof activeSnap?.seq === "number" ? activeSnap.seq : undefined);
+			thinkingOp = { id: ++thinkingSeqRef.current, level: optimisticLevel, previousLevel, settled: false, seqAtDispatch };
+			pendingThinkingRef.current.set(target, thinkingOp);
+			if (activeSessionRef.current === target) {
+				setState((s) => s.snapshot ? { ...s, snapshot: { ...s.snapshot, thinkingLevel: optimisticLevel } } : s);
+			}
+		}
 		let optimisticId: string | null = null;
 		if (cmd.cmd === "prompt" && !cmd.behavior) {
 			const rawText = typeof cmd.text === "string" ? cmd.text : "";
@@ -1420,31 +1518,73 @@ export function usePiWeb() {
 					: s,
 			);
 		};
-		try {
-			const r = await fetch(`/api/agent/${target}`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(cmd),
-			});
-			const result = await r.json();
-			if (!r.ok || !result.success) {
+		const priorModelOp = needsModelOrder ? pendingModelOpsRef.current.get(target) : undefined;
+		const requestPromise = (async () => {
+			try {
+				if (priorModelOp) await priorModelOp.catch(() => undefined);
+				const r = await fetch(`/api/agent/${target}`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(cmd),
+				});
+				const result = await r.json();
+				if (!r.ok || !result.success) {
+					clearOptimistic();
+					if (thinkingOp && pendingThinkingRef.current.get(target)?.id === thinkingOp.id) {
+						pendingThinkingRef.current.delete(target);
+						if (activeSessionRef.current === target) {
+							const rollback = thinkingOp.previousLevel;
+							setState((s) => s.snapshot ? { ...s, snapshot: { ...s.snapshot, thinkingLevel: rollback } } : s);
+						}
+					}
+					if (reportError()) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
+				} else if (result.data?.command === true) {
+					clearOptimistic();
+				} else {
+					if (optimisticId) {
+						const pending = pendingOptimisticRef.current.get(target);
+						if (pending?.streamId === optimisticId) pending.settled = true;
+					}
+					if (thinkingOp && pendingThinkingRef.current.get(target)?.id === thinkingOp.id) {
+						const confirmed = typeof result.data?.thinkingLevel === "string" ? result.data.thinkingLevel : thinkingOp.level;
+						thinkingOp.level = confirmed;
+						thinkingOp.settled = true;
+						thinkingOp.settledAt = Date.now();
+						if (activeSessionRef.current === target) {
+							setState((s) => s.snapshot ? { ...s, snapshot: { ...s.snapshot, thinkingLevel: confirmed } } : s);
+						}
+					} else if ((cmd.cmd === "setModel" || cmd.cmd === "cycleModel") && typeof result.data?.thinkingLevel === "string") {
+						const pending = pendingThinkingRef.current.get(target);
+						if (pending && pending.settled) pending.level = result.data.thinkingLevel;
+						if (activeSessionRef.current === target) {
+							setState((s) => s.snapshot ? { ...s, snapshot: { ...s.snapshot, thinkingLevel: result.data.thinkingLevel } } : s);
+						}
+					}
+				}
+				return result;
+			} catch (error) {
 				clearOptimistic();
-				if (reportError()) setState((s) => ({ ...s, error: result.error || `request failed (${r.status})` }));
-			} else if (result.data?.command === true) {
-				clearOptimistic();
-			} else if (optimisticId) {
-				const pending = pendingOptimisticRef.current.get(target);
-				if (pending?.streamId === optimisticId) pending.settled = true;
+				if (thinkingOp && pendingThinkingRef.current.get(target)?.id === thinkingOp.id) {
+					pendingThinkingRef.current.delete(target);
+					if (activeSessionRef.current === target) {
+						const rollback = thinkingOp.previousLevel;
+						setState((s) => s.snapshot ? { ...s, snapshot: { ...s.snapshot, thinkingLevel: rollback } } : s);
+					}
+				}
+				const message = error instanceof Error ? error.message : "request failed";
+				if (reportError()) setState((s) => ({ ...s, error: message }));
+				return { success: false, error: message };
+			} finally {
+				if (isPrompt) promptRequestsRef.current.delete(target);
 			}
-			return result;
-		} catch (error) {
-			clearOptimistic();
-			const message = error instanceof Error ? error.message : "request failed";
-			if (reportError()) setState((s) => ({ ...s, error: message }));
-			return { success: false, error: message };
-		} finally {
-			if (isPrompt) promptRequestsRef.current.delete(target);
+		})();
+		if (isModelOp) {
+			const tracked = requestPromise.finally(() => {
+				if (pendingModelOpsRef.current.get(target) === tracked) pendingModelOpsRef.current.delete(target);
+			});
+			pendingModelOpsRef.current.set(target, tracked);
 		}
+		return requestPromise;
 	}, [currentId]);
 
 	const newSession = useCallback(async (

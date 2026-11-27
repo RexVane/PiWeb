@@ -145,6 +145,8 @@ export interface Managed {
 	hasPersistedThinking?: boolean;
 	/** Ref-counted resource/settings watcher handle while SSE subscribers are attached */
 	resourceWatchUnsub?: () => void;
+	/** Suppress transient SDK thinking_level_changed broadcasts while applying an atomic model/thinking update. */
+	suppressThinkingPublish?: boolean;
 	modelSelection?: Promise<CommandResult>;
 	compactionStartedAt?: number;
 	/** 正在流式生成、尚未进入 session.messages 的助手消息（SDK 的共享 partial 对象）；中途订阅的快照要带上它 */
@@ -1287,6 +1289,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 			publish(m, { type: "name", name: evt.name ?? "", ts: now });
 			break;
 		case "thinking_level_changed":
+			if (m.suppressThinkingPublish) break;
 			if (m.session) publishModelState(m, m.session);
 			else publish(m, { type: "model", thinkingLevel: evt.level, ts: now });
 			break;
@@ -1874,7 +1877,7 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			const recordedModelRef = hasModelEntry ? recordedContext?.model ?? undefined : undefined;
 			const preselectedModel = recordedModelRef ? modelRuntime.getModel(recordedModelRef.provider, recordedModelRef.modelId) : undefined;
 			const initialModel = preselectedModel && modelRuntime.hasConfiguredAuth(preselectedModel.provider) ? preselectedModel : undefined;
-			const initialThinkingLevel = !hasMessages ? (m.desiredThinkingLevel ?? (hasThinkingEntry ? recordedContext?.thinkingLevel : undefined)) : undefined;
+			const initialThinkingLevel = m.desiredThinkingLevel ?? (!hasMessages && hasThinkingEntry ? recordedContext?.thinkingLevel : undefined);
 			const { session } = await createAgentSession({
 				cwd: m.cwd,
 				agentDir: getAgentDir(),
@@ -1927,8 +1930,13 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 					if (initialThinkingLevel) {
 						session.setThinkingLevel(clampThinkingLevel(extensionModel as any, initialThinkingLevel as any) as never);
 					}
-					reapplyDesiredLevel(m, session);
 				}
+			}
+			m.suppressThinkingPublish = true;
+			try {
+				reapplyDesiredLevel(m, session);
+			} finally {
+				m.suppressThinkingPublish = false;
 			}
 			applySessionTools(m, session);
 			m.resourceVersion = resourceLoaderVersion(m.cwd);
@@ -2157,6 +2165,7 @@ async function performReload(
 				// session_start may register or activate tools, so the final tool set is part of reload success.
 				applySessionTools(m, session);
 				swapCurrentModelObject(session);
+				reapplyDesiredLevel(m, session);
 				await syncSessionSettingsDefaults(m);
 			});
 			m.resourceVersion = attemptedVersion;
@@ -2872,6 +2881,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		}
 		isStreaming = isManagedBusy(m);
 	} else {
+		snapSeq = m.seq;
 		// 冷渲染：从 JSONL 还原消息（不启动 agent），压缩掉的历史也照常显示
 		try {
 			messages = sessionDisplayMessages(m.sm);
@@ -2882,7 +2892,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			const anySm = m.sm as unknown as { buildSessionContext?: () => { model?: { provider: string; modelId: string } | null; thinkingLevel?: string } };
 			const ctx = anySm.buildSessionContext?.();
 			if (ctx?.model) model = { provider: ctx.model.provider, id: ctx.model.modelId, name: ctx.model.modelId };
-			thinkingLevel = ctx?.thinkingLevel;
+			thinkingLevel = m.desiredThinkingLevel ?? ctx?.thinkingLevel;
 			// 冷会话也按真实模型给档位，而不是固定七档
 			if (ctx?.model) {
 				const rt = await getModelRuntime();
@@ -3334,9 +3344,15 @@ async function selectModel(m: Managed, cmd: AgentCommand): Promise<CommandResult
 	const session = await ensureSession(m);
 	const from = modelReference(session.model);
 	if (cmd.cmd === "cycleModel") {
-		const result = await session.cycleModel(cmd.direction ?? "forward");
-		if (!result?.model) return { ok: false, error: "no scoped models to cycle" };
-		reapplyDesiredLevel(m, session);
+		m.suppressThinkingPublish = true;
+		let result: Awaited<ReturnType<AgentSession["cycleModel"]>>;
+		try {
+			result = await session.cycleModel(cmd.direction ?? "forward");
+			if (!result?.model) return { ok: false, error: "no scoped models to cycle" };
+			reapplyDesiredLevel(m, session);
+		} finally {
+			m.suppressThinkingPublish = false;
+		}
 		publishModelState(m, session);
 		publishContextBreakdown(m);
 		recordModelChange(m, from, modelReference(session.model));
@@ -3344,16 +3360,49 @@ async function selectModel(m: Managed, cmd: AgentCommand): Promise<CommandResult
 	}
 	const model = session.modelRuntime.getModels(cmd.provider).find((item) => item.id === cmd.modelId);
 	if (!model) return { ok: false, error: `unknown model ${cmd.provider}/${cmd.modelId}` };
-	await session.setModel(model, { persist: false });
-	reapplyDesiredLevel(m, session);
-	// 新会话页先选的模型按新会话规则设档位；它不构成聊天中的一次切换。
-	if (cmd.fresh === true && !m.desiredThinkingLevel) applyNewSessionThinking(m, session);
+	m.suppressThinkingPublish = true;
+	try {
+		await session.setModel(model, { persist: false });
+		reapplyDesiredLevel(m, session);
+		// 新会话页先选的模型按新会话规则设档位；它不构成聊天中的一次切换。
+		if (cmd.fresh === true && !m.desiredThinkingLevel) applyNewSessionThinking(m, session);
+	} finally {
+		m.suppressThinkingPublish = false;
+	}
 	usageCache.delete(m);
 	publishModelState(m, session);
 	if (!cmd.fresh) recordModelChange(m, from, modelReference(session.model));
 	publishUsage(m, true);
 	publishContextBreakdown(m);
 	return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: safeThinkingLevels(session) } };
+}
+
+async function selectThinkingLevel(m: Managed, requested: string): Promise<CommandResult> {
+	m.desiredThinkingLevel = requested;
+	if (!m.session && !m.creating) {
+		const context = m.sm.buildSessionContext();
+		const { listWorkspaceModelsForPiWeb } = await import("./models-service");
+		const model = context.model ? (await listWorkspaceModelsForPiWeb(m.cwd)).models.find((item) => item.provider === context.model!.provider && item.id === context.model!.modelId) : undefined;
+		if (!m.session && !m.creating) {
+			const effective = model ? clampThinkingLevelTo(model.thinkingLevels, requested) : "off";
+			m.sm.appendThinkingLevelChange(effective);
+			publish(m, { type: "model", provider: context.model?.provider, model: context.model?.modelId, thinkingLevel: effective, thinkingLevels: model?.thinkingLevels ?? ["off"], ts: Date.now() });
+			return { ok: true, data: { requested, thinkingLevel: effective, clamped: requested !== effective } };
+		}
+	}
+	const session = await ensureSession(m);
+	// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
+	const effective = clampThinkingLevel(session.model as any, requested as any);
+	m.desiredThinkingLevel = requested;
+	// 不传 persist：与终端 pi 一样，聊天里切档位只影响本会话；全局默认仍以 settings.json 为准（见 reapplyDesiredLevel）
+	m.suppressThinkingPublish = true;
+	try {
+		session.setThinkingLevel(effective as never);
+	} finally {
+		m.suppressThinkingPublish = false;
+	}
+	publishModelState(m, session);
+	return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
 }
 
 export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandResult> {
@@ -3374,6 +3423,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const busy = await claimSubmission(m);
 				if (busy) return { ok: false, error: busy };
 				try {
+					await m.modelSelection?.catch(() => undefined);
 					if (!cmd.behavior && !m.runActive && !m.session?.isStreaming) kickoffGrowthPrepare(m);
 					const session = await ensureSession(m);
 					if (m.disposed) throw new Error("session is disposed");
@@ -3395,6 +3445,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const busy = await claimSubmission(m);
 				if (busy) return { ok: false, error: busy };
 				try {
+					await m.modelSelection?.catch(() => undefined);
 					const session = await ensureSession(m);
 					if (m.resourceReloading || !session.isStreaming) return { ok: false, error: "session is not accepting queued messages" };
 					await session[cmd.cmd](cmd.text ?? "", cmd.images);
@@ -3419,6 +3470,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				if (busy) return { ok: false, error: busy };
 				let cleared: { steering: string[]; followUp: string[]; images?: PromptImages } | undefined;
 				try {
+					await m.modelSelection?.catch(() => undefined);
 					const session = await ensureSession(m);
 					if (m.disposed) throw new Error("session is disposed");
 					if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
@@ -3499,26 +3551,13 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				finally { if (m.modelSelection === selection) m.modelSelection = undefined; }
 			}
 			case "setThinkingLevel": {
-				if (!m.session && !m.creating) {
-					const requested = String(cmd.level ?? "medium");
-					const context = m.sm.buildSessionContext();
-					const { listWorkspaceModelsForPiWeb } = await import("./models-service");
-					const model = context.model ? (await listWorkspaceModelsForPiWeb(m.cwd)).models.find((item) => item.provider === context.model!.provider && item.id === context.model!.modelId) : undefined;
-					if (m.session || m.creating) return execute(m, cmd);
-					const effective = model ? clampThinkingLevelTo(model.thinkingLevels, requested) : "off";
-					m.desiredThinkingLevel = requested; m.sm.appendThinkingLevelChange(effective);
-					publish(m, { type: "model", provider: context.model?.provider, model: context.model?.modelId, thinkingLevel: effective, thinkingLevels: model?.thinkingLevels ?? ["off"], ts: Date.now() });
-					return { ok: true, data: { requested, thinkingLevel: effective, clamped: requested !== effective } };
-				}
-				const session = await ensureSession(m);
 				const requested = String(cmd.level ?? "medium");
-				// 与 pi 终端一致：不支持的档位就近钳制而不是拒绝（非推理模型 → off），并把实际生效值回传
-				const effective = clampThinkingLevel(session.model as any, requested as any);
 				m.desiredThinkingLevel = requested;
-				// 不传 persist：与终端 pi 一样，聊天里切档位只影响本会话；全局默认仍以 settings.json 为准（见 reapplyDesiredLevel）
-				session.setThinkingLevel(effective as never);
-				publishModelState(m, session);
-				return { ok: true, data: { requested, thinkingLevel: session.thinkingLevel, clamped: session.thinkingLevel !== requested } };
+				const prior = m.modelSelection?.catch(() => undefined);
+				const selection = Promise.resolve(prior).then(() => selectThinkingLevel(m, requested));
+				m.modelSelection = selection;
+				try { return await selection; }
+				finally { if (m.modelSelection === selection) m.modelSelection = undefined; }
 			}
 			case "navigate": {
 				const entryId = cmd.entryId ?? "";
@@ -3549,6 +3588,7 @@ export async function execute(m: Managed, cmd: AgentCommand): Promise<CommandRes
 				const busy = await claimSubmission(m);
 				if (busy) return { ok: false, error: busy };
 				try {
+					await m.modelSelection?.catch(() => undefined);
 					const session = await ensureSession(m);
 					if (m.disposed) throw new Error("session is disposed");
 					if (m.submissionCancelled) return { ok: false, error: "已停止，消息未发送。" };
