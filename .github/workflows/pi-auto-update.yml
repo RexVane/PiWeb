@@ -1,0 +1,213 @@
+name: pi-auto-update
+
+# 每天 12:00 Asia/Shanghai（= 04:00 UTC）检查内置 Pi SDK 是否落后于 npm latest：
+#   - 主版本号或次版本号变化（如 1.5.x → 1.6.x）：更新；
+#   - 同一次版本内修订号落后 ≥ 2（如 1.6.0 → 1.6.2）：更新。
+# 满足条件时：
+#   1. 在 bot/pi-sdk-<版本> 分支把全部 Pi 运行时包锁到新版本，PiWeb 升补丁版本，写发布说明，开 PR；
+#   2. 对该提交跑完整的 check.yml（Ubuntu/Windows 矩阵 + macOS + lint + verify:package）；
+#   3. main 没有被别人推进时，把同一个已测试提交快进推到 main（PR 自动变为 merged）；
+#   4. 调用 publish.yml 发布到 npm、打 tag、建 GitHub Release。
+# 任何一步失败：不发布，保留 PR/分支，开 Issue 通知维护者修复。
+# 同一版本的分支已存在时（上次失败待处理）跳过，避免每天重复开 PR/Issue。
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only report the decision; do not open a PR or publish"
+        type: boolean
+        default: false
+
+concurrency:
+  group: pi-auto-update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      current: ${{ steps.decide.outputs.current }}
+      latest: ${{ steps.decide.outputs.latest }}
+      reason: ${{ steps.decide.outputs.reason }}
+      branch: ${{ steps.gate.outputs.branch }}
+      proceed: ${{ steps.gate.outputs.proceed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Compare the pinned Pi SDK with npm latest
+        id: decide
+        run: node .github/scripts/pi-auto-update.mjs check
+
+      - name: Decide whether to proceed
+        id: gate
+        env:
+          UPDATE: ${{ steps.decide.outputs.update }}
+          LATEST: ${{ steps.decide.outputs.latest }}
+          REASON: ${{ steps.decide.outputs.reason }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          branch="bot/pi-sdk-$LATEST"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          proceed=false
+          if [ "$UPDATE" != "true" ]; then
+            echo "No update needed: $REASON"
+          elif git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "Branch $branch already exists (a previous run is waiting for a fix); skipping."
+          elif [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: would update ($REASON)"
+          else
+            proceed=true
+            echo "Updating: $REASON"
+          fi
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+          echo "### Pi SDK check: $REASON (proceed=$proceed)" >> "$GITHUB_STEP_SUMMARY"
+
+  prepare:
+    needs: detect
+    if: needs.detect.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      base: ${{ steps.base.outputs.base }}
+      sha: ${{ steps.commit.outputs.sha }}
+      piweb: ${{ steps.apply.outputs.piweb }}
+      pr: ${{ steps.pr.outputs.url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - id: base
+        run: echo "base=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Pin every Pi runtime package to the new version
+        id: apply
+        run: node .github/scripts/pi-auto-update.mjs apply "${{ needs.detect.outputs.latest }}"
+        env:
+          PI_CODING_AGENT_DIR: ${{ runner.temp }}/piweb-update-agent
+          PI_OFFLINE: "1"
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Commit and push the update branch
+        id: commit
+        env:
+          BRANCH: ${{ needs.detect.outputs.branch }}
+          PREVIOUS: ${{ needs.detect.outputs.current }}
+          PI: ${{ needs.detect.outputs.latest }}
+          PIWEB: ${{ steps.apply.outputs.piweb }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(deps): update Pi SDK $PREVIOUS -> $PI (release $PIWEB)"
+          git push origin "$BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Open the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.detect.outputs.branch }}
+          PREVIOUS: ${{ needs.detect.outputs.current }}
+          PI: ${{ needs.detect.outputs.latest }}
+          PIWEB: ${{ steps.apply.outputs.piweb }}
+          REASON: ${{ needs.detect.outputs.reason }}
+        run: |
+          set -euo pipefail
+          body="Automated Pi SDK update: \`$PREVIOUS\` → \`$PI\` ($REASON).
+
+          PiWeb version: \`$PIWEB\`. This PR is merged and published automatically after the full check workflow passes in [run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). If checks fail, it stays open for a manual fix."
+          url="$(gh pr create --base main --head "$BRANCH" --title "chore(deps): update Pi SDK to $PI (PiWeb $PIWEB)" --body "$body")"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: [detect, prepare]
+    uses: ./.github/workflows/check.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+    permissions:
+      contents: read
+
+  merge:
+    needs: [detect, prepare, check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - name: Fast-forward main to the tested commit
+        env:
+          BASE: ${{ needs.prepare.outputs.base }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          BRANCH: ${{ needs.detect.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "$BASE" ]; then
+            echo "main moved since the update was prepared; refusing to publish an untested combination."
+            exit 1
+          fi
+          git push origin "$SHA:refs/heads/main"
+          git push origin --delete "$BRANCH" || true
+
+  publish:
+    needs: [merge]
+    uses: ./.github/workflows/publish.yml
+    with:
+      ref: main
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write
+
+  report-failure:
+    needs: [detect, prepare, check, merge, publish]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREVIOUS: ${{ needs.detect.outputs.current }}
+          PI: ${{ needs.detect.outputs.latest }}
+          PR: ${{ needs.prepare.outputs.pr }}
+          RESULTS: "detect=${{ needs.detect.result }}, prepare=${{ needs.prepare.result }}, check=${{ needs.check.result }}, merge=${{ needs.merge.result }}, publish=${{ needs.publish.result }}"
+        run: |
+          set -euo pipefail
+          body="The automated Pi SDK update \`$PREVIOUS\` → \`$PI\` did not complete, so nothing new was published (unless the publish stage itself failed after npm accepted the version — see RELEASING.md \"Retrying\").
+
+          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          - PR: ${PR:-not created}
+          - Stages: $RESULTS
+
+          Fix the code on the PR branch, merge it, then run \`gh workflow run publish --ref main\`. Delete the \`bot/pi-sdk-$PI\` branch if you want the automation to retry this version from scratch."
+          gh issue create --title "Pi SDK auto-update to $PI failed" --body "$body"
