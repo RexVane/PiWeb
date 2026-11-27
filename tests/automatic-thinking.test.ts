@@ -42,6 +42,32 @@ it("always preserves manual mappings, including user additions beyond the offici
 	await service.settle(); expect(probe).not.toHaveBeenCalled();
 });
 
+it("uses the Pi catalog levels for GPT-6.2 Astra on a compatible provider", async () => {
+	const modelsPath = path.join(root, "models.json");
+	await fs.writeFile(modelsPath, JSON.stringify({
+		providers: {
+			agentrouter: {
+				api: "openai-responses",
+				baseUrl: "https://models.invalid/v1",
+				apiKey: "offline-key",
+				models: [{ id: "gpt-6.2-astra", reasoning: true }],
+			},
+		},
+	}));
+	const runtime = await createPiWebModelRuntime({
+		modelsPath,
+		authPath: path.join(root, "auth.json"),
+		allowModelNetwork: false,
+	});
+	const astra = runtime.getModel("agentrouter", "gpt-6.2-astra")!;
+	expect(modelThinkingMetadata(astra)).toMatchObject({
+		source: "official",
+		status: "none",
+		officialModel: "openai/gpt-6.2-astra",
+	});
+	expect(getSupportedThinkingLevels(astra)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+});
+
 it("deduplicates background work, caches only levels, survives restart and never writes models.json", async () => {
 	const file = path.join(root, "models.json"); const content = '{"providers":{"custom":{"apiKey":"secret-must-not-be-cached"}}}';
 	await fs.writeFile(file, content);
