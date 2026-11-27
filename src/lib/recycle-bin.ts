@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { APP_ROOT } from "./app-root";
 import { BoundaryError, isPathInside, samePath } from "./path-boundary";
-import { assertNoRemovalMounts, withProtectedRemovalSource } from "./removal-boundary";
+import { assertNoRemovalMounts, canonicalRemovalSource, currentRemovalPath, withProtectedRemovalSource } from "./removal-boundary";
 
 export class TrashUnavailableError extends Error {
 	readonly code = "TRASH_UNAVAILABLE";
@@ -118,7 +118,7 @@ export async function moveToTrash(target: string, options: TrashOptions): Promis
 			|| options.expectedKind === "directory" && !stat.isDirectory() && !stat.isSymbolicLink()) {
 			throw new BoundaryError("Removal type changed; original files were retained.");
 		}
-		if (options.expectedCanonical && (stat.isSymbolicLink() || !samePath(await fs.realpath(source), options.expectedCanonical))) throw new BoundaryError("Removal target changed; original files were retained.");
+		if (options.expectedCanonical && (stat.isSymbolicLink() || !samePath(await canonicalRemovalSource(source), options.expectedCanonical))) throw new BoundaryError("Removal target changed; original files were retained.");
 		const expected = options.expectedIdentity;
 		if (expected && (stat.dev !== expected.dev || stat.ino !== expected.ino
 			|| expected.size !== undefined && stat.size !== expected.size || expected.mtimeMs !== undefined && stat.mtimeMs !== expected.mtimeMs)) throw new BoundaryError("Item changed during removal; refresh and try again.");
@@ -126,6 +126,7 @@ export async function moveToTrash(target: string, options: TrashOptions): Promis
 		if (!unchanged(stat, await fs.lstat(source))) throw new BoundaryError("Item changed during removal; refresh and try again.");
 		try {
 			if (process.platform === "darwin") {
+				if (!samePath(await currentRemovalPath(source), removed)) throw new BoundaryError("Removal path changed; original files were retained.");
 				await runFile("/usr/bin/osascript", ["-e", MAC_TRASH_SCRIPT, removed], { timeout: 60_000 });
 			} else if (process.platform === "win32") {
 				await runFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", path.join(APP_ROOT, "scripts", "recycle-item.ps1"), "-LiteralPath", removed], { windowsHide: true, timeout: 60_000 });

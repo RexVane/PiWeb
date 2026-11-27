@@ -4,7 +4,18 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 const runner = vi.hoisted(() => ({ spawnSync: vi.fn() }));
-vi.mock("node:child_process", async (original) => ({ ...await original<typeof import("node:child_process")>(), spawnSync: runner.spawnSync }));
+vi.mock("node:child_process", async (original) => {
+	const actual = await original<typeof import("node:child_process")>();
+	return {
+		...actual,
+		spawnSync: ((command: string, args?: readonly string[], options?: unknown) => {
+			if (Array.isArray(args) && args.some((arg) => /[/\\]scripts[/\\]build\.mjs$/.test(String(arg)))) {
+				return runner.spawnSync(command, args, options);
+			}
+			return actual.spawnSync(command, args as string[], options as never);
+		}) as typeof actual.spawnSync,
+	};
+});
 import { ensureInstallBuild, hasProductionBuild } from "../scripts/install-build.mjs";
 import { selectProductionBuild } from "../scripts/build-output.mjs";
 import { runLauncher } from "../scripts/launcher.mjs";
@@ -18,7 +29,7 @@ function writeBuild(root: string, buildDir: string, id: string) {
 }
 function fixture() {
 	vi.stubEnv("PIWEB_SKIP_INSTALL_BUILD", "0");
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "piweb-install-transaction-")); roots.push(root);
+	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "piweb-install-transaction-"))); roots.push(root);
 	fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "@rexvane/piweb", version: "1.0.0" }));
 	fs.writeFileSync(path.join(root, "tsconfig.json"), "{}");
 	fs.mkdirSync(path.join(root, "node_modules/next"), { recursive: true });

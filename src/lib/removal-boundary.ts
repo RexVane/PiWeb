@@ -1,9 +1,61 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import fsSync, { constants } from "node:fs";
 import fs from "node:fs/promises";
-import { constants } from "node:fs";
 import path from "node:path";
 import { runtimeRequire } from "../../scripts/runtime-require.mjs";
 
 const inside = (child: string, parent: string) => child === parent || child.startsWith(parent.replace(/\/$/, "") + "/");
+const darwinPinnedParents = new AsyncLocalStorage<Map<string, () => string>>();
+
+type DarwinNative = {
+	open: (path: string, oflag: number) => number;
+	openat: (fd: number, path: string, oflag: number) => number;
+	close: (fd: number) => number;
+	fcntl: (fd: number, cmd: number, type: "void *", buf: Buffer) => number;
+	errno: () => number;
+};
+
+let darwinApi: DarwinNative | undefined;
+function loadDarwinNative(): DarwinNative {
+	if (darwinApi) return darwinApi;
+	const koffi = runtimeRequire(import.meta.url)("koffi") as typeof import("koffi");
+	const libc = koffi.load("/usr/lib/libSystem.B.dylib");
+	darwinApi = {
+		open: libc.func("int open(const char *path, int oflag, ...)") as DarwinNative["open"],
+		openat: libc.func("int openat(int fd, const char *path, int oflag, ...)") as DarwinNative["openat"],
+		close: libc.func("int close(int fd)") as DarwinNative["close"],
+		fcntl: libc.func("int fcntl(int fd, int cmd, ...)") as DarwinNative["fcntl"],
+		errno: () => koffi.errno(),
+	};
+	return darwinApi;
+}
+
+function readDarwinFdPath(native: DarwinNative, fd: number): string {
+	const F_GETPATH = 50;
+	const buffer = Buffer.alloc(4096);
+	if (native.fcntl(fd, F_GETPATH, "void *", buffer) !== 0) {
+		throw new Error("Removal path changed or could not be resolved; original files were retained.");
+	}
+	const terminator = buffer.indexOf(0);
+	return buffer.subarray(0, terminator === -1 ? buffer.length : terminator).toString("utf8");
+}
+
+function darwinOpenError(code: number, targetPath: string): Error {
+	if (code === 2) return Object.assign(new Error(`ENOENT: no such file or directory, open '${targetPath}'`), { code: "ENOENT" });
+	if (code === 20 || code === 62) return new Error("Removal path changed or contains a directory link; original files were retained.");
+	return new Error(`Could not protect the removal path (errno ${code}); original files were retained.`);
+}
+
+/** Resolve the current path of a protected removal source without following macOS volfs limitations. */
+export async function currentRemovalPath(source: string): Promise<string> {
+	const resolver = darwinPinnedParents.getStore()?.get(source);
+	return resolver ? resolver() : source;
+}
+
+/** Resolve the canonical target path for a protected removal source. */
+export async function canonicalRemovalSource(source: string): Promise<string> {
+	return fs.realpath(await currentRemovalPath(source));
+}
 
 /** mountinfo, unlike st_dev alone, also identifies same-filesystem bind mounts. */
 export function removalMounts(mountInfo: string, target: string, root = target): string[] {
@@ -59,6 +111,39 @@ export async function withProtectedRemovalSource<T>(target: string, action: (sou
 			}
 			return await action(`/proc/self/fd/${directory.fd}/${path.basename(absolute)}`);
 		} finally { for (const handle of handles.reverse()) await handle.close(); }
+	}
+	if (process.platform === "darwin") {
+		const native = loadDarwinNative();
+		const O_RDONLY = 0x0000;
+		const O_NOFOLLOW = 0x0100;
+		const O_DIRECTORY = 0x100000;
+		const flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
+		const handles: number[] = [];
+		try {
+			let fd = native.open(volume, flags);
+			if (fd < 0) throw darwinOpenError(native.errno(), volume);
+			handles.push(fd);
+			for (const segment of path.relative(volume, parent).split(path.sep).filter(Boolean)) {
+				fd = native.openat(fd, segment, flags);
+				if (fd < 0) throw darwinOpenError(native.errno(), parent);
+				handles.push(fd);
+			}
+			if (readDarwinFdPath(native, fd) !== parent) {
+				throw new Error("Removal path changed; original files were retained.");
+			}
+			const stat = fsSync.fstatSync(fd, { bigint: true });
+			const volParent = `/.vol/${stat.dev}/${stat.ino}`;
+			if (!(await fs.lstat(volParent)).isDirectory()) {
+				throw new Error("Could not protect the removal path; original files were retained.");
+			}
+			const basename = path.basename(absolute);
+			const source = `${volParent}/${basename}`;
+			const pinned = new Map(darwinPinnedParents.getStore());
+			pinned.set(source, () => path.join(readDarwinFdPath(native, fd), basename));
+			return await darwinPinnedParents.run(pinned, () => action(source));
+		} finally {
+			for (const handle of handles.reverse()) native.close(handle);
+		}
 	}
 	// Other platforms have no native path pinning adapter here; re-resolve the
 	// physical parent and fail if it has become an alias. Do not claim OS isolation.

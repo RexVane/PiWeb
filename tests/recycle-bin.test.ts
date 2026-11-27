@@ -32,6 +32,8 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 vi.mock("@/lib/removal-boundary", () => ({
 	assertNoRemovalMounts: native.mounts,
+	canonicalRemovalSource: async (source: string) => fs.realpath(source),
+	currentRemovalPath: async (source: string) => source,
 	withProtectedRemovalSource: async <T,>(target: string, action: (source: string) => Promise<T>) => action(target),
 }));
 import { moveToTrash, TrashUnavailableError } from "@/lib/recycle-bin";

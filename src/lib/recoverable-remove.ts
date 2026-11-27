@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { withSettingsWriteLock, withExternalSettingsLock } from "./settings-write-lock";
-import { assertNoRemovalMounts, withProtectedRemovalSource } from "./removal-boundary";
+import { assertNoRemovalMounts, canonicalRemovalSource, withProtectedRemovalSource } from "./removal-boundary";
 
 export interface RecoverableRemoveOptions {
 	/** A trusted workspace, never a client-provided deletion destination. */
@@ -93,7 +93,7 @@ export async function recoverableRemove(target: string, options: RecoverableRemo
 async function recoverableRemovePinned(removed: string, source: string, options: RecoverableRemoveOptions): Promise<{ removed: string; backup: string; index: string }> {
 	const metadata = await fs.lstat(source);
 	if (options.expectedLink !== undefined && metadata.isSymbolicLink() !== options.expectedLink) throw new Error("Skill removal type changed; original files were retained.");
-	if (options.expectedCanonical && (metadata.isSymbolicLink() || await fs.realpath(source) !== options.expectedCanonical)) throw new Error("Skill target changed during removal; original files were retained.");
+	if (options.expectedCanonical && (metadata.isSymbolicLink() || await canonicalRemovalSource(source) !== options.expectedCanonical)) throw new Error("Skill target changed during removal; original files were retained.");
 	await assertNoRemovalMounts(removed, options.managedRoot);
 	const home = path.resolve(os.homedir());
 	const workspace = options.cwd ? path.resolve(options.cwd) : undefined;
@@ -105,7 +105,7 @@ async function recoverableRemovePinned(removed: string, source: string, options:
 	const mirror = inside(removed, home) && !(workspace && inside(removed, workspace))
 		? path.dirname(path.relative(home, removed)) : "files";
 	const directory = path.join(root, mirror);
-	const canonicalTarget = metadata.isSymbolicLink() ? removed : await fs.realpath(source);
+	const canonicalTarget = metadata.isSymbolicLink() ? removed : await canonicalRemovalSource(source);
 	if (inside(await canonicalDestination(directory), canonicalTarget)) throw new Error("Recovery directory resolves inside the item being removed");
 	await fs.mkdir(directory, { recursive: true });
 	// Reject a recovery-root link into the item itself before moving any data.
