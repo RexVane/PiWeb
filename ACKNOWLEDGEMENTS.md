@@ -10,7 +10,7 @@ These are direct runtime or framework foundations declared in `package.json` (or
 
 | Project | Link | License | PiWeb use |
 | --- | --- | --- | --- |
-| [Pi Coding Agent](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`, `pi-agent-core`, `pi-ai`, `pi-codemode`, `pi-mcp`, `pi-telemetry`, `pi-tui`, `@earendil-works/chord`) | https://github.com/earendil-works/pi | MIT (`package-lock.json`, package `license` field, version 1.5.2) | Bundled SDK: agent runtime, tools, MCP, sessions, and related UI/server integration under `src/` |
+| [Pi Coding Agent](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`, `pi-agent-core`, `pi-ai`, `pi-codemode`, `pi-mcp`, `pi-telemetry`, `pi-tui`, `@earendil-works/chord`) | https://github.com/earendil-works/pi | MIT (`package-lock.json`, package `license` field, version 1.6.1) | Bundled SDK: agent runtime, tools, MCP, sessions, and related UI/server integration under `src/` |
 | [Next.js](https://github.com/vercel/next.js) | https://github.com/vercel/next.js | MIT (`next@16.4.5` package.json in this install) | App framework: `src/app/`, `next.config.ts`, production build |
 | [React](https://github.com/react/react) and React DOM | https://github.com/react/react | MIT (`react@19.3.0` / `react-dom@19.3.0` package.json; repository field `https://github.com/react/react.git`) | UI components under `src/components/` and `src/hooks/` |
 | [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) | https://github.com/tailwindlabs/tailwindcss | MIT | Styling (`src/app/globals.css`, PostCSS config) |
