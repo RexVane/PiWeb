@@ -651,8 +651,9 @@ export function AppShell() {
 			breakdown: snapshot?.contextBreakdown,
 			compacted: compactedRecently,
 			loadFull: loadFullContext,
+			sessionId: currentId,
 		}),
-		[contextSystemChars, getComposerMessages, snapshot?.contextBreakdown, compactedRecently, loadFullContext],
+		[contextSystemChars, getComposerMessages, snapshot?.contextBreakdown, compactedRecently, loadFullContext, currentId],
 	);
 	const isStreaming = snapshot?.isStreaming ?? false;
 	const archiveActivePathRef = useRef(currentPath);

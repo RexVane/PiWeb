@@ -4,23 +4,16 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
 
 /** 上下文总量是 SDK 估算；API 输入用量与内容字符分类分别展示，不能按比例分摊 token。 */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ContextInspectorModal } from "@/components/ContextInspectorModal";
 import { useI18n } from "@/i18n";
+import { inContextMessages, type ContextCategoryKey, type ContextMessageLike } from "@/lib/effective-context";
 import { fmtPercent, fmtTokens } from "@/lib/format";
 import { formatCapacity, parseCapacity } from "@/lib/model-draft";
 import { classifyMessageChars } from "@/lib/process-format";
 import type { ContextBreakdown, TrajTokens } from "@/lib/types";
 
-type ContextMessage = {
-	id?: string;
-	role?: string;
-	content: Array<{ type: string; text?: string; thinking?: string; arguments?: unknown; name?: string }>;
-	/** `!` 命令：输出在 bash 里，不在 content 里（`!!` 的不进上下文） */
-	bash?: { command: string; output: string; excludeFromContext?: boolean };
+type ContextMessage = ContextMessageLike & {
 	usage?: TrajTokens;
-	stopReason?: string;
-	timestamp?: number;
-	summaryKind?: string;
-	firstKeptEntryId?: string;
 };
 
 type ContextSource = {
@@ -32,19 +25,11 @@ type ContextSource = {
 	breakdown?: ContextBreakdown;
 	compacted?: boolean;
 	loadFull?: () => Promise<unknown> | unknown;
+	/** 会话 ID：点击颜色条或分类行时从服务端读取真正的有效上下文投影 */
+	sessionId?: string | null;
 };
 
 const EMPTY_MESSAGES: ContextMessage[] = [];
-
-/** 压缩状态行按完成时间显示，上下文从 SDK 保留的第一条消息算起。 */
-function inContext(messages: ContextMessage[]): { messages: ContextMessage[]; since?: number } {
-	const at = messages.findLastIndex((m) => m.role === "summary" && m.summaryKind === "compaction");
-	if (at < 0) return { messages };
-	const { firstKeptEntryId, timestamp } = messages[at];
-	// 向上翻页之前，第一条保留消息可能早于当前加载窗口。
-	const from = firstKeptEntryId ? Math.max(0, messages.findIndex((message) => message.id === firstKeptEntryId)) : at + 1;
-	return { messages: messages.slice(from), since: timestamp };
-}
 
 export function ContextMeter({ percent, tokens, contextWindow, model, source, label }: {
 	percent: number | null;
@@ -59,6 +44,7 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	const [open, setOpen] = useState(false);
 	const [counting, setCounting] = useState(false);
 	const [hoverKey, setHoverKey] = useState<string | null>(null);
+	const [inspectCategory, setInspectCategory] = useState<ContextCategoryKey | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 	const { t } = useI18n();
 	const cold = Boolean(source?.breakdown?.cold);
@@ -89,8 +75,10 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	const hasCompactedBreakdown = Boolean(source?.compacted || (source?.breakdown?.characters?.compacted ?? 0) > 0 || (source?.breakdown?.compacted ?? 0) > 0);
 	// 流式期间只在打开弹窗后扫描；仅在刚压缩且尚无新回合 API 用量时读取最新上下文消息以算圆环估算值。
 	const shouldReadClosed = window_ > 0 && tokens === null && percent === null && hasCompactedBreakdown;
-	const messages = (open || shouldReadClosed) ? source?.getMessages?.() ?? source?.messages ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
-	const context = useMemo(() => inContext(messages), [messages]);
+	const messages = (open || shouldReadClosed || (inspectCategory !== null && !source?.sessionId))
+		? source?.getMessages?.() ?? source?.messages ?? EMPTY_MESSAGES
+		: EMPTY_MESSAGES;
+	const context = useMemo(() => inContextMessages(messages), [messages]);
 	const chars = useMemo(() => classifyMessageChars(context.messages), [context]);
 	const lastUsage = useMemo(() => context.messages.findLast((m) => m.role === "assistant" && m.stopReason !== "error" && m.stopReason !== "aborted" && m.stopReason !== "pending" &&
 		(context.since === undefined || (m.timestamp ?? 0) >= context.since) &&
@@ -107,21 +95,26 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	const anchor = window_ > 0 ? (measuredInput !== null ? Math.min(measuredInput, window_) : known ? Math.min(used, window_) : null) : null;
 	// 超过窗口时预留不再画到窗口外；非压缩导致的用量未知仍不能将整扇窗口显示为 Free Space。
 	const free = anchor === null ? null : Math.max(0, window_ - anchor - reserved);
+	const serverMsgChars = source?.breakdown?.messageCharacters;
+	const effectiveChars = serverMsgChars ?? chars;
 	const b = source?.breakdown?.characters;
-	const rows = [
+	const rows: Array<{ key: ContextCategoryKey; label: string; value: number | undefined; color: string }> = [
 		{ key: "system", label: t.contextSystemPrompt, value: b?.systemPrompt, color: "#3b82f6" },
 		{ key: "builtin", label: t.contextSystemTools, value: b?.systemTools, color: "#8b5cf6" },
 		{ key: "custom", label: t.contextCustomTools, value: b?.customTools, color: "#a855f7" },
 		{ key: "memory", label: t.contextMemory, value: b?.memory, color: "#06b6d4" },
 		{ key: "skills", label: t.contextSkills, value: b?.skills, color: "#10b981" },
-		{ key: "user", label: t.contextUserMessages, value: chars.user, color: "#22c55e" },
-		{ key: "text", label: t.contextAgentText, value: chars.agentText, color: "#84cc16" },
-		{ key: "thinking", label: t.contextAgentThinking, value: chars.agentThinking, color: "#eab308" },
-		{ key: "call", label: t.contextAgentToolCall, value: chars.agentToolCall, color: "#f97316" },
-		{ key: "output", label: t.contextToolOutput, value: chars.toolOutput, color: "#f59e0b" },
+		{ key: "user", label: t.contextUserMessages, value: effectiveChars.user, color: "#22c55e" },
+		{ key: "text", label: t.contextAgentText, value: effectiveChars.agentText, color: "#84cc16" },
+		{ key: "thinking", label: t.contextAgentThinking, value: effectiveChars.agentThinking, color: "#eab308" },
+		{ key: "call", label: t.contextAgentToolCall, value: effectiveChars.agentToolCall, color: "#f97316" },
+		{ key: "output", label: t.contextToolOutput, value: effectiveChars.toolOutput, color: "#f59e0b" },
 		{ key: "compacted", label: t.contextCompacted, value: b?.compacted, color: "#ec4899" },
-	].filter((row) => row.value !== undefined && row.value > 0);
-	const charTotal = rows.reduce((sum, row) => sum + (row.value ?? 0), 0);
+	];
+	const visibleRows = rows
+		.filter((row) => row.value !== undefined && row.value > 0)
+		.sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
+	const charTotal = visibleRows.reduce((sum, row) => sum + (row.value ?? 0), 0);
 	const isPostCompaction = hasCompactedBreakdown || context.since !== undefined;
 	/**
 	 * 压缩后、下一次模型响应返回真实 API usage 之前：真实 token 与 SDK 估算均为 null，
@@ -138,12 +131,23 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 	const barAnchor = anchor ?? estimatedFromChars;
 	const barReserved = barAnchor === null ? 0 : Math.min(reserved, Math.max(0, window_ - barAnchor));
 	const displayFree = free ?? (estimatedFromChars !== null ? Math.max(0, window_ - estimatedFromChars - reserved) : null);
-	const segments = barAnchor === null || charTotal === 0 ? [] : rows.map((row) => ({
+	const segments = barAnchor === null || charTotal === 0 ? [] : visibleRows.map((row) => ({
 		key: row.key,
 		label: row.label,
 		value: row.value as number,
 		color: row.color,
 		width: barAnchor / window_ * 100 * ((row.value as number) / charTotal),
+	}));
+	const openInspector = (key: ContextCategoryKey) => {
+		setOpen(false);
+		setHoverKey(null);
+		setInspectCategory(key);
+	};
+	const categoryMeta = visibleRows.map((row) => ({
+		key: row.key,
+		label: row.label,
+		color: row.color,
+		chars: row.value ?? 0,
 	}));
 
 	return (
@@ -167,8 +171,9 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 					{window_ > 0 && (
 						<div className="pw-agent-limits-bar mt-3 flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: "var(--dsw-selector)" }} data-testid="context-bar" aria-hidden onMouseLeave={() => setHoverKey(null)}>
 							{segments.map((segment) => (
-								<span key={segment.key} data-segment={segment.key} className="pw-agent-limits-seg flex-none" title={`${segment.label}：${fmtTokens(segment.value)} ${t.contextChars}`}
+								<span key={segment.key} data-segment={segment.key} data-clickable="true" className="pw-agent-limits-seg flex-none" title={`${segment.label}：${fmtTokens(segment.value)} ${t.contextChars} · ${t.contextInspectorClickHint}`}
 									onMouseEnter={() => setHoverKey(segment.key)}
+									onClick={(e) => { e.stopPropagation(); openInspector(segment.key); }}
 									style={{ width: `${segment.width}%`, background: segment.color, opacity: hoverKey && hoverKey !== segment.key ? 0.32 : 1 }} />
 							))}
 							{barReserved > 0 && <span data-segment="reserved" className="pw-agent-limits-seg flex-none" onMouseEnter={() => setHoverKey("reserved")} style={{ width: `${barReserved / window_ * 100}%`, background: "var(--dsw-border-l3)", opacity: hoverKey && hoverKey !== "reserved" ? 0.32 : 1 }} />}
@@ -183,9 +188,9 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 							{t.contextPostCompactionHint}
 						</div>
 					)}
-					{/* 进度条的图例：颜色跟上面的分段一一对应，数字是真实字符数 */}
+					{/* 进度条的图例：颜色跟上面的分段一一对应，数字是真实字符数；点击对应行查看该类当前有效内容 */}
 					<div className="mt-2.5 flex flex-col gap-1" style={{ color: "var(--dsw-label-tertiary)" }} onMouseLeave={() => setHoverKey(null)}>
-						{rows.map((row) => <DataRow key={row.key} itemKey={row.key} active={hoverKey === row.key} dimmed={hoverKey !== null && hoverKey !== row.key} onHover={setHoverKey} label={row.label} value={`${fmtTokens(row.value!)} ${t.contextChars}`} exact={`${row.value} ${t.contextChars}`} color={row.color} />)}
+						{visibleRows.map((row) => <DataRow key={row.key} itemKey={row.key} active={hoverKey === row.key} dimmed={hoverKey !== null && hoverKey !== row.key} onHover={setHoverKey} onClick={() => openInspector(row.key)} clickHint={t.contextInspectorClickHint} label={row.label} value={`${fmtTokens(row.value!)} ${t.contextChars}`} exact={`${row.value} ${t.contextChars}`} color={row.color} />)}
 					</div>
 					{cold && source?.loadFull && (
 						<div className="mt-3 flex items-center justify-between gap-2" style={{ color: "var(--dsw-label-tertiary)" }}>
@@ -204,6 +209,18 @@ export function ContextMeter({ percent, tokens, contextWindow, model, source, la
 					)}
 				</div>
 			)}
+			<ContextInspectorModal
+				open={inspectCategory !== null}
+				initialCategory={inspectCategory ?? "system"}
+				categoryMeta={categoryMeta}
+				messages={messages}
+				model={model}
+				sessionId={source?.sessionId}
+				refreshKey={source?.breakdown}
+				cold={cold}
+				onLoadFull={source?.loadFull}
+				onClose={() => setInspectCategory(null)}
+			/>
 		</div>
 	);
 }
@@ -327,7 +344,29 @@ function WindowEditor({ model, value, onSaved }: { model: { provider: string; id
 	);
 }
 
-function DataRow({ label, value, exact, color, itemKey, active, dimmed, onHover }: { label: string; value: string; exact?: string; color: string; itemKey?: string; active?: boolean; dimmed?: boolean; onHover?: (key: string | null) => void }) {
+function DataRow({ label, value, exact, color, itemKey, active, dimmed, onHover, onClick, clickHint }: { label: string; value: string; exact?: string; color: string; itemKey?: string; active?: boolean; dimmed?: boolean; onHover?: (key: string | null) => void; onClick?: () => void; clickHint?: string }) {
+	const inner = (
+		<>
+			<span className="flex items-center gap-1.5"><span className="pw-agent-limits-dot inline-block rounded-full" style={{ width: 8, height: 8, background: color, boxShadow: active ? `0 0 8px ${color}` : undefined }} />{label}</span>
+			<span title={exact} style={{ fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-mono)", fontSize: "0.94em" }}>{value}</span>
+		</>
+	);
+	if (onClick) {
+		return (
+			<button
+				type="button"
+				className="pw-agent-limits-row pw-agent-limits-row-clickable flex w-full items-center justify-between gap-2 text-left"
+				data-active={active || undefined}
+				data-dimmed={dimmed || undefined}
+				title={clickHint}
+				onMouseEnter={itemKey && onHover ? () => onHover(itemKey) : undefined}
+				onMouseLeave={itemKey && onHover ? () => onHover(null) : undefined}
+				onClick={onClick}
+			>
+				{inner}
+			</button>
+		);
+	}
 	return <div
 		className="pw-agent-limits-row flex items-center justify-between gap-2"
 		data-active={active || undefined}
@@ -335,7 +374,6 @@ function DataRow({ label, value, exact, color, itemKey, active, dimmed, onHover 
 		onMouseEnter={itemKey && onHover ? () => onHover(itemKey) : undefined}
 		onMouseLeave={itemKey && onHover ? () => onHover(null) : undefined}
 	>
-		<span className="flex items-center gap-1.5"><span className="pw-agent-limits-dot inline-block rounded-full" style={{ width: 8, height: 8, background: color, boxShadow: active ? `0 0 8px ${color}` : undefined }} />{label}</span>
-		<span title={exact} style={{ fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-mono)", fontSize: "0.94em" }}>{value}</span>
+		{inner}
 	</div>;
 }

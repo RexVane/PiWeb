@@ -2,6 +2,7 @@
  * agent-manager：AgentSession 池 + pi 事件 → Web 事件翻译 + SSE 订阅管理。
  * 打开会话即惰性冷启动（createAgentSession），空闲回收，事件先快照后增量。
  */
+import { imageFileName } from "./chat/image-attachment";
 import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -58,6 +59,7 @@ import { canonicalWorkspacePath, getGrowthInitConsent, setGrowthInitConsent } fr
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { onThinkingCapabilitiesChanged } from "./automatic-thinking";
 import { editSessionQueue, sessionQueueState, QueueEditError } from "./session-queue";
+import { buildEffectiveContext, type BuildEffectiveContextInput, type EffectiveContextResponse, type EffectiveModelRef } from "./effective-context";
 import type {
 	AgentCommand,
 	ContextBreakdown,
@@ -101,8 +103,6 @@ export interface Managed {
 	viewerGraceUntil?: number;
 	/** 本轮已排队推送上下文分项（publishContextBreakdown 合并同一轮的多次触发） */
 	breakdownQueued?: boolean;
-	/** 首次运行后 pi 才会把系统分段持久化，届时用它把分类从差分换成投影口径，只换一次 */
-	breakdownProjected?: boolean;
 	buffer: { seq: number; json: string }[];
 	seq: number;
 	/**
@@ -165,6 +165,8 @@ export interface Managed {
 	shutdownRequested?: boolean;
 	/** 用户的 `!` 命令正在跑：算忙（不回收、不重载），停止按钮能中断它 */
 	bashActive?: boolean;
+	/** A user shell command is saved by the SDK only after exit. Keep its live message for reconnects. */
+	runningBash?: WebMessage;
 	/** 可选单回合预算（env 显式开启时才有）：步数 / 时长 / token 上限 */
 	budget?: AgentBudgetState;
 }
@@ -224,8 +226,10 @@ export function toWebMessage(m: any, entryId?: string): WebMessage {
 			items.push({ type: "thinking", thinking: c.thinking });
 		else if (c.type === "toolCall")
 			items.push({ type: "toolCall", id: String(c.id ?? ""), name: String(c.name ?? ""), arguments: c.arguments });
-		else if (c.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string")
-			items.push({ type: "image", data: c.data, mimeType: c.mimeType });
+		else if (c.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string") {
+			const name = imageFileName(c.name);
+			items.push({ type: "image", data: c.data, mimeType: c.mimeType, ...(name ? { name } : {}) });
+		}
 	}
 	out.content = items;
 	if (m.role === "user") out.role = "user";
@@ -1091,12 +1095,9 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 				const events: WebEvent[] = [];
 				if (msg.role === "assistant") {
 					msg.endedAt = now;
-					// 首次回复结束后 pi 已把系统分段写进会话文件，此时分类能读到投影（比 systemPrompt 差分精确）
-					if (!m.breakdownProjected) {
-						m.breakdownProjected = true;
-						publishContextBreakdown(m);
-					}
 				}
+				// 每条消息落盘后实时刷新有效上下文分项（含用户/助手/思考/调用/输出与首次系统投影）
+				publishContextBreakdown(m);
 				events.push({ type: "message", message: msg, phase: "end", ts: now });
 				const usage = usageEvent(m);
 				if (usage) events.push(usage);
@@ -1164,6 +1165,7 @@ function translate(m: Managed, evt: AgentSessionEvent): void {
 		case "agent_end":
 			// SDK 的 post-run retry/compaction/queued continuation 尚未结束。
 			publishUsage(m);
+			publishContextBreakdown(m);
 			break;
 		case "agent_settled":
 			m.runActive = false;
@@ -1560,12 +1562,58 @@ function loadContextResources(cwd: string, loader: AgentSession["resourceLoader"
 	];
 }
 
-const SKILLS_SECTION_START = "The following skills provide specialized instructions";
-const SKILLS_SECTION_END = "</available_skills>";
+function effectiveModelOf(m: Managed, projectionModel?: { provider: string; modelId: string } | null): EffectiveModelRef | null {
+	const model = m.session?.model as { provider?: string; api?: string; id?: string } | undefined;
+	if (model?.id) {
+		return { provider: model.provider, api: model.api, id: model.id };
+	}
+	if (projectionModel?.modelId) {
+		return { provider: projectionModel.provider, id: projectionModel.modelId };
+	}
+	return null;
+}
+
+function effectiveContextFromProjection(
+	m: Managed,
+	projectedMessages: Array<Record<string, unknown>>,
+	projectionModel?: { provider: string; modelId: string } | null,
+	resources?: ContextResource[],
+): EffectiveContextResponse {
+	const hasPersistedSystem = projectedMessages.some((msg) => msg?.role === "system");
+	let projectMemoryResources: Array<{ path: string; content: string }> = [];
+	let coldSkillsText: string | undefined;
+	if (!hasPersistedSystem) {
+		if (resources) {
+			projectMemoryResources = resources.filter((r) => r.source === "project").map((r) => ({ path: r.path, content: r.content }));
+		} else {
+			try {
+				const loader = m.session?.resourceLoader ?? peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
+				projectMemoryResources = loader.getAgentsFiles().agentsFiles.map((file) => ({ path: file.path, content: file.content }));
+			} catch {
+				/* 资源尚未就绪时保持为空 */
+			}
+		}
+		if (!m.session) {
+			try {
+				const loader = peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
+				const skills = formatSkillsForPrompt(loader.getSkills().skills).trim();
+				if (skills) coldSkillsText = skills;
+			} catch {
+				/* 技能尚未就绪时保持为空 */
+			}
+		}
+	}
+	return buildEffectiveContext({
+		projectedMessages,
+		session: m.session as BuildEffectiveContextInput["session"],
+		currentModel: effectiveModelOf(m, projectionModel),
+		projectMemoryResources,
+		coldSkillsText,
+	});
+}
 
 /**
- * 当前上下文的字符分类，优先读 SDK 投影中的系统分段、工具 schema 与摘要。
- * 旧客户端仍可读取字符/4 的估算字段；新客户端仅将字符数作为分类数据。
+ * 当前上下文的字符分类，与 getEffectiveContext 共用同一份 SDK 投影口径。
  * 没有持久化系统消息且尚未启动的会话，资源来自发现缓存并标记 cold。
  */
 async function buildContextBreakdown(m: Managed, resources: ContextResource[]): Promise<ContextBreakdown> {
@@ -1574,49 +1622,26 @@ async function buildContextBreakdown(m: Managed, resources: ContextResource[]): 
 		systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0, autoCompactBuffer: 0,
 		...(session ? {} : { cold: true }),
 	};
-	// Memory：AGENTS.md 等注入文件（contextResources 的 project 部分）
-	const memoryText = resources.filter((r) => r.source === "project").map((r) => r.content).join("\n\n");
-	// 字符分项只读取当前投影中的内容。历史压缩摘要、未激活工具不混入当前统计。
-	const characters = { systemPrompt: 0, systemTools: 0, customTools: 0, memory: 0, skills: 0, compacted: 0 };
 	try {
-		const messages = m.sm.buildSessionProjection().messages as any[];
-		const system = messages.findLast((message) => message.role === "system");
-		if (system) {
-			const contentChars = typeof system.content === "string" ? system.content.length : textOf(system.content).length;
-			characters.memory = system.sections?.project_context?.length ?? 0;
-			characters.skills = system.sections?.skills?.length ?? 0;
-			characters.systemPrompt = contentChars + Object.entries(system.sections ?? {})
-				.filter(([key]) => key !== "project_context" && key !== "skills")
-				.reduce((sum, [, value]) => sum + (typeof value === "string" ? value.length : 0), 0);
-			const builtinNames = new Set(session
-				? session.getAllTools().filter((tool: any) => tool.sourceInfo?.source === "builtin").map((tool) => tool.name)
-				: ["read", "bash", "edit", "write", "grep", "find", "ls"]);
-			for (const tool of system.toolsAdded ?? []) {
-				characters[builtinNames.has(tool.name) ? "systemTools" : "customTools"] += JSON.stringify(tool).length;
-			}
-			delete breakdown.cold;
-		} else if (session) {
-			const prompt = session.systemPrompt ?? "";
-			characters.memory = memoryText.length;
-			const start = prompt.indexOf(SKILLS_SECTION_START);
-			const end = prompt.indexOf(SKILLS_SECTION_END);
-			characters.skills = start >= 0 && end > start ? prompt.slice(start, end + SKILLS_SECTION_END.length).length : 0;
-			characters.systemPrompt = Math.max(0, prompt.length - characters.memory - characters.skills);
-			const active = new Set(session.getActiveToolNames());
-			for (const tool of session.getAllTools().filter((tool) => active.has(tool.name))) {
-				const size = JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }).length;
-				characters[(tool as any).sourceInfo?.source === "builtin" ? "systemTools" : "customTools"] += size;
-			}
-		} else {
-			// 初次启动前只能读到待注入的资源，界面保留 cold 提示。
-			characters.memory = memoryText.length;
-			const loader = peekResourceLoader(m.cwd) ?? getResourceLoader(m.cwd);
-			characters.skills = formatSkillsForPrompt(loader.getSkills().skills).trim().length;
-		}
-		for (const message of messages) {
-			if (message.role === "compactionSummary" || message.role === "branchSummary") characters.compacted += message.summary?.length ?? 0;
-		}
+		const projection = m.sm.buildSessionProjection();
+		const eff = effectiveContextFromProjection(m, projection.messages as Array<Record<string, unknown>>, projection.model, resources);
+		const characters = {
+			systemPrompt: eff.totals.system,
+			systemTools: eff.totals.builtin,
+			customTools: eff.totals.custom,
+			memory: eff.totals.memory,
+			skills: eff.totals.skills,
+			compacted: eff.totals.compacted,
+		};
 		breakdown.characters = characters;
+		breakdown.messageCharacters = {
+			user: eff.totals.user,
+			agentText: eff.totals.text,
+			agentThinking: eff.totals.thinking,
+			agentToolCall: eff.totals.call,
+			toolOutput: eff.totals.output,
+		};
+		if (!eff.cold) delete breakdown.cold;
 		// 保留旧客户端的估算字段，当前客户端直接展示实际字符数。
 		for (const key of Object.keys(characters) as Array<keyof typeof characters>) breakdown[key] = Math.ceil(characters[key] / 4);
 	} catch {
@@ -1630,6 +1655,23 @@ async function buildContextBreakdown(m: Managed, resources: ContextResource[]): 
 		/* 设置读取失败则保持 0 */
 	}
 	return breakdown;
+}
+
+/**
+ * 读取当前会话真正进入模型窗口的有效上下文明细（基于 SDK 投影与会话注入状态）。
+ * 只读，不触发启动也不修改会话。
+ */
+export async function getEffectiveContext(m: Managed): Promise<EffectiveContextResponse> {
+	let projectedMessages: Array<Record<string, unknown>> = [];
+	let projectionModel: { provider: string; modelId: string } | null | undefined;
+	try {
+		const projection = m.sm.buildSessionProjection();
+		projectedMessages = projection.messages as Array<Record<string, unknown>>;
+		projectionModel = projection.model;
+	} catch {
+		projectedMessages = [];
+	}
+	return effectiveContextFromProjection(m, projectedMessages, projectionModel);
 }
 
 /**
@@ -2583,6 +2625,7 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 			if (partial.role === "assistant") messages.push({ ...partial, stopReason: "pending" });
 		}
 		messages = hideImportedTaskNotifications(branch, messages);
+		if (m.runningBash) messages.push(m.runningBash);
 		snapSeq = m.seq;
 		const modelObj: any = session.model;
 		if (modelObj) model = { provider: String(modelObj.provider ?? ""), id: String(modelObj.id ?? ""), name: String(modelObj.name ?? modelObj.id ?? "") };
@@ -2839,9 +2882,10 @@ function queuedMessageImages(session: AgentSession): PromptImages {
 		if (!Array.isArray(msg?.content)) continue;
 		for (const block of msg.content) {
 			if (block && typeof block === "object" && "type" in block && block.type === "image") {
-				const img = block as { data?: unknown; mimeType?: unknown };
+				const img = block as { data?: unknown; mimeType?: unknown; name?: unknown };
 				if (typeof img.data === "string" && typeof img.mimeType === "string") {
-					images.push({ type: "image", data: img.data, mimeType: img.mimeType });
+					const name = imageFileName(img.name);
+					images.push({ type: "image", data: img.data, mimeType: img.mimeType, ...(name ? { name } : {}) });
 				}
 			}
 		}
@@ -2964,12 +3008,8 @@ async function submitPrompt(
 async function runUserBash(m: Managed, session: AgentSession, command: string, excludeFromContext: boolean): Promise<void> {
 	const streamId = randomUUID();
 	const startedAt = Date.now();
-	publish(m, {
-		type: "message",
-		phase: "start",
-		message: { role: "bashExecution", streamId, content: [], timestamp: startedAt, bash: { command, output: "", running: true, excludeFromContext: excludeFromContext || undefined } },
-		ts: startedAt,
-	});
+	m.runningBash = { role: "bashExecution", streamId, content: [], timestamp: startedAt, bash: { command, output: "", running: true, excludeFromContext: excludeFromContext || undefined } };
+	publish(m, { type: "message", phase: "start", message: m.runningBash, ts: startedAt });
 	let pending = "";
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	const flush = () => {
@@ -2978,11 +3018,18 @@ async function runUserBash(m: Managed, session: AgentSession, command: string, e
 		if (!pending) return;
 		const delta = sanitizeToolOutput(pending).text;
 		pending = "";
-		if (delta) publish(m, { type: "bash_output", messageId: streamId, delta, ts: Date.now() });
+		if (!delta) return;
+		const current = m.runningBash;
+		if (current?.bash) {
+			const output = current.bash.output + delta;
+			m.runningBash = { ...current, bash: { ...current.bash, output: output.slice(-8000), truncated: current.bash.truncated || output.length > 8000 } };
+		}
+		publish(m, { type: "bash_output", messageId: streamId, delta, ts: Date.now() });
 	};
 	/** 收尾帧：沿用开始帧的流 ID；entryId 是会话里那条消息的条目 ID（重连后的快照不会多出一条） */
 	const finish = (message: Record<string, unknown>, extra: { entryId?: string; failed?: boolean } = {}) => {
 		flush();
+		m.runningBash = undefined;
 		const frame = toWebMessage({ role: "bashExecution", command, excludeFromContext, timestamp: startedAt, ...message }, extra.entryId);
 		publish(m, { type: "message", phase: "end", message: { ...frame, streamId, bash: frame.bash && extra.failed ? { ...frame.bash, failed: true } : frame.bash }, ts: Date.now() });
 	};
@@ -3007,6 +3054,7 @@ async function runUserBash(m: Managed, session: AgentSession, command: string, e
 		m.ledger.recordBash({ command, excludeFromContext, ...result }, startedAt);
 		publishTraj(m);
 		publishUsage(m, true);
+		if (!excludeFromContext) publishContextBreakdown(m);
 	} catch (error) {
 		// 没能跑起来（找不到 shell 等）：也要收尾，不留一个永远在跑的卡片
 		finish({ output: String((error as Error)?.message ?? error) }, { failed: true });
@@ -3030,6 +3078,7 @@ async function selectModel(m: Managed, cmd: AgentCommand): Promise<CommandResult
 			m.sm.appendModelChange(model.provider, model.id);
 			m.sm.appendThinkingLevelChange(effective);
 			publish(m, { type: "model", provider: model.provider, model: model.id, thinkingLevel: effective, thinkingLevels: model.thinkingLevels, ts: Date.now() });
+			publishContextBreakdown(m);
 			if (!cmd.fresh && previous) {
 				const from = models.find((item) => item.provider === previous.provider && item.id === previous.modelId)
 					?? { provider: previous.provider, id: previous.modelId };
@@ -3045,6 +3094,7 @@ async function selectModel(m: Managed, cmd: AgentCommand): Promise<CommandResult
 		if (!result?.model) return { ok: false, error: "no scoped models to cycle" };
 		reapplyDesiredLevel(m, session);
 		publishModelState(m, session);
+		publishContextBreakdown(m);
 		recordModelChange(m, from, modelReference(session.model));
 		return { ok: true, data: { model: String(result.model.id ?? ""), thinkingLevel: session.thinkingLevel } };
 	}
@@ -3058,6 +3108,7 @@ async function selectModel(m: Managed, cmd: AgentCommand): Promise<CommandResult
 	publishModelState(m, session);
 	if (!cmd.fresh) recordModelChange(m, from, modelReference(session.model));
 	publishUsage(m, true);
+	publishContextBreakdown(m);
 	return { ok: true, data: { thinkingLevel: session.thinkingLevel, thinkingLevels: safeThinkingLevels(session) } };
 }
 

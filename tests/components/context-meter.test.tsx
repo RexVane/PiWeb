@@ -295,3 +295,133 @@ describe("上下文圆环里改窗口", () => {
 		expect(screen.getByTitle("12.00% 上下文估算")).toBeTruthy();
 	});
 });
+
+describe("点击颜色条与分类行查看真正有效上下文", () => {
+	it("弹窗优先采用服务端实时推送的 messageCharacters 有效字符口径", () => {
+		const withEffectiveMessages: ContextBreakdown = {
+			...WARM,
+			messageCharacters: { user: 1200, agentText: 4500, agentThinking: 0, agentToolCall: 300, toolOutput: 800 },
+		};
+		render(meter(withEffectiveMessages));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		// 尽管 MESSAGES 只有 "hello there, please look at the project"（39 字符），弹窗应展示服务端权威有效字符数
+		expect(screen.getByText("1.20K 字符")).toBeTruthy();
+		expect(screen.getByText("4.50K 字符")).toBeTruthy();
+		expect(screen.queryByText("Agent Thinking")).toBeNull();
+	});
+
+	it("点击颜色条分段关闭小弹窗并打开对应分类的内容查看器（客户端回退），按 Esc 关闭", () => {
+		render(meter(WARM));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		const bar = screen.getByTestId("context-bar");
+		const userSeg = bar.querySelector('[data-segment="user"]') as HTMLElement;
+		fireEvent.click(userSeg);
+
+		// 小弹窗关闭，内容查看器打开并展示当前有效的用户消息
+		expect(screen.queryByTestId("context-bar")).toBeNull();
+		const modal = screen.getByTestId("context-inspector-modal");
+		expect(modal.textContent).toContain("User Messages");
+		expect(modal.textContent).toContain("hello there, please look at the project");
+
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(screen.queryByTestId("context-inspector-modal")).toBeNull();
+	});
+
+	it("点击分类行从 /api/sessions/<id>/context 拉取有效上下文，支持切换标签、复制与随 breakdown 实时刷新；无搜索栏且按大小降序", async () => {
+		const copySpy = vi.fn(async () => {});
+		Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copySpy } });
+
+		let callCount = 0;
+		const fetchMock = vi.fn(async (url: string) => {
+			callCount += 1;
+			expect(url).toBe("/api/sessions/sess-123/context");
+			return {
+				ok: true,
+				status: 200,
+				json: async () => ({
+					success: true,
+					data: {
+						cold: false,
+						categories: {
+							system: [{ id: "system:main", category: "system", title: "System Prompt", content: `Effective system prompt v${callCount}`, chars: 26 }],
+							builtin: [{ id: "builtin:read:0", category: "builtin", title: "read", subtitle: "Read file", tag: "builtin", content: "# read\n\nRead file", chars: 120 }],
+							custom: [],
+							memory: [{ id: "memory:injected", category: "memory", title: "AGENTS.md", content: "Project memory rule", chars: 19 }],
+							skills: [],
+							user: [
+								{ id: "user:0", category: "user", title: "", turn: 1, content: "hi", chars: 2 },
+								{ id: "user:1", category: "user", title: "", turn: 2, content: "longest user prompt", chars: 19 },
+								{ id: "user:2", category: "user", title: "", turn: 3, content: "medium", chars: 6 },
+							],
+							text: [],
+							thinking: [],
+							call: [],
+							output: [],
+							compacted: [],
+						},
+						totals: { system: 26, builtin: 120, custom: 0, memory: 19, skills: 0, user: 27, text: 0, thinking: 0, call: 0, output: 0, compacted: 0 },
+					},
+				}),
+			};
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const view = render(
+			<ContextMeter
+				percent={12}
+				tokens={24000}
+				contextWindow={200000}
+				source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM, sessionId: "sess-123" }}
+			/>,
+		);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByRole("button", { name: /System Prompt/ }));
+
+		const modal = await screen.findByTestId("context-inspector-modal");
+		expect(await screen.findByText("Effective system prompt v1")).toBeTruthy();
+		// 无搜索栏与排序切换按钮
+		expect(screen.queryByRole("searchbox")).toBeNull();
+		expect(screen.queryByRole("button", { name: /按顺序|按大小/ })).toBeNull();
+
+		// 分类标签按大小降序排列（System Tools 120 > User Messages 27 > System Prompt 26 > Memory 19）
+		const tabLabels = [...modal.querySelectorAll('[role="tab"]')].map((el) => el.textContent ?? "");
+		expect(tabLabels[0]).toContain("System Tools");
+		expect(tabLabels[1]).toContain("User Messages");
+		expect(tabLabels[2]).toContain("System Prompt");
+		expect(tabLabels[3]).toContain("Memory");
+
+		// 复制有效内容
+		fireEvent.click(screen.getByRole("button", { name: "复制" }));
+		await waitFor(() => expect(copySpy).toHaveBeenCalledWith("Effective system prompt v1"));
+		expect(await screen.findByText("已复制")).toBeTruthy();
+
+		// 切换到 User Messages：条目按 chars 降序（第2轮 19 > 第3轮 6 > 第1轮 2）
+		fireEvent.click(screen.getByRole("tab", { name: /User Messages/ }));
+		const itemHeads = [...modal.querySelectorAll(".pw-ctx-inspector-item-head")].map((el) => el.textContent ?? "");
+		expect(itemHeads.map((text) => text.slice(0, 3))).toEqual(["第 2", "第 3", "第 1"]);
+
+		// 切换到 Memory 标签
+		fireEvent.click(screen.getByRole("tab", { name: /Memory/ }));
+		expect(await screen.findByText("Project memory rule")).toBeTruthy();
+
+		// 服务端推送新的 breakdown 时实时刷新弹窗内容
+		view.rerender(
+			<ContextMeter
+				percent={13}
+				tokens={26000}
+				contextWindow={200000}
+				source={{ systemChars: 0, messages: MESSAGES, breakdown: { ...WARM }, sessionId: "sess-123" }}
+			/>,
+		);
+		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+		expect(modal).toBeTruthy();
+	});
+
+	it("点击 Free Space 或 Auto-Compact Buffer 不会打开内容查看器", () => {
+		render(meter(WARM));
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByText("Free Space"));
+		fireEvent.click(screen.getByText("Auto-Compact Buffer"));
+		expect(screen.queryByTestId("context-inspector-modal")).toBeNull();
+	});
+});

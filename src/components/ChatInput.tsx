@@ -127,6 +127,7 @@ export function ChatInput({
 		breakdown?: import("@/lib/types").ContextBreakdown;
 		compacted?: boolean;
 		loadFull?: () => Promise<unknown> | unknown;
+		sessionId?: string | null;
 	};
 	/** 还没有对话时隐藏上下文计量 */
 	contextVisible?: boolean;

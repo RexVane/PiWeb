@@ -367,6 +367,8 @@ export interface ContextResource {
 export interface ContextBreakdown {
 	/** 当前投影中实际文本的字符数；不将估算 token 按比例分摊。 */
 	characters?: { systemPrompt: number; systemTools: number; customTools: number; memory: number; skills: number; compacted: number };
+	/** 当前有效上下文投影中 5 类消息的实时字符数（剔除错误/中止回复、跨模型思考、!! 命令与已删/已压缩消息） */
+	messageCharacters?: { user: number; agentText: number; agentThinking: number; agentToolCall: number; toolOutput: number };
 	/** SDK 内建 system prompt 正文（不含 memory/skills/tools 段）的估算 token */
 	systemPrompt: number;
 	/** 内建工具（SDK 自带 bash/read/edit 等）定义的估算 token */

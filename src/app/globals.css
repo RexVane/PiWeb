@@ -4593,6 +4593,109 @@ body[data-ds-dark-theme] {
 .pw-agent-limits-row[data-active="true"] .pw-agent-limits-dot {
 	transform: scale(1.22);
 }
+.pw-agent-limits-seg[data-clickable="true"] {
+	cursor: pointer;
+}
+.pw-agent-limits-seg[data-clickable="true"]:hover {
+	filter: brightness(1.08);
+}
+.pw-agent-limits-row-clickable {
+	width: calc(100% + 12px);
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+.pw-agent-limits-row-clickable:hover {
+	background: var(--dsw-hover);
+	color: var(--dsw-label-primary);
+}
+.pw-ctx-inspector-tab {
+	border-radius: 999px;
+	padding: 4px 10px;
+	font-size: 12px;
+	border: 0.5px solid transparent;
+	background: transparent;
+	color: var(--dsw-label-secondary);
+	cursor: pointer;
+	transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.pw-ctx-inspector-tab:hover {
+	background: var(--dsw-hover);
+	color: var(--dsw-label-primary);
+}
+.pw-ctx-inspector-tab[data-active="true"] {
+	background: var(--dsw-active);
+	border-color: var(--dsw-border-l2);
+	color: var(--dsw-label-primary);
+	font-weight: 600;
+}
+.pw-ctx-inspector-item {
+	border-radius: 10px;
+	border: 0.5px solid var(--dsw-border-l2);
+	background: var(--dsw-bg-elevated, var(--dsw-hover));
+	overflow: hidden;
+}
+.pw-ctx-inspector-item[data-open="true"] {
+	border-color: var(--dsw-border-l3);
+}
+.pw-ctx-inspector-item-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 8px 10px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font-size: var(--dsh-content-font-size-secondary);
+	cursor: pointer;
+}
+.pw-ctx-inspector-item-head:hover {
+	background: var(--dsw-hover);
+}
+.pw-ctx-inspector-tag {
+	border-radius: 999px;
+	padding: 1px 7px;
+	font-size: 10.5px;
+	border: 0.5px solid var(--dsw-border-l2);
+	color: var(--dsw-label-secondary);
+	background: var(--dsw-bg-base, transparent);
+}
+.pw-ctx-inspector-tag[data-error="true"] {
+	border-color: var(--dsw-danger);
+	color: var(--dsw-danger);
+}
+.pw-ctx-inspector-minibar {
+	width: 56px;
+	height: 5px;
+	border-radius: 999px;
+	background: var(--dsw-selector);
+	overflow: hidden;
+	flex: none;
+}
+.pw-ctx-inspector-minibar > span {
+	display: block;
+	height: 100%;
+	border-radius: 999px;
+}
+.pw-ctx-inspector-item-body {
+	border-top: 0.5px solid var(--dsw-border-l2);
+	padding: 8px 10px 10px;
+	background: var(--dsw-bg-base, transparent);
+}
+.pw-ctx-inspector-pre {
+	margin: 0;
+	max-height: 45vh;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--dsw-label-primary);
+}
 
 /* 3. 联网搜索 / 网页访问来源展示（地球仪步骤、重叠站点图标、可点击外部来源面板） */
 .pw-arg-search {
