@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
-const deps = vi.hoisted(() => ({ create: vi.fn(), resources: vi.fn(), execute: vi.fn(), managed: vi.fn(), list: vi.fn(), read: vi.fn(), resolve: vi.fn() }));
+const deps = vi.hoisted(() => ({ create: vi.fn(), resources: vi.fn(), execute: vi.fn(), managed: vi.fn(), read: vi.fn(), resolve: vi.fn() }));
 vi.mock("@/lib/agent-manager", () => ({ createNewSession: deps.create, loadWorkspaceResources: deps.resources, execute: deps.execute, getManaged: deps.managed, exportSession: vi.fn() }));
-vi.mock("@/lib/prompt-sources", () => ({ listPromptSources: deps.list, readPromptSource: deps.read }));
+vi.mock("@/lib/prompt-sources", () => ({ readPromptSource: deps.read }));
 vi.mock("@/lib/path-security", () => ({ BoundaryError: class BoundaryError extends Error {}, resolveSessionPath: deps.resolve, resolveWorkspacePath: async () => "/private/project" }));
 import { BoundaryError } from "@/lib/path-security";
 import { POST as create } from "@/app/api/agent/new/route";
@@ -9,14 +9,14 @@ import { GET as resources } from "@/app/api/agent/resources/route";
 import { POST as command } from "@/app/api/agent/[id]/route";
 import { GET as tree } from "@/app/api/agent/[id]/tree/route";
 import { GET as exportSession } from "@/app/api/sessions/[id]/export/route";
-import { GET as sources, POST as prompt } from "@/app/api/prompts/route";
+import { POST as prompt } from "@/app/api/prompts/route";
 const context = () => ({ params: Promise.resolve({ id: "probe" }) });
 const get = (path: string) => new Request("http://localhost/api/" + path);
 const post = (path: string, data: unknown) => new Request("http://localhost/api/" + path, { method: "POST", body: JSON.stringify(data) });
 beforeEach(() => {
 	vi.resetAllMocks();
 	deps.resolve.mockResolvedValue("/private/session.jsonl");
-	for (const fn of [deps.create, deps.resources, deps.execute, deps.managed, deps.list, deps.read]) fn.mockImplementation(() => { throw Object.assign(new Error("EACCES: C:\\Users\\private\\secrets.json"), { code: "EACCES" }); });
+	for (const fn of [deps.create, deps.resources, deps.execute, deps.managed, deps.read]) fn.mockImplementation(() => { throw Object.assign(new Error("EACCES: C:\\Users\\private\\secrets.json"), { code: "EACCES" }); });
 });
 
 it.each([
@@ -25,7 +25,6 @@ it.each([
 	["command", () => command(post("agent/probe", { cmd: "abort" }), context())],
 	["tree", () => tree(get("agent/probe/tree"), context())],
 	["export", () => exportSession(get("sessions/probe/export"), context())],
-	["prompt sources", () => sources(get("prompts?cwd=project"))],
 	["prompt body", () => prompt(post("prompts", { action: "read", cwd: "/project", filePath: "AGENTS.md" }))],
 ] as const)("%s failures preserve OS categories without exposing server paths", async (_name, request) => {
 	const response = await request();
@@ -54,6 +53,26 @@ it("keeps path validation and malformed JSON as client errors", async () => {
 	const invalid = await create(new Request("http://localhost/api/agent/new", { method: "POST", body: "{" }));
 	expect(invalid.status).toBe(400);
 	expect(await invalid.json()).toMatchObject({ errorCode: "INVALID_JSON" });
+});
+
+it("keeps POST /api/prompts boundary checks and malformed JSON as client errors", async () => {
+	deps.read.mockImplementation(() => { throw new BoundaryError("linked resource escapes /private/project"); });
+	const boundary = await prompt(post("prompts", { action: "read", cwd: "/project", filePath: "/private/secret" }));
+	expect(boundary.status).toBe(400);
+	const boundaryBody = await boundary.json();
+	expect(boundaryBody).toMatchObject({ success: false, errorCode: "VALIDATION_ERROR" });
+	expect(JSON.stringify(boundaryBody)).not.toContain("private");
+
+	const invalid = await prompt(new Request("http://localhost/api/prompts", { method: "POST", body: "{" }));
+	expect(invalid.status).toBe(400);
+	expect(await invalid.json()).toMatchObject({ success: false, errorCode: "INVALID_JSON" });
+
+	deps.read.mockReset();
+	const badAction = await prompt(post("prompts", { action: "list", cwd: "/project" }));
+	expect(badAction.status).toBe(400);
+	const missingFile = await prompt(post("prompts", { action: "read", cwd: "/project" }));
+	expect(missingFile.status).toBe(400);
+	expect(deps.read).not.toHaveBeenCalled();
 });
 
 it.each([null, [], 42])("rejects non-object request bodies %s without starting work", async (body) => {
