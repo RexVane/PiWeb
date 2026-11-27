@@ -134,7 +134,7 @@ export interface WebNestedCall {
 
 export type WebContent =
 	| { type: "text"; text: string }
-	| { type: "image"; data: string; mimeType: string; url?: string }
+	| { type: "image"; data: string; mimeType: string; url?: string; name?: string }
 	| { type: "thinking"; thinking: string }
 	| { type: "toolCall"; id: string; name: string; arguments: unknown }
 	| { type: "toolResult"; toolCallId?: string; text: string; isError?: boolean; title?: string; encodingLoss?: boolean; patch?: string; nestedCalls?: WebNestedCall[] };
@@ -535,6 +535,7 @@ export interface QueueEditRequest {
 
 export interface ImageAttachment {
 	type: "image";
+	name?: string;
 	data: string;
 	mimeType: string;
 }

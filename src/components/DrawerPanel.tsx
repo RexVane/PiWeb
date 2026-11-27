@@ -161,9 +161,6 @@ export function DrawerPanel({
 						onReference={onReference}
 						onOpenEditor={onOpenEditor}
 						onJumpToChat={onJumpToChat}
-						gitRefreshKey={gitRefreshKey}
-						// 「Git 详情」按钮切到抽屉的 git 入口(项目栏不再自己开一个面板)
-						onOpenGit={() => onSectionChange("git")}
 						onClose={onClose}
 						onError={onError}
 					/>

@@ -42,6 +42,8 @@ export interface ToolCardState {
 	endedAt?: number;
 	/** 嵌套调用：发起它的那次工具调用（codemode 脚本、扩展的 ctx.executeTool） */
 	parentId?: string;
+	/** Nested calls can persist their outcome without storing the response body. */
+	recordedStatus?: WebNestedCall["status"];
 	/** 这次调用自己发起的嵌套调用，按出现顺序 */
 	children?: string[];
 }
@@ -562,7 +564,7 @@ function toolsFromMessages(messages: WebMessage[], streaming = false): Record<st
 	// 正在流式时还没有结果的调用就是正在执行（中途打开页面拿到的快照），别显示成"已完成 · 无输出"
 	if (streaming) {
 		for (const [id, tool] of Object.entries(tools)) {
-			if (!resolved.has(id)) tools[id] = { ...tool, state: "running", startedAt: Date.now() };
+			if (!resolved.has(id) && !tool.recordedStatus) tools[id] = { ...tool, state: "running", startedAt: Date.now() };
 		}
 	}
 	return tools;
@@ -582,6 +584,7 @@ function linkNestedCalls(tools: Record<string, ToolCardState>, parentId: string,
 			args: call.args,
 			state: "done",
 			result: call.error,
+			recordedStatus: call.status,
 			isError: call.status === "error",
 			parentId: owner,
 		};

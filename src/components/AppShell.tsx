@@ -7,10 +7,11 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * AppShell：三栏网格（对齐 dsh ui-layout 几何）+ 拖拽调宽 + 侧栏窄条 +
  * 头部（对话/轨迹标签 + Session log）+ Hero 新会话页 + 设置弹窗。
  */
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties } from "react";
 import shellStyles from "./AppShell.module.css";
 import { PiMark } from "@/components/PiMark";
-import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate } from "@/components/ChatInput";
+import { ChatInput, EMPTY_CHAT_DRAFT, type ChatDraft, type ChatDraftUpdate, type DraftStore } from "@/components/ChatInput";
+import { ProjectOverviewPanel, ProjectOverviewToggle } from "@/components/ProjectOverview";
 import { ErrorToast } from "@/components/ErrorToast";
 import type { RoundBadge } from "@/components/ChatWindow";
 import { ExtensionDialogHost, ExtensionNotices, ExtensionWidgets } from "@/components/ExtensionUI";
@@ -89,14 +90,10 @@ const SIDEBAR_COLLAPSED = 56;
 const RIGHT_MIN = 280;
 const RIGHT_MAX = 760;
 const RIGHT_DEFAULT = 360;
+const OVERVIEW_DOCK_MIN_MAIN_WIDTH = 760;
 /** 稳定的空队列 / 思考档位兜底：流式期间不能每帧给输入区换新数组 */
 const EMPTY_SESSION_QUEUE: { steering: string[]; followUp: string[] } = { steering: [], followUp: [] };
 const DEFAULT_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-/** 草稿仓库：AppShell 持有数据，但只有订阅了对应 key 的输入框会随草稿变化渲染。 */
-type DraftStore = {
-	get: (key: string) => ChatDraft;
-	subscribe: (listener: () => void) => () => void;
-};
 const emptyDraftSnapshot = () => EMPTY_CHAT_DRAFT;
 
 /**
@@ -197,6 +194,7 @@ export function AppShell() {
 	// Drafts are parent-owned data, never a replayable last insertion/upload event.
 	// A hero draft keeps its identity when newSession switches the rendered composer.
 	const composerDrafts = useRef(new Map<string, ChatDraft>());
+	const sourcePickerRef = useRef<HTMLInputElement>(null);
 	const sessionDraftKeys = useRef(new Map<string, string>());
 	const draftSequence = useRef(0);
 	const [heroDraftKey, setHeroDraftKey] = useState("__hero__:0");
@@ -335,6 +333,11 @@ export function AppShell() {
 	const [heroThinking, setHeroThinking] = useState("");
 	const [isNarrow, setIsNarrow] = useState(false);
 	const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+	const [overviewOpen, setOverviewOpen] = useState(false);
+	const overviewId = useId();
+	const overviewTriggerRef = useRef<HTMLButtonElement>(null);
+	const mainRef = useRef<HTMLDivElement>(null);
+	const [mainWidth, setMainWidth] = useState(0);
 	useEffect(() => {
 		setSidebarWidth(restore("piweb.sidebarW", SIDEBAR_DEFAULT));
 		setRightWidth(restoreRightWidth());
@@ -446,6 +449,16 @@ export function AppShell() {
 		sync();
 		query.addEventListener("change", sync);
 		return () => query.removeEventListener("change", sync);
+	}, []);
+
+	useEffect(() => {
+		const el = mainRef.current;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const sync = () => setMainWidth(el.clientWidth);
+		sync();
+		const observer = new ResizeObserver(sync);
+		observer.observe(el);
+		return () => observer.disconnect();
 	}, []);
 
 	// 后台页面暂停装饰动画，返回时从原位置继续。
@@ -1109,6 +1122,45 @@ export function AppShell() {
 			<IconPanelRightOutline16 size={15} />
 		</button>
 	);
+	const overviewCwd = currentId ? snapshot?.cwd || currentSession?.cwd || pendingSessionCwd || "" : heroCwd;
+	const overviewMode: "docked" | "overlay" = !isNarrow && (mainWidth === 0 || mainWidth >= OVERVIEW_DOCK_MIN_MAIN_WIDTH) ? "docked" : "overlay";
+	const headerActions = (
+		<div className="relative flex shrink-0 items-center gap-1">
+			<ProjectOverviewToggle
+				open={overviewOpen}
+				controlsId={overviewId}
+				triggerRef={overviewTriggerRef}
+				onToggle={() => setOverviewOpen((v) => !v)}
+			/>
+			{drawerToggle}
+		</div>
+	);
+	const overviewPanel = (
+		<ProjectOverviewPanel
+			id={overviewId}
+			open={overviewOpen}
+			mode={overviewMode}
+			triggerRef={overviewTriggerRef}
+			onClose={() => setOverviewOpen(false)}
+			resetKey={JSON.stringify([overviewCwd, draftKey])}
+			cwd={overviewCwd}
+			name={overviewCwd ? getWorkspaceName(overviewCwd) : t.projectPanel}
+			messages={snapshot ? state.messages : []}
+			tools={snapshot ? state.tools : {}}
+			live={Boolean(snapshot && state.connected && isStreaming)}
+			draftKey={draftKey}
+			draftStore={draftStore}
+			refreshKey={panelRefreshKey}
+			hasEarlier={Boolean(snapshot && hasEarlier)}
+			loadingEarlier={loadingEarlier}
+			onLoadEarlier={loadEarlierMessages}
+			onOpenChanges={() => openDrawerSection("git")}
+			onOpenFile={openPathInViewer}
+			onOpenUpload={previewUploadInViewer}
+			onPickFiles={() => sourcePickerRef.current?.click()}
+			onAddLink={(url) => updateDraft(draftKey, (previous) => ({ ...previous, text: [previous.text, url].filter(Boolean).join("\n\n") }))}
+		/>
+	);
 	// 最右一列(宽屏是网格列,窄屏是贴左右的 fixed 覆盖层):轨迹详情 ⇄ 抽屉互斥。
 	// selected(点对话里的工具行)优先——它临时接管这一列;关掉后自动回落回抽屉,
 	// 并回到抽屉原本选中的入口(入口状态在 drawerSection,不随锁定/解锁重置)。
@@ -1218,7 +1270,7 @@ export function AppShell() {
 			{/* 三列网格:侧栏 | 会话区 | 最右一列(项目栏已进抽屉,不再有独立的项目列) */}
 
 			{/* 会话区 / 顶部工作区页面（技能 / 扩展 / 提示词模板） */}
-			<div className="pi-main flex min-h-0 min-w-0 flex-col">
+			<div ref={mainRef} className="pi-main flex min-h-0 min-w-0 flex-col">
 				{activeView === "skills" ? (
 					<SkillsWorkspaceView
 						knownCwds={knownCwds}
@@ -1241,49 +1293,55 @@ export function AppShell() {
 					/>
 				 ) : !currentId ? (
 					<div className="flex min-h-0 flex-1 flex-col">
-						<div className="flex shrink-0 justify-end px-5 pt-3">{drawerToggle}</div>
-						<Hero
-							draftStore={draftStore}
-								draftKey={heroDraftKey}
-								onDraftChange={saveHeroDraft}
-								onUploadError={(message) => failUpload(heroDraftKey, message)}
-								onClearUploadError={clearHeroUploadError}
-								onUploadProgress={(delta) => trackUpload(heroDraftKey, delta)}
-								uploadFailure={uploadFailures[heroDraftKey]}
-								pendingUploadCount={uploadCounts[heroDraftKey] ?? 0}
-								pendingSend={pendingSends[heroDraftKey] ?? false}
-								onSendPendingChange={(pending) => trackSend(heroDraftKey, pending)}
-								onPreviewFile={previewUploadInViewer}
-							commands={slashCommands}
-							onCommand={runSlashCommand}
-							cwd={heroCwd}
-							setCwd={setHeroCwd}
-							knownCwds={knownCwds}
-							getWorkspaceName={getWorkspaceName}
-							onSend={heroSend}
-							models={modelChoices}
-							providerNames={providerNames}
-							authByProvider={authByProvider}
-							addWorkspaceByPicker={addWorkspaceByPicker}
-							heroChoice={heroChoice}
-							onSelectHeroModel={(provider, id) => {
-								const choice = { provider, id };
-								setHeroModel(choice);
-								// 只记在当前工作区名下
-								if (heroCwd) writeRememberedHeroModel(safeLocalStorage, heroCwd, choice);
-								const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
-								if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
-							}}
-							heroModelLevels={heroModelLevels}
-							heroEffectiveThinking={heroEffectiveThinking}
-							onSelectHeroThinking={setHeroThinking}
-						/>
-						{/* 草稿阶段的错误行内显示 */}
-						{state.error && (
-							<div className="flex justify-center px-4 pb-3">
-								<ErrorToast message={state.error} onDismiss={clearError} className="max-w-md" />
+						<div className="flex shrink-0 justify-end px-5 pt-3">{headerActions}</div>
+						<div className="relative flex min-h-0 flex-1">
+							<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+								<Hero
+									sourcePickerRef={sourcePickerRef}
+									draftStore={draftStore}
+										draftKey={heroDraftKey}
+										onDraftChange={saveHeroDraft}
+										onUploadError={(message) => failUpload(heroDraftKey, message)}
+										onClearUploadError={clearHeroUploadError}
+										onUploadProgress={(delta) => trackUpload(heroDraftKey, delta)}
+										uploadFailure={uploadFailures[heroDraftKey]}
+										pendingUploadCount={uploadCounts[heroDraftKey] ?? 0}
+										pendingSend={pendingSends[heroDraftKey] ?? false}
+										onSendPendingChange={(pending) => trackSend(heroDraftKey, pending)}
+										onPreviewFile={previewUploadInViewer}
+									commands={slashCommands}
+									onCommand={runSlashCommand}
+									cwd={heroCwd}
+									setCwd={setHeroCwd}
+									knownCwds={knownCwds}
+									getWorkspaceName={getWorkspaceName}
+									onSend={heroSend}
+									models={modelChoices}
+									providerNames={providerNames}
+									authByProvider={authByProvider}
+									addWorkspaceByPicker={addWorkspaceByPicker}
+									heroChoice={heroChoice}
+									onSelectHeroModel={(provider, id) => {
+										const choice = { provider, id };
+										setHeroModel(choice);
+										// 只记在当前工作区名下
+										if (heroCwd) writeRememberedHeroModel(safeLocalStorage, heroCwd, choice);
+										const levels = modelChoices.find((model) => model.provider === provider && model.id === id)?.thinkingLevels ?? [];
+										if (heroThinking && !levels.includes(heroThinking)) setHeroThinking("");
+									}}
+									heroModelLevels={heroModelLevels}
+									heroEffectiveThinking={heroEffectiveThinking}
+									onSelectHeroThinking={setHeroThinking}
+								/>
+								{/* 草稿阶段的错误行内显示 */}
+								{state.error && (
+									<div className="flex justify-center px-4 pb-3">
+										<ErrorToast message={state.error} onDismiss={clearError} className="max-w-md" />
+									</div>
+								)}
 							</div>
-						)}
+							{overviewPanel}
+						</div>
 					</div>
 				) : (
 					<>
@@ -1294,7 +1352,7 @@ export function AppShell() {
 										{title}
 									</span>
 									{/* 右侧抽屉的入口与开关 */}
-									{drawerToggle}
+									{headerActions}
 								</div>
 							{projectTrust?.required && !projectTrust.trusted && (
 								<div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2" style={{ fontSize: "var(--dsh-ui-font-125)", background: "var(--dsw-hover)", border: "0.5px solid var(--dsw-border-l2)" }} role="status">
@@ -1310,9 +1368,10 @@ export function AppShell() {
 						</div>
 
 						{/* 内容：只有对话区，轨迹按需在详情栏查看 */}
-						{!snapshot ? (
+						<div className="relative flex min-h-0 flex-1">
+							{!snapshot ? (
 								// 切换会话时快照未到：居中加载指示，避免空白/占位符闪现
-								<div className="flex min-h-0 flex-1 flex-col gap-3 items-center justify-center" role="status">
+								<div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 items-center justify-center" role="status">
 									<span
 										className="piweb-spin"
 										style={{
@@ -1328,7 +1387,7 @@ export function AppShell() {
 									{!state.connected ? <><span style={{ color: "var(--dsw-label-secondary)", fontSize: "var(--dsh-ui-font-sm)" }}>{t.connectionLost}</span><button className="btn-outline" onClick={resync}>{t.retry}</button></> : null}
 								</div>
 							) : (
-							<div className="flex min-h-0 flex-1 flex-col justify-end">
+							<div className="flex min-h-0 min-w-0 flex-1 flex-col justify-end">
 
 								<ChatWindow
 									key={currentId ?? "none"}
@@ -1361,6 +1420,7 @@ export function AppShell() {
 										{/* 运行状态指示由 ChatWindow 内的 WorkingIndicator 承担（含工具/输出 token 信息） */}
 										<ExtensionWidgets widgets={state.extensionWidgets} placement="aboveEditor" className="mb-2" />
 										<DraftChatInput
+										sourcePickerRef={sourcePickerRef}
 											key={draftKey}
 												draftStore={draftStore}
 												draftKey={draftKey}
@@ -1413,6 +1473,8 @@ export function AppShell() {
 								</div>
 								)
 						}
+							{overviewPanel}
+						</div>
 					</>
 				)}
 			</div>
@@ -1519,6 +1581,7 @@ function basename(p: string): string {
 }
 
 function Hero({
+	sourcePickerRef,
 	draftStore,
 	draftKey,
 	onDraftChange,
@@ -1547,6 +1610,7 @@ function Hero({
 	heroEffectiveThinking,
 	onSelectHeroThinking,
 }: {
+	sourcePickerRef: React.RefObject<HTMLInputElement | null>;
 	draftStore: DraftStore;
 	draftKey: string;
 	onDraftChange: (update: ChatDraftUpdate) => void;
@@ -1725,6 +1789,7 @@ function Hero({
 
 				{/* 输入卡 */}
 				<DraftChatInput
+					sourcePickerRef={sourcePickerRef}
 					draftStore={draftStore}
 					draftKey={draftKey}
 					onDraftChange={onDraftChange}

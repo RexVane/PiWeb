@@ -330,10 +330,10 @@ html[data-pw-background] *::after {
 	touch-action: none;
 }
 .piweb-conversation-width-handle[data-side="left"] {
-	left: calc(50% - var(--dsh-chat-content-width) / 2 - 20px);
+	left: max(0px, calc(50% - var(--dsh-chat-content-width) / 2 - 20px));
 }
 .piweb-conversation-width-handle[data-side="right"] {
-	right: calc(50% - var(--dsh-chat-content-width) / 2 - 20px);
+	right: max(0px, calc(50% - var(--dsh-chat-content-width) / 2 - 20px));
 }
 .piweb-conversation-width-handle::after {
 	content: "";

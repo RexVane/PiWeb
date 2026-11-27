@@ -77,6 +77,8 @@ export interface GitInfo {
 	detached: boolean;
 	files: GitFileEntry[];
 	counts?: GitStatusCounts;
+	/** Net changes to tracked files compared to HEAD. Untracked files are counted in counts.untracked. */
+	lineStats?: { add: number; del: number };
 	/** 状态读取失败时文件变更未知；不能把空 files 解读为工作区干净。 */
 	statusError?: string;
 	commits: GitCommit[];
@@ -306,7 +308,7 @@ export async function repoRoot(cwd: string): Promise<{ available: boolean; root:
 	}
 }
 
-export async function gitInfo(cwdValue: unknown, summaryOnly = false): Promise<GitInfo> {
+export async function gitInfo(cwdValue: unknown, summaryOnly: boolean | "lines" = false): Promise<GitInfo> {
 	const cwd = await resolveWorkspacePath(cwdValue);
 	const { available, root } = await repoRoot(cwd);
 	if (!available) return { ...EMPTY, available: false };
@@ -317,6 +319,7 @@ export async function gitInfo(cwdValue: unknown, summaryOnly = false): Promise<G
 	let ahead = 0;
 	let behind = 0;
 	let detached = false;
+	let unborn = false;
 	let statusError: string | undefined;
 	const files: GitFileEntry[] = [];
 	const counts: GitStatusCounts = { total: 0, conflicts: 0, staged: 0, unstaged: 0, untracked: 0 };
@@ -342,6 +345,7 @@ export async function gitInfo(cwdValue: unknown, summaryOnly = false): Promise<G
 				continue;
 			}
 			if (!line) continue;
+			if (line === "# branch.oid (initial)") unborn = true;
 			if (line.startsWith("# branch.head ")) {
 				const head = line.slice("# branch.head ".length);
 				if (head === "(detached)") detached = true;
@@ -417,7 +421,21 @@ export async function gitInfo(cwdValue: unknown, summaryOnly = false): Promise<G
 			/* keep null */
 		}
 	}
-	return { available: true, isRepo: true, root, branch, upstream, ahead, behind, detached, files, commits, ...(statusError ? { statusError } : { counts }) };
+	let lineStats: GitInfo["lineStats"];
+	if (summaryOnly === "lines" && !statusError) {
+		try {
+			let stat = "";
+			if (counts.total > counts.untracked) {
+				const base = unborn ? (await runGitCommand(root, ["hash-object", "-t", "tree", "--stdin"], { input: "" })).stdout.trim() : "HEAD";
+				stat = await runGit(root, ["diff", "--shortstat", "--no-ext-diff", "--no-textconv", base, "--"]);
+			}
+			// gitEnvironment fixes LC_ALL=C. --shortstat emits one line even in a large repository.
+			lineStats = { add: Number(stat.match(/(\d+) insertion/)?.[1] ?? 0), del: Number(stat.match(/(\d+) deletion/)?.[1] ?? 0) };
+		} catch (error) {
+			statusError = error instanceof Error ? error.message : String(error);
+		}
+	}
+	return { available: true, isRepo: true, root, branch, upstream, ahead, behind, detached, files, commits, ...(lineStats ? { lineStats } : {}), ...(statusError ? { statusError } : { counts }) };
 }
 
 export interface GitDiffResult {

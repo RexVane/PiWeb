@@ -53,6 +53,29 @@ describe("recent commits", () => {
 });
 
 describe("complete Git line counts", () => {
+	it("summarizes net tracked lines across the index and working tree, including the first commit", async () => {
+		const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-overview-git-"));
+		const git = (...args: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=t@example.test", ...args], { windowsHide: true });
+		const tracked = path.join(cwd, "notes.txt");
+		try {
+			git("init", "-q");
+			await fs.writeFile(tracked, "old\n");
+			git("add", "notes.txt");
+			await fs.writeFile(tracked, "old\nsecond\n");
+			await fs.writeFile(path.join(cwd, "untracked.txt"), "new file\n");
+			expect(await gitInfo(cwd, "lines")).toMatchObject({ lineStats: { add: 2, del: 0 }, counts: { untracked: 1 }, files: [], commits: [] });
+
+			git("commit", "-qm", "Initial");
+			await fs.writeFile(tracked, "intermediate edit\n");
+			git("add", "notes.txt");
+			await fs.writeFile(tracked, "old\nfinal\n");
+			expect(await gitInfo(cwd, "lines")).toMatchObject({ lineStats: { add: 1, del: 0 }, counts: { total: 2, untracked: 1 } });
+			expect((await gitInfo(cwd, true)).lineStats).toBeUndefined();
+		} finally {
+			await recycleFixture(cwd);
+		}
+	});
+
 	it("keeps full numstat for truncated worktree/staged/commit/untracked patches and binary files", async () => {
 		const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "piweb-git-numstat-"));
 		try {

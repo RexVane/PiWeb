@@ -53,13 +53,13 @@ describe("/api/git GET cross-site protection", () => {
 		expect(nonBrowser.headers.get("Cache-Control")).toContain("no-store");
 	});
 
-	it("skips automatic Git status for home until recording is explicitly enabled", async () => {
+	it.each(["1", "lines"])("skips the %s Git summary for home until recording is explicitly enabled", async (mode) => {
 		deps.home.mockResolvedValue(true);
 		deps.consent.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-		const summary = () => request("/api/git?cwd=%2Fhome%2Fuser&summary=1");
+		const summary = () => request("/api/git?cwd=%2Fhome%2Fuser&summary=" + mode);
 		expect(await (await GET(summary())).json()).toEqual({ success: true, data: null });
 		expect(deps.info).not.toHaveBeenCalled();
 		expect((await GET(summary())).status).toBe(200);
-		expect(deps.info).toHaveBeenCalledWith("/home/user", true);
+		expect(deps.info).toHaveBeenCalledWith("/home/user", mode === "lines" ? "lines" : true);
 	});
 });

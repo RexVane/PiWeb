@@ -8,12 +8,13 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { createRef } from "react";
 import { ChatInput, type ChatDraft } from "@/components/ChatInput";
 import { deckLayout, fanLayout } from "@/components/composer/ComposerImages";
 
 afterEach(cleanup);
 
-function renderInput(initialDraft: Partial<ChatDraft>) {
+function renderInput(initialDraft: Partial<ChatDraft>, sourcePickerRef?: React.RefObject<HTMLInputElement | null>) {
 	render(
 		<ChatInput
 			isStreaming={false}
@@ -22,12 +23,27 @@ function renderInput(initialDraft: Partial<ChatDraft>) {
 			thinkingLevels={[]} models={[]} providerNames={{}} authByProvider={{}}
 			queue={{ steering: [], followUp: [] }}
 			initialDraft={{ text: "", images: [], uploads: [], references: [], ...initialDraft }}
+			sourcePickerRef={sourcePickerRef}
 			onSend={vi.fn(async () => ({ success: true }))}
 			onSteer={vi.fn(async () => ({ success: true }))}
 			onAbort={vi.fn()} onSelectModel={vi.fn()} onSelectLevel={vi.fn()}
 		/>,
 	);
 }
+
+it("uses the overview file picker to attach a file to the existing draft", async () => {
+	const picker = createRef<HTMLInputElement>();
+	const path = "/agent/web-uploads/note.txt";
+	const upload = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { name: "note.txt", path, size: 2 } }) });
+	vi.stubGlobal("fetch", upload);
+	try {
+		renderInput({ text: "unfinished" }, picker);
+		fireEvent.change(picker.current!, { target: { files: [new File(["ok"], "note.txt", { type: "text/plain" })] } });
+		expect(await screen.findByText("note.txt")).toBeTruthy();
+		expect(upload).toHaveBeenCalledTimes(1);
+		expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("unfinished");
+	} finally { vi.unstubAllGlobals(); }
+});
 
 describe("引用 chip 的显示", () => {
 	it("目录带尾斜杠，其余保留尾部两段：目录和同名文件都分得清", () => {

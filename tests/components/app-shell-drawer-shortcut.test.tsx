@@ -69,6 +69,24 @@ afterEach(() => {
 });
 
 describe("Ctrl+Shift+E with the trajectory detail open", () => {
+	it("keeps the overview and existing drawer independent and opens the Git drawer from Changes", async () => {
+		render(<AppShell />);
+		const drawer = await screen.findByTestId("drawer-panel");
+		const overview = screen.getByRole("button", { name: "项目概览" });
+		fireEvent.click(overview);
+		expect(screen.getByRole("dialog", { name: "项目概览" })).toBeTruthy();
+		expect(screen.getByTestId("project-overview-rail").getAttribute("data-mode")).toBe("docked");
+		expect(screen.getByTestId("drawer-panel")).toBe(drawer);
+		fireEvent.keyDown(document, { key: "Escape" });
+		expect(document.activeElement).toBe(overview);
+		expect(screen.queryByRole("dialog", { name: "项目概览" })).toBeNull();
+		expect(screen.getByTestId("drawer-toggle").getAttribute("aria-expanded")).toBe("true");
+		fireEvent.click(overview);
+		fireEvent.click(screen.getByRole("button", { name: /^变更/ }));
+		await waitFor(() => expect(screen.getByTestId("drawer-panel").textContent).toContain("git"));
+		expect(screen.queryByRole("dialog", { name: "项目概览" })).toBeNull();
+	});
+
 	it("keeps the open drawer and its draft when crossing the mobile breakpoint", async () => {
 		const listeners = new Set<() => void>();
 		const narrow = {
@@ -90,11 +108,14 @@ describe("Ctrl+Shift+E with the trajectory detail open", () => {
 		expect(screen.getByRole("textbox", { name: "drawer draft" })).toBe(input);
 		expect((input as HTMLInputElement).value).toBe("keep this unsaved text");
 		expect(sidebar.hasAttribute("inert")).toBe(true);
+		fireEvent.click(screen.getByRole("button", { name: "项目概览" }));
+		expect(screen.getByTestId("project-overview-rail").getAttribute("data-mode")).toBe("overlay");
 		fireEvent.click(menu);
 		expect(sidebar.hasAttribute("inert")).toBe(false);
 		expect(menu.getAttribute("aria-expanded")).toBe("true");
 
 		act(() => { narrow.matches = false; listeners.forEach((listener) => listener()); });
+		expect(screen.getByTestId("project-overview-rail").getAttribute("data-mode")).toBe("docked");
 		expect(sidebar.hasAttribute("inert")).toBe(false);
 		expect(menu.getAttribute("aria-expanded")).toBe("false");
 		expect(screen.getByRole("textbox", { name: "drawer draft" })).toBe(input);

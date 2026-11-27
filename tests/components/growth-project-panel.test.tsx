@@ -177,38 +177,13 @@ describe("ProjectPanel rounds", () => {
 	});
 });
 
-describe("ProjectPanel Git unknown state", () => {
-	it("displays streamed counters when the Git response omits the file list", async () => {
-		vi.useFakeTimers();
-		const info = { isRepo: true, branch: "main", counts: { total: 24_000, conflicts: 0, staged: 0, unstaged: 0, untracked: 24_000 } };
-		const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: info }) });
-		vi.stubGlobal("fetch", fetchMock);
-		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
-		await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-		expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/git?") && url.includes("summary=1"))).toBe(true);
-		expect(screen.getByTestId("growth-git-summary").textContent).toContain("24000");
-	});
-	it.each(["status", "request"])("does not show clean or commit controls after a %s failure", async (kind) => {
-		vi.useFakeTimers();
-		const info = { available: true, isRepo: true, root: "/workspace", branch: "main", upstream: null, ahead: 0, behind: 0, detached: false, files: [], commits: [], statusError: "index file corrupt" };
-		vi.stubGlobal("fetch", kind === "status"
-			? vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: info }) })
-			: vi.fn().mockRejectedValue(new Error("request failed")));
-		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
-		await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-		const error = screen.getByTestId("growth-git-error");
-		expect(error.textContent).toMatch(/Git 状态读取失败|Git status unavailable/);
-		expect(error.getAttribute("title")).toBe(kind === "status" ? "index file corrupt" : "request failed");
-		expect(screen.queryByText(/工作区干净|Working tree clean/)).toBeNull();
-	});
-
-	it("renders safely when a git response lacks a files array", async () => {
-		vi.useFakeTimers();
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { isRepo: true } }) }));
-		render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession={false} onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
-		await act(async () => { await vi.advanceTimersByTimeAsync(300); });
-		expect(screen.getByTestId("growth-git-summary").textContent).toMatch(/工作区干净|No changes|Working tree clean/);
-	});
+it("loads growth records without requesting another working-tree summary in the drawer", async () => {
+	const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { consent: true } }) });
+	vi.stubGlobal("fetch", fetchMock);
+	render(<ProjectPanel growth={growth} workspaceName="workspace" cwd="/workspace" hasSession onOpenFile={vi.fn()} onClose={vi.fn()} onError={vi.fn()} />);
+	expect(await screen.findByRole("button", { name: /已启用|Enabled/ })).toBeTruthy();
+	expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/git?"))).toBe(false);
+	expect(screen.queryByRole("button", { name: /Git 详情|Git details/i })).toBeNull();
 });
 
 describe("ProjectPanel recording switch", () => {

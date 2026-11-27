@@ -10,11 +10,10 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  */
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { GrowthTree } from "@/components/GrowthTree";
-import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconGitOutline16, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
+import { IconChevronLeft14, IconChevronRight14, IconCloseOutline14, IconRefreshOutline14, IconSearchOutline16 } from "@/components/icons";
 import type { GrowthApi, GrowthEntry } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { Lang } from "@/lib/lang";
-import type { GitInfo } from "@/lib/git-service";
 import type { TreeNode } from "@/lib/growth-tree";
 import type { GrowthChange } from "@/lib/types";
 
@@ -114,8 +113,6 @@ export function ProjectPanel({
 	onReference,
 	onOpenEditor,
 	onJumpToChat,
-	gitRefreshKey = 0,
-	onOpenGit,
 	onClose,
 	onError,
 }: {
@@ -130,8 +127,6 @@ export function ProjectPanel({
 	onOpenEditor?: (path: string) => void;
 	/** 跳到对话里这一轮的提问（用户消息 entryId） */
 	onJumpToChat?: (messageId: string) => void;
-	gitRefreshKey?: number;
-	onOpenGit?: () => void;
 	onClose: () => void;
 	onError: (message: string) => void;
 }) {
@@ -162,32 +157,8 @@ export function ProjectPanel({
 	const [jumpValue, setJumpValue] = useState("");
 	const roundPickerRef = useRef<HTMLDivElement>(null);
 	const roundListRef = useRef<HTMLDivElement>(null);
-	const [gitState, setGitState] = useState<{ cwd: string; info: GitInfo | null; error?: string } | null>(null);
-	const git = gitState?.cwd === cwd ? gitState.info : null;
-	const gitError = gitState?.cwd === cwd ? gitState.error ?? git?.statusError : undefined;
 	useEffect(() => setOnlyChanges(true), [cwd]);
 	const { rounds, selected } = growth;
-	const latestCommit = rounds[rounds.length - 1]?.commit ?? "";
-	useEffect(() => {
-		if (!cwd) return;
-		const controller = new AbortController();
-		const timer = setTimeout(() => {
-			void fetch(`/api/git?cwd=${encodeURIComponent(cwd)}&summary=1`, { signal: controller.signal, cache: "no-store" })
-				.then(async (response) => {
-					const result = await response.json();
-					if (!response.ok || !result.success) throw new Error(result.error || `request failed (${response.status})`);
-					if (!controller.signal.aborted) setGitState({ cwd, info: result.data as GitInfo });
-				})
-				.catch((error) => {
-					if (!controller.signal.aborted) setGitState({ cwd, info: null, error: error instanceof Error ? error.message : "failed to load git status" });
-				});
-		}, 250);
-		return () => {
-			clearTimeout(timer);
-			controller.abort();
-		};
-	}, [cwd, gitRefreshKey, latestCommit, recordingEnabled]);
-
 	const totals = useMemo(() => {
 		if (selected && growth.scope === "round") {
 			const st = selected.stats;
@@ -241,11 +212,6 @@ export function ProjectPanel({
 		growth.select(round.commit);
 		setRoundPickerOpen(false);
 	};
-	const gitFiles = Array.isArray(git?.files) ? git.files : [];
-	const conflicts = git?.counts?.conflicts ?? gitFiles.filter((file) => file.kind === "conflict").length;
-	const staged = git?.counts?.staged ?? gitFiles.filter((file) => file.kind !== "conflict" && file.indexStatus !== " ").length;
-	const unstaged = git?.counts?.unstaged ?? gitFiles.filter((file) => file.kind !== "conflict" && file.workStatus !== " " && file.kind !== "untracked").length;
-	const untracked = git?.counts?.untracked ?? gitFiles.filter((file) => file.kind === "untracked").length;
 
 	useEffect(() => {
 		if (!notice) return;
@@ -306,28 +272,6 @@ export function ProjectPanel({
 			{cwd && hasSession && !growth.available && !growth.loading && (
 				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-warn-text)", background: "var(--dsw-hover)" }} role="status">
 					{t.growthUnavailableFallback}
-				</div>
-			)}
-			{gitError && (
-				<div className="mx-3 mb-2 rounded-lg px-2 py-1" style={{ fontSize: 11.5, color: "var(--dsw-danger)" }} title={gitError} role="alert" data-testid="growth-git-error">
-					{t.gitStatusUnknown}
-				</div>
-			)}
-			{git?.isRepo && !gitError && (
-				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-2" style={{ fontSize: 11.5, color: "var(--dsw-label-secondary)" }} data-testid="growth-git-summary">
-					<IconGitOutline16 size={13} style={{ flex: "none", color: "var(--dsw-label-caption)" }} />
-					<span className="max-w-[45%] truncate" style={{ fontWeight: 600, color: "var(--dsw-label-primary)" }} title={git.branch ?? undefined}>{git.detached ? t.gitDetached : git.branch ?? "Git"}</span>
-					{git.ahead > 0 && <span title={t.gitAhead.replace("{n}", String(git.ahead))}>↑{git.ahead}</span>}
-					{git.behind > 0 && <span title={t.gitBehind.replace("{n}", String(git.behind))}>↓{git.behind}</span>}
-					{(git.counts?.total ?? gitFiles.length) > 0 ? (
-						<span className="min-w-0 flex-1 truncate" title={`${conflicts ? `${t.gitConflict} ${conflicts} · ` : ""}${t.gitStaged} ${staged} · ${t.gitUnstaged} ${unstaged} · ${t.gitUntracked} ${untracked}`}>
-							{conflicts > 0 && <span style={{ color: "var(--dsw-danger)" }}>{t.gitConflict} {conflicts} </span>}
-							{staged > 0 && <span style={{ color: "var(--dsw-success-text)" }}>{t.gitStaged} {staged} </span>}
-							{unstaged > 0 && <span style={{ color: "var(--dsw-warn-text)" }}>{t.gitUnstaged} {unstaged} </span>}
-							{untracked > 0 && <span>{t.gitUntracked} {untracked}</span>}
-						</span>
-					) : <span className="min-w-0 flex-1 truncate">{t.gitNoChanges}</span>}
-					{onOpenGit && <button type="button" className="pw-chip" onClick={onOpenGit}>{t.gitDetails}</button>}
 				</div>
 			)}
 			{/* 所选这一轮：提问首行 / 时间 · 文件数 · 行数 / 在对话里看 */}

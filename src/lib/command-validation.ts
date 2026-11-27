@@ -1,5 +1,5 @@
 import type { AgentCommand, ImageAttachment } from "./types";
-import { MAX_IMAGE_BASE64, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "./chat/image-attachment";
+import { imageFileName, MAX_IMAGE_BASE64, MAX_IMAGES_BASE64, MAX_MESSAGE_CHARS } from "./chat/image-attachment";
 
 const COMMANDS = new Set<AgentCommand["cmd"]>([
 	"prepare",
@@ -56,7 +56,8 @@ function parseImages(value: unknown): ImageAttachment[] | undefined {
 		}
 		total += image.data.length;
 		if (total > MAX_IMAGES_BASE64) throw new Error("image attachments are too large");
-		return { type: "image", data: image.data, mimeType: image.mimeType };
+		const name = imageFileName(image.name);
+		return { type: "image", data: image.data, mimeType: image.mimeType, ...(name ? { name } : {}) };
 	});
 }
 

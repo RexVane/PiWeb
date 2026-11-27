@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { getSessionHistory, readSessionImage, toWebMessage, type Managed } from "@/lib/agent-manager";
 import { previewMessage } from "@/lib/chat/web-history";
+import { parseAgentCommand } from "@/lib/command-validation";
 
 const first = { type: "image" as const, data: "Zmlyc3Q=", mimeType: "image/png" };
 const second = { type: "image" as const, data: "c2Vjb25k", mimeType: "image/jpeg" };
 const result = { role: "toolResult", toolCallId: "read-1", toolName: "read", content: [{ type: "text", text: "Read image file [image/png]" }, first, second], isError: false, timestamp: 1000 };
 
 describe("tool image message projection", () => {
+	it("keeps an attached image's basename from command validation to a lazy history preview", () => {
+		const parsed = parseAgentCommand({ cmd: "prompt", text: "look", images: [{ ...first, name: "C:\\capture\\sample.png" }] });
+		expect(parsed.ok).toBe(true);
+		if (!parsed.ok) throw new Error(parsed.error);
+		const message = toWebMessage({ role: "user", content: parsed.command.images }, "u1");
+		expect(previewMessage(message, () => "/image/u1").content[0]).toMatchObject({ name: "sample.png", data: "", url: "/image/u1" });
+	});
 	it("retains images alongside the tool-result marker without changing its text or metadata", () => {
 		const message = toWebMessage(result, "entry-result");
 		expect(message).toMatchObject({ id: "entry-result", role: "toolResult", timestamp: 1000 });
