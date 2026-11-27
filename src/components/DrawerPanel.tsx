@@ -11,25 +11,22 @@ import { useId, useRef } from "react";
  * 关掉后回到抽屉,并回到抽屉原本选中的那个入口——所以选中项由 AppShell 持有,
  * 不能放在本组件的局部 state 里,否则轨迹详情来回切换会丢掉入口。
  */
-import { PromptPanel } from "@/components/PromptPanel";
 import { GitPanel, type GitDiffOpenTarget } from "@/components/GitPanel";
 import { ProjectPanel } from "@/components/ProjectPanel";
 import { SessionImportSection } from "@/components/SessionImportSection";
-import { IconCloseOutline14, IconDownloadOutline16, IconAgentPresetOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
+import { IconCloseOutline14, IconDownloadOutline16, IconGitOutline16, IconFolderOpenOutline16 } from "@/components/icons";
 import type { GrowthApi } from "@/hooks/useGrowth";
 import { useI18n } from "@/i18n";
 import type { TreeNode } from "@/lib/growth-tree";
 
-/** 抽屉入口：项目 → 提示词 → Git 详情 → 会话导入。 */
-export type DrawerSection = "project" | "prompts" | "git" | "import";
+/** 抽屉入口：项目 → Git 详情 → 会话导入。 */
+export type DrawerSection = "project" | "git" | "import";
 
 export function DrawerPanel({
 	cwd,
 	section,
 	onSectionChange,
 	onClose,
-	sessionId,
-	promptRefreshKey,
 	gitRefreshKey,
 	growth,
 	workspaceName,
@@ -40,7 +37,6 @@ export function DrawerPanel({
 	onOpenEditor,
 	onJumpToChat,
 	onError,
-	onOpenContent,
 	onOpenFile,
 	onOpenGitDiff,
 	onGitMutated,
@@ -50,9 +46,6 @@ export function DrawerPanel({
 	section: DrawerSection;
 	onSectionChange: (section: DrawerSection) => void;
 	onClose: () => void;
-	sessionId: string | null;
-	/** 提示词面板重新拉取的键(切换会话) */
-	promptRefreshKey?: string | number | null;
 	/** Git 面板重新拉取的键(回合结束 / pi 改了文件) */
 	gitRefreshKey?: number;
 	/** 项目入口用的生长视图状态(AppShell 里 useGrowth 不随抽屉卸载) */
@@ -70,8 +63,6 @@ export function DrawerPanel({
 	/** 跳到对话里这一轮的提问(用户消息 entryId) */
 	onJumpToChat?: (messageId: string) => void;
 	onError: (message: string) => void;
-	/** 提示词正文交给居中查看器 */
-	onOpenContent?: (path: string, content: string) => void;
 	/** 在本机编辑器打开(Git 文件) */
 	onOpenFile?: (absPath: string) => void;
 	/** 在居中 FileViewer 打开 Git 并排差异 */
@@ -84,9 +75,7 @@ export function DrawerPanel({
 	const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
 	const entries: { id: DrawerSection; label: string; icon: React.ReactNode }[] = [
-		// 入口只用现有的 i18n 键;「提示词」是入口短名,和面板标题「提示词来源」区分开
 		{ id: "project", label: t.projectPanel, icon: <IconFolderOpenOutline16 size={15} /> },
-		{ id: "prompts", label: t.drawerPrompts, icon: <IconAgentPresetOutline16 size={15} /> },
 		{ id: "git", label: t.gitDetails, icon: <IconGitOutline16 size={15} /> },
 		// 「导入会话」的设置栏已移除,文案复用在这里
 		{ id: "import", label: t.importSessions, icon: <IconDownloadOutline16 size={15} /> },
@@ -133,8 +122,8 @@ export function DrawerPanel({
 				))}
 			</div>
 
-			{/* 所选入口的内容:项目 / 提示词 / Git 三个面板自带标题行与滚动。
-			    「导入会话」段落没有标题行,这里补一行,排布照抄 PromptPanel(同样在入口列表下面、关掉整个抽屉) */}
+			{/* 所选入口的内容:项目 / Git 两个面板自带标题行与滚动。
+			    「导入会话」段落没有标题行,这里补一行,排布保持一致(同样在入口列表下面、关掉整个抽屉) */}
 			<div id={`${id}-panel`} role="tabpanel" aria-labelledby={`${id}-${section}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col">
 				{section === "import" ? (
 					<>
@@ -164,9 +153,6 @@ export function DrawerPanel({
 						onClose={onClose}
 						onError={onError}
 					/>
-				) : section === "prompts" ? (
-					// 三个面板的关闭按钮都收起整个抽屉(它们自己不再有"关闭"以外的语义)
-					<PromptPanel cwd={cwd} sessionId={sessionId} refreshKey={promptRefreshKey} onOpenContent={onOpenContent} onClose={onClose} />
 				) : (
 					<GitPanel cwd={cwd} refreshKey={gitRefreshKey} onClose={onClose} onOpenFile={onOpenFile} onOpenDiff={onOpenGitDiff} onMutated={onGitMutated} />
 				)}

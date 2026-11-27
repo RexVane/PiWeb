@@ -12,7 +12,6 @@ import { useState } from "react";
 import { DrawerPanel, type DrawerSection } from "@/components/DrawerPanel";
 import type { GrowthApi } from "@/hooks/useGrowth";
 
-vi.mock("@/components/PromptPanel", () => ({ PromptPanel: () => <div>prompts</div> }));
 vi.mock("@/components/GitPanel", () => ({ GitPanel: () => <div>git</div> }));
 vi.mock("@/components/ProjectPanel", () => ({ ProjectPanel: () => <div>project</div> }));
 vi.mock("@/components/SessionImportSection", () => ({ SessionImportSection: () => <div>import-body</div> }));
@@ -27,7 +26,6 @@ function Harness({ initial }: { initial: DrawerSection }) {
 			section={section}
 			onSectionChange={setSection}
 			onClose={() => {}}
-			sessionId={null}
 			growth={{} as GrowthApi}
 			workspaceName="w"
 			hasSession={false}
@@ -40,10 +38,11 @@ function Harness({ initial }: { initial: DrawerSection }) {
 describe("drawer panel", () => {
 	it("moves tab selection and focus with arrows, Home and End", () => {
 		render(<Harness initial="project" />);
+		expect(screen.queryByTestId("drawer-entry-prompts")).toBeNull();
 		const project = screen.getByTestId("drawer-entry-project");
 		project.focus();
 		fireEvent.keyDown(project, { key: "ArrowRight" });
-		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-prompts"));
+		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-git"));
 		expect(document.activeElement?.getAttribute("aria-selected")).toBe("true");
 		fireEvent.keyDown(document.activeElement!, { key: "End" });
 		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-import"));
@@ -66,7 +65,7 @@ describe("drawer panel", () => {
 		fireEvent.click(git);
 		fireEvent.mouseLeave(git);
 		fireEvent.click(screen.getByTestId("drawer-entry-import"));
-		for (const id of ["project", "prompts", "git", "import"]) {
+		for (const id of ["project", "git", "import"]) {
 			expect(screen.getByTestId(`drawer-entry-${id}`).style.background, id).toBe("");
 		}
 	});
@@ -85,6 +84,6 @@ describe("drawer panel", () => {
 		render(<Harness initial="git" />);
 		fireEvent.keyDown(screen.getByTestId("drawer-entry-git"), { key: "ArrowRight" });
 		expect(document.activeElement).toBe(screen.getByTestId("drawer-entry-import"));
-		expect(screen.getAllByRole("tab")).toHaveLength(4);
+		expect(screen.getAllByRole("tab")).toHaveLength(3);
 	});
 });

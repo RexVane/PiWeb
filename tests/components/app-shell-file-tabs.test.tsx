@@ -16,10 +16,12 @@ vi.mock("@/components/ChatWindow", () => ({
 	</>,
 	SessionStatsBar: () => null,
 }));
-vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: () => null }));
-vi.mock("@/components/DrawerPanel", () => ({ DrawerPanel: ({ onOpenContent }: { onOpenContent?: (path: string, content: string) => void }) => <button onClick={() => onOpenContent?.("/skills/demo/SKILL.md", "global skill document")}>Read global skill</button> }));
+vi.mock("@/components/SessionSidebar", () => ({ SessionSidebar: ({ onSelectView }: { onSelectView?: (view: "chat" | "skills" | "plugins" | "prompts") => void }) => <button onClick={() => onSelectView?.("skills")}>Open skills view</button> }));
+vi.mock("@/components/DrawerPanel", () => ({ DrawerPanel: () => null }));
 vi.mock("@/components/workspace/SkillsPluginsViews", () => ({
-	SkillsWorkspaceView: () => null, PluginsWorkspaceView: () => null, MarketWorkspaceView: () => null,
+	SkillsWorkspaceView: ({ onOpenFileContent }: { onOpenFileContent?: (path: string, content: string) => void }) => <button onClick={() => onOpenFileContent?.("/skills/demo/SKILL.md", "global skill document")}>Read global skill</button>,
+	PluginsWorkspaceView: () => null,
+	MarketWorkspaceView: () => null,
 }));
 vi.mock("@/components/ExtensionUI", () => ({ ExtensionDialogHost: () => null, ExtensionNotices: () => null, ExtensionWidgets: () => null }));
 vi.mock("@/hooks/useGrowth", () => ({ useGrowth: () => ({
@@ -167,7 +169,7 @@ describe("AppShell file viewer lifecycle", () => {
 	it("can still open a global skill document before any workspace or conversation exists", async () => {
 		mocks.path = null; mocks.ready = false; mocks.fallback = false;
 		render(<AppShell />);
-		fireEvent.click(screen.getByTestId("drawer-toggle"));
+		await open("Open skills view");
 		await open("Read global skill");
 		await screen.findByTestId("file-viewer");
 		await waitFor(() => expect(screen.getByTestId("file-viewer").textContent).toContain("global skill document"));

@@ -344,8 +344,8 @@ export function AppShell() {
 		setSidebarCollapsed(safeLocalStorage.getItem("piweb.sidebarCollapsed") === "1");
 		setDrawerOpen(safeLocalStorage.getItem("piweb.drawerOpen") === "1");
 		const section = safeLocalStorage.getItem("piweb.drawerSection");
-		if (["project", "prompts", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
-		else if (section === "tree") safeLocalStorage.setItem("piweb.drawerSection", "project");
+		if (["project", "git", "import"].includes(section ?? "")) setDrawerSection(section as DrawerSection);
+		else if (section === "tree" || section === "prompts") safeLocalStorage.setItem("piweb.drawerSection", "project");
 	}, []);
 	/** 新会话时加载用户之前的选择；没有记住的，等 /api/models/defaults 回来用 pi 设置里的建议模型兜底 */
 	useEffect(() => {
@@ -1176,8 +1176,6 @@ export function AppShell() {
 					section={drawerSection}
 					onSectionChange={chooseDrawerSection}
 					onClose={() => toggleDrawer(false)}
-					sessionId={currentId}
-					promptRefreshKey={latestCompaction?.id ?? currentId}
 					gitRefreshKey={panelRefreshKey}
 					growth={growth}
 					workspaceName={panelCwd ? getWorkspaceName(panelCwd) : ""}
@@ -1188,7 +1186,6 @@ export function AppShell() {
 					onOpenEditor={openInEditor}
 					onJumpToChat={jumpToChat}
 					onError={setError}
-					onOpenContent={(path, content) => viewer.openStatic(path, content)}
 					onOpenFile={openInEditor}
 					onOpenGitDiff={(target) => viewer.open(target.path, {
 						...(target.from ? { from: target.from } : {}),
