@@ -28,8 +28,11 @@ import {
 	resourceLoaderIsStale,
 	getSettingsManager,
 	getAgentDir,
+	invalidateResourceFingerprintCache,
 	peekResourceLoader,
+	refreshModelRuntimeIfFilesChanged,
 	refreshResourceLoaderIfStale,
+	refreshSettingsManagerIfStale,
 	resolveProjectTrust,
 	resourceLoaderReady,
 	withResourceLock,
@@ -40,6 +43,7 @@ import {
 	openSessionManager,
 	encodeSessionId,
 } from "./pi";
+import { watchWorkspaceResources } from "./resource-fingerprint";
 import { createExtensionUiBridge, type ExtensionUiBridge } from "./extension-ui";
 import { createSessionModelRuntime, clearSessionModelProviders, releaseSessionModelRuntime } from "./session-model-runtime";
 import { createGrowthTracker, GROWTH_TRACKER_VERSION, type GrowthTracker } from "./growth-tracker";
@@ -137,6 +141,10 @@ export interface Managed {
 	messageIds: WeakMap<object, string>;
 	/** 用户在本会话里最后一次显式选择的思考级别；切模型后按新模型就近钳制重新应用，不让选择被 SDK 带丢 */
 	desiredThinkingLevel?: string;
+	/** 会话打开时磁盘上已记录过 thinking_level_change（不随设置默认值变更覆盖） */
+	hasPersistedThinking?: boolean;
+	/** Ref-counted resource/settings watcher handle while SSE subscribers are attached */
+	resourceWatchUnsub?: () => void;
 	modelSelection?: Promise<CommandResult>;
 	compactionStartedAt?: number;
 	/** 正在流式生成、尚未进入 session.messages 的助手消息（SDK 的共享 partial 对象）；中途订阅的快照要带上它 */
@@ -710,6 +718,76 @@ function reapplyDesiredLevel(m: Managed, session: AgentSession): void {
 	if (!m.desiredThinkingLevel) return;
 	const target = clampThinkingLevel(session.model as any, m.desiredThinkingLevel as any);
 	if (target !== session.thinkingLevel) session.setThinkingLevel(target as never);
+}
+
+function hasExplicitSessionThinking(m: Pick<Managed, "desiredThinkingLevel" | "hasPersistedThinking">): boolean {
+	return Boolean(m.desiredThinkingLevel || m.hasPersistedThinking);
+}
+
+async function syncSessionSettingsDefaults(m: Managed, options: { publishIfCold?: boolean } = {}): Promise<boolean> {
+	if (m.disposed) return false;
+	const settings = getSettingsManager(m.cwd);
+	if (m.session) {
+		const session = m.session;
+		// Reconcile cache warmer in-memory without writing default values back to settings.json on disk.
+		(session as unknown as { _cacheWarmer?: { onModeChanged?: () => void } })._cacheWarmer?.onModeChanged?.();
+		if (session.agent?.state !== undefined && typeof settings.getSteeringMode === "function" && typeof settings.getFollowUpMode === "function") {
+			session.agent.steeringMode = settings.getSteeringMode();
+			session.agent.followUpMode = settings.getFollowUpMode();
+		}
+		if (hasExplicitSessionThinking(m) || !session.model) return false;
+		const next = newSessionThinkingLevel({
+			supported: safeThinkingLevels(session),
+			modelOverride: settings.getModelThinkingLevel(session.model.provider, session.model.id),
+			defaultLevel: settings.getDefaultThinkingLevel(),
+		});
+		if (next && next !== session.thinkingLevel) {
+			session.setThinkingLevel(next as never);
+			return true;
+		}
+		return false;
+	}
+	if (hasExplicitSessionThinking(m)) return false;
+	const context = m.sm.buildSessionContext();
+	if (!context.model) return false;
+	let supported: string[] = [];
+	try {
+		const runtime = await getModelRuntime();
+		const model = runtime.getModel(context.model.provider, context.model.modelId);
+		if (model) supported = getSupportedThinkingLevels(model as never);
+	} catch {
+		/* ignore */
+	}
+	if (!supported.length) {
+		try {
+			const { listWorkspaceModelsForPiWeb } = await import("./models-service");
+			const model = (await listWorkspaceModelsForPiWeb(m.cwd)).models.find(
+				(item) => item.provider === context.model!.provider && item.id === context.model!.modelId,
+			);
+			if (model) supported = model.thinkingLevels;
+		} catch {
+			/* ignore */
+		}
+	}
+	if (!supported.length) return false;
+	const next = newSessionThinkingLevel({
+		supported,
+		modelOverride: settings.getModelThinkingLevel(context.model.provider, context.model.modelId),
+		defaultLevel: settings.getDefaultThinkingLevel(),
+	});
+	if (!next || next === context.thinkingLevel) return false;
+	m.sm.appendThinkingLevelChange(next);
+	if (options.publishIfCold && hasViewers(m)) {
+		publish(m, {
+			type: "model",
+			provider: context.model.provider,
+			model: context.model.modelId,
+			thinkingLevel: next,
+			thinkingLevels: supported,
+			ts: Date.now(),
+		});
+	}
+	return true;
 }
 
 /**
@@ -1383,6 +1461,7 @@ function reopenManaged(m: Managed): Managed {
 	fresh.diskTracker = m.diskTracker;
 	fresh.diskTracker?.adopt(sm.getEntries().map((entry) => entry.id));
 	fresh.desiredThinkingLevel = m.desiredThinkingLevel;
+	fresh.hasPersistedThinking = m.hasPersistedThinking;
 	fresh.viewerGraceUntil = m.viewerGraceUntil;
 	fresh.externalReload = reload;
 	return fresh;
@@ -1394,12 +1473,17 @@ function reopenManaged(m: Managed): Managed {
  * SDK 收尾时还可能有延后的提问要开跑，那一刻回收会把它丢掉）。每个会话一次 stat，没变就不读文件。
  */
 export function syncSessionsFromDisk(): void {
+	const watchedCwds = new Set<string>();
 	for (const m of [...sessions.values()]) {
 		try {
-			syncWithDisk(m);
+			const current = syncWithDisk(m);
+			if (!current.disposed && hasViewers(current) && current.cwd) watchedCwds.add(current.cwd);
 		} catch {
 			/* 核对失败只是晚一点发现，打开 / 发送时还会再查 */
 		}
+	}
+	for (const cwd of watchedCwds) {
+		void syncWorkspaceForExternalChange(cwd, { fresh: false }).catch(() => undefined);
 	}
 }
 
@@ -1418,6 +1502,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 	} catch {
 		/* A damaged history can still be opened; live events start a fresh ledger. */
 	}
+	const hasPersistedThinking = sm.getBranch().some((entry) => entry.type === "thinking_level_change");
 	const m: Managed = {
 		sessionPath,
 		cwd,
@@ -1444,6 +1529,7 @@ function registerManaged(sessionPath: string, cwd: string, sm: SessionManager): 
 		diskSize: fileSize(sessionPath),
 		diskTracker: new SessionDiskTracker(sessionPath, undefined, sm.getEntries().map((entry) => entry.id)),
 		externalEntries: 0,
+		hasPersistedThinking,
 	};
 	sessions.set(sessionPath, m);
 	trimColdSessions(m);
@@ -1761,7 +1847,10 @@ export async function ensureSession(m: Managed): Promise<AgentSession> {
 			}
 			else throw new Error("运行中的会话过多，请关闭一个空闲会话后重试。");
 		}
+		const hadLoader = Boolean(peekResourceLoader(m.cwd));
 		await resourceLoaderReady(m.cwd);
+		await refreshSettingsManagerIfStale(m.cwd);
+		if (hadLoader) await refreshResourceLoaderIfStale(m.cwd, { fresh: true });
 		const settingsManager = getSettingsManager(m.cwd);
 		const loader = await createSessionResourceLoader(m.cwd);
 		let created: AgentSession | undefined;
@@ -2068,6 +2157,7 @@ async function performReload(
 				// session_start may register or activate tools, so the final tool set is part of reload success.
 				applySessionTools(m, session);
 				swapCurrentModelObject(session);
+				await syncSessionSettingsDefaults(m);
 			});
 			m.resourceVersion = attemptedVersion;
 			m.resourceReloadPending ||= attemptedVersion !== resourceLoaderVersion(m.cwd);
@@ -2289,6 +2379,8 @@ export function disposeSession(m: Managed): Promise<void> {
 	if (existing) return existing;
 	if (m.disposed) return Promise.resolve();
 	m.disposed = true;
+	m.resourceWatchUnsub?.();
+	m.resourceWatchUnsub = undefined;
 	for (const key of writeBases.keys()) {
 		if (key.startsWith(`${m.sessionPath}\u0000`)) writeBases.delete(key);
 	}
@@ -2380,7 +2472,8 @@ type ResourceBundle = Pick<WebSnapshot, "skills" | "promptTemplates" | "extensio
  * 新会话页和冷会话的斜杠补全都靠它，等第一次提问才建会话。
  */
 export async function loadWorkspaceResources(cwd: string): Promise<ResourceBundle> {
-	await refreshResourceLoaderIfStale(cwd);
+	await refreshSettingsManagerIfStale(cwd);
+	await refreshResourceLoaderIfStale(cwd, { fresh: true });
 	const modelRegistry = new ModelRegistry(await getModelRuntime());
 	return withResourceLock(async () => {
 		const loader = getResourceLoader(cwd);
@@ -2388,6 +2481,143 @@ export async function loadWorkspaceResources(cwd: string): Promise<ResourceBundl
 		const runner = new ExtensionRunner(extensions, runtime, cwd, SessionManager.inMemory(cwd), modelRegistry);
 		return collectResources({ cwd, session: null }, runner);
 	});
+}
+
+interface WorkspaceChangeSubscription {
+	version: number;
+	listeners: Set<(version: number) => void>;
+	unsub?: () => void;
+}
+
+const workspaceSubscriptions = new Map<string, WorkspaceChangeSubscription>();
+const workspaceSyncJobs = new Map<string, { promise: Promise<boolean>; rerunFresh: boolean }>();
+
+function workspaceKey(cwd: string): string {
+	const resolved = path.resolve(cwd);
+	return process.platform === "win32" ? resolved.replace(/\\/g, "/").toLowerCase() : resolved.replace(/\\/g, "/");
+}
+
+function notifyWorkspaceListeners(cwd: string): void {
+	const entry = workspaceSubscriptions.get(workspaceKey(cwd));
+	if (!entry) return;
+	entry.version += 1;
+	for (const listener of [...entry.listeners]) {
+		try { listener(entry.version); } catch { /* listener failure must not break other streams */ }
+	}
+}
+
+export function workspaceChangeVersion(cwd: string): number {
+	return workspaceSubscriptions.get(workspaceKey(cwd))?.version ?? 0;
+}
+
+export async function primeWorkspaceWatch(cwd: string): Promise<void> {
+	const resolved = path.resolve(cwd);
+	getSettingsManager(resolved);
+	await resourceLoaderReady(resolved);
+	await refreshSettingsManagerIfStale(resolved);
+	await refreshResourceLoaderIfStale(resolved);
+}
+
+/**
+ * Subscribe to real-time settings/resource changes for a workspace (used by Hero/draft SSE).
+ * Ref-counts the underlying fs.watch handles and closes them immediately on last unsubscribe.
+ */
+export function subscribeWorkspaceChanges(cwd: string, listener: (version: number) => void): () => void {
+	const resolved = path.resolve(cwd);
+	getSettingsManager(resolved);
+	void resourceLoaderReady(resolved).catch(() => undefined);
+	const key = workspaceKey(resolved);
+	let entry = workspaceSubscriptions.get(key);
+	if (!entry) {
+		entry = { version: 0, listeners: new Set() };
+		workspaceSubscriptions.set(key, entry);
+	}
+	entry.listeners.add(listener);
+	if (!entry.unsub) {
+		entry.unsub = watchWorkspaceResources(resolved, getAgentDir(), () => {
+			void syncWorkspaceForExternalChange(resolved).catch(() => undefined);
+		});
+	}
+	let active = true;
+	return () => {
+		if (!active) return;
+		active = false;
+		const current = workspaceSubscriptions.get(key);
+		if (!current || current !== entry) return;
+		current.listeners.delete(listener);
+		if (current.listeners.size === 0) {
+			current.unsub?.();
+			current.unsub = undefined;
+			workspaceSubscriptions.delete(key);
+		}
+	};
+}
+
+/**
+ * Detect external settings/resource/model file changes for `cwd`, reload in-memory managers/loaders,
+ * push SSE updates to connected sessions (preserving explicit per-session thinking levels),
+ * and notify workspace subscribers.
+ */
+export async function syncWorkspaceForExternalChange(cwd: string, options: { fresh?: boolean } = {}): Promise<boolean> {
+	const resolved = path.resolve(cwd);
+	const key = workspaceKey(resolved);
+	const existing = workspaceSyncJobs.get(key);
+	if (existing) {
+		if (options.fresh !== false) existing.rerunFresh = true;
+		return existing.promise;
+	}
+	const state = { promise: null as unknown as Promise<boolean>, rerunFresh: false };
+	const runOnce = async (fresh: boolean): Promise<boolean> => {
+		if (fresh) invalidateResourceFingerprintCache(resolved);
+		const modelChanged = await refreshModelRuntimeIfFilesChanged();
+		const settingsChanged = await refreshSettingsManagerIfStale(resolved);
+		const resourcesChanged = await refreshResourceLoaderIfStale(resolved, { fresh });
+		if (!modelChanged && !settingsChanged && !resourcesChanged) return false;
+		for (const m of [...sessions.values()]) {
+			if (m.disposed || workspaceKey(m.cwd) !== key) continue;
+			try {
+				if (!m.session) {
+					if (!m.creating) await syncSessionSettingsDefaults(m, { publishIfCold: true });
+					if (hasViewers(m)) {
+						publishResources(m);
+						publishTools(m, null);
+						if (modelChanged) publishUsage(m, true);
+					}
+					continue;
+				}
+				if (m.creating || isManagedBusy(m)) {
+					m.resourceReloadPending = true;
+					failedResourceReloadVersions.delete(m);
+					continue;
+				}
+				if (resourcesChanged || settingsChanged) {
+					m.resourceReloadPending = true;
+					await reloadManagedResources(m);
+				}
+				if (modelChanged) {
+					swapCurrentModelObject(m.session);
+					usageCache.delete(m);
+					publishUsage(m, true);
+				}
+				await syncSessionSettingsDefaults(m);
+			} catch {
+				/* a single session reload error must not block other sessions or workspace notifications */
+			}
+		}
+		notifyWorkspaceListeners(resolved);
+		return true;
+	};
+	state.promise = (async () => {
+		let changed = await runOnce(options.fresh !== false);
+		while (state.rerunFresh) {
+			state.rerunFresh = false;
+			if (await runOnce(true)) changed = true;
+		}
+		return changed;
+	})();
+	workspaceSyncJobs.set(key, state);
+	try { return await state.promise; }
+	finally { if (workspaceSyncJobs.get(key) === state) workspaceSyncJobs.delete(key); }
 }
 
 function collectResources(m: Pick<Managed, "cwd" | "session">, commandRunner?: ExtensionRunner): ResourceBundle {
@@ -2575,10 +2805,15 @@ export async function buildSnapshot(m: Managed): Promise<WebSnapshot> {
 		} else if (m.session && isManagedBusy(m)) {
 			if (resourceLoaderIsStale(m.cwd) || m.resourceVersion !== resourceLoaderVersion(m.cwd)) m.resourceReloadPending = true;
 		} else {
-			await refreshResourceLoaderIfStale(m.cwd);
-			if (m.session && (m.resourceReloadPending || m.resourceVersion !== resourceLoaderVersion(m.cwd))) {
+			await refreshSettingsManagerIfStale(m.cwd);
+			await refreshResourceLoaderIfStale(m.cwd, { fresh: true });
+			if (!m.session) {
+				await syncSessionSettingsDefaults(m, { publishIfCold: false });
+			} else if (m.resourceReloadPending || m.resourceVersion !== resourceLoaderVersion(m.cwd)) {
 				m.resourceReloadPending = true;
 				await reloadManagedResources(m);
+			} else {
+				await syncSessionSettingsDefaults(m);
 			}
 		}
 	} catch {
@@ -2797,12 +3032,21 @@ export function subscribe(
 		return event.type === "extension_ui" && ["select", "confirm", "input", "editor", "web", "resource"].includes(event.method) && !pending.has(event.id);
 	})) return false;
 	m.subscribers.add(send);
+	if (m.cwd && !m.disposed && !m.resourceWatchUnsub) {
+		m.resourceWatchUnsub = watchWorkspaceResources(m.cwd, getAgentDir(), () => {
+			void syncWorkspaceForExternalChange(m.cwd).catch(() => undefined);
+		});
+	}
 	for (const b of replay) send(b.seq, b.json);
 	return true;
 }
 
 export function unsubscribe(m: Managed, send: (seq: number, json: string) => void): void {
 	m.subscribers.delete(send);
+	if (m.subscribers.size === 0 && m.resourceWatchUnsub) {
+		m.resourceWatchUnsub();
+		m.resourceWatchUnsub = undefined;
+	}
 }
 
 /**
@@ -3391,9 +3635,11 @@ export async function createNewSession(
 	}
 	const provider = options?.provider?.trim();
 	const modelId = options?.modelId?.trim();
+	await refreshSettingsManagerIfStale(cwd);
 	let selectedModel: Awaited<ReturnType<typeof import("./models-service")["listWorkspaceModelsForPiWeb"]>>["models"][number] | undefined;
 	if (hasProvider && hasModelId) {
 		if (!provider || !modelId) throw new BoundaryError("provider and modelId must both be provided");
+		await refreshModelRuntimeIfFilesChanged();
 		const { listWorkspaceModelsForPiWeb } = await import("./models-service");
 		selectedModel = (await listWorkspaceModelsForPiWeb(cwd)).models.find(
 			(item) => item.provider === provider && item.id === modelId,

@@ -4,7 +4,7 @@ import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { resourceFingerprint } from "../src/lib/resource-fingerprint";
+import { resourceFingerprint, activeResourceWatcherCount, activeResourceWatchHandleCount, stopAllResourceWatchers } from "../src/lib/resource-fingerprint";
 
 vi.mock("../src/lib/growth-tracker", () => ({
 	GROWTH_TRACKER_VERSION: 1,
@@ -40,6 +40,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	for (const session of managed) manager.disposeSession(session);
+	stopAllResourceWatchers();
 	vi.unstubAllGlobals();
 	vi.unstubAllEnvs();
 	await recycleGeneratedFixture(root);
@@ -151,5 +152,30 @@ describe("SDK resource refresh", () => {
 		expect(reads.mock.calls.some(([dir]) => String(dir).includes(`${path.sep}ignored`))).toBe(false);
 		if (linked) expect(reads.mock.calls.filter(([dir]) => String(dir).endsWith(`${path.sep}loop`))).toHaveLength(0);
 		reads.mockRestore();
+	});
+
+	it("syncs external .pi/settings.json changes to connected sessions and cleans up watchers on dispose", async () => {
+		const cwd = path.join(workspace, "settings-watch");
+		await write(path.join(cwd, ".pi", "settings.json"), JSON.stringify({ defaultThinkingLevel: "low" }));
+		const { sessionPath } = await manager.createNewSession(cwd);
+		const session = manager.getManaged(sessionPath);
+		managed.push(session);
+		await manager.ensureSession(session);
+
+		const frames: string[] = [];
+		const send = (_seq: number, json: string) => { frames.push(json); };
+		expect(manager.subscribe(session, send, session.seq)).toBe(true);
+		expect(activeResourceWatcherCount()).toBeGreaterThan(0);
+
+		await write(path.join(cwd, ".pi", "prompts", "watched.md"), "---\ndescription: Watched prompt\n---\nHello.\n");
+		await vi.waitFor(() => {
+			expect(frames.some((frame) => frame.includes('"name":"watched"'))).toBe(true);
+		}, { timeout: 5_000 });
+
+		manager.unsubscribe(session, send);
+		await manager.disposeSession(session);
+		managed.pop();
+		expect(activeResourceWatcherCount()).toBe(0);
+		expect(activeResourceWatchHandleCount()).toBe(0);
 	});
 });

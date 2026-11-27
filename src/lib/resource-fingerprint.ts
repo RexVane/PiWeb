@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import ignore from "ignore";
 import { readJsonObjectSync } from "./agent-config";
+import { registerShutdownHook } from "./graceful-shutdown";
 import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 
 type ResourceKind = "skills" | "agents-skills" | "prompts" | "extensions";
@@ -188,3 +189,209 @@ export function resourceFingerprint({ cwd, agentDir, trusted, loader, packageRoo
 	}
 	return `${trusted}\n${[...records].sort(([a], [b]) => a.localeCompare(b)).map(([file, revision]) => `${file}:${revision}`).join("\n")}`;
 }
+
+interface WatchTarget {
+	dir: string;
+	recursive: boolean;
+}
+
+interface ResourceWatchEntry {
+	cwd: string;
+	agentDir: string;
+	debounceMs: number;
+	listeners: Set<() => void>;
+	watchers: Map<string, { watcher: fs.FSWatcher; recursive: boolean }>;
+	timer: ReturnType<typeof setTimeout> | null;
+	closed: boolean;
+}
+
+const WATCHERS_KEY = Symbol.for("piweb.resourceWatchers");
+
+function watcherRegistry(): Map<string, ResourceWatchEntry> {
+	const store = globalThis as Record<PropertyKey, unknown>;
+	let map = store[WATCHERS_KEY] as Map<string, ResourceWatchEntry> | undefined;
+	if (!map) {
+		map = new Map();
+		store[WATCHERS_KEY] = map;
+	}
+	return map;
+}
+
+function collectWatchTargets(cwd: string, agentDir: string): WatchTarget[] {
+	const homeDir = process.env.HOME || os.homedir();
+	const resolvedCwd = path.resolve(cwd);
+	const resolvedAgentDir = path.resolve(agentDir);
+	const project = path.join(resolvedCwd, ".pi");
+	const targets = new Map<string, WatchTarget>();
+	const add = (dir: string, recursive = false) => {
+		const resolved = path.resolve(dir);
+		const targetKey = key(resolved);
+		const prev = targets.get(targetKey);
+		if (prev) {
+			if (recursive && !prev.recursive) prev.recursive = true;
+			return;
+		}
+		targets.set(targetKey, { dir: resolved, recursive });
+	};
+	const resolveInput = (value: string, base: string) => path.resolve(base, value.trim().replace(/^~(?=$|[/\\])/, homeDir));
+	const addConfiguredRoots = (settingsFile: string, base: string) => {
+		const settings = readJsonObjectSync(settingsFile);
+		for (const kind of ["skills", "prompts", "extensions"] as const) {
+			const values = settings[kind];
+			if (!Array.isArray(values)) continue;
+			for (const value of values) {
+				if (typeof value !== "string" || /^[!+-]|[*?]/.test(value) || value.startsWith("builtin:")) continue;
+				const root = resolveInput(value, base);
+				// Never crawl broad workspace/home roots recursively; watch only their resource subdirs.
+				if ([resolvedCwd, homeDir, resolvedAgentDir, project].some((dir) => key(path.resolve(dir)) === key(root))) {
+					add(path.join(root, kind), true);
+					continue;
+				}
+				add(root, kind !== "skills");
+			}
+		}
+	};
+
+	add(resolvedAgentDir, false);
+	if (!fs.existsSync(resolvedAgentDir)) add(path.dirname(resolvedAgentDir), false);
+	add(resolvedCwd, false);
+	add(project, false);
+	for (const base of [resolvedAgentDir, project]) {
+		for (const kind of ["skills", "prompts", "extensions"] as const) add(path.join(base, kind), true);
+	}
+	let current = resolvedCwd;
+	for (;;) {
+		add(path.join(current, ".agents"), false);
+		add(path.join(current, ".agents", "skills"), true);
+		if (fs.existsSync(path.join(current, ".git"))) break;
+		const parent = path.dirname(current);
+		if (parent === current) break;
+		current = parent;
+	}
+	add(path.join(homeDir, ".agents", "skills"), true);
+	addConfiguredRoots(path.join(resolvedAgentDir, "settings.json"), resolvedAgentDir);
+	addConfiguredRoots(path.join(project, "settings.json"), project);
+	return [...targets.values()];
+}
+
+function syncEntryWatchers(entry: ResourceWatchEntry): void {
+	if (entry.closed) return;
+	const desired = new Map<string, WatchTarget>();
+	for (const target of collectWatchTargets(entry.cwd, entry.agentDir)) {
+		try {
+			if (fs.statSync(target.dir).isDirectory()) desired.set(key(target.dir), target);
+		} catch {
+			/* missing or non-directory */
+		}
+	}
+	for (const [targetKey, existing] of entry.watchers) {
+		const wanted = desired.get(targetKey);
+		if (!wanted || wanted.recursive !== existing.recursive) {
+			try { existing.watcher.close(); } catch { /* ignore */ }
+			entry.watchers.delete(targetKey);
+		}
+	}
+	for (const [targetKey, target] of desired) {
+		if (entry.watchers.has(targetKey)) continue;
+		const schedule = () => {
+			if (entry.closed) return;
+			if (entry.timer) clearTimeout(entry.timer);
+			entry.timer = setTimeout(() => {
+				entry.timer = null;
+				if (entry.closed) return;
+				syncEntryWatchers(entry);
+				for (const listener of [...entry.listeners]) {
+					try { listener(); } catch { /* listener errors must not break other watchers */ }
+				}
+			}, entry.debounceMs);
+			entry.timer.unref?.();
+		};
+		const openWatcher = (recursive: boolean): fs.FSWatcher | null => {
+			try {
+				const watcher = fs.watch(target.dir, { persistent: false, ...(recursive ? { recursive: true } : {}) }, schedule);
+				watcher.unref?.();
+				watcher.on("error", () => {
+					const active = entry.watchers.get(targetKey);
+					if (active?.watcher === watcher) entry.watchers.delete(targetKey);
+					try { watcher.close(); } catch { /* ignore */ }
+				});
+				return watcher;
+			} catch {
+				return null;
+			}
+		};
+		const watcher = openWatcher(target.recursive) ?? (target.recursive ? openWatcher(false) : null);
+		if (watcher) entry.watchers.set(targetKey, { watcher, recursive: target.recursive });
+	}
+}
+
+function closeEntry(entryKey: string, entry: ResourceWatchEntry): void {
+	entry.closed = true;
+	if (entry.timer) {
+		clearTimeout(entry.timer);
+		entry.timer = null;
+	}
+	for (const { watcher } of entry.watchers.values()) {
+		try { watcher.close(); } catch { /* ignore */ }
+	}
+	entry.watchers.clear();
+	entry.listeners.clear();
+	watcherRegistry().delete(entryKey);
+}
+
+/**
+ * Watch workspace and agent-dir settings/resource directories with ref-counted handles.
+ * Returns an idempotent unsubscribe function that closes all handles once no listeners remain.
+ */
+export function watchWorkspaceResources(
+	cwd: string,
+	agentDir: string,
+	listener: () => void,
+	options: { debounceMs?: number } = {},
+): () => void {
+	const resolvedCwd = path.resolve(cwd);
+	const resolvedAgentDir = path.resolve(agentDir);
+	const entryKey = `${key(resolvedAgentDir)}\u0000${key(resolvedCwd)}`;
+	const registry = watcherRegistry();
+	let entry = registry.get(entryKey);
+	if (!entry) {
+		entry = {
+			cwd: resolvedCwd,
+			agentDir: resolvedAgentDir,
+			debounceMs: options.debounceMs ?? 80,
+			listeners: new Set(),
+			watchers: new Map(),
+			timer: null,
+			closed: false,
+		};
+		registry.set(entryKey, entry);
+	}
+	entry.listeners.add(listener);
+	syncEntryWatchers(entry);
+
+	let active = true;
+	return () => {
+		if (!active) return;
+		active = false;
+		const current = registry.get(entryKey);
+		if (!current || current !== entry) return;
+		current.listeners.delete(listener);
+		if (current.listeners.size === 0) closeEntry(entryKey, current);
+	};
+}
+
+export function activeResourceWatcherCount(): number {
+	return watcherRegistry().size;
+}
+
+export function activeResourceWatchHandleCount(): number {
+	let count = 0;
+	for (const entry of watcherRegistry().values()) count += entry.watchers.size;
+	return count;
+}
+
+export function stopAllResourceWatchers(): void {
+	for (const [entryKey, entry] of [...watcherRegistry()]) closeEntry(entryKey, entry);
+}
+
+registerShutdownHook(stopAllResourceWatchers, { name: "resource-watchers" });

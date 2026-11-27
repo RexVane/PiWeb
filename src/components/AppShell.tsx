@@ -175,6 +175,7 @@ export function AppShell() {
 		removeWorkspace,
 		refreshModels,
 		setModelCwd,
+		workspaceRefreshNonce,
 		pendingSessionCwd,
 		sendCommand,
 		newSession,
@@ -364,13 +365,20 @@ export function AppShell() {
 	useEffect(() => {
 		const suggested = heroDefaults?.model;
 		if (!heroCwd || !suggested) return;
-		setHeroModel((current) => current ?? suggested);
+		if (readRememberedHeroModel(safeLocalStorage, heroCwd)) {
+			setHeroModel((current) => current ?? suggested);
+			return;
+		}
+		setHeroModel(suggested);
 	}, [heroCwd, heroDefaults]);
 	useEffect(() => {
 		setHeroDefaults(null);
-		if (!heroCwd) return;
+	}, [heroCwd]);
+	const heroDefaultsCwd = !currentId ? heroCwd : "";
+	useEffect(() => {
+		if (!heroDefaultsCwd) return;
 		let stale = false;
-		fetch(`/api/models/defaults?cwd=${encodeURIComponent(heroCwd)}`)
+		fetch(`/api/models/defaults?cwd=${encodeURIComponent(heroDefaultsCwd)}`, { cache: "no-store" })
 			.then((r) => r.json() as Promise<{ success?: boolean; data?: NewSessionDefaults }>)
 			.then((json) => {
 				if (!stale && json.success && json.data) setHeroDefaults(json.data);
@@ -379,7 +387,7 @@ export function AppShell() {
 		return () => {
 			stale = true;
 		};
-	}, [heroCwd]);
+	}, [heroDefaultsCwd, resourcesVersion, workspaceRefreshNonce, settingsOpen]);
 	/** 补全数据归属的工作区：有会话看会话的 cwd，新会话看 Hero 选中的工作区 */
 	const resourceCwd = currentId
 		? sessions.find((session) => samePath(session.path, currentPath ?? ""))?.cwd ||
@@ -406,7 +414,7 @@ export function AppShell() {
 		return () => {
 			stale = true;
 		};
-	}, [currentId, resourceCwd, settingsOpen, resourcesVersion, setError]);
+	}, [currentId, resourceCwd, settingsOpen, resourcesVersion, workspaceRefreshNonce, setError]);
 	/** 右侧抽屉开关(项目栏降级成抽屉入口后,它是"最右一列是否打开"唯一的开关) */
 	const toggleDrawer = useCallback((next?: boolean) => {
 		preserveChatReadingPosition();

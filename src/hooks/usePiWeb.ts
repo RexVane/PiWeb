@@ -337,7 +337,12 @@ const foldEvent = (state: PiWebState, evt: WebEvent): PiWebState => {
 		case "model": {
 			if (s.snapshot) {
 				const snap = { ...s.snapshot };
-				if (evt.model) snap.model = { ...(snap.model ?? { provider: "", id: "", name: "" }), id: evt.model, name: evt.model };
+				if (evt.model) {
+					const sameModel = snap.model?.id === evt.model && (!evt.provider || snap.model?.provider === evt.provider);
+					snap.model = sameModel && snap.model
+						? snap.model
+						: { ...(snap.model ?? { provider: "", id: "", name: "" }), id: evt.model, name: evt.model };
+				}
 				if (evt.provider && snap.model) snap.model = { ...snap.model, provider: evt.provider };
 				if (evt.thinkingLevel) snap.thinkingLevel = evt.thinkingLevel;
 				if (evt.thinkingLevels) snap.thinkingLevels = evt.thinkingLevels;
@@ -652,6 +657,7 @@ export function usePiWeb() {
 	const [groupBy, setGroupByState] = useState<"workspace" | "flat">("workspace");
 	const [orderBy, setOrderByState] = useState<"updated" | "manual">("updated");
 	const [resyncNonce, setResyncNonce] = useState(0);
+	const [workspaceRefreshNonce, setWorkspaceRefreshNonce] = useState(0);
 	const esRef = useRef<{ close(): void } | null>(null);
 	const promptRequestsRef = useRef(new Set<string>());
 	const pendingOptimisticRef = useRef(new Map<string, PendingOptimisticPrompt>());
@@ -1304,6 +1310,63 @@ export function usePiWeb() {
 		};
 	}, [currentId, resyncNonce, refreshModels]);
 
+	// Hero / 新会话草稿页没有会话 SSE：订阅工作区资源与设置变更流，外部改 .pi/settings.json 等立即同步
+	useEffect(() => {
+		if (currentId || !modelCwd || typeof window === "undefined") return;
+		const polling = usesEventPolling(window.location.hostname);
+		if (!polling && typeof EventSource === "undefined") return;
+		const url = `/api/agent/resources?cwd=${encodeURIComponent(modelCwd)}&stream=1`;
+		let disposed = false;
+		let retryDelayMs = 2000;
+		let retryTimer: ReturnType<typeof setTimeout> | undefined;
+		let stream: { close(): void } | null = null;
+		const onMessage = (data: string) => {
+			if (disposed || activeSessionRef.current) return;
+			let parsed: { type?: string } | null = null;
+			try {
+				parsed = JSON.parse(data) as { type?: string };
+			} catch {
+				return;
+			}
+			if (parsed?.type === "workspace_changed" || parsed?.type === "resources") {
+				setWorkspaceRefreshNonce((n) => n + 1);
+				void refreshModels();
+			}
+		};
+		const connect = () => {
+			if (disposed) return;
+			if (polling) {
+				stream = pollEventStream(url, {
+					onOpen: () => { retryDelayMs = 2000; },
+					onMessage,
+					onError: () => {},
+				});
+				return;
+			}
+			const es = new EventSource(url);
+			stream = es;
+			es.onopen = () => { retryDelayMs = 2000; };
+			es.onmessage = (e) => onMessage(e.data);
+			es.onerror = () => {
+				if (stream !== es || es.readyState !== EventSource.CLOSED) return;
+				es.close();
+				stream = null;
+				const delay = retryDelayMs;
+				retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
+				retryTimer = setTimeout(() => {
+					if (!disposed && stream === null) connect();
+				}, delay);
+			};
+		};
+		connect();
+		return () => {
+			disposed = true;
+			if (retryTimer) clearTimeout(retryTimer);
+			stream?.close();
+			stream = null;
+		};
+	}, [currentId, modelCwd, refreshModels]);
+
 	const sendCommand = useCallback(async (cmd: Record<string, unknown>, id?: string, options?: { shouldReportError?: () => boolean }): Promise<any> => {
 		const target = id ?? currentId;
 		if (!target) {
@@ -1609,6 +1672,7 @@ export function usePiWeb() {
 		removeWorkspace,
 		refreshModels,
 		setModelCwd,
+		workspaceRefreshNonce,
 		pendingSessionCwd: pendingSession && currentPath && pathKey(pendingSession.path) === pathKey(currentPath) ? pendingSession.cwd : "",
 		sendCommand,
 		newSession,

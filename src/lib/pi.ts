@@ -24,6 +24,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { modelFilesFingerprint, reloadStoredCredentials } from "./model-files";
+import { invalidateJsonFile } from "./agent-config";
 import { refreshSessionModelRuntimes } from "./session-model-runtime";
 import { createPiWebModelRuntime } from "./model-runtime-safe";
 import { securePackageManager } from "./package-manager-safe";
@@ -113,6 +114,8 @@ export async function refreshModelRuntimeIfFilesChanged(): Promise<boolean> {
 const settingsCache = new Map<string, SettingsManager>();
 /** 缓存键 → 原始目录。键在 Windows 上是小写的，不能拿它当目录交给 SDK 或算资源指纹 */
 const settingsCwds = new Map<string, string>();
+const settingsFingerprints = new WeakMap<SettingsManager, string>();
+const settingsRefreshJobs = new Map<string, Promise<boolean>>();
 
 /**
  * 缓存容量上限（L4）：`settingsCache` / `loaderCache` / `packageManagerCache` 都按工作区
@@ -289,16 +292,76 @@ export function syncProjectTrust(): void {
 	}
 }
 
+function stampSettingsFile(file: string): string {
+	try {
+		const stat = fs.statSync(file, { bigint: true });
+		return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+	} catch {
+		return "missing";
+	}
+}
+
+function settingsFilesFingerprint(cwd: string): string {
+	const resolved = path.resolve(cwd);
+	const agentDir = getAgentDir();
+	const trusted = resolveProjectTrust(resolved).trusted;
+	return [
+		trusted,
+		stampSettingsFile(path.join(agentDir, "settings.json")),
+		stampSettingsFile(path.join(resolved, ".pi", "settings.json")),
+		stampSettingsFile(path.join(agentDir, "trust.json")),
+	].join("\n");
+}
+
+function invalidateSettingsJsonCaches(cwd?: string): void {
+	invalidateJsonFile(path.join(getAgentDir(), "settings.json"));
+	if (cwd) invalidateJsonFile(path.join(path.resolve(cwd), ".pi", "settings.json"));
+	else {
+		for (const item of settingsCwds.values()) invalidateJsonFile(path.join(item, ".pi", "settings.json"));
+	}
+	trustFileCache = null;
+	trustStore = null;
+}
+
 /** 每个 cwd 一个 SettingsManager（project 级发现依赖 cwd；global 级共享 agentDir），按项目信任状态创建 */
 export function getSettingsManager(cwd: string): SettingsManager {
 	const resolved = path.resolve(cwd);
 	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
 	let sm = settingsCache.get(key);
 	if (!sm) {
+		const fingerprint = settingsFilesFingerprint(resolved);
 		sm = SettingsManagerClass.fromStorage(new JsoncSettingsStorage(resolved, getAgentDir()), { projectTrusted: resolveProjectTrust(resolved).trusted });
 		rememberSettingsManager(key, sm, resolved);
+		settingsFingerprints.set(sm, fingerprint);
 	}
 	return sm;
+}
+
+/**
+ * Check whether global/project settings.json or trust.json changed on disk for `cwd`.
+ * Reloads the cached SettingsManager in-place when stale and returns whether a clean reload occurred.
+ */
+export async function refreshSettingsManagerIfStale(cwd: string): Promise<boolean> {
+	const resolved = path.resolve(cwd);
+	const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+	const pending = settingsRefreshJobs.get(key);
+	if (pending) return pending;
+	const job = (async () => {
+		const sm = getSettingsManager(resolved);
+		const before = settingsFilesFingerprint(resolved);
+		if (settingsFingerprints.get(sm) === before) return false;
+		invalidateSettingsJsonCaches(resolved);
+		sm.setProjectTrusted(resolveProjectTrust(resolved).trusted);
+		sm.drainErrors();
+		await sm.reload();
+		const errors = sm.drainErrors();
+		if (errors.length > 0) return false;
+		if (settingsFilesFingerprint(resolved) === before) settingsFingerprints.set(sm, before);
+		return true;
+	})();
+	settingsRefreshJobs.set(key, job);
+	try { return await job; }
+	finally { if (settingsRefreshJobs.get(key) === job) settingsRefreshJobs.delete(key); }
 }
 
 interface LoaderEntry {
@@ -413,13 +476,17 @@ function queueLoaderReload(cwd: string, entry: LoaderEntry): Promise<void> {
 		// 发现缓存从未被会话绑定；替换前释放它自己的 event-bus 订阅。
 		entry.loader.getExtensions().runtime.invalidate();
 		for (let attempt = 0; attempt < 2; attempt += 1) {
+			invalidateSettingsJsonCaches(cwd);
 			const before = resourceFingerprint(cwd);
+			const beforeSettings = settingsFilesFingerprint(cwd);
 			await entry.loader.reload();
 			entry.packageRoots = getPackageManager(cwd).listConfiguredPackages()
 				.map((pkg) => pkg.installedPath).filter((root): root is string => typeof root === "string");
 			// New sources or a concurrent edit require another read. Never mark a newer
 			// on-disk revision as loaded just because it was observed after reload.
 			entry.fingerprint = before;
+			const sm = getSettingsManager(cwd);
+			if (settingsFilesFingerprint(cwd) === beforeSettings) settingsFingerprints.set(sm, beforeSettings);
 			if (before === resourceFingerprint(cwd)) break;
 			if (attempt === 0) entry.loader.getExtensions().runtime.invalidate();
 		}
@@ -472,6 +539,15 @@ export function resourceLoaderIsStale(cwd: string, { fresh = false }: { fresh?: 
 
 const fingerprintChecks = new WeakMap<LoaderEntry, { at: number; fingerprint: string }>();
 
+export function invalidateResourceFingerprintCache(cwd?: string): void {
+	if (cwd) {
+		const entry = loaderCache.get(loaderKey(cwd));
+		if (entry) fingerprintChecks.delete(entry);
+		return;
+	}
+	for (const entry of loaderCache.values()) fingerprintChecks.delete(entry);
+}
+
 export async function refreshResourceLoaderIfStale(cwd: string, options: { fresh?: boolean } = {}): Promise<boolean> {
 	await resourceLoaderReady(cwd);
 	const entry = loaderCache.get(loaderKey(cwd));
@@ -498,13 +574,20 @@ export async function reloadLoader(cwd: string): Promise<void> {
 
 /** 让所有已缓存的 SettingsManager 就地重新读盘（活跃会话持有的就是这些实例） */
 export async function reloadSettingsManagers(): Promise<void> {
+	invalidateSettingsJsonCaches();
+	invalidateResourceFingerprintCache();
 	const failures: unknown[] = [];
-	for (const sm of settingsCache.values()) {
+	for (const [key, sm] of settingsCache.entries()) {
+		const cwd = settingsCwds.get(key) ?? key;
 		// Previous diagnostics are not evidence that this reload failed.
 		sm.drainErrors();
 		try {
+			sm.setProjectTrusted(resolveProjectTrust(cwd).trusted);
+			const before = settingsFilesFingerprint(cwd);
 			await sm.reload();
-			for (const issue of sm.drainErrors()) failures.push(issue.error);
+			const issues = sm.drainErrors();
+			for (const issue of issues) failures.push(issue.error);
+			if (issues.length === 0 && settingsFilesFingerprint(cwd) === before) settingsFingerprints.set(sm, before);
 		} catch (error) {
 			failures.push(error);
 		}

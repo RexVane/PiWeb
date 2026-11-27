@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { newSessionDefaults } from "@/lib/model-defaults";
+import { refreshModelRuntimeIfFilesChanged, refreshSettingsManagerIfStale } from "@/lib/pi";
 import { BoundaryError, resolveWorkspacePath } from "@/lib/path-security";
 import { apiError } from "@/lib/api-error";
 
@@ -9,6 +10,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
 	try {
 		const cwd = await resolveWorkspacePath(new URL(req.url).searchParams.get("cwd"));
+		await refreshSettingsManagerIfStale(cwd);
+		await refreshModelRuntimeIfFilesChanged();
 		return NextResponse.json({ success: true, data: await newSessionDefaults(cwd) }, { headers: { "Cache-Control": "no-store" } });
 	} catch (error) {
 		return NextResponse.json(
