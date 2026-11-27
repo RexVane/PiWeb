@@ -3474,7 +3474,8 @@ export async function exportSession(
 	try {
 		const outPath = await session.exportToHtml(path.join(temporary, "session.html"));
 		const content = await readFile(outPath, "utf8");
-		return { filename: base.replace(/\.jsonl$/, ".html"), content: options.raw ? content : redactSecrets(content), contentType: "text/html" };
+		const html = options.raw ? content : (await import("./secret-redaction")).redactExportedHtml(content);
+		return { filename: base.replace(/\.jsonl$/, ".html"), content: html, contentType: "text/html" };
 	} finally {
 		await recycleTemporaryDirectory(temporary).catch((error) => console.warn("[piweb] Temporary export was retained because recycling failed", error));
 	}

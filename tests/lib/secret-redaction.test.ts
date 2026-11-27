@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactJsonl, redactSecrets, redactUrlCredentials } from "../../src/lib/secret-redaction";
+import { redactExportedHtml, redactJsonl, redactSecrets, redactUrlCredentials } from "../../src/lib/secret-redaction";
 
 const LONG_KEY = "sk-proj-AbCdEfGhIjKlMnOpQrStUvWx";
 const LONG_BEARER = "eyJhbGciOiJIUzI1NiJ9.payload.signature";
@@ -99,5 +99,138 @@ describe("redactJsonl", () => {
 
 	it("returns empty input unchanged", () => {
 		expect(redactJsonl("")).toBe("");
+	});
+
+	it("redacts escaped JSON secrets embedded inside JSONL string fields", () => {
+		const line = JSON.stringify({
+			type: "message",
+			message: { role: "toolResult", content: JSON.stringify({ apiKey: "custom-inner-secret", password: "inner-password", note: "普通文本" }) },
+		});
+		const redacted = redactJsonl(line);
+		expect(redacted).not.toContain("custom-inner-secret");
+		expect(redacted).not.toContain("inner-password");
+		const parsed = JSON.parse(redacted) as { message: { content: string } };
+		expect(JSON.parse(parsed.message.content)).toEqual({ apiKey: "***", password: "***", note: "普通文本" });
+	});
+});
+
+describe("redactExportedHtml", () => {
+	function extractSessionData(html: string): Record<string, unknown> {
+		const match = /<script\b[^>]*id=["']session-data["'][^>]*>([\s\S]*?)<\/script>/i.exec(html);
+		expect(match).not.toBeNull();
+		const b64 = match![1].trim();
+		return JSON.parse(Buffer.from(b64, "base64").toString("utf8")) as Record<string, unknown>;
+	}
+
+	it("redacts base64-encoded session-data JSON including nested JSON, CJK, and renderedTools", () => {
+		const sessionData = {
+			header: { type: "session", version: 3, id: "sess-1", timestamp: "2026-11-27T00:00:00Z", cwd: "/tmp/proj" },
+			entries: [
+				{
+					type: "message",
+					id: "m1",
+					parentId: null,
+					timestamp: "2026-11-27T00:00:01Z",
+					message: {
+						role: "user",
+						content: [
+							{ type: "text", text: `普通中文内容 tokenCount=42 key=${LONG_KEY} proxy=http://alice:hunter2@proxy.local:8080` },
+							{ type: "text", text: JSON.stringify({ apiKey: "nested-json-secret", trackingId: "trk-999", ok: "keep-me" }) },
+							{ type: "text", text: `Prefix {\"password\":\"escaped-json-pass\"} suffix` },
+						],
+					},
+				},
+				{
+					type: "message",
+					id: "m2",
+					parentId: "m1",
+					timestamp: "2026-11-27T00:00:02Z",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: `Authorization: Bearer ${LONG_BEARER}` }],
+						apiKey: "top-level-key",
+					},
+				},
+			],
+			leafId: "m2",
+			systemPrompt: "System prompt with ghp_abcdefghijklmnopqrstuvwxyz0123",
+			tools: [{ name: "bash", description: "Run shell" }],
+			renderedTools: {
+				call_1: {
+					callHtml: '<div class="ansi-line">{&quot;apiKey&quot;:&quot;rendered-secret&quot;}</div>',
+					resultHtmlExpanded: `<div class="ansi-line">Bearer ${LONG_BEARER} &nbsp; 普通</div>`,
+				},
+			},
+		};
+		const b64 = Buffer.from(JSON.stringify(sessionData), "utf8").toString("base64");
+		const html = `<!DOCTYPE html><html><head><style>body{color:#fff}</style></head><body><div id="messages"></div><script id="session-data" type="application/json">${b64}</script><script>const data = JSON.parse(new TextDecoder('utf-8').decode(new Uint8Array()));</script></body></html>`;
+
+		const redacted = redactExportedHtml(html);
+		expect(redacted).not.toContain(LONG_KEY);
+		expect(redacted).not.toContain("hunter2");
+		expect(redacted).not.toContain("nested-json-secret");
+		expect(redacted).not.toContain("trk-999");
+		expect(redacted).not.toContain("escaped-json-pass");
+		expect(redacted).not.toContain(LONG_BEARER);
+		expect(redacted).not.toContain("top-level-key");
+		expect(redacted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123");
+		expect(redacted).not.toContain("rendered-secret");
+
+		const decoded = extractSessionData(redacted) as typeof sessionData;
+		expect(decoded.leafId).toBe("m2");
+		expect(decoded.systemPrompt).toBe("System prompt with ghp_***");
+		expect(decoded.entries[0].message.content[0].text).toBe("普通中文内容 tokenCount=42 key=sk-proj-*** proxy=http://alice:***@proxy.local:8080");
+		expect(JSON.parse(decoded.entries[0].message.content[1].text)).toEqual({ apiKey: "***", trackingId: "***", ok: "keep-me" });
+		expect(decoded.entries[0].message.content[2].text).toBe('Prefix {"password":"***"} suffix');
+		expect((decoded.entries[1].message as { apiKey?: string }).apiKey).toBe("***");
+		expect(decoded.entries[1].message.content[0].text).toBe("Authorization: Bearer ***");
+		expect(decoded.renderedTools.call_1.callHtml).toBe('<div class="ansi-line">{&quot;apiKey&quot;:&quot;***&quot;}</div>');
+		expect(decoded.renderedTools.call_1.resultHtmlExpanded).toBe('<div class="ansi-line">Bearer *** &nbsp; 普通</div>');
+	});
+
+	it("redacts raw JSON scripts, atob payloads, data-* attributes, data URIs, and HTML entities while preserving ordinary markup", () => {
+		const inlinePayload = Buffer.from(JSON.stringify({ secret: "atob-secret", name: "ok" }), "utf8").toString("base64");
+		const attrPayload = Buffer.from(JSON.stringify({ token: "attr-b64-secret" }), "utf8").toString("base64");
+		const dataUriPayload = Buffer.from(JSON.stringify({ password: "uri-secret" }), "utf8").toString("base64");
+		const pngUri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk";
+
+		const html = [
+			"<html><body>",
+			`<p>Hello&nbsp;world &copy; 2026 &amp; plain text</p>`,
+			`<p>{&quot;apiKey&quot;:&quot;entity-secret&quot;,&quot;keep&quot;:&quot;yes&quot;} &nbsp; http://u&#58;entitypass&#64;proxy:8080</p>`,
+			`<div data-session="${attrPayload}" data-config="{&quot;password&quot;:&quot;attr-entity-secret&quot;}"></div>`,
+			`<a href="data:application/json;base64,${dataUriPayload}">dl</a>`,
+			`<img src="${pngUri}" alt="pixel">`,
+			`<script type="application/json">{"apiKey":"raw-json-secret","html":"\\u003c/script>"}</script>`,
+			`<script>const x = atob("${inlinePayload}"); const y = "${LONG_KEY}";</script>`,
+			"</body></html>",
+		].join("");
+
+		const redacted = redactExportedHtml(html);
+		expect(redacted).not.toContain("atob-secret");
+		expect(redacted).not.toContain("attr-b64-secret");
+		expect(redacted).not.toContain("uri-secret");
+		expect(redacted).not.toContain("entity-secret");
+		expect(redacted).not.toContain("entitypass");
+		expect(redacted).not.toContain("attr-entity-secret");
+		expect(redacted).not.toContain("raw-json-secret");
+		expect(redacted).not.toContain(LONG_KEY);
+
+		expect(redacted).toContain("<p>Hello&nbsp;world &copy; 2026 &amp; plain text</p>");
+		expect(redacted).toContain("{&quot;apiKey&quot;:&quot;***&quot;,&quot;keep&quot;:&quot;yes&quot;} &nbsp; http://u:***@proxy:8080");
+		expect(redacted).toContain('data-config="{&quot;password&quot;:&quot;***&quot;}"');
+		expect(redacted).toContain(pngUri);
+		expect(redacted).toContain('{"apiKey":"***","html":"<\\/script>"}');
+
+		const attrMatch = /data-session="([^"]+)"/.exec(redacted);
+		expect(JSON.parse(Buffer.from(attrMatch![1], "base64").toString("utf8"))).toEqual({ token: "***" });
+
+		const atobMatch = /atob\("([^"]+)"\)/.exec(redacted);
+		expect(JSON.parse(Buffer.from(atobMatch![1], "base64").toString("utf8"))).toEqual({ secret: "***", name: "ok" });
+
+		const dataUriMatch = /data:application\/json;base64,([A-Za-z0-9+/=]+)/.exec(redacted);
+		expect(JSON.parse(Buffer.from(dataUriMatch![1], "base64").toString("utf8"))).toEqual({ password: "***" });
+
+		expect(redactExportedHtml(redacted)).toBe(redacted);
 	});
 });
