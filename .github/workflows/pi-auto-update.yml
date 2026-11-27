@@ -7,7 +7,7 @@ name: pi-auto-update
 #   1. 在 bot/pi-sdk-<版本> 分支把全部 Pi 运行时包锁到新版本，PiWeb 升补丁版本，写发布说明，开 PR；
 #   2. 对该提交跑完整的 check.yml（Ubuntu/Windows 矩阵 + macOS + lint + verify:package）；
 #   3. main 没有被别人推进时，把同一个已测试提交快进推到 main（PR 自动变为 merged）；
-#   4. 调用 publish.yml 发布到 npm、打 tag、建 GitHub Release。
+#   4. 在 main 上触发 publish.yml 并等待完成，发布到 npm、打 tag、建 GitHub Release。
 # 任何一步失败：不发布，保留 PR/分支，开 Issue 通知维护者修复。
 # 同一版本的分支已存在时（上次失败待处理）跳过，避免每天重复开 PR/Issue。
 on:
@@ -155,6 +155,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -162,6 +163,8 @@ jobs:
           fetch-depth: 0
       - name: Fast-forward main to the tested commit
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.prepare.outputs.pr }}
           BASE: ${{ needs.prepare.outputs.base }}
           SHA: ${{ needs.prepare.outputs.sha }}
           BRANCH: ${{ needs.detect.outputs.branch }}
@@ -173,17 +176,40 @@ jobs:
             exit 1
           fi
           git push origin "$SHA:refs/heads/main"
+          for _ in $(seq 1 10); do
+            state="$(gh pr view "$PR" --json state --jq .state 2>/dev/null || true)"
+            [ "$state" = "MERGED" ] && break
+            sleep 2
+          done
           git push origin --delete "$BRANCH" || true
 
   publish:
-    needs: [merge]
-    uses: ./.github/workflows/publish.yml
-    with:
-      ref: main
-    secrets: inherit
+    needs: [prepare, merge]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
-      contents: write
-      id-token: write
+      actions: write
+    steps:
+      - name: Dispatch and watch publish workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh workflow run publish.yml -R "$GH_REPO" --ref main
+          run_id=""
+          for _ in $(seq 1 24); do
+            sleep 5
+            run_id="$(gh run list -R "$GH_REPO" --workflow publish.yml --event workflow_dispatch --branch main --limit 5 --json databaseId,headSha --jq "first(.[] | select(.headSha == \"$SHA\") | .databaseId) // empty")"
+            [ -n "$run_id" ] && break
+          done
+          if [ -z "$run_id" ]; then
+            echo "Timed out waiting for publish.yml run for $SHA"
+            exit 1
+          fi
+          echo "Watching publish run $run_id for $SHA"
+          gh run watch "$run_id" -R "$GH_REPO" --exit-status
 
   report-failure:
     needs: [detect, prepare, check, merge, publish]

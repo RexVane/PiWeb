@@ -72,6 +72,42 @@ function check() {
 	output({ current, latest, update: String(update), reason });
 }
 
+/**
+ * Sync DEFAULT_MODEL_PER_PROVIDER in src/lib/model-defaults.ts with the installed
+ * Pi SDK's defaultModelPerProvider table so tests/model-defaults.test.ts stays green.
+ * @returns {boolean}
+ */
+function syncModelDefaults() {
+	const resolverPath = path.join(ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/core/model-resolver.js");
+	const resolverSource = readFileSync(resolverPath, "utf8").replace(/\r\n/g, "\n");
+	const body = /export const defaultModelPerProvider = \{([\s\S]*?)\n\};/.exec(resolverSource)?.[1] ?? "";
+	const pairs = [...body.matchAll(/^\s*"?([^":\s]+)"?:\s*"([^"]+)",?$/gm)].map((m) => [m[1], m[2]]);
+	if (pairs.length <= 40) {
+		throw new Error(`unexpectedly few defaultModelPerProvider entries (${pairs.length}) in ${resolverPath}`);
+	}
+
+	const modelDefaultsPath = path.join(ROOT, "src/lib/model-defaults.ts");
+	const currentSource = readFileSync(modelDefaultsPath, "utf8");
+	const pattern = /^(export const DEFAULT_MODEL_PER_PROVIDER: Readonly<Record<string, string>> = \{(\r?\n))[\s\S]*?(\r?\n\};)/m;
+	if (!pattern.test(currentSource)) {
+		throw new Error(`cannot find DEFAULT_MODEL_PER_PROVIDER in ${modelDefaultsPath}`);
+	}
+
+	const updatedSource = currentSource.replace(
+		pattern,
+		(_match, prefix, eol, suffix) => {
+			const lines = pairs.map(([provider, modelId]) => {
+				const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(provider) ? provider : JSON.stringify(provider);
+				return `\t${key}: ${JSON.stringify(modelId)},`;
+			});
+			return `${prefix}${lines.join(eol)}${suffix}`;
+		},
+	);
+	if (updatedSource === currentSource) return false;
+	writeFileSync(modelDefaultsPath, updatedSource);
+	return true;
+}
+
 /** @param {string} target */
 function apply(target) {
 	const version = exactRegistryVersion(target ?? "");
@@ -82,6 +118,7 @@ function apply(target) {
 	run("npm", ["install", "--save-exact", ...piRuntimeSpecs(version), "--no-audit", "--no-fund", "--ignore-scripts", ...OFFICIAL_REGISTRY_ARGS]);
 	run("npm", ["run", "sync:provider-icons"]);
 	if (verifyPiRuntimePins(readManifest()) !== version) throw new Error("Pi runtime pins did not move to " + version);
+	syncModelDefaults();
 
 	run("npm", ["version", "patch", "--no-git-tag-version"]);
 	const piweb = readManifest().version;
