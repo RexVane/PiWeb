@@ -40,6 +40,27 @@ const CATEGORY_COLORS: Record<ContextCategoryKey, string> = {
 
 const PAGE_SIZE = 20;
 
+const TEMPORAL_CATEGORIES = new Set<ContextCategoryKey>(["user", "text", "thinking", "call", "output", "compacted"]);
+
+function sortContextItemsByTimeDesc(items: ContextInspectItem[], category: ContextCategoryKey): ContextInspectItem[] {
+	const indexed = items.map((item, index) => ({ item, index }));
+	const isTemporal = TEMPORAL_CATEGORIES.has(category);
+	indexed.sort((a, b) => {
+		const ta = typeof a.item.timestamp === "number" && Number.isFinite(a.item.timestamp) ? a.item.timestamp : null;
+		const tb = typeof b.item.timestamp === "number" && Number.isFinite(b.item.timestamp) ? b.item.timestamp : null;
+		if (ta !== null && tb !== null && ta !== tb) return tb - ta;
+		if (ta !== null && tb === null) return -1;
+		if (ta === null && tb !== null) return 1;
+		const turnA = typeof a.item.turn === "number" ? a.item.turn : null;
+		const turnB = typeof b.item.turn === "number" ? b.item.turn : null;
+		if (turnA !== null && turnB !== null && turnA !== turnB) return turnB - turnA;
+		if (turnA !== null && turnB === null) return -1;
+		if (turnA === null && turnB !== null) return 1;
+		return isTemporal ? b.index - a.index : a.index - b.index;
+	});
+	return indexed.map((entry) => entry.item);
+}
+
 interface InnerProps {
 	initialCategory: ContextCategoryKey;
 	categoryMeta: ContextCategoryMeta[];
@@ -199,8 +220,8 @@ function ContextInspectorModalInner({
 	);
 
 	const sortedItems = useMemo(
-		() => [...rawItems].sort((a, b) => b.chars - a.chars),
-		[rawItems],
+		() => sortContextItemsByTimeDesc(rawItems, activeCategory),
+		[rawItems, activeCategory],
 	);
 
 	const visibleItems = sortedItems.slice(0, limit);

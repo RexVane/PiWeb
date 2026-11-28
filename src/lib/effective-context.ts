@@ -344,8 +344,6 @@ export function buildEffectiveContext(input: BuildEffectiveContextInput): Effect
 				content: formatToolSchema({ name: tool.name, description: tool.description, parameters: tool.parameters, promptGuidelines: tool.promptGuidelines }),
 			}));
 		}
-		categories.builtin.sort((a, b) => b.chars - a.chars);
-		categories.custom.sort((a, b) => b.chars - a.chars);
 	} else if (session) {
 		cold = false;
 		const prompt = session.systemPrompt ?? "";
@@ -372,7 +370,6 @@ export function buildEffectiveContext(input: BuildEffectiveContextInput): Effect
 				content: resource.content,
 			}));
 		}
-		categories.memory.sort((a, b) => b.chars - a.chars);
 
 		let core = skillsSlice ? prompt.replace(skillsSlice, "") : prompt;
 		for (const resource of input.projectMemoryResources ?? []) {
@@ -409,8 +406,6 @@ export function buildEffectiveContext(input: BuildEffectiveContextInput): Effect
 				content: formatToolSchema(tool),
 			}));
 		}
-		categories.builtin.sort((a, b) => b.chars - a.chars);
-		categories.custom.sort((a, b) => b.chars - a.chars);
 	} else {
 		for (const resource of input.projectMemoryResources ?? []) {
 			if (!resource.content) continue;
@@ -422,7 +417,6 @@ export function buildEffectiveContext(input: BuildEffectiveContextInput): Effect
 				content: resource.content,
 			}));
 		}
-		categories.memory.sort((a, b) => b.chars - a.chars);
 		if (input.coldSkillsText?.trim()) {
 			const skillsText = input.coldSkillsText.trim();
 			categories.skills.push(makeItem({

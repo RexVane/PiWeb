@@ -327,7 +327,7 @@ describe("点击颜色条与分类行查看真正有效上下文", () => {
 		expect(screen.queryByTestId("context-inspector-modal")).toBeNull();
 	});
 
-	it("点击分类行从 /api/sessions/<id>/context 拉取有效上下文，支持切换标签、复制与随 breakdown 实时刷新；无搜索栏且按大小降序", async () => {
+	it("点击分类行从 /api/sessions/<id>/context 拉取有效上下文，支持切换标签、复制与随 breakdown 实时刷新；分类按大小降序，明细按时间降序", async () => {
 		const copySpy = vi.fn(async () => {});
 		Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copySpy } });
 
@@ -344,14 +344,17 @@ describe("点击颜色条与分类行查看真正有效上下文", () => {
 						cold: false,
 						categories: {
 							system: [{ id: "system:main", category: "system", title: "System Prompt", content: `Effective system prompt v${callCount}`, chars: 26 }],
-							builtin: [{ id: "builtin:read:0", category: "builtin", title: "read", subtitle: "Read file", tag: "builtin", content: "# read\n\nRead file", chars: 120 }],
+							builtin: [
+								{ id: "builtin:ls:0", category: "builtin", title: "ls", subtitle: "List dir", tag: "builtin", content: "# ls", chars: 20 },
+								{ id: "builtin:read:1", category: "builtin", title: "read", subtitle: "Read file", tag: "builtin", content: "# read\n\nRead file", chars: 100 },
+							],
 							custom: [],
 							memory: [{ id: "memory:injected", category: "memory", title: "AGENTS.md", content: "Project memory rule", chars: 19 }],
 							skills: [],
 							user: [
-								{ id: "user:0", category: "user", title: "", turn: 1, content: "hi", chars: 2 },
-								{ id: "user:1", category: "user", title: "", turn: 2, content: "longest user prompt", chars: 19 },
-								{ id: "user:2", category: "user", title: "", turn: 3, content: "medium", chars: 6 },
+								{ id: "user:0", category: "user", title: "", turn: 1, timestamp: 1000, content: "hi", chars: 2 },
+								{ id: "user:1", category: "user", title: "", turn: 2, timestamp: 2000, content: "longest user prompt", chars: 19 },
+								{ id: "user:2", category: "user", title: "", turn: 3, timestamp: 3000, content: "medium", chars: 6 },
 							],
 							text: [],
 							thinking: [],
@@ -395,10 +398,16 @@ describe("点击颜色条与分类行查看真正有效上下文", () => {
 		await waitFor(() => expect(copySpy).toHaveBeenCalledWith("Effective system prompt v1"));
 		expect(await screen.findByText("已复制")).toBeTruthy();
 
-		// 切换到 User Messages：条目按 chars 降序（第2轮 19 > 第3轮 6 > 第1轮 2）
+		// 切换到 User Messages：条目按时间降序（第 3 轮 3000 > 第 2 轮 2000 > 第 1 轮 1000）
 		fireEvent.click(screen.getByRole("tab", { name: /User Messages/ }));
 		const itemHeads = [...modal.querySelectorAll(".pw-ctx-inspector-item-head")].map((el) => el.textContent ?? "");
-		expect(itemHeads.map((text) => text.slice(0, 3))).toEqual(["第 2", "第 3", "第 1"]);
+		expect(itemHeads.map((text) => text.slice(0, 3))).toEqual(["第 3", "第 2", "第 1"]);
+
+		// 切换到 System Tools：无时间戳的静态分类保留原注入顺序（ls 在 read 前面，不按 chars 排）
+		fireEvent.click(screen.getByRole("tab", { name: /System Tools/ }));
+		const toolHeads = [...modal.querySelectorAll(".pw-ctx-inspector-item-head")].map((el) => el.textContent ?? "");
+		expect(toolHeads[0]).toContain("ls");
+		expect(toolHeads[1]).toContain("read");
 
 		// 切换到 Memory 标签
 		fireEvent.click(screen.getByRole("tab", { name: /Memory/ }));
@@ -415,6 +424,77 @@ describe("点击颜色条与分类行查看真正有效上下文", () => {
 		);
 		await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 		expect(modal).toBeTruthy();
+	});
+
+	it("时间降序支持同时间戳按原顺序倒序排列，并保持客户端回退模式同样按时间降序", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({
+				success: true,
+				data: {
+					cold: false,
+					categories: {
+						system: [],
+						builtin: [],
+						custom: [],
+						memory: [],
+						skills: [],
+						user: [],
+						text: [],
+						thinking: [],
+						call: [
+							{ id: "call:0", category: "call", title: "grep", timestamp: 1000, turn: 1, content: "{}", chars: 50 },
+							{ id: "call:1", category: "call", title: "read", timestamp: 2000, turn: 1, content: "{}", chars: 10 },
+							{ id: "call:2", category: "call", title: "edit", timestamp: 2000, turn: 1, content: "{}", chars: 5 },
+						],
+						output: [],
+						compacted: [],
+					},
+					totals: { system: 0, builtin: 0, custom: 0, memory: 0, skills: 0, user: 0, text: 0, thinking: 0, call: 65, output: 0, compacted: 0 },
+				},
+			}),
+		})));
+		render(
+			<ContextMeter
+				percent={12}
+				tokens={24000}
+				contextWindow={200000}
+				source={{ systemChars: 0, messages: MESSAGES, breakdown: WARM, sessionId: "sess-order" }}
+			/>,
+		);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByRole("button", { name: /System Prompt/ }));
+		const modal = await screen.findByTestId("context-inspector-modal");
+		fireEvent.click(await screen.findByRole("tab", { name: /Agent Tool Call/ }));
+		const callHeads = [...modal.querySelectorAll(".pw-ctx-inspector-item-head")].map((el) => el.textContent ?? "");
+		expect(callHeads[0]).toContain("edit");
+		expect(callHeads[1]).toContain("read");
+		expect(callHeads[2]).toContain("grep");
+
+		// 客户端回退模式下（无 sessionId）同样按时间降序排列
+		cleanup();
+		render(
+			<ContextMeter
+				percent={12}
+				tokens={24000}
+				contextWindow={200000}
+				source={{
+					systemChars: 0,
+					breakdown: WARM,
+					messages: [
+						{ role: "user", content: [{ type: "text", text: "first longer prompt" }], timestamp: 100 },
+						{ role: "user", content: [{ type: "text", text: "second" }], timestamp: 200 },
+					],
+				}}
+			/>,
+		);
+		fireEvent.click(screen.getByTitle(USAGE_LABEL));
+		fireEvent.click(screen.getByRole("button", { name: /User Messages/ }));
+		const clientModal = screen.getByTestId("context-inspector-modal");
+		const clientHeads = [...clientModal.querySelectorAll(".pw-ctx-inspector-item-head")].map((el) => el.textContent ?? "");
+		expect(clientHeads[0]).toContain("second");
+		expect(clientHeads[1]).toContain("first longer prompt");
 	});
 
 	it("点击 Free Space 或 Auto-Compact Buffer 不会打开内容查看器", () => {
