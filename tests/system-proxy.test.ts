@@ -2,7 +2,7 @@ import { execFile, type execFileSync } from "node:child_process";
 import http from "node:http";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
-import { parseWindowsProxy, readSystemProxy } from "../scripts/system-proxy.mjs";
+import { parseMacProxy, parseWindowsProxy, readSystemProxy } from "../scripts/system-proxy.mjs";
 import { applyProxyEnv, nodeSupportsEnvProxy } from "../scripts/launcher.mjs";
 
 const registry = (server: string, enabled = "0x1", bypass = "") => `
@@ -62,5 +62,39 @@ describe("Windows system proxy detection", () => {
 			server.closeAllConnections();
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}
+	});
+});
+
+describe("macOS system proxy detection", () => {
+	const scutil = `<dictionary> {
+  ExceptionsList : <array> {
+    0 : *.local
+    1 : 169.254/16
+    2 : localhost
+  }
+  HTTPEnable : 1
+  HTTPPort : 7897
+  HTTPProxy : 127.0.0.1
+  HTTPSEnable : 1
+  HTTPSPort : 7897
+  HTTPSProxy : 127.0.0.1
+}`;
+
+	it("parses scutil --proxy HTTP/HTTPS entries and safe bypass hosts", () => {
+		expect(parseMacProxy(scutil)).toEqual({
+			http: "http://127.0.0.1:7897",
+			https: "http://127.0.0.1:7897",
+			noProxy: "*.local,localhost",
+		});
+		expect(parseMacProxy("<dictionary> { HTTPEnable : 0 HTTPSEnable : 0 }")).toBeNull();
+	});
+
+	it("reads scutil --proxy on darwin without invoking reg.exe", () => {
+		const run = vi.fn(() => scutil) as unknown as typeof execFileSync;
+		expect(readSystemProxy({ platform: "darwin", run })).toMatchObject({
+			http: "http://127.0.0.1:7897",
+			https: "http://127.0.0.1:7897",
+		});
+		expect(run).toHaveBeenCalledWith("scutil", ["--proxy"], expect.objectContaining({ timeout: 1500 }));
 	});
 });

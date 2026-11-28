@@ -2,7 +2,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
 import { useSyncExternalStore } from "react";
 
 /**
- * 更新状态的前端单例：设置里的两行「PiWeb 版本 / Pi 版本」和右下角提示条共用一份，
+ * 更新状态的前端单例：设置里的「PiWeb 版本」行和右下角提示条共用一份，
  * 在一处点了更新，另一处同步显示进度和结果。
  *
  * 页面打开时取一次启动检查的结果（GET /api/update，服务启动时已经在查），
@@ -10,7 +10,7 @@ import { useSyncExternalStore } from "react";
  */
 
 export type UpdateTarget = "piweb" | "pi";
-export type UpdatePhase = "idle" | "checking" | "available" | "updating" | "latest" | "updated" | "error";
+export type UpdatePhase = "idle" | "checking" | "available" | "updating" | "restarting" | "latest" | "updated" | "error";
 
 export interface TargetUpdate {
 	phase: UpdatePhase;
@@ -122,12 +122,51 @@ export async function checkUpdate(target: UpdateTarget): Promise<void> {
 	}
 }
 
-/** 更新一项；成功返回 true。装好后要用户手动重启，进程不自己重启 */
-export async function runUpdate(target: UpdateTarget): Promise<boolean> {
+const RESTART_POLL_MS = 500;
+const RESTART_WAIT_MS = 45_000;
+
+async function waitForServerRestart(previousStartId: string | null, reload: () => void = () => window.location.reload()): Promise<boolean> {
+	const deadline = Date.now() + RESTART_WAIT_MS;
+	let sawDisconnect = false;
+	while (Date.now() < deadline) {
+		await new Promise((resolve) => setTimeout(resolve, RESTART_POLL_MS));
+		try {
+			const response = await fetch("/api/update", { cache: "no-store" });
+			if (!response.ok) {
+				if (response.status >= 500) sawDisconnect = true;
+				continue;
+			}
+			const json = (await response.json()) as { success?: boolean; data?: { startId?: string | null } };
+			if (!json?.success) continue;
+			const nextStartId = json.data?.startId ?? null;
+			if (sawDisconnect || (previousStartId && nextStartId && nextStartId !== previousStartId)) {
+				reload();
+				return true;
+			}
+		} catch {
+			sawDisconnect = true;
+		}
+	}
+	return false;
+}
+
+/** 更新一项；成功返回 true。支持启动器托管时自动触发重启并等待重连刷新。 */
+export async function runUpdate(target: UpdateTarget, options?: { reload?: () => void }): Promise<boolean> {
+	const previousStartId = state.startId;
 	patch(target, { phase: "updating", error: "", busy: false });
 	try {
 		const data = await post(target, "update");
-		patch(target, { phase: "updated", latest: data?.version || state.targets[target].latest, command: "" });
+		const nextVersion = data?.version || state.targets[target].latest;
+		if (data?.restarting) {
+			patch(target, { phase: "restarting", latest: nextVersion, command: "" });
+			void waitForServerRestart(previousStartId, options?.reload).then((reloaded) => {
+				if (!reloaded && state.targets[target].phase === "restarting") {
+					patch(target, { phase: "updated" });
+				}
+			});
+			return true;
+		}
+		patch(target, { phase: "updated", latest: nextVersion, command: "" });
 		return true;
 	} catch (error) {
 		patch(target, failure(error));

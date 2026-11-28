@@ -46,7 +46,8 @@ export function UpdateNotice() {
 	const startId = updates.startId;
 	const items = offered.map((target) => ({ target, ...updates.targets[target] }));
 	const updatable = items.filter((item) => !item.command && (item.phase === "available" || item.phase === "error"));
-	const updating = items.some((item) => item.phase === "updating");
+	const restarting = items.some((item) => item.phase === "restarting");
+	const updating = restarting || items.some((item) => item.phase === "updating");
 	const anyUpdated = items.some((item) => item.phase === "updated");
 	const dismiss = () => {
 		try {
@@ -62,7 +63,7 @@ export function UpdateNotice() {
 			if (!(await runUpdate(item.target))) break;
 		}
 	};
-	const title = updating ? t.updateNoticeUpdatingTitle : anyUpdated && !updatable.length ? t.updateNoticeDoneTitle : t.updateNoticeTitle;
+	const title = restarting ? t.updateNoticeRestartingTitle : updating ? t.updateNoticeUpdatingTitle : anyUpdated && !updatable.length ? t.updateNoticeDoneTitle : t.updateNoticeTitle;
 
 	return (
 		<div
@@ -105,11 +106,11 @@ export function UpdateNotice() {
 
 function ItemStatus({ item }: { item: TargetUpdate }) {
 	const { t } = useI18n();
-	if (item.phase === "updating") {
+	if (item.phase === "updating" || item.phase === "restarting") {
 		return (
 			<span className="flex items-center gap-1.5" style={{ color: "var(--dsw-label-tertiary)" }}>
 				<span className="h-3 w-3 flex-none animate-spin rounded-full border-2 border-current border-t-transparent" />
-				{t.updatingNow}
+				{item.phase === "restarting" ? t.restartingNow : t.updatingNow}
 			</span>
 		);
 	}

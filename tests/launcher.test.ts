@@ -4,7 +4,7 @@ import path from "node:path";
 import http, { type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyProxyEnv, browserLaunchSpec, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, nodeSupportsEnvProxy, parseLauncherArgs, probePort, readHttpProxySetting, readLaunchToken, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
+import { applyProxyEnv, browserLaunchSpec, createLaunchPlan, isLoopback, isPiWebRunning, localUrl, nodeSupportsEnvProxy, parseLauncherArgs, probePort, readHttpProxySetting, readLaunchToken, RESTART_EXIT_CODE, runLauncher, tokenLoginUrl, warmFirstPaint, FIRST_PAINT_ROUTES } from "../scripts/launcher.mjs";
 import { runDev } from "../scripts/dev.mjs";
 import { resolveBuildOutput, selectProductionBuild } from "../scripts/build-output.mjs";
 import { recycleFixture } from "./fixtures/recycle";
@@ -618,6 +618,46 @@ describe("proxy environment for the server process", () => {
 		expect(spawned[0].HTTPS_PROXY).toBe("http://system:8080");
 		await launch("http://manual:7890");
 		expect(spawned[1].HTTPS_PROXY).toBe("http://manual:7890");
+		await launch("direct");
+		expect(spawned[2].HTTPS_PROXY).toBeUndefined();
+		expect(spawned[2].PIWEB_PROXY_SOURCE).toBe("direct");
 		expect(readSystemProxy).toHaveBeenCalledTimes(1);
+	});
+
+	it("automatically restarts a production server without reopening the browser when it exits with RESTART_EXIT_CODE", async () => {
+		const root = await installation();
+		await productionBuild(root);
+		const spawned: Array<Record<string, string | undefined>> = [];
+		const openBrowser = vi.fn(async () => {});
+		const logs: string[] = [];
+		let count = 0;
+		const spawn = vi.fn((_command: string, _args: string[], options: { env?: Record<string, string | undefined> }) => {
+			count += 1;
+			spawned.push(options.env ?? {});
+			const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) });
+			const exitCode = count === 1 ? RESTART_EXIT_CODE : 0;
+			setTimeout(() => child.emit("exit", exitCode), 30);
+			return child;
+		});
+		const code = await runLauncher({
+			root,
+			args: [],
+			env: {},
+			dependencies: {
+				spawn,
+				probePort: vi.fn<typeof probePort>(async () => "free"),
+				isPiWebRunning: vi.fn(async () => true),
+				warmFirstPaint: vi.fn(async () => true),
+				readCurrentLaunchToken: vi.fn(async () => "tok_abcdefghijklmnop"),
+				openBrowser,
+				log: (message: string) => logs.push(message),
+			},
+		});
+		expect(code).toBe(0);
+		expect(spawn).toHaveBeenCalledTimes(2);
+		expect(spawned[0].PIWEB_RESTART_SUPPORTED).toBe("1");
+		expect(spawned[1].PI_WEB_LAUNCH_TOKEN).toBe(spawned[0].PI_WEB_LAUNCH_TOKEN);
+		expect(openBrowser).toHaveBeenCalledTimes(1);
+		expect(logs.some((line) => line.includes("正在自动重启服务"))).toBe(true);
 	});
 });

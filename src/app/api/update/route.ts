@@ -3,6 +3,10 @@ import { checkForUpdate, runUpdate, UpdateBusyError, type UpdateTarget } from "@
 import { ensureStartupCheck, markUpdated, recordCheck } from "@/lib/update/startup-check";
 import { activeStatus } from "@/lib/agent-manager";
 import { apiError } from "@/lib/api-error";
+import { runShutdownHooks } from "@/lib/graceful-shutdown";
+
+/** 与 scripts/launcher.mjs 中的 RESTART_EXIT_CODE 保持一致，避免 Next 路由打包启动器代码 */
+const RESTART_EXIT_CODE = 75;
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +55,16 @@ export async function POST(req: Request) {
 		await assertIdle();
 		const result = await runUpdate(target, { assertIdle });
 		markUpdated(target, result.version);
-		return json({ success: true, data: result });
+		const restarting = target === "piweb" && Boolean(result.needsRestart) && process.env.PIWEB_RESTART_SUPPORTED === "1" && !process.env.VITEST;
+		if (restarting) {
+			const timer = setTimeout(() => {
+				void runShutdownHooks("update-restart").finally(() => {
+					process.exit(RESTART_EXIT_CODE);
+				});
+			}, 250);
+			timer.unref?.();
+		}
+		return json({ success: true, data: { ...result, ...(restarting ? { restarting: true } : {}) } });
 	} catch (error) {
 		const busy = error instanceof UpdateBusyError;
 		return json({ success: false, ...apiError(error, busy ? "更新暂时无法开始，请等待现有更新或会话结束后重试。" : "更新失败，请检查网络和安装状态后重试。"), ...(busy ? { errorCode: "UPDATE_BUSY" } : {}) }, {

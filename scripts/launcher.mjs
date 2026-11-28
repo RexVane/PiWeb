@@ -19,6 +19,8 @@ export { applyProxyEnv, nodeSupportsEnvProxy } from "./proxy-env.mjs";
 export { isMainModule } from "./entrypoint.mjs";
 
 const DEFAULT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** 服务更新后请求启动器自动重启的约定退出码（与 src/app/api/update/route.ts 保持一致） */
+export const RESTART_EXIT_CODE = 75;
 
 /** @typedef {Record<string, string | undefined>} Environment */
 /** @typedef {{port: number, hostname: string, publicUrl: string | null, noOpen: boolean, isDev: boolean, help: boolean}} ParsedOptions */
@@ -493,129 +495,166 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 		port += 1;
 	}
 	const url = localUrl(options.hostname, port);
-	// 内置插件要转发回 PiWeb 自己的端口；端口可能被占而 +1，所以在这里给最终值。
-	plan.env.PIWEB_PORT = String(port);
-	plan.env.PORT = String(port);
-	instanceLock?.updateMetadata({ port, hostname: options.hostname, root: plan.root });
-	plan.env.PIWEB_HTTP_GUARD = "1";
-	plan.env.NODE_OPTIONS = [plan.env.NODE_OPTIONS, `--import=${JSON.stringify(pathToFileURL(path.join(DEFAULT_ROOT, "scripts", "http-request-guard.mjs")).href)}`].filter(Boolean).join(" ");
-	log(`[piweb] 启动 ${url} (${plan.command} 模式)`);
-	const proxySetting = (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env);
-	const hasProxyEnv = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].some((key) => plan.env[key]?.trim());
-	const systemProxy = !proxySetting && !hasProxyEnv ? (dependencies.readSystemProxy ?? readSystemProxy)() : null;
-	plan.env.PIWEB_INHERITED_HTTP_PROXY = (env.http_proxy || env.HTTP_PROXY || "").trim();
-	plan.env.PIWEB_INHERITED_HTTPS_PROXY = (env.https_proxy || env.HTTPS_PROXY || "").trim();
-	const proxy = applyProxyEnv(plan.env, { proxySetting, systemProxy });
-	plan.env.PIWEB_PROXY_SOURCE = proxy.source ?? "none";
-	if (proxy.proxy) {
-		const from = proxy.source === "settings" ? "手动设置" : proxy.source === "system" ? "系统代理" : "环境变量";
-		if (proxy.supported) log(`[piweb] 模型请求走代理 ${redactProxy(proxy.proxy)}（来自${from}）`);
-		else (dependencies.warn ?? console.warn)(`[piweb] 配了代理（来自${from}），但 Node ${process.versions.node} 不支持按环境变量走代理，模型请求仍是直连。请升级到 Node 24 或 22.21 以上。`);
-	}
-	const authOn = authenticationEnabled(plan.env.PI_WEB_AUTH);
-	if (authOn) log("[piweb] 已启用启动令牌认证");
-	if (!isLoopback(options.hostname)) {
-		for (const addresses of Object.values(os.networkInterfaces())) {
-			for (const address of addresses ?? []) {
-				if (address.family === "IPv4" && !address.internal && !address.address.startsWith("169.254.")) {
-					log(`[piweb] 局域网/手机访问地址（需同一网络）：http://${address.address}:${port}`);
-				}
-			}
-		}
-	}
-	// Only the browser receives a launch credential; redirected terminal logs do not.
 	const loginBase = options.publicUrl ?? url;
-	if (authOn) {
-		if (options.publicUrl) log(`[piweb] 对外地址：${options.publicUrl}`);
-		log("[piweb] 登录入口会自动在本机浏览器打开；需要重新登录时再次运行 piweb。");
-	}
-	const next = path.join(plan.root, "node_modules", "next", "dist", "bin", "next");
-	/**
-	 * 服务进程的工作目录**必须是项目根目录**，不能用 `next [directory]` 传参代替。
-	 *
-	 * 曾试过把工作目录移到安装目录之外、改由 `next [directory]` 传入项目目录，
-	 * 目的是让 Windows 上 npm 能替换正在运行的包（进程 cwd 落在包目录内时改名为 EBUSY）。
-	 * 这条路在 Next 16.4.0 上不成立，原因在 Next 内部：
-	 *
-	 *   1. `build/define-env.js` 把 `path.relative(process.cwd(), projectPath)` 作为
-	 *      `__NEXT_RELATIVE_PROJECT_DIR` 烘焙进产物；
-	 *   2. 处理请求时 `server/route-modules/route-module.js` 用
-	 *      `join(process.cwd(), relativeProjectDir)` 还原项目目录。
-	 *
-	 * 于是 cwd 一旦不等于项目目录，还原结果就是错的：
-	 *   - 生产构建烘焙的是空串（构建时 cwd 就是项目根），`join(cwd, "")` 直接等于 cwd；
-	 *   - 跨盘符（cwd 在 C:、项目在 D:）时 `path.relative` 直接返回绝对路径，
-	 *     `join(cwd, "D:\\...")` 拼成 `C:\\...\\run\\D:\\...\\PiWeb` 这种双份路径，
-	 *     表现为 `ENOENT ... routes-manifest.json`。
-	 *
-	 * 所以 cwd 保持项目根；Windows 上「服务运行时就地自我更新」改为让用户先停服务再装
-	 * （update-service 会据此退回复制命令，见 canSelfUpdateNpmInstall）。
-	 */
-	const child = start(process.execPath, [next, plan.command, ...(plan.command === "dev" ? ["--webpack"] : []), "-p", String(port), "-H", options.hostname], {
-		cwd: plan.root, stdio: "inherit", env: instanceLock ? lockChildEnvironment(plan.env, instanceLock.file, instanceLock.token) : plan.env, windowsHide: true, detached: process.platform !== "win32",
-	});
-	if (child.pid) instanceLock?.childStarted(child.pid);
-	const controller = new AbortController();
-	let timer;
+	const authOn = authenticationEnabled(plan.env.PI_WEB_AUTH);
 	const warn = dependencies.warn ?? console.warn;
-	// 首屏预热：开发模式每次请求都要现场编译，预热只会白占 CPU，因此只在生产模式下做。
-	// 本机地址通过代理自动签发会话 Cookie 预热，避免消耗一次性的启动令牌。
-	const canRunWarmup = plan.command !== "dev" && env.PIWEB_SKIP_WARMUP !== "1";
-	const warmToken = canRunWarmup && authOn && !isLoopback(new URL(url).hostname) ? plan.env.PI_WEB_LAUNCH_TOKEN : undefined;
-	let warmPromise = null;
-	if (canRunWarmup) {
-		const warm = dependencies.warmFirstPaint ?? warmFirstPaint;
-		warmPromise = Promise.resolve(warm(url, { token: warmToken, signal: controller.signal })).then(() => true, () => false);
-	}
-	const ready = async (attempt = 0) => {
-		if (controller.signal.aborted || attempt > 350) return;
-		if (await checkHealth(url, { signal: controller.signal })) {
-			if (controller.signal.aborted) return;
-			if (warmPromise) {
-				log("[piweb] 预热首屏…");
-				await warmPromise;
-				if (controller.signal.aborted) return;
+	const next = path.join(plan.root, "node_modules", "next", "dist", "bin", "next");
+
+	function prepareChildEnv(currentPlan, isRestart) {
+		currentPlan.env.PIWEB_PORT = String(port);
+		currentPlan.env.PORT = String(port);
+		currentPlan.env.PIWEB_HTTP_GUARD = "1";
+		if (currentPlan.command === "start") currentPlan.env.PIWEB_RESTART_SUPPORTED = "1";
+		else delete currentPlan.env.PIWEB_RESTART_SUPPORTED;
+		currentPlan.env.NODE_OPTIONS = [currentPlan.env.NODE_OPTIONS, `--import=${JSON.stringify(pathToFileURL(path.join(DEFAULT_ROOT, "scripts", "http-request-guard.mjs")).href)}`].filter(Boolean).join(" ");
+		const proxySetting = (dependencies.readHttpProxySetting ?? readHttpProxySetting)(env);
+		const hasProxyEnv = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].some((key) => currentPlan.env[key]?.trim());
+		const systemProxy = !proxySetting && !hasProxyEnv ? (dependencies.readSystemProxy ?? readSystemProxy)() : null;
+		currentPlan.env.PIWEB_INHERITED_HTTP_PROXY = (env.http_proxy || env.HTTP_PROXY || "").trim();
+		currentPlan.env.PIWEB_INHERITED_HTTPS_PROXY = (env.https_proxy || env.HTTPS_PROXY || "").trim();
+		const proxy = applyProxyEnv(currentPlan.env, { proxySetting, systemProxy });
+		currentPlan.env.PIWEB_PROXY_SOURCE = proxy.source ?? "none";
+		if (!isRestart) {
+			log(`[piweb] 启动 ${url} (${currentPlan.command} 模式)`);
+			if (proxy.source === "direct") {
+				log("[piweb] 模型请求使用直连（已禁用代理）");
+			} else if (proxy.proxy) {
+				const from = proxy.source === "settings" ? "手动设置" : proxy.source === "system" ? "系统代理" : "环境变量";
+				if (proxy.supported) log(`[piweb] 模型请求走代理 ${redactProxy(proxy.proxy)}（来自${from}）`);
+				else warn(`[piweb] 配了代理（来自${from}），但 Node ${process.versions.node} 不支持按环境变量走代理，模型请求仍是直连。请升级到 Node 24 或 22.21 以上。`);
 			}
-			log(`[piweb] 就绪：${url}`);
-			// 开了认证就直接开登录链接：否则用户打开的是登录页，而他手里还没有会话 Cookie。
-			if (!options.noOpen) {
-				const latestToken = authOn ? await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env) : null;
-				if (authOn && !latestToken) {
-					warn("[piweb] 未能从本地令牌管道读取最新启动令牌；若打开后仍停在登录页，请重新运行 piweb 或手动输入令牌/配对码。");
+			if (authOn) log("[piweb] 已启用启动令牌认证");
+			if (!isLoopback(options.hostname)) {
+				for (const addresses of Object.values(os.networkInterfaces())) {
+					for (const address of addresses ?? []) {
+						if (address.family === "IPv4" && !address.internal && !address.address.startsWith("169.254.")) {
+							log(`[piweb] 局域网/手机访问地址（需同一网络）：http://${address.address}:${port}`);
+						}
+					}
 				}
-				const browserToken = latestToken ?? (authOn && !warmToken ? plan.env.PI_WEB_LAUNCH_TOKEN : null);
-				await browse(browserToken ? tokenLoginUrl(loginBase, browserToken) : loginBase);
 			}
-		} else if (!controller.signal.aborted) {
-			const retryMs = attempt < 20 ? 25 : attempt < 60 ? 75 : 200;
-			timer = setTimeout(() => void ready(attempt + 1), retryMs);
-			timer.unref();
+			// Only the browser receives a launch credential; redirected terminal logs do not.
+			if (authOn) {
+				if (options.publicUrl) log(`[piweb] 对外地址：${options.publicUrl}`);
+				log("[piweb] 登录入口会自动在本机浏览器打开；需要重新登录时再次运行 piweb。");
+			}
 		}
+	}
+
+	instanceLock?.updateMetadata({ port, hostname: options.hostname, root: plan.root });
+	let stopping = false;
+	let activeChild = null;
+	let rapidRestarts = 0;
+	let lastRestartAt = 0;
+	const shutdown = () => {
+		if (stopping) return;
+		stopping = true;
+		if (activeChild) void terminateProcessTreeGracefully(activeChild).catch(() => {});
 	};
-	return new Promise((resolve, reject) => {
-		// 优雅停机（L6）：收到 SIGINT/SIGTERM 不再直接强杀进程树：先让服务进程自己收尾
-		// （POSIX 转发可捕获的 SIGTERM；Windows 等它响应控制台 Ctrl+C），超过预算仍未退出
-		// 才 taskkill /T /F 兜底，保证不留孤儿。由信号发起的关闭仍以非 0 结束，退出码约定不变。
-		let stopping = false;
-		const shutdown = () => {
-			if (stopping) return;
-			stopping = true;
-			void terminateProcessTreeGracefully(child).catch((error) => { cleanup(); reject(error); });
-		};
-		const interrupt = shutdown;
-		const terminate = shutdown;
-		const cleanup = () => {
-			controller.abort();
-			clearTimeout(timer);
-			process.off("SIGINT", interrupt);
-			process.off("SIGTERM", terminate);
-		};
-		process.once("SIGINT", interrupt);
-		process.once("SIGTERM", terminate);
-		child.once("error", (error) => { cleanup(); reject(error); });
-		child.once("exit", (code) => { cleanup(); resolve(stopping ? 1 : (code ?? 1)); });
-		void ready().catch(() => {});
-	});
+	process.once("SIGINT", shutdown);
+	process.once("SIGTERM", shutdown);
+
+	try {
+		for (let isRestart = false; ; isRestart = true) {
+			if (isRestart) {
+				const now = Date.now();
+				rapidRestarts = lastRestartAt && now - lastRestartAt < 5_000 ? rapidRestarts + 1 : 0;
+				lastRestartAt = now;
+				if (rapidRestarts > 2) {
+					warn("[piweb] 重启过于频繁，已停止自动重启。");
+					return 1;
+				}
+				const token = plan.env.PI_WEB_LAUNCH_TOKEN;
+				plan = createLaunchPlan(root, options, env);
+				if (token) plan.env.PI_WEB_LAUNCH_TOKEN = token;
+				instanceLock?.updateMetadata({ port, hostname: options.hostname, root: plan.root });
+			}
+			prepareChildEnv(plan, isRestart);
+			const currentPlan = plan;
+			/**
+			 * 服务进程的工作目录**必须是项目根目录**，不能用 `next [directory]` 传参代替。
+			 *
+			 * 曾试过把工作目录移到安装目录之外、改由 `next [directory]` 传入项目目录，
+			 * 目的是让 Windows 上 npm 能替换正在运行的包（进程 cwd 落在包目录内时改名为 EBUSY）。
+			 * 这条路在 Next 16.4.0 上不成立，原因在 Next 内部：
+			 *
+			 *   1. `build/define-env.js` 把 `path.relative(process.cwd(), projectPath)` 作为
+			 *      `__NEXT_RELATIVE_PROJECT_DIR` 烘焙进产物；
+			 *   2. 处理请求时 `server/route-modules/route-module.js` 用
+			 *      `join(process.cwd(), relativeProjectDir)` 还原项目目录。
+			 *
+			 * 于是 cwd 一旦不等于项目目录，还原结果就是错的：
+			 *   - 生产构建烘焙的是空串（构建时 cwd 就是项目根），`join(cwd, "")` 直接等于 cwd；
+			 *   - 跨盘符（cwd 在 C:、项目在 D:）时 `path.relative` 直接返回绝对路径，
+			 *     `join(cwd, "D:\\...")` 拼成 `C:\\...\\run\\D:\\...\\PiWeb` 这种双份路径，
+			 *     表现为 `ENOENT ... routes-manifest.json`。
+			 *
+			 * 所以 cwd 保持项目根；Windows 上「服务运行时就地自我更新」改为让用户先停服务再装
+			 * （update-service 会据此退回复制命令，见 canSelfUpdateNpmInstall）。
+			 */
+			const child = start(process.execPath, [next, currentPlan.command, ...(currentPlan.command === "dev" ? ["--webpack"] : []), "-p", String(port), "-H", options.hostname], {
+				cwd: currentPlan.root, stdio: "inherit", env: instanceLock ? lockChildEnvironment(currentPlan.env, instanceLock.file, instanceLock.token) : currentPlan.env, windowsHide: true, detached: process.platform !== "win32",
+			});
+			activeChild = child;
+			if (child.pid) instanceLock?.childStarted(child.pid);
+			const controller = new AbortController();
+			let timer;
+			// 首屏预热：开发模式每次请求都要现场编译，预热只会白占 CPU，因此只在生产模式下做。
+			// 本机地址通过代理自动签发会话 Cookie 预热，避免消耗一次性的启动令牌。
+			const canRunWarmup = currentPlan.command !== "dev" && env.PIWEB_SKIP_WARMUP !== "1";
+			const warmToken = canRunWarmup && authOn && !isLoopback(new URL(url).hostname) ? currentPlan.env.PI_WEB_LAUNCH_TOKEN : undefined;
+			let warmPromise = null;
+			if (canRunWarmup) {
+				const warm = dependencies.warmFirstPaint ?? warmFirstPaint;
+				warmPromise = Promise.resolve(warm(url, { token: warmToken, signal: controller.signal })).then(() => true, () => false);
+			}
+			const ready = async (attempt = 0) => {
+				if (controller.signal.aborted || attempt > 350) return;
+				if (await checkHealth(url, { signal: controller.signal })) {
+					if (controller.signal.aborted) return;
+					if (warmPromise) {
+						log("[piweb] 预热首屏…");
+						await warmPromise;
+						if (controller.signal.aborted) return;
+					}
+					log(`[piweb] 就绪：${url}`);
+					// 开了认证就直接开登录链接：否则用户打开的是登录页，而他手里还没有会话 Cookie。
+					// 自动重启时不重开浏览器标签页，原页面会自动刷新重连。
+					if (!options.noOpen && !isRestart) {
+						const latestToken = authOn ? await (dependencies.readCurrentLaunchToken ?? readCurrentLaunchToken)(port, env) : null;
+						if (authOn && !latestToken) {
+							warn("[piweb] 未能从本地令牌管道读取最新启动令牌；若打开后仍停在登录页，请重新运行 piweb 或手动输入令牌/配对码。");
+						}
+						const browserToken = latestToken ?? (authOn && !warmToken ? currentPlan.env.PI_WEB_LAUNCH_TOKEN : null);
+						await browse(browserToken ? tokenLoginUrl(loginBase, browserToken) : loginBase);
+					}
+				} else if (!controller.signal.aborted) {
+					const retryMs = attempt < 20 ? 25 : attempt < 60 ? 75 : 200;
+					timer = setTimeout(() => void ready(attempt + 1), retryMs);
+					timer.unref();
+				}
+			};
+
+			const outcome = await new Promise((resolve, reject) => {
+				const cleanup = () => {
+					controller.abort();
+					clearTimeout(timer);
+				};
+				child.once("error", (error) => { cleanup(); reject(error); });
+				child.once("exit", (code) => { cleanup(); resolve(code ?? 1); });
+				void ready().catch(() => {});
+			});
+
+			if (outcome === RESTART_EXIT_CODE && !stopping && currentPlan.command === "start") {
+				log("[piweb] 更新已完成，正在自动重启服务…");
+				continue;
+			}
+			return stopping ? 1 : outcome;
+		}
+	} finally {
+		process.off("SIGINT", shutdown);
+		process.off("SIGTERM", shutdown);
+	}
 }
 
 /** One launcher per agent directory, including the period before health is ready. */

@@ -1,7 +1,7 @@
 import type { SystemProxy } from "./system-proxy.mjs";
 
 export type ProxyEnvMap = Record<string, string | undefined>;
-export type ProxySource = "env" | "settings" | "system";
+export type ProxySource = "env" | "settings" | "system" | "direct";
 
 export interface ApplyProxyEnvOptions {
 	proxySetting?: string | null;

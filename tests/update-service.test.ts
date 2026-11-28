@@ -296,6 +296,22 @@ describe("npm-installed PiWeb updates from the registry", () => {
 		expect(run.mock.calls.map(([, args]) => normalizeArgs(args).join(" "))).toEqual(["view @rexvane/piweb version"]);
 	});
 
+	it("allows in-place global self-update on POSIX even when cwd is inside the installation", async () => {
+		const root = await npmInstallation();
+		const run = vi.fn(async (_command: string, args: string[]) => args[0] === "view" ? "2.0.0\n" : "");
+		const previous = process.cwd();
+		process.chdir(root);
+		try {
+			expect(canSelfUpdateNpmInstall("darwin", root)).toBe(true);
+			expect(canSelfUpdateNpmInstall("linux", root)).toBe(true);
+			const check = await createUpdateService({ root, run, versions, platform: "darwin" }).checkForUpdate("piweb");
+			expect(check).toMatchObject({ canUpdate: true, selfUpdate: true });
+			expect(check.command).toBeUndefined();
+		} finally {
+			process.chdir(previous);
+		}
+	});
+
 	it("falls back to the install command on Windows when serving from inside the installation", async () => {
 		// Windows 不允许改名任何进程的当前工作目录，而 npm 替换全局包要先挪走整个包目录。
 		// 若服务的工作目录落在安装目录里（旧行为），更新必然 EBUSY，所以必须给出命令而不是按钮。

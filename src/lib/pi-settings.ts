@@ -3,6 +3,7 @@
  * （压缩 / 自动重试 / 缓存预热 / 排队投递方式 / 代理）。
  * 与项目信任同一个外科手术式 JSON patch 方式：只动点名的字段，其余原样留着。
  */
+import fs from "node:fs";
 import path from "node:path";
 import { invalidateJsonFile } from "./agent-config";
 import { getAgentDir, reloadSettingsManagers, resolveProjectTrust } from "./pi";
@@ -71,6 +72,29 @@ function settingsFile(): string {
 	return path.join(getAgentDir(), "settings.json");
 }
 
+function webProxyFile(): string {
+	return path.join(getAgentDir(), "web-proxy.json");
+}
+
+function readDirectProxyMode(): boolean {
+	try {
+		const raw = fs.readFileSync(webProxyFile(), "utf8").replace(/^\uFEFF/, "");
+		return (JSON.parse(raw) as { mode?: unknown })?.mode === "direct";
+	} catch {
+		return false;
+	}
+}
+
+function writeDirectProxyMode(direct: boolean): void {
+	const file = webProxyFile();
+	if (direct) {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, `${JSON.stringify({ mode: "direct" }, null, 2)}\n`, "utf8");
+	} else {
+		fs.rmSync(file, { force: true });
+	}
+}
+
 async function readSettingsObject(file: string): Promise<Record<string, unknown>> {
 	const text = await readFileBounded(file, 1024 * 1024).then((bytes) => bytes.toString("utf8")).catch((error) => { if (error.code === "ENOENT") return "{}"; throw error; });
 	const errors: ParseError[] = [];
@@ -98,11 +122,12 @@ function objectOf(value: unknown): Record<string, unknown> {
 
 const isTokenCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-function normalizedSettings(raw: Record<string, unknown>): PiSettings {
+function normalizedSettings(raw: Record<string, unknown>, directMode = false): PiSettings {
 	const c = objectOf(raw.compaction);
 	const r = objectOf(raw.retry);
 	const num = (v: unknown, d: number) => (isTokenCount(v) ? v : d);
 	const oneOf = <T extends string>(v: unknown, allowed: readonly T[], d: T): T => (allowed.includes(v as T) ? v as T : d);
+	const rawProxy = typeof raw.httpProxy === "string" ? raw.httpProxy.trim() : DEFAULTS.httpProxy;
 	return {
 		compaction: {
 			enabled: c.enabled !== false,
@@ -117,17 +142,18 @@ function normalizedSettings(raw: Record<string, unknown>): PiSettings {
 		cacheWarming: oneOf(raw.cacheWarming, CACHE_WARMING_MODES, DEFAULTS.cacheWarming),
 		steeringMode: oneOf(raw.steeringMode, QUEUE_MODES, DEFAULTS.steeringMode),
 		followUpMode: oneOf(raw.followUpMode, QUEUE_MODES, DEFAULTS.followUpMode),
-		httpProxy: typeof raw.httpProxy === "string" ? raw.httpProxy : DEFAULTS.httpProxy,
+		httpProxy: rawProxy || (directMode ? "direct" : DEFAULTS.httpProxy),
 	};
 }
 
 export async function getPiSettings(cwd?: string): Promise<PiSettings> {
 	const global = await readSettingsFileStrict();
-	if (!cwd) return normalizedSettings(global);
+	const directMode = readDirectProxyMode();
+	if (!cwd) return normalizedSettings(global, directMode);
 	const projectRoot = await resolveWorkspacePath(cwd);
 	const project = readJsoncSettingsObjectSync(path.join(projectRoot, ".pi", "settings.json"), { projectRoot });
 	const trusted = resolveProjectTrust(cwd).trusted;
-	return { ...normalizedSettings(mergedSettings(global, project)), effective: normalizedSettings(trusted ? mergedSettings(global, project) : global), projectTrusted: trusted };
+	return { ...normalizedSettings(mergedSettings(global, project), directMode), effective: normalizedSettings(trusted ? mergedSettings(global, project) : global, directMode), projectTrusted: trusted };
 }
 
 /**
@@ -137,7 +163,7 @@ export async function getPiSettings(cwd?: string): Promise<PiSettings> {
 export function redactPiSettingsForRead(settings: PiSettings): PiSettings {
 	const redact = (value: PiSettings): PiSettings => ({
 		...value,
-		httpProxy: typeof value.httpProxy === "string" ? redactUrlCredentials(value.httpProxy) : value.httpProxy,
+		httpProxy: typeof value.httpProxy === "string" && value.httpProxy && value.httpProxy !== "direct" ? redactUrlCredentials(value.httpProxy) : value.httpProxy,
 	});
 	return { ...redact(settings), ...(settings.effective ? { effective: redact(settings.effective) } : {}) };
 }
@@ -196,7 +222,7 @@ export function validatePiSettingsPatch(value: unknown): PiSettingsPatch {
 	}
 	if (input.httpProxy !== undefined) {
 		const proxy = validateString("httpProxy", input.httpProxy, 2048);
-		if (proxy) {
+		if (proxy && proxy !== "direct") {
 			let url: URL | undefined;
 			try {
 				url = new URL(proxy);
@@ -224,13 +250,16 @@ export async function patchPiSettings(value: unknown, cwd?: string): Promise<PiS
 			for (const key of ["cacheWarming", "steeringMode", "followUpMode"] as const) {
 				if (patch[key] !== undefined) raw[key] = patch[key];
 			}
-			// 清空 = 删掉键，回到 pi 的默认行为（不留空字符串）
+			// 清空或直连 = 不在 Pi CLI 的 settings.json 留无效值；直连偏好单独记在 web-proxy.json。
 			if (patch.httpProxy !== undefined) {
-				if (patch.httpProxy) raw.httpProxy = patch.httpProxy;
+				if (patch.httpProxy && patch.httpProxy !== "direct") raw.httpProxy = patch.httpProxy;
 				else delete raw.httpProxy;
 			}
 			return raw;
 		}, { projectRoot });
+		if (patch.httpProxy !== undefined) {
+			writeDirectProxyMode(patch.httpProxy === "direct");
+		}
 		invalidateJsonFile(file);
 	}, { retryBusy: true });
 	// 正在运行的会话每次压缩/重试都从 SettingsManager 读：让它们重新读盘，改动立即生效

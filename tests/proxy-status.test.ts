@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createServer } from "node:net";
-import { automaticProxy, publicProxy, testProxyConnection, type ProxyChoice } from "../src/lib/proxy-status";
+import { automaticProxy, detectedProxies, publicProxy, testProxyConnection, type ProxyChoice } from "../src/lib/proxy-status";
 
 const system = { http: "http://127.0.0.1:7897", https: "http://127.0.0.1:7897" };
 const automatic: ProxyChoice = { source: "system", ...system };
@@ -67,4 +67,18 @@ describe("proxy diagnostics", () => {
 		const result = await testProxyConnection(`http://127.0.0.1:${port}`, { automatic });
 		expect(result).toMatchObject({ ok: false, code: "unreachable" });
 	}, 12_000);
+
+	it("collects deduplicated detected proxies and tests direct connections without proxy", async () => {
+		expect(detectedProxies({ HTTPS_PROXY: "http://alice:secret@env:3128" }, { http: "http://127.0.0.1:7897", https: "http://127.0.0.1:7897" })).toEqual([
+			{ url: "http://127.0.0.1:7897", source: "system" },
+			{ url: "http://env:3128", source: "env" },
+		]);
+		expect(automaticProxy({ PIWEB_PROXY_SOURCE: "direct", HTTP_PROXY: "", PIWEB_INHERITED_HTTPS_PROXY: "http://env:3128" }, null)).toEqual({
+			source: "env", http: null, https: "http://env:3128",
+		});
+		expect(await testProxyConnection("direct", {
+			automatic,
+			directProbe: async () => ({ ok: true, status: 204 }),
+		})).toMatchObject({ ok: true, proxy: { source: "direct", http: null, https: null }, status: 204 });
+	});
 });

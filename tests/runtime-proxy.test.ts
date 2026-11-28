@@ -199,4 +199,28 @@ describe("runtime proxy live switching", () => {
 			proxy: "http://127.0.0.1:7890", source: "settings", supported: true, activeInProcess: false,
 		});
 	});
+
+	it("switches to explicit direct mode without restoring inherited env proxy or system proxy", () => {
+		const envWithInherited: Record<string, string | undefined> = { HTTPS_PROXY: "http://inherited:3128" };
+		const fakeHttp = { Agent: http.Agent, globalAgent: new http.Agent() };
+		const fakeHttps = { Agent: https.Agent, globalAgent: new https.Agent() };
+		const fakeUndici = {
+			Agent: class {},
+			EnvHttpProxyAgent: class {},
+			setGlobalDispatcher: () => undefined,
+		} as unknown as UndiciModule;
+		const res = applyRuntimeProxy("direct", {
+			env: envWithInherited,
+			nodeVersion: "24.0.0",
+			readSystemProxy: () => ({ http: "http://system:8080", https: "http://system:8080" }),
+			loadUndici: () => fakeUndici,
+			httpModule: fakeHttp,
+			httpsModule: fakeHttps,
+		});
+		expect(res).toEqual({ proxy: null, source: "direct", supported: true, activeInProcess: true });
+		expect(envWithInherited.PIWEB_PROXY_SOURCE).toBe("direct");
+		expect(envWithInherited.PIWEB_INHERITED_HTTPS_PROXY).toBe("http://inherited:3128");
+		expect(envWithInherited.HTTP_PROXY).toBeUndefined();
+		expect(envWithInherited.HTTPS_PROXY).toBeUndefined();
+	});
 });

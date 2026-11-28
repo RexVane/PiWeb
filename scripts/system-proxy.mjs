@@ -36,13 +36,54 @@ export function parseWindowsProxy(output) {
 	return result;
 }
 
+function formatHostPort(host, port) {
+	const trimmed = String(host ?? "").trim();
+	const portNumber = Number(port);
+	if (!trimmed || !Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) return undefined;
+	const wrapped = trimmed.includes(":") && !trimmed.startsWith("[") ? `[${trimmed}]` : trimmed;
+	return `${wrapped}:${portNumber}`;
+}
+
+/** Read the current user's enabled macOS HTTP(S) proxy from `scutil --proxy` output. */
+export function parseMacProxy(output) {
+	const text = String(output ?? "");
+	const field = (name) => text.match(new RegExp(`^\\s*${name}\\s*:\\s*(.+?)\\s*$`, "m"))?.[1]?.trim();
+	/** @type {SystemProxy} */
+	const result = {};
+	if (field("HTTPEnable") === "1") {
+		const hostPort = formatHostPort(field("HTTPProxy"), field("HTTPPort"));
+		if (hostPort) result.http = proxyUrl(hostPort);
+	}
+	if (field("HTTPSEnable") === "1") {
+		const hostPort = formatHostPort(field("HTTPSProxy"), field("HTTPSPort"));
+		if (hostPort) result.https = proxyUrl(hostPort);
+	}
+	if (!result.http && !result.https) return null;
+	const exceptions = text.match(/^\s*ExceptionsList\s*:\s*(?:<array>\s*)?\{([\s\S]*?)^\s*\}/m)?.[1] ?? "";
+	const bypass = Array.from(exceptions.matchAll(/^\s*\d+\s*:\s*(.+?)\s*$/gm))
+		.map((match) => match[1].trim())
+		.filter((value) => value && !/[<>\s/]/.test(value) && (value === "*" || !value.replace(/^\*\./, "").includes("*")));
+	if (bypass.length) result.noProxy = bypass.includes("*") ? "*" : bypass.join(",");
+	return result;
+}
+
 /** @returns {SystemProxy | null} */
 export function readSystemProxy({ platform = process.platform, run = execFileSync } = {}) {
-	if (platform !== "win32") return null;
-	try {
-		const output = run(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "reg.exe"), [
-			"query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-		], { encoding: "utf8", windowsHide: true, timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
-		return parseWindowsProxy(output);
-	} catch { return null; }
+	if (platform === "win32") {
+		try {
+			const output = run(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "reg.exe"), [
+				"query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+			], { encoding: "utf8", windowsHide: true, timeout: 1500, stdio: ["ignore", "pipe", "ignore"] });
+			return parseWindowsProxy(output);
+		} catch { return null; }
+	}
+	if (platform === "darwin") {
+		try {
+			const output = run("scutil", ["--proxy"], {
+				encoding: "utf8", windowsHide: true, timeout: 1500, stdio: ["ignore", "pipe", "ignore"],
+			});
+			return parseMacProxy(output);
+		} catch { return null; }
+	}
+	return null;
 }

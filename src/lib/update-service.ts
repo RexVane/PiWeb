@@ -87,8 +87,11 @@ function isNpmInstall(root: string): boolean {
  * @param {NodeJS.Platform} [platform]
  * @param {string} [installation] 安装目录；不传时无法核对，按平台保守判断
  */
-export function canSelfUpdateNpmInstall(_platform: NodeJS.Platform = process.platform, installation?: string): boolean {
+export function canSelfUpdateNpmInstall(platform: NodeJS.Platform = process.platform, installation?: string): boolean {
 	if (!installation) return false;
+	// POSIX systems allow replacing an installed npm package directory while serving;
+	// only Windows locks the process's current working directory with EBUSY.
+	if (platform !== "win32") return true;
 	try {
 		const cwd = realpathSync(process.cwd());
 		const root = realpathSync(installation);
@@ -118,14 +121,17 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		const commandEnv = isolatedCommandEnv(env);
 		// The settings page may change this after the service was started. An
 		// installer is a new process, so it can use the current setting immediately.
-		if (env.PIWEB_PROXY_SOURCE === "settings") {
+		if (env.PIWEB_PROXY_SOURCE === "settings" || env.PIWEB_PROXY_SOURCE === "direct") {
 			for (const [lower, upper, inherited] of [["http_proxy", "HTTP_PROXY", "PIWEB_INHERITED_HTTP_PROXY"], ["https_proxy", "HTTPS_PROXY", "PIWEB_INHERITED_HTTPS_PROXY"]]) {
 				delete commandEnv[lower]; delete commandEnv[upper];
 				if (env[inherited]?.trim()) commandEnv[lower] = commandEnv[upper] = env[inherited]!.trim();
 			}
 		}
 		const proxy = readHttpProxySetting(env);
-		if (proxy) {
+		if (proxy === "direct") {
+			delete commandEnv.http_proxy; delete commandEnv.HTTP_PROXY;
+			delete commandEnv.https_proxy; delete commandEnv.HTTPS_PROXY;
+		} else if (proxy) {
 			const parsed = new URL(proxy);
 			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("更新所用的代理地址必须是 HTTP 或 HTTPS。");
 			commandEnv.http_proxy = commandEnv.HTTP_PROXY = commandEnv.https_proxy = commandEnv.HTTPS_PROXY = proxy;
@@ -179,7 +185,8 @@ export function createUpdateService({ root = APP_ROOT, run = runCommand, version
 		}
 		await assertIdle();
 		const commandEnv = currentCommandEnv();
-		const command = (args: string[], timeoutMs: number) => run("npm", args, { cwd: installation, env: commandEnv, timeoutMs });
+		const commandCwd = platform === "win32" ? installation : path.dirname(installation);
+		const command = (args: string[], timeoutMs: number) => run("npm", args, { cwd: commandCwd, env: commandEnv, timeoutMs });
 		const manifestPath = path.join(installation, "package.json");
 		const before = await readPackageVersion(manifestPath);
 		await command(["install", "-g", `${PIWEB_PACKAGE}@latest`, "--no-audit", "--no-fund", "--ignore-scripts", ...OFFICIAL_REGISTRY_ARGS], 600_000);

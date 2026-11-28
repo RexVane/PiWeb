@@ -222,9 +222,13 @@ describe("设置面板新接管的 pi 设置", () => {
 		await withAgentDir({ theme: "dark" }, async (file) => {
 			await patchPiSettings({ httpProxy: "http://127.0.0.1:7890" });
 			expect((await read(file)).httpProxy).toBe("http://127.0.0.1:7890");
-			await patchPiSettings({ httpProxy: "" });
-			// 清空 = 删掉键，回到 pi 的默认行为；别的字段还在
+			await patchPiSettings({ httpProxy: "direct" });
 			expect(await read(file)).toEqual({ theme: "dark" });
+			expect(await getPiSettings()).toMatchObject({ httpProxy: "direct" });
+			await patchPiSettings({ httpProxy: "" });
+			// 清空 = 删掉键与 web-proxy.json，回到系统代理默认行为；别的字段还在
+			expect(await read(file)).toEqual({ theme: "dark" });
+			expect(await getPiSettings()).toMatchObject({ httpProxy: "" });
 		});
 	});
 

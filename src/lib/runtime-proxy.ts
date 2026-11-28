@@ -34,7 +34,7 @@ export interface ApplyRuntimeProxyOptions {
 
 export interface RuntimeProxyResult {
 	proxy: string | null;
-	source: "settings" | "env" | "system" | "none";
+	source: "settings" | "env" | "system" | "direct" | "none";
 	supported: boolean;
 	activeInProcess: boolean;
 }
@@ -82,7 +82,7 @@ export function applyRuntimeProxy(proxySetting: string, options: ApplyRuntimePro
 	const previousSource = env.PIWEB_PROXY_SOURCE;
 
 	if (env.PIWEB_INHERITED_HTTP_PROXY === undefined && env.PIWEB_INHERITED_HTTPS_PROXY === undefined) {
-		const managedAtStartup = previousSource === "settings" || previousSource === "system";
+		const managedAtStartup = previousSource === "settings" || previousSource === "system" || previousSource === "direct";
 		env.PIWEB_INHERITED_HTTP_PROXY = managedAtStartup ? "" : readEnvValue(env, "HTTP_PROXY");
 		env.PIWEB_INHERITED_HTTPS_PROXY = managedAtStartup ? "" : readEnvValue(env, "HTTPS_PROXY");
 	}
@@ -91,8 +91,10 @@ export function applyRuntimeProxy(proxySetting: string, options: ApplyRuntimePro
 	deleteEnvValue(env, "HTTPS_PROXY");
 	const inheritedHttp = String(env.PIWEB_INHERITED_HTTP_PROXY ?? "").trim();
 	const inheritedHttps = String(env.PIWEB_INHERITED_HTTPS_PROXY ?? "").trim();
-	if (inheritedHttp) env.HTTP_PROXY = inheritedHttp;
-	if (inheritedHttps) env.HTTPS_PROXY = inheritedHttps;
+	if (proxy !== "direct") {
+		if (inheritedHttp) env.HTTP_PROXY = inheritedHttp;
+		if (inheritedHttps) env.HTTPS_PROXY = inheritedHttps;
+	}
 
 	if (env.PIWEB_MANAGED_NO_PROXY === "1" || ((previousSource === "settings" || previousSource === "system") && readEnvValue(env, "NO_PROXY") === DEFAULT_LOCAL_NO_PROXY)) {
 		deleteEnvValue(env, "NO_PROXY");

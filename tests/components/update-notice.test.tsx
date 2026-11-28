@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { UPDATE_NOTICE_KEY, UpdateNotice } from "@/components/update/UpdateNotice";
-import { resetUpdates } from "@/components/update/update-store";
+import { resetUpdates, runUpdate } from "@/components/update/update-store";
 
 type Results = Record<string, unknown>;
 
@@ -128,5 +128,26 @@ describe("更新提示条", () => {
 		expect(posts).toEqual(["update:piweb"]);
 		expect(screen.getByRole("button", { name: "更新" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "稍后" })).toBeTruthy();
+	});
+
+	it("服务端返回 restarting=true 时展示重启状态并在新实例就绪后刷新页面", async () => {
+		let pollCount = 0;
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			if (url !== "/api/update") throw new Error(`unexpected URL ${url}`);
+			if (!init?.method || init.method === "GET") {
+				pollCount += 1;
+				if (pollCount === 1) return reply(200, { success: true, data: { startId: "start-1", results: { piweb: PIWEB } } });
+				if (pollCount === 2) throw new Error("restarting");
+				return reply(200, { success: true, data: { startId: "start-2", results: {} } });
+			}
+			return reply(200, { success: true, data: { version: "0.3.20", needsRestart: true, restarting: true } });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		const reload = vi.fn();
+		render(<UpdateNotice />);
+		await screen.findByTestId("update-notice");
+		expect(await runUpdate("piweb", { reload })).toBe(true);
+		expect(await screen.findByText("正在重启 PiWeb")).toBeTruthy();
+		await waitFor(() => expect(reload).toHaveBeenCalledOnce(), { timeout: 4000 });
 	});
 });

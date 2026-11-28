@@ -146,6 +146,7 @@ export function GeneralSection({
 				if (j.data.compaction.reserveTokens !== undefined) setReserveTokensDraft(String(j.data.compaction.reserveTokens));
 				if (j.data.compaction.keepRecentTokens !== undefined) setKeepRecentTokensDraft(String(j.data.compaction.keepRecentTokens));
 				if (j.data.retry.maxRetries !== undefined) setMaxRetriesDraft(String(j.data.retry.maxRetries));
+				if (typeof j.data.httpProxy === "string") setTextDrafts({ httpProxy: j.data.httpProxy });
 			}
 			setSettingsWarning(typeof j.warning === "string" ? j.warning : "");
 			return true;
@@ -158,10 +159,10 @@ export function GeneralSection({
 		}
 	};
 
-	/** 网络代理：失焦或回车时保存；保存失败就退回原值 */
-	const commitText = async (field: "httpProxy") => {
+	/** 网络代理：切换预设或失焦回车时保存；保存失败退回原值 */
+	const commitText = async (field: "httpProxy", override?: string) => {
 		if (!piSettings) return;
-		const value = textDrafts[field].trim();
+		const value = (override ?? textDrafts[field]).trim();
 		if (value === piSettings[field]) return;
 		if (!(await patchPiSettings({ [field]: value }))) setTextDrafts((previous) => ({ ...previous, [field]: piSettings[field] }));
 	};
@@ -362,18 +363,12 @@ export function GeneralSection({
 			</Row>
 			<Row title={t.httpProxy} desc={t.httpProxyRestart}>
 				<ProxySettings value={textDrafts.httpProxy} disabled={!piSettings || settingsLoading || settingsSaving}
-					onChange={(httpProxy) => setTextDrafts({ httpProxy })} onCommit={() => void commitText("httpProxy")} />
+					onChange={(httpProxy) => setTextDrafts({ httpProxy })} onCommit={(next) => void commitText("httpProxy", next)} />
 			</Row>
 			<Row title={t.versionPiweb} desc={t.versionPiwebDesc}>
 				<div className="flex items-center gap-2.5">
 					<VersionLink href="https://github.com/RexVane/PiWeb" value={versions?.piWeb} />
 					<UpdateControl target="piweb" />
-				</div>
-			</Row>
-			<Row title={t.versionPi} desc={t.versionPiDesc}>
-				<div className="flex items-center gap-2.5">
-					<VersionLink href="https://github.com/earendil-works/pi" value={versions?.piEngine} />
-					<UpdateControl target="pi" />
 				</div>
 			</Row>
 			{webAuth?.enabled ? (
@@ -422,7 +417,7 @@ function VersionLink({ href, value }: { href: string; value?: string }) {
 function UpdateControl({ target }: { target: UpdateTarget }) {
 	const { t } = useI18n();
 	const { phase, latest, command, error, busy: sessionBusy } = useUpdates().targets[target];
-	const busy = phase === "checking" || phase === "updating";
+	const busy = phase === "checking" || phase === "updating" || phase === "restarting";
 
 	useEffect(() => {
 		void loadUpdates();
@@ -471,7 +466,7 @@ function UpdateControl({ target }: { target: UpdateTarget }) {
 	return (
 		<span className="flex items-center gap-1.5" style={{ fontSize: 12, color: "var(--dsw-label-tertiary)" }}>
 			<span className="h-3 w-3 flex-none animate-spin rounded-full border-2 border-current border-t-transparent" />
-			{phase === "updating" ? t.updatingNow : t.checkingUpdate}
+			{phase === "restarting" ? t.restartingNow : phase === "updating" ? t.updatingNow : t.checkingUpdate}
 		</span>
 	);
 }

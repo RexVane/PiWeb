@@ -11,8 +11,14 @@ export function readHttpProxySetting(env = process.env) {
 		: /^~[\\/]/.test(raw) ? path.join(home, raw.slice(2)) : raw;
 	try {
 		const parsed = JSON.parse(fs.readFileSync(path.join(root, "settings.json"), "utf8").replace(/^\uFEFF/, ""));
-		return typeof parsed?.httpProxy === "string" ? parsed.httpProxy.trim() || null : null;
-	} catch { return null; }
+		const configured = typeof parsed?.httpProxy === "string" ? parsed.httpProxy.trim() : "";
+		if (configured) return configured;
+	} catch { /* fallback to web-proxy.json */ }
+	try {
+		const webProxy = JSON.parse(fs.readFileSync(path.join(root, "web-proxy.json"), "utf8").replace(/^\uFEFF/, ""));
+		if (webProxy?.mode === "direct") return "direct";
+	} catch { /* no web-proxy.json */ }
+	return null;
 }
 
 export const OFFICIAL_REGISTRY = "https://registry.npmjs.org";

@@ -35,6 +35,11 @@ export function nodeSupportsEnvProxy(version = process.versions.node) {
  * @returns {{proxy: string | null, source: "env" | "settings" | "system" | null, supported: boolean}}
  */
 export function applyProxyEnv(childEnv, { proxySetting = null, systemProxy = null, nodeVersion = process.versions.node } = {}) {
+	if (proxySetting === "direct") {
+		deleteEnvValue(childEnv, "HTTP_PROXY");
+		deleteEnvValue(childEnv, "HTTPS_PROXY");
+		return { proxy: null, source: "direct", supported: true };
+	}
 	// Windows 上环境变量不分大小写，但展开成普通对象后分：两种写法都要查，免得补出一个只差大小写的重复键
 	const fromEnv = readEnvValue(childEnv, "HTTPS_PROXY") || readEnvValue(childEnv, "HTTP_PROXY");
 	if (proxySetting) {
