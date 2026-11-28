@@ -59,6 +59,7 @@ export function resolveBuildOutput(root, value) {
 function createLocalPathChecker(root) {
 	const realRoot = fs.realpathSync(root);
 	const verifiedDirs = new Map();
+	const verifiedFiles = new Map();
 	const assertInsideRoot = (resolved, relative) => {
 		const inside = path.relative(realRoot, resolved);
 		if (inside === ".." || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) {
@@ -66,6 +67,8 @@ function createLocalPathChecker(root) {
 		}
 	};
 	const inspect = (relative) => {
+		const cachedFile = verifiedFiles.get(relative);
+		if (cachedFile) return cachedFile;
 		if (typeof relative !== "string" || !relative || relative.includes("\\") || relative.includes(":")) {
 			throw new Error("invalid project-relative path");
 		}
@@ -114,8 +117,11 @@ function createLocalPathChecker(root) {
 			const resolved = fs.realpathSync(target);
 			assertInsideRoot(resolved, relative);
 			verifiedDirs.set(relative, resolved);
+			return { target, stat };
 		}
-		return { target, stat };
+		const result = { target, stat };
+		verifiedFiles.set(relative, result);
+		return result;
 	};
 	return {
 		inspect,

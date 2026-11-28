@@ -13,8 +13,6 @@ import {
 	setAlias,
 	unpinSession,
 } from "@/lib/workspace-store";
-import { encodeSessionId } from "@/lib/pi";
-import { disposeSessionPath } from "@/lib/agent-manager";
 import { BoundaryError, resolveSessionPath, resolveWorkspacePath } from "@/lib/path-security";
 import { isLoopbackHostname } from "@/lib/auth";
 import { apiError } from "@/lib/api-error";
@@ -120,6 +118,7 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "archiveSession") {
 			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+			const [{ encodeSessionId }, { disposeSessionPath }] = await Promise.all([import("@/lib/pi"), import("@/lib/agent-manager")]);
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			// 归档即收工：会话随即从工作区消失，不能让它继续在后台跑（看不见却仍消耗 token）。
 			// 只影响这一个会话，其它运行中的会话不受影响。
@@ -129,18 +128,21 @@ export async function POST(req: Request) {
 		}
 		if (body.action === "forgetSession") {
 			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+			const { encodeSessionId } = await import("@/lib/pi");
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			await forgetSession(sessionPath);
 			return await archiveMutationResponse();
 		}
 		if (body.action === "pinSession") {
 			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+			const { encodeSessionId } = await import("@/lib/pi");
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const pinnedSessions = await pinSession(sessionPath);
 			return mutationResponse({ pinnedSessions });
 		}
 		if (body.action === "unpinSession") {
 			if (!body.path) return json({ success: false, error: "missing path", errorCode: "VALIDATION_ERROR" }, { status: 400 });
+			const { encodeSessionId } = await import("@/lib/pi");
 			const sessionPath = await resolveSessionPath(encodeSessionId(body.path), { allowPending: true });
 			const pinnedSessions = await unpinSession(sessionPath);
 			return mutationResponse({ pinnedSessions });

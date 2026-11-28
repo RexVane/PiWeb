@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { applySettingsToSessions } from "@/lib/agent-manager";
 import { getPiSettings, patchPiSettings, PiSettingsValidationError, PiSettingsRefreshError, redactPiSettingsForRead, type PiSettingsPatch } from "@/lib/pi-settings";
 import { SettingsWriteBusyError } from "@/lib/settings-write-lock";
 import { apiError } from "@/lib/api-error";
@@ -36,7 +35,10 @@ export async function PUT(req: Request) {
 		if (error instanceof PiSettingsRefreshError) { patch = error.patch; warning = error.message; }
 		else return NextResponse.json({ success: false, ...apiError(error, "设置保存失败，请重试。", error instanceof PiSettingsValidationError) }, { status: error instanceof BoundaryError || error instanceof PiSettingsValidationError || error instanceof SyntaxError ? 400 : 500, headers });
 	}
-	try { applySettingsToSessions(patch, cwd); }
+	try {
+		const { applySettingsToSessions } = await import("@/lib/agent-manager");
+		applySettingsToSessions(patch, cwd);
+	}
 	catch { warning = "设置已保存，但部分活动会话未能刷新。"; }
 	let restartRequired = false;
 	if (typeof patch.httpProxy === "string") {

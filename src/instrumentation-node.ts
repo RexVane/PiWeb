@@ -17,9 +17,25 @@ export async function registerNode() {
 		(await import("./lib/web-launch-token")).publishLaunchToken();
 	}
 
-	// 每次启动检查一次 PiWeb / pi 有没有新版本：不等结果，查到了在终端打一行，页面右下角也会提醒
-	void (await import("./lib/update/startup-check")).ensureStartupCheck().catch(() => {});
+	// 延迟启动检查：避免在冷启动阶段导入更新模块或发起网络查询，优先保障首屏就绪。
+	if (process.env.PI_WEB_UPDATE_CHECK !== "0") {
+		const updateTimer = setTimeout(() => {
+			void import("./lib/update/startup-check").then(({ ensureStartupCheck }) => ensureStartupCheck()).catch(() => {});
+		}, 2500);
+		updateTimer.unref?.();
+	}
 
+	// 生产模式下等健康检查就绪并拉起浏览器后，在后台预热会话/工作区/模型目录，与浏览器加载并行。
+	if (process.env.NODE_ENV === "production" && !process.env.VITEST && process.env.PIWEB_SKIP_WARMUP !== "1") {
+		const warmTimer = setTimeout(() => {
+			void Promise.allSettled([
+				import("./lib/session-reader").then(({ listSessions }) => listSessions()),
+				import("./lib/workspace-store").then(({ getWorkspaceRegistry }) => getWorkspaceRegistry()),
+				import("./lib/models-service").then(({ listModelsForPiWeb }) => listModelsForPiWeb()),
+			]);
+		}, 80);
+		warmTimer.unref?.();
+	}
 
 	const { remoteBlocked, remoteLanEnabled, ensureRemoteAccess } = await import("./lib/remote/supervisor");
 	if (!remoteLanEnabled()) return;
@@ -35,10 +51,13 @@ export async function registerNode() {
 		return;
 	}
 
-	const state = await ensureRemoteAccess();
-	if (state.lan.running) {
-		console.log(`[远程连接] 局域网已就绪，公网正在自动准备：${state.lan.urls.join("  ")}`);
-	} else {
-		console.warn(`[远程连接] 局域网入口启动失败：${state.lan.error}`);
-	}
+	void ensureRemoteAccess().then((state) => {
+		if (state.lan.running) {
+			console.log(`[远程连接] 局域网已就绪，公网正在自动准备：${state.lan.urls.join("  ")}`);
+		} else {
+			console.warn(`[远程连接] 局域网入口启动失败：${state.lan.error}`);
+		}
+	}).catch((error) => {
+		console.warn(`[远程连接] 局域网入口启动失败：${error instanceof Error ? error.message : String(error)}`);
+	});
 }

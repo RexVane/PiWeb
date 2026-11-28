@@ -328,7 +328,7 @@ function delay(ms, signal) {
  * pollMs?: number, check?: typeof isPiWebRunning, signal?: AbortSignal}} [options]
  * @returns {Promise<boolean>} 是否成功读完首个会话列表响应
  */
-export async function warmFirstPaint(base, { fetchImpl = fetch, token, timeoutMs = 20_000, waitMs = 60_000, pollMs = 100, check = isPiWebRunning, signal } = {}) {
+export async function warmFirstPaint(base, { fetchImpl = fetch, token, timeoutMs = 20_000, waitMs = 60_000, pollMs = 25, check = isPiWebRunning, signal } = {}) {
 	const timeoutFor = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs));
 	// 身份确认不带凭据（与 isPiWebRunning 的既有约定一致）：端口可能被别的进程抢走。
 	const deadline = Date.now() + waitMs;
@@ -568,7 +568,7 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 		warmPromise = Promise.resolve(warm(url, { token: warmToken, signal: controller.signal })).then(() => true, () => false);
 	}
 	const ready = async (attempt = 0) => {
-		if (controller.signal.aborted || attempt > 240) return;
+		if (controller.signal.aborted || attempt > 350) return;
 		if (await checkHealth(url, { signal: controller.signal })) {
 			if (controller.signal.aborted) return;
 			if (warmPromise) {
@@ -587,7 +587,8 @@ async function runLauncherInner({ args = process.argv.slice(2), env = process.en
 				await browse(browserToken ? tokenLoginUrl(loginBase, browserToken) : loginBase);
 			}
 		} else if (!controller.signal.aborted) {
-			timer = setTimeout(() => void ready(attempt + 1), 250);
+			const retryMs = attempt < 20 ? 25 : attempt < 60 ? 75 : 200;
+			timer = setTimeout(() => void ready(attempt + 1), retryMs);
 			timer.unref();
 		}
 	};
@@ -647,7 +648,7 @@ export async function runLauncher(options = {}) {
 				}
 				return 0;
 			}
-			await new Promise((resolve) => setTimeout(resolve, 250));
+			await new Promise((resolve) => setTimeout(resolve, 50));
 		}
 		throw new Error("已有 PiWeb 实例仍在启动或没有响应；请等待或停止该实例后重试。");
 	}
