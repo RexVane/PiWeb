@@ -41,7 +41,7 @@ It bundles the official `@earendil-works/pi-*` SDK and shares your existing pi s
 - **Session import** — Search and import local history from Claude Code, Codex, OpenCode, Grok, ZCode, dsh, Kimi Code, WorkBuddy, Antigravity, Antigravity CLI, Qwen Code, and Cursor. PiWeb reads the original files in place.
 - **Files and changes** — Inspect changes by round in the project growth tree, including `SKILL.md` reads and calls inside codemode. Open source, rendered Markdown, and unified or side-by-side diffs, and quote selected lines in chat.
 - **Models, skills, and extensions** — Configure providers, use Pi's MCP tools, and manage Pi packages. [Install packages through Pi](docs/resources.md); native interactions and JSON UI use the built-in web interface.
-- **Prompt sources** — Inspect project instructions, skills, templates, and tool definitions with their resource origin.
+- **Context inspector** — Inspect system prompt, memory, skills, tools, and conversation items ordered newest-first inside each category (categories are sorted by size), along with each item's source origin.
 - **Mobile access and languages** — Scan the QR code in Settings → Remote access. The UI is available in English, Simplified Chinese, Traditional Chinese, Japanese, and Russian.
 
 <details>
@@ -111,7 +111,7 @@ piweb -H 0.0.0.0         # also bind the main server to the LAN (authentication 
 
 On the host, the launcher opens the browser with a private login credential and does not print it. Running `piweb` again reopens the existing instance and signs in.
 
-Update with `npm install -g @rexvane/piweb@latest`, then restart `piweb`. Uninstall with `npm uninstall -g @rexvane/piweb` — agent data and imported tool history are left untouched. Downgrades are covered in [release and rollback](docs/operations/release-and-rollback.md).
+On macOS and Linux, clicking **Update** in the web UI (or the update notice) installs the new version, gracefully restarts the server on the same port, and reloads the page automatically. To upgrade manually or on Windows, run `npm install -g @rexvane/piweb@latest`, then restart `piweb`. Uninstall with `npm uninstall -g @rexvane/piweb` — agent data and imported tool history are left untouched. Downgrades are covered in [release and rollback](docs/operations/release-and-rollback.md).
 
 To connect a phone or another device, open **Settings → Remote access** and scan the QR code (or copy the link). The same code works on the same Wi-Fi and from outside the local network; clients need no extra software. The code is a 256-bit one-time credential, valid for 120 seconds. Production startup prepares a mobile-layout proxy on `0.0.0.0:30142` and a Cloudflare quick tunnel (`cloudflared`). The QR code uses the tunnel's HTTPS address and appears only once that address is reachable. `127.0.0.1:30141` on the host serves the desktop page. Development mode stays local.
 
@@ -140,7 +140,7 @@ Values come from the process environment. CLI flags override the equivalent vari
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Shared Pi / PiWeb agent directory. It is not the only data root; see [data and privacy](docs/operations/data-and-privacy.md). |
 | `PIWEB_REMOTE_LAN` | enabled | `0` / `false` / `off` / `no` disables automatic LAN proxy and Cloudflare quick tunnel preparation. |
 | `PIWEB_REMOTE_LAN_PORT` | `30142` | Built-in LAN / mobile-proxy listen port. |
-| `HTTP_PROXY` / `HTTPS_PROXY` | unset | Proxy for model requests. Settings → General → Network proxy (`httpProxy`) overrides this. |
+| `HTTP_PROXY` / `HTTPS_PROXY` | unset | Proxy for model requests. Settings → General → Network proxy defaults to the system proxy and also supports Direct, detected, or custom proxies. |
 | `PI_WEB_UPDATE_CHECK` | `1` | `0` skips the startup update check. Settings → Check for updates still works. |
 | `PI_OFFLINE` | unset | `1` / `true` / `yes` skips PiWeb / SDK network actions such as update checks. |
 
@@ -173,11 +173,11 @@ The tables below list every PiWeb-specific variable found in `src/`, `scripts/`,
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HTTP_PROXY` / `HTTPS_PROXY` (and lowercase) | unset | Proxy for model requests. If unset, an enabled per-user Windows system proxy is used when present. |
-| `NO_PROXY` / `no_proxy` | local addresses bypass | Proxy bypass list. Windows exact-host and domain-suffix exceptions are inherited; PAC/WPAD and Windows-only patterns such as `<local>` or `192.168.*` are not evaluated. |
+| `HTTP_PROXY` / `HTTPS_PROXY` (and lowercase) | unset | Proxy for model requests. If unset, an enabled per-user Windows or macOS (`scutil --proxy`) system proxy is used when present. |
+| `NO_PROXY` / `no_proxy` | local addresses bypass | Proxy bypass list. Windows and macOS (`ExceptionsList`) exact-host and domain-suffix exceptions are inherited; PAC/WPAD and OS-specific patterns such as `<local>` or `192.168.*` are not evaluated. |
 | `NODE_USE_ENV_PROXY` | launcher sets `1` when supported | Makes Node `fetch` / `http` honor proxy variables. Supported on Node 24+ or 22.21+; an explicit user value is kept. |
 
-A Settings → General → Network proxy value (`httpProxy` in `settings.json`) overrides environment and system proxies; leave it blank to return to automatic detection. Restart `piweb` after changes.
+Settings → General → Network proxy lets you pick **System proxy (default)**, **Direct** (saved in `web-proxy.json` so `pi` CLI settings stay valid, disabling environment/system proxies), any detected proxy, or **Custom** (`httpProxy` in `settings.json`). Changes apply immediately to new model requests and catalog fetches without restarting `piweb`.
 
 #### Authentication and secrets
 
@@ -235,7 +235,7 @@ These default to off or to a loose cap and do not change historical behavior unt
 
 Do not use these in a deployment. `CI`, `PIWEB_COVERAGE`, `PIWEB_COVERAGE_REPORT_DIR`, `PIWEB_TEST_REPORT`, `PIWEB_TEST_TUNNEL`, and `PIWEB_LINT_SKIP_INSTALL` are for tests and CI only.
 
-The launcher, locks, and tests also inject: `PI_WEB_LAUNCH_TOKEN` (one-time local login token, regenerated each start), `PIWEB_PORT` (actual port mirrored into the child), `PIWEB_HTTP_GUARD`, `PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`, `PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`, `PIWEB_PROXY_SOURCE`, `PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`, `PIWEB_MANAGED_NODE_USE_ENV_PROXY`, `PIWEB_MANAGED_NO_PROXY`, `PIWEB_DEV_ASSET_ID`, `PIWEB_DISABLE_GRACEFUL_SHUTDOWN`, `PIWEB_DEBUG_PROMPT`, and `PIWEB_BROWSER_URL` (temporary URL when opening the host browser on Windows). `PYTHONUTF8` / `PYTHONIOENCODING`, `NODE_OPTIONS`, `NEXT_PHASE`, `NEXT_RUNTIME`, and `NEXT_TELEMETRY_DISABLED` are process or Next.js conventions (build scripts disable Next telemetry).
+The launcher, locks, and tests also inject: `PI_WEB_LAUNCH_TOKEN` (one-time local login token, regenerated each start), `PIWEB_PORT` (actual port mirrored into the child), `PIWEB_HTTP_GUARD`, `PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`, `PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`, `PIWEB_PROXY_SOURCE`, `PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`, `PIWEB_MANAGED_NODE_USE_ENV_PROXY`, `PIWEB_MANAGED_NO_PROXY`, `PIWEB_RESTART_SUPPORTED`, `PIWEB_DEV_ASSET_ID`, `PIWEB_DISABLE_GRACEFUL_SHUTDOWN`, `PIWEB_DEBUG_PROMPT`, and `PIWEB_BROWSER_URL` (temporary URL when opening the host browser on Windows). `PYTHONUTF8` / `PYTHONIOENCODING`, `NODE_OPTIONS`, `NEXT_PHASE`, `NEXT_RUNTIME`, and `NEXT_TELEMETRY_DISABLED` are process or Next.js conventions (build scripts disable Next telemetry).
 
 PiWeb also reads OS path variables such as `HOME`, `USERPROFILE`, `TEMP` / `TMP`, `APPDATA`, and `LOCALAPPDATA`, plus optional `WORKBUDDY_CONFIG_DIR` and `QWEN_HOME` for those import sources.
 
@@ -253,7 +253,7 @@ PiWeb does not replace a separately installed `pi` CLI. They **share the same ag
 - [Environment reference](docs/operations/environment.md)
 - [Data, privacy and retention](docs/operations/data-and-privacy.md)
 - [Release, downgrade and rollback](docs/operations/release-and-rollback.md)
-- [Changes since 0.3.35](docs/releases/0.3.36.md)
+- [Latest release notes (0.3.39)](docs/releases/0.3.39.md)
 - [Extension web UI](docs/extension-web-ui.md) and [extension examples](examples/piweb-extensions/README.md)
 - Documentation index: [docs/README.md](docs/README.md)
 

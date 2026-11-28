@@ -41,7 +41,7 @@
 - **会話のインポート** — Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code、Cursor のローカル履歴を検索して取り込みます。元のファイルはその場所のまま読み取ります。
 - **ファイルと変更** — プロジェクトの変更履歴ツリーでターンごとの変更を確認し、`SKILL.md` の読み込みや codemode 内の呼び出しを追跡できます。ソース、Markdown プレビュー、統合または左右並列の差分を開き、選んだ行を会話に引用できます。
 - **モデル、スキル、拡張機能** — プロバイダー、Pi の MCP ツールとパッケージを管理します。[Pi で拡張機能をインストール](docs/resources.md)し、標準の対話 UI と JSON UI を利用できます。
-- **プロンプトのソース** — 指示、スキル、テンプレート、ツール定義とその提供元を確認できます。
+- **コンテキストインスペクター** — システムプロンプト、メモリ、スキル、ツール、会話項目とその提供元を確認できます。カテゴリーはサイズ順、各カテゴリー内の項目は新しい順（時刻の降順）で並びます。
 - **モバイルと表示言語** — 「設定 → リモートアクセス」の QR コードを読み取ります。英語、簡体字中国語、繁体字中国語、日本語、ロシア語に対応しています。
 
 <details>
@@ -111,7 +111,7 @@ piweb -H 0.0.0.0         # メインサーバーも LAN にバインドする（
 
 ホスト上では、ランチャーが非公開のログイン資格情報でブラウザーを開き、その値を端末に出力しません。もう一度 `piweb` を実行すると、既存のインスタンスを開いてサインインします。
 
-更新は `npm install -g @rexvane/piweb@latest` のあと、`piweb` を再起動してください。アンインストールは `npm uninstall -g @rexvane/piweb` です。agent のデータと取り込んだツールの履歴はそのまま残ります。ダウングレードは[リリースとロールバック](docs/operations/release-and-rollback.md)を参照してください。
+macOS と Linux では、Web の設定または更新通知から **更新** をクリックすると、新バージョンをインストールして同じポートでサーバーを自動再起動し、ページも自動で再読み込みします。手動更新や Windows の場合は `npm install -g @rexvane/piweb@latest` のあと、`piweb` を再起動してください。アンインストールは `npm uninstall -g @rexvane/piweb` です。agent のデータと取り込んだツールの履歴はそのまま残ります。ダウングレードは[リリースとロールバック](docs/operations/release-and-rollback.md)を参照してください。
 
 スマートフォンや別のデバイスから接続するには、**設定 → リモートアクセス** を開き、QR コードを読み取るかリンクをコピーします。同じコードは同一 Wi-Fi でも、ローカルネットワークの外からでも使えます。クライアント側に追加のソフトは不要です。コードは 256 ビットのワンタイム資格情報で、有効期限は 120 秒です。本番起動では `0.0.0.0:30142` のモバイルレイアウト用プロキシと、Cloudflare のクイックトンネル（`cloudflared`）を準備します。QR コードはトンネルの HTTPS アドレスを使い、そのアドレスに到達できるようになってから表示されます。ホストの `127.0.0.1:30141` はデスクトップページを提供します。開発モードはローカルのままです。
 
@@ -140,7 +140,7 @@ LAN への直接 HTTP は暗号化されません。QR アドレスの TLS は C
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb が共有する agent ディレクトリ。唯一のデータルートではありません。[データとプライバシー](docs/operations/data-and-privacy.md) を参照してください。 |
 | `PIWEB_REMOTE_LAN` | 有効 | `0` / `false` / `off` / `no` で、LAN プロキシと Cloudflare クイックトンネルの自動準備を無効にします。 |
 | `PIWEB_REMOTE_LAN_PORT` | `30142` | 組み込み LAN / モバイルプロキシの待ち受けポート。 |
-| `HTTP_PROXY` / `HTTPS_PROXY` | 未設定 | モデルリクエスト用のプロキシ。設定 → 一般 → ネットワークプロキシ（`httpProxy`）がこれを上書きします。 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 未設定 | モデルリクエスト用のプロキシ。設定 → 一般 → ネットワークプロキシは既定でシステムプロキシを使用し、直接接続・自動検出されたプロキシ・カスタム指定も選べます。 |
 | `PI_WEB_UPDATE_CHECK` | `1` | `0` で起動時の更新確認をスキップします。設定の「更新を確認」は引き続き使えます。 |
 | `PI_OFFLINE` | 未設定 | `1` / `true` / `yes` で、更新確認など PiWeb / SDK のネットワーク動作をスキップします。 |
 
@@ -173,11 +173,11 @@ LAN への直接 HTTP は暗号化されません。QR アドレスの TLS は C
 
 | 変数 | 既定値 | 意味 |
 | --- | --- | --- |
-| `HTTP_PROXY` / `HTTPS_PROXY`（小文字も可） | 未設定 | モデルリクエスト用のプロキシ。未設定なら、有効になっているユーザー単位の Windows システムプロキシを使います。 |
-| `NO_PROXY` / `no_proxy` | ローカルアドレスは迂回 | プロキシの迂回リスト。Windows の完全一致ホストとドメインサフィックス例外は継承されます。PAC/WPAD や `<local>`、`192.168.*` などの Windows 固有パターンは評価されません。 |
+| `HTTP_PROXY` / `HTTPS_PROXY`（小文字も可） | 未設定 | モデルリクエスト用のプロキシ。未設定なら、有効になっているユーザー単位の Windows または macOS（`scutil --proxy`）システムプロキシを使います。 |
+| `NO_PROXY` / `no_proxy` | ローカルアドレスは迂回 | プロキシの迂回リスト。Windows と macOS（`ExceptionsList`）の完全一致ホストとドメインサフィックス例外は継承されます。PAC/WPAD や `<local>`、`192.168.*` などの OS 固有パターンは評価されません。 |
 | `NODE_USE_ENV_PROXY` | 対応していればランチャーが `1` を設定 | Node の `fetch` / `http` にプロキシ変数を認識させます。Node 24+ または 22.21+ で対応。ユーザーが明示した値は保持されます。 |
 
-設定 → 一般 → ネットワークプロキシの値（`settings.json` の `httpProxy`）は環境変数とシステムプロキシより優先されます。空にすると自動検出に戻ります。変更後は `piweb` を再起動してください。
+設定 → 一般 → ネットワークプロキシでは、**システムプロキシ（既定）**、**直接接続**（`pi` CLI との互換性のため `web-proxy.json` に保存し、環境変数とシステムプロキシを無効化）、検出されたプロキシ、または**カスタム**（`settings.json` の `httpProxy`）を選択できます。変更は `piweb` を再起動せずに新しいモデルリクエストとモデル一覧取得へ即座に反映されます。
 
 #### 認証とシークレット
 
@@ -235,7 +235,7 @@ LAN への直接 HTTP は暗号化されません。QR アドレスの TLS は C
 
 デプロイでは使わないでください。`CI`、`PIWEB_COVERAGE`、`PIWEB_COVERAGE_REPORT_DIR`、`PIWEB_TEST_REPORT`、`PIWEB_TEST_TUNNEL`、`PIWEB_LINT_SKIP_INSTALL` はテストと CI 専用です。
 
-ランチャー、ロック、テストは次も注入します：`PI_WEB_LAUNCH_TOKEN`（起動のたびに作り直す、本機用ワンタイムログイントークン）、`PIWEB_PORT`（子プロセスに渡す実際のポート）、`PIWEB_HTTP_GUARD`、`PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`、`PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`、`PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_DEV_ASSET_ID`、`PIWEB_DISABLE_GRACEFUL_SHUTDOWN`、`PIWEB_DEBUG_PROMPT`、`PIWEB_BROWSER_URL`（Windows でホストのブラウザーを開くときの一時 URL）。`PYTHONUTF8` / `PYTHONIOENCODING`、`NODE_OPTIONS`、`NEXT_PHASE`、`NEXT_RUNTIME`、`NEXT_TELEMETRY_DISABLED` はプロセスまたは Next.js の規約です（ビルドスクリプトは Next のテレメトリを無効にします）。
+ランチャー、ロック、テストは次も注入します：`PI_WEB_LAUNCH_TOKEN`（起動のたびに作り直す、本機用ワンタイムログイントークン）、`PIWEB_PORT`（子プロセスに渡す実際のポート）、`PIWEB_HTTP_GUARD`、`PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`、`PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`、`PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_RESTART_SUPPORTED`、`PIWEB_DEV_ASSET_ID`、`PIWEB_DISABLE_GRACEFUL_SHUTDOWN`、`PIWEB_DEBUG_PROMPT`、`PIWEB_BROWSER_URL`（Windows でホストのブラウザーを開くときの一時 URL）。`PYTHONUTF8` / `PYTHONIOENCODING`、`NODE_OPTIONS`、`NEXT_PHASE`、`NEXT_RUNTIME`、`NEXT_TELEMETRY_DISABLED` はプロセスまたは Next.js の規約です（ビルドスクリプトは Next のテレメトリを無効にします）。
 
 PiWeb は `HOME`、`USERPROFILE`、`TEMP` / `TMP`、`APPDATA`、`LOCALAPPDATA` などの OS パス変数と、該当するインポート元のための任意の `WORKBUDDY_CONFIG_DIR` と `QWEN_HOME` も読みます。
 

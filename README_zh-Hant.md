@@ -41,7 +41,7 @@
 - **會話匯入** — 搜尋並匯入 Claude Code、Codex、OpenCode、Grok、ZCode、dsh、Kimi Code、WorkBuddy、Antigravity、Antigravity CLI、Qwen Code 和 Cursor 的本機歷史。PiWeb 就地讀取原始檔案。
 - **檔案與改動** — 在專案生長樹中按輪檢視改動，包括 `SKILL.md` 讀取步驟和 codemode 內的呼叫。支援原始碼、Markdown 預覽、統一或並排 Diff，以及在對話中引用選取的行。
 - **模型、技能與擴充功能** — 配置模型供應商，使用 Pi 的 MCP 工具並管理 Pi 套件。[透過 Pi 安裝擴充功能](docs/resources.md)，使用內建互動介面與 JSON UI。
-- **提示詞來源** — 檢視專案指令、技能、模板和工具定義及其資源來源。
+- **上下文檢查器** — 檢視系統提示詞、記憶、技能、工具和對話項目及其資源來源；各類別內按時間降序排列（最新優先），類別按佔用大小排序。
 - **手機訪問與語言** — 在「設定 → 遠端連線」掃碼連線。介面支援英語、簡體中文、繁體中文、日語和俄語。
 
 <details>
@@ -111,7 +111,7 @@ piweb -H 0.0.0.0         # 同時把主服務綁到區域網（認證仍然開�
 
 在本機上，啟動器會用私有登入憑據開啟瀏覽器，並且不會把該憑據列印出來。再次執行 `piweb` 會重新開啟已有例項並登入。
 
-更新：`npm install -g @rexvane/piweb@latest`，然後重啟 `piweb`。解除安裝：`npm uninstall -g @rexvane/piweb` —— agent 資料和已匯入的工具歷史不會被改動。降級見[發布、降級與回滾](docs/operations/release-and-rollback.md)。
+在 macOS 和 Linux 上，於網頁設定或提示條點擊「更新」會自動安裝新版本、在原連接埠優雅重啟服務並自動重新整理頁面；手動升級或 Windows 使用者可執行 `npm install -g @rexvane/piweb@latest`，然後重啟 `piweb`。解除安裝：`npm uninstall -g @rexvane/piweb` —— agent 資料和已匯入的工具歷史不會被改動。降級見[發布、降級與回滾](docs/operations/release-and-rollback.md)。
 
 連線手機或其他裝置時，開啟 **設定 → 遠端連線**，掃描 QR Code（或複製連結）。同一張碼在同一 Wi-Fi 和區域網外都可以用，客戶端無需額外軟體。這是一個 256 位一次性憑據，有效期 120 秒。生產啟動會準備 `0.0.0.0:30142` 上的手機排版代理，以及 Cloudflare 快速隧道（`cloudflared`）。QR Code使用隧道的 HTTPS 地址，只有該地址可達後才會出現。本機的 `127.0.0.1:30141` 提供桌面頁面。開發模式保持本機訪問。
 
@@ -140,7 +140,7 @@ piweb -H 0.0.0.0         # 同時把主服務綁到區域網（認證仍然開�
 | `PI_CODING_AGENT_DIR` | `~/.pi/agent` | Pi / PiWeb 共用的 agent 目錄。它不是唯一資料根，見[資料與隱私](docs/operations/data-and-privacy.md)。 |
 | `PIWEB_REMOTE_LAN` | 啟用 | `0` / `false` / `off` / `no` 關閉區域網代理和 Cloudflare 快速隧道的自動準備。 |
 | `PIWEB_REMOTE_LAN_PORT` | `30142` | 內建區域網 / 手機代理的監聽連接埠。 |
-| `HTTP_PROXY` / `HTTPS_PROXY` | 未設定 | 模型請求使用的代理。設定 → 通用 → 網路代理（`httpProxy`）會覆蓋它。 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 未設定 | 模型請求使用的代理。設定 → 通用 → 網路代理預設使用系統代理，也支援直連、識別出的代理或自訂位址。 |
 | `PI_WEB_UPDATE_CHECK` | `1` | 設為 `0` 時跳過啟動時的更新檢查。設定 → 檢查更新仍可用。 |
 | `PI_OFFLINE` | 未設定 | `1` / `true` / `yes` 跳過 PiWeb / SDK 的聯網動作，例如更新檢查。 |
 
@@ -173,11 +173,11 @@ piweb -H 0.0.0.0         # 同時把主服務綁到區域網（認證仍然開�
 
 | 變數 | 預設值 | 含義 |
 | --- | --- | --- |
-| `HTTP_PROXY` / `HTTPS_PROXY`（及小寫形式） | 未設定 | 模型請求使用的代理。未設定時，若當前使用者啟用了 Windows 系統代理則使用它。 |
-| `NO_PROXY` / `no_proxy` | 本機地址繞過 | 代理繞過列表。Windows 的精確主機和域名字尾例外會繼承；PAC/WPAD 以及 `<local>`、`192.168.*` 等 Windows 專用規則不會被執行。 |
+| `HTTP_PROXY` / `HTTPS_PROXY`（及小寫形式） | 未設定 | 模型請求使用的代理。未設定時，若當前使用者啟用了 Windows 或 macOS（`scutil --proxy`）系統代理則使用它。 |
+| `NO_PROXY` / `no_proxy` | 本機地址繞過 | 代理繞過列表。Windows 和 macOS（`ExceptionsList`）的精確主機和域名字尾例外會繼承；PAC/WPAD 以及 `<local>`、`192.168.*` 等系統專用規則不會被執行。 |
 | `NODE_USE_ENV_PROXY` | 在支援時由啟動器設為 `1` | 讓 Node 的 `fetch` / `http` 認代理環境變數。支援 Node 24+ 或 22.21+；使用者顯式設定的值會被保留。 |
 
-設定 → 通用 → 網路代理中的值（`settings.json` 的 `httpProxy`）優先於環境變數和系統代理；留空則回到自動檢測。修改後請重啟 `piweb`。
+設定 → 通用 → 網路代理支援選擇**系統代理（預設）**、**直連**（寫入 `web-proxy.json` 以相容 `pi` CLI 驗證，並停用環境變數與系統代理）、已識別的代理或**自訂**（寫入 `settings.json` 的 `httpProxy`）。修改後立即對新的模型請求與目錄拉取生效，無需重啟 `piweb`。
 
 #### 認證與金鑰
 
@@ -235,7 +235,7 @@ piweb -H 0.0.0.0         # 同時把主服務綁到區域網（認證仍然開�
 
 不要在部署中使用這些變數。`CI`、`PIWEB_COVERAGE`、`PIWEB_COVERAGE_REPORT_DIR`、`PIWEB_TEST_REPORT`、`PIWEB_TEST_TUNNEL` 和 `PIWEB_LINT_SKIP_INSTALL` 僅用於測試和 CI。
 
-啟動器、鎖和測試還會注入：`PI_WEB_LAUNCH_TOKEN`（一次性本機登入令牌，每次啟動重新生成）、`PIWEB_PORT`（寫入子行程的實際連接埠）、`PIWEB_HTTP_GUARD`、`PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`、`PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`、`PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_DEV_ASSET_ID`、`PIWEB_DISABLE_GRACEFUL_SHUTDOWN`、`PIWEB_DEBUG_PROMPT`，以及 `PIWEB_BROWSER_URL`（在 Windows 上開啟本機瀏覽器時的臨時地址）。`PYTHONUTF8` / `PYTHONIOENCODING`、`NODE_OPTIONS`、`NEXT_PHASE`、`NEXT_RUNTIME` 和 `NEXT_TELEMETRY_DISABLED` 屬於程序或 Next.js 約定（建置腳本會關閉 Next 遙測）。
+啟動器、鎖和測試還會注入：`PI_WEB_LAUNCH_TOKEN`（一次性本機登入令牌，每次啟動重新生成）、`PIWEB_PORT`（寫入子行程的實際連接埠）、`PIWEB_HTTP_GUARD`、`PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN`、`PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY`、`PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_RESTART_SUPPORTED`、`PIWEB_DEV_ASSET_ID`、`PIWEB_DISABLE_GRACEFUL_SHUTDOWN`、`PIWEB_DEBUG_PROMPT`，以及 `PIWEB_BROWSER_URL`（在 Windows 上開啟本機瀏覽器時的臨時地址）。`PYTHONUTF8` / `PYTHONIOENCODING`、`NODE_OPTIONS`、`NEXT_PHASE`、`NEXT_RUNTIME` 和 `NEXT_TELEMETRY_DISABLED` 屬於程序或 Next.js 約定（建置腳本會關閉 Next 遙測）。
 
 PiWeb 還會讀取 `HOME`、`USERPROFILE`、`TEMP` / `TMP`、`APPDATA`、`LOCALAPPDATA` 等作業系統路徑變數，以及可選的 `WORKBUDDY_CONFIG_DIR` 和 `QWEN_HOME`（用於對應的會話匯入來源）。
 

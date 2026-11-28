@@ -30,10 +30,10 @@
 
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
-| `HTTP_PROXY` / `HTTPS_PROXY`（及小写形式） | 未设置 | 模型请求代理。未设置时会读取当前用户启用的 Windows 系统代理。 |
-| `NO_PROXY` / `no_proxy` | 本机地址直连 | 代理绕过列表。Windows 的精确主机/域名后缀例外也会继承；PAC/WPAD 与 `<local>`、`192.168.*` 等 Windows 专用规则不执行。 |
+| `HTTP_PROXY` / `HTTPS_PROXY`（及小写形式） | 未设置 | 模型请求代理。未设置时会读取当前用户启用的 **Windows 或 macOS（`scutil --proxy`）** 系统代理。 |
+| `NO_PROXY` / `no_proxy` | 本机地址直连 | 代理绕过列表。Windows 和 macOS（`ExceptionsList`）的精确主机/域名后缀例外也会继承；PAC/WPAD 与 `<local>`、`192.168.*` 等系统专用规则不执行。 |
 | `NODE_USE_ENV_PROXY` | 启动器按 Node 版本自动设 `1` | 让 Node 的 `fetch/http` 认代理环境变量。Node 24+ 或 22.21+ 支持；更旧版本上即使配了代理，模型请求仍直连（启动器打印明确提示）。用户显式设置的值会被保留。 |
-| `PI_CODING_AGENT_DIR/settings.json` 的 `httpProxy` | 空 | 设置 → 通用 → 网络代理，优先级高于环境变量与系统代理；留空恢复自动检测。 |
+| `PI_CODING_AGENT_DIR/settings.json` 的 `httpProxy` 与 `web-proxy.json` | 系统代理（默认） | 设置 → 通用 → 网络代理（下拉选择）：默认读取系统代理/环境变量；支持**直连**（写入 `<agent 目录>/web-proxy.json` 的 `{ "mode": "direct" }` 并清除 `settings.json` 的 `httpProxy` 以兼容 `pi` CLI 校验，显式禁用环境变量与系统代理）、**识别出的代理**与**自定义**；修改后对新的模型请求与目录拉取立即生效，无需重启（进行中的请求与已启动子进程仍沿用旧代理）。 |
 
 ## 认证与密钥
 
@@ -102,6 +102,7 @@
 | `PIWEB_BUILD_LOCK_FILE` / `PIWEB_BUILD_LOCK_TOKEN`、`PIWEB_PROCESS_LOCK_FILE` / `PIWEB_PROCESS_LOCK_TOKEN` | 构建/子进程互斥锁的所有权证明，防止并发构建或死锁清理。 |
 | `PIWEB_PROXY_SOURCE`、`PIWEB_INHERITED_HTTP_PROXY` / `PIWEB_INHERITED_HTTPS_PROXY` | 启动器记录的代理来源与原值，用于运行中切换代理与状态显示。 |
 | `PIWEB_MANAGED_NODE_USE_ENV_PROXY`、`PIWEB_MANAGED_NO_PROXY`、`PIWEB_MANAGED_*` | 运行中切换代理时，标记“哪些值由 PiWeb 写入”，避免误删用户设置。 |
+| `PIWEB_RESTART_SUPPORTED` | `1` 时表示当前生产服务由 `piweb` 启动器托管，应用内更新完成后可优雅停机并以退出码 `75` 触发同端口自动重启（含连续快速重启保护）。 |
 | `PIWEB_DEV_ASSET_ID` | 开发模式的静态资源版本前缀，避免缓存串版本。 |
 | `PIWEB_DISABLE_GRACEFUL_SHUTDOWN` | `1` 时禁用进程级优雅停机信号处理器（只给测试/特殊编排用）。 |
 | `PIWEB_DEBUG_PROMPT` | 打印 node:sqlite 加载失败等诊断信息（会话导入用）。 |
