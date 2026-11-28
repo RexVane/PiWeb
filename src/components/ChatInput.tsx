@@ -8,7 +8,7 @@ import { clientFetch as fetch } from "@/lib/client-fetch";
  * 运行中：Enter 按设置插话 / 排队，Ctrl(⌘)+Enter 用另一种；停止按钮会把排队消息取回输入框（pi 终端同款）；
  * 排队中的消息列在输入卡上方，行内 ✓/× 确认/取消；空输入框 ↑ 编辑最后一条待发消息。Enter 发送 / Shift+Enter 换行。
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
 	IconEditOutline16,
 	IconFileOutline16,
@@ -112,7 +112,6 @@ export function ChatInput({
 	uploadFailure,
 	pendingUploadCount = 0,
 	onPreviewFile,
-	sourcePickerRef,
 	pendingSend = false,
 	onSendPendingChange,
 	attachmentLayout = "overlay",
@@ -172,7 +171,6 @@ export function ChatInput({
 	pendingUploadCount?: number;
 	/** 点上传附件卡：用页内文件查看器预览（文件可能还没发出去） */
 	onPreviewFile?: (path: string) => void;
-	sourcePickerRef?: RefObject<HTMLInputElement | null>;
 	pendingSend?: boolean;
 	onSendPendingChange?: (pending: boolean) => void;
 	/** Hero 在输入卡上方预留空间；聊天中仍让附件悬浮、不占布局高度 */
@@ -714,10 +712,6 @@ export function ChatInput({
 
 	return (
 		<div ref={wrapRef} className="relative w-full" data-testid="composer">
-			{sourcePickerRef && <input hidden type="file" multiple ref={sourcePickerRef} aria-label={t.overviewAttach} onChange={(event) => {
-				pickFiles(event.currentTarget.files);
-				event.currentTarget.value = "";
-			}} />}
 			{attachmentError && (
 				<div className="mb-2 flex justify-center">
 					<ErrorToast message={attachmentError} onDismiss={clearAttachmentError} />

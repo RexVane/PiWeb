@@ -56,13 +56,6 @@ export const IconPanelRightOutline16 = ({ size = 16, style, ...rest }: P) => (
 	<IconPanelLeftOutline16 size={size} style={{ transform: "scaleX(-1)", ...style }} {...rest} />
 );
 
-export const IconOverviewOutline16 = ({ size = 16, ...rest }: P) => (
-	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true" {...rest}>
-		<circle cx="3.25" cy="4.25" r="1.6" /><circle cx="3.25" cy="11.75" r="1.6" />
-		<path d="M7.75 4.25h6.5m-6.5 7.5h6.5" />
-	</svg>
-);
-
 /** ic_ds_plus_outline_16 */
 export const IconPlusOutline16 = ({ size = 16, ...rest }: P) => (
 	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" {...rest}>
